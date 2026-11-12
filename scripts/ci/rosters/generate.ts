@@ -15,9 +15,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { findInFiles, type Lang, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { isSuppressed, isTestFile, langFor, pluginsDisabledFor, targetFiles } from "../lint-rules";
+import { isSuppressed, isTestFile, langFor, maskSwiftNonCode, pluginsDisabledFor, targetFiles } from "../lint-rules";
 import type { RosterDefinition } from "./define";
 import { parseRosters, ROSTER_DEFINITIONS, ROSTERS_FILE, type Rosters, readRosters, rosterGrowth } from "./index";
+import { SWIFT_ROSTERS, type SwiftRoster, swiftRosterApplies, swiftRosterLines } from "./swift";
 import { buildInventory, countByKey, TREE_ROSTERS, type TreeMatch, unsuppressed } from "./tree";
 
 export interface RosterMatch {
@@ -82,6 +83,40 @@ export async function scanRoster(definition: RosterDefinition, files: readonly s
         }
 
         matches.push({ file, line, text: node.text().split("\n")[0].slice(0, 100) });
+    }
+
+    return matches;
+}
+
+/** Every line of the Swift files that holds one of `rosters`' patterns; each file is read and masked once. */
+export function scanSwiftRosters(
+    rosters: readonly SwiftRoster[],
+    files: readonly string[],
+    read: (file: string) => string = (file) => readFileSync(file, "utf8")
+): Map<string, RosterMatch[]> {
+    const matches = new Map<string, RosterMatch[]>(rosters.map((roster) => [roster.name, []]));
+
+    for (const file of files) {
+        const applying = rosters.filter((roster) => swiftRosterApplies(roster, file));
+
+        if (applying.length === 0) {
+            continue;
+        }
+
+        const source = read(file);
+        const lines = source.split("\n");
+        const masks = {
+            code: maskSwiftNonCode(source).split("\n"),
+            withStrings: maskSwiftNonCode(source, { keepStrings: true }).split("\n"),
+        };
+
+        for (const roster of applying) {
+            for (const hit of swiftRosterLines(roster, masks, (line) => isSuppressed(lines, line))) {
+                matches
+                    .get(roster.name)
+                    ?.push({ file, line: hit.line, text: (lines[hit.line - 1] ?? "").trim().slice(0, 100) });
+            }
+        }
     }
 
     return matches;
@@ -168,8 +203,9 @@ if (import.meta.main) {
     const treeOnly = process.argv.includes("--tree");
     const definitions = treeOnly ? [] : ROSTER_DEFINITIONS.filter((definition) => !only || definition.name === only);
     const trees = TREE_ROSTERS.filter((tree) => !only || tree.name === only);
+    const swift = treeOnly ? [] : SWIFT_ROSTERS.filter((roster) => !only || roster.name === only);
 
-    if (definitions.length === 0 && trees.length === 0) {
+    if (definitions.length === 0 && trees.length === 0 && swift.length === 0) {
         console.error(`rosters: no roster named ${only}`);
         process.exit(2);
     }
@@ -184,6 +220,11 @@ if (import.meta.main) {
         console.log(
             `${definition.name} (${definition.candidate}): ${matches.length} in ${Object.keys(found[definition.name]).length} files`
         );
+    }
+
+    for (const [name, matches] of scanSwiftRosters(swift, files)) {
+        found[name] = countByFile(matches);
+        console.log(`${name}: ${matches.length} in ${Object.keys(found[name]).length} files`);
     }
 
     // The tree rosters read every source file once, whatever the lint was asked to look at: a copy is a copy of
@@ -205,7 +246,7 @@ if (import.meta.main) {
     }
 
     const plan = planRosters(current, found);
-    const known = new Set([...ROSTER_DEFINITIONS, ...TREE_ROSTERS].map((roster) => roster.name));
+    const known = new Set([...ROSTER_DEFINITIONS, ...TREE_ROSTERS, ...SWIFT_ROSTERS].map((roster) => roster.name));
     const unknown = Object.keys(current).filter((name) => !known.has(name));
     const next: Rosters = { ...current, ...plan.next };
 

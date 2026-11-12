@@ -70,7 +70,13 @@ generated list of the places that still hold it, which only shrinks. Two kinds:
     its parameters named anything (comments and spacing ignored).
   - `roster-tool-dependency-added`: a tool imports a tool it did not import before, or `src/utils` imports a tool.
     The manifest key is `from → to`, not a file.
-  `plugins/` is left out: a plugin file cannot import `src/utils`. A wanted exception is `// lint-rules-ignore: <why>`
+  `plugins/` is left out: a plugin file cannot import `src/utils`.
+- A **Swift roster** (`rosters/swift.ts`, `SWIFT_ROSTERS`) is a regex per line, because ast-grep has no Swift grammar.
+  Comments are always hidden; `strings: true` keeps string text (`maskSwiftNonCode(source, { keepStrings: true })`)
+  for a pattern that reads a literal (`"GENESIS_TOOLS_HOME"`, `"--review"`). A line counts once, test targets are left
+  out, and lint-rules checks them in `checkSwiftSource` with the counts of `rosters.json`. Ten patterns from the
+  architecture plan (C04, C25, C46, C52) and the app's owners (socket clients, `GenesisToolsHome`, `PathOpener`,
+  `Clipboard`); each proven by a plant on 2026-11-12. A wanted exception is `// lint-rules-ignore: <why>`
   on the line or the line above. Proven by plants on 2026-11-12: one file with all four violations failed the check
   with its file, line and the owner it copies; the same file with the ignore comments passed.
 

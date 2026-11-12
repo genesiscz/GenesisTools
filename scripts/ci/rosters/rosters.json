@@ -728,6 +728,64 @@
         "src/youtube/ui/lib/format.ts": 5,
         "src/zsh/lib/completions/rc-block.ts": 1
     },
+    "roster-swift-cli-runner-type-outside-bridge": {
+        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubWorktrees.swift": 1
+    },
+    "roster-swift-forge-kind-compare-outside-forge": {
+        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubCommitLink.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubComponents.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubNotify.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubPRFetch.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubPRs.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Review/PRThreads.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Review/ReviewProposal.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Review/ReviewWindow.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Sketches/ListsSketchA.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Sketches/ListsSketchB.swift": 1
+    },
+    "roster-swift-genesis-tools-home-name-outside-owner": {
+        "src/browser-router/native/Router.swift": 1,
+        "src/macos/GenesisTools/Sources/Host/App/SettingsModel.swift": 1,
+        "src/macos/GenesisTools/Sources/Host/LauncherFailures.swift": 1,
+        "src/macos/GenesisTools/Sources/Host/Notify.swift": 1,
+        "src/macos/GenesisTools/Sources/Host/Router.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Meetings/Data/MeetingsService.swift": 1
+    },
+    "roster-swift-hand-built-genesis-tools-path": {
+        "src/macos/GenesisTools/Sources/Host/App/SettingsModel.swift": 1,
+        "src/macos/GenesisTools/Sources/Host/VaultUnlock.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubAgents.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubMainMenu.swift": 2
+    },
+    "roster-swift-inline-page-script": {
+        "src/macos/GenesisKit/Sources/GenesisKitCatalogTool/CatalogBoard.swift": 2
+    },
+    "roster-swift-pasteboard-copy-outside-clipboard": {
+        "src/macos/GenesisKit/Sources/GenesisKit/Focus/Studio/FocusSessionDetailView.swift": 1,
+        "src/macos/GenesisKit/Sources/GenesisKit/Focus/Studio/FocusStudioView.swift": 1,
+        "src/macos/GenesisKit/Sources/GenesisKit/Settings/NativeSettingsStandardPages.swift": 1,
+        "src/macos/GenesisTools/Sources/Host/LocalNetworkWatch.swift": 1
+    },
+    "roster-swift-reveal-in-finder-outside-path-opener": {
+        "src/macos/GenesisKit/Sources/GenesisKit/Markdown/Document/MarkdownExport.swift": 1,
+        "src/macos/GenesisKit/Sources/GenesisKit/Markdown/Views/MarkdownDocumentToolbar.swift": 1,
+        "src/macos/GenesisKit/Sources/GenesisKit/Markdown/Window/MarkdownKeymap.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubMainMenu.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Recorder/Editor/EditorModel.swift": 2,
+        "src/macos/GenesisTools/Sources/Parts/Recorder/Editor/EditorView.swift": 1
+    },
+    "roster-swift-review-argv-outside-review-launch": {
+        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubPRs.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Hub/Review/PRRefs.swift": 2
+    },
+    "roster-swift-tools-server-client-outside-bridge": {
+        "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubData.swift": 1,
+        "src/macos/GenesisTools/Sources/Parts/Widget/WidgetWindow.swift": 1
+    },
+    "roster-swift-unix-socket-outside-rpc-clients": {
+        "native/ax-tool/SnapshotSupport/CursorReceipt.swift": 2,
+        "native/ax-tool/Sources/CursorOverlay.swift": 2
+    },
     "roster-tool-dependency-added": {
         "agents → question": 1,
         "ai → ai-proxy": 1,

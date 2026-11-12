@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Lang, parse } from "@ast-grep/napi";
+import { maskSwiftNonCode } from "../lint-rules";
 import adoFetchOutsideApi from "./ado-fetch-outside-api.definition";
 import cdpSocketOutsideConnect from "./cdp-socket-outside-connect.definition";
 import cmuxSendOutsideSurfaceInput from "./cmux-send-outside-surface-input.definition";
@@ -13,6 +14,7 @@ import launchctlOutsideLaunchdAgent from "./launchctl-outside-launchd-agent.defi
 import lockUnlinkOutsidePidfile from "./lock-unlink-outside-pidfile.definition";
 import mcpProviderWriteOutsideCycle from "./mcp-provider-write-outside-cycle.definition";
 import providerFetchOutsideExchange from "./provider-fetch-outside-exchange.definition";
+import { SWIFT_ROSTERS, swiftRosterApplies, swiftRosterLines } from "./swift";
 import {
     copyNames,
     countByKey,
@@ -232,5 +234,72 @@ describe("tree rosters: what one file cannot show", () => {
             "refs.jsonl",
             "/refs.jsonl",
         ]);
+    });
+});
+
+describe("swift rosters", () => {
+    const masks = (source: string) => ({
+        code: maskSwiftNonCode(source).split("\n"),
+        withStrings: maskSwiftNonCode(source, { keepStrings: true }).split("\n"),
+    });
+    const byName = (name: string) => {
+        const roster = SWIFT_ROSTERS.find((item) => item.name === name);
+
+        if (!roster) {
+            throw new Error(`no roster ${name}`);
+        }
+
+        return roster;
+    };
+
+    test("a comment never counts; a string counts only for a roster that reads strings", () => {
+        const source = [
+            '// "GENESIS_TOOLS_HOME" and <script> in a comment',
+            'let home = env["GENESIS_TOOLS_HOME"]',
+            'let text = "NSPasteboard.general.setString( in a string"',
+            'NSPasteboard.general.setString("x", forType: .string)',
+            'let path = "\\(root)/.genesis-tools/app"',
+        ].join("\n");
+        const none = () => false;
+
+        expect(
+            swiftRosterLines(byName("roster-swift-genesis-tools-home-name-outside-owner"), masks(source), none)
+        ).toEqual([{ line: 2, column: 16 }]);
+        expect(swiftRosterLines(byName("roster-swift-pasteboard-copy-outside-clipboard"), masks(source), none)).toEqual(
+            [{ line: 4, column: 1 }]
+        );
+        expect(
+            swiftRosterLines(byName("roster-swift-hand-built-genesis-tools-path"), masks(source), none)
+        ).toHaveLength(1);
+        expect(swiftRosterLines(byName("roster-swift-inline-page-script"), masks(source), none)).toEqual([]);
+        expect(
+            swiftRosterLines(
+                byName("roster-swift-genesis-tools-home-name-outside-owner"),
+                masks(source),
+                (line) => line === 2
+            )
+        ).toEqual([]);
+    });
+
+    test("the owner and the test targets are no findings", () => {
+        const roster = byName("roster-swift-pasteboard-copy-outside-clipboard");
+
+        expect(swiftRosterApplies(roster, "src/macos/GenesisKit/Sources/GenesisKitBase/Paths/Clipboard.swift")).toBe(
+            false
+        );
+        expect(swiftRosterApplies(roster, "src/macos/GenesisTools/Tests/ClipboardTests.swift")).toBe(false);
+        expect(swiftRosterApplies(roster, "src/macos/GenesisTools/Sources/Parts/Focus/FocusStudioView.swift")).toBe(
+            true
+        );
+    });
+
+    test("the comments-only mask keeps every column and line where it was", () => {
+        const source = 'let a = "x // not a comment" // a comment\n/* block\n "still" */ let b = 1';
+        const kept = maskSwiftNonCode(source, { keepStrings: true });
+
+        expect(kept.length).toBe(source.length);
+        expect(kept.split("\n")[0]).toBe(`let a = "x // not a comment" ${" ".repeat("// a comment".length)}`);
+        expect(kept.split("\n")[2]?.endsWith("let b = 1")).toBe(true);
+        expect(kept).not.toContain("still");
     });
 });
