@@ -164,3 +164,8 @@ export function mobileBuildCommand(): string {
 export function mobileRoutesCommand(): string {
     return toolCommand("mobile routes");
 }
+
+/** Explicitly installs the pinned offline music asset and its license. */
+export function musicSoundfontInstallCommand(): string {
+    return toolCommand("music soundfont install");
+}
