@@ -95,8 +95,8 @@ struct PersonPicker: View {
     var visibleRows: Int = 6
     /// A person the user clicked or picked with Return.
     let pick: (KnownPerson) -> Void
-    /// "Add 'X' as new speaker": the typed name.
-    let addNew: (String) -> Void
+    /// "Add 'X' as new speaker": omitted when this picker can only select existing people.
+    var addNew: ((String) -> Void)?
     /// Esc.
     var cancel: () -> Void = {}
     /// The Contacts grant button when Contacts refused access; nil hides it.
@@ -107,7 +107,10 @@ struct PersonPicker: View {
 
     static let rowHeight: CGFloat = 40
 
-    private var newName: String? { PeopleText.newName(query, people: people, rule: addRule) }
+    var newName: String? {
+        guard addNew != nil else { return nil }
+        return PeopleText.newName(query, people: people, rule: addRule)
+    }
     /// The rows Up and Down move through: the people, then the add row.
     private var rowCount: Int { people.count + (newName == nil ? 0 : 1) }
 
@@ -192,7 +195,7 @@ struct PersonPicker: View {
     }
 
     private func addRow(_ name: String) -> some View {
-        Button { addNew(name) } label: {
+        Button { addNew?(name) } label: {
             HStack(spacing: 8) {
                 Image(systemName: "person.badge.plus")
                     .font(.system(size: 13))
@@ -227,9 +230,9 @@ struct PersonPicker: View {
     /// row offered; it never picks the first person by itself (nothing is preselected).
     private func submit() {
         if let row = highlighted {
-            if row < people.count { pick(people[row]) } else if let newName { addNew(newName) }
+            if row < people.count { pick(people[row]) } else if let newName { addNew?(newName) }
         } else if people.isEmpty, let newName {
-            addNew(newName)
+            addNew?(newName)
         }
     }
 }

@@ -134,6 +134,15 @@ final class MeetingsContactsTests: XCTestCase {
         XCTAssertNil(PeopleText.newName("Dana", people: people, rule: .noResults), "noResults waits for an empty list")
     }
 
+    func testExistingPersonPickerDoesNotOfferAnUnusableAddAction() {
+        let picker = PersonPicker(people: [], query: .constant("New person"), title: "Merge with",
+                                  pick: { _ in })
+        XCTAssertNil(picker.newName, "An existing-person picker cannot add the typed name")
+        let addingPicker = PersonPicker(people: [], query: .constant("New person"),
+                                        pick: { _ in }, addNew: { _ in })
+        XCTAssertEqual(addingPicker.newName, "New person")
+    }
+
     func testTheRowSaysTheAddressElseWhereTheyWereSeen() {
         XCTAssertEqual(PeopleText.address(Fixture.person("Robin Example", email: "robin@example.com")), "robin@example.com")
         XCTAssertEqual(PeopleText.address(Fixture.person("Alex Example", meetings: 4)), "4 meetings")

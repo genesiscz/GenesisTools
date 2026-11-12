@@ -280,7 +280,6 @@ struct MeetingsContactsView: View {
                                 query: $mergeQuery, title: "Merge \(person.name) with", prompt: "Search people",
                                 addRule: .noResults,
                                 pick: { other in mergeFrom = nil; requestMerge(person, other) },
-                                addNew: { _ in },
                                 cancel: { mergeFrom = nil })
                         }
                         Divider().padding(.leading, 52)
