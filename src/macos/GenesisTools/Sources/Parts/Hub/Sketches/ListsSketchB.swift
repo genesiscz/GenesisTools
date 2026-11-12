@@ -944,7 +944,7 @@ extension ListsSketchB {
                 header(events: events.count, projects: digests.count)
                 PanelFindBar(find: find)
                 if let failure = timeline.error {
-                    FailureInline(failure, form: .compact) { timeline.load(fresh: true) }
+                    ListVariantLoadFailure(failure) { timeline.load(fresh: true) }
                 }
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
