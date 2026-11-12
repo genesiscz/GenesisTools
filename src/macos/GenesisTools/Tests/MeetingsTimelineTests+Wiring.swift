@@ -219,6 +219,18 @@ extension MeetingsTimelineTests {
         XCTAssertNil(MeetingsPlaybackKeys.key(keyCode: 0, characters: "a", modifiers: []))
     }
 
+    func testFocusedControlsKeepSpaceAndArrowKeys() {
+        for code: UInt16 in [49, 123, 124] {
+            XCTAssertNil(MeetingsPlaybackKeys.key(keyCode: code, characters: nil, modifiers: [], controlFocused: true),
+                         "A focused control keeps Space and arrows")
+        }
+        XCTAssertEqual(MeetingsPlaybackKeys.key(keyCode: 53, characters: nil, modifiers: [], controlFocused: true), .escape,
+                       "Escape retains the existing popover and playback stack order")
+        XCTAssertEqual(MeetingsPlaybackKeys.key(keyCode: 33, characters: "[", modifiers: [], controlFocused: true), .previousPin)
+        XCTAssertEqual(MeetingsPlaybackKeys.key(keyCode: 49, characters: " ", modifiers: []), .space,
+                       "Playback shortcuts still work when the list owns keyboard focus")
+    }
+
     func testTheBracketsStepToTheNextAndThePreviousPinAndTheEndsHold() {
         let seconds: [Double] = [10, 40, 90]
         XCTAssertEqual(MeetingsPlaybackKeys.nextPin(seconds, from: nil, forward: true), 0)

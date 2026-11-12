@@ -95,8 +95,10 @@ enum MeetingsPlaybackKeys {
     }
 
     /// The key a plain key press names; none with ⌘, ⌃ or ⌥ held.
-    static func key(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags) -> Key? {
+    static func key(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags, controlFocused: Bool = false) -> Key? {
         guard modifiers.intersection([.command, .control, .option]).isEmpty else { return nil }
+        // Space activates a focused button; arrows change a focused picker or slider. Escape keeps its stack order.
+        guard !controlFocused || ![49, 123, 124].contains(keyCode) else { return nil }
         switch keyCode {
         case 49: return .space
         case 123: return .left
@@ -114,7 +116,9 @@ enum MeetingsPlaybackKeys {
     private static func handle(_ event: NSEvent) -> Bool {
         guard let window = event.window, window.frameAutosaveName == windowName, window.attachedSheet == nil,
               !(window.firstResponder is NSText),
-              let key = key(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags),
+              let key = key(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags,
+                            controlFocused: StandardEditing.controlHasFocus(firstResponder: window.firstResponder,
+                                                                           focusedElement: NSApp.accessibilityFocusedUIElement)),
               let model = MeetingsMenuTarget.shared.model,
               // The "This also affects" card is drawn in the window (no attached sheet) and keeps every key, as a sheet did.
               model.detail?.pendingReach == nil else { return false }
