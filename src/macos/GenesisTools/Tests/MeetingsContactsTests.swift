@@ -245,21 +245,6 @@ final class MeetingsContactsTests: XCTestCase {
         XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.PersonDecisionPlan.Result.self, result).reach?.stretches, [])
     }
 
-    /// F10, G-PPL-5: the Contacts view is a place of the window; the open meeting stays open for the way back.
-    func testContactsIsAPlaceThatKeepsTheOpenMeeting() throws {
-        let suite = "meetings.contacts.tests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
-        model.select("m1")
-        model.go(.contacts)
-        XCTAssertEqual(model.place, .contacts)
-        XCTAssertEqual(model.selectedMeetingID, "m1")
-        XCTAssertEqual(model.detail?.id, "m1")
-        XCTAssertTrue(model.visibleMeetings.isEmpty)
-        XCTAssertEqual(model.people.switches, PeopleSourceSwitches(), "no config read yet: both sources on")
-    }
-
     func testSnapshotsOfThePickerAndTheContactsView() throws {
         guard let folder = ProcessInfo.processInfo.environment["MEETINGS_PEOPLE_SHOTS"] else { return }
         let people = Fixture.people

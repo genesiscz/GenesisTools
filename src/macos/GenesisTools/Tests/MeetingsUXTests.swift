@@ -64,40 +64,6 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(bar.items.map(\.title), ["GenesisTools", "File", "Edit", "View", "Window"])
     }
 
-    /// G-KEY-1 and the settings lane's keys: the timeline's zoom, Contacts and the settings panel are menu items, so
-    /// they work wherever the keyboard is and the menu names them.
-    func testTheViewMenuZoomsTheTimelineOpensContactsAndTogglesTheSettingsPanel() throws {
-        let (defaults, suite) = try defaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let bar = MeetingsMenu.build(appName: "GenesisTools")
-        func item(_ key: String, _ mask: NSEvent.ModifierFlags = .command) -> NSMenuItem? {
-            bar.items.compactMap(\.submenu).flatMap(\.items).first {
-                $0.keyEquivalent == key && $0.keyEquivalentModifierMask == mask
-            }
-        }
-        XCTAssertEqual(item("3")?.title, "People")
-        XCTAssertEqual(item("+")?.title, "Zoom In on the Timeline")
-        XCTAssertEqual(item("-")?.title, "Zoom Out on the Timeline")
-        XCTAssertEqual(item("0")?.title, "Fit the Clip")
-        let panel = try XCTUnwrap(item("i", [.command, .option]))
-        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
-        model.remembersPanel = false
-        MeetingsMenuTarget.shared.model = model
-        defer { MeetingsMenuTarget.shared.model = nil }
-        _ = MeetingsMenuTarget.shared.validateMenuItem(panel)
-        XCTAssertEqual(panel.title, "Show Settings Panel")
-        MeetingsMenuTarget.shared.toggleSidePanel(nil)
-        XCTAssertTrue(model.sidePanelOpen)
-        _ = MeetingsMenuTarget.shared.validateMenuItem(panel)
-        XCTAssertEqual(panel.title, "Hide Settings Panel")
-        MeetingsMenuTarget.shared.showContacts(nil)
-        XCTAssertEqual(model.place, .contacts)
-        MeetingsMenuTarget.shared.zoomOut(nil)
-        XCTAssertEqual(model.player.timeline.zoom, .context, "⌘- zooms out; the sound is not touched (R4)")
-        MeetingsMenuTarget.shared.fitClip(nil)
-        XCTAssertEqual(model.player.timeline.zoom, .clip)
-    }
-
     func testTheViewMenuMovesTheWindowsPlace() throws {
         let (defaults, suite) = try defaults()
         defer { defaults.removePersistentDomain(forName: suite) }

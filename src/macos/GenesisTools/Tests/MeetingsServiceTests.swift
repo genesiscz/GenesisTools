@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 import XCTest
@@ -1161,5 +1162,79 @@ extension MeetingsServiceTests {
         XCTAssertEqual(fake.count("meeting.speakers"), previousReads + 1, "the matching own event must not duplicate the refresh")
         XCTAssertEqual(fake.count("meeting.show"), 0, "the successful patch still avoids a full record read")
         XCTAssertEqual(fake.count("meeting.rows"), 0, "the successful patch still avoids a full rows read")
+    }
+}
+
+extension MeetingsServiceTests {
+    /// F10, G-PPL-5: the Contacts view is a place of the window; the open meeting stays open for the way back.
+    func testContactsIsAPlaceThatKeepsTheOpenMeeting() async throws {
+        try writeServiceEntry()
+        try libraryAnswers()
+        fake.answers["people.known"] = ["result": ["query": "", "people": [], "total": 0, "sources": []] as [String: Any]]
+        let service = makeService()
+        defer { service.disconnect() }
+        let suite = "meetings.contacts.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults, service: service, loadDetail: { _ in })
+        model.select("m1")
+        model.go(.contacts)
+        XCTAssertEqual(model.place, .contacts)
+        XCTAssertEqual(model.selectedMeetingID, "m1")
+        XCTAssertEqual(model.detail?.id, "m1")
+        XCTAssertTrue(model.visibleMeetings.isEmpty)
+        XCTAssertEqual(model.people.switches, PeopleSourceSwitches(), "no config read yet: both sources on")
+        try await waitForContactsReads(model)
+    }
+
+    /// G-KEY-1 and the settings lane's keys: the timeline's zoom, Contacts and the settings panel are menu items, so
+    /// they work wherever the keyboard is and the menu names them.
+    func testTheViewMenuZoomsTheTimelineOpensContactsAndTogglesTheSettingsPanel() async throws {
+        let suite = "meetings.contacts-menu.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        try writeServiceEntry()
+        try libraryAnswers()
+        fake.answers["people.known"] = ["result": ["query": "", "people": [], "total": 0, "sources": []] as [String: Any]]
+        let service = makeService()
+        defer { service.disconnect() }
+        let bar = MeetingsMenu.build(appName: "GenesisTools")
+        func item(_ key: String, _ mask: NSEvent.ModifierFlags = .command) -> NSMenuItem? {
+            bar.items.compactMap(\.submenu).flatMap(\.items).first {
+                $0.keyEquivalent == key && $0.keyEquivalentModifierMask == mask
+            }
+        }
+        XCTAssertEqual(item("3")?.title, "People")
+        XCTAssertEqual(item("+")?.title, "Zoom In on the Timeline")
+        XCTAssertEqual(item("-")?.title, "Zoom Out on the Timeline")
+        XCTAssertEqual(item("0")?.title, "Fit the Clip")
+        let panel = try XCTUnwrap(item("i", [.command, .option]))
+        let model = MeetingsWindowModel(defaults: defaults, service: service, loadDetail: { _ in })
+        model.remembersPanel = false
+        MeetingsMenuTarget.shared.model = model
+        defer { MeetingsMenuTarget.shared.model = nil }
+        _ = MeetingsMenuTarget.shared.validateMenuItem(panel)
+        XCTAssertEqual(panel.title, "Show Settings Panel")
+        MeetingsMenuTarget.shared.toggleSidePanel(nil)
+        XCTAssertTrue(model.sidePanelOpen)
+        _ = MeetingsMenuTarget.shared.validateMenuItem(panel)
+        XCTAssertEqual(panel.title, "Hide Settings Panel")
+        MeetingsMenuTarget.shared.showContacts(nil)
+        XCTAssertEqual(model.place, .contacts)
+        MeetingsMenuTarget.shared.zoomOut(nil)
+        XCTAssertEqual(model.player.timeline.zoom, .context, "⌘- zooms out; the sound is not touched (R4)")
+        MeetingsMenuTarget.shared.fitClip(nil)
+        XCTAssertEqual(model.player.timeline.zoom, .clip)
+        try await waitForContactsReads(model)
+    }
+
+    private func waitForContactsReads(_ model: MeetingsWindowModel) async throws {
+        for _ in 0..<150 where model.people.known.value == nil || model.settingsRaw == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNotNil(model.people.known.value, "the people directory must load through the fixture")
+        XCTAssertNotNil(model.settingsRaw, "the source switches must load through the fixture")
+        XCTAssertGreaterThan(fake.count("people.known"), 0)
+        XCTAssertGreaterThan(fake.count("config.read"), 0)
     }
 }
