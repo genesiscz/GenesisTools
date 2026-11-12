@@ -5,6 +5,7 @@ import cdpSocketOutsideConnect from "./cdp-socket-outside-connect.definition";
 import cmuxSendOutsideSurfaceInput from "./cmux-send-outside-surface-input.definition";
 import cmuxTreeOutsideReader from "./cmux-tree-outside-reader.definition";
 import type { RosterDefinition } from "./define";
+import { importFrom, literal } from "./define";
 import doctorDirectDelete from "./doctor-direct-delete.definition";
 import { planRosters } from "./generate";
 import { ROSTER_DEFINITIONS, rosterGrowth } from "./index";
@@ -12,6 +13,18 @@ import launchctlOutsideLaunchdAgent from "./launchctl-outside-launchd-agent.defi
 import lockUnlinkOutsidePidfile from "./lock-unlink-outside-pidfile.definition";
 import mcpProviderWriteOutsideCycle from "./mcp-provider-write-outside-cycle.definition";
 import providerFetchOutsideExchange from "./provider-fetch-outside-exchange.definition";
+import {
+    copyNames,
+    countByKey,
+    FUNCTION_BODY_COPIED,
+    type FunctionFact,
+    fingerprint,
+    isDistinctName,
+    SHARED_EXPORT_REDECLARED,
+    TOOL_DEPENDENCY_ADDED,
+    toolOf,
+    unsuppressed,
+} from "./tree";
 
 function matches(definition: RosterDefinition, source: string): number {
     const root = parse(Lang.TypeScript, source).root();
@@ -66,5 +79,158 @@ describe("rosterGrowth", () => {
                 { "roster-a": { "src/one.ts": 2, "src/two.ts": 1 }, "roster-new": { "src/x.ts": 4 } }
             )
         ).toEqual(["roster-a: src/one.ts 1 → 2", "roster-a: src/two.ts 0 → 1"]);
+    });
+});
+
+describe("tree rosters: what one file cannot show", () => {
+    const fn = (over: Partial<FunctionFact>): FunctionFact => ({
+        file: "src/port/lib/a.ts",
+        line: 1,
+        name: "helper",
+        exported: false,
+        fingerprint: "",
+        ...over,
+    });
+    const record = (name: string) =>
+        `{ return typeof ${name} === "object" && ${name} !== null && !Array.isArray(${name}); }`;
+    const shared = [
+        fn({ file: "src/utils/format.ts", name: "formatDuration", exported: true }),
+        fn({ file: "src/utils/deep/nested/format.ts", name: "formatDuration", exported: true }),
+        fn({
+            file: "src/utils/object.ts",
+            name: "isObject",
+            exported: true,
+            fingerprint: fingerprint(record("value"), ["value"]),
+        }),
+        fn({ file: "src/utils/text.ts", name: "walk", exported: true }),
+    ];
+
+    test("a body is the same when only parameter names, comments and spacing differ", () => {
+        const a = fingerprint(record("value"), ["value"]);
+        const b = fingerprint(
+            `{\n    // is it a record?\n    return typeof v === "object" /* yes */ && v !== null && !Array.isArray(v);\n}`,
+            ["v"]
+        );
+
+        expect(b).toBe(a);
+        expect(a).toBe('1|{return typeof $0==="object"&&$0!==null&&!Array.isArray($0);}');
+        // A property with a parameter's name, and the text of a string, are not the parameter.
+        expect(fingerprint('{ return other.value + "value // not a comment"; }', ["value"])).toBe(
+            '1|{return other.value+"value // not a comment";}'
+        );
+        expect(fingerprint(record("value"), ["value"])).not.toBe(
+            fingerprint('{ return typeof value === "string"; }', ["value"])
+        );
+    });
+
+    test("a name counts when it is two words, and a copy affix does not hide it", () => {
+        expect(isDistinctName("formatDuration")).toBe(true);
+        expect(isDistinctName("walk")).toBe(false);
+        expect(isDistinctName("gitroot")).toBe(false);
+        expect(copyNames("myParseTranscript")).toContain("parseTranscript");
+        expect(copyNames("parseTranscriptLocal")).toContain("parseTranscript");
+        expect(copyNames("parseTranscript2")).toContain("parseTranscript");
+        expect(copyNames("_parseTranscript")).toContain("parseTranscript");
+        // A component is not its lower-case namesake, and `local…` names what a function computes.
+        expect(copyNames("RouterLink")).not.toContain("routerLink");
+        expect(copyNames("localDaysBefore")).not.toContain("daysBefore");
+    });
+
+    test("the same name, and a renamed copy, outside the owner; never the owner or a one-word name", () => {
+        const matches = SHARED_EXPORT_REDECLARED.scan({
+            functions: [
+                ...shared,
+                fn({ name: "formatDuration", line: 3 }),
+                fn({ name: "myFormatDuration", line: 9 }),
+                fn({ file: "src/hub/lib/b.ts", name: "walk" }),
+                fn({ file: "src/hub/lib/b.ts", name: "formatBytes" }),
+            ],
+            imports: [],
+        });
+
+        expect(matches.map((match) => [match.key, match.line, match.detail])).toEqual([
+            ["src/port/lib/a.ts", 3, "formatDuration: exported from src/utils/format.ts"],
+            [
+                "src/port/lib/a.ts",
+                9,
+                "myFormatDuration: a renamed copy of formatDuration, exported from src/utils/format.ts",
+            ],
+        ]);
+    });
+
+    test("a copied body under another name names the shared owner; the owner itself is no finding", () => {
+        const matches = FUNCTION_BODY_COPIED.scan({
+            functions: [
+                ...shared,
+                fn({ name: "isJsonRecord", line: 20, fingerprint: fingerprint(record("input"), ["input"]) }),
+                fn({
+                    name: "isText",
+                    line: 30,
+                    fingerprint: fingerprint(
+                        "{ return typeof input === 'string' && input.length > 0 && input.trim() !== ''; }",
+                        ["input"]
+                    ),
+                }),
+            ],
+            imports: [],
+        });
+
+        expect(matches.map((match) => [match.file, match.line, match.detail])).toEqual([
+            ["src/port/lib/a.ts", 20, "isJsonRecord: the body of isObject (src/utils/object.ts:1)"],
+        ]);
+    });
+
+    test("a dependency is one entry per pair of tools; utils is free to import, and never free to import a tool", () => {
+        const from = (file: string, target: string, line = 1) => ({ file, line, target });
+        const matches = TOOL_DEPENDENCY_ADDED.scan({
+            functions: [],
+            imports: [
+                from("src/hub/lib/a.ts", "src/question/lib/store"),
+                from("src/hub/lib/b.ts", "src/question/lib/verbs", 7),
+                from("src/hub/lib/a.ts", "src/hub/lib/b"),
+                from("src/hub/lib/a.ts", "src/utils/json"),
+                from("src/utils/agent-sessions/x.ts", "src/claude/lib/history/search", 4),
+                from("src/single.ts", "src/hub/lib/a"),
+            ],
+        });
+
+        expect(matches.map((match) => match.key)).toEqual(["hub → question", "utils → claude"]);
+        expect(toolOf("src/hub/lib/a.ts")).toBe("hub");
+        expect(toolOf("src/single.ts")).toBeNull();
+        expect(countByKey(matches)).toEqual({ "hub → question": 1, "utils → claude": 1 });
+    });
+
+    test("a suppressed line is no match, and a new entry is growth the plan refuses", () => {
+        const match = { key: "src/a.ts", file: "src/a.ts", line: 2, detail: "x" };
+
+        expect(unsuppressed([match], () => "// lint-rules-ignore: wanted\nfunction x() {}")).toEqual([]);
+        expect(unsuppressed([match], () => "\nfunction x() {}")).toEqual([match]);
+
+        const plan = planRosters(
+            { "roster-tool-dependency-added": { "hub → question": 1 } },
+            { "roster-tool-dependency-added": { "hub → question": 1, "port → spotify": 1 } }
+        );
+
+        expect(plan.grown).toEqual(["roster-tool-dependency-added: port → spotify has 1, the roster allows 0"]);
+        expect(plan.next["roster-tool-dependency-added"]).toEqual({ "hub → question": 1 });
+    });
+
+    test("the literal and import helpers match the whole text, in quotes and in a template", () => {
+        const root = parse(
+            Lang.TypeScript,
+            'import axios from "axios";\nexport { x } from "axios";\nimport y from "axios-retry";\n' +
+                'const a = "refs.jsonl"; const b = `$' +
+                '{dir}/refs.jsonl`; const c = "not-refs.jsonl";'
+        ).root();
+
+        expect(root.findAll(importFrom(/^axios$/)).map((node) => node.text())).toEqual([
+            'import axios from "axios";',
+            'export { x } from "axios";',
+        ]);
+        expect(root.findAll(literal(/^refs\.jsonl$/)).map((node) => node.text())).toEqual(["refs.jsonl"]);
+        expect(root.findAll(literal(/(?:^|\/)refs\.jsonl$/)).map((node) => node.text())).toEqual([
+            "refs.jsonl",
+            "/refs.jsonl",
+        ]);
     });
 });

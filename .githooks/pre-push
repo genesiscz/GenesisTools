@@ -133,6 +133,7 @@ run_guard logging-guard bash scripts/ci/logging-guard.sh
 run_guard ai-credentials-guard bash scripts/ci/ai-credentials-guard.sh
 run_guard pid-safety-guard bash scripts/ci/pid-safety-guard.sh
 run_guard package-boundaries bun scripts/ci/check-package-boundaries.ts
+run_guard tree-rosters bun scripts/ci/rosters/generate.ts --check --tree
 run_guard plugin-standalone bun scripts/ci/check-plugin-standalone.ts
 run_guard plugin-vendored bun scripts/gen-harness-plugin.ts --check
 run_guard tool-commands bun scripts/ci/check-tool-commands.ts --strict

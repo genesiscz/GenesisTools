@@ -6,6 +6,7 @@
  *   bun scripts/ci/rosters/generate.ts --check    # write nothing; exit 1 when the manifest differs from the tree
  *   bun scripts/ci/rosters/generate.ts --base origin/master   # also exit 1 when the manifest grew against that ref
  *   bun scripts/ci/rosters/generate.ts --only roster-ado-fetch-outside-api
+ *   bun scripts/ci/rosters/generate.ts --check --tree   # only the tree rosters (`tree.ts`): the pre-push and CI guard
  *
  * A roster only shrinks. A file that gained a match, or a new file with one, is printed and NOT written: fix the code,
  * or add `// lint-rules-ignore: <why>` on the line. Only a roster the manifest does not have yet (a new definition)
@@ -17,6 +18,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { isSuppressed, isTestFile, langFor, pluginsDisabledFor, targetFiles } from "../lint-rules";
 import type { RosterDefinition } from "./define";
 import { parseRosters, ROSTER_DEFINITIONS, ROSTERS_FILE, type Rosters, readRosters, rosterGrowth } from "./index";
+import { buildInventory, countByKey, TREE_ROSTERS, type TreeMatch, unsuppressed } from "./tree";
 
 export interface RosterMatch {
     file: string;
@@ -163,9 +165,11 @@ if (import.meta.main) {
     const check = process.argv.includes("--check");
     const only = argValue("--only");
     const base = argValue("--base");
-    const definitions = ROSTER_DEFINITIONS.filter((definition) => !only || definition.name === only);
+    const treeOnly = process.argv.includes("--tree");
+    const definitions = treeOnly ? [] : ROSTER_DEFINITIONS.filter((definition) => !only || definition.name === only);
+    const trees = TREE_ROSTERS.filter((tree) => !only || tree.name === only);
 
-    if (definitions.length === 0) {
+    if (definitions.length === 0 && trees.length === 0) {
         console.error(`rosters: no roster named ${only}`);
         process.exit(2);
     }
@@ -182,8 +186,27 @@ if (import.meta.main) {
         );
     }
 
+    // The tree rosters read every source file once, whatever the lint was asked to look at: a copy is a copy of
+    // a file that did not change.
+    const treeMatches = new Map<string, TreeMatch[]>();
+
+    if (trees.length > 0) {
+        const inventory = await buildInventory(files);
+
+        for (const tree of trees) {
+            const matches = unsuppressed(tree.scan(inventory));
+
+            treeMatches.set(tree.name, matches);
+            found[tree.name] = countByKey(matches);
+            console.log(
+                `${tree.name} (${tree.candidate}): ${matches.length} in ${Object.keys(found[tree.name]).length} entries`
+            );
+        }
+    }
+
     const plan = planRosters(current, found);
-    const unknown = Object.keys(current).filter((name) => !ROSTER_DEFINITIONS.some((d) => d.name === name));
+    const known = new Set([...ROSTER_DEFINITIONS, ...TREE_ROSTERS].map((roster) => roster.name));
+    const unknown = Object.keys(current).filter((name) => !known.has(name));
     const next: Rosters = { ...current, ...plan.next };
 
     for (const name of unknown) {
@@ -206,6 +229,22 @@ if (import.meta.main) {
 
     for (const line of problems) {
         console.log(line);
+    }
+
+    // What grew in a tree roster, match by match: the manifest line alone does not say which function it is.
+    for (const tree of trees) {
+        const listed = current[tree.name];
+        const over = (treeMatches.get(tree.name) ?? []).filter(
+            (match) => listed !== undefined && (found[tree.name]?.[match.key] ?? 0) > (listed[match.key] ?? 0)
+        );
+
+        for (const match of over) {
+            console.log(`  ${match.file}:${match.line}  ${match.detail}`);
+        }
+
+        if (over.length > 0) {
+            console.log(`  ${tree.name}: ${tree.message}`);
+        }
     }
 
     if (check) {
