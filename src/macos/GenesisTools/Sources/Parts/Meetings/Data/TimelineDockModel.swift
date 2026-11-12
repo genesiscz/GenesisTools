@@ -271,7 +271,9 @@ final class TimelineDockModel {
     }
 
     /// The display the pane shows by itself (G-SCR-1): the one with the Moment's OCR hit, else the one most frames show.
-    static func autoDisplay(screen: MeetingsAPI.MeetingScreen.Result, moment: Moment?) -> Int? {
+    static func autoDisplay(screen: MeetingsAPI.MeetingScreen.Result, moment: Moment?, at second: Double? = nil) -> Int? {
+        if let second, let focused = screen.frames.last(where: { $0.meetingSec <= second && $0.focusedDisplayId != nil })?.focusedDisplayId,
+           screen.frames.contains(where: { $0.displayId == focused }) { return focused }
         if let hit = moment?.screen?.first(where: { $0.hit != nil }), let id = hit.displayId { return id }
         let counts = Dictionary(grouping: screen.frames.compactMap(\.displayId), by: { $0 }).mapValues(\.count)
         return counts.max { $0.value < $1.value }?.key

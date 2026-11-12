@@ -83,9 +83,16 @@ export function readOcrRows(path: string): OcrRow[] {
  */
 export function readScreenRows(folder: string): { rows: OcrRow[]; pending: number } {
     const path = join(folder, "ocr.jsonl");
-    const rows = existsSync(path) ? readOcrRows(path) : [];
+    const indexed = readIndexRows(folder);
+    const focused = new Map(
+        indexed.filter((row) => row.focusedDisplayId !== undefined).map((row) => [row.file, row.focusedDisplayId!])
+    );
+    // A still-running older OCR worker may omit this capture metadata; the frame index is authoritative.
+    const rows = (existsSync(path) ? readOcrRows(path) : []).map((row) =>
+        focused.has(row.file) ? { ...row, focusedDisplayId: focused.get(row.file) } : row
+    );
     const done = new Set(rows.map((row) => row.file));
-    const waiting = readIndexRows(folder).filter((entry) => !done.has(entry.file));
+    const waiting = indexed.filter((entry) => !done.has(entry.file));
 
     if (waiting.length === 0) {
         return { rows, pending: 0 };
@@ -95,6 +102,7 @@ export function readScreenRows(folder: string): { rows: OcrRow[]; pending: numbe
         file: entry.file,
         at: entry.at,
         displayId: entry.displayId,
+        ...(entry.focusedDisplayId !== undefined ? { focusedDisplayId: entry.focusedDisplayId } : {}),
         changePercent: entry.changePercent,
         reason: entry.reason,
         text: "",

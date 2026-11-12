@@ -35,6 +35,7 @@ final class FrameReviewModel {
     private(set) var frame: TimelineFrame?
     private(set) var time: Double
     var display: Int?
+    var followsFocus: Bool
     var textVisible = true
     var sourceDuration: Double = 0
     var query = "" { didSet { if oldValue != query { search() } } }
@@ -50,6 +51,8 @@ final class FrameReviewModel {
     @ObservationIgnored private var requestedFile: String
     @ObservationIgnored private var seekTask: Task<Void, Never>?
     @ObservationIgnored private var allFrames: [TimelineFrame] = []
+    @ObservationIgnored private var focusFrames: [TimelineFrame] = []
+    @ObservationIgnored private var automaticFrames: [TimelineFrame] = []
     @ObservationIgnored private var displayFrames: [Int: [TimelineFrame]] = [:]
     private var lastFrameTime = 0.0
     private var transcriptEnd = 0.0
@@ -65,15 +68,35 @@ final class FrameReviewModel {
         time = at
         self.player = player
         self.defaults = defaults
+        followsFocus = MeetingsPreferences.Panes.frameAutoDisplay.value(defaults)
         if let timeline { accept(timeline) }
         if let transcript { accept(transcript) }
     }
 
-    var frames: [TimelineFrame] { frames(on: display) }
+    var frames: [TimelineFrame] { followsFocus && hasFocusHistory ? automaticFrames : frames(on: display) }
+    var displayChoice: Int { followsFocus ? -2 : (display ?? -1) }
+    var hasFocusHistory: Bool { !focusFrames.isEmpty }
+    var automaticDisplayName: String? {
+        guard followsFocus, let id = frame?.displayId else { return nil }
+        return timeline.value?.displays.first(where: { $0.id == id })?.name ?? "Display \(id)"
+    }
+
+    func chooseDisplay(_ choice: Int) {
+        followsFocus = choice == -2
+        if !followsFocus { display = choice == -1 ? nil : choice }
+        defaults.set(followsFocus, forKey: MeetingsPreferences.Panes.frameAutoDisplay.key)
+        selectTime(time)
+    }
+
+    private func selectedFrames(at time: Double) -> [TimelineFrame] {
+        if followsFocus, let marker = Self.nearest(in: allFrames, at: time), marker.meetingSec <= time,
+           let focused = marker.focusedDisplayId, let frames = displayFrames[focused], !frames.isEmpty { return frames }
+        return frames(on: display)
+    }
     func frames(on display: Int?) -> [TimelineFrame] { display.map { displayFrames[$0] ?? [] } ?? allFrames }
     var previewFrame: TimelineFrame? {
         guard let hoveredMatch else { return frame }
-        return hoveredMatch.frame ?? Self.nearest(in: frames, at: hoveredMatch.fromSec)
+        return hoveredMatch.frame ?? Self.nearest(in: selectedFrames(at: hoveredMatch.fromSec), at: hoveredMatch.fromSec)
     }
     var previewText: String? { (hoveredMatch ?? selectedMatch)?.text }
     var duration: Double { max(1, sourceDuration, lastFrameTime, transcriptEnd) }
@@ -87,7 +110,7 @@ final class FrameReviewModel {
             display = selected.displayId
             frame = selected
         }
-        updateContext()
+        selectTime(at)
     }
 
     func load() async {
@@ -125,6 +148,8 @@ final class FrameReviewModel {
         timeline = .loaded(value)
         allFrames = value.frames.sorted { $0.meetingSec < $1.meetingSec }
         displayFrames = Dictionary(grouping: allFrames, by: { $0.displayId ?? -1 })
+        focusFrames = allFrames.filter { $0.focusedDisplayId != nil }
+        automaticFrames = allFrames.filter { $0.focusedDisplayId == nil || $0.focusedDisplayId == $0.displayId }
         lastFrameTime = allFrames.last?.meetingSec ?? 0
         indexTask?.cancel()
         indexing = true
@@ -247,7 +272,10 @@ final class FrameReviewModel {
 
     private func show(_ match: Match) {
         appearanceIndex = 0
-        if let frame = match.frame { display = frame.displayId }
+        if let frame = match.frame {
+            followsFocus = false
+            display = frame.displayId
+        }
         selectTime(match.fromSec)
     }
 
@@ -259,7 +287,7 @@ final class FrameReviewModel {
 
     func selectTime(_ next: Double) {
         time = min(max(0, next), duration)
-        let selected = Self.nearest(in: frames, at: time)
+        let selected = Self.nearest(in: selectedFrames(at: time), at: time)
         if frame?.file != selected?.file { frame = selected }
         if let frame { requestedFile = frame.file }
         updateContext()

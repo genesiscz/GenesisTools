@@ -532,6 +532,7 @@ const meetingScreen = defineMethod({
                 path: z.string(),
                 meetingSec: z.number(),
                 displayId: z.number().optional(),
+                focusedDisplayId: z.number().optional(),
                 width: z.number(),
                 height: z.number(),
                 lineCount: z.number(),
@@ -573,6 +574,7 @@ const meetingTimeline = defineMethod({
                 at: z.string(),
                 meetingSec: z.number(),
                 displayId: z.number().optional(),
+                focusedDisplayId: z.number().optional(),
                 width: z.number(),
                 height: z.number(),
                 lineCount: z.number(),
@@ -582,6 +584,9 @@ const meetingTimeline = defineMethod({
             })
         ),
         pending: z.number(),
+        focusSpans: z
+            .array(z.object({ displayId: z.number(), fromSec: z.number(), toSec: z.number().optional() }))
+            .optional(),
     }),
     resultName: "ScreenTimeline",
     doc: "Screen frames with changed OCR boxes, or every OCR line with all or a selected frame. Matches screen --timeline --json.",

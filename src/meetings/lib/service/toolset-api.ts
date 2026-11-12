@@ -314,9 +314,10 @@ export const screenTimelineMethod = defineMethod({
     name: "screenTimeline",
     params: z.object({ all: z.boolean().optional() }).strict(),
     result: z.unknown(),
-    resultName: "{ displays, frames: { file, path, meetingSec, displayId, changed: OcrBox[] }[] }",
+    resultName:
+        "{ displays, focusSpans?, frames: { file, path, meetingSec, displayId, focusedDisplayId?, changed: OcrBox[] }[] }",
     effect: "read",
-    doc: "Every frame of the screen recording in time order with the OCR lines that changed since the display's earlier frame (all: every line too).",
+    doc: "Every frame in time order with changed OCR lines (all: every line too), the focused display when recorded, and its focusSpans. Older recordings have no focus history.",
 });
 export const saveClip = defineMethod({
     name: "saveClip",

@@ -60,12 +60,16 @@ struct FrameReviewView: View {
             HStack(spacing: 10) {
                 Text(model.previewFrame.map { "\(model.hoveredMatch == nil ? "Frame" : "Preview") at \(MeetingsFormat.clock($0.meetingSec))" } ?? "Screen recording").font(.headline)
                 if let displays = model.timeline.value?.displays, displays.count > 1 {
-                    Picker("Display", selection: Binding(get: { model.display ?? -1 }, set: { model.display = $0 == -1 ? nil : $0; model.selectTime(model.time) })) {
+                    Picker("Display", selection: Binding(get: { model.displayChoice }, set: { model.chooseDisplay($0) })) {
+                        Text(model.automaticDisplayName.map { "Auto: \($0)" } ?? "Auto").tag(-2)
                         Text("All displays").tag(-1)
                         ForEach(displays.indices, id: \.self) { index in
                             Text(displays[index].name ?? "Display \(displays[index].id ?? 0)").tag(displays[index].id ?? -1)
                         }
                     }.frame(maxWidth: 180)
+                        .accessibilityIdentifier("meetings.frame-review.display")
+                        .help(model.hasFocusHistory ? "Auto follows the display that had focus during recording."
+                                  : "This recording has no display-focus history. Auto keeps the current display.")
                 }
                 Toggle("Boxes", isOn: $boxes).toggleStyle(.checkbox).accessibilityIdentifier("meetings.frame-review.boxes")
                 if boxes {
@@ -197,7 +201,9 @@ private struct FrameReviewTranscriptContext: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Nearby transcript").font(.headline)
                 if model.context.isEmpty {
-                    LoadablePane(state: model.transcript, reading: "Reading transcript…", retry: { Task { await model.load() } }) { _ in
+                    LoadablePane(state: model.transcript, reading: "Reading transcript…",
+                                 retry: { Task { await model.load() } },
+                                 noSource: .init(what: "transcript", showScreen: nil)) { _ in
                         Text("There is no timed transcript for this recording.").foregroundStyle(.secondary)
                     }
                 } else {

@@ -104,6 +104,7 @@ struct FrameRow: View, Equatable {
                 FrameThumbnail(path: frame.path, width: 220)
             }
             .accessibilityLabel("Frame at \(MeetingsFormat.clock(frame.meetingSec)) on \(displayName)")
+            .accessibilityIdentifier("meetings.screen.frame.\(frame.file)")
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(verbatim: MeetingsFormat.clock(frame.meetingSec)).font(.system(size: 12, weight: .semibold, design: .monospaced))

@@ -391,6 +391,7 @@ class OcrWorker {
             file: entry.file,
             at: entry.at,
             displayId: entry.displayId,
+            ...(entry.focusedDisplayId !== undefined ? { focusedDisplayId: entry.focusedDisplayId } : {}),
             changePercent: entry.changePercent,
             reason: entry.reason,
         };

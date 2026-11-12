@@ -57,6 +57,7 @@ const nativeFrame = z.object({
     changePercent: z.number().default(0),
     reason: z.string().default("change"),
     displayId: z.number().optional(),
+    focusedDisplayId: z.number().optional(),
     motionBoxes: z.array(z.tuple([z.number(), z.number(), z.number(), z.number()])).optional(),
 });
 const nativeTrack = z.object({
@@ -287,6 +288,7 @@ const controlEvent = z.discriminatedUnion("event", [
         timestampMs: z.number(),
         reason: z.string().default("change"),
         displayId: z.number().optional(),
+        focusedDisplayId: z.number().optional(),
     }),
     z.object({ event: z.literal("display-switch"), from: z.number().optional(), to: z.number() }),
     z.object({ event: z.literal("error"), code: z.string().optional(), message: z.string() }),
@@ -460,6 +462,7 @@ export class NativeLiveCapture implements LiveCapture {
                 atMs: event.timestampMs,
                 changePercent: 0,
                 reason: event.reason,
+                ...(event.focusedDisplayId !== undefined ? { focusedDisplayId: event.focusedDisplayId } : {}),
                 ...((event.displayId ?? this.displayId) !== undefined
                     ? { displayId: event.displayId ?? this.displayId }
                     : {}),
@@ -666,6 +669,7 @@ export class NativeFrameRecorder extends FrameRecorder {
                 atMs: frame.timestampMs,
                 changePercent: frame.changePercent,
                 reason: frame.reason,
+                ...(frame.focusedDisplayId !== undefined ? { focusedDisplayId: frame.focusedDisplayId } : {}),
                 ...(frame.displayId !== undefined || targetId !== undefined
                     ? { displayId: frame.displayId ?? targetId }
                     : {}),

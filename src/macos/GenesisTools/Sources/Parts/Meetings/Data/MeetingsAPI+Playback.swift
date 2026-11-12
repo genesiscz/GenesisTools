@@ -319,6 +319,7 @@ extension MeetingsAPI {
             let width: Double
             let height: Double
             let lineCount: Int
+            var focusedDisplayId: Int? = nil
         }
 
         struct Result: Decodable, Equatable {

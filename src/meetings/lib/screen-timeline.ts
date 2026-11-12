@@ -18,6 +18,8 @@ export interface TimelineFrame {
     /** Seconds on the transcript clock. */
     meetingSec: number;
     displayId?: number;
+    /** The focused display when this frame was captured; absent in older recordings. */
+    focusedDisplayId?: number;
     width: number;
     height: number;
     /** Every OCR line of the frame. */
@@ -30,11 +32,44 @@ export interface TimelineFrame {
     pending?: true;
 }
 
+export interface DisplayFocusSpan {
+    displayId: number;
+    fromSec: number;
+    /** Absent for the final span, which continues until the recording ends. */
+    toSec?: number;
+}
+
+/** Consecutive focused-display markers as ranges on the meeting clock. Older captures have none. */
+export function displayFocusSpans(
+    frames: readonly Pick<TimelineFrame, "meetingSec" | "focusedDisplayId">[]
+): DisplayFocusSpan[] {
+    const spans: DisplayFocusSpan[] = [];
+    for (const frame of [...frames].sort((a, b) => a.meetingSec - b.meetingSec)) {
+        const id = frame.focusedDisplayId;
+        const previous = spans.at(-1);
+        if (id === undefined) {
+            if (previous && previous.toSec === undefined) {
+                previous.toSec = frame.meetingSec;
+            }
+            continue;
+        }
+        if (previous?.displayId === id && previous.toSec === undefined) {
+            continue;
+        }
+        if (previous && previous.toSec === undefined) {
+            previous.toSec = frame.meetingSec;
+        }
+        spans.push({ displayId: id, fromSec: frame.meetingSec });
+    }
+    return spans.filter((span) => span.toSec === undefined || span.toSec > span.fromSec);
+}
+
 export interface ScreenTimeline {
     meeting: string;
     folder: string;
     displays: Array<{ id?: number; name?: string; frames: number }>;
     frames: TimelineFrame[];
+    focusSpans?: DisplayFocusSpan[];
     /** Kept frames the OCR worker has not read yet; they are among the frames, as `pending`. */
     pending: number;
 }
@@ -96,6 +131,7 @@ export async function screenTimeline(options: {
             at: row.at,
             meetingSec: Math.round((Date.parse(row.at) - zeroMs) / 100) / 10,
             ...(row.displayId !== undefined ? { displayId: row.displayId } : {}),
+            ...(row.focusedDisplayId !== undefined ? { focusedDisplayId: row.focusedDisplayId } : {}),
             width: size.width,
             height: size.height,
             lineCount: boxes.length,
@@ -112,9 +148,11 @@ export async function screenTimeline(options: {
         counts.set(frame.displayId, (counts.get(frame.displayId) ?? 0) + 1);
     }
 
+    const focusSpans = displayFocusSpans(frames);
     return {
         meeting: record.id,
         folder,
+        ...(focusSpans.length ? { focusSpans } : {}),
         displays: [...counts].map(([id, count]) => ({
             ...(id !== undefined ? { id } : {}),
             ...(id !== undefined && names.get(id) ? { name: names.get(id) } : {}),

@@ -22,12 +22,13 @@ import {
 import { decideItems, reopenItems } from "./decide";
 import { testPhrase } from "./dictionary-test";
 import { exportMeeting } from "./export";
+import { appendFrameIndex } from "./frame-index";
 import { matchPreview } from "./match-preview";
 import { projectLabels, setMeetingFields } from "./meeting-fields";
 import { momentClipPath, planMoment } from "./moment";
 import { meetingBadges, meetingsOverview } from "./overview";
 import { removeProject, renameProject } from "./project-admin";
-import { screenTimeline } from "./screen-timeline";
+import { displayFocusSpans, screenTimeline } from "./screen-timeline";
 import { InProcessMeetingsClient } from "./service/client";
 import { openMeetingsWindow, playInOpenWindow, type WindowRequest, windowOpenArgs } from "./window";
 import { revisionsRead, revisionTokens } from "./window-reads";
@@ -253,6 +254,81 @@ describe("dictionary test", () => {
 });
 
 describe("screen timeline", () => {
+    test("focus history leaves older intervals unknown rather than extending a later observation", () => {
+        expect(
+            displayFocusSpans([
+                { meetingSec: 0 },
+                { meetingSec: 10, focusedDisplayId: 1 },
+                { meetingSec: 20 },
+                { meetingSec: 30, focusedDisplayId: 1 },
+            ])
+        ).toEqual([
+            { displayId: 1, fromSec: 10, toSec: 20 },
+            { displayId: 1, fromSec: 30 },
+        ]);
+    });
+
+    test("keeps recorded display focus through the index, pending OCR and both service reads", async () => {
+        const { meetings } = stores();
+        const record = await meetings.create(
+            { title: "Focus", start: "2026-11-05T08:00:00Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const folder = meetings.folder(record.id);
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        const image = createCanvas(20, 10).toBuffer("image/png");
+        const captured = [
+            [0, 10, 1, 1],
+            [1, 10.1, 2, 1],
+            [2, 20, 1, 2],
+            [3, 20.1, 2, 2],
+        ] as const;
+        for (const [index, second, displayId, focusedDisplayId] of captured) {
+            const file = `frames/f${index}.png`;
+            writeFileSync(join(folder, file), image);
+            appendFrameIndex(folder, {
+                file,
+                at: new Date(Date.parse(record.start) + second! * 1000),
+                displayId: displayId!,
+                focusedDisplayId: focusedDisplayId!,
+                changePercent: 0,
+                reason: "focus-change",
+            });
+        }
+        const reopened = new MeetingStore(meetings.storage).read(record.id)!;
+        const client = new InProcessMeetingsClient({ deps: { store: () => new MeetingStore(meetings.storage) } });
+        try {
+            const timeline = await client.call("meeting.timeline", { meeting: record.id });
+            expect(timeline.pending).toBe(4);
+            expect(timeline.frames.map((frame) => frame.focusedDisplayId)).toEqual([1, 1, 2, 2]);
+            expect(timeline.focusSpans).toEqual([
+                { displayId: 1, fromSec: 10, toSec: 20 },
+                { displayId: 2, fromSec: 20 },
+            ]);
+            const screen = await client.call("meeting.screen", { meeting: reopened.id });
+            expect(screen.frames.map((frame) => frame.focusedDisplayId)).toEqual([1, 1, 2, 2]);
+            writeFileSync(
+                join(folder, "ocr.jsonl"),
+                `${captured
+                    .map(([index, second, displayId]) =>
+                        SafeJSON.stringify({
+                            file: `frames/f${index}.png`,
+                            at: new Date(Date.parse(record.start) + second * 1000).toISOString(),
+                            displayId,
+                            text: "",
+                            blocks: [],
+                        })
+                    )
+                    .join("\n")}\n`
+            );
+            const afterOldWorker = await client.call("meeting.timeline", { meeting: record.id });
+            expect(afterOldWorker.pending).toBe(0);
+            expect(afterOldWorker.focusSpans).toEqual(timeline.focusSpans);
+        } finally {
+            client.close();
+        }
+    });
+
     test("each frame keeps only the lines the same display did not show before", async () => {
         const { meetings } = stores();
         const created = await meetings.create(

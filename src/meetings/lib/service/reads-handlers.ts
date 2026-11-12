@@ -85,6 +85,7 @@ export async function readScreen(
             path: frame.path,
             meetingSec: frame.meetingSec,
             ...(frame.displayId === undefined ? {} : { displayId: frame.displayId }),
+            ...(frame.focusedDisplayId === undefined ? {} : { focusedDisplayId: frame.focusedDisplayId }),
             width: frame.width,
             height: frame.height,
             lineCount: frame.lineCount,

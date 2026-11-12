@@ -245,6 +245,7 @@ struct TimelineFrame: Decodable, Equatable, Hashable, Identifiable, Sendable {
     let width: Double
     let height: Double
     let lineCount: Int
+    var focusedDisplayId: Int? = nil
     let changed: [OcrBox]
     let lines: [OcrBox]?
     var id: String { file }
@@ -252,6 +253,8 @@ struct TimelineFrame: Decodable, Equatable, Hashable, Identifiable, Sendable {
 
 struct ScreenTimeline: Decodable, Equatable {
     struct Display: Decodable, Equatable, Hashable { let id: Int?; let name: String?; let frames: Int }
+    struct FocusSpan: Decodable, Equatable { let displayId: Int; let fromSec: Double; let toSec: Double? }
+    var focusSpans: [FocusSpan]? = nil
     let meeting: String
     let folder: String
     let displays: [Display]

@@ -23,6 +23,7 @@ export const frameIndexRowSchema = z.object({
     file: z.string(),
     at: z.string(),
     displayId: z.number(),
+    focusedDisplayId: z.number().optional(),
     changePercent: z.number(),
     reason: z.string(),
     motionBoxes: z.array(z.tuple([z.number(), z.number(), z.number(), z.number()])).optional(),
@@ -34,6 +35,7 @@ const ocrIndexRowSchema = z.looseObject({
     file: z.string(),
     at: z.string(),
     displayId: z.number().optional(),
+    focusedDisplayId: z.number().optional(),
     changePercent: z.number().optional(),
     reason: z.string().optional(),
 });
@@ -53,6 +55,7 @@ export function appendFrameIndex(
         file: string;
         at: Date;
         displayId: number;
+        focusedDisplayId?: number;
         changePercent: number;
         reason: string;
         motionBoxes?: MotionBox[];
@@ -62,6 +65,7 @@ export function appendFrameIndex(
         file: frame.file,
         at: frame.at.toISOString(),
         displayId: frame.displayId,
+        ...(frame.focusedDisplayId !== undefined ? { focusedDisplayId: frame.focusedDisplayId } : {}),
         changePercent: frame.changePercent,
         reason: frame.reason,
         ...(frame.motionBoxes ? { motionBoxes: frame.motionBoxes } : {}),
@@ -137,6 +141,7 @@ function indexFromOcr(path: string): FrameIndexRow[] {
             file: parsed.data.file,
             at: parsed.data.at,
             displayId: parsed.data.displayId ?? frameDisplayId(parsed.data.file) ?? 0,
+            ...(parsed.data.focusedDisplayId !== undefined ? { focusedDisplayId: parsed.data.focusedDisplayId } : {}),
             changePercent: parsed.data.changePercent ?? 0,
             reason: parsed.data.reason ?? "change",
         });

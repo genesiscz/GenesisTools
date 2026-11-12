@@ -9,6 +9,7 @@ import { readFrameIndex } from "./frame-index";
 interface TimedFrame {
     at: number;
     displayId?: number;
+    focusedDisplayId?: number;
     changePercent: number;
     reason: string;
 }
@@ -33,6 +34,7 @@ function frameTimes(folder: string): Map<string, TimedFrame> | undefined {
             timed.set(row.file, {
                 at,
                 displayId: row.displayId,
+                ...(row.focusedDisplayId !== undefined ? { focusedDisplayId: row.focusedDisplayId } : {}),
                 changePercent: row.changePercent,
                 reason: row.reason,
             });
@@ -103,6 +105,7 @@ export function writeMeetingRecordingManifest(folder: string, record: MeetingRec
                 file,
                 atMs: Math.max(0, Math.round(frame.at - started)),
                 ...(frame.displayId === undefined ? {} : { displayId: frame.displayId }),
+                ...(frame.focusedDisplayId === undefined ? {} : { focusedDisplayId: frame.focusedDisplayId }),
                 changePercent: frame.changePercent,
                 reason: frame.reason,
             })),

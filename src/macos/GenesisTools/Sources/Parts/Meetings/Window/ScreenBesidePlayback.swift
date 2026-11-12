@@ -219,7 +219,7 @@ struct ScreenBesidePlayback: View {
 
     private func menuItems() -> [MenuButtonItem] {
         var items: [MenuButtonItem] = [
-            .action("Auto (the display with the hit)", checked: selectedDisplay == nil) { pickDisplay(nil) },
+            .action("Auto (recorded focus, then the hit)", checked: selectedDisplay == nil) { pickDisplay(nil) },
             .divider,
         ]
         items += displays.map { display in

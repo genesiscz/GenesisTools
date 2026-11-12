@@ -160,7 +160,9 @@ describe("the frame index and the OCR worker (two phases)", () => {
     let stores = 0;
 
     /** A meeting with `frames` kept on disk and listed in its index; `ocr` rows already written, if any. */
-    async function meetingWith(frames: Array<{ name: string; at: string; changePercent?: number; reason?: string }>) {
+    async function meetingWith(
+        frames: Array<{ name: string; at: string; changePercent?: number; reason?: string; focusedDisplayId?: number }>
+    ) {
         stores += 1;
         const store = new MeetingStore(new Storage(`meetings-ocr-worker-${process.pid}-${stores}`));
         const created = await store.create(
@@ -175,6 +177,7 @@ describe("the frame index and the OCR worker (two phases)", () => {
                 file: `frames/${frame.name}`,
                 at: new Date(frame.at),
                 displayId: 1,
+                focusedDisplayId: frame.focusedDisplayId,
                 changePercent: frame.changePercent ?? 40,
                 reason: frame.reason ?? "change",
                 motionBoxes: [],
@@ -269,6 +272,14 @@ describe("the frame index and the OCR worker (two phases)", () => {
         expect(readRecordingManifest(meeting.dir)?.frames.map((frame) => [frame.file, frame.atMs])).toEqual([
             ["frames/f1-d1.jpg", Date.parse("2026-11-11T14:00:02.000Z") - zero],
         ]);
+    });
+
+    it("keeps display focus when OCR finishes and when the recorder manifest is reopened", async () => {
+        const meeting = await meetingWith([{ name: "focused.jpg", at: "2026-11-11T14:00:01Z", focusedDisplayId: 2 }]);
+        await runOcrWorker({ store: meeting.store, meetingId: meeting.id, settings, engine: fakeEngine(() => false) });
+        expect(readScreenRows(meeting.dir).rows[0]?.focusedDisplayId).toBe(2);
+        writeMeetingRecordingManifest(meeting.dir, meeting.store.read(meeting.id)!);
+        expect(readRecordingManifest(meeting.dir)?.frames[0]?.focusedDisplayId).toBe(2);
     });
 
     it("retries a read that throws, starts a fresh helper, writes a failed row when the next frame reads, retries it once reads work, and --retry-failed reads it again in place", async () => {

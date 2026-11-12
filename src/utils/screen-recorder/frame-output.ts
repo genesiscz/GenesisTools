@@ -157,6 +157,7 @@ export interface OcrRow {
     file: string;
     at: string;
     displayId: number;
+    focusedDisplayId?: number;
     changePercent: number;
     reason: string;
     text: string;
@@ -246,6 +247,7 @@ export interface KeptFrame {
     at: Date;
     elapsedMs: number;
     displayId: number;
+    focusedDisplayId?: number;
     changePercent: number;
     reason: string;
     motionBoxes?: MotionBox[];
@@ -264,7 +266,7 @@ export interface FrameRead {
 }
 
 /** The frame a row describes: everything an `OcrRow` holds besides the text. */
-export type OcrRowFrame = Pick<OcrRow, "file" | "at" | "displayId" | "changePercent" | "reason">;
+export type OcrRowFrame = Pick<OcrRow, "file" | "at" | "displayId" | "focusedDisplayId" | "changePercent" | "reason">;
 
 /** One frame's `ocr.jsonl` row from its read; a read shorter than `minChars` (or none, OCR off) is stored empty. */
 export function ocrRowOf(frame: OcrRowFrame, outcome: FrameRead | undefined, minChars: number): OcrRow {
@@ -274,6 +276,7 @@ export function ocrRowOf(frame: OcrRowFrame, outcome: FrameRead | undefined, min
         file: frame.file,
         at: frame.at,
         displayId: frame.displayId,
+        ...(frame.focusedDisplayId !== undefined ? { focusedDisplayId: frame.focusedDisplayId } : {}),
         changePercent: frame.changePercent,
         reason: frame.reason,
         text: used.text,
@@ -452,6 +455,7 @@ export class FrameOutput {
             at: when,
             elapsedMs,
             displayId: at.displayId,
+            ...(frame.focusedDisplayId !== undefined ? { focusedDisplayId: frame.focusedDisplayId } : {}),
             changePercent: frame.changePercent,
             reason: frame.reason,
             ...(frame.motionBoxes ? { motionBoxes: frame.motionBoxes } : {}),
@@ -471,6 +475,7 @@ export class FrameOutput {
                     file: kept.file,
                     at: when.toISOString(),
                     displayId: at.displayId,
+                    ...(frame.focusedDisplayId !== undefined ? { focusedDisplayId: frame.focusedDisplayId } : {}),
                     changePercent: frame.changePercent,
                     reason: frame.reason,
                 },

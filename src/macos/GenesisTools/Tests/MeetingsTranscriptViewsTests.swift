@@ -35,6 +35,52 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(FrameReviewModel.nearest(in: [first, second], at: 0)?.file, "a.png")
     }
 
+    func testAutoDisplayFollowsRecordedFocusAndManualSelectionStaysFixed() throws {
+        func frame(_ file: String, _ time: Double, _ display: Int, _ focus: Int) -> TimelineFrame {
+            var value = TimelineFrame(file: file, path: "/fixture/\(file)", at: "2026-11-01T10:00:00Z", meetingSec: time,
+                                      displayId: display, width: 20, height: 10, lineCount: 0, changed: [], lines: [])
+            value.focusedDisplayId = focus
+            return value
+        }
+        let frames = [frame("one-a", 0, 1, 1), frame("two-a", 1, 2, 1), frame("one-b", 10, 1, 2), frame("two-b", 11, 2, 2)]
+        let suite = "meetings.focus.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let timeline = ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: frames)
+        let model = FrameReviewModel(meeting: "m", file: "one-a", at: 5, player: nil, defaults: defaults, timeline: timeline)
+        XCTAssertEqual(model.displayChoice, -2)
+        XCTAssertEqual(model.frame?.file, "one-a")
+        model.selectTime(12)
+        XCTAssertEqual(model.frame?.file, "two-b")
+        model.chooseDisplay(1)
+        model.selectTime(12)
+        XCTAssertEqual(model.frame?.file, "one-b")
+        XCTAssertFalse(MeetingsPreferences.Panes.frameAutoDisplay.value(defaults))
+        model.chooseDisplay(-2)
+        XCTAssertEqual(model.frame?.file, "two-b")
+        XCTAssertTrue(MeetingsPreferences.Panes.frameAutoDisplay.value(defaults))
+    }
+
+    func testAutoDisplayDoesNotInventFocusForOlderPartsOfARecording() throws {
+        let old = TimelineFrame(file: "old", path: "/old", at: "", meetingSec: 0, displayId: 1,
+                                width: 20, height: 10, lineCount: 0, changed: [], lines: [])
+        var focused = TimelineFrame(file: "new", path: "/new", at: "", meetingSec: 10, displayId: 2,
+                                    width: 20, height: 10, lineCount: 0, changed: [], lines: [])
+        focused.focusedDisplayId = 2
+        let unknown = TimelineFrame(file: "unknown", path: "/unknown", at: "", meetingSec: 20, displayId: 1,
+                                    width: 20, height: 10, lineCount: 0, changed: [], lines: [])
+        let suite = "meetings.focus.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let timeline = ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: [old, focused, unknown])
+        let model = FrameReviewModel(meeting: "m", file: "old", at: 5, player: nil, defaults: defaults, timeline: timeline)
+        XCTAssertEqual(model.frame?.file, "old")
+        model.selectTime(12)
+        XCTAssertEqual(model.frame?.file, "new")
+        model.selectTime(20)
+        XCTAssertEqual(model.frame?.file, "unknown")
+    }
+
     func testFrameReviewGroupsRepeatedOCRAndSearchesBothSources() async throws {
         func frame(_ file: String, _ time: Double, _ text: String, _ display: Int = 1) -> TimelineFrame {
             let box = OcrBox(x: 10, y: 20, width: 120, height: 30, text: text, confidence: 1)

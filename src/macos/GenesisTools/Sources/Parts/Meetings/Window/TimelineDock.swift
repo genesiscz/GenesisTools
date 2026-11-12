@@ -269,8 +269,8 @@ private struct DockScreen: View {
 
     var body: some View {
         let chosen = dock.displays[meeting]
-        let display = chosen ?? TimelineDockModel.autoDisplay(screen: screen, moment: moment)
         let at = dock.screenFollows ? (position() ?? moment?.spotSec ?? 0) : (held ?? position() ?? 0)
+        let display = chosen ?? TimelineDockModel.autoDisplay(screen: screen, moment: moment, at: at)
         let frame = TimelineDockModel.frame(in: screen, at: at, display: display)
         ScreenBesidePlayback(recorded: true, image: image, atSec: frame?.meetingSec,
                              apartSec: frame.flatMap { TimelineDockModel.apart($0, in: screen, at: at, display: display) },

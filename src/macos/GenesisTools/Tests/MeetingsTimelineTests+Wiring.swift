@@ -162,6 +162,17 @@ extension MeetingsTimelineTests {
 
     // MARK: The screen beside the sound (R41, G-SCR-1)
 
+    func testDockAutoDisplayPrefersRecordedFocusAtThePlayhead() {
+        var a = MeetingsAPI.MeetingScreen.Frame(file: "a", path: "/a", meetingSec: 0, displayId: 1, width: 20, height: 10, lineCount: 0)
+        a.focusedDisplayId = 1
+        var b = MeetingsAPI.MeetingScreen.Frame(file: "b", path: "/b", meetingSec: 10, displayId: 2, width: 20, height: 10, lineCount: 0)
+        b.focusedDisplayId = 2
+        let screen = MeetingsAPI.MeetingScreen.Result(meeting: "m", recorded: true, displays: [], frames: [a, b])
+        XCTAssertEqual(TimelineDockModel.autoDisplay(screen: screen, moment: nil, at: 5), 1)
+        XCTAssertEqual(TimelineDockModel.autoDisplay(screen: screen, moment: nil, at: 12), 2)
+        XCTAssertEqual(TimelineDockModel.frame(in: screen, at: 12, display: 1)?.file, "a")
+    }
+
     func testTheScreenPaneShowsTheLastFrameAtOrBeforeThePlayheadOnItsDisplay() throws {
         let json = #"""
         {"meeting":"m","recorded":true,"displays":[{"id":1,"name":"Built-in","frames":2},{"id":2,"name":"Studio","frames":3}],

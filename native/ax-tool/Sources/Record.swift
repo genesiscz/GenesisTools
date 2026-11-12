@@ -385,6 +385,7 @@ struct KeptFrame {
     let changePercent: Double
     let reason: String
     let displayID: CGDirectDisplayID?
+    let focusedDisplayID: CGDirectDisplayID?
     let motionBoxes: [MotionBox]
 
     var motionBoxesJSON: [[Int]] { motionBoxes.map(\.json) }
@@ -445,6 +446,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var lastKeptMs: Int?
     /// The display the frames come from, `nil` for isolated captures. Changed on this queue by `displayChanged`.
     private var currentDisplayID: CGDirectDisplayID?
+    private var focusedDisplayID: CGDirectDisplayID?
     private(set) var displaySwitches = 0
     private(set) var heartbeatFrames = 0
     /// `pause`: frames are counted but neither sampled, kept nor written to the movie.
@@ -461,6 +463,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         self.activeFps = options.activeFps
         self.idleFps = options.idleFps
         self.currentDisplayID = displayID
+        self.focusedDisplayID = displayID == nil ? nil : currentFocusDisplay()
         self.warnings = options.startWarnings
     }
 
@@ -485,6 +488,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             event["from"] = currentDisplayID
         }
         currentDisplayID = id
+        latestBuffer = nil
         displaySwitches += 1
         policy.restart(reason: "display-switch")
         CaptureEvents.emit(event)
@@ -523,6 +527,23 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 latestBuffer = nil
             }
             paused = value
+        }
+    }
+
+    /// Keep the focus transition even on a still desktop. The same metadata travels with every display's frames.
+    func focusChanged(to id: CGDirectDisplayID?) {
+        queue.async { [self] in
+            guard let id, id != focusedDisplayID else { return }
+            focusedDisplayID = id
+            guard firstTimestamp != nil else { return }
+            policy.restart(reason: "focus-change")
+            guard !paused, pendingDisplay == nil, let buffer = latestBuffer,
+                  let signature = signature(of: buffer) else { return }
+            var candidate = policy
+            let decision = candidate.consider(signature)
+            guard decision.keep else { return }
+            let nowMs = elapsedMs(CMClockGetTime(CMClockGetHostTimeClock()))
+            _ = keep(buffer, timestampMs: nowMs, decision: decision, candidate: candidate)
         }
     }
 
@@ -697,9 +718,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 warnings.append("the video writer refused a frame: \(writer?.error?.localizedDescription ?? "no writer error reported")")
             }
         }
-        if heartbeat.enabled {
-            latestBuffer = pixelBuffer
-        }
+        // A focus transition needs the current image even when the desktop is still and heartbeats are off.
+        latestBuffer = pixelBuffer
         guard let signature = signature(of: pixelBuffer) else { return }
         let timestampMs = elapsedMs(timestamp)
         var candidate = policy
@@ -738,7 +758,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         let file = String(format: "keep-%04d.png", index)
         let url = URL(fileURLWithPath: options.outDir).appendingPathComponent(file)
         let frame = KeptFrame(index: index, file: file, timestampMs: timestampMs, changePercent: decision.changePercent,
-                              reason: decision.reason, displayID: currentDisplayID, motionBoxes: decision.motionBoxes)
+                              reason: decision.reason, displayID: currentDisplayID, focusedDisplayID: focusedDisplayID,
+                              motionBoxes: decision.motionBoxes)
         let encode = { () -> (failure: String?, bytes: Int) in
             guard let png = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) else {
                 return ("frame at \(timestampMs) ms could not be encoded", 0)
@@ -764,6 +785,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             if let id = frame.displayID {
                 event["displayId"] = id
             }
+            if let id = frame.focusedDisplayID { event["focusedDisplayId"] = id }
             CaptureEvents.emit(event)
             if let maxMb = options.maxMb, policy.capReached, policy.keptCount < policy.maxFrames, !byteCapWarned {
                 byteCapWarned = true
@@ -1213,6 +1235,7 @@ func cmdCaptureScreen() {
         if let id = frame.displayID {
             row["displayId"] = id
         }
+        if let id = frame.focusedDisplayID { row["focusedDisplayId"] = id }
         return row
     }
     var sheet: [String: Any] = [:]
@@ -1380,6 +1403,7 @@ private final class ScreenStreamHost {
         self.stream = stream
         self.display = display
         self.displaysUsed = [display.id]
+        recorder.focusChanged(to: currentFocusDisplay())
     }
 
     private var excludedWindowIDs: Set<CGWindowID> { indicator.windowIDs.union(options.selection.excludedWindowIDs) }
@@ -1392,8 +1416,10 @@ private final class ScreenStreamHost {
             return false
         }
 
+        let focused = currentFocusDisplay()
+        recorder.focusChanged(to: focused)
         if options.followFocus, #available(macOS 14.0, *) {
-            follow()
+            follow(focused: focused)
         }
         guard recorder.failure != nil else {
             deadTicks = 0
@@ -1551,11 +1577,11 @@ private final class ScreenStreamHost {
     }
 
     @available(macOS 14.0, *)
-    private func follow() {
+    private func follow(focused: CGDirectDisplayID?) {
         guard !switching else { return }
         let displays = activeDisplays().map { DisplayFrame(id: $0.id, bounds: $0.bounds) }
         let pointer = displayUnder(CGEvent(source: nil)?.location, displays: displays)
-        guard let target = followState.next(pointer: pointer, focus: currentFocusDisplay()) else { return }
+        guard let target = followState.next(pointer: pointer, focus: focused) else { return }
         let lost = displayLost || !displayIsActive(display.id)
         if recorder.failure != nil {
             if lost {

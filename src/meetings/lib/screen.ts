@@ -9,6 +9,7 @@ export const ocrLineSchema = z.object({
     at: z.string(),
     /** The display the frame shows; absent in recordings from before several displays. */
     displayId: z.number().optional(),
+    focusedDisplayId: z.number().optional(),
     text: z.string(),
     /** A kept frame the OCR worker has not read yet: it has no text so far (`readScreenRows`). */
     pending: z.literal(true).optional(),
