@@ -417,6 +417,15 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                     try? await Task.sleep(for: .milliseconds(400))
                 }
             }
+            if request.card == nil, request.sheet == nil {
+                // The flags name the entire window, not its content rect. SwiftUI installs a toolbar after the
+                // first layout, adding 66 pt (80 with the dock) to the initial content size. Resize only after
+                // those views are present so snapshots at the same requested size remain comparable.
+                let size = MeetingsWindow.floored(NSSize(width: request.width, height: request.height))
+                window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
+                window.contentView?.layoutSubtreeIfNeeded()
+                try? await Task.sleep(for: .milliseconds(200))
+            }
             guard let capture = await WindowSnapshot.capture(window),
                   let png = capture.image.representation(using: .png, properties: [:]) else {
                 FileHandle.standardError.write(Data("meetings snapshot failed: the window could not be drawn\n".utf8))
