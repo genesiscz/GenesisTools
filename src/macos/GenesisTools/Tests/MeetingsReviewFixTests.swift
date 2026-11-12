@@ -20,6 +20,22 @@ final class MeetingsReviewFixTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
     }
 
+    func testTranscriptVisibilityIncludesEachMountedSidePane() {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        detail.tab = .items
+        let first = UUID(), replacement = UUID()
+        XCTAssertFalse(detail.transcriptIsShowing)
+        detail.setTranscriptPane(first, visible: true)
+        detail.setTranscriptPane(replacement, visible: true)
+        detail.setTranscriptPane(first, visible: false)
+        XCTAssertTrue(detail.transcriptIsShowing, "a disappearing old pane cannot hide its replacement")
+        XCTAssertEqual(MeetingDetailModel.transcriptRefresh(read: true, showing: detail.transcriptIsShowing), .readQuietly)
+        detail.setTranscriptPane(replacement, visible: false)
+        XCTAssertFalse(detail.transcriptIsShowing)
+        detail.tab = .transcript
+        XCTAssertTrue(detail.transcriptIsShowing)
+    }
+
     // MARK: Finding 1: the row's controls are pressable at rest
 
     /// Whether each `LiveButton` in a view's body is pressable at rest. A hosted SwiftUI view shows no accessibility
@@ -292,6 +308,149 @@ final class MeetingsReviewFixTests: XCTestCase {
         try click(2)
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         XCTAssertEqual(detail.editingRow, "r1", "a double click still opens the editor")
+    }
+
+    func testTimelineRetriesOnlyMissingResourcesAndRows() throws {
+        let rows = try termRows()
+        let screen = try JSONDecoder().decode(MeetingsAPI.MeetingScreen.Result.self,
+            from: Data(#"{"meeting":"m","recorded":false,"displays":[],"frames":[]}"#.utf8))
+        var audioCalls = 0, waveCalls = 0, screenCalls = 0, rowCalls = 0
+        let model = TimelineDockModel(reads: .init(audio: { _ in
+            audioCalls += 1
+            return .init(path: "/test.wav", tracks: 1, channels: 1, durationSec: 60)
+        }, waveform: { _ in
+            waveCalls += 1
+            if waveCalls == 1 { throw CocoaError(.fileReadUnknown) }
+            return .init(meeting: "m", fromSec: 0, toSec: 60, peaks: [0.2], cannot: nil)
+        }, screen: { _ in
+            screenCalls += 1
+            return screen
+        }, rows: { _ in
+            rowCalls += 1
+            if rowCalls == 1 { throw CocoaError(.fileReadUnknown) }
+            return rows
+        }), defaults: defaults)
+        model.prepare("m")
+        model.prepareRows("m")
+        settle()
+        XCTAssertEqual([audioCalls, waveCalls, screenCalls, rowCalls], [1, 1, 1, 1])
+        XCTAssertNil(model.whole["m"])
+        XCTAssertNil(model.otherRows["m"])
+
+        model.prepare("m")
+        model.prepare("m")
+        model.prepareRows("m")
+        model.prepareRows("m")
+        settle()
+        XCTAssertEqual([audioCalls, waveCalls, screenCalls, rowCalls], [1, 2, 1, 2])
+        XCTAssertEqual(model.whole["m"]?.peaks, [0.2])
+        XCTAssertEqual(model.otherRows["m"], rows.rows)
+
+        model.prepare("m")
+        model.prepareRows("m")
+        settle()
+        XCTAssertEqual([audioCalls, waveCalls, screenCalls, rowCalls], [1, 2, 1, 2])
+    }
+
+    private func autoplayFixture() throws -> (MeetingsWindowModel, MeetingDetailModel, MomentPlayer, ReviewRows) {
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let player = MomentPlayer(engine: .init(cut: { _ in throw CancellationError() },
+                                                plan: { _ in .init(moment: nil, cannot: nil) },
+                                                audio: { _ in throw CancellationError() }),
+                                  load: { _ in throw CancellationError() }, defaults: defaults)
+        window.player = player
+        window.select("m", tab: .items)
+        let detail = try XCTUnwrap(window.detail)
+        let rows = try termRows()
+        detail.rows = .loaded(rows)
+        defaults.set(MeetingsPreferences.Rows.AutoplayNext.afterAnswer.rawValue, forKey: MeetingsPreferences.Rows.autoplayNext.key)
+        defaults.set(0.0, forKey: MeetingsPreferences.Rows.autoplayDelaySec.key)
+        return (window, detail, player, rows)
+    }
+
+    func testForwardedMuteStopsAndReplacesExistingPlayback() throws {
+        let (window, _, player, rows) = try autoplayFixture()
+        player.play(rows.rows[0].target, in: "m", from: .row)
+        XCTAssertNotNil(player.top)
+        MeetingsWindow(primary: false).apply(MeetingsRequest.parse(["--muted"]), to: window)
+        XCTAssertNil(player.top, "forwarded mute must stop the previous player")
+        XCTAssertFalse(window.player === player)
+    }
+
+    func testDelayedAutoplayCannotLeaveItsMeeting() async throws {
+        let (window, detail, player, rows) = try autoplayFixture()
+        defer { withExtendedLifetime(window) {} }
+        detail.autoplayNext(after: rows.rows[0])
+        let pending = try XCTUnwrap(detail.autoplayTask)
+        window.select("other", tab: .items)
+        await pending.value
+        XCTAssertTrue(pending.isCancelled)
+        XCTAssertNil(player.top, "a dropped meeting must not resume its queued audio")
+    }
+
+    func testDelayedAutoplayCannotUseAReplacedPlayer() async throws {
+        let (window, detail, player, rows) = try autoplayFixture()
+        defer { withExtendedLifetime(window) {} }
+        detail.autoplayNext(after: rows.rows[0])
+        let pending = try XCTUnwrap(detail.autoplayTask)
+        window.player = MomentPlayer(engine: .init(cut: { _ in throw CancellationError() },
+                                                   plan: { _ in .init(moment: nil, cannot: nil) },
+                                                   audio: { _ in throw CancellationError() }),
+                                     load: { _ in throw CancellationError() }, defaults: defaults)
+        await pending.value
+        XCTAssertNil(player.top, "the old player must not start after replacement")
+    }
+
+    func testDelayedAutoplayCannotReplaceAnotherStoppedOrFailedMoment() async throws {
+        let (window, detail, player, rows) = try autoplayFixture()
+        defer { withExtendedLifetime(window) {} }
+        detail.autoplayNext(after: rows.rows[0])
+        let pending = try XCTUnwrap(detail.autoplayTask)
+        player.play(.time(500), in: "m", from: .row)
+        let selected = try XCTUnwrap(player.top?.id)
+        await pending.value
+        XCTAssertEqual(player.top?.id, selected, "another selection owns playback even when it is not playing")
+        player.stop()
+    }
+
+    func testDelayedAutoplayStillPlaysForTheCurrentUnchangedMeeting() async throws {
+        let (window, detail, player, rows) = try autoplayFixture()
+        defer { withExtendedLifetime(window) {} }
+        detail.autoplayNext(after: rows.rows[0])
+        try await XCTUnwrap(detail.autoplayTask).value
+        XCTAssertEqual(player.top?.target, rows.rows[1].target)
+        player.stop()
+    }
+
+    func testPinRevealMakesFilteredRowsVisibleEvenWhenAlreadySelected() throws {
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        detail.tab = .items
+        let rows = try termRows()
+        detail.rows = .loaded(rows)
+        detail.selectedRow = "r1"
+        detail.itemsFilter = .questions
+        detail.reveal(row: "r1", defaults: defaults)
+        XCTAssertEqual(detail.tab, .items)
+        XCTAssertEqual(detail.itemsFilter, .all)
+        XCTAssertTrue(detail.itemsFilter.rows(rows.rows).contains { $0.id == "r1" })
+
+        detail.itemsFilter = .questions
+        detail.reveal(row: "r1", defaults: defaults)
+        XCTAssertEqual(detail.itemsFilter, .all, "the same selected id must still clear a newly incompatible filter")
+        detail.itemsFilter = .suggestions
+        detail.reveal(row: "r1", defaults: defaults)
+        XCTAssertEqual(detail.itemsFilter, .suggestions, "a compatible filter stays in place")
+    }
+
+    func testPinRevealClearsTheFilterBeforeAnotherMeetingsRowsArrive() {
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        detail.tab = .items
+        detail.itemsFilter = .questions
+        detail.reveal(row: "loading-row", defaults: defaults)
+        XCTAssertEqual(detail.itemsFilter, .all)
+        XCTAssertEqual(detail.selectedRow, "loading-row")
     }
 
     func testAnOversizedSelectedRowShowsItsHeadingAtTheTop() throws {

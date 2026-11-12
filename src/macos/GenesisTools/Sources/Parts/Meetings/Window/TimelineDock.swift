@@ -69,7 +69,7 @@ struct TimelineDock: View {
                                            anchorX: { anchorX(of: $0, rows: rows, view: view, duration: duration, screen: screen != nil) },
                                            arrowEdge: .bottom,
                                            card: { id in card(id, rows: rows, meeting: meeting) }))
-                .task(id: meeting) {
+                .task(id: [meeting, window?.detail?.id ?? ""]) {
                     dock.prepare(meeting)
                     if let detail = window?.detail, detail.id == meeting {
                         // The pins are the open meeting's rows, which its Items tab reads. A meeting that opened on

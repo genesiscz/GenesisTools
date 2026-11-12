@@ -278,9 +278,10 @@ final class MeetingsReviewRowTests: XCTestCase {
             let held = try XCTUnwrap(after.cgImage)
             XCTAssertEqual(held.height, original.height, "answering keeps the choices' layout at width \(width)")
             let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
+            // These large Latin labels need the fast recognizer. The accurate recognizer initializes an unrelated
+            // E5RT model that fails before recognition on some macOS builds; keep the same rendered-word assertions.
+            request.recognitionLevel = .fast
             request.usesLanguageCorrection = false
-            // This checks rendered words, not GPU inference. Shared GPU initialization can fail before OCR starts.
             for (stage, devices) in try request.supportedComputeStageDevices {
                 let cpu = try XCTUnwrap(devices.first { device in
                     if case .cpu = device { return true }
@@ -411,6 +412,54 @@ final class MeetingsReviewRowTests: XCTestCase {
         let pending = MeetingDetailModel.PendingReach(row: try rows().rows[0], action: .answer("q1", "Dana Example"), reason: nil, reach: reach)
         XCTAssertEqual(pending.initiallyStruck(), ["q2"], "what the replaced answer left out starts struck")
         XCTAssertEqual(pending.initiallyStruck(remembered: ["i3", "gone"]), ["q2", "i3"], "only items the sheet shows can start struck")
+    }
+
+    func testOnlyThisQuestionHonorsDoNotAskAgain() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let window = MeetingsWindowModel(defaults: defaults, service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        let row = try rows().rows[0]
+        let pending = MeetingDetailModel.PendingReach(row: row, action: .answer("q1", "Dana Example"), reason: nil,
+            reach: try JSONDecoder().decode(DecisionReach.self, from: Self.reachJSON))
+        detail.busyItems.insert(row.id) // isolate the checkbox from the asynchronous write
+        detail.applyOnlyThis(pending, askAgain: true)
+        XCTAssertEqual(MeetingsPreferences.Rows.askReach.value(defaults), .always)
+        detail.applyOnlyThis(pending, askAgain: false)
+        XCTAssertEqual(MeetingsPreferences.Rows.askReach.value(defaults), .never)
+    }
+
+    func testAssignmentAndProjectJournalPayloadsInvalidateCorrectedSpeech() throws {
+        func decode(_ extra: [String: Any]) throws -> JournalEntry {
+            var value: [String: Any] = ["token": "t1", "at": "2026-11-12T00:00:00Z", "meeting": "m", "actor": ["kind": "window"],
+                "action": ["kind": "revert", "token": "old"]]
+            value.merge(extra) { _, new in new }
+            return try JSONDecoder().decode(JournalEntry.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+        let assignment: [String: Any] = ["id": "a1", "label": "Speaker 1", "fromSec": 10, "toSec": 20,
+            "person": "Dana Example", "at": "2026-11-12T00:00:00Z"]
+        let assigned = try decode(["assignments": [["id": "a1", "after": assignment]]])
+        XCTAssertEqual(assigned.assignments.first?.after?.person, "Dana Example")
+        XCTAssertTrue(assigned.changesTranscript)
+        let undone = try decode(["assignments": [["id": "a1", "before": assignment]]])
+        XCTAssertTrue(undone.changesTranscript, "Undo also changes the corrected speakers")
+        XCTAssertTrue(try decode(["fields": [["field": "project", "after": "work"]]]).changesTranscript)
+        XCTAssertFalse(try decode(["fields": [["field": "title", "after": "A new title"]]]).changesTranscript)
+    }
+
+    func testALongDecidedAnswerWrapsInANarrowColumn() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        func height(_ answer: String) throws -> CGFloat {
+            let json: [String: Any] = ["id": "q1", "label": "Q1", "kind": "question", "status": "confirmed", "answer": answer,
+                "what": "Who owns the next action?", "edit": "answer", "sources": [], "parts": [], "choices": [],
+                "target": ["kind": "item", "id": "q1"]]
+            let row = try JSONDecoder().decode(ReviewRow.self, from: JSONSerialization.data(withJSONObject: json))
+            let host = NSHostingView(rootView: ReviewRowView(row: row, detail: detail, player: nil, foldedFit: 2).frame(width: 350))
+            return host.fittingSize.height
+        }
+        let short = try height("Dana Example")
+        let long = try height(String(repeating: "The owner will verify the package, update the documentation and report the result. ", count: 4))
+        XCTAssertGreaterThan(long, short + 30, "the saved answer must remain fully readable")
     }
 
     /// The sheet as a picture (`MEETINGS_UI_SNAPSHOTS=<folder>` keeps it): one target struck, one look-alike, the same
@@ -671,6 +720,7 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(ItemsTab.noticeRoom(count: 1, limit: nil), 78)
         XCTAssertEqual(ItemsTab.noticeRoom(count: 2, limit: nil), 144)
         XCTAssertEqual(ItemsTab.noticeRoom(count: 5, limit: 2), 172, "folded notices take one chip, not a pill each")
+        XCTAssertEqual(ItemsTab.noticeRoom(count: 8, limit: nil), 378, "reserve only the capped stack plus its outer inset")
     }
 
     /// A transcript line at the row's own time, whose words the row already quotes, is the header's time button again.

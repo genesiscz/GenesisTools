@@ -186,6 +186,28 @@ struct LabelChange: Decodable, Equatable {
     let after: String?
 }
 
+/// A journaled assignment keeps the exact before/after speaker span, including an Undo that removes it.
+struct AssignmentChange: Decodable, Equatable {
+    struct Value: Decodable, Equatable {
+        let id: String
+        let label: String
+        let fromSec: Double
+        let toSec: Double
+        let person: String
+        let email: String?
+        let at: String
+    }
+    let id: String
+    let before: Value?
+    let after: Value?
+}
+
+struct MeetingFieldChange: Decodable, Equatable {
+    let field: String
+    let before: JSONValue?
+    let after: JSONValue?
+}
+
 /// An item a decision named and left, with the reason; `needs` says what decides it (speaker, proposed, listen) or
 /// `nothing` when it is decided that way already.
 struct DecisionSkip: Decodable, Equatable, Hashable {
@@ -210,6 +232,8 @@ struct JournalEntry: Decodable, Equatable, Identifiable {
     let skipped: [DecisionSkip]
     let changes: [ItemChange]
     let labels: [LabelChange]
+    let assignments: [AssignmentChange]
+    let fields: [MeetingFieldChange]
     /// `journal.read` only: the later entry that gave back every item this one decided.
     let revertedBy: String?
 
@@ -217,7 +241,7 @@ struct JournalEntry: Decodable, Equatable, Identifiable {
     var canUndo: Bool { revertedBy == nil && !["comment", "revert", "unsupported"].contains(action.kind) }
 
     enum CodingKeys: String, CodingKey {
-        case token, at, meeting, actor, reason, action, question, decided, settled, skipped, changes, labels, revertedBy
+        case token, at, meeting, actor, reason, action, question, decided, settled, skipped, changes, labels, assignments, fields, revertedBy
     }
 
     init(from decoder: Decoder) throws {
@@ -234,7 +258,14 @@ struct JournalEntry: Decodable, Equatable, Identifiable {
         skipped = try container.decodeIfPresent([DecisionSkip].self, forKey: .skipped) ?? []
         changes = try container.decodeIfPresent([ItemChange].self, forKey: .changes) ?? []
         labels = try container.decodeIfPresent([LabelChange].self, forKey: .labels) ?? []
+        assignments = try container.decodeIfPresent([AssignmentChange].self, forKey: .assignments) ?? []
+        fields = try container.decodeIfPresent([MeetingFieldChange].self, forKey: .fields) ?? []
         revertedBy = try container.decodeIfPresent(String.self, forKey: .revertedBy)
+    }
+
+    var changesTranscript: Bool {
+        !labels.isEmpty || !changes.isEmpty || !assignments.isEmpty || action.kind == "assign"
+            || fields.contains { $0.field == "project" }
     }
 
     /// Every item id this entry changed, decided or settled.

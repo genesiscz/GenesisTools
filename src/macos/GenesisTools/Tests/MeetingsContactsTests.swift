@@ -165,6 +165,14 @@ final class MeetingsContactsTests: XCTestCase {
         XCTAssertTrue(PersonNameField.isDirty(draft: "Dana", saved: nil))
     }
 
+    func testSavedNameChangesReplaceOnlyACleanDraft() {
+        XCTAssertEqual(PersonNameField.draftAfterSavedChange(draft: "Dana Example", old: "Dana Example", new: "Robin Example"), "Robin Example")
+        XCTAssertEqual(PersonNameField.draftAfterSavedChange(draft: "Dana Example ", old: "Dana Example", new: "Robin Example"), "Robin Example")
+        XCTAssertEqual(PersonNameField.draftAfterSavedChange(draft: "My draft", old: "Dana Example", new: "Robin Example"), "My draft")
+        XCTAssertEqual(PersonNameField.draftAfterSavedChange(draft: "Dana Example", old: "Dana Example", new: nil), "")
+        XCTAssertEqual(PersonNameField.draftAfterSavedChange(draft: "", old: nil, new: "Robin Example"), "Robin Example")
+    }
+
     // MARK: The Contacts view's words
 
     func testWhereSeenAndTheMergeWords() throws {

@@ -112,7 +112,7 @@ extension TimelinePin.State {
 /// Pins that sit closer than the merge gap drawn as one mark with a count (G-PLAY-8).
 struct PinCluster: Identifiable, Equatable {
     let pins: [TimelinePin]
-    /// The x of the mark: the middle of its pins' x.
+    /// The first pin's x, kept inside the drawable icon bounds.
     let x: CGFloat
     /// The free room to the next mark's x (for the short text); the rest of the width for the last mark.
     var room: CGFloat
@@ -148,6 +148,11 @@ struct PinCluster: Identifiable, Equatable {
         return target.upperBound - target.lowerBound < (view.upperBound - view.lowerBound) * 0.85
     }
 
+    private static func boundedX(_ second: Double, in range: ClosedRange<Double>, width: CGFloat) -> CGFloat {
+        let inset = min(PinMark.iconWidth / 2, width / 2)
+        return min(width - inset, max(inset, TimelineGeometry.x(second, in: range, width: width)))
+    }
+
     /// Pins of a view on `lanes` rows: a pin stands on the first row whose last mark shows its whole text before it,
     /// else on the row whose last mark is farthest back when a mark still fits there (that mark's text is cut), and
     /// only when no row has `markWidth` of room it joins the first row's mark, which becomes a count. So pins that
@@ -155,8 +160,9 @@ struct PinCluster: Identifiable, Equatable {
     static func laid(_ pins: [TimelinePin], in range: ClosedRange<Double>, width: CGFloat, lanes: Int,
                      markWidth: CGFloat = PinMark.markWidth,
                      wants: (TimelinePin) -> CGFloat = PinMark.wantedWidth) -> [PinCluster] {
+        guard width > 0 else { return [] }
         let placed = pins.filter { range.contains($0.sec) }
-            .map { (pin: $0, x: TimelineGeometry.x($0.sec, in: range, width: width)) }
+            .map { (pin: $0, x: boundedX($0.sec, in: range, width: width)) }
             .sorted { $0.x < $1.x }
         var marks: [(pins: [TimelinePin], x: CGFloat, lane: Int, want: CGFloat)] = []
         // The index of each row's last mark.
@@ -199,8 +205,9 @@ struct PinCluster: Identifiable, Equatable {
     /// other on a long meeting's strip.
     static func clusters(_ pins: [TimelinePin], in range: ClosedRange<Double>, width: CGFloat,
                          markWidth: CGFloat = PinMark.markWidth) -> [PinCluster] {
+        guard width > 0 else { return [] }
         let placed = pins.filter { range.contains($0.sec) }
-            .map { (pin: $0, x: TimelineGeometry.x($0.sec, in: range, width: width)) }
+            .map { (pin: $0, x: boundedX($0.sec, in: range, width: width)) }
             .sorted { $0.x < $1.x }
         var groups: [[(pin: TimelinePin, x: CGFloat)]] = []
         for item in placed {
@@ -210,10 +217,9 @@ struct PinCluster: Identifiable, Equatable {
                 groups.append([item])
             }
         }
-        var marks: [(pins: [TimelinePin], x: CGFloat)] = []
-        for group in groups {
-            let middle = ((group.first?.x ?? 0) + (group.last?.x ?? 0)) / 2
-            marks.append((pins: group.map(\.pin), x: marks.last.map { max(middle, $0.x + markWidth) } ?? middle))
+        let marks = groups.compactMap { group -> (pins: [TimelinePin], x: CGFloat)? in
+            guard let first = group.first else { return nil }
+            return (pins: group.map(\.pin), x: first.x)
         }
         return marks.enumerated().map { index, mark in
             let next = index + 1 < marks.count ? marks[index + 1].x : width
@@ -336,7 +342,8 @@ struct PinMark: View {
                     // takes the window's colour; white on white showed an empty capsule.
                     .foregroundStyle(look == .classic && cluster.state == .playing ? Color(nsColor: .windowBackgroundColor) : .white)
                     .padding(.horizontal, 4)
-                    .frame(minWidth: Self.iconWidth, minHeight: 14)
+                    .lineLimit(1).minimumScaleFactor(0.5)
+                    .frame(width: Self.iconWidth, height: 14)
                     .background(Capsule().fill(fill))
             }
             if showsText, cluster.room > 40 {

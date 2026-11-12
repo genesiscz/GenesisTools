@@ -6,6 +6,7 @@ import SwiftUI
 /// selection popover with Comment and Clip 5s, and the comments staged for the listening agent (R43).
 struct TranscriptPane: View {
     @Bindable var detail: MeetingDetailModel
+    @State private var visibilityToken = UUID()
 
     var body: some View {
         LoadablePane(state: detail.transcript, reading: "Reading the transcript…", retry: detail.loadTranscript,
@@ -17,7 +18,11 @@ struct TranscriptPane: View {
                 TranscriptBlocksPane(detail: detail, entries: transcript.entries, showsHeader: true)
             }
         }
-        .onAppear { detail.ensureTranscript() }
+        .onAppear {
+            detail.setTranscriptPane(visibilityToken, visible: true)
+            detail.ensureTranscript()
+        }
+        .onDisappear { detail.setTranscriptPane(visibilityToken, visible: false) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Transcript")
     }

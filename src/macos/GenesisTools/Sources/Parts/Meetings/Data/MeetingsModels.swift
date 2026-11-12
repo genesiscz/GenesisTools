@@ -277,6 +277,8 @@ struct TimelineFrame: Decodable, Equatable, Hashable, Identifiable, Sendable {
 }
 
 struct ScreenTimeline: Decodable, Equatable {
+    struct CaptureSpan: Decodable, Equatable { let fromSec: Double; let toSec: Double }
+    struct DisplayCaptureSpan: Decodable, Equatable { let displayId: Int; let fromSec: Double; let toSec: Double }
     struct Display: Decodable, Equatable, Hashable { let id: Int?; let name: String?; let frames: Int }
     struct FocusSpan: Decodable, Equatable { let displayId: Int; let fromSec: Double; let toSec: Double? }
     var focusSpans: [FocusSpan]? = nil
@@ -284,6 +286,8 @@ struct ScreenTimeline: Decodable, Equatable {
     let folder: String
     let displays: [Display]
     let frames: [TimelineFrame]
+    var recordingSpans: [CaptureSpan]? = nil
+    var displaySpans: [DisplayCaptureSpan]? = nil
 }
 
 // MARK: - Project proposals (`tools meetings assign proposals <id> --json`)

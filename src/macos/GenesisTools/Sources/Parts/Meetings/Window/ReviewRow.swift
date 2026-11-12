@@ -506,10 +506,11 @@ struct ReviewRowView: View, Equatable {
     @ViewBuilder
     private func decidedTail(words: Bool) -> some View {
         if let answer = Self.foldedAnswer(row) {
-            Text(verbatim: "→ \(answer)").font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+            Text(verbatim: "→ \(answer)").font(.system(size: 12.5, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(idealWidth: FoldedShape.Nominal.answer, alignment: .leading)
                 .layoutPriority(2)
-                .instantTooltip(words ? "" : Self.decidedWords(row))
+                .instantTooltip("\(answer)\n\(Self.decidedWords(row))")
         }
         if words {
             Text(verbatim: Self.decidedWords(row)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
@@ -820,7 +821,7 @@ private struct SettlesReferences: View {
                 let settled = detail.rows.value?.rows.first { $0.id == id }
                 // lint-rules-ignore: short list (the one to three items a question settles; LiveButton reads the review row's liveness)
                 LiveButton(tooltip: settled.map { "\($0.what). Click to select it in the list." } ?? "Item \(id)", pressable: true,
-                           action: { detail.selectedRow = id }) {
+                           action: { detail.reveal(row: id) }) {
                     Text(verbatim: settled.map(ReviewRowView.reference) ?? id).font(.system(size: 12)).foregroundStyle(Color.accentColor)
                 }
                 .accessibilityLabel("Select \(settled.map(ReviewRowView.reference) ?? id)")

@@ -443,11 +443,19 @@ final class MeetingsWindowModel {
     /// terminal, a new meeting) reads now, quietly: what is on screen stays until an answer differs.
     func refreshAfterReturn() {
         windowSettingsChanged()
+        preparePlayingTimeline()
+        // Config edits outside this process do not emit meeting events.
+        loadSettings(quiet: true)
         guard !liveUpdates else { return }
         HubMainBusy.measure("meetings.refresh", window: 1.5)
         loadOverview(quiet: true)
-        loadSettings(quiet: true)
         detail?.refreshLoaded()
+    }
+
+    private func preparePlayingTimeline() {
+        guard let meeting = player.top?.meeting else { return }
+        player.timeline.prepare(meeting)
+        if detail?.id != meeting { player.timeline.prepareRows(meeting) }
     }
 
     // MARK: Live updates (R36)
@@ -530,8 +538,10 @@ final class MeetingsWindowModel {
             receive(event)
         case .resumed:
             setLive(true)
+            preparePlayingTimeline()
             // Events between the two connections were not heard: what the window shows reads again once.
             loadOverview(quiet: true)
+            loadSettings(quiet: true)
             detail?.refreshLoaded()
         case .lost:
             setLive(false)

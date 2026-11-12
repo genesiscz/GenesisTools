@@ -47,9 +47,10 @@ struct ConversationStrip: View {
                     }
                     WaveformBars(peaks: peaks, peaksRange: whole, view: whole, clip: zoom, voices: voices)
                         .frame(width: width - 8, height: height - 38)
-                        .offset(x: 4, y: 20)
+                        // Keep the hit shape on the waveform before moving it below the pin lane.
                         .contentShape(Rectangle())
                         .gesture(dragGesture(width: width - 8))
+                        .offset(x: 4, y: 20)
                     TimelineGrid(view: whole).frame(width: width - 8, height: height - 34).offset(x: 4, y: 18)
                     lens(width: width - 8).offset(x: 4)
                     TimelinePlayhead(position: position, view: whole)
@@ -97,6 +98,8 @@ struct ConversationStrip: View {
                 .offset(x: left + lensWidth + 120 > width ? left - 118 : left + lensWidth + 4, y: 22)
                 .allowsHitTesting(false)
         }
+        // The lens is drawn above pins; its container must pass pointer events through too.
+        .allowsHitTesting(false)
     }
 
     /// A drag that starts on the lens moves it; a drag or a click beside it centres the lens on the pointer.

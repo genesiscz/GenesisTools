@@ -328,6 +328,8 @@ extension MeetingsAPI {
             let recorded: Bool
             let displays: [ScreenTimeline.Display]
             let frames: [Frame]
+            var recordingSpans: [ScreenTimeline.CaptureSpan]? = nil
+            var displaySpans: [ScreenTimeline.DisplayCaptureSpan]? = nil
         }
     }
 

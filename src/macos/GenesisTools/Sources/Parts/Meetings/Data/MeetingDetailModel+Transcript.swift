@@ -185,7 +185,14 @@ extension MeetingDetailModel {
 
     /// Selects a row from a pin or a "?" banner: the Items tab, the row selected (the tab scrolls to it, instantly under
     /// Reduce Motion). A decided row that `meetings.rows.decided` hides shows again, with an Undo that hides it again.
-    func reveal(row id: String, defaults: UserDefaults = .standard) {
+    func reveal(row id: String, defaults: UserDefaults? = nil) {
+        let defaults = defaults ?? self.defaults
+        if let row = rows.value?.rows.first(where: { $0.id == id }) {
+            if itemsFilter.rows([row]).isEmpty { itemsFilter = .all }
+        } else {
+            // The requested meeting's rows may still be loading.
+            itemsFilter = .all
+        }
         if tab != .items { show(.items) }
         let setting = MeetingsPreferences.Rows.decided
         if let row = rows.value?.rows.first(where: { $0.id == id }), !row.isOpen, setting.value(defaults) == .hidden {

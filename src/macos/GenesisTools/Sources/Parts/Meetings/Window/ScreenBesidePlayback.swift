@@ -192,20 +192,20 @@ struct ScreenBesidePlayback: View {
     /// What VoiceOver reads for the picture: the full sentence outside the capture, else the caption.
     private var spoken: String { Self.sentence(atSec: atSec, apartSec: apartSec) ?? caption }
 
-    /// "Screen at 54:35"; outside the capture "Last frame, 37 min earlier" or "First frame, 55 s later". Short on
+    /// "Screen at 54:35"; outside the capture "Frame, 37 min earlier" or "Frame, 55 s later". Short on
     /// purpose: the pane's header is 290 pt wide with its display menu and two buttons, and a longer caption was cut.
     static func caption(atSec: Double?, apartSec: Double?) -> String {
         guard let atSec else { return "Screen" }
         guard let apartSec else { return "Screen at \(MeetingsFormat.clock(atSec))" }
-        return apartSec > 0 ? "Last frame, \(gap(apartSec)) earlier" : "First frame, \(gap(apartSec)) later"
+        return apartSec > 0 ? "Frame, \(gap(apartSec)) earlier" : "Frame, \(gap(apartSec)) later"
     }
 
     /// The caption's full sentence, for the tooltip and VoiceOver; nil inside the capture.
     static func sentence(atSec: Double?, apartSec: Double?) -> String? {
         guard let atSec, let apartSec else { return nil }
         let at = MeetingsFormat.clock(atSec)
-        return apartSec > 0 ? "The screen capture ended at \(at), \(gap(apartSec)) before this spot. This is its last frame."
-            : "The screen capture starts at \(at), \(gap(apartSec)) after this spot. This is its first frame."
+        let relative = apartSec > 0 ? "before" : "after"
+        return "The capture does not cover this spot. This frame is from \(at), \(gap(apartSec)) \(relative) it."
     }
 
     private static func gap(_ apartSec: Double) -> String {

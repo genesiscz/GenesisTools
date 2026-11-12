@@ -62,6 +62,14 @@ final class MeetingDetailModel {
     @ObservationIgnored private var tabAwaitsList = false
     /// A change made the transcript stale while its tab was hidden: the next show reads it quietly over the old lines.
     @ObservationIgnored private var transcriptStale = false
+    /// Each mounted side pane owns one visibility token; an old pane disappearing cannot hide its replacement.
+    @ObservationIgnored private var transcriptPanes: Set<UUID> = []
+
+    var transcriptIsShowing: Bool { tab == .transcript || !transcriptPanes.isEmpty }
+
+    func setTranscriptPane(_ token: UUID, visible: Bool) {
+        if visible { transcriptPanes.insert(token) } else { transcriptPanes.remove(token) }
+    }
 
     /// A part of the pane with a `meetings revisions` token.
     enum RevisionPart: Hashable { case record, transcript, speakers, timeline }
@@ -74,6 +82,8 @@ final class MeetingDetailModel {
     /// The review rows (`meeting.rows`): what the Items tab lists, computed by the engine.
     var rows: Loadable<ReviewRows> = .idle
     @ObservationIgnored var rowsGeneration = 0
+    /// The Items kind filter lives with the selection, so an explicit reveal can make its row visible.
+    var itemsFilter: ItemsFilter = .all
     /// The keyboard's row.
     var selectedRow: String?
     /// The row whose editor is open (a spelling, a person, a typed answer, a reason).
@@ -107,6 +117,7 @@ final class MeetingDetailModel {
     /// The tokens of the decision events heard since the last event refresh: a burst that holds only decisions whose
     /// own path already read the record and the rows reads nothing again.
     @ObservationIgnored var eventBurstTokens: Set<String> = []
+    @ObservationIgnored var eventTranscriptChanged = false
     /// The window's decisions whose own path read the record and the rows again (`refreshAfterDecision`).
     @ObservationIgnored var refreshedTokens: Set<String> = []
     @ObservationIgnored var rowDecisionTokens: [String: String] = [:]
@@ -218,7 +229,7 @@ final class MeetingDetailModel {
                 let args = ["word-timings", "generate", id, "--from", String(from), "--to", String(to), "--model", model, "--json"]
                     + (language.map { ["--language", $0] } ?? [])
                 let result = try await MeetingsRead<MeetingsAPI.WordTimings.Result>
-                    .service(MeetingsAPI.WordTimings.self, params, orRun: args, timeoutSeconds: 125).run()
+                    .service(MeetingsAPI.WordTimings.self, params, orRun: args, timeoutSeconds: 125).run(service: service)
                 guard !Task.isCancelled, !isDropped else { return }
                 readTranscript(quiet: true)
                 notices.push(StackedNotice(text: "Timed \(result.coverage.matchedWords) of \(result.coverage.eligibleWords) words",
@@ -270,7 +281,7 @@ final class MeetingDetailModel {
     func frameLines(file: String) async throws -> [OcrBox] {
         let view = try await MeetingsRead<ScreenTimeline>
             .service(MeetingsAPI.MeetingTimeline.self, .init(meeting: id, frame: file),
-                     orRun: ["screen", id, "--timeline", "--json", "--frame", file], timeoutSeconds: 120).run()
+                     orRun: ["screen", id, "--timeline", "--json", "--frame", file], timeoutSeconds: 120).run(service: service)
         return view.frames.first?.lines ?? []
     }
 
@@ -299,9 +310,10 @@ final class MeetingDetailModel {
         let current = self[keyPath: generation]
         if !quiet { self[keyPath: part] = .loading(previous: self[keyPath: part].value) }
         inFlight[part]?.cancel()
+        let service = service
         inFlight[part] = Task { [weak self] in
             do {
-                let value = try await source.run()
+                let value = try await source.run(service: service)
                 guard let self, !self.isDropped, current == self[keyPath: generation] else { return }
                 self.settle(part, .loaded(value))
                 landed?(value)
@@ -327,9 +339,10 @@ final class MeetingDetailModel {
         inFlight[\MeetingDetailModel.record]?.cancel()
         inFlight[\MeetingDetailModel.rows]?.cancel()
         pairRead?.cancel()
+        let service = service
         pairRead = Task { [weak self] in
-            async let record = Self.attempt(recordSource)
-            async let rows = Self.attempt(rowsSource)
+            async let record = Self.attempt(recordSource, service: service)
+            async let rows = Self.attempt(rowsSource, service: service)
             let (recordResult, rowsResult) = await (record, rows)
             guard let self, !Task.isCancelled, !self.isDropped else { return }
             if recordTurn == self.recordGeneration {
@@ -341,8 +354,8 @@ final class MeetingDetailModel {
         }
     }
 
-    private static func attempt<Value>(_ source: MeetingsRead<Value>) async -> Result<Value, Error> {
-        do { return .success(try await source.run()) } catch { return .failure(error) }
+    private static func attempt<Value>(_ source: MeetingsRead<Value>, service: MeetingsService?) async -> Result<Value, Error> {
+        do { return .success(try await source.run(service: service)) } catch { return .failure(error) }
     }
 
     func settleDecisionRecord(_ value: MeetingRecordView) {
@@ -385,6 +398,8 @@ final class MeetingDetailModel {
         inFlight.removeAll()
         pairRead?.cancel()
         wordTimingTask?.cancel()
+        autoplayTask?.cancel()
+        autoplayTask = nil
     }
 
     // MARK: - Actions
@@ -438,7 +453,7 @@ final class MeetingDetailModel {
     }
 
     func transcriptChanged() {
-        switch Self.transcriptRefresh(read: transcript != .idle, showing: tab == .transcript) {
+        switch Self.transcriptRefresh(read: transcript != .idle, showing: transcriptIsShowing) {
         case .none: break
         case .readQuietly: readTranscript(quiet: true)
         case .markStale: transcriptStale = true
@@ -522,8 +537,9 @@ final class MeetingDetailModel {
         let id = id
         let key: AnyKeyPath = \MeetingDetailModel.refreshGeneration
         inFlight[key]?.cancel()
+        let service = service
         inFlight[key] = Task { [weak self] in
-            let revisions = try? await Self.revisionsRead(id).run()
+            let revisions = try? await Self.revisionsRead(id).run(service: service)
             guard let self, !Task.isCancelled, !self.isDropped, generation == self.refreshGeneration else { return }
             let recordStale = self.mustRead(.record, revisions?.show)
             if recordStale || force { self.readRecord(quiet: true) }

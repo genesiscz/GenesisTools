@@ -240,10 +240,11 @@ extension MeetingDetailModel {
 
     /// "Only this question" (R22): the answer goes to this question and what it decides; the questions that look
     /// alike stay open for their own answers.
-    func applyOnlyThis(_ pending: PendingReach) {
+    func applyOnlyThis(_ pending: PendingReach, askAgain: Bool = true) {
         let struck = pendingStruck
         pendingReach = nil
         pendingStruck = []
+        if !askAgain { defaults.set(MeetingsPreferences.Rows.AskReach.never.rawValue, forKey: MeetingsPreferences.Rows.askReach.key) }
         var action = Self.striking(pending.action, struck)
         action.lookAlikes = "leave"
         apply(pending.row, action, reason: pending.reason)
@@ -323,6 +324,7 @@ extension MeetingDetailModel {
         if patched {
             window?.loadOverview(quiet: true)
             transcriptChanged()
+            if entry.changesTranscript, speakers != .idle { readSpeakers(quiet: true) }
         } else {
             refreshAfterDecision()
         }
@@ -488,6 +490,7 @@ extension MeetingDetailModel {
         readRecordAndRows()
         window?.loadOverview(quiet: true)
         transcriptChanged()
+        if speakers != .idle { readSpeakers(quiet: true) }
     }
 
     // MARK: Autoplay (R19, G22, G24)
@@ -496,7 +499,7 @@ extension MeetingDetailModel {
     /// is open, the window cannot be seen, or the reader played something else meanwhile. At the queue's end a notice
     /// says so.
     func autoplayNext(after row: ReviewRow) {
-        guard let rows = rows.value?.rows else { return }
+        guard !isDropped, let rows = rows.value?.rows else { return }
         let order = MeetingsPreferences.Rows.order.value(defaults), shown = Self.visibleRows(rows, order: order, decided: .inPlace)
         guard let next = Self.nextOpenRow(after: row.id, in: shown) else {
             notices.push(StackedNotice(text: "That was the last open row of this meeting"))
@@ -510,8 +513,9 @@ extension MeetingDetailModel {
         autoplayTask?.cancel()
         autoplayTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard let self, !Task.isCancelled, self.editingRow == nil, self.window?.windowVisible ?? false,
-                  self.selectedRow == next.id, player.top?.id == playingBefore || player.phase != .playing else { return }
+            guard let self, !Task.isCancelled, !self.isDropped, self.editingRow == nil,
+                  let window = self.window, window.windowVisible, window.detail === self, window.player === player,
+                  self.selectedRow == next.id, player.top?.id == playingBefore else { return }
             player.play(next.target, in: self.id, from: .autoplay)
         }
     }
@@ -553,15 +557,21 @@ extension MeetingDetailModel {
         // own decisions: their path read the record and the rows already. The check runs after the wait, because the
         // event can arrive before the answer that names the token.
         eventBurstTokens.insert(entry.token)
+        eventTranscriptChanged = eventTranscriptChanged || entry.changesTranscript
         eventRefresh?.cancel()
         eventRefresh = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
             guard let self, !Task.isCancelled else { return }
             let burst = self.eventBurstTokens
+            let changedTranscript = self.eventTranscriptChanged
             self.eventBurstTokens = []
+            self.eventTranscriptChanged = false
             guard !burst.isSubset(of: self.refreshedTokens) else { return }
             self.readRecordAndRows()
-            if !entry.labels.isEmpty || !entry.changes.isEmpty { self.transcriptChanged() }
+            if changedTranscript {
+                self.transcriptChanged()
+                if self.speakers != .idle { self.readSpeakers(quiet: true) }
+            }
         }
     }
 

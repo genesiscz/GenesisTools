@@ -404,11 +404,12 @@ struct MomentTimeline: View {
                                  clip: span.map { $0.startSec...max($0.startSec, $0.endSec) },
                                  asked: span.map { $0.fromSec...max($0.fromSec, $0.toSec) }, voices: voices)
                         .frame(width: width, height: waveHeight)
-                        .offset(y: waveY)
+                        // Move the interactive region with the waveform, leaving the pins above it reachable.
                         .contentShape(Rectangle())
                         .onTapGesture(coordinateSpace: .local) { point in
                             onSeek(TimelineGeometry.sec(atX: point.x, in: view, width: width))
                         }
+                        .offset(y: waveY)
                         .accessibilityHidden(true)
                     TimelineGrid(view: view)
                         .frame(width: width, height: fullHeight - 16 - (span == nil ? 6 : 24))

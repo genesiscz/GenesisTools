@@ -233,6 +233,7 @@ extension MeetingDetailModel {
     private func afterAssign() {
         readRecord(quiet: true)
         transcriptChanged()
+        if speakers != .idle { readSpeakers(quiet: true) }
         window?.loadOverview(quiet: true)
     }
 }

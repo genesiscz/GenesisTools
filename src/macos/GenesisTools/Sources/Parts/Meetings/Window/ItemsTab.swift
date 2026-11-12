@@ -54,8 +54,7 @@ enum ItemsFilter: String, CaseIterable {
 struct ItemsTab: View {
     @Bindable var detail: MeetingDetailModel
     @FocusState private var focused: Bool
-    /// The kind of rows shown; a meeting opens on all of them.
-    @State private var filter = ItemsFilter.all
+
     @AppStorage(MeetingsPreferences.Rows.order.key) private var order = MeetingsPreferences.Rows.order.defaultValue.rawValue
     @AppStorage(MeetingsPreferences.Rows.decided.key) private var decided = MeetingsPreferences.Rows.decided.defaultValue.rawValue
     @AppStorage(MeetingsPreferences.Rows.choiceKeys.key) private var choiceKeys = MeetingsPreferences.Rows.choiceKeys.defaultValue.rawValue
@@ -84,7 +83,7 @@ struct ItemsTab: View {
     private func list(_ rows: ReviewRows) -> some View {
         let open = rows.rows.filter(\.isOpen).count
         let questions = rows.rows.filter { $0.isOpen && $0.isQuestion }.count
-        let kind = ItemsFilter.effective(filter, open: open, questions: questions)
+        let kind = ItemsFilter.effective(detail.itemsFilter, open: open, questions: questions)
         // The row whose Moment is on top of the player: it carries the play hue on its leading edge.
         let player = detail.window?.player
         let top = player?.top
@@ -209,6 +208,10 @@ struct ItemsTab: View {
             .onKeyPress(characters: .decimalDigits) { press in cardShows ? .ignored : pickNumber(press.characters, in: shown) }
             // A pin's click on a meeting that was not open selects its row before the rows land (G-PLAY-6).
             .onAppear { if let id = detail.selectedRow { keepInView(id, proxy: proxy) } }
+            .onChange(of: ids) { _, visible in
+                guard let id = detail.selectedRow, visible.contains(id) else { return }
+                keepInView(id, proxy: proxy)
+            }
             .onChange(of: detail.selectedRow) { _, id in
                 guard let id else { return }
                 keepInView(id, proxy: proxy)
@@ -220,7 +223,7 @@ struct ItemsTab: View {
         // rows do not move when a notice comes or goes: only how far the list scrolls to show a row changes.
         .safeAreaInset(edge: noticeEdge, spacing: 0) { Color.clear.frame(height: noticeRoom) }
         .safeAreaInset(edge: .top, spacing: 0) {
-            BulkConfirmBar(detail: detail, items: items, open: open, questions: questions, filter: $filter,
+            BulkConfirmBar(detail: detail, items: items, open: open, questions: questions, filter: $detail.itemsFilter,
                            applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)
         }
     }
@@ -249,7 +252,7 @@ struct ItemsTab: View {
         guard count > 0 else { return 0 }
         let shown = min(count, limit ?? count)
         let chip: CGFloat = shown < count ? 28 : 0
-        return 18 + CGFloat(shown) * 60 + CGFloat(shown - 1) * 6 + chip
+        return min(378, 18 + CGFloat(shown) * 60 + CGFloat(shown - 1) * 6 + chip)
     }
 
     /// "430 rows wait for you", "1 row waits for you", or that nothing waits.

@@ -10,7 +10,7 @@ struct SpeakersTab: View {
     /// Below this width a speaker's rename field goes under its numbers: beside them, at the window's smallest size the
     /// field and the Play button left the numbers about 20 pt, one letter per line.
     static let stackWidth: CGFloat = 560
-    @State private var reviewing: String?
+    @State private var reviewing: ReviewHint?
     @AppStorage(MeetingsPreferences.Speakers.showQuestions.key) private var showQuestions =
         MeetingsPreferences.Speakers.showQuestions.defaultValue
     @AppStorage(MeetingsPreferences.Speakers.hintChips.key) private var hintChips = MeetingsPreferences.Speakers.hintChips.defaultValue
@@ -41,16 +41,16 @@ struct SpeakersTab: View {
                                                                 maxShown: hintChips > 0 ? hintChips : MeetingsPreferences.Speakers.hintChips.defaultValue,
                                                                 play: { from, to in playRange(from, to) },
                                                                 zoom: { from, to in zoom(from, to) },
-                                                                review: { reviewing = speaker.label })
+                                                                review: { reviewing = ReviewHint(label: speaker.label, ranges: line.ranges) })
                                            }
                                        }, commit: { detail.rename(label: speaker.label, to: $0) })
                         }
                     }
                     .listStyle(.inset)
                 }
-                .sheet(item: Binding(get: { reviewing.map(ReviewLabel.init) }, set: { reviewing = $0?.label })) { review in
+                .sheet(item: $reviewing) { review in
                     HintRangesSheet(label: review.label, names: renames,
-                                    ranges: MeetingsWords.speakerHintLines(stats.hints, for: review.label).flatMap(\.ranges),
+                                    ranges: review.ranges,
                                     longestClipSec: longestClipSec,
                                     play: { from, to in playRange(from, to) },
                                     zoom: { from, to in zoom(from, to) },
@@ -120,9 +120,10 @@ struct SpeakersTab: View {
     }
 }
 
-private struct ReviewLabel: Identifiable {
+private struct ReviewHint: Identifiable {
+    let id = UUID()
     let label: String
-    var id: String { label }
+    let ranges: [SpeakerHint.Range]
 }
 
 /// "Review N" (G-SPK-1): every range of a label's hints, each with its chip.

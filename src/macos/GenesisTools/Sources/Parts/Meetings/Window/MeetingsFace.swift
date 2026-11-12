@@ -125,10 +125,6 @@ package func runMeetings(_ args: [String]) -> Never {
     MainActor.assumeIsolated {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
-        if request.muted {
-            let model = MeetingsWindow.shared.model
-            model.player = MomentPlayer(load: { try AVMomentSound(url: $0, muted: true) }, defaults: model.defaults)
-        }
         MeetingsMenuTarget.shared.model = MeetingsWindow.shared.model
         MeetingsMenu.install()
         HangWatch.start()
@@ -188,6 +184,10 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
     }
 
     func apply(_ request: MeetingsRequest, to model: MeetingsWindowModel) {
+        if request.muted {
+            model.player.stop()
+            model.player = MomentPlayer(load: { try AVMomentSound(url: $0, muted: true) }, defaults: model.defaults)
+        }
         if let place = request.place { model.go(place) }
         if request.sidePanel { model.sidePanelOpen = true }
         if let meeting = request.meeting {

@@ -326,6 +326,10 @@ struct PersonNameField: View {
         return !typed.isEmpty && typed != (saved ?? "")
     }
 
+    static func draftAfterSavedChange(draft: String, old: String?, new: String?) -> String {
+        isDirty(draft: draft, saved: old) ? draft : (new ?? "")
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             TextField("Rename", text: $draft, prompt: Text(saved ?? "Rename for this meeting"))
@@ -363,7 +367,9 @@ struct PersonNameField: View {
         }
         .onAppear { draft = saved ?? "" }
         // A new saved name replaces the field only when it holds no draft of its own.
-        .onChange(of: saved) { _, now in if !isDirty { draft = now ?? "" } }
+        .onChange(of: saved) { old, now in
+            draft = Self.draftAfterSavedChange(draft: draft, old: old, new: now)
+        }
     }
 
     private func save() {

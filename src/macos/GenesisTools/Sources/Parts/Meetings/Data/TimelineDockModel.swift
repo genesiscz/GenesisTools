@@ -61,7 +61,9 @@ final class TimelineDockModel {
 
     @ObservationIgnored private let reads: Reads
     @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private var asked: Set<String> = []
+    @ObservationIgnored private var preparingAudio: Set<String> = []
+    @ObservationIgnored private var preparingWaveform: Set<String> = []
+    @ObservationIgnored private var preparingScreen: Set<String> = []
     @ObservationIgnored private var askedRows: Set<String> = []
     @ObservationIgnored private var zoomTask: Task<Void, Never>?
     @ObservationIgnored private var zoomAsked: ClosedRange<Double>?
@@ -165,27 +167,36 @@ final class TimelineDockModel {
 
     /// The recording's length, its whole peaks and its screen frames, read once per meeting.
     func prepare(_ meeting: String) {
-        guard asked.insert(meeting).inserted else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            if let audio = try? await self.reads.audio(meeting) { self.audio[meeting] = audio }
+        if audio[meeting] == nil, preparingAudio.insert(meeting).inserted {
+            Task { [weak self] in
+                guard let self else { return }
+                defer { self.preparingAudio.remove(meeting) }
+                if let audio = try? await self.reads.audio(meeting) { self.audio[meeting] = audio }
+            }
         }
-        Task { [weak self] in
-            guard let self else { return }
-            let params = MeetingsAPI.MeetingWaveform.Params(meeting: meeting, buckets: Self.wholeBuckets)
-            if let peaks = try? await self.reads.waveform(params) { self.whole[meeting] = peaks }
+        if whole[meeting] == nil, preparingWaveform.insert(meeting).inserted {
+            Task { [weak self] in
+                guard let self else { return }
+                defer { self.preparingWaveform.remove(meeting) }
+                let params = MeetingsAPI.MeetingWaveform.Params(meeting: meeting, buckets: Self.wholeBuckets)
+                if let peaks = try? await self.reads.waveform(params) { self.whole[meeting] = peaks }
+            }
         }
-        Task { [weak self] in
-            guard let self else { return }
-            if let screen = try? await self.reads.screen(meeting) { self.screens[meeting] = screen }
+        if screens[meeting] == nil, preparingScreen.insert(meeting).inserted {
+            Task { [weak self] in
+                guard let self else { return }
+                defer { self.preparingScreen.remove(meeting) }
+                if let screen = try? await self.reads.screen(meeting) { self.screens[meeting] = screen }
+            }
         }
     }
 
     /// The rows of a playing meeting that is not open, for its pins; read once.
     func prepareRows(_ meeting: String) {
-        guard askedRows.insert(meeting).inserted else { return }
+        guard otherRows[meeting] == nil, askedRows.insert(meeting).inserted else { return }
         Task { [weak self] in
             guard let self else { return }
+            defer { self.askedRows.remove(meeting) }
             if let rows = try? await self.reads.rows(meeting) { self.otherRows[meeting] = rows.rows }
         }
     }
@@ -265,17 +276,16 @@ final class TimelineDockModel {
         return frames[found ?? 0]
     }
 
-    /// How far the shown frame is from `second` when the capture does not cover that time: positive when `frame` is
-    /// the capture's last frame and `second` is more than `limit` after it (the capture ended earlier), negative when
-    /// it is the first frame and `second` is more than `limit` before it. Nil inside the capture, where an older frame
-    /// means the screen did not change. The pane then says that its picture is from another time.
+    /// A saved capture interval establishes coverage; a sparse frame list cannot. Nil coverage on older records is
+    /// unknown. A known gap (including a pause or an inactive display) labels the retained frame with its true age.
     static func apart(_ frame: MeetingsAPI.MeetingScreen.Frame, in screen: MeetingsAPI.MeetingScreen.Result, at second: Double,
-                      display: Int?, limit: Double = 30) -> Double? {
-        let frames = display.map { id in screen.frames.filter { $0.displayId == id } } ?? screen.frames
-        let gap = second - frame.meetingSec
-        if frame == frames.last, gap > limit { return gap }
-        if frame == frames.first, gap < -limit { return gap }
-        return nil
+                      display: Int?) -> Double? {
+        if let display, let spans = screen.displaySpans {
+            return spans.contains { $0.displayId == display && $0.fromSec <= second && second <= $0.toSec }
+                ? nil : second - frame.meetingSec
+        }
+        guard let spans = screen.recordingSpans else { return nil }
+        return spans.contains { $0.fromSec <= second && second <= $0.toSec } ? nil : second - frame.meetingSec
     }
 
     /// The display the pane shows by itself (G-SCR-1): the one with the Moment's OCR hit, else the one most frames show.

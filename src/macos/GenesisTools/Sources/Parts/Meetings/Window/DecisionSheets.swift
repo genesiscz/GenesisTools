@@ -53,7 +53,7 @@ struct ReachSheet: View {
                 Spacer()
                 Button("Cancel") { detail.cancelReach() }.keyboardShortcut(.cancelAction)
                 if !detail.lookAlikes(of: pending).isEmpty {
-                    Button("Only this question") { detail.applyOnlyThis(pending) }
+                    Button("Only this question") { detail.applyOnlyThis(pending, askAgain: askAgain) }
                         .instantTooltip("Answer \(pending.row.label) and what it decides. The questions that look alike stay open.")
                 }
                 Button(struck.isEmpty ? "Save" : "Save the rest") { detail.applyReach(pending, askAgain: askAgain, spelling: spellingAction) }

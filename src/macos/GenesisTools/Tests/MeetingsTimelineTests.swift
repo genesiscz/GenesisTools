@@ -51,10 +51,10 @@ final class MeetingsTimelineTests: XCTestCase {
         let clusters = PinCluster.clusters(pins, in: 0...600, width: 600)
         XCTAssertEqual(clusters.map { $0.pins.map(\.id) }, [["i0", "i1", "i2"], ["i3", "i4"], ["i5"], ["i6"]],
                        "40 and 46 are 6 pt apart: two 16 pt marks there drew over each other")
-        XCTAssertEqual(clusters[0].x, 13.5)
+        XCTAssertEqual(clusters[0].x, 10, "merged marks stay anchored to their first pin")
         XCTAssertEqual(clusters[0].range, 10...17)
-        XCTAssertEqual(clusters[1].x, 43)
-        XCTAssertEqual(clusters[1].room, 27)
+        XCTAssertEqual(clusters[1].x, 40)
+        XCTAssertEqual(clusters[1].room, 30)
         XCTAssertEqual(clusters[3].room, 300)
 
         // A dense stretch (a pin every 8 pt) is a row of counts, never one count for all of it, and never an overlap.
@@ -71,16 +71,38 @@ final class MeetingsTimelineTests: XCTestCase {
                                      "a mark stays at its pins")
         }
 
-        // A pin just past a mark's reach is pushed clear of it, not drawn into it.
+        // First-pin anchoring leaves the next mark clear without shifting its time.
         let edge = PinCluster.clusters([100, 119, 120].enumerated().map { TimelinePin(id: "e\($0)", sec: Double($1), text: "e", state: .open) },
                                        in: 0...600, width: 600)
-        XCTAssertEqual(edge.map(\.x), [109.5, 129.5])
+        XCTAssertEqual(edge.map(\.x), [100, 120])
+    }
+
+    func testDenseEndPinsStayInsideTheTimelineInBothLayouts() {
+        let pins = stride(from: 80.0, through: 100, by: 1).enumerated().map {
+            TimelinePin(id: "end\($0.offset)", sec: $0.element, text: "end", state: .open)
+        }
+        for width in [CGFloat(20), 80, 400] {
+            for marks in [PinCluster.clusters(pins, in: 0...100, width: width),
+                          PinCluster.laid(pins, in: 0...100, width: width, lanes: 3)] {
+                XCTAssertEqual(marks.flatMap(\.pins).count, pins.count)
+                for mark in marks {
+                    XCTAssertGreaterThanOrEqual(mark.x - PinMark.iconWidth / 2, 0)
+                    XCTAssertLessThanOrEqual(mark.x + PinMark.iconWidth / 2, width)
+                }
+                for lane in Set(marks.map(\.lane)) {
+                    let row = marks.filter { $0.lane == lane }
+                    for (before, after) in zip(row, row.dropFirst()) {
+                        XCTAssertGreaterThanOrEqual(after.x - before.x, PinMark.markWidth)
+                    }
+                }
+            }
+        }
     }
 
     /// D8: outside the capture the screen pane says that its picture is from another time.
     func testTheScreenPaneSaysWhenItsFrameIsFromAnotherTime() throws {
         let json = Data("""
-        {"meeting":"m","recorded":true,"displays":[],"frames":[
+        {"meeting":"m","recorded":true,"recordingSpans":[{"fromSec":60,"toSec":1080}],"displays":[],"frames":[
          {"file":"a.png","path":"/x/a.png","meetingSec":60,"width":10,"height":10,"lineCount":0},
          {"file":"b.png","path":"/x/b.png","meetingSec":600,"width":10,"height":10,"lineCount":0},
          {"file":"c.png","path":"/x/c.png","meetingSec":1048,"width":10,"height":10,"lineCount":0}]}
@@ -94,12 +116,24 @@ final class MeetingsTimelineTests: XCTestCase {
         XCTAssertNil(TimelineDockModel.apart(middle, in: screen, at: 500, display: nil), "inside the capture an older frame is an unchanged screen")
         let first = try XCTUnwrap(TimelineDockModel.frame(in: screen, at: 5, display: nil))
         XCTAssertEqual(TimelineDockModel.apart(first, in: screen, at: 5, display: nil), -55)
-        XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 1048, apartSec: 2227), "Last frame, 37 min earlier")
+        XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 1048, apartSec: 2227), "Frame, 37 min earlier")
         XCTAssertEqual(ScreenBesidePlayback.sentence(atSec: 1048, apartSec: 2227),
-                       "The screen capture ended at 17:28, 37 min before this spot. This is its last frame.")
-        XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 60, apartSec: -55), "First frame, 55 s later")
+                       "The capture does not cover this spot. This frame is from 17:28, 37 min before it.")
+        XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 60, apartSec: -55), "Frame, 55 s later")
         XCTAssertNil(ScreenBesidePlayback.sentence(atSec: 3275, apartSec: nil))
         XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 3275, apartSec: nil), "Screen at 54:35")
+    }
+
+    func testCaptureCoveragePreservesUnchangedScreensPausesAndDisplayGaps() {
+        let frame = MeetingsAPI.MeetingScreen.Frame(file: "a", path: "/a", meetingSec: 60, displayId: 1, width: 10, height: 10, lineCount: 0)
+        var screen = MeetingsAPI.MeetingScreen.Result(meeting: "m", recorded: true, displays: [], frames: [frame])
+        XCTAssertNil(TimelineDockModel.apart(frame, in: screen, at: 9000, display: 1), "old metadata is unknown, not a stopped capture")
+        screen.recordingSpans = [.init(fromSec: 0, toSec: 100), .init(fromSec: 200, toSec: 10000)]
+        XCTAssertNil(TimelineDockModel.apart(frame, in: screen, at: 9000, display: 1), "unchanged screen remains current")
+        XCTAssertEqual(TimelineDockModel.apart(frame, in: screen, at: 150, display: nil), 90, "pause remains a gap")
+        screen.displaySpans = [.init(displayId: 1, fromSec: 0, toSec: 100), .init(displayId: 2, fromSec: 200, toSec: 10000)]
+        XCTAssertEqual(TimelineDockModel.apart(frame, in: screen, at: 250, display: 1), 190, "another display's capture does not cover this display")
+        XCTAssertNil(TimelineDockModel.apart(frame, in: screen, at: 250, display: 2))
     }
 
     /// G-PLAY-5: a mark is dimmed only when every pin in it is filtered out; its state is the strongest of its pins.
@@ -320,6 +354,15 @@ final class MeetingsTimelineTests: XCTestCase {
                     name: "conversation-strip", width: width, scheme: scheme)
             }
         }
+    }
+
+    func testPinChoiceChipsWrapAnOversizedAnswerWithinTheCard() throws {
+        let text = "An oversized answer must keep every word visible when this card is narrow"
+        let renderer = ImageRenderer(content: PinChoiceChips(items: [text]).frame(width: 180))
+        renderer.scale = 1
+        let image = try XCTUnwrap(renderer.cgImage)
+        XCTAssertEqual(image.width, 180)
+        XCTAssertGreaterThan(image.height, 40, "the answer needs several lines, not one clipped chip")
     }
 
     func testSnapshotsOfThePinCard() throws {

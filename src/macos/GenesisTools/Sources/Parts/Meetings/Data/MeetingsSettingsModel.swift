@@ -15,7 +15,7 @@ struct MatchRulesDraft: Equatable {
 
 /// The Settings → Meetings pages: the meetings config (read with `config.read` and written with `config.set` and
 /// `config.unset` through the Meetings service, or `config show`, `config set` and `config unset` when no service
-/// answers; the projects and dictionary commands stay commands, WaveB-Plan.md decision 13), the cost of each capture
+/// answers; library reads and writes use the same typed service with a command compatibility fallback), the cost of each capture
 /// choice, the match preview and the phrase test.
 @Observable
 @MainActor
@@ -48,6 +48,8 @@ final class MeetingsSettingsModel {
     let writes: Bool
     /// The Meetings service the config reads and writes go through; nil runs them as commands (XCTest, the preview).
     @ObservationIgnored let service: MeetingsService?
+    /// A test can deny command execution without touching the real settings or starting a child process.
+    @ObservationIgnored private let command: (([String]) async throws -> Data)?
     private var previewTask: Task<Void, Never>?
     private var phraseTask: Task<Void, Never>?
     /// The one read of the values the rule fields offer, shared by every field of every project; Settings opened
@@ -55,9 +57,11 @@ final class MeetingsSettingsModel {
     @ObservationIgnored var suggestionsTask: Task<MeetingsAPI.ProjectsSuggestions.Result, Error>?
 
     /// `service` nil is the shared one (`MeetingsService.shared`, itself nil under XCTest and in the preview).
-    init(writes: Bool = true, notices: NoticeStackModel? = nil, service: MeetingsService? = nil) {
+    init(writes: Bool = true, notices: NoticeStackModel? = nil, service: MeetingsService? = nil,
+         command: (([String]) async throws -> Data)? = nil) {
         self.writes = writes
         self.service = service ?? MeetingsService.shared
+        self.command = command
         self.notices = notices ?? MeetingsPreferences.makeNoticeStack()
     }
 
@@ -105,7 +109,9 @@ final class MeetingsSettingsModel {
         settings = .loading(previous: settings.value)
         Task {
             do {
-                let shown = try await MeetingsWindowModel.settingsRead.run(service: service)
+                let shown = try await MeetingsWindowModel.settingsRead.run(service: service, command: { [self] args, _ in
+                    try await readCommand(ConfigShow.self, args)
+                })
                 let value = shown.value
                 let previous = settings.value
                 let dirty = Set(drafts.keys.filter { name in
@@ -129,7 +135,7 @@ final class MeetingsSettingsModel {
         cost = .loading(previous: cost.value)
         Task {
             do {
-                cost = .loaded(try await MeetingsCLI.json(CaptureCost.self, ["record", "cost", "--json"]))
+                cost = .loaded(try await readCommand(CaptureCost.self, ["record", "cost", "--json"]))
             } catch {
                 cost = .failed(asFailure(error), previous: cost.value)
             }
@@ -149,7 +155,9 @@ final class MeetingsSettingsModel {
             var args = ["projects", "preview", "--json"]
             if !draft.isEmpty { args += ["--draft", MeetingsCLI.jsonArgument(draft)] }
             do {
-                let rows = try await MeetingsCLI.json([MatchPreviewRow].self, args)
+                let params = try MeetingsService.decode(MeetingsAPI.ProjectsPreview.Params.self,
+                                                        draft.isEmpty ? [:] : ["draft": draft])
+                let rows = try await readLibrary(MeetingsAPI.ProjectsPreview.self, params, orRun: args)
                 guard !Task.isCancelled else { return }
                 preview = .loaded(rows)
             } catch {
@@ -164,7 +172,8 @@ final class MeetingsSettingsModel {
         let scope = dictionaryScope
         Task {
             do {
-                let value = try await MeetingsCLI.json(DictionaryShow.self, ["dictionary", "show", "--json"] + (scope.map { ["--project", $0] } ?? []))
+                let value = try await readLibrary(MeetingsAPI.DictionaryShowEntries.self, .init(project: scope),
+                                                  orRun: ["dictionary", "show", "--json"] + (scope.map { ["--project", $0] } ?? []))
                 guard scope == dictionaryScope else { return }
                 dictionary = .loaded(value)
             } catch {
@@ -237,23 +246,29 @@ final class MeetingsSettingsModel {
     func addProject(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        run(key: "project.add", ["projects", "add", trimmed], done: "Added the project \(trimmed)") { $0.loadSettings() }
+        run(key: "project.add", MeetingsAPI.ProjectsAdd.self, .init(name: trimmed),
+            orRun: ["projects", "add", trimmed], done: "Added the project \(trimmed)") { $0.loadSettings() }
     }
 
     func changeLabels(_ project: String, add: [String] = [], remove: [String] = []) {
         var args = ["projects", "labels", project]
         if !add.isEmpty { args += ["--add"] + add }
         if !remove.isEmpty { args += ["--remove"] + remove }
-        run(key: "labels.\(project)", args, done: nil) { $0.loadSettings() }
+        run(key: "labels.\(project)", MeetingsAPI.ProjectsLabels.self,
+            .init(project: project, add: add.isEmpty ? nil : add, remove: remove.isEmpty ? nil : remove),
+            orRun: args, done: nil) { $0.loadSettings() }
     }
 
     func unpair(entry: String, title: String, preview: UnpairPreview) {
-        run(key: "unpair.\(entry)", ["projects", "unpair", "--entry", entry],
+        run(key: "unpair.\(entry)", MeetingsAPI.ProjectsUnpair.self, .init(entry: entry),
+            orRun: ["projects", "unpair", "--entry", entry],
             done: "Removed what \(title) paired: \(preview.words)") { $0.loadSettings() }
     }
 
     func unpair(person: PairedPerson, from project: String) {
-        run(key: "unpair.\(project).\(person.id)", ["projects", "unpair", project, "--person", person.email ?? person.name],
+        run(key: "unpair.\(project).\(person.id)", MeetingsAPI.ProjectsUnpair.self,
+            .init(project: project, person: .init(name: person.name, email: person.email)),
+            orRun: ["projects", "unpair", project, "--person", person.email ?? person.name],
             done: "\(person.name) is no longer paired with \(project)") { $0.loadSettings() }
     }
 
@@ -298,7 +313,9 @@ final class MeetingsSettingsModel {
         Task {
             defer { writing.remove("rules.\(project)") }
             do {
-                _ = try await MeetingsCLI.run(["config", "edit", MeetingsCLI.jsonArgument(edits)])
+                let params = try MeetingsService.decode(MeetingsAPI.ConfigEdit.Params.self, ["edits": edits])
+                _ = try await writeLibrary(MeetingsAPI.ConfigEdit.self, params,
+                                           orRun: ["config", "edit", MeetingsCLI.jsonArgument(edits)])
                 notices.push(StackedNotice(text: "Saved the \(project) rules"))
             } catch let failure as MeetingsCLI.Failure where failure.code == "config-stale" {
                 // The draft stays: the reload brings the other editor's rules into the saved side to compare with.
@@ -374,7 +391,15 @@ final class MeetingsSettingsModel {
         let args = Self.addEntryArgs(type: type, value: value, substitution: substitution, spoken: spoken, meaning: meaning,
                                      caseSensitive: caseSensitive, scope: scope ?? dictionaryScope, replacing: replacing,
                                      ifAbsent: ifAbsent)
-        run(key: "dictionary.\(replacing ?? value)", args, done: "Saved \(value)") {
+        let entry = SavedDictionaryEntry(type: type, value: value,
+                                        substitution: ["fix", "abbr"].contains(type) ? substitution : nil,
+                                        spoken: type == "term" && !spoken.isEmpty ? spoken : nil,
+                                        meaning: type == "term" && meaning?.isEmpty == false ? meaning : nil,
+                                        caseSensitive: type == "fix" && caseSensitive ? true : nil)
+        run(key: "dictionary.\(replacing ?? value)", MeetingsAPI.DictionaryAdd.self,
+            .init(entry: entry, project: scope ?? dictionaryScope,
+                  replace: replacing != value ? replacing : nil, ifAbsent: ifAbsent ? true : nil),
+            orRun: args, done: "Saved \(value)") {
             $0.loadDictionary()
             $0.testPhrase($0.phrase)
         }
@@ -387,7 +412,8 @@ final class MeetingsSettingsModel {
         let restore = entry
         // The Undo restores into the level the entry left, whatever scope the page shows by then, and only while
         // nobody made the entry again there.
-        run(key: "dictionary.\(entry.value)", args, done: "Removed \(entry.value)", undo: { [weak model = self] in
+        run(key: "dictionary.\(entry.value)", MeetingsAPI.DictionaryRemove.self,
+            .init(value: entry.value, project: scope), orRun: args, done: "Removed \(entry.value)", undo: { [weak model = self] in
             model?.addEntry(type: restore.type, value: restore.value, substitution: restore.substitution,
                            spoken: restore.spoken ?? [], meaning: restore.meaning, caseSensitive: restore.caseSensitive == true,
                            scope: .some(scope), ifAbsent: true)
@@ -411,7 +437,8 @@ final class MeetingsSettingsModel {
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
             do {
-                let result = try await MeetingsCLI.json(PhraseTest.self, ["dictionary", "test", trimmed, "--json"] + (scope.map { ["--project", $0] } ?? []))
+                let result = try await readLibrary(MeetingsAPI.DictionaryTest.self, .init(phrase: trimmed, project: scope),
+                                                   orRun: ["dictionary", "test", trimmed, "--json"] + (scope.map { ["--project", $0] } ?? []))
                 guard !Task.isCancelled else { return }
                 phraseResult = result
             } catch {
@@ -423,6 +450,16 @@ final class MeetingsSettingsModel {
 
     // MARK: Runner
 
+    private func runCommand(_ args: [String]) async throws -> Data {
+        if let command { return try await command(args) }
+        return try await MeetingsCLI.run(args)
+    }
+
+    private func readCommand<Value: Decodable>(_ type: Value.Type, _ args: [String]) async throws -> Value {
+        if let command { return try JSONDecoder().decode(type, from: await command(args)) }
+        return try await MeetingsRead<Value>.command(args).run(service: nil)
+    }
+
     /// Another editor changed the setting after this page read it: nothing was written, and the page reads it again.
     static func staleNotice(_ failure: MeetingsCLI.Failure) -> StackedNotice {
         StackedNotice(text: "Not saved: this setting changed in another window or the terminal. The page shows its new value now.",
@@ -431,10 +468,44 @@ final class MeetingsSettingsModel {
 
     func isWriting(_ key: String) -> Bool { writing.contains(key) }
 
-    /// What a write runs: a command (the projects and dictionary ones), or a config change through the service.
+    /// What a write runs: a typed library/config operation, or a command without a service route.
     enum Step {
         case command([String])
         case config(MeetingsConfigWrite)
+        case library(@MainActor () async throws -> Void)
+    }
+
+    private func readLibrary<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params,
+                                                       orRun args: [String]) async throws -> M.Result {
+        let read = MeetingsRead.service(method, params, orRun: args)
+        return try await read.run(service: service, command: { [self] args, _ in
+            try await readCommand(M.Result.self, args)
+        })
+    }
+
+    /// Only an unavailable service known not to have applied a write permits the compatibility command.
+    /// A refusal, cancellation, lost reply or invalid reply remains the result of that one attempt.
+    func writeLibrary<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, orRun args: [String],
+                                                resultFromCommand: Bool = false) async throws -> M.Result? {
+        if let service {
+            do { return try await service.call(method, params) }
+            catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
+                try Task.checkCancellation()
+            }
+        }
+        try Task.checkCancellation()
+        if resultFromCommand { return try await readCommand(M.Result.self, args) }
+        _ = try await runCommand(args)
+        return nil
+    }
+
+    private func run<M: MeetingsServiceMethod>(key: String, _ method: M.Type, _ params: M.Params,
+                                               orRun args: [String], done: String?, undo: (@MainActor () -> Void)? = nil,
+                                               saved: ((MeetingsSettingsModel) -> Void)? = nil,
+                                               then: @escaping (MeetingsSettingsModel) -> Void) {
+        run(key: key, .library { [self] in
+            _ = try await writeLibrary(method, params, orRun: args)
+        }, done: done, undo: undo, saved: saved, then: then)
     }
 
     private func run(key: String, _ args: [String], done: String?, undo: (@MainActor () -> Void)? = nil,
@@ -452,8 +523,9 @@ final class MeetingsSettingsModel {
         Task {
             do {
                 switch step {
-                case .command(let args): _ = try await MeetingsCLI.run(args)
+                case .command(let args): _ = try await runCommand(args)
                 case .config(let write): try await write.run(service: service)
+                case .library(let perform): try await perform()
                 }
                 saved?(self)
                 if let done {
@@ -513,7 +585,8 @@ extension MeetingsSettingsModel {
     func renameProject(_ from: String, to typed: String, renamed: (() -> Void)? = nil) {
         let to = typed.trimmingCharacters(in: .whitespaces)
         guard !to.isEmpty, to != from else { return }
-        run(key: "project.rename.\(from)", Self.renameArgs(from, to: to), done: "Renamed \(from) to \(to)",
+        run(key: "project.rename.\(from)", MeetingsAPI.ProjectsRename.self, .init(from: from, to: to),
+            orRun: Self.renameArgs(from, to: to), done: "Renamed \(from) to \(to)",
             undo: { [weak self] in self?.renameProject(to, to: from) }, saved: { model in
                 if model.writes { MeetingsPreferences.renameOpenProject(from, to: to) }
                 renamed?()
@@ -529,7 +602,10 @@ extension MeetingsSettingsModel {
         Task {
             defer { writing.remove(key) }
             do {
-                let removal = try await MeetingsCLI.json(ProjectRemoval.self, Self.removeArgs(name, unassign: unassign))
+                guard let removal = try await writeLibrary(MeetingsAPI.ProjectsRemove.self,
+                                                            .init(name: name, unassign: unassign ? true : nil),
+                                                            orRun: Self.removeArgs(name, unassign: unassign),
+                                                            resultFromCommand: true) else { return }
                 notices.push(StackedNotice(text: Self.removalNote(removal),
                                            detail: "Its settings are kept in \((removal.backup as NSString).abbreviatingWithTildeInPath)"))
             } catch let failure as MeetingsCLI.Failure where !unassign && Self.offersUnassign(failure) {
