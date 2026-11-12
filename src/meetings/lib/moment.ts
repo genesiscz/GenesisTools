@@ -589,7 +589,14 @@ function toneFileVersion(moment: Moment): number[] {
  * is cut once (G16, G-PLAY-10).
  */
 export function momentCachePath(moment: Moment, source: ClipSource): string {
-    const key = clipKey(moment, [source.path, source.mtimeMs, source.size, ...toneFileVersion(moment)]);
+    // Earlier clips dropped delayed-track timestamps. Keep those derived WAVs out of the corrected cache.
+    const key = clipKey(moment, [
+        "container-clock-v1",
+        source.path,
+        source.mtimeMs,
+        source.size,
+        ...toneFileVersion(moment),
+    ]);
     return join(momentCacheDir(moment.meeting), `${clipName(moment)}-${key}.wav`);
 }
 

@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
@@ -726,6 +735,43 @@ describe("a Moment of a saved meeting", () => {
         expect(result.tone).toBeUndefined();
         expect(config.global.playback.listen.tone.enabled).toBe(true);
         expect(config.global.playback.listen.tone.sound).toEqual({ file: "/missing/tone.wav", volume: 0.6 });
+    });
+
+    test("clips made before source-clock preservation are not reused", async () => {
+        const audioPath = recording("old-clock-cache");
+        const { store, saved, opened } = await savedMeeting("meetings-moment-old-clock", audioPath);
+        const target: MomentTarget = { kind: "item", id: "Q1" };
+        const planned = await openMoment({ store, record: saved, target, opened });
+        const source = statSync(audioPath);
+        const oldKey = Bun.hash(
+            SafeJSON.stringify([
+                planned.startSec,
+                planned.endSec,
+                planned.tone ?? null,
+                audioPath,
+                source.mtimeMs,
+                source.size,
+            ])
+        ).toString(36);
+        const oldPath = join(momentCacheDir(saved.id), `Q1-${oldKey}.wav`);
+        mkdirSync(dirname(oldPath), { recursive: true });
+        writeFileSync(oldPath, "old shifted clock");
+        let cuts = 0;
+        const result = await clipMoment({
+            store,
+            record: saved,
+            target,
+            opened,
+            probe: oneTrack,
+            cut: async (options) => {
+                cuts++;
+                writeFileSync(options.outPath, "new source clock");
+            },
+        });
+        expect(cuts).toBe(1);
+        expect(result.path).not.toBe(oldPath);
+        expect(readFileSync(result.path, "utf8")).toBe("new source clock");
+        expect(readFileSync(oldPath, "utf8")).toBe("old shifted clock");
     });
 
     test("a recording with two tracks is cut with both, and another recording file is another clip", async () => {
