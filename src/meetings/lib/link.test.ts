@@ -101,6 +101,25 @@ describe("link: one source meeting, one record (MC1)", () => {
         ).not.toThrow();
     });
 
+    test("a refresh reaches a record that holds the source meeting already, even beside another holder", async () => {
+        const { store, first, second } = await twoRecords();
+        await store.update(second, { command: "test", change: "second link" }, (record) => {
+            record.sources.wisprflow = { meetingId: "7e900336-aaaa" };
+        });
+        const guard = (targetId: string, refresh?: boolean) => () =>
+            assertSourceFree({ store, sourceId: "wisprflow", sourceMeetingId: "7e900336-aaaa", targetId, refresh });
+
+        expect(guard(first, true)).not.toThrow();
+        expect(guard(second, true)).not.toThrow();
+        expect(guard(second)).toThrow(MeetingsConflictError);
+
+        const third = await store.create(
+            { title: "Other", start: "2026-11-05T15:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "created" }
+        );
+        expect(guard(third.id, true)).toThrow(MeetingsConflictError);
+    });
+
     test("a holder is matched by the whole id, never by a prefix", async () => {
         const { store } = await twoRecords();
 

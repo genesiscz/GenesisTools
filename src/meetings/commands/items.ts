@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { appliedLine } from "@app/meetings/lib/item-text";
+import { appliedLine, itemWhat } from "@app/meetings/lib/item-text";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -91,7 +91,7 @@ function printItems(record: MeetingRecord, items: MeetingItem[]): void {
             item.kind,
             STATUS_COLOR[item.status](item.status),
             percent(item.confidence),
-            truncateDisplay(row.what, 90),
+            truncateDisplay(item.kind === "term" ? itemWhat(item, { width: 90 }) : row.what, 90),
             item.rules.join(", "),
         ]);
     }

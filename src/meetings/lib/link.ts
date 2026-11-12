@@ -63,7 +63,16 @@ export function assertSourceFree(options: {
     sourceId: string;
     sourceMeetingId: string;
     targetId: string;
+    /** Refreshing an existing link adds no second holder. */
+    refresh?: boolean;
 }): void {
+    if (
+        options.refresh &&
+        options.store.read(options.targetId)?.sources[options.sourceId]?.meetingId === options.sourceMeetingId
+    ) {
+        return;
+    }
+
     const holders = sourceHolders({ ...options, exceptId: options.targetId });
     const holder = holders[0];
 
@@ -161,6 +170,7 @@ export async function linkSource(options: {
             sourceId: ref.source,
             sourceMeetingId: meeting.sourceMeetingId,
             targetId: existing.id,
+            refresh: options.refresh,
         });
     }
 

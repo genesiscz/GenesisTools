@@ -70,10 +70,11 @@ export enum MeetingRule {
     /**
      * R20, swapped labels. In 5 min windows of a calibrated recording, the user's label sits on the call's channel
      * (median microphone share 0.3 or less) while one platform-named label sits on the microphone (0.7 or more), for
-     * 10 min or more, and the two read the other way elsewhere in the call: the recorder swapped their names for that
-     * stretch (2026-11-09: from 1:45:15 to the end). The other label's lines there are the user's, the user's label's
-     * lines are the other person's (0.5 + half the gap of the medians, at most 0.9), and R18 and the per-line rules
-     * leave those lines alone.
+     * 10 min or more (from the first swapped line's start to the last one's end, within 30 s), and the two read the
+     * other way elsewhere in the call: the recorder swapped their names for that stretch (2026-11-09: from 1:45:15 to
+     * the end).
+     * The other label's lines there are the user's, the user's label's lines are the other person's (0.5 + half the
+     * gap of the medians, at most 0.9), and R16, R18 and the per-line rules leave those lines alone.
      */
     LabelSwap = "R20",
     /**

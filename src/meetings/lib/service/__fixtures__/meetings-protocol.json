@@ -2545,8 +2545,44 @@
         "result": {
           "meeting": "2026-11-03-1400-retro",
           "folder": "<meetings>/2026-11-03-1400-retro",
-          "displays": [],
-          "frames": [],
+          "displays": [
+            {
+              "id": 1,
+              "frames": 1
+            }
+          ],
+          "frames": [
+            {
+              "file": "frames/screen.png",
+              "path": "<meetings>/2026-11-03-1400-retro/frames/screen.png",
+              "at": "2026-11-03T13:00:00.000Z",
+              "meetingSec": 0,
+              "displayId": 1,
+              "width": 1,
+              "height": 1,
+              "lineCount": 1,
+              "changed": [
+                {
+                  "x": 0,
+                  "y": 0,
+                  "width": 1,
+                  "height": 1,
+                  "text": "Agenda",
+                  "confidence": 1
+                }
+              ],
+              "lines": [
+                {
+                  "x": 0,
+                  "y": 0,
+                  "width": 1,
+                  "height": 1,
+                  "text": "Agenda",
+                  "confidence": 1
+                }
+              ]
+            }
+          ],
           "pending": 0
         }
       }
@@ -4750,7 +4786,7 @@
           "code": 1100,
           "message": "1 meeting has the project Harbor: 2026-11-03-1000-design-review. Rename it instead, or remove it with --unassign to leave them without a project.",
           "data": {
-            "code": "failed"
+            "code": "project-in-use"
           },
           "stack": "<stack>",
           "issue": {

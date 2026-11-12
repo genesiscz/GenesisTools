@@ -942,6 +942,8 @@ describe("itemWhat", () => {
 
         expect(itemWhat(range(279, 279))).toBe("Speaker 1 04:39 → Alice Example");
         expect(itemWhat(range(279, 301))).toBe("Speaker 1 04:39–05:01 → Alice Example");
+        expect(itemWhat(range(279.4, 279.6))).toBe("Speaker 1 04:39 → Alice Example");
+        expect(itemWhat(range(278.6, 279.2))).toBe("Speaker 1 04:38–04:39 → Alice Example");
     });
 
     test("a term shows its spelling, else its quote with the source, else its meaning; only none of them is a ?", () => {
@@ -965,6 +967,27 @@ describe("itemWhat", () => {
         );
         expect(itemWhat(term({}))).toBe("category data → ?");
     });
+});
+
+test("in a column, a long quote is shortened inside its quotes and keeps its source", () => {
+    const long = meetingItemSchema.parse({
+        id: "i1",
+        kind: "term",
+        status: "suggested",
+        suggestedAt: "2026-11-02T15:00:00.000Z",
+        atSec: 1623,
+        heard: "category data",
+        confidence: 0.9,
+        rules: [],
+        quote: { text: `categoryData: ${"string | number | ".repeat(8)}null`, source: "dto.ts:12" },
+    });
+    const what = itemWhat(long, { width: 90 });
+
+    expect(what).toHaveLength(90);
+    expect(what.startsWith('category data → "categoryData: string | number')).toBe(true);
+    expect(what.endsWith('…" (quote from dto.ts:12)')).toBe(true);
+    // Without a width, nothing is cut.
+    expect(itemWhat(long)).toContain("null");
 });
 
 describe("appliedLine", () => {

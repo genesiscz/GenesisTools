@@ -400,6 +400,7 @@ describe("screen timeline", () => {
             expect(inWhole).toBeDefined();
             expect(one.frames[0]?.changed).toEqual(inWhole?.changed ?? []);
             expect(one.frames[0]?.changed.map((line) => line.text)).toEqual(["Budget totals"]);
+            expect(one.frames[0]?.lines?.map((line) => line.text)).toEqual(["Agenda", "Budget totals"]);
 
             boxes.mockClear();
             const first = await screenTimeline({ store: meetings, record: created, frame: "frames/b-d2.png" });
@@ -536,9 +537,9 @@ describe("window revisions", () => {
             writeFileSync(path, "RIFF");
         };
 
-        // An earlier play made the folder; this read is the window's last one.
-        clip(0, 2);
         const before = await revisionsRead({ store: meetings, record: created });
+        clip(0, 2);
+        expect(await revisionsRead({ store: meetings, record: created })).toEqual(before);
         clip(1, 3);
 
         expect(await revisionsRead({ store: meetings, record: created })).toEqual(before);

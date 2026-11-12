@@ -1132,7 +1132,10 @@ export class MeetingsConfigStore {
             const projects = objectAt(raw, "projects");
 
             if (!projects[project]) {
-                throw new Error(`No project ${project}, so the ${source} folder "${folder}" is not paired`);
+                throw new UnknownProjectError(
+                    project,
+                    `No project ${project}, so the ${source} folder "${folder}" is not paired`
+                );
             }
 
             const match = objectAt(objectAt(objectAt(objectAt(raw, "sources"), source), "match"), project);
@@ -1142,6 +1145,17 @@ export class MeetingsConfigStore {
         });
 
         return added;
+    }
+}
+
+/** A project the config does not have (removed or renamed meanwhile), so a pairing for it is refused. */
+export class UnknownProjectError extends Error {
+    constructor(
+        readonly project: string,
+        message: string
+    ) {
+        super(message);
+        this.name = "UnknownProjectError";
     }
 }
 

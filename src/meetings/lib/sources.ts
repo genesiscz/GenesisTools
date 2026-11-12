@@ -1,7 +1,12 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { MEETING_SOURCE_IDS, type MeetingSourceId, type TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import {
+    MEETING_SOURCE_IDS,
+    type MeetingSourceId,
+    type SourceMeeting,
+    type TranscriptSource,
+} from "@genesiscz/utils/meetings/sources";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 
 /** One loader per source. The table lives in the tool, because a source is implemented in its own tool. */
@@ -18,7 +23,21 @@ export async function meetingSource(id: string): Promise<TranscriptSource> {
         throw new Error(`Unknown source "${id}". Known: ${MEETING_SOURCE_IDS.join(", ")}`);
     }
 
-    return MEETING_SOURCES[id]();
+    const source = await MEETING_SOURCES[id]();
+    return { ...source, load: async (sourceMeetingId) => composedMeeting(await source.load(sourceMeetingId)) };
+}
+
+/**
+ * The meeting with its speaker labels and names composed (NFC). The CLI composes its arguments (`src/meetings/index.ts`),
+ * so a label typed or answered in the window matches a source label only when the source's is composed too.
+ */
+export function composedMeeting(meeting: SourceMeeting): SourceMeeting {
+    return {
+        ...meeting,
+        participants: meeting.participants.map((person) => ({ ...person, name: person.name.normalize("NFC") })),
+        speakers: meeting.speakers.map((speaker) => ({ ...speaker, name: speaker.name.normalize("NFC") })),
+        transcript: meeting.transcript.map((entry) => ({ ...entry, speaker: entry.speaker.normalize("NFC") })),
+    };
 }
 
 /** Which source a record's transcript comes from: the first source block that names a meeting of its own. */

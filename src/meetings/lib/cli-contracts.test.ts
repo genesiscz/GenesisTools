@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import { Storage } from "@genesiscz/utils/storage/storage";
+import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
 import { z } from "zod";
 import { MEETINGS_REGISTRARS } from "../registrars";
@@ -13,8 +17,11 @@ import { meetingAudioPath } from "./audio";
 import { MeetingComments } from "./comments";
 import { journalEntrySchema } from "./decision-actions";
 import { meetingListRow, selectMeetings } from "./list-rows";
+import { planMoment } from "./moment";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
+import { InProcessMeetingsClient } from "./service/client";
 import { MeetingsServiceError } from "./service/handlers";
+import * as momentHandlers from "./service/moment-handlers";
 import { enumHint, errorJSON, errorText, fail, formatFlag } from "./shared";
 import { linkedSource } from "./sources";
 
@@ -71,6 +78,128 @@ test("saved clips reject playback and read-only flags before touching the meetin
         raw.mockRestore();
         human.mockRestore();
         resolve.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("--clip --no-start plans once without cutting, saving or starting a player", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Plan only", start: "2026-11-09T10:00:00Z", end: "2026-11-09T10:02:00Z", createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const planned = {
+        ...planMoment({
+            record,
+            transcript: [],
+            listen: meetingsConfigSchema.parse({}).global.playback.listen,
+            target: { kind: "range", fromSec: 2, toSec: 4 },
+        }),
+        audioPath: "/fixture/audio.wav",
+    };
+    const plan = spyOn(momentHandlers, "planMomentCall").mockResolvedValue({ moment: planned });
+    const cut = spyOn(momentHandlers, "clipMomentCall").mockRejectedValue(new Error("must not cut"));
+    const save = spyOn(momentHandlers, "saveMomentCall").mockRejectedValue(new Error("must not save"));
+    const printed = spyOn(out, "result").mockImplementation(() => {});
+    const error = spyOn(ui, "err").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
+        await program.parseAsync(
+            ["play", record.id, "--target", '{"kind":"range","fromSec":2,"toSec":4}', "--clip", "--no-start", "--json"],
+            { from: "user" }
+        );
+        expect(plan).toHaveBeenCalledTimes(1);
+        expect(cut).not.toHaveBeenCalled();
+        expect(save).not.toHaveBeenCalled();
+        expect(error).not.toHaveBeenCalled();
+        expect(printed).toHaveBeenCalledWith(SafeJSON.stringify(planned, null, 2));
+        expect(existsSync(join(store.folder(record.id), "moments"))).toBe(false);
+    } finally {
+        plan.mockRestore();
+        cut.mockRestore();
+        save.mockRestore();
+        printed.mockRestore();
+        error.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("the items column keeps a long quote's source inside its width", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        {
+            title: "Quote",
+            start: "2026-11-09T10:00:00Z",
+            createdBy: "new",
+            items: [
+                {
+                    id: "i1",
+                    kind: "term",
+                    status: "suggested",
+                    suggestedAt: "2026-11-09T10:00:00Z",
+                    rules: [],
+                    heard: "category data",
+                    quote: { text: `categoryData: ${"string | number | ".repeat(8)}null`, source: "dto.ts:12" },
+                },
+            ],
+        },
+        { command: "test", change: "fixture" }
+    );
+    const printed: string[] = [];
+    const output = spyOn(out, "println").mockImplementation((text: string) => {
+        printed.push(text);
+    });
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "items" });
+        await program.parseAsync(["items", record.id], { from: "user" });
+        expect(printed.join("\n")).toContain('…" (quote from dto.ts:12)');
+    } finally {
+        output.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("screen --timeline --frame and --all print unchanged OCR lines as requested", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Screen lines", start: "2026-11-09T10:00:00Z", createdBy: "record" },
+        { command: "test", change: "fixture" }
+    );
+    const folder = store.folder(record.id);
+    mkdirSync(join(folder, "frames"), { recursive: true });
+    const image = createCanvas(400, 200).toBuffer("image/png");
+    const rows = ["Old item", "New item"].map((text, index) => ({
+        file: `frames/${index}.png`,
+        at: `2026-11-09T10:00:0${index}.000Z`,
+        displayId: 1,
+        text: `Agenda\n${text}`,
+        blocks: ["Agenda", text].map((text, i) => ({
+            text,
+            confidence: 1,
+            bounds: { x: 0.1, y: 0.8 - i * 0.3, width: 0.6, height: 0.1 },
+        })),
+    }));
+    for (const row of rows) {
+        writeFileSync(join(folder, row.file), image);
+    }
+    writeFileSync(join(folder, "ocr.jsonl"), `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`);
+    const printed: string[] = [];
+    const output = spyOn(out, "println").mockImplementation((text: string) => {
+        printed.push(text);
+    });
+    try {
+        for (const flags of [["--frame", "frames/1.png"], ["--all"]]) {
+            printed.length = 0;
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "screen" });
+            await program.parseAsync(["screen", record.id, "--timeline", ...flags], { from: "user" });
+            expect(printed.filter((line) => line === "    Agenda")).toHaveLength(flags[0] === "--all" ? 2 : 1);
+            expect(printed).toContain("    New item");
+        }
+    } finally {
+        output.mockRestore();
         process.exitCode = 0;
     }
 });
@@ -390,16 +519,40 @@ describe("list --json prints one summary row per meeting, and --limit keeps the 
         });
     });
 
-    test("--project filters before --limit, so the limit counts that project's meetings", () => {
-        const records = [
-            meeting("c", "2026-11-05T12:00:00.000Z"),
-            meeting("b", "2026-11-05T11:00:00.000Z", "work"),
-            meeting("a", "2026-11-05T10:00:00.000Z", "work"),
-        ];
+    test("--project filters before --limit, so the limit counts that project's meetings, and reads stop there", async () => {
+        const store = new MeetingStore(new Storage(`meetings-list-limit-${process.pid}`));
+        const create = async (title: string, start: string, project?: string) =>
+            (
+                await store.create(
+                    { title, start, createdBy: "new", ...(project ? { project } : {}) },
+                    { command: "test", change: "fixture" }
+                )
+            ).id;
+        const a = await create("A", "2026-11-03T10:00:00.000Z", "work");
+        const b = await create("B", "2026-11-04T11:00:00.000Z", "work");
+        const c = await create("C", "2026-11-05T12:00:00.000Z");
+        const read = spyOn(store, "read");
 
-        expect(selectMeetings(records, { limit: 2 }).map((one) => one.id)).toEqual(["c", "b"]);
-        expect(selectMeetings(records, { project: "work", limit: 1 }).map((one) => one.id)).toEqual(["b"]);
-        expect(selectMeetings(records, {}).map((one) => one.id)).toEqual(["c", "b", "a"]);
+        try {
+            expect(selectMeetings(store, { limit: 2 }).map((one) => one.id)).toEqual([c, b]);
+            expect(read).toHaveBeenCalledTimes(2);
+            read.mockClear();
+            expect(selectMeetings(store, { project: "work", limit: 1 }).map((one) => one.id)).toEqual([b]);
+            expect(read).toHaveBeenCalledTimes(2);
+            expect(selectMeetings(store, {}).map((one) => one.id)).toEqual([c, b, a]);
+            read.mockClear();
+            const client = new InProcessMeetingsClient({ deps: { store: () => store } });
+            try {
+                expect(
+                    (await client.call("meetings.list", { project: "work", limit: 1, full: true })).map((one) => one.id)
+                ).toEqual([b]);
+                expect(read).toHaveBeenCalledTimes(2);
+            } finally {
+                client.close();
+            }
+        } finally {
+            read.mockRestore();
+        }
     });
 });
 

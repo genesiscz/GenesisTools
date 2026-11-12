@@ -579,7 +579,7 @@ async function timeline(store: MeetingStore, record: MeetingRecord, opts: Screen
                 `${formatClock(frame.meetingSec)}  d${frame.displayId ?? "?"}  ${frame.file}${frame.pending ? "  (OCR pending)" : ""}`
             );
 
-            for (const line of frame.changed) {
+            for (const line of frame.lines ?? frame.changed) {
                 out.println(`    ${line.text}`);
             }
         }

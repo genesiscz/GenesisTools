@@ -1875,6 +1875,7 @@ async function captureExamples(): Promise<Example[]> {
             file: "frames/screen.png",
             at: RETRO.start,
             displayId: 1,
+            text: "Agenda",
             blocks: [{ text: "Agenda", confidence: 1, bounds: { x: 0, y: 0, width: 1, height: 1 } }],
         })}\n`
     );
@@ -2234,6 +2235,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
                 "already-decided",
                 "ambiguous-person",
                 "dictionary-exists",
+                "project-in-use",
                 "failed",
                 "unplayable",
                 "unknown-comment",
