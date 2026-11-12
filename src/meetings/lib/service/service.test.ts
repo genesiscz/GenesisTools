@@ -913,10 +913,10 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
 
     test("a receiver reads comments explicitly; only unread comments can be withdrawn", async () => {
         const { client, store } = await ADAPTERS[kind](agentHello);
-        await client.call("comment.stage", {
-            meeting: REVIEW.id,
+        MeetingComments.of(store, REVIEW.id).stage({
             target: { kind: "time", atSec: 2 },
             text: "Read this",
+            actor: { kind: "window" },
         });
         await client.call("comment.stage", {
             meeting: REVIEW.id,
@@ -924,10 +924,13 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             text: "Withdraw this",
         });
         await client.call("comment.send", { meeting: REVIEW.id });
+        expect(await failure(client.call("comment.read", { meeting: REVIEW.id, id: "c2" }))).toMatchObject({
+            code: "wrong-actor",
+        });
         const read = await client.call("comment.read", { meeting: REVIEW.id, id: "c1" });
         expect(read.readAt).toBe(NOW.toISOString());
         expect(await failure(client.call("comment.withdraw", { meeting: REVIEW.id, id: "c1" }))).toMatchObject({
-            code: "already-read",
+            code: "wrong-actor",
         });
         const withdrawn = await client.call("comment.withdraw", { meeting: REVIEW.id, id: "c2" });
         expect(withdrawn.withdrawnAt).toBe(NOW.toISOString());
@@ -1967,7 +1970,13 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "comment.unstage", { meeting: REVIEW.id, id: "c1" }, "A sent comment: already-sent.");
     await ask(window, "comment.send", { meeting: REVIEW.id, ids: ["c7"] }, "No such comment: unknown-comment.");
     await ask(window, SUBSCRIBE, { meeting: REVIEW.id, events: ["comment.changed"] });
-    await ask(window, "comment.read", { meeting: REVIEW.id, id: "c1" }, "A receiver acknowledges the first comment.");
+    await ask(
+        window,
+        "comment.read",
+        { meeting: REVIEW.id, id: "c1" },
+        "The author cannot acknowledge its own comment: wrong-actor."
+    );
+    await ask(agent, "comment.read", { meeting: REVIEW.id, id: "c1" }, "A receiver acknowledges the first comment.");
     await ask(window, "comment.withdraw", { meeting: REVIEW.id, id: "c1" }, "An acknowledged comment: already-read.");
     await ask(window, "comment.stage", { meeting: REVIEW.id, target: selection, text: "Withdraw before reading" });
     await ask(window, "comment.send", { meeting: REVIEW.id, ids: ["c3"] });
@@ -2329,6 +2338,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
                 "already-sent",
                 "already-read",
                 "withdrawn-comment",
+                "wrong-actor",
                 "unknown-person",
                 "unknown-merge",
                 "code-mismatch",

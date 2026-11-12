@@ -424,7 +424,7 @@
         "id": 8,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
-          "cacheRevision": "8cd3a052abd9e0b64afb8cda034c28abb388bee089ef9208320b5fcf9f55601a",
+          "cacheRevision": "6c5e1670df537d69fc0ac322a250f3e2e6a1a161b541a61a45e020df6d47700c",
           "reused": false,
           "window": {
             "fromSec": 0,
@@ -440,7 +440,7 @@
             "boundaryLinesSkipped": 1
           },
           "provenance": {
-            "id": "91d41ccc8bc609f8b3c6c5a2182c809923b391c9fffb8c516dff3257a9c7a71a",
+            "id": "54823ce5ad0a2695f0cb36a05f17254836830f8ab3fb917f9c60a4a76ac4fa95",
             "kind": "asr",
             "modelId": "fixture/words",
             "language": "auto",
@@ -448,9 +448,9 @@
               "id": "transformers-js",
               "version": "4.2.0"
             },
-            "modelFingerprint": "724b8b9c56a96373f1b8ddacecf3e04ef175d8564a056a6de4d2952cd03d6f5a",
-            "audioFingerprint": "44315c44b58455ad6a0705e0bfcbfc52ac12295d091f435aa461e763e7d555f2",
-            "generatedAt": "2026-11-12T06:37:05.088Z",
+            "modelFingerprint": "61f0ebf15d36eba9ba476b97c2a7054fb88fbe197b20c9838c70d25d77efa37d",
+            "audioFingerprint": "c36e5f468e792615e6f635745d9265372cf2439857bbe77f17084b618977a734",
+            "generatedAt": "2026-11-12T21:40:57.315Z",
             "policy": "exact-word-v1",
             "pcmSha256": "fixture-pcm"
           }
@@ -501,10 +501,10 @@
         "id": 10,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
-          "show": "1ile8f7kyxs38",
-          "transcript": "1asio50eqpf9e",
-          "speakers": "2t2vi383wqiw0",
-          "timeline": "1z30tg2chnp61"
+          "show": "17svktjkemh3m",
+          "transcript": "3i5h1jf1t341r",
+          "speakers": "3enulzarsw8vq",
+          "timeline": "28977u2b9tf99"
         }
       }
     },
@@ -839,7 +839,7 @@
         "id": 2,
         "result": {
           "entry": {
-            "token": "a6c8f37d-e8c4-4389-afb2-599e9e1a691d",
+            "token": "99e31144-4e9c-4739-9d32-0657d28559b4",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -898,7 +898,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "a6c8f37d-e8c4-4389-afb2-599e9e1a691d",
+                    "token": "99e31144-4e9c-4739-9d32-0657d28559b4",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -950,7 +950,7 @@
         "id": 3,
         "result": {
           "entry": {
-            "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4",
+            "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -1010,7 +1010,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4",
+                    "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1181,7 +1181,7 @@
                     "id": "i1"
                   },
                   "decision": {
-                    "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4",
+                    "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57",
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
@@ -1245,7 +1245,7 @@
         "method": "decision.revert",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
-          "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4"
+          "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57"
         }
       },
       "reply": {
@@ -1253,7 +1253,7 @@
         "id": 4,
         "result": {
           "entry": {
-            "token": "d92d84b6-e7ca-41f8-982e-267c2968dc05",
+            "token": "687bd1ef-5640-4cb8-9163-f4189c8a9b29",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -1263,7 +1263,7 @@
             },
             "action": {
               "kind": "revert",
-              "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4"
+              "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57"
             },
             "decided": [],
             "settled": [],
@@ -1290,7 +1290,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4",
+                    "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1355,7 +1355,7 @@
         "id": 5,
         "result": {
           "entry": {
-            "token": "a418ae5f-7b37-47f7-944a-58fef4e7065d",
+            "token": "d145aac3-11b1-4ab1-8436-37c4797f75a4",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -1414,7 +1414,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "a418ae5f-7b37-47f7-944a-58fef4e7065d",
+                    "token": "d145aac3-11b1-4ab1-8436-37c4797f75a4",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1584,7 +1584,7 @@
                     "id": "i1"
                   },
                   "decision": {
-                    "token": "a418ae5f-7b37-47f7-944a-58fef4e7065d",
+                    "token": "d145aac3-11b1-4ab1-8436-37c4797f75a4",
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
@@ -1667,7 +1667,7 @@
               "i1"
             ],
             "entry": {
-              "token": "a418ae5f-7b37-47f7-944a-58fef4e7065d",
+              "token": "d145aac3-11b1-4ab1-8436-37c4797f75a4",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
@@ -1726,7 +1726,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "a418ae5f-7b37-47f7-944a-58fef4e7065d",
+                      "token": "d145aac3-11b1-4ab1-8436-37c4797f75a4",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -1775,7 +1775,7 @@
           "meeting": "2026-11-03-1000-design-review",
           "entries": [
             {
-              "token": "a418ae5f-7b37-47f7-944a-58fef4e7065d",
+              "token": "d145aac3-11b1-4ab1-8436-37c4797f75a4",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
@@ -1834,7 +1834,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "a418ae5f-7b37-47f7-944a-58fef4e7065d",
+                      "token": "d145aac3-11b1-4ab1-8436-37c4797f75a4",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -1855,7 +1855,7 @@
               "corrections": []
             },
             {
-              "token": "d92d84b6-e7ca-41f8-982e-267c2968dc05",
+              "token": "687bd1ef-5640-4cb8-9163-f4189c8a9b29",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
@@ -1865,7 +1865,7 @@
               },
               "action": {
                 "kind": "revert",
-                "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4"
+                "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57"
               },
               "decided": [],
               "settled": [],
@@ -1892,7 +1892,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4",
+                      "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -2051,7 +2051,7 @@
           },
           "delaySec": 2,
           "repeatGapSec": 1,
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-MESqvG/gt-test-home-k56kBa/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-1hk4yq0tot0vr.wav"
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-D31TmI/gt-test-home-NLpvWp/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-21gc1ongptdr3.wav"
         }
       }
     },
@@ -2071,7 +2071,7 @@
         "jsonrpc": "2.0",
         "id": 23,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-MESqvG/mtg-audio-FfJjYH/upload.ogg",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-D31TmI/mtg-audio-OJYC2G/upload.ogg",
           "tracks": 1,
           "channels": 2,
           "durationSec": 45
@@ -2128,7 +2128,7 @@
         "jsonrpc": "2.0",
         "id": 25,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-MESqvG/gt-test-home-k56kBa/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-D31TmI/gt-test-home-NLpvWp/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
           "sound": {
             "hz": 880,
             "sec": 0.15,
@@ -2155,7 +2155,7 @@
         "jsonrpc": "2.0",
         "id": 26,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-MESqvG/gt-test-home-k56kBa/.genesis-tools/meetings-cache/tones/tone-a2ihri6ep544.wav",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-D31TmI/gt-test-home-NLpvWp/.genesis-tools/meetings-cache/tones/tone-a2ihri6ep544.wav",
           "sound": {
             "hz": 2000,
             "sec": 0.03,
@@ -2635,7 +2635,7 @@
         "jsonrpc": "2.0",
         "id": 34,
         "result": {
-          "generatedAt": "2026-11-12T06:37:05.131Z",
+          "generatedAt": "2026-11-12T21:40:57.358Z",
           "days": 3650,
           "applyAbove": 0.5,
           "meetings": [
@@ -2715,7 +2715,7 @@
         "jsonrpc": "2.0",
         "id": 35,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-MESqvG/gt-test-home-k56kBa/.genesis-tools/meetings/config.json",
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-D31TmI/gt-test-home-NLpvWp/.genesis-tools/meetings/config.json",
           "value": 30
         }
       }
@@ -2862,7 +2862,7 @@
                 "id": "i1"
               },
               "decision": {
-                "token": "a418ae5f-7b37-47f7-944a-58fef4e7065d",
+                "token": "d145aac3-11b1-4ab1-8436-37c4797f75a4",
                 "actor": {
                   "kind": "agent",
                   "harness": "claude-code",
@@ -3150,7 +3150,7 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "ea712abf-511e-4628-9dc4-322ec364034b"
+              "token": "3e9e230b-ad36-4b74-b1ec-9bd619b6ea4c"
             }
           ],
           "listeners": [
@@ -3163,7 +3163,7 @@
             }
           ],
           "entry": {
-            "token": "ea712abf-511e-4628-9dc4-322ec364034b",
+            "token": "3e9e230b-ad36-4b74-b1ec-9bd619b6ea4c",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -3287,7 +3287,7 @@
     {
       "method": "comment.read",
       "direction": "client→service",
-      "note": "A receiver acknowledges the first comment.",
+      "note": "The author cannot acknowledge its own comment: wrong-actor.",
       "request": {
         "jsonrpc": "2.0",
         "id": 48,
@@ -3300,6 +3300,35 @@
       "reply": {
         "jsonrpc": "2.0",
         "id": 48,
+        "error": {
+          "code": 1100,
+          "message": "A comment's author cannot acknowledge its own comment.",
+          "data": {
+            "code": "wrong-actor"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.read",
+      "direction": "client→service",
+      "note": "A receiver acknowledges the first comment.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "comment.read",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "id": "c1"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 6,
         "result": {
           "id": "c1",
           "at": "2026-11-03T10:00:00.000Z",
@@ -3321,10 +3350,12 @@
           },
           "state": "sent",
           "sentAt": "2026-11-03T10:00:00.000Z",
-          "token": "ea712abf-511e-4628-9dc4-322ec364034b",
+          "token": "3e9e230b-ad36-4b74-b1ec-9bd619b6ea4c",
           "readAt": "2026-11-03T10:00:00.000Z",
           "readBy": {
-            "kind": "window"
+            "kind": "agent",
+            "harness": "claude-code",
+            "session": "11111111-2222-4333-8444-555555555555"
           }
         }
       }
@@ -3445,7 +3476,7 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "f3029e58-1552-4e39-8131-69b7b98aae5b"
+              "token": "3273c536-8b6f-46fe-8d92-78775845ffb1"
             }
           ],
           "listeners": [
@@ -3458,7 +3489,7 @@
             }
           ],
           "entry": {
-            "token": "f3029e58-1552-4e39-8131-69b7b98aae5b",
+            "token": "3273c536-8b6f-46fe-8d92-78775845ffb1",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -3529,7 +3560,7 @@
           },
           "state": "sent",
           "sentAt": "2026-11-03T10:00:00.000Z",
-          "token": "f3029e58-1552-4e39-8131-69b7b98aae5b",
+          "token": "3273c536-8b6f-46fe-8d92-78775845ffb1",
           "withdrawnAt": "2026-11-03T10:00:00.000Z"
         }
       }
@@ -3602,10 +3633,12 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "ea712abf-511e-4628-9dc4-322ec364034b",
+              "token": "3e9e230b-ad36-4b74-b1ec-9bd619b6ea4c",
               "readAt": "2026-11-03T10:00:00.000Z",
               "readBy": {
-                "kind": "window"
+                "kind": "agent",
+                "harness": "claude-code",
+                "session": "11111111-2222-4333-8444-555555555555"
               }
             },
             {
@@ -3628,7 +3661,7 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "f3029e58-1552-4e39-8131-69b7b98aae5b",
+              "token": "3273c536-8b6f-46fe-8d92-78775845ffb1",
               "withdrawnAt": "2026-11-03T10:00:00.000Z"
             }
           ],
@@ -3673,10 +3706,12 @@
             },
             "state": "sent",
             "sentAt": "2026-11-03T10:00:00.000Z",
-            "token": "ea712abf-511e-4628-9dc4-322ec364034b",
+            "token": "3e9e230b-ad36-4b74-b1ec-9bd619b6ea4c",
             "readAt": "2026-11-03T10:00:00.000Z",
             "readBy": {
-              "kind": "window"
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
             }
           }
         }
@@ -3988,7 +4023,7 @@
         "id": 61,
         "result": {
           "merge": {
-            "token": "45abd7aa-3665-4402-806b-53da4e40b9ea",
+            "token": "c84b8260-c90b-4b1b-a313-149f6474f778",
             "people": [
               {
                 "name": "Alex Example"
@@ -4065,7 +4100,7 @@
         "id": 62,
         "method": "people.unmerge",
         "params": {
-          "token": "45abd7aa-3665-4402-806b-53da4e40b9ea"
+          "token": "c84b8260-c90b-4b1b-a313-149f6474f778"
         }
       },
       "reply": {
@@ -4073,7 +4108,7 @@
         "id": 62,
         "result": {
           "merge": {
-            "token": "45abd7aa-3665-4402-806b-53da4e40b9ea",
+            "token": "c84b8260-c90b-4b1b-a313-149f6474f778",
             "people": [
               {
                 "name": "Alex Example"
@@ -4239,7 +4274,7 @@
         "id": 66,
         "result": {
           "entry": {
-            "token": "98d56288-8b75-40d4-aed2-f0124d5320a6",
+            "token": "d508ed7c-c61f-4b2a-821f-09707d06281e",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -4816,7 +4851,7 @@
           "unassigned": [
             "2026-11-03-1000-design-review"
           ],
-          "backup": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-MESqvG/gt-test-home-k56kBa/.genesis-tools/backups/meetings/2026-11-03-1000-project-Harbor.json"
+          "backup": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-D31TmI/gt-test-home-NLpvWp/.genesis-tools/backups/meetings/2026-11-03-1000-project-Harbor.json"
         }
       }
     },
@@ -4829,7 +4864,7 @@
         "params": {
           "meeting": "2026-11-03-1000-design-review",
           "entry": {
-            "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4",
+            "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -4889,7 +4924,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4",
+                    "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -4921,9 +4956,9 @@
         "method": "decision.reverted",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
-          "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4",
+          "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57",
           "entry": {
-            "token": "d92d84b6-e7ca-41f8-982e-267c2968dc05",
+            "token": "687bd1ef-5640-4cb8-9163-f4189c8a9b29",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -4933,7 +4968,7 @@
             },
             "action": {
               "kind": "revert",
-              "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4"
+              "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57"
             },
             "decided": [],
             "settled": [],
@@ -4960,7 +4995,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "2f0c2faf-cc54-4e48-ba62-12f2993cdbc4",
+                    "token": "711b6eab-3ef0-4801-97d2-da7db4eb6b57",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -5010,7 +5045,7 @@
         "method": "comment.sent",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
-          "token": "ea712abf-511e-4628-9dc4-322ec364034b",
+          "token": "3e9e230b-ad36-4b74-b1ec-9bd619b6ea4c",
           "comments": [
             {
               "id": "c1",
@@ -5033,7 +5068,7 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "ea712abf-511e-4628-9dc4-322ec364034b"
+              "token": "3e9e230b-ad36-4b74-b1ec-9bd619b6ea4c"
             }
           ],
           "listeners": [
