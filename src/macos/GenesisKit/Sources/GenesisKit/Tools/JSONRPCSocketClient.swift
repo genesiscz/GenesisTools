@@ -148,10 +148,19 @@ public final class JSONRPCSocketClient: @unchecked Sendable {
     }
 
     public let path: String
-    /// `(method, params)` of each notification.
-    public var onNotification: ((String, Any?) -> Void)?
+    private let callbackLock = NSLock()
+    private var notificationCallback: ((String, Any?) -> Void)?
+    private var closeCallback: (() -> Void)?
+    /// `(method, params)` of each notification. Replacement and reads may come from different queues.
+    public var onNotification: ((String, Any?) -> Void)? {
+        get { callbackLock.withLock { notificationCallback } }
+        set { callbackLock.withLock { notificationCallback = newValue } }
+    }
     /// Once, when the connection ends for any reason after a successful `connect`.
-    public var onClose: (() -> Void)?
+    public var onClose: (() -> Void)? {
+        get { callbackLock.withLock { closeCallback } }
+        set { callbackLock.withLock { closeCallback = newValue } }
+    }
 
     private let queue = DispatchQueue(label: "genesis.jsonrpc.socket")
     private let callbackQueue: DispatchQueue

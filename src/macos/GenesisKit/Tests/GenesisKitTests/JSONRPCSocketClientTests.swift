@@ -110,3 +110,23 @@ final class JSONRPCSocketClientTests: XCTestCase {
         XCTAssertTrue(old === client)
     }
 }
+
+final class JSONRPCCallbackTests: XCTestCase {
+    func testCallbackSlotsCanChangeWhileCallbacksAreRead() {
+        let client = JSONRPCSocketClient(path: "/unused", callbackQueue: .global())
+        DispatchQueue.concurrentPerform(iterations: 2000) { index in
+            if index.isMultiple(of: 2) {
+                client.onNotification = { _, _ in }
+                client.onClose = {}
+            } else {
+                client.onNotification?("changed", nil)
+                client.onClose?()
+            }
+        }
+        // Invoking a callback must not hold the slots' lock: a callback may detach itself.
+        client.onClose = { client.onNotification = nil }
+        client.onClose?()
+        client.onClose = nil
+        XCTAssertNil(client.onNotification)
+    }
+}
