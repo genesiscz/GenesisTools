@@ -23,6 +23,9 @@ struct LiveHierarchySource: HierarchySource {
         if read == .invalidUIElement, let root, !CFEqual(element, root) {
             throw VanishedElement()
         }
+        if read == .failure, let root, !CFEqual(element, root) {
+            throw UnreadableChildren(read.rawValue)
+        }
         guard read == .success || read == .attributeUnsupported || read == .noValue else {
             throw ObservedTreeError("AX tree read failed (\(read.rawValue)); refresh instead of assuming an empty subtree",
                                     vanished: read == .invalidUIElement)
@@ -481,6 +484,7 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
             "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "bulk": workflowBulkUsed,
             // The count of the tree these elements came from, not of the second read that checked it.
             "vanishedDuringWalk": tree.vanished,
+            "unreadableSubtrees": tree.unreadableSubtrees,
             "elements": publicRows]
     if !queryReport.isEmpty {
         output["query"] = queryReport
@@ -1185,11 +1189,14 @@ func cmdAct(appName _: String) {
             : coordinateStaleRefusal(error, windowStableKey: tree.rows.first?["stableKey"] as? String))
     }
     let element = tree.elements[elementIndex]
+    func targetPoint(in bounds: CGRect) throws -> CGPoint? {
+        try rawCoords.map {
+            try snapshotCoordinatePoint($0, frame: workflowArgument("--frame") ?? "screen", window: bounds)
+        }
+    }
     ActionCursor.describe(element)
     if action != "get", !(action == "focus" && elementIndex == 0) {
-        let coordinates = rawCoords?.split(separator: ",").compactMap { Double($0) }
-        let point = coordinates?.count == 2 ? CGPoint(x: coordinates![0], y: coordinates![1]) : nil
-        do { try validateModalTarget(rows: tree.rows, target: elementIndex, point: point) }
+        do { try validateModalTarget(rows: tree.rows, target: elementIndex, point: targetPoint(in: window.bounds)) }
         catch { workflowFailure(error) }
     }
     var prepared = false
@@ -1227,7 +1234,7 @@ func cmdAct(appName _: String) {
         window = refreshedWindow
         tree = refreshed
         elementIndex = nextIndex
-        do { try validateModalTarget(rows: tree.rows, target: elementIndex) }
+        do { try validateModalTarget(rows: tree.rows, target: elementIndex, point: targetPoint(in: window.bounds)) }
         catch { workflowFailure(error) }
         dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
             digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query,truncate:token.truncates)
@@ -1324,7 +1331,7 @@ func cmdAct(appName _: String) {
                     sameElement: CFEqual(element, fresh.elements[currentIndex]))
             }
 
-            try validateModalTarget(rows: fresh.rows, target: currentIndex)
+            try validateModalTarget(rows: fresh.rows, target: currentIndex, point: targetPoint(in: freshWindow.bounds))
             _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
                 digest: dispatchToken.digest, element: currentIndex, count: fresh.elements.count,
                 now: Date().timeIntervalSince1970)
@@ -1333,7 +1340,7 @@ func cmdAct(appName _: String) {
                   let currentIndex = remapDocumentTarget(observedIndex: elementIndex, observed: documentPin, current: current) else {
                 throw SnapshotError.refusal(.staleObservation, "the page changed; run see again")
             }
-            try validateModalTarget(rows: fresh.rows, target: currentIndex)
+            try validateModalTarget(rows: fresh.rows, target: currentIndex, point: targetPoint(in: freshWindow.bounds))
             _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
                 digest: dispatchToken.digest, element: currentIndex, count: fresh.elements.count,
                 now: Date().timeIntervalSince1970)
@@ -1514,18 +1521,7 @@ func cmdAct(appName _: String) {
         // window moving opts in with --frame window, and that is the one this documents.
         let coordinateFrame = workflowArgument("--frame") ?? "screen"
         func parsePoint(_ raw: String, requireInside: Bool = true) throws -> CGPoint {
-            let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
-            let numbers = parts.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-            guard parts.count == 2, numbers.count == 2, numbers.allSatisfy({ $0.isFinite }) else {
-                throw WindowEventError.unavailable("coordinates require two finite numbers x,y")
-            }
-            let given = CGPoint(x: numbers[0], y: numbers[1])
-            // A window-relative point is resolved against the window's CURRENT origin, which is
-            // the whole point: the HUD that moved from -459,-1057 to -64,-922 between two calls
-            // keeps the same window-relative coordinates.
-            let point = coordinateFrame == "window"
-                ? CGPoint(x: window.bounds.origin.x + given.x, y: window.bounds.origin.y + given.y)
-                : given
+            let point = try snapshotCoordinatePoint(raw, frame: coordinateFrame, window: window.bounds)
             guard !requireInside || window.bounds.contains(point) else {
                 throw WindowEventError.unavailable(describeOutsideWindow(point: point, window: window))
             }

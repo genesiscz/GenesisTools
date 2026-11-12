@@ -39,6 +39,13 @@ public struct VanishedElement: Error {
     public init() {}
 }
 
+/// The element still exists, but its children could not be read. This is never an empty subtree.
+public struct UnreadableChildren: Error, LocalizedError {
+    public let code: Int32
+    public init(_ code: Int32) { self.code = code }
+    public var errorDescription: String? { "AX children read failed (\(code)); subtree was not observed" }
+}
+
 public struct ObservedTreeData {
     public var elements: [AXUIElement] = []
     public var frames: [CGRect] = []
@@ -48,6 +55,7 @@ public struct ObservedTreeData {
     public var vanished = 0
     /// Rows at the depth limit whose children `--truncate` left out.
     public var truncatedAt: [Int] = []
+    public var unreadableSubtrees: Int { rows.filter { $0["childrenUnreadable"] is String }.count }
     public init() {}
 }
 
@@ -106,7 +114,8 @@ public func observationBudgetMessage(walked: Int) -> String {
 /// Pre-order walk from `root`. Shared AX objects are visited once, window buttons are leaves,
 /// chrome scope omits web-area descendants, and a tree deeper than `depth` or larger than
 /// `observedElementLimit` is refused rather than truncated. `expired` is the caller's deadline:
-/// once it answers true the walk stops with an error, never with a partial tree.
+/// once it answers true the walk stops with an error. A non-root child-list failure retains its
+/// row with childrenUnreadable, so callers can distinguish an unknown subtree from an empty one.
 public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth: Int, scope: String,
                               truncate: Bool = false, expired: () -> Bool = { false }) throws -> ObservedTreeData {
     guard (1...maxObservedDepth).contains(depth) else {
@@ -127,12 +136,17 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
             throw ObservedTreeError(observationBudgetMessage(walked: tree.elements.count))
         }
         let rawChildren: [AXUIElement]
+        var childrenUnreadable: String?
         do {
             rawChildren = try source.children(of: element)
         } catch is VanishedElement {
             // Gone from the UI: no row for it, so no index can point at a dead element.
             tree.vanished += 1
             return
+        } catch let error as UnreadableChildren {
+            guard level > 0 else { throw error }
+            rawChildren = []
+            childrenUnreadable = error.localizedDescription
         }
         let subrole = source.attribute(element, "AXSubrole") as? String ?? ""
         let windowButton = windowButtonSubroles.contains(subrole)
@@ -156,6 +170,7 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
             "visible": frame.width > 0 && frame.height > 0 && visibleClip.contains(CGPoint(x: frame.midX, y: frame.midY)),
             "actions": source.actionNames(of: element).sorted(),
         ]
+        if let childrenUnreadable { row["childrenUnreadable"] = childrenUnreadable }
         // A long line or a wide text node can have its CENTER clipped by a narrow column while most of
         // it is on screen. Record where the visible part is, so a click can land there instead of being
         // refused ("element center is outside its window/scroll clip").

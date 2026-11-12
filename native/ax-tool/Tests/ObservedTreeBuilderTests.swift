@@ -62,6 +62,7 @@ private final class FakeSource: HierarchySource {
             throw VanishedElement()
         }
         if let error = node.childrenError {
+            if error == .failure { throw UnreadableChildren(error.rawValue) }
             throw ObservedTreeError("AX tree read failed (\(error.rawValue)); refresh instead of assuming an empty subtree")
         }
         return node.children.map(self.element)
@@ -608,5 +609,33 @@ final class DocumentScopeTests: XCTestCase {
         let churned = try tree(browser(tabs: ["Extensions - 170 MB"]))
         XCTAssertNil(remapDocumentTarget(observedIndex: tab, observed: try documentScope(observed.rows),
                                          current: try documentScope(churned.rows)))
+    }
+}
+
+extension ObservedTreeBuilderTests {
+    func testUnreadableBranchIsDisclosedAndReadableSiblingSurvives() throws {
+        let fake = source()
+        fake.nodes[3]?.childrenError = .failure
+        let partial = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window")
+        XCTAssertEqual(partial.rows.map { $0["role"] as? String }, ["AXWindow", "AXButton", "AXGroup"])
+        XCTAssertEqual(partial.rows[2]["childrenUnreadable"] as? String, UnreadableChildren(-25200).localizedDescription)
+        XCTAssertEqual(partial.rows[1]["actions"] as? [String], ["AXPress", "AXShowMenu"])
+        fake.nodes[3]?.childrenError = nil
+        let complete = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window")
+        XCTAssertNotEqual(partial.digest, complete.digest, "A repaired subtree invalidates the partial snapshot")
+        fake.nodes[1]?.childrenError = .failure
+        XCTAssertThrowsError(try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window"))
+    }
+
+    func testQueryDisclosesUnreadableSiblingWithoutHidingItsMatch() throws {
+        let fake = source()
+        fake.nodes[3]?.childrenError = .failure
+        let result = try buildQueryTree(root: fake.element(1), source: fake, depth: 5,
+                                       query: TreeQuery(text: "Save", role: "AXButton"))
+        XCTAssertEqual(result.report.matches, 1)
+        XCTAssertEqual(result.report.unreadableSubtrees, 1)
+        XCTAssertEqual(result.tree.unreadableSubtrees, 1)
+        XCTAssertEqual(result.tree.rows.map { $0["role"] as? String }, ["AXWindow", "AXButton", "AXGroup"])
+        XCTAssertNotNil(result.tree.rows[2]["childrenUnreadable"])
     }
 }

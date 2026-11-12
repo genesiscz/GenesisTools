@@ -797,3 +797,43 @@ extension AttachedSheetFocusTests {
         XCTAssertEqual(reads, 4)
     }
 }
+
+extension ModalDispatchTests {
+    func testUnreadableBranchProtectsItsTargetsAndCoordinatesButNotReadableSiblings() throws {
+        let rows: [[String: Any]] = [
+            ["role": "AXWindow", "depth": 0],
+            ["role": "AXGroup", "depth": 1, "x": 0, "y": 0, "width": 100, "height": 100,
+             "childrenUnreadable": "AX children read failed (-25200); subtree was not observed"],
+            ["role": "AXButton", "depth": 2],
+            ["role": "AXButton", "depth": 1, "x": 150, "y": 0, "width": 50, "height": 50]
+        ]
+        XCTAssertThrowsError(try validateModalTarget(rows: rows, target: 1))
+        XCTAssertThrowsError(try validateModalTarget(rows: rows, target: 2))
+        XCTAssertThrowsError(try validateModalTarget(rows: rows, target: 0))
+        XCTAssertNoThrow(try validateModalTarget(rows: rows, target: 3))
+        XCTAssertThrowsError(try validateModalTarget(rows: rows, target: 0, point: CGPoint(x: 50, y: 50)))
+        XCTAssertNoThrow(try validateModalTarget(rows: rows, target: 0, point: CGPoint(x: 175, y: 25)))
+    }
+}
+
+extension ModalDispatchTests {
+    func testIncompleteBranchValidationUsesCurrentGlobalCoordinates() throws {
+        for origin in [CGPoint(x: -500, y: 100), CGPoint(x: 300, y: -400)] {
+            let window = CGRect(origin: origin, size: CGSize(width: 400, height: 300))
+            let rows: [[String: Any]] = [
+                ["role": "AXWindow", "depth": 0],
+                ["role": "AXGroup", "depth": 1, "x": origin.x + 10, "y": origin.y + 10,
+                 "width": 100, "height": 100, "childrenUnreadable": "AX failure"]
+            ]
+            let inside = try snapshotCoordinatePoint("20,20", frame: "window", window: window)
+            XCTAssertEqual(inside, CGPoint(x: origin.x + 20, y: origin.y + 20))
+            XCTAssertThrowsError(try validateModalTarget(rows: rows, target: 0, point: inside))
+            let outside = try snapshotCoordinatePoint("200,200", frame: "window", window: window)
+            XCTAssertNoThrow(try validateModalTarget(rows: rows, target: 0, point: outside))
+            let screen = try snapshotCoordinatePoint("200,200", frame: "screen", window: window)
+            XCTAssertEqual(screen, CGPoint(x: 200, y: 200))
+        }
+        XCTAssertThrowsError(try snapshotCoordinatePoint("nan,2", frame: "window", window: .zero))
+        XCTAssertThrowsError(try snapshotCoordinatePoint("1,2,3", frame: "screen", window: .zero))
+    }
+}
