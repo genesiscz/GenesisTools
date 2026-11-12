@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as fileLines from "@genesiscz/utils/fs/read-lines";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import {
@@ -22,6 +23,7 @@ import {
     decisionActionSchema,
     decisionReach,
     JOURNAL_FILE,
+    journalEntrySchema,
 } from "./decision-journal";
 import { reviewRow } from "./review-rows";
 import { assignmentReach } from "./speaker-assign";
@@ -267,6 +269,43 @@ describe("decision journal", () => {
         expect(actorText({ kind: "agent", harness: "grok", session: null })).toBe("an agent (Grok)");
         expect(actorText({ kind: "agent", harness: "other-agent", session: null })).toBe("an agent (other-agent)");
         expect(actorText({ kind: "unknown" })).toBe("someone, before the history existed");
+    });
+
+    test("a future journal action remains visible, cannot be undone, and does not block known decisions", async () => {
+        const fx = await fixture([term("i1", 10, { proposed: "Wiki" })]);
+        const result = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i1"] },
+            actor: person,
+        });
+        const file = fx.journal.path(fx.meeting.id);
+        appendFileSync(
+            file,
+            `${SafeJSON.stringify({
+                token: "future-token",
+                at: now,
+                meeting: fx.meeting.id,
+                actor: { kind: "window" },
+                action: { kind: "future-action", extra: { version: 9 } },
+                changes: [],
+            })}\n`
+        );
+        const bytes = readFileSync(file, "utf8");
+        const record = readFileSync(fx.store.path(fx.meeting.id), "utf8");
+        const entries = fx.journal.read(fx.meeting.id);
+        expect(entries).toHaveLength(2);
+        expect(entries[0]?.action).toEqual({ kind: "unsupported", name: "future-action" });
+        expect(journalEntrySchema.parse(entries[0]).action).toEqual(entries[0]?.action);
+        expect(decisionActionSchema.safeParse({ kind: "unsupported", name: "future-action" }).success).toBe(false);
+        expect(journalEntrySchema.safeParse({ ...entries[0], action: { kind: "answer" } }).success).toBe(false);
+        await expect(
+            fx.journal.revert({ meeting: fx.meeting.id, token: "future-token", actor: person })
+        ).rejects.toThrow("newer build");
+        expect(readFileSync(file, "utf8")).toBe(bytes);
+        expect(readFileSync(fx.store.path(fx.meeting.id), "utf8")).toBe(record);
+        await fx.journal.revert({ meeting: fx.meeting.id, token: result.entry!.token, actor: person });
+        expect(fx.item("i1")?.status).toBe("suggested");
+        expect(readFileSync(file, "utf8").startsWith(bytes)).toBe(true);
     });
 
     test("an item decided before the journal reads as unknown, and its old token still reopens it", async () => {

@@ -78,6 +78,8 @@ function whatText(record: MeetingRecord, entry: JournalReadEntry): string {
             return `set ${(entry.fields ?? []).map((field) => `${field.field} ${fieldText(field.after)}`).join(", ")}`;
         case "comment":
             return `told the listening agent: ${action.comments.map((comment) => `"${comment.text.trim()}"`).join(", ")}`;
+        case "unsupported":
+            return `newer build: ${action.name} (open that build to undo)`;
     }
 }
 

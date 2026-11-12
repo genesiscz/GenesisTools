@@ -782,6 +782,7 @@ extension MeetingsWords {
         case "assign": return "gave a stretch to \(action.person ?? "someone")"
         case "revert": return "undid a decision"
         case "comment": return "told the listening agent"
+        case "unsupported": return "made a decision with a newer build (\(action.name ?? "unknown action"))"
         default: return action.kind
         }
     }

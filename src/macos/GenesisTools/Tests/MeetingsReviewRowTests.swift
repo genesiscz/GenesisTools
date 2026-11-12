@@ -469,6 +469,14 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(MeetingsPreferences.Rows.stateLook.defaultValue, .hueAndGlyph)
     }
 
+    func testAFutureJournalActionExplainsItsOriginWithoutOfferingUndo() throws {
+        let future = try entry(token: "future", action: #"{"kind":"unsupported","name":"future-action"}"#, changes: [])
+        XCTAssertFalse(future.canUndo)
+        XCTAssertEqual(MeetingsWords.entryAction(future), "made a decision with a newer build (future-action)")
+        let known = try entry(token: "known", action: #"{"kind":"confirm","items":["i1"]}"#, changes: [("i1", "suggested", "confirmed")])
+        XCTAssertTrue(known.canUndo)
+    }
+
     func testANoticeNamesAQuestionByItsLabel() throws {
         let answer = try entry(token: "t1", action: #"{"kind":"answer","question":"q1","answer":"Dana Example"}"#, changes: [("q1", "suggested", "confirmed")])
         XCTAssertEqual(MeetingsWords.entryAction(answer), "answered q1: Dana Example")

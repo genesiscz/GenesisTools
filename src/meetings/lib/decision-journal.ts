@@ -1364,6 +1364,11 @@ export class DecisionJournal {
      */
     async revert(request: RevertRequest): Promise<Decided> {
         const target = this.entries(request.meeting).find((entry) => entry.token === request.token);
+        if (target?.action.kind === "unsupported") {
+            throw new Error(
+                `This decision was made by a newer build (${target.action.name}). Open it in that build to undo it; nothing was changed.`
+            );
+        }
 
         if (target?.action.kind === "comment") {
             throw new Error(
@@ -1503,7 +1508,13 @@ export class DecisionJournal {
                 }
 
                 known ??= new Map(this.entries(meeting).map((entry) => [entry.token, entry]));
-                return known.get(wanted);
+                const entry = known.get(wanted);
+                if (entry?.action.kind === "unsupported") {
+                    throw new Error(
+                        `This decision was made by a newer build (${entry.action.name}). Open it in that build to undo it; nothing was changed.`
+                    );
+                }
+                return entry;
             },
         };
         let result: Decided = { skipped: [] };

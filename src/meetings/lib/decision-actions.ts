@@ -136,6 +136,29 @@ export const journalActionSchema = z.discriminatedUnion("kind", [
 ]);
 export type JournalAction = z.infer<typeof journalActionSchema>;
 
+const knownJournalKinds = new Set<string>([
+    ...journalActionSchema.options.map((option) => option.shape.kind.value),
+    "unsupported",
+]);
+const unsupportedJournalAction = z.object({ kind: z.literal("unsupported"), name: z.string().min(1) });
+/** Reading a newer action preserves its history without pretending this build can execute or undo it. */
+const savedJournalActionSchema = z.preprocess(
+    (value) => {
+        if (
+            typeof value === "object" &&
+            value !== null &&
+            "kind" in value &&
+            typeof value.kind === "string" &&
+            value.kind.length > 0 &&
+            !knownJournalKinds.has(value.kind)
+        ) {
+            return { kind: "unsupported", name: value.kind };
+        }
+        return value;
+    },
+    z.union([journalActionSchema, unsupportedJournalAction])
+);
+
 /** One item a decision changed: its state before (absent: the decision made it) and after (absent: it removed it). */
 export const itemChangeSchema = z.object({
     id: z.string(),
@@ -193,7 +216,7 @@ export const journalEntrySchema = z.object({
     /** An actor kind a newer build wrote reads as `unknown`, so its entry still reads and its token still reverts. */
     actor: savedDecisionActorSchema,
     reason: z.string().optional(),
-    action: journalActionSchema,
+    action: savedJournalActionSchema,
     /** The question it decided (an answer, a skip, a split) or gave back (the Undo of one). */
     question: z.string().optional(),
     decided: z.array(z.string()).default([]),

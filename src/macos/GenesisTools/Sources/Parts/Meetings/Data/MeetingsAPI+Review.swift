@@ -214,6 +214,7 @@ struct JournalEntry: Decodable, Equatable, Identifiable {
     let revertedBy: String?
 
     var id: String { token }
+    var canUndo: Bool { revertedBy == nil && !["comment", "revert", "unsupported"].contains(action.kind) }
 
     enum CodingKeys: String, CodingKey {
         case token, at, meeting, actor, reason, action, question, decided, settled, skipped, changes, labels, revertedBy

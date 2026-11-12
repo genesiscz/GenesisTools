@@ -329,9 +329,12 @@ private struct HistoryRow: View {
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            if entry.revertedBy != nil {
+            if entry.action.kind == "unsupported" {
+                Badge("Newer build", color: KitPalette.faint)
+                    .instantTooltip("Open this meeting in the build that made this decision to undo it.")
+            } else if entry.revertedBy != nil {
                 Badge("Undone", color: KitPalette.faint)
-            } else if entry.action.kind != "comment" && entry.action.kind != "revert" {
+            } else if entry.canUndo {
                 GhostButton("Undo", symbol: "arrow.uturn.backward", tooltip: "Take this decision back") {
                     detail.revert(token: entry.token, items: entry.touched.isEmpty ? nil : Array(entry.touched).sorted()) {
                         detail.openHistory(item: detail.history?.item)
