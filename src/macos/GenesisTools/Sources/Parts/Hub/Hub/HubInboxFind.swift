@@ -34,7 +34,10 @@ struct InboxFindHost: View {
             }
             .panelFind(find, revision: sessions) {
                 sessions.flatMap { session in
-                    [PanelFindRow(id: "session:\(session.id)", fields: session.findFields, container: session.id)]
+                    if HubLayout.option("lists") != nil {
+                        return session.items.map { PanelFindRow(id: $0.id, fields: session.findFields + $0.findFields) }
+                    }
+                    return [PanelFindRow(id: "session:\(session.id)", fields: session.findFields, container: session.id)]
                         + session.items.map { PanelFindRow(id: $0.id, fields: $0.findFields, container: session.id) }
                 }
             }
