@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import * as fileLines from "@genesiscz/utils/fs/read-lines";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import {
@@ -87,6 +88,35 @@ async function fixture(items: Record<string, unknown>[], labels: Record<string, 
 const person = { kind: "listen" } as const;
 
 describe("decision journal", () => {
+    test("reopening different tokens reads the journal once per decision", async () => {
+        const ids = ["i1", "i2", "i3"];
+        const fx = await fixture(ids.map((id, index) => term(id, 10 + index, { proposed: "ADA" })));
+        for (const id of ids) {
+            await fx.journal.apply({ meeting: fx.meeting.id, action: { kind: "confirm", items: [id] }, actor: person });
+        }
+        const reads = spyOn(fileLines, "readLinesSync");
+        try {
+            await fx.journal.apply({ meeting: fx.meeting.id, action: { kind: "reopen", items: ids }, actor: person });
+            expect(reads.mock.calls.filter(([path]) => path === fx.journal.path(fx.meeting.id))).toHaveLength(1);
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items.map((item) => item.status)).toEqual([
+                "suggested",
+                "suggested",
+                "suggested",
+            ]);
+            reads.mockClear();
+            await fx.journal.apply({ meeting: fx.meeting.id, action: { kind: "confirm", items: ids }, actor: person });
+            await fx.journal.apply({ meeting: fx.meeting.id, action: { kind: "reopen", items: ids }, actor: person });
+            expect(reads.mock.calls.filter(([path]) => path === fx.journal.path(fx.meeting.id))).toHaveLength(1);
+            expect(
+                new MeetingStore(fx.store.storage)
+                    .read(fx.meeting.id)!
+                    .items.every((item) => item.status === "suggested")
+            ).toBe(true);
+        } finally {
+            reads.mockRestore();
+        }
+    });
+
     test("the internal observer receives committed locked snapshots and excludes the next queued write", async () => {
         const fx = await fixture(lookAlikes());
         const snapshots: Array<{ before: MeetingRecord; after: MeetingRecord }> = [];

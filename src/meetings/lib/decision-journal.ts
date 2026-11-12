@@ -1490,7 +1490,9 @@ export class DecisionJournal {
         const prepared = handler.prepare ? await handler.prepare(saved, action, this.options.split) : {};
         const at = (this.options.now?.() ?? new Date()).toISOString();
         const token = randomUUID();
-        const known = new Map<string, JournalEntry | undefined>();
+        // One lazy snapshot per decision, read under the record lock. Reopening many independently confirmed
+        // items must not read and parse the whole journal again for each distinct token.
+        let known: Map<string, JournalEntry> | undefined;
         const context: ActionContext = {
             now: at,
             listenBelow: this.options.listenBelow ?? DEFAULT_LISTEN_BELOW,
@@ -1500,13 +1502,7 @@ export class DecisionJournal {
                     return undefined;
                 }
 
-                if (!known.has(wanted)) {
-                    known.set(
-                        wanted,
-                        this.entries(meeting).find((entry) => entry.token === wanted)
-                    );
-                }
-
+                known ??= new Map(this.entries(meeting).map((entry) => [entry.token, entry]));
                 return known.get(wanted);
             },
         };
