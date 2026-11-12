@@ -46,11 +46,18 @@ struct PRDetailSketchB: View {
         }
         .background { tabKeys }
         .onAppear { PRChecksSection.prepareSnapshot() }
-        .onReceive(prs.review?.$selectedID.dropFirst().eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
+        .onChange(of: prs.review.map(ObjectIdentifier.init), initial: true) { prs.review?.start() }
+        .overlay {
+            if let review = prs.review, let store = review.pr {
+                PRSubmitReviewHost(model: review, store: store)
+                    .id(ObjectIdentifier(review))
+            }
+        }
+        .onReceive(prs.review?.$navigationRequests.dropFirst().eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
             tab = .changes
             pickingFiles = false
         }
-        .onReceive(prs.review?.$scope.dropFirst().eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in tab = .changes }
+
         .onReceive(prs.review?.$focusedCard.dropFirst().eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { card in
             if card != nil { tab = .changes }
         }

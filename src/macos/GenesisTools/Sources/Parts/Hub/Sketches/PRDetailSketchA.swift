@@ -84,6 +84,13 @@ struct PRDetailSketchA: View {
             }
         }
         .onAppear { PRChecksSection.prepareSnapshot() }
+        .onChange(of: prs.review.map(ObjectIdentifier.init), initial: true) { prs.review?.start() }
+        .overlay {
+            if let review = prs.review, let store = review.pr {
+                PRSubmitReviewHost(model: review, store: store)
+                    .id(ObjectIdentifier(review))
+            }
+        }
     }
 
     // MARK: Header (C13, C14): one title row, one fact line, every count once

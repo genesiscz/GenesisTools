@@ -1918,21 +1918,58 @@ private struct PRBadge: View {
     }
 }
 
-/// Review layouts share the confirmation form and keyboard request path.
+/// The button and keyboard requests reach a host that stays mounted across every redesign tab.
 struct PRSubmitReviewButton: View {
     @ObservedObject var model: ReviewModel
     @ObservedObject var store: PRThreadsStore
-    @State private var submitting = false
 
     var body: some View {
-        Button("Submit review…") { submitting = true }
-            .disabled(!store.canWrite || store.busy != nil)
-            .instantTooltip("Publish pending drafts as one review; asks first")
-            .popover(isPresented: $submitting, arrowEdge: .bottom) {
-                SubmitReviewForm(store: store) { submitting = false }
+        HStack(spacing: 8) {
+            if !model.selectedThreads.isEmpty {
+                Button("Fix \(Plural.count(model.selectedThreads.count, "thread"))…") { model.fixRequests += 1 }
+                    .disabled(!store.canWrite || store.busy != nil)
+                    .instantTooltip("Send the selected threads to an agent; choose the agent first")
+                IconButton(systemName: "xmark.circle", tooltip: "Clear the Fix selection") { model.clearThreadSelection() }
+            }
+            Button("Submit review…") { model.submitRequests += 1 }
+                .disabled(!store.canWrite || store.busy != nil)
+                .instantTooltip("Publish pending drafts as one review; asks first")
+        }
+    }
+}
+
+struct PRSubmitReviewHost: View {
+    @ObservedObject var model: ReviewModel
+    @ObservedObject var store: PRThreadsStore
+    @State private var submitting = false
+    @State private var fixing = false
+
+    var body: some View {
+        Color.clear
+            .popover(isPresented: Binding(get: { submitting || fixing }, set: { if !$0 { submitting = false; fixing = false } }), arrowEdge: .top) {
+                if fixing {
+                    FixThreadsForm(model: model, store: store) { fixing = false }
+                } else {
+                    SubmitReviewForm(store: store) { submitting = false }
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                VStack(alignment: .trailing, spacing: 8) {
+                    if let notice = store.notice {
+                        NoticePill(text: notice, isError: notice.hasPrefix("Failed")) { store.notice = nil }
+                    }
+                    if let notice = model.notice {
+                        NoticePill(text: notice, isError: notice.lowercased().contains("failed") || notice.lowercased().contains("could not")) { model.notice = nil }
+                    }
+                }
+                .frame(maxWidth: 560, alignment: .trailing)
+                .padding(14)
             }
             .onChange(of: model.submitRequests) { _, _ in
-                if store.canWrite, store.busy == nil { submitting = true }
+                if store.canWrite, store.busy == nil { fixing = false; submitting = true }
+            }
+            .onChange(of: model.fixRequests) { _, _ in
+                if store.canWrite, store.busy == nil, !model.selectedThreads.isEmpty { submitting = false; fixing = true }
             }
     }
 }
