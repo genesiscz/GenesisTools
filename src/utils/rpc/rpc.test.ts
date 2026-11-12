@@ -108,6 +108,53 @@ test("error replies retain the remote stack and issue", async () => {
     peer.close("done");
 });
 
+test("a handler failure sends its cause stack and issue, and the peer answers the next request", async () => {
+    const sent: string[] = [];
+    const cause = new Error("capture failed");
+    cause.stack = "Error: capture failed\n    at origin (/fixture/source.ts:12:3)";
+    const peer = new RpcPeer({
+        write: (bytes) => {
+            sent.push(bytes.toString("utf8"));
+            return bytes.length;
+        },
+        handle: async ({ method }) => {
+            if (method === "fail") {
+                throw new RpcError(
+                    1042,
+                    "refused",
+                    { reason: "fixture" },
+                    { cause, issue: { title: "Original refusal" } }
+                );
+            }
+            return { ok: true };
+        },
+        invalid: "answer",
+        log: logger.scoped("rpc-test").log,
+        label: "fixture",
+        tool: "fixture",
+    });
+    try {
+        peer.receive(Buffer.from(`${SafeJSON.stringify({ jsonrpc: "2.0", id: 41, method: "fail" })}\n`));
+        await peer.queue;
+        expect(SafeJSON.parse(sent[0], { strict: true })).toEqual({
+            jsonrpc: "2.0",
+            id: 41,
+            error: {
+                code: 1042,
+                message: "refused",
+                data: { reason: "fixture" },
+                stack: cause.stack,
+                issue: { tool: "fixture", title: "Original refusal" },
+            },
+        });
+        peer.receive(Buffer.from(`${SafeJSON.stringify({ jsonrpc: "2.0", id: 42, method: "next" })}\n`));
+        await peer.queue;
+        expect(SafeJSON.parse(sent[1], { strict: true })).toEqual({ jsonrpc: "2.0", id: 42, result: { ok: true } });
+    } finally {
+        peer.close("done");
+    }
+});
+
 describe("the JSON-RPC socket server, both directions", () => {
     test("the server asks a client that said hello as host, and the reply comes back by id", async () => {
         const { socket, connections } = serve(async ({ method, params, connection }) => {
