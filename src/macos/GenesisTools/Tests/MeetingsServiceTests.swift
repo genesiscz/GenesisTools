@@ -484,9 +484,9 @@ final class MeetingsServiceTests: XCTestCase {
 
     /// service.json as the TypeScript host writes it, naming the fake's socket and a live pid (and the checkout its code
     /// runs from, when given).
-    private func writeServiceEntry(sourceRoot: String? = nil) throws {
+    private func writeServiceEntry(sourceRoot: String? = nil, startedAt: String = "2026-11-09T19:00:00.000Z") throws {
         var entry: [String: Any] = ["version": 1, "protocol": 1, "pid": Int(getpid()), "socket": fake.path,
-                                    "startedAt": "2026-11-09T19:00:00.000Z", "codeStamp": 0]
+                                    "startedAt": startedAt, "codeStamp": 0]
         entry["sourceRoot"] = sourceRoot
         try JSONSerialization.data(withJSONObject: entry).write(to: folder.appendingPathComponent("service.json"))
     }
@@ -642,6 +642,60 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(fake.count("hello"), 1, "the second read did not knock again")
         XCTAssertEqual(commands.starts, 0, "a refusing service is not started over")
         XCTAssertEqual(service.state, .idle)
+    }
+
+    func testAReplacementServiceBypassesTheRejectedInstancesBackoff() async throws {
+        try writeServiceEntry()
+        fake.helloAnswer = ["error": ["code": 1100, "message": "code changed",
+                                      "data": ["code": "code-mismatch"]]]
+        let service = makeService()
+        defer { service.disconnect() }
+        _ = try? await service.call(MeetingsAPI.Show.self, .init(ref: Self.design))
+        XCTAssertEqual(fake.count("hello"), 1)
+
+        // Same socket and PID, new service lifetime. Rewriting the discovery entry happens at service startup.
+        fake.helloAnswer = ["result": try MeetingsFixture.helloResult()]
+        try writeServiceEntry(startedAt: "2026-11-09T19:01:00.000Z")
+        let record = try await service.call(MeetingsAPI.Show.self, .init(ref: Self.design))
+        XCTAssertEqual(record.id, Self.design)
+        XCTAssertEqual(fake.count("hello"), 2, "a replacement is not held behind the old service's minute-long refusal")
+        XCTAssertEqual(commands.starts, 0, "the replacement already runs")
+    }
+
+    func testARejectedServiceThatExitedAllowsAStartImmediately() async throws {
+        try writeServiceEntry()
+        fake.helloAnswer = ["error": ["code": 1100, "message": "code changed",
+                                      "data": ["code": "code-mismatch"]]]
+        let service = makeService()
+        _ = try? await service.call(MeetingsAPI.Show.self, .init(ref: Self.design))
+        // Retain the file with a dead PID, as an abruptly exited service can do.
+        var entry = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("service.json"))) as? [String: Any])
+        entry["pid"] = Int(Int32.max)
+        try JSONSerialization.data(withJSONObject: entry).write(to: folder.appendingPathComponent("service.json"))
+        XCTAssertEqual(service.discover(), .none)
+        _ = try? await service.call(MeetingsAPI.Show.self, .init(ref: Self.design))
+        await Task.yield()
+        XCTAssertEqual(commands.starts, 1, "a dead rejected instance cannot block recovery")
+        XCTAssertEqual(fake.count("hello"), 1, "the dead instance is not contacted again")
+    }
+
+    func testAKeptSubscriptionNoticesAReplacementDuringRefusalBackoff() async throws {
+        try writeServiceEntry()
+        fake.helloAnswer = ["error": ["code": 1100, "message": "code changed",
+                                      "data": ["code": "code-mismatch"]]]
+        let service = makeService()
+        defer { service.unsubscribe() }
+        _ = try? await service.subscribe(meeting: Self.design, events: ["meeting.changed"])
+        XCTAssertEqual(fake.count("hello"), 1)
+        // Give the reconnect loop time to enter its refusal wait before replacing the service.
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(fake.count("hello"), 1, "do not repeatedly knock on the refused service")
+        fake.helloAnswer = ["result": try MeetingsFixture.helloResult()]
+        try writeServiceEntry(startedAt: "2026-11-09T19:01:00.000Z")
+        for _ in 0..<100 where !service.isSubscribed { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(service.isSubscribed, "metadata changes resume the subscription without another read")
+        XCTAssertEqual(fake.count("hello"), 2)
+        XCTAssertEqual(fake.count("subscribe"), 1)
     }
 
     func testADroppedConnectionIsOpenedAgainWithANewHello() async throws {

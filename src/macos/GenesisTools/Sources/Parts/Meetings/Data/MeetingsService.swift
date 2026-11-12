@@ -300,7 +300,8 @@ struct MeetingListRow: Decodable, Equatable {
 /// down or changing. When no service answers, this side starts one in the background through the launcher
 /// (`tools meetings serve --detach`), at most once per `startThrottle`; the read that found none does not wait for it.
 /// A service whose code is changing refuses the hello with `code-mismatch` and exits within a minute: the window looks
-/// again only after `refusedBackoff`. The connection closes after `idleClose` with no call and no subscription, so the
+/// again after `refusedBackoff`, or sooner when that instance exits or its discovery entry changes. The connection
+/// closes after `idleClose` with no call and no subscription, so the
 /// service can exit when it is idle. A kept subscription keeps a connection: when it closes, this side connects again
 /// by itself (`resumeSubscription`).
 @MainActor
@@ -396,6 +397,9 @@ final class MeetingsService {
     private var client: JSONRPCSocketClient?
     private var connecting: Task<JSONRPCSocketClient?, Never>?
     private var refusedUntil: Date?
+    /// Discovery is written once per service lifetime. A refusal belongs to that instance, not its replacement.
+    private var refusedDiscovery: Data?
+    private var clientDiscovery: Data?
     private var lastStart: Date?
     private var failedStarts = 0
     private var starting: Task<Void, Never>?
@@ -617,7 +621,7 @@ final class MeetingsService {
     /// The connection, after its hello; nil when no service answers now. Calls that arrive while it opens wait for it.
     private func connection() async -> JSONRPCSocketClient? {
         if let client, case .connected = state { return client }
-        if let refusedUntil, Date() < refusedUntil { return nil }
+        if backoffRemaining > 0 { return nil }
         if let connecting { return await connecting.value }
         let task = Task { await self.connect() }
         connecting = task
@@ -626,8 +630,28 @@ final class MeetingsService {
         return connected
     }
 
+    private func backOff(for duration: TimeInterval, discovery: Data?) {
+        refusedUntil = Date().addingTimeInterval(duration)
+        refusedDiscovery = discovery
+    }
+
+    /// Keep a refused instance quiet, but let an exited or replaced service recover immediately.
+    private var backoffRemaining: TimeInterval {
+        guard let until = refusedUntil else { return 0 }
+        let remaining = until.timeIntervalSinceNow
+        guard remaining > 0 else { return 0 }
+        if discover() == .none || (try? Data(contentsOf: discovery)) != refusedDiscovery {
+            refusedUntil = nil
+            refusedDiscovery = nil
+            HubPerf.log("meetings.service: refused instance exited or changed; looking for its replacement")
+            return 0
+        }
+        return remaining
+    }
+
     private func connect() async -> JSONRPCSocketClient? {
         state = .connecting
+        let entry = try? Data(contentsOf: discovery)
         let socket: String
         switch discover() {
         case .none:
@@ -639,7 +663,7 @@ final class MeetingsService {
             // only find it running; look again after the backoff (it may exit idle, and then this window starts its own).
             HubPerf.log("meetings.service: the live service runs \(root ?? "a checkout it does not name"), not "
                 + "\(checkout?.root() ?? "?"); the command answers")
-            refusedUntil = Date().addingTimeInterval(timing.refusedBackoff)
+            backOff(for: timing.refusedBackoff, discovery: entry)
             state = .idle
             return nil
         case .socket(let found):
@@ -662,11 +686,11 @@ final class MeetingsService {
             guard answer.protocol == MeetingsAPI.protocolVersion else {
                 HubPerf.log("meetings.service: the service speaks protocol \(answer.protocol), the window \(MeetingsAPI.protocolVersion)")
                 candidate.close()
-                refusedUntil = Date().addingTimeInterval(timing.refusedBackoff)
+                backOff(for: timing.refusedBackoff, discovery: entry)
                 state = .idle
                 return nil
             }
-            attach(candidate, hello: answer)
+            attach(candidate, hello: answer, discovery: entry)
             return candidate
         } catch {
             candidate.close()
@@ -674,7 +698,7 @@ final class MeetingsService {
             let refusal = (error as? JSONRPCSocketClient.RemoteError)?.decodeData(MeetingsAPI.ErrorData.self)?.code
             HubPerf.log("meetings.service: hello failed (\(refusal ?? "no answer")): \(error.localizedDescription)")
             if let refusal, MeetingsAPI.connectionRefusals.contains(refusal) {
-                refusedUntil = Date().addingTimeInterval(timing.refusedBackoff)
+                backOff(for: timing.refusedBackoff, discovery: entry)
             }
             return nil
         }
@@ -714,9 +738,11 @@ final class MeetingsService {
     }
 
     /// The connection answered its hello: a kept subscription is sent again.
-    private func attach(_ connected: JSONRPCSocketClient, hello: MeetingsAPI.Hello.Result) {
+    private func attach(_ connected: JSONRPCSocketClient, hello: MeetingsAPI.Hello.Result, discovery: Data?) {
         client = connected
+        clientDiscovery = discovery
         refusedUntil = nil
+        refusedDiscovery = nil
         state = .connected(methods: hello.methods, events: hello.events)
         HubPerf.log("meetings.service: connected (service \(hello.version), \(hello.methods.count) methods)")
         if let subscription {
@@ -745,17 +771,19 @@ final class MeetingsService {
         dropped.onClose = nil
         dropped.onNotification = nil
         dropped.close()
+        if let backoff { backOff(for: backoff, discovery: clientDiscovery) }
         if client === dropped {
             client = nil
+            clientDiscovery = nil
             state = .idle
             subscriptionLost()
         }
-        if let backoff { refusedUntil = Date().addingTimeInterval(backoff) }
         resumeSubscription()
     }
 
     /// While a subscription is kept and no connection is open, connects again by itself: after `reconnectDelay`, then
-    /// twice as long each time up to `refusedBackoff`, never before a refusal's backoff ends. `connection()` starts the
+    /// twice as long each time up to `refusedBackoff`. During a refusal, inspect discovery every reconnectDelay so a
+    /// replacement can connect promptly without knocking again on the refused instance. `connection()` starts the
     /// service when none runs, and `attach` sends the kept subscription. Nothing else would connect: the window reads
     /// on events, not on a timer.
     private func resumeSubscription() {
@@ -764,8 +792,8 @@ final class MeetingsService {
         resuming = Task { [weak self] in
             var delay = first
             while true {
-                let refused = self?.refusedUntil?.timeIntervalSinceNow ?? 0
-                try? await Task.sleep(for: .seconds(max(delay, refused)))
+                let refused = self?.backoffRemaining ?? 0
+                try? await Task.sleep(for: .seconds(refused > 0 ? min(first, refused) : delay))
                 // Cancelled: `unsubscribe` cleared `resuming` itself, and a later subscription may own it now.
                 guard let self, !Task.isCancelled else { return }
                 var done = self.subscription == nil || self.client != nil
@@ -777,7 +805,7 @@ final class MeetingsService {
                     self.resumeSubscription()
                     return
                 }
-                delay = min(delay * 2, self.timing.refusedBackoff)
+                delay = self.backoffRemaining > 0 ? first : min(delay * 2, self.timing.refusedBackoff)
             }
         }
     }
