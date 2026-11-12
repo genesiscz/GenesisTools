@@ -133,7 +133,7 @@ private struct UsageSketchDaemonRowA: View {
 
     private var disclosureTitle: String {
         let runs = stats?.recentRuns.count ?? 0
-        return runs == 0 ? "Statistics" : "Statistics and \(Plural.count(runs, "recent run"))"
+        return runs == 0 ? "Schedule, limits and statistics" : "Schedule, limits, statistics and \(Plural.count(runs, "recent run"))"
     }
 
     private var lastRunInFlight: Bool {

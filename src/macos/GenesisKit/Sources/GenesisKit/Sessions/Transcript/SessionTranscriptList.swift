@@ -857,7 +857,7 @@ public struct SessionTranscriptList: View {
     /// 2026-10-01): its output is the file, which the reader already has.
     private func defaultOpen(_ row: TranscriptRow) -> Bool {
         switch row.kind {
-        // `TranscriptSketch.opensToolsByDefault`: false only under `--sketch transcript=b` (Sketches/TranscriptSketchB.swift).
+        // Every layout uses the same verbosity default; explicit expansion choices remain in `expansion`.
         case .tool(let line): return verbosity.opensTools && TranscriptToolKind.of(line.name) != .read && TranscriptSketch.opensToolsByDefault
         case .thinking: return verbosity.opensThinking
         default: return false

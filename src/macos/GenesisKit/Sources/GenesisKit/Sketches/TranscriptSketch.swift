@@ -12,8 +12,8 @@ public extension EnvironmentValues {
 }
 
 /// Hub UX wave 2, area "transcript" (C17, C18, C19, C1-later): what the two redesign options change in the shared
-/// session screen. Every question here goes through `HubLayout.option("transcript")`, so a run without
-/// `--sketch transcript=a|b` draws every current view unchanged. Option A lives in `TranscriptSketchA.swift`, option B
+/// session screen. HubLayout reads the saved choice, Classic by default, and a per-process
+/// `--sketch transcript=a|b|classic` overrides that choice. Option A lives in `TranscriptSketchA.swift`, option B
 /// in `TranscriptSketchB.swift`; this file only routes to them.
 public enum TranscriptSketch {
     /// "a", "b", or nil for the current views.
@@ -23,7 +23,7 @@ public enum TranscriptSketch {
     /// Minimal folds them).
     @MainActor static var foldsToolRuns: Bool { option == "a" }
 
-    /// Option B draws every tool call closed, as one line with its result, at every verbosity; a click opens it.
+    /// Tool calls honor the reader's verbosity choice in every layout.
     /// Option A's calls sit inside folded runs, which start closed anyway.
     @MainActor static var opensToolsByDefault: Bool { true }
 

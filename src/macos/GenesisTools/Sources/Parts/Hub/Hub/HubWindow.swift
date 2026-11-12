@@ -2497,7 +2497,6 @@ struct HubRootView: View {
         .hubSurface(.content)
         // The window style, glass and General → Theme, for every surface above (Hub/HubStyle.swift).
         .modifier(HubStyleHost())
-        .environment(\.transcriptSubjectAbove, model.mode == .sessions)
         .preferredColorScheme(.dark)
         // Every stall and dropped-frame line in app-perf.log names this (GenesisKit Perf/PerfContext.swift).
         .task(id: perfArea) { PerfContext.area = perfArea }
@@ -2902,7 +2901,17 @@ private struct SessionListView: View {
                         .modifier(SidebarArrowKeys(
                             ids: { Self.inboxKeyOrder(model.inbox, sort: sort, filter: model.filter) },
                             selection: { model.inbox.selectedID },
-                            select: { model.inbox.selectedID = $0 },
+                            select: { id in
+                                model.inbox.selectedID = id
+                                if HubLayout.option("lists") != nil,
+                                   let session = model.inbox.sessions.first(where: { $0.id == id }),
+                                   let item = session.items.first(where: { $0.isOpen }) ?? session.items.first {
+                                    model.inbox.keyCardID = item.id
+                                    ListsSketchB.InboxPick.shared.bucket = nil
+                                    ListsSketchB.InboxPick.shared.project = nil
+                                    ListsSketchB.InboxPick.shared.open = item.id
+                                }
+                            },
                             proxy: proxy, focused: $listFocused, focusOnClick: true))
                 }
             } else if model.mode == .timeline {
@@ -3289,6 +3298,7 @@ struct SessionDetailView: View {
                 }
             }
         }
+        .environment(\.transcriptSubjectAbove, HubLayout.option("transcript") == "a" && agent?.node == nil)
         // Only the count is state: a resize step that keeps the same panes changes nothing here.
         .onGeometryChange(for: Int.self, of: { Self.fittingCount(visible, width: $0.size.width) }) { count in
             if fitting != count {
