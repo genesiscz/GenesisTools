@@ -1,13 +1,16 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import {
     MEETING_FILE,
-    MEETING_UNCHANGED,
     type MeetingRecord,
     type MeetingStore,
     meetingRecordSchema,
 } from "@genesiscz/utils/meetings/record";
+import { clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
+import { kickDrainer, loadRmConfig, moveToTrash, resolveTarget, rmCallerFromRuntime } from "@genesiscz/utils/rm";
+import { ANSWER_LOG_FILE, appendAnswerEvent, readAnswerEvents, runningRound } from "./answer-log";
+import { COMMENTS_FILE, MeetingComments } from "./comments";
 import { cloneTree } from "./merge";
 import { readRecorderState } from "./recorder-shared";
 
@@ -47,8 +50,89 @@ export async function duplicateMeeting(request: DuplicateRequest): Promise<Dupli
         throw new Error(`No meeting "${request.ref}".`);
     }
 
-    const recorder = readRecorderState(store);
+    return store.storage.withFileLock({
+        file: join(store.root, ".duplicate"),
+        fn: async () => {
+            recoverCopies(store);
+            return store.storage.withFileLock({
+                file: store.path(original.id),
+                fn: async () => duplicateLocked({ ...request, ref: original.id }),
+            });
+        },
+    });
+}
 
+const PENDING_COPIES = ".duplicate-pending";
+
+/** Only an unpublished folder reserved for this copy may be rolled back; a published copy always stays. */
+function discardCopy(store: MeetingStore, id: string): void {
+    const folder = store.folder(id);
+    if (existsSync(store.path(id)) || !existsSync(folder)) {
+        return;
+    }
+
+    const config = loadRmConfig();
+    const batch = moveToTrash([{ target: resolveTarget(folder, store.root), rule: "meetings-duplicate-rollback" }], {
+        config,
+        caller: rmCallerFromRuntime(),
+        graceMinutes: config.grace.otherMinutes,
+    });
+    if (!batch || existsSync(folder)) {
+        throw new Error(`The unfinished copy ${id} could not be moved to the trash.`);
+    }
+
+    kickDrainer(config);
+    log.debug({ id, batch: batch.id }, "unfinished meeting copy moved to trash");
+}
+
+/** The operation lock serializes recovery with new copies; pid identity also protects another live process. */
+function recoverCopies(store: MeetingStore): void {
+    const pending = join(store.root, PENDING_COPIES);
+    if (!existsSync(pending)) {
+        return;
+    }
+
+    for (const name of readdirSync(pending)) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*\.pid$/.test(name)) {
+            continue;
+        }
+
+        const claim = join(pending, name);
+        const state = inspectPidFile(claim);
+        if (state.status === "dead" || state.status === "foreign") {
+            discardCopy(store, name.slice(0, -4));
+            clearPidFile(claim, { force: true });
+        }
+    }
+}
+
+function closeCopiedListeners(folder: string): void {
+    const comments = new MeetingComments(join(folder, COMMENTS_FILE), { alive: () => true });
+    for (const listener of comments.listeners()) {
+        comments.leave(listener.pid);
+    }
+
+    const answers = join(folder, ANSWER_LOG_FILE);
+    const round = runningRound(readAnswerEvents(answers));
+    if (round.length > 0) {
+        appendAnswerEvent(answers, {
+            event: "round-end",
+            at: new Date().toISOString(),
+            reason: "stopped",
+            asked: round.filter((event) => event.event === "answered" || event.event === "skipped").length,
+            open: -1,
+        });
+    }
+}
+
+async function duplicateLocked(request: DuplicateRequest): Promise<DuplicateResult> {
+    const { store } = request;
+    const original = store.read(request.ref);
+    if (!original) {
+        throw new Error(`No meeting "${request.ref}".`);
+    }
+
+    const recorder = readRecorderState(store);
     if (recorder.running && recorder.state?.meetingId === original.id) {
         throw new Error(`${original.id} is being recorded now; stop the recording first, then duplicate it.`);
     }
@@ -63,24 +147,66 @@ export async function duplicateMeeting(request: DuplicateRequest): Promise<Dupli
         title: _title,
         ...fields
     } = original;
-    const copy = await store.create(
-        { ...fields, title },
-        { command: "duplicate", change: `duplicated from ${original.id}` }
-    );
     const from = store.folder(original.id);
-    const to = store.folder(copy.id);
-
-    for (const name of readdirSync(from)) {
-        if (name === MEETING_FILE) {
-            continue;
+    let prepared: { id: string; claim: string } | undefined;
+    const rollback = () => {
+        if (prepared) {
+            discardCopy(store, prepared.id);
+            clearPidFile(prepared.claim);
         }
+    };
+    let copy: MeetingRecord;
+    try {
+        copy = await store.createWithFiles({
+            fields: { ...fields, title },
+            change: { command: "duplicate", change: `duplicated from ${original.id}` },
+            beside: {
+                write: (record) => {
+                    const to = store.folder(record.id);
+                    const claim = join(store.root, PENDING_COPIES, `${record.id}.pid`);
+                    prepared = { id: record.id, claim };
+                    try {
+                        writePidFile(claim, { exclusive: true });
+                        for (const name of readdirSync(from)) {
+                            if (name === MEETING_FILE || /(?:\.pid|\.lock)(?:$|\.)/.test(name)) {
+                                continue;
+                            }
 
-        cloneTree(join(from, name), join(to, name));
+                            cloneTree(join(from, name), join(to, name));
+                        }
+
+                        closeCopiedListeners(to);
+                        repointPaths(record, from, to);
+                    } catch (error) {
+                        try {
+                            rollback();
+                        } catch (undoError) {
+                            log.error(
+                                { id: record.id, error: undoError },
+                                "unfinished meeting copy could not be rolled back"
+                            );
+                        }
+
+                        throw error;
+                    }
+                },
+                undo: rollback,
+                saved: () => {
+                    if (prepared) {
+                        clearPidFile(prepared.claim);
+                    }
+                },
+            },
+        });
+    } catch (error) {
+        // Releasing a file lock may recreate its parent for arbitration. Finish cleanup after that release.
+        try {
+            rollback();
+        } catch (undoError) {
+            log.error({ error: undoError }, "unfinished copy cleanup failed after its record lock was released");
+        }
+        throw error;
     }
-
-    await store.update(copy.id, { command: "duplicate", change: "paths point into the copy's folder" }, (current) =>
-        repointPaths(current, from, to) ? undefined : MEETING_UNCHANGED
-    );
     log.debug({ from: original.id, to: copy.id }, "meeting duplicated");
     return { from: original.id, id: copy.id, title };
 }

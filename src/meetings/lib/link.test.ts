@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
     appendFileSync,
     chmodSync,
@@ -9,16 +9,21 @@ import {
     statSync,
     writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { LinkGate } from "@genesiscz/utils/browser-router/link-gate";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { ANSWER_LOG_FILE, appendAnswerEvent, readAnswerEvents, roundRunning } from "./answer-log";
 import type { AssignInbox } from "./assign-inbox";
+import { COMMENTS_FILE, MeetingComments } from "./comments";
 import { copyTitle, duplicateMeeting } from "./duplicate";
 import { applySource, assertSourceFree, playLinksFor, sourceHolders } from "./link";
+import * as mergeFiles from "./merge";
 import { mergeMeetings } from "./merge";
 
 function gate(enabled: boolean, linkHost: string | null = "links.example"): LinkGate {
@@ -438,6 +443,141 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
 });
 
 describe("duplicate: a second record of one meeting", () => {
+    test("a killed copy stays unpublished and the next Duplicate reclaims it before retrying", async () => {
+        stores += 1;
+        const namespace = `meetings-duplicate-crash-${process.pid}-${stores}`;
+        const store = new MeetingStore(new Storage(namespace));
+        const original = await store.create(
+            { title: "Planning", start: "2026-11-05T13:02:36.000Z", createdBy: "new" },
+            { command: "test", change: "created" }
+        );
+        writeFileSync(join(store.folder(original.id), "capture.txt"), "original bytes");
+        const code = `
+            import { spyOn } from "bun:test";
+            import { writeFileSync } from "node:fs";
+            import { MeetingStore } from "@genesiscz/utils/meetings/record";
+            import { env } from "@genesiscz/utils/env";
+            env.testing.set("GENESIS_TOOLS_HOME", ${SafeJSON.stringify(env.tools.getHome())});
+            import { Storage } from "@genesiscz/utils/storage/storage";
+            import * as merge from ${SafeJSON.stringify(new URL("./merge.ts", import.meta.url).pathname)};
+            import { duplicateMeeting } from ${SafeJSON.stringify(new URL("./duplicate.ts", import.meta.url).pathname)};
+            const store = new MeetingStore(new Storage(${SafeJSON.stringify(namespace)}));
+            if (store.root !== ${SafeJSON.stringify(store.root)}) throw new Error("Unexpected fixture root");
+            spyOn(merge, "cloneTree").mockImplementation((_source, destination) => {
+                writeFileSync(destination, "interrupted bytes");
+                process.kill(process.pid, "SIGKILL");
+            });
+            await duplicateMeeting({ store, ref: ${SafeJSON.stringify(original.id)} });
+        `;
+        const child = Bun.spawn([process.execPath, "--eval", code], { stdout: "pipe", stderr: "pipe" });
+        const deadline = setTimeout(() => child.kill("SIGKILL"), 4_000);
+        try {
+            const [exit, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+            expect(stderr).not.toContain("error:");
+            expect(exit).not.toBe(0);
+        } finally {
+            clearTimeout(deadline);
+            child.kill("SIGKILL");
+        }
+        const pending = join(store.root, ".duplicate-pending");
+        const claims = readdirSync(pending).filter((name) => name.endsWith(".pid"));
+        expect(claims).toHaveLength(1);
+        const id = claims[0]!.slice(0, -4);
+        expect(existsSync(store.path(id))).toBe(false);
+        expect(new MeetingStore(store.storage).list().map((record) => record.id)).toEqual([original.id]);
+        expect(readFileSync(join(store.folder(id), "capture.txt"), "utf8")).toBe("interrupted bytes");
+        const copy = await duplicateMeeting({ store, ref: original.id });
+        if (copy.id !== id) {
+            expect(existsSync(store.folder(id))).toBe(false);
+        }
+        expect(readFileSync(join(store.folder(copy.id), "capture.txt"), "utf8")).toBe("original bytes");
+        expect(readdirSync(pending).filter((name) => name.endsWith(".pid"))).toEqual([]);
+        expect(new MeetingStore(store.storage).list()).toHaveLength(2);
+        expect(readFileSync(join(store.folder(original.id), "capture.txt"), "utf8")).toBe("original bytes");
+    });
+
+    test("a record publication failure takes back all prepared copy files", async () => {
+        stores += 1;
+        const store = new MeetingStore(new Storage(`meetings-duplicate-${process.pid}-${stores}`));
+        const original = await store.create(
+            { title: "Planning", start: "2026-11-05T13:02:36.000Z", createdBy: "new" },
+            { command: "test", change: "created" }
+        );
+        writeFileSync(join(store.folder(original.id), "capture.txt"), "original bytes");
+        const realWrite = atomicFile.atomicWriteFileSync;
+        const write = spyOn(atomicFile, "atomicWriteFileSync").mockImplementation((file, data, options) => {
+            if (file !== store.path(original.id) && file.endsWith("/meeting.json")) {
+                throw new Error("ENOSPC: publication failed");
+            }
+            realWrite(file, data, options);
+        });
+        try {
+            await expect(duplicateMeeting({ store, ref: original.id })).rejects.toThrow("ENOSPC: publication failed");
+        } finally {
+            write.mockRestore();
+        }
+        expect(new MeetingStore(store.storage).list().map((record) => record.id)).toEqual([original.id]);
+        expect(readdirSync(store.root).filter((name) => name.startsWith("2026-"))).toEqual([original.id]);
+        expect(readdirSync(join(store.root, ".duplicate-pending")).filter((name) => name.endsWith(".pid"))).toEqual([]);
+        expect(readFileSync(join(store.folder(original.id), "capture.txt"), "utf8")).toBe("original bytes");
+    });
+
+    test("a copy is invisible until its files are complete and a copy failure leaves no record", async () => {
+        stores += 1;
+        const store = new MeetingStore(new Storage(`meetings-duplicate-${process.pid}-${stores}`));
+        const original = await store.create(
+            { title: "Planning", start: "2026-11-05T13:02:36.000Z", createdBy: "new" },
+            { command: "test", change: "created" }
+        );
+        writeFileSync(join(store.folder(original.id), "capture.txt"), "original bytes");
+        const recordBefore = readFileSync(store.path(original.id), "utf8");
+        let visibleDuringCopy: string[] = [];
+        let unfinishedFolder = "";
+        const clone = spyOn(mergeFiles, "cloneTree").mockImplementation((_from, to) => {
+            visibleDuringCopy = new MeetingStore(store.storage).list().map((record) => record.id);
+            unfinishedFolder = dirname(to);
+            writeFileSync(to, "partial copy");
+            throw new Error("ENOSPC: fixture copy failed");
+        });
+        try {
+            await expect(duplicateMeeting({ store, ref: original.id })).rejects.toThrow("ENOSPC");
+            expect(visibleDuringCopy).toEqual([original.id]);
+            expect(existsSync(unfinishedFolder)).toBe(false);
+            expect(new MeetingStore(store.storage).list().map((record) => record.id)).toEqual([original.id]);
+            expect(readFileSync(store.path(original.id), "utf8")).toBe(recordBefore);
+            expect(readFileSync(join(store.folder(original.id), "capture.txt"), "utf8")).toBe("original bytes");
+        } finally {
+            clone.mockRestore();
+        }
+    });
+
+    test("the copy keeps comment and answer history but has no inherited live listener, round or worker lock", async () => {
+        stores += 1;
+        const store = new MeetingStore(new Storage(`meetings-duplicate-${process.pid}-${stores}`));
+        const original = await store.create(
+            { title: "Planning", start: "2026-11-05T13:02:36.000Z", createdBy: "new" },
+            { command: "test", change: "created" }
+        );
+        const folder = store.folder(original.id);
+        const at = "2026-11-05T13:02:36.000Z";
+        const listener = { kind: "listening", listener: { pid: process.pid, at, actor: { kind: "window" } } };
+        writeFileSync(join(folder, COMMENTS_FILE), `${SafeJSON.stringify(listener)}\n`);
+        appendAnswerEvent(join(folder, ANSWER_LOG_FILE), { event: "round-start", at, pid: process.pid, open: 1 });
+        appendAnswerEvent(join(folder, ANSWER_LOG_FILE), { event: "skipped", at, item: "i1" });
+        writeFileSync(join(folder, "ocr.pid"), String(process.pid));
+        writeFileSync(join(folder, "comments.ndjson.lock"), "live lock");
+        const result = await duplicateMeeting({ store, ref: original.id });
+        const copy = store.folder(result.id);
+        expect(new MeetingComments(join(copy, COMMENTS_FILE), { alive: () => true }).listeners()).toEqual([]);
+        expect(roundRunning(join(copy, ANSWER_LOG_FILE), () => true)).toBe(false);
+        expect(existsSync(join(copy, "ocr.pid"))).toBe(false);
+        expect(existsSync(join(copy, "comments.ndjson.lock"))).toBe(false);
+        expect(readAnswerEvents(join(copy, ANSWER_LOG_FILE))).toContainEqual({ event: "skipped", at, item: "i1" });
+        expect(new MeetingComments(join(folder, COMMENTS_FILE), { alive: () => true }).listeners()).toHaveLength(1);
+        expect(roundRunning(join(folder, ANSWER_LOG_FILE), () => true)).toBe(true);
+        expect(readFileSync(join(folder, "ocr.pid"), "utf8")).toBe(String(process.pid));
+    });
+
     test("the copy keeps the fields, items and files, its paths point into its own folder, and the original stays", async () => {
         stores += 1;
         const store = new MeetingStore(new Storage(`meetings-duplicate-${process.pid}-${stores}`));

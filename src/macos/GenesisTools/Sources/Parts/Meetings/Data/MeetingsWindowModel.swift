@@ -517,7 +517,9 @@ final class MeetingsWindowModel {
                 renamingMeetingID = copy.id
                 notices.push(StackedNotice(text: "Duplicated as \(copy.title)"))
             } catch {
-                notices.push(.meetingsFailure(error) { [weak self] in self?.duplicate(id) })
+                // A timeout can follow a completed copy; show the current list before another explicit Duplicate.
+                loadOverview(quiet: true)
+                notices.push(.meetingsFailure(error))
             }
         }
     }
