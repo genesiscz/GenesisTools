@@ -46,7 +46,11 @@ struct PRDetailSketchB: View {
         }
         .background { tabKeys }
         .onAppear { PRChecksSection.prepareSnapshot() }
-        .onChange(of: prs.review.map(ObjectIdentifier.init), initial: true) { prs.review?.start() }
+        .background {
+            if let review = prs.review {
+                PRVariantReviewLifetime(model: review).id(ObjectIdentifier(review))
+            }
+        }
         .overlay {
             if let review = prs.review, let store = review.pr {
                 PRSubmitReviewHost(model: review, store: store)
@@ -58,9 +62,6 @@ struct PRDetailSketchB: View {
             pickingFiles = false
         }
 
-        .onReceive(prs.review?.$focusedCard.dropFirst().eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { card in
-            if card != nil { tab = .changes }
-        }
     }
 
     // MARK: Header (C13, C14): title row, fact line, then the tabs with the open tab's controls on the same row
@@ -506,7 +507,6 @@ private struct DiffColumn: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < ReviewRootView.wrapBelow }) { review.fitWrap(narrow: $0) }
         .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < HubDiffLayout.autoSplitBelow }) { review.fitStyle(narrow: $0) }
-        .onAppear { review.start() }
-        .onDisappear { review.stop() }
+
     }
 }

@@ -61,6 +61,11 @@ final class ReviewSessionStateTests: XCTestCase {
         XCTAssertEqual(model.navigationRequests, 3, "an explicit pick of the same scope still opens Changes")
         model.follow(model.scope, remoteHead: nil)
         XCTAssertEqual(model.navigationRequests, 3, "a head refresh must not interrupt the reader")
+        model.select("automatic.swift", requestingNavigation: false)
+        XCTAssertEqual(model.selectedID, "automatic.swift")
+        model.reveal(path: "proposal.swift", requestingNavigation: false)
+        XCTAssertEqual(model.pendingRevealPath, "proposal.swift")
+        XCTAssertEqual(model.navigationRequests, 3, "automatic proposal positioning must preserve the active tab")
     }
 
     func testEveryScopeSurvivesTheDiskForm() throws {

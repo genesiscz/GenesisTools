@@ -1504,10 +1504,10 @@ final class ReviewModel: ObservableObject {
 
     /// Opens a file now or once the next load has it: an absolute path inside any root, or a path
     /// relative to this repository.
-    func reveal(path: String) {
-        navigationRequests += 1
+    func reveal(path: String, requestingNavigation: Bool = true) {
+        if requestingNavigation { navigationRequests += 1 }
         if let file = file(atPath: path) {
-            select(file.id)
+            select(file.id, requestingNavigation: false)
         } else {
             pendingRevealPath = path
             notice = files.isEmpty ? nil : Self.noChangeNotice(path)
@@ -1634,14 +1634,14 @@ final class ReviewModel: ObservableObject {
     }
 
     /// Opens the draft's file and marks its card: the drafts list, the banner, a fresh proposal.
-    func revealDraft(_ id: String) {
+    func revealDraft(_ id: String, requestingNavigation: Bool = true) {
         guard let draft = proposal?.drafts.first(where: { $0.id == id }) else { return }
         // An off-diff draft only says so: a pending reveal would open its file on some later load unasked.
         if !files.isEmpty, file(atPath: draft.path) == nil {
             notice = Self.noChangeNotice(draft.path)
             return
         }
-        reveal(path: draft.path)
+        reveal(path: draft.path, requestingNavigation: requestingNavigation)
         // A draft whose file has no change in this scope never gets a card; a pending mark for it would
         // wait for ever and block the first-draft jump.
         guard draftCards.contains(where: { $0.id == ReviewCardID.proposalDraft(id).rawValue }) else { return }
@@ -1688,7 +1688,7 @@ final class ReviewModel: ObservableObject {
               let first = draftCards.first(where: { $0.state == "proposed" }) else { return }
         revealedProposal = proposal.url.path
         HubPerf.log("review.proposal opens at its first open draft \(first.id)")
-        if let id = ReviewCardID(first.id).draftID { revealDraft(id) }
+        if let id = ReviewCardID(first.id).draftID { revealDraft(id, requestingNavigation: false) }
     }
 
     /// The pending card, once the page has drawn the diff and holds that card; nil until then.
@@ -1697,8 +1697,8 @@ final class ReviewModel: ObservableObject {
         return pending
     }
 
-    func select(_ id: String) {
-        navigationRequests += 1
+    func select(_ id: String, requestingNavigation: Bool = true) {
+        if requestingNavigation { navigationRequests += 1 }
         selectedID = id
         if showsOneFile {
             pushToRenderer()
@@ -2487,6 +2487,7 @@ final class ReviewModel: ObservableObject {
                 : "No PR thread sits on this diff. Threads show on their lines in the Branch scope or the PR's range."
             return
         }
+        navigationRequests += 1
         focusedCard = id
         renderer.focusThread(cardID: id, reply: false)
     }
