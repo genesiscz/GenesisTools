@@ -1940,10 +1940,8 @@ func cmdAct(appName _: String) {
                 }
             } else {
                 let button = workflowArgument("--button") ?? "left"
-                let types: [String: (NSEvent.EventType, NSEvent.EventType)] = [
-                    "left": (.leftMouseDown, .leftMouseUp), "right": (.rightMouseDown, .rightMouseUp),
-                    "middle": (.otherMouseDown, .otherMouseUp)]
-                guard let (downType, upType) = types[button] else {
+                let buttons: [String: CGMouseButton] = ["left": .left, "right": .right, "middle": .center]
+                guard let mouseButton = buttons[button] else {
                     throw WindowEventError.unavailable("--button must be left, right or middle")
                 }
                 // Held modifiers travel on the events themselves (the app reads them from its current
@@ -1951,16 +1949,7 @@ func cmdAct(appName _: String) {
                 let modifierFlags = try workflowArgument("--modifiers").map(NativeKeyChord.modifiers) ?? []
                 for click in 1...(workflowFlag("--double") ? 2 : 1) {
                     _ = try verifyPoint(point, pin: .element)
-                    let down = try factory.mouse(type: downType, point: point, clickCount: click)
-                    let up = try factory.mouse(type: upType, point: point, clickCount: click)
-                    if !modifierFlags.isEmpty {
-                        down.flags = modifierFlags
-                        up.flags = modifierFlags
-                    }
-                    if button == "middle" {
-                        down.setIntegerValueField(.mouseEventButtonNumber, value: 2)
-                        up.setIntegerValueField(.mouseEventButtonNumber, value: 2)
-                    }
+
                     let held = try dispatchAfterPresentation(present: {
                         ActionCursor.emit("click", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel",
                                           button: button, clickCount: workflowFlag("--double") ? 2 : 1)
@@ -1968,7 +1957,10 @@ func cmdAct(appName _: String) {
                         if click == 1 { try validateAfterFeedback() }
                         _ = try verifyPoint(point, pin: .element)
                         try admitVisualAction()
-                    }, dispatch: { try inputGate.press({ down.postToPid(pid) }, release: { up.postToPid(pid) }) })
+                    }, dispatch: {
+                        try factory.pressClick(point: point, button: mouseButton, clickCount: click, modifiers: modifierFlags,
+                                               background: background, pid: pid, gate: inputGate)
+                    })
                     Thread.sleep(forTimeInterval: 0.03)
                     inputGate.release(held)
                     Thread.sleep(forTimeInterval: 0.03)
