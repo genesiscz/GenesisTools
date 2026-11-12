@@ -107,6 +107,16 @@ export function readRecorderState(store: MeetingStore): { running: boolean; stat
     return { running, ...(parsed?.success ? { state: parsed.data } : {}) };
 }
 
+/** Still frames can stay unchanged; only this meeting's recorder-state heartbeat extends their known activity. */
+export function lastRecordingActivity(store: MeetingStore, meetingId: string): number | undefined {
+    const files = [join(store.folder(meetingId), "frames")];
+    if (readRecorderState(store).state?.meetingId === meetingId) {
+        files.push(recorderFiles(store).state);
+    }
+    const activity = files.filter(existsSync).map((file) => statSync(file).mtimeMs);
+    return activity.length > 0 ? Math.max(...activity) : undefined;
+}
+
 /** Sends the stop only while the running recorder is the owner's run (its meeting and start), else undefined. */
 export function requestRecorderStop<T>(
     store: MeetingStore,

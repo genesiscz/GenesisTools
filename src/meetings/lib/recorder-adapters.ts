@@ -53,6 +53,28 @@ export class RecorderStateFile<T> {
     }
 }
 
+/** A dead recorder or a detached copy cannot keep extending its capture intervals. Closed history stays exact. */
+export function interruptedRecording(recording: RecordingBlock, at: string): RecordingBlock {
+    const close = <T extends RecordingSpan>(span: T) =>
+        span.to
+            ? span
+            : {
+                  ...span,
+                  to: Date.parse(at) < Date.parse(span.from) ? span.from : at,
+                  stopReason: "error" as const,
+                  interrupted: true as const,
+              };
+    return {
+        ...recording,
+        status: "stopped",
+        stopReason: "error",
+        interrupted: true,
+        stoppedAt: at,
+        spans: recording.spans?.map(close),
+        displaySpans: recording.displaySpans?.map(close),
+    };
+}
+
 /** The meeting record's recording block as the recorder keeps it: the spans, and the start, pause and resume. */
 export class RecordingRecord {
     readonly spans: RecordingSpan[];

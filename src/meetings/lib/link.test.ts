@@ -9,6 +9,7 @@ import {
     readFileSync,
     realpathSync,
     statSync,
+    utimesSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -587,6 +588,73 @@ describe("duplicate: a second record of one meeting", () => {
             clone.mockRestore();
         }
     });
+
+    test.each(["recording", "paused"] as const)(
+        "an orphaned %s copy ends its capture intervals without changing the original",
+        async (status) => {
+            stores += 1;
+            const store = new MeetingStore(new Storage(`meetings-duplicate-${process.pid}-${stores}`));
+            const at = (seconds: number) =>
+                new Date(Date.parse("2026-11-05T13:02:36.000Z") + seconds * 1000).toISOString();
+            const original = await store.create(
+                {
+                    title: "Planning",
+                    start: at(0),
+                    createdBy: "record",
+                    recording: {
+                        status,
+                        startedAt: at(0),
+                        spans: [{ from: at(0), to: at(10) }, { from: at(20) }],
+                        displaySpans: [
+                            { displayId: 1, from: at(0), to: at(10) },
+                            { displayId: 2, from: at(20) },
+                        ],
+                    },
+                },
+                { command: "test", change: "recorder died" }
+            );
+            const frames = join(store.folder(original.id), "frames");
+            mkdirSync(frames);
+            writeFileSync(join(frames, "frame.jpg"), "frame bytes");
+            utimesSync(frames, new Date(at(30)), new Date(at(30)));
+            const stateFile = join(store.root, "recorder.json");
+            writeFileSync(
+                stateFile,
+                SafeJSON.stringify({
+                    meetingId: status === "recording" ? original.id : "other-meeting",
+                    pid: 99999999,
+                    startedAt: at(20),
+                    display: "all",
+                    frames: 1,
+                    bytes: 11,
+                })
+            );
+            utimesSync(stateFile, new Date(at(40)), new Date(at(40)));
+            const before = readFileSync(store.path(original.id), "utf8");
+            const result = await duplicateMeeting({ store, ref: original.id });
+            const copy = new MeetingStore(store.storage).read(result.id)!;
+            // Only this meeting's heartbeat can extend its last frame's known capture time.
+            const ended = at(status === "recording" ? 40 : 30);
+            expect(copy.recording).toMatchObject({
+                status: "stopped",
+                stoppedAt: ended,
+                stopReason: "error",
+                interrupted: true,
+                spans: [
+                    { from: at(0), to: at(10) },
+                    { from: at(20), to: ended, stopReason: "error", interrupted: true },
+                ],
+                displaySpans: [
+                    { displayId: 1, from: at(0), to: at(10) },
+                    { displayId: 2, from: at(20), to: ended, stopReason: "error", interrupted: true },
+                ],
+            });
+            expect(SafeJSON.parse(readFileSync(store.path(result.id), "utf8"))).toMatchObject({
+                recording: copy.recording,
+            });
+            expect(readFileSync(store.path(original.id), "utf8")).toBe(before);
+        }
+    );
 
     test("the copy keeps comment and answer history but has no inherited live listener, round or worker lock", async () => {
         stores += 1;

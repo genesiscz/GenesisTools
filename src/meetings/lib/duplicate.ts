@@ -12,7 +12,8 @@ import { kickDrainer, loadRmConfig, moveToTrash, resolveTarget, rmCallerFromRunt
 import { ANSWER_LOG_FILE, appendAnswerEvent, readAnswerEvents, runningRound } from "./answer-log";
 import { COMMENTS_FILE, MeetingComments } from "./comments";
 import { cloneTree } from "./merge";
-import { readRecorderState } from "./recorder-shared";
+import { interruptedRecording } from "./recorder-adapters";
+import { lastRecordingActivity, readRecorderState } from "./recorder-shared";
 
 const { log } = logger.scoped("meetings-duplicate");
 
@@ -147,6 +148,18 @@ async function duplicateLocked(request: DuplicateRequest): Promise<DuplicateResu
         title: _title,
         ...fields
     } = original;
+    if (fields.recording?.status === "recording" || fields.recording?.status === "paused") {
+        const spans = [...(fields.recording.spans ?? []), ...(fields.recording.displaySpans ?? [])];
+        const knownTimes = [
+            original.start,
+            fields.recording.startedAt,
+            ...spans.flatMap((span) => [span.from, span.to]),
+        ]
+            .flatMap((value) => (value ? [Date.parse(value)] : []))
+            .filter(Number.isFinite);
+        const at = new Date(Math.max(lastRecordingActivity(store, original.id) ?? 0, ...knownTimes)).toISOString();
+        fields.recording = interruptedRecording(fields.recording, at);
+    }
     const from = store.folder(original.id);
     let prepared: { id: string; claim: string } | undefined;
     const rollback = () => {
