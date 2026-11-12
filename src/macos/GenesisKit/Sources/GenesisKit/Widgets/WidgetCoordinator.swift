@@ -992,8 +992,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         }
         let editingText = panel.firstResponder is NSTextView
             || (panel.firstResponder as? NSControl)?.currentEditor() != nil
-        let controlFocused = Self.controlHasFocus(firstResponder: panel.firstResponder,
-                                                focusedElement: NSApp.accessibilityFocusedUIElement)
+        let controlFocused = StandardEditing.controlHasFocus(firstResponder: panel.firstResponder,
+                                                             focusedElement: NSApp.accessibilityFocusedUIElement)
         if MediaPreviewKeyboard.handle(stroke, editingText: editingText) {
             return nil
         }
@@ -1023,16 +1023,6 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         case .choose(let choice): model.choose(option: choice)
         }
         return nil
-    }
-
-    /// Native controls are responders; SwiftUI controls can instead expose their focus through an accessibility node.
-    static func controlHasFocus(firstResponder: NSResponder?, focusedElement: Any?) -> Bool {
-        if firstResponder is NSControl { return true }
-        guard let element = focusedElement as? NSAccessibilityProtocol, let role = element.accessibilityRole() else {
-            return false
-        }
-        return [NSAccessibility.Role.button, .checkBox, .radioButton, .popUpButton, .menuButton, .disclosureTriangle, .link,
-                .comboBox, .slider, .incrementor].contains(role)
     }
 
     /// `list(_, alternate:)`: a list key; `alternate` is ⌘↩ ("openAlt"), the other of what Return does there.

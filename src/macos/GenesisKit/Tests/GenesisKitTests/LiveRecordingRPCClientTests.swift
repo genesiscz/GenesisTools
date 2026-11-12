@@ -382,7 +382,10 @@ final class FakeRPCPeer: @unchecked Sendable {
     }
 
     func stop() {
-        if connection >= 0 { shutdown(connection, SHUT_RDWR) }
+        condition.lock()
+        let connected = connection
+        condition.unlock()
+        if connected >= 0 { shutdown(connected, SHUT_RDWR) }
         close(listener)
         unlink(path)
     }

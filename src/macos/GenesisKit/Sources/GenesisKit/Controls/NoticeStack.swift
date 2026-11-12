@@ -140,6 +140,7 @@ public struct StackedNotice: Identifiable {
         public let afterPress: AfterPress
         /// Gets the notice's id, so the result can replace it in place.
         public let perform: @MainActor (StackedNotice.ID) -> Void
+        fileprivate var sourceFix: NoticeFix?
 
         public init(_ label: String, symbol: String? = nil, confirm: NoticeFix.Confirmation? = nil,
                     afterPress: AfterPress = .dismiss, perform: @escaping @MainActor (StackedNotice.ID) -> Void) {
@@ -148,6 +149,21 @@ public struct StackedNotice: Identifiable {
             self.confirm = confirm
             self.afterPress = afterPress
             self.perform = perform
+        }
+
+        /// Adapts an existing notice action without losing its confirmation, command layout or failure preparation.
+        @MainActor
+        public init(fix: NoticeFix, afterPress: AfterPress = .keep) {
+            switch fix.kind {
+            case .action(let confirm, let perform):
+                self.init(fix.label, symbol: fix.symbol, confirm: confirm, afterPress: afterPress) { _ in perform() }
+            case .command(let command):
+                self.init(fix.label, symbol: fix.symbol, afterPress: .keep) { _ in Clipboard.copy(command, what: "command") }
+            }
+            var prepared = fix
+            prepared.preparation?()
+            prepared.preparation = nil
+            sourceFix = prepared
         }
 
         /// Takes back what the notice reports. The notice waits in its place until the result replaces it.
@@ -183,6 +199,17 @@ public struct StackedNotice: Identifiable {
     }
 }
 
+/// Interaction choices owned by the host's settings. Defaults preserve the original stack behavior.
+public struct NoticeStackInteractionPolicy: Equatable, Sendable {
+    public var pauseWhenInactive: Bool
+    public var passScrollWhenFits: Bool
+
+    public init(pauseWhenInactive: Bool = false, passScrollWhenFits: Bool = false) {
+        self.pauseWhenInactive = pauseWhenInactive
+        self.passScrollWhenFits = passScrollWhenFits
+    }
+}
+
 /// The notices a view shows over its content, oldest first. `push` returns the id that a later `push(_:replacing:)`
 /// or `dismiss` names. Each notice counts its own time on the injected clock; `setPaused(true)` (the pointer over the
 /// stack) stops every clock, and `setPaused(false)` gives each notice the time it had left.
@@ -194,6 +221,7 @@ public final class NoticeStackModel {
     public private(set) var waiting: [StackedNotice.ID: String] = [:]
     /// The pointer is over the stack: no notice leaves.
     public private(set) var isPaused = false
+    private var settingsRevision: UInt = 0
 
     private struct Run {
         /// Seconds left; nil: the notice stays until it is closed.
@@ -207,6 +235,7 @@ public final class NoticeStackModel {
     @ObservationIgnored private let timing: @MainActor () -> NoticeStackTiming
     @ObservationIgnored private let maxVisible: @MainActor () -> Int?
     @ObservationIgnored private let announces: Bool
+    @ObservationIgnored private let interaction: @MainActor () -> NoticeStackInteractionPolicy
     @ObservationIgnored private var runs: [StackedNotice.ID: Run] = [:]
 
     /// `clock` defaults to `SystemNoticeClock.shared`. `timing` is read at each push, so a changed setting applies to
@@ -214,15 +243,32 @@ public final class NoticeStackModel {
     /// (nil: all; read at each draw). `announces` posts each new notice to VoiceOver.
     public init(clock: NoticeClock? = nil,
                 timing: @escaping @MainActor () -> NoticeStackTiming = { .standard },
-                maxVisible: @escaping @MainActor () -> Int? = { nil }, announces: Bool = true) {
+                maxVisible: @escaping @MainActor () -> Int? = { nil }, announces: Bool = true,
+                interaction: @escaping @MainActor () -> NoticeStackInteractionPolicy = { .init() }) {
         self.clock = clock ?? SystemNoticeClock.shared
         self.timing = timing
         self.maxVisible = maxVisible
         self.announces = announces
+        self.interaction = interaction
+    }
+
+    public var interactionPolicy: NoticeStackInteractionPolicy {
+        _ = settingsRevision
+        return interaction()
+    }
+
+    /// Re-read the host's settings without resetting the notices or their remaining time.
+    public func refreshSettings() { settingsRevision &+= 1 }
+
+    func updateInteraction(pointerInside: Bool, windowIsKey: Bool) {
+        setPaused(pointerInside || (interactionPolicy.pauseWhenInactive && !windowIsKey))
     }
 
     /// How many notices the stack draws; the older ones fold into "+N more". Nil draws all of them.
-    public var visibleLimit: Int? { maxVisible() }
+    public var visibleLimit: Int? {
+        _ = settingsRevision
+        return maxVisible()
+    }
 
     /// The newest `max` notices, and the older ones that fold into "+N more" (oldest first in both).
     public static func split(_ notices: [StackedNotice], max: Int?) -> (shown: [StackedNotice], folded: [StackedNotice]) {
@@ -364,6 +410,7 @@ public struct NoticeStackView: View {
     var maxWidth: CGFloat
     var maxHeight: CGFloat
     var edge: VerticalEdge
+    var heightChanged: ((CGFloat) -> Void)?
     @GenReduceMotion private var reduceMotion
     @State private var contentHeight: CGFloat = 0
     /// "+N more" was pressed: every notice shows until none is folded again.
@@ -383,11 +430,15 @@ public struct NoticeStackView: View {
         edge == .bottom ? notices.reversed() : notices
     }
 
+    static func expansionAfterChange(showsAll: Bool, notices: [StackedNotice], limit: Int?) -> Bool {
+        showsAll && !NoticeStackModel.split(notices, max: limit).folded.isEmpty
+    }
+
     public var body: some View {
         let notices = model.notices
         if !notices.isEmpty {
             let split = NoticeStackModel.split(notices, max: showsAll ? nil : model.visibleLimit)
-            ScrollView {
+            viewport {
                 VStack(alignment: .leading, spacing: 6) {
                     // The folded notices are the oldest: their chip sits where they would, at the pinned edge.
                     if edge == .top { moreChip(split.folded.count) }
@@ -400,22 +451,39 @@ public struct NoticeStackView: View {
                     if edge == .bottom { moreChip(split.folded.count) }
                 }
                 .padding(8)
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { contentHeight = $0 }
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) {
+                    contentHeight = $0
+                    heightChanged?(min($0, maxHeight))
+                }
             }
-            .scrollDisabled(contentHeight <= maxHeight)
-            .scrollIndicators(contentHeight > maxHeight ? .automatic : .never)
-            // The newest notice is at the far end from the pinned edge; past `maxHeight` that end stays in view.
-            .defaultScrollAnchor(edge == .top ? .bottom : .top)
+
             .frame(maxWidth: maxWidth)
             .frame(height: min(contentHeight, maxHeight))
             .frameProbe("notice-stack")
-            .onHover { model.setPaused($0) }
-            .onDisappear { model.setPaused(false) }
+            .background(NoticeStackInteractionProbe(model: model, passScroll: contentHeight <= maxHeight))
+            .onDisappear {
+                model.setPaused(false)
+                showsAll = Self.expansionAfterChange(showsAll: showsAll, notices: model.notices, limit: model.visibleLimit)
+            }
             .animation(GenMotion.animation(expanding: true, reduceMotion: reduceMotion), value: notices.map(\.id))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Notices")
             .accessibilityIdentifier("notice-stack")
-            .onChange(of: split.folded.isEmpty) { _, none in if none { showsAll = false } }
+            .onChange(of: NoticeStackModel.split(notices, max: model.visibleLimit).folded.isEmpty) { _, _ in
+                showsAll = Self.expansionAfterChange(showsAll: showsAll, notices: notices, limit: model.visibleLimit)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func viewport(@ViewBuilder content: () -> some View) -> some View {
+        if model.interactionPolicy.passScrollWhenFits && contentHeight <= maxHeight {
+            content()
+        } else {
+            ScrollView { content() }
+                .scrollDisabled(contentHeight <= maxHeight)
+                .scrollIndicators(contentHeight > maxHeight ? .automatic : .never)
+                .defaultScrollAnchor(edge == .top ? .bottom : .top)
         }
     }
 
@@ -440,12 +508,20 @@ public struct NoticeStackView: View {
         }
     }
 
+    private func fix(_ action: StackedNotice.Action, for id: StackedNotice.ID) -> NoticeFix {
+        if let source = action.sourceFix, case .command = source.kind { return source }
+        var fix = NoticeFix.button(action.label, symbol: action.symbol, confirm: action.confirm) { model.press(action, of: id) }
+        fix.preparationID = action.sourceFix?.preparationID
+        fix.preparation = action.sourceFix?.preparation
+        return fix
+    }
+
     private func pill(_ notice: StackedNotice) -> some View {
         let waiting = model.waiting[notice.id]
         return NoticePill(
             text: notice.text, detail: waiting ?? notice.detail, more: notice.more, tone: notice.tone,
             fixes: waiting != nil ? [] : notice.actions.map { action in
-                NoticeFix.button(action.label, symbol: action.symbol, confirm: action.confirm) { model.press(action, of: notice.id) }
+                fix(action, for: notice.id)
             },
             dismiss: { model.dismiss(notice.id) })
             .environment(\.noticePillPlacement, .stacked)
@@ -494,7 +570,7 @@ private struct NoticeStackModifier: ViewModifier {
             content.preference(key: NoticeStackHostKey.self, value: [.init(model: model)])
         } else {
             content.overlay(alignment: alignment) {
-                NoticeStackView(model, pinnedTo: alignment.noticeStackEdge).padding(8)
+                NoticeStackSurface(model: model, edge: alignment.noticeStackEdge).padding(8)
             }
         }
     }
@@ -519,7 +595,7 @@ public extension View {
             .overlayPreferenceValue(NoticeStackHostKey.self, alignment: alignment) { entries in
                 VStack(spacing: 0) {
                     ForEach(entries.indices, id: \.self) { index in
-                        NoticeStackView(entries[index].model, pinnedTo: alignment.noticeStackEdge)
+                        NoticeStackSurface(model: entries[index].model, edge: alignment.noticeStackEdge)
                     }
                 }
                 .padding(8)

@@ -38,6 +38,9 @@ let kitProducts: [Product] = [
     // read the same files by path. An app target never links it.
     .library(name: "GenesisKitFixtures", targets: ["GenesisKitFixtures"]),
     .library(name: "GenesisKitTestHooks", targets: ["GenesisKitTestHooks"]),
+    // The design system's fixture (every component with its variants and looks) and the command that draws it.
+    .library(name: "GenesisKitCatalog", targets: ["GenesisKitCatalog"]),
+    .executable(name: "genesis-kit-catalog", targets: ["GenesisKitCatalogTool"]),
 ]
 
 // The markdown viewer's "Native+" renderer: diagrams and highlighted code without a web view.
@@ -70,11 +73,14 @@ let kitTargets: [Target] = [
     // Tests only: a window asked to become key is only ordered front, and the app never activates, so a test run
     // never takes the user's keyboard focus.
     .target(name: "GenesisKitTestHooks", path: "Sources/GenesisKitTestHooks", linkerSettings: [.linkedFramework("AppKit")]),
+    // No app links these two: the catalog is the kit's own picture book, drawn by `bun run kit:catalog`.
+    .target(name: "GenesisKitCatalog", dependencies: ["GenesisKit"], path: "Sources/GenesisKitCatalog"),
+    .executableTarget(name: "GenesisKitCatalogTool", dependencies: ["GenesisKit", "GenesisKitCatalog"], path: "Sources/GenesisKitCatalogTool"),
     .testTarget(
         name: "GenesisKitTests",
         dependencies: [
             "GenesisKitBase", "GenesisKit", "GenesisKitCharts", "GenesisKitOverlay", "GenesisKitCamera", "GenesisKitPosture", "GenesisKitDisk",
-            "GenesisKitFixtures", "GenesisKitTestHooks",
+            "GenesisKitFixtures", "GenesisKitTestHooks", "GenesisKitCatalog",
         ],
         path: "Tests/GenesisKitTests"
     ),

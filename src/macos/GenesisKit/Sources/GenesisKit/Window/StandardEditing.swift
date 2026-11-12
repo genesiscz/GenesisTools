@@ -32,6 +32,17 @@ public enum StandardEditing {
         }
     }
 
+    /// Native controls are responders; SwiftUI controls can expose their focus through an accessibility node.
+    /// A window-level playback or navigation shortcut must leave these controls their own keys.
+    public static func controlHasFocus(firstResponder: NSResponder?, focusedElement: Any?) -> Bool {
+        if firstResponder is NSControl { return true }
+        guard let element = focusedElement as? NSAccessibilityProtocol, let role = element.accessibilityRole() else {
+            return false
+        }
+        return [NSAccessibility.Role.button, .checkBox, .radioButton, .popUpButton, .menuButton, .disclosureTriangle, .link,
+                .comboBox, .slider, .incrementor].contains(role)
+    }
+
     /// Sends a standard editing chord to `window`'s first responder and up its responder chain (the field editor, then
     /// the window, which owns undo). False for any other key, or when no responder takes the action.
     @MainActor

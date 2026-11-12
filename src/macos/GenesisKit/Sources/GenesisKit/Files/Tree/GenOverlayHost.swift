@@ -62,7 +62,20 @@ public final class GenOverlayContentView: NSView {
             view.removeFromSuperview()
             addSubview(view, positioned: .above, relativeTo: root)
         }
+        // Floating controls remain above native content even when a later pane attaches its table or web view.
+        for entry in overlays where (entry.slot.view as? GenOverlaySlot)?.elevation == .floating {
+            if entry.view.superview === self { addSubview(entry.view, positioned: .above, relativeTo: nil) }
+        }
         placeOverlays()
+    }
+
+    /// Floating views in paint order, for a host that must repair a CPU snapshot after compositing native content.
+    public var floatingOverlays: [NSView] {
+        overlays.compactMap { entry in
+            guard (entry.slot.view as? GenOverlaySlot)?.elevation == .floating,
+                  !entry.view.isHiddenOrHasHiddenAncestor else { return nil }
+            return entry.view
+        }
     }
 
     /// Removes an overlay and forgets its associated sidebar slot.
@@ -133,6 +146,11 @@ public final class GenRootHostingView<Content: View>: NSHostingView<Content> {
 /// A place in the SwiftUI root for an AppKit view that lives outside it: inside a `GenOverlayContentView` the
 /// view is laid over this slot; anywhere else (a test that hosts the root alone) it is the slot's own subview.
 public final class GenOverlaySlot: NSView {
+    enum Elevation { case content, floating }
+    let elevation: Elevation
+    var intrinsicSize: (() -> NSSize)?
+    override public var intrinsicContentSize: NSSize { intrinsicSize?() ?? super.intrinsicContentSize }
+
     /// The AppKit content drawn over this placeholder slot.
     let overlay: NSView
     /// The overlay's content height (the table's rows); the overlay covers no more of the slot than that.
@@ -140,8 +158,9 @@ public final class GenOverlaySlot: NSView {
     private weak var content: GenOverlayContentView?
 
     /// Creates a placeholder for AppKit content that may be reparented outside SwiftUI.
-    init(overlay: NSView) {
+    init(overlay: NSView, elevation: Elevation = .content) {
         self.overlay = overlay
+        self.elevation = elevation
         super.init(frame: .zero)
     }
 

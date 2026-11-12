@@ -34,11 +34,17 @@ public struct MenuButton<Label: View, Style: ButtonStyle>: View {
     }
 
     @Environment(\.rowLive) private var live
+    @State private var host = HostWindow()
 
     public var body: some View {
+        content.background(HostWindowReader(host: host).allowsHitTesting(false))
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if live {
             Button {
-                MenuButtonPresenter.pop(items())
+                MenuButtonPresenter.pop(items(), in: host.window)
             } label: {
                 label().contentShape(Rectangle())
             }
@@ -48,7 +54,7 @@ public struct MenuButton<Label: View, Style: ButtonStyle>: View {
             // its label, so a bare label moved by 3 pt when the row turned live); VoiceOver still opens the menu.
             label().contentShape(Rectangle())
                 .padding((style as? GenHoverButtonStyle)?.padding ?? EdgeInsets())
-                .restingButton { MenuButtonPresenter.pop(items()) }
+                .restingButton { MenuButtonPresenter.pop(items(), in: host.window) }
         }
     }
 }
@@ -91,10 +97,10 @@ public enum MenuButtonPresenter {
     }
 
     /// Opens the menu where the click was (from the keyboard or VoiceOver: at the pointer).
-    public static func pop(_ items: [MenuButtonItem]) {
+    public static func pop(_ items: [MenuButtonItem], in host: NSWindow? = nil) {
         let event = NSApp.currentEvent
-        guard let window = event?.window ?? NSApp.keyWindow, let content = window.contentView else { return }
-        let clicked = event.map { [.leftMouseUp, .leftMouseDown].contains($0.type) } ?? false
+        guard let window = host ?? event?.window ?? NSApp.keyWindow, let content = window.contentView else { return }
+        let clicked = event.map { $0.window === window && [.leftMouseUp, .leftMouseDown].contains($0.type) } ?? false
         let location = clicked ? event?.locationInWindow ?? .zero : window.mouseLocationOutsideOfEventStream
         menu(items).popUp(positioning: nil, at: content.convert(location, from: nil), in: content)
     }

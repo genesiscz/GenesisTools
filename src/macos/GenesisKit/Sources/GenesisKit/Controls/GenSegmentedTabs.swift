@@ -4,20 +4,35 @@ import SwiftUI
 ///
 /// The native segmented `Picker` draws its selected segment in the accent colour only while its window is
 /// key, and grey otherwise. The widget's top and side panels are separate non-activating panels, so the
-/// same tabs showed blue in one and grey in the other. Here the selected segment always has the accent
-/// fill. Each segment is a real button with a hover fill and the pointing-hand cursor.
+/// same tabs showed blue in one and grey in the other. Here the selected segment always draws the same.
+/// Each segment is a real button with a hover fill and the pointing-hand cursor.
 ///
 /// One pill marks the selection. When the selection changes, the pill slides to the new segment and takes its width
-/// on the `GenMotion` curve; under Reduce Motion it moves at once. The titles are drawn twice, in the ink outside the
-/// pill and in white inside it, so a title is white exactly where the pill covers it while the pill moves. Only the
-/// pill and the segment widths animate: what the selection switches belongs to the caller and changes at once.
+/// on the `GenMotion` curve; under Reduce Motion it moves at once. The titles are drawn twice, in the colours of a
+/// segment outside the pill and in the colours of the pill inside it, so a title changes exactly where the pill
+/// covers it while the pill moves. Only the pill and the segment widths animate: what the selection switches belongs
+/// to the caller and changes at once.
+///
+/// The surfaces come from the window's `KitLook`. A segment may carry a glyph, a count and a hue: the hue colours
+/// the glyph and the count ("Questions 9" in the colour of a question).
 public struct GenSegmentedTabs<ID: Hashable>: View {
     public struct Item {
         public let id: ID
         public let title: String
-        public init(_ id: ID, _ title: String) {
+        public let symbol: String?
+        public let count: Int?
+        public let hue: KitHue
+        /// False: the segment shows dimmed and takes no click (a view that has nothing to show now).
+        public let isEnabled: Bool
+
+        public init(_ id: ID, _ title: String, symbol: String? = nil, count: Int? = nil, hue: KitHue = .neutral,
+                    isEnabled: Bool = true) {
             self.id = id
             self.title = title
+            self.symbol = symbol
+            self.count = count
+            self.hue = hue
+            self.isEnabled = isEnabled
         }
     }
 
@@ -28,65 +43,160 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     private let identifier: String?
     /// Equal segments over the width it is given (an inspector column), instead of its own width.
     private let fillsWidth: Bool
+    private let size: KitControlSize
     /// Light text on the dark panels it was made for, dark text in a light window (the markdown viewer's light theme).
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.kitLook) private var look
     @GenReduceMotion private var reduceMotion
-    private var ink: Color { scheme == .dark ? .white : .black }
+    /// The width a filling strip is offered, in whole points; nil until its first layout.
+    @State private var offered: CGFloat?
+    @FocusState private var focusedSegment: ID?
+    @Environment(\.layoutDirection) private var layoutDirection
 
     /// `identifier` names the group for UI automation; each segment is then `<identifier>.<id>`, the id as
     /// `GenAccessibilityID.suffix` spells it (an enum case's name, a string as it is).
     public init(_ label: String, items: [Item], selection: Binding<ID>, minSegmentWidth: CGFloat = 72,
-                identifier: String? = nil, fillsWidth: Bool = false) {
+                identifier: String? = nil, fillsWidth: Bool = false, size: KitControlSize = .regular) {
         self.label = label
         self.items = items
         _selection = selection
         self.minSegmentWidth = minSegmentWidth
         self.identifier = identifier
         self.fillsWidth = fillsWidth
+        self.size = size
     }
 
-    public var body: some View {
-        if fillsWidth {
-            // Every title at its full size while they fit the width: a long title takes the room it needs from the
-            // short ones. Equal segments shrank only the long titles, so one strip drew two text sizes.
-            ViewThatFits(in: .horizontal) {
-                strip(scales: false)
-                strip(scales: true)
+    /// What a title is drawn for: the button's own (clear, it only gives the size), outside the pill, inside it.
+    private enum Layer { case sizing, segment, thumb }
+
+    /// How the titles take their width.
+    enum Fit: CaseIterable {
+        /// The strip has its own width: each title with the size's padding.
+        case natural
+        /// Over a given width, every title whole with 8 pt on each side.
+        case roomy
+        /// Over a given width that `roomy` does not fit: one text size down, 5 pt on each side.
+        case compact
+        /// The same text with 3 pt on each side: the last step that keeps every title whole.
+        case tight
+        /// The titles alone, one text size down with 6 pt on each side, each as wide as its words: a glyph or a count of
+        /// three digits took the room a title needed, and a cut title is worse than a count the bar below repeats.
+        case bare
+        /// The last step: the titles alone in equal segments; they scale down to 85 % and then cut.
+        case scaled
+
+        /// Draws a segment's glyph and count.
+        var showsExtras: Bool { self != .bare && self != .scaled }
+        /// Every title keeps its own width.
+        var keepsTitles: Bool { self == .roomy || self == .compact || self == .tight || self == .bare }
+
+        var fills: Bool { self != .natural }
+
+        /// The first filling fit whose titles fit the offered width whole, else `scaled`; `roomy` before the width is
+        /// known. The order `ViewThatFits` tried them in.
+        static func filling(_ offered: CGFloat?, need: (Fit) -> CGFloat) -> Fit {
+            guard let offered else { return .roomy }
+            return [Fit.roomy, .compact, .tight, .bare].first { need($0) <= offered } ?? .scaled
+        }
+
+        func padding(_ size: KitControlSize) -> CGFloat {
+            switch self {
+            case .natural: size.padding
+            case .roomy: 8
+            case .compact: 5
+            case .tight: 3
+            case .bare: 6
+            case .scaled: 4
             }
-        } else {
-            strip(scales: false)
         }
     }
 
-    private func strip(scales: Bool) -> some View {
+    private var segmentHeight: CGFloat { size.height - 2 }
+    private var inset: CGFloat { look.wellInset }
+    private var thumbRadius: CGFloat { look.radius(.thumb, height: segmentHeight, legacy: 6) }
+    private var wellRadius: CGFloat { look.radius(.well, height: segmentHeight + 2 * inset, legacy: 8) }
+    private var selectedHue: KitHue { items.first { $0.id == selection }?.hue ?? .neutral }
+
+    public var body: some View {
+        if fillsWidth {
+            // Every title at its full size while they fit the width with room around them: a long title takes the
+            // room it needs from the short ones. In a narrower column every title steps down one size together
+            // (equal segments shrank only the long titles, so one strip drew two text sizes). Only then they scale.
+            // One strip, its fit picked from the width it is offered, read whole points at a time. A `ViewThatFits`
+            // of the five built and dropped every candidate per measurement, and a list's inset measures its bar
+            // many times per pass: in the Meetings window that was 70 to 81 % of the main thread while a Moment
+            // played (2026-11-11). The frame takes the offer whatever the fit, so the fit cannot change the width.
+            strip(Fit.filling(offered, need: idealWidth))
+                .frame(minWidth: 0, maxWidth: .infinity)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded(.down) } action: { offered = $0 }
+        } else {
+            strip(.natural)
+        }
+    }
+
+    /// The width a strip of these items takes on its own (`fillsWidth: false`), without building it: a caller that
+    /// picks between strips by the room it has compares this with the room, instead of a `ViewThatFits` that builds
+    /// each candidate on every measurement.
+    public static func naturalWidth(items: [Item], selection: ID, minSegmentWidth: CGFloat = 72,
+                                    size: KitControlSize = .regular, look: KitLook) -> CGFloat {
+        Self.idealWidth(items: items, selection: selection, minSegmentWidth: minSegmentWidth, size: size,
+                        inset: look.wellInset, fit: .natural)
+    }
+
+    private func idealWidth(_ fit: Fit) -> CGFloat {
+        Self.idealWidth(items: items, selection: selection, minSegmentWidth: minSegmentWidth, size: size, inset: inset, fit: fit)
+    }
+
+    /// A strip's ideal width, from its titles' measured text: the segments, the 2 pt between them and the well's inset.
+    /// It follows `title(_:_:_:)` term by term.
+    static func idealWidth(items: [Item], selection: ID, minSegmentWidth: CGFloat, size: KitControlSize,
+                           inset: CGFloat, fit: Fit) -> CGFloat {
+        let step: CGFloat = fit == .compact || fit == .tight || fit == .bare ? 1 : 0
+        let segments = items.reduce(CGFloat(0)) { sum, item in
+            var width = KitTextWidth.text(item.title, size: size.font - step,
+                                          weight: item.id == selection ? .semibold : .medium)
+            if let symbol = item.symbol, fit.showsExtras {
+                width += KitTextWidth.symbol(symbol, size: size.glyph - step, weight: .medium) + 5
+            }
+            if let count = item.count, fit.showsExtras {
+                let digits = KitTextWidth.text("\(count)", size: size.font - 1.5, weight: .semibold, monospacedDigits: true)
+                width += max(17, digits + 10) + 5
+            }
+            width += 2 * fit.padding(size)
+            return sum + max(fit.fills ? 0 : minSegmentWidth, width)
+        }
+        return segments + 2 * CGFloat(max(0, items.count - 1)) + 2 * inset
+    }
+
+    private func strip(_ fit: Fit) -> some View {
         // The buttons: hit areas, hover fills and the frames the pill and the titles follow. Their own titles are
         // clear; the visible ones are the two layers above.
         HStack(spacing: 2) {
             ForEach(items, id: \.id) { item in
-                segment(item, scales: scales)
+                segment(item, fit)
             }
         }
-        .padding(2)
+        .padding(inset)
         // One pill behind the segments, placed on the selected one's frame. A change of selection moves its frame,
         // and the animation below carries it there: it slides and reshapes rather than fading out and in.
         .backgroundPreferenceValue(GenSegmentFrames.self) { frames in
-            pill(frames, fill: Color.accentColor)
+            thumb(frames)
         }
         .overlayPreferenceValue(GenSegmentFrames.self) { frames in
             ZStack {
-                titles(ink.opacity(0.68), scales: scales)
+                titles(.segment, fit)
                     .mask {
                         Rectangle()
-                            .overlay { pill(frames, fill: .black).blendMode(.destinationOut) }
+                            .overlay { thumbShape(frames).blendMode(.destinationOut) }
                             .compositingGroup()
                     }
-                titles(.white, scales: scales)
-                    .mask { pill(frames, fill: .black) }
+                titles(.thumb, fit)
+                    .mask { thumbShape(frames) }
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
-        .background(ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .background(KitSurfaceBackground(look.surface(.well, scheme: scheme), radius: wellRadius, corners: look.corners))
         .animation(GenMotion.animation(expanding: true, reduceMotion: reduceMotion), value: selection)
         .fixedSize(horizontal: !fillsWidth, vertical: true)
         .accessibilityElement(children: .contain)
@@ -94,49 +204,120 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         .chartAccessibilityIdentifier(identifier)
     }
 
-    private func segment(_ item: Item, scales: Bool) -> some View {
+    private func segment(_ item: Item, _ fit: Fit) -> some View {
         let selected = item.id == selection
         return Button {
             selection = item.id
         } label: {
-            title(item, color: .clear, scales: scales)
-                .contentShape(RoundedRectangle(cornerRadius: 6))
+            title(item, .sizing, fit)
+                .contentShape(RoundedRectangle(cornerRadius: thumbRadius, style: look.corners))
         }
-        .buttonStyle(GenSegmentStyle(selected: selected, ink: ink))
+        .buttonStyle(GenSegmentStyle(selected: selected, radius: thumbRadius))
+        .focusable()
+        .focused($focusedSegment, equals: item.id)
+        .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
+            guard press.modifiers.intersection([.command, .control, .option]).isEmpty else { return .ignored }
+            let direction = (press.key == .rightArrow ? 1 : -1) * (layoutDirection == .rightToLeft ? -1 : 1)
+            if let next = Self.adjacentItem(in: items, from: item.id, direction: direction) {
+                selection = next
+                focusedSegment = next
+            }
+            return .handled
+        }
+        .disabled(!item.isEnabled)
         .anchorPreference(key: GenSegmentFrames.self, value: .bounds) { [AnyHashable(item.id): $0] }
-        .accessibilityLabel(item.title)
+        .accessibilityLabel(item.count.map { "\(item.title), \($0)" } ?? item.title)
         .chartAccessibilityIdentifier(identifier.map { "\($0).\(GenAccessibilityID.suffix(item.id))" })
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    /// Every title in one colour, laid out exactly as the buttons are.
-    private func titles(_ color: Color, scales: Bool) -> some View {
-        HStack(spacing: 2) {
-            ForEach(items, id: \.id) { item in
-                title(item, color: color, scales: scales)
-            }
+    /// Arrow navigation skips unavailable choices and stays at either end, like a native segmented picker.
+    static func adjacentItem(in items: [Item], from id: ID, direction: Int) -> ID? {
+        guard direction == -1 || direction == 1, let start = items.firstIndex(where: { $0.id == id }) else { return nil }
+        var index = start + direction
+        while items.indices.contains(index) {
+            if items[index].isEnabled { return items[index].id }
+            index += direction
         }
-        .padding(2)
+        return nil
     }
 
-    private func title(_ item: Item, color: Color, scales: Bool) -> some View {
-        Text(item.title)
-            .font(.system(size: 12, weight: item.id == selection ? .semibold : .medium))
+    /// Every title in one layer's colours, laid out exactly as the buttons are.
+    private func titles(_ layer: Layer, _ fit: Fit) -> some View {
+        HStack(spacing: 2) {
+            ForEach(items, id: \.id) { item in
+                title(item, layer, fit)
+            }
+        }
+        .padding(inset)
+    }
+
+    private func title(_ item: Item, _ layer: Layer, _ fit: Fit) -> some View {
+        let surface = layer == .thumb
+            ? look.surface(.thumb, hue: item.hue, scheme: scheme, selected: true)
+            : look.surface(.segment, hue: item.hue, scheme: scheme)
+        let step: CGFloat = fit == .compact || fit == .tight || fit == .bare ? 1 : 0
+        return HStack(spacing: 5) {
+            if let symbol = item.symbol, fit.showsExtras {
+                Image(systemName: symbol)
+                    .font(.system(size: size.glyph - step, weight: .medium))
+                    .foregroundStyle(layer == .sizing ? Color.clear : surface.glyph)
+            }
+            Text(item.title)
+                .font(.system(size: size.font - step, weight: item.id == selection ? .semibold : .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(fit == .scaled ? 0.85 : 1)
+                .fixedSize(horizontal: fit.keepsTitles, vertical: false)
+                .foregroundStyle(layer == .sizing ? Color.clear : surface.label)
+            if let count = item.count, fit.showsExtras {
+                countPill(count, item, layer)
+            }
+        }
+        .opacity(item.isEnabled ? 1 : 0.4)
+        .padding(.horizontal, fit.padding(size))
+        .frame(minWidth: fit.fills ? 0 : minSegmentWidth, maxWidth: fit.fills ? .infinity : nil, minHeight: segmentHeight)
+    }
+
+    /// The count beside a title, in the item's hue.
+    private func countPill(_ count: Int, _ item: Item, _ layer: Layer) -> some View {
+        let surface = look.surface(.badge, hue: item.hue, scheme: scheme, selected: layer == .thumb)
+        return Text(verbatim: "\(count)")
+            .font(.system(size: size.font - 1.5, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(surface.label)
             .lineLimit(1)
-            .minimumScaleFactor(scales ? 0.85 : 1)
-            .fixedSize(horizontal: fillsWidth && !scales, vertical: false)
-            .foregroundStyle(color)
-            .padding(.horizontal, fillsWidth ? 4 : 10)
-            .frame(minWidth: fillsWidth ? 0 : minSegmentWidth, maxWidth: fillsWidth ? .infinity : nil, minHeight: 24)
+            .fixedSize()
+            .padding(.horizontal, 5)
+            .frame(minWidth: 17, minHeight: 15)
+            .background(Capsule().fill(surface.fill))
+            .opacity(layer == .sizing ? 0 : 1)
     }
 
     /// The pill on the selected segment's frame, in the space of the view it decorates.
-    private func pill(_ frames: [AnyHashable: Anchor<CGRect>], fill: Color) -> some View {
+    private func thumb(_ frames: [AnyHashable: Anchor<CGRect>]) -> some View {
         GeometryReader { proxy in
             if let anchor = frames[AnyHashable(selection)] {
                 let frame = proxy[anchor]
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(fill)
+                let surface = look.surface(.thumb, hue: selectedHue, scheme: scheme, selected: true)
+                KitSurfaceBackground(surface, radius: thumbRadius, corners: look.corners)
+                    .overlay(alignment: .bottom) {
+                        if let indicator = surface.indicator {
+                            Capsule().fill(indicator).frame(width: max(10, frame.width - 22), height: 2).padding(.bottom, 2)
+                        }
+                    }
+                    .frame(width: frame.width, height: frame.height)
+                    .offset(x: frame.minX, y: frame.minY)
+            }
+        }
+    }
+
+    /// The pill's shape alone, for the masks that split the two title layers.
+    private func thumbShape(_ frames: [AnyHashable: Anchor<CGRect>]) -> some View {
+        GeometryReader { proxy in
+            if let anchor = frames[AnyHashable(selection)] {
+                let frame = proxy[anchor]
+                RoundedRectangle(cornerRadius: thumbRadius, style: look.corners)
+                    .fill(.black)
                     .frame(width: frame.width, height: frame.height)
                     .offset(x: frame.minX, y: frame.minY)
             }
@@ -153,28 +334,36 @@ private struct GenSegmentFrames: PreferenceKey {
     }
 }
 
-/// A segment: the hover fill and the pressed fill of the row style on an unselected segment (in the window's ink,
-/// so a light window shows it too), none on the selected one, which the pill marks.
+/// A segment: the look's hover fill and pressed fill on an unselected segment (in the window's ink, so a light
+/// window shows it too), none on the selected one, which the pill marks.
 private struct GenSegmentStyle: ButtonStyle {
     let selected: Bool
-    let ink: Color
+    let radius: CGFloat
 
     func makeBody(configuration: Configuration) -> some View {
-        GenSegmentBody(configuration: configuration, selected: selected, ink: ink)
+        GenSegmentBody(configuration: configuration, selected: selected, radius: radius)
     }
 }
 
 private struct GenSegmentBody: View {
     let configuration: ButtonStyleConfiguration
     let selected: Bool
-    let ink: Color
+    let radius: CGFloat
     @State private var hovering = false
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.kitForcedInteraction) private var forced
+    @Environment(\.kitLook) private var look
+    @Environment(\.colorScheme) private var scheme
     @GenReduceMotion private var reduceMotion
 
     var body: some View {
         configuration.label
-            .background(RoundedRectangle(cornerRadius: 6).fill(ink.opacity(fill)))
+            .background {
+                if !selected {
+                    RoundedRectangle(cornerRadius: radius, style: look.corners)
+                        .fill(look.surface(.segment, state, scheme: scheme).fill)
+                }
+            }
             .pointerCursor(isEnabled)
             .onHover { inside in
                 let next = isEnabled && inside
@@ -185,10 +374,8 @@ private struct GenSegmentBody: View {
             .onDisappear { hovering = false }
     }
 
-    /// The row style's values (white 5.5 % on hover, 10 % pressed), so the dark panels look as they did.
-    private var fill: Double {
-        if selected { return 0 }
-        if configuration.isPressed { return 0.10 }
-        return hovering ? 0.055 : 0
+    private var state: KitInteraction {
+        if configuration.isPressed || forced == .pressed { return .pressed }
+        return hovering || forced == .hover ? .hover : .rest
     }
 }

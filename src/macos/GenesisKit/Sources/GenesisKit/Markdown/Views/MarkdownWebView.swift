@@ -503,8 +503,11 @@ struct MarkdownWebView: NSViewRepresentable {
         }
         /// The notice over the page (`MarkdownPageNotice`), and what it shows.
         var noticeHost: MarkdownPageNoticeHost?
-        var currentNotice: MarkdownPageNotice?
-        var noticeToken = 0
+        let pageNotices = NoticeStackModel()
+        var pageNoticeValues: [StackedNotice.ID: MarkdownPageNotice] = [:]
+        var currentNotice: MarkdownPageNotice? {
+            pageNotices.notices.reversed().lazy.compactMap { self.pageNoticeValues[$0.id] }.first
+        }
         var noticeFrameWatch: NSObjectProtocol?
 
         func applyDiffMarks() {
@@ -663,6 +666,7 @@ struct MarkdownWebView: NSViewRepresentable {
             }
             let mediaJSON = (try? JSONSerialization.data(withJSONObject: map)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
             let same = renderedOnce && renderedDocument == parent.documentURL
+            if renderedOnce && !same { MainActor.assumeIsolated { hideNotice() } }
             renderedOnce = true
             renderedDocument = parent.documentURL
             web?.evaluateJavaScript(
@@ -675,7 +679,7 @@ struct MarkdownWebView: NSViewRepresentable {
                     // A render that drew takes a failure notice away (Retry worked, or the text was fixed).
                     if (result as? String) == "ok" {
                         MainActor.assumeIsolated {
-                            if self?.currentNotice?.kind == .failure { self?.hideNotice() }
+                            self?.hideFailures()
                         }
                     }
                 }
@@ -870,8 +874,9 @@ struct MarkdownWebView: NSViewRepresentable {
                 }
             case "propsRemoved":
                 let name = body["key"] as? String ?? ""
-                let notice: MarkdownPageNotice = (body["item"] as? String).map { .itemRemoved($0, from: name) }
+                var notice: MarkdownPageNotice = (body["item"] as? String).map { .itemRemoved($0, from: name) }
                     ?? .propertyRemoved(name)
+                notice.undoToken = body["undoToken"] as? Int
                 MainActor.assumeIsolated { show(notice) }
             case "pageError":
                 MarkdownWebView.report("page error line \(body["line"] as? Int ?? 0): \(body["message"] as? String ?? "?")")
@@ -1978,19 +1983,49 @@ function gnPropText(v){
 }
 // Undo is valid only while the rows still match the state just after removal.
 // Normalize like the host's render, so a round trip does not invalidate Undo.
-var gnPropsBefore=null,gnPropsAfter=null;
-function gnPropsItems(){return gnProps.map(function(p){return {key:p.key,kind:p.kind,value:p.value||'',items:p.items||[],inline:!!p.inline};});}
-function gnPropsKeep(){gnPropsBefore=JSON.parse(JSON.stringify(gnPropsItems()));gnPropsAfter=null;}
-window.gnPropsUndo=function(){
-  var before=gnPropsBefore,after=gnPropsAfter;gnPropsBefore=null;gnPropsAfter=null;
-  if(!before||JSON.stringify(gnPropsItems())!==after)return;
-  gnProps=before;gnPropsPost();
-};
-function gnPropsPost(){
-  var items=gnPropsItems();
-  if(gnPropsBefore&&gnPropsAfter===null)gnPropsAfter=JSON.stringify(items);
-  gnPost({type:'properties',items:items});
-}
+    var gnPropsUndos = new Map(),
+        gnPropsUndoSequence = 0,
+        gnPropsPendingUndo = null;
+    function gnPropsItems() {
+        return gnProps.map((p) => ({
+            key: p.key,
+            kind: p.kind,
+            value: p.value || "",
+            items: p.items || [],
+            inline: !!p.inline,
+        }));
+    }
+    function gnPropsKeep() {
+        var token = ++gnPropsUndoSequence;
+        gnPropsUndos.set(token, { before: JSON.parse(JSON.stringify(gnPropsItems())), after: null });
+        // Bound snapshots when a page stays open for a long editing session.
+        if (gnPropsUndos.size > 100) {
+            gnPropsUndos.delete(gnPropsUndos.keys().next().value);
+        }
+        gnPropsPendingUndo = token;
+        return token;
+    }
+    window.gnPropsUndo = (token) => {
+        if (token == null) {
+            token = Array.from(gnPropsUndos.keys()).pop();
+        }
+        var entry = gnPropsUndos.get(token);
+        if (!entry || JSON.stringify(gnPropsItems()) !== entry.after) {
+            return false;
+        }
+        gnPropsUndos.delete(token);
+        gnProps = entry.before;
+        gnPropsPost();
+        return true;
+    };
+    function gnPropsPost() {
+        var items = gnPropsItems();
+        if (gnPropsPendingUndo !== null) {
+            gnPropsUndos.get(gnPropsPendingUndo).after = JSON.stringify(items);
+            gnPropsPendingUndo = null;
+        }
+        gnPost({ type: "properties", items: items });
+    }
 function gnConvert(p,kind){
   var v=p.kind==='list'||p.kind==='tags'?(p.items||[]).join(', '):(p.value||'');
   var q={key:p.key,kind:kind,value:'',items:[],inline:false};
@@ -2052,8 +2087,8 @@ function gnPropRow(p,i){
   if(gnPropsEditable){
     var rm=document.createElement('button');rm.type='button';rm.className='gn-prop-remove';rm.title='Remove property';rm.textContent='×';
     rm.setAttribute('aria-label','Remove property '+(p.key||'(unnamed)'));
-    rm.addEventListener('click',function(){gnPropsKeep();gnProps.splice(gnProps.indexOf(p),1);gnPropsPost();
-      gnPost({type:'propsRemoved',key:p.key||''});});
+    rm.addEventListener('click',function(){var undoToken=gnPropsKeep();gnProps.splice(gnProps.indexOf(p),1);gnPropsPost();
+      gnPost({type:'propsRemoved',key:p.key||'',undoToken:undoToken});});
     row.appendChild(rm);
   }
   return row;
@@ -2089,8 +2124,8 @@ function gnPropValue(val,p){
     (p.items||[]).forEach(function(it,j){var c=document.createElement('span');c.className='gn-chip';
       c.innerHTML='<span>'+(p.kind==='tags'?'#':'')+gnPropText(it)+'</span><button type="button" class="gn-chip-x" title="Remove">×</button>';
       var x=c.querySelector('.gn-chip-x');x.setAttribute('aria-label','Remove '+(p.kind==='tags'?'tag ':'')+it);
-      x.addEventListener('click',function(){gnPropsKeep();p.items.splice(j,1);gnPropsFocus={key:p.key,what:'.gn-chip-in'};commit();
-        gnPost({type:'propsRemoved',key:p.key||'',item:String(it)});});
+      x.addEventListener('click',function(){var undoToken=gnPropsKeep();p.items.splice(j,1);gnPropsFocus={key:p.key,what:'.gn-chip-in'};commit();
+        gnPost({type:'propsRemoved',key:p.key||'',item:String(it),undoToken:undoToken});});
       val.appendChild(c);});
     if(!ro){var inp=document.createElement('input');inp.type='text';inp.className='gn-chip-in';inp.placeholder=p.items&&p.items.length?'':(p.kind==='tags'?'Add tag…':'Add item…');
       inp.setAttribute('spellcheck','false');
@@ -2113,8 +2148,8 @@ function gnPropValue(val,p){
       inp.addEventListener('keydown',function(e){
         if(gnSugKey(e))return;
         if(e.key==='Enter'||e.key===','){e.preventDefault();addItem(typed(),true);}
-        else if(e.key==='Backspace'&&!inp.value&&p.items&&p.items.length){gnPropsKeep();var gone=p.items.pop();gnPropsFocus={key:p.key,what:'.gn-chip-in'};commit();
-          gnPost({type:'propsRemoved',key:p.key||'',item:String(gone)});}});
+        else if(e.key==='Backspace'&&!inp.value&&p.items&&p.items.length){var undoToken=gnPropsKeep();var gone=p.items.pop();gnPropsFocus={key:p.key,what:'.gn-chip-in'};commit();
+          gnPost({type:'propsRemoved',key:p.key||'',item:String(gone),undoToken:undoToken});}});
       inp.addEventListener('blur',function(){addItem(typed(),false);});
       val.appendChild(inp);}
     return;
@@ -2318,6 +2353,7 @@ function gnRestoreFocus(key){
 // `tag` is Swift's render tag; `same` is false when this render shows another document than the last one (a page
 // taken over by another tab), which has no place of its own to keep yet.
 function gnRenderNow(markdown,props,editable,vocabulary,media,lines,tag,same){
+  if(same===false){gnPropsUndos.clear();gnPropsPendingUndo=null;}
   window.gnLastRender=[markdown,props,editable,vocabulary,media,lines];
   if(vocabulary)gnVocab=vocabulary;
   gnCodeLines=!!lines;

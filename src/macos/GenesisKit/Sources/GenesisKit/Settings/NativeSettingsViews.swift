@@ -34,9 +34,63 @@ public struct NativeSettingsCard<Content: View>: View {
     }
 }
 
+/// The glyph a settings row shows before its title, set with `.nativeSettingsIcon(_:tint:)`.
+public struct NativeSettingsRowIcon: Equatable, Sendable {
+    public let symbol: String
+    /// Nil is the window's own ink: a quiet grey tile.
+    public let tint: Color?
+
+    public init(symbol: String, tint: Color? = nil) {
+        self.symbol = symbol
+        self.tint = tint
+    }
+}
+
+private struct NativeSettingsRowIconKey: EnvironmentKey {
+    static let defaultValue: NativeSettingsRowIcon? = nil
+}
+
+extension EnvironmentValues {
+    var nativeSettingsRowIcon: NativeSettingsRowIcon? {
+        get { self[NativeSettingsRowIconKey.self] }
+        set { self[NativeSettingsRowIconKey.self] = newValue }
+    }
+}
+
+public extension View {
+    /// Gives a settings row (`NativeSettingsRow`, and the toggle, picker, segmented and slider rows built on it) a
+    /// glyph before its title, in a tinted tile. A page of rows with one sentence each reads as a wall of text; the
+    /// glyph is what the eye finds a row by. Give it to every row of a card or to none, so the titles stay in line.
+    func nativeSettingsIcon(_ symbol: String, tint: Color? = nil) -> some View {
+        environment(\.nativeSettingsRowIcon, NativeSettingsRowIcon(symbol: symbol, tint: tint))
+    }
+}
+
+/// The tile of a row's glyph: a wash of the tint under a glyph in the tint. Quieter than a page's icon
+/// (`NativeSettingsPageIcon`), since a card holds several.
+struct NativeSettingsRowIconView: View {
+    let icon: NativeSettingsRowIcon
+    @Environment(\.isEnabled) private var isEnabled
+
+    static let side: CGFloat = 26
+
+    var body: some View {
+        let tint = icon.tint ?? Color.white.opacity(0.82)
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        Image(systemName: icon.symbol).font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: Self.side, height: Self.side)
+            .background(tint.opacity(icon.tint == nil ? 0.09 : 0.16), in: shape)
+            .overlay(shape.strokeBorder(tint.opacity(icon.tint == nil ? 0.08 : 0.2), lineWidth: 0.5))
+            .opacity(isEnabled ? 1 : 0.45)
+            .accessibilityHidden(true)
+    }
+}
+
 public struct NativeSettingsRow<Accessory: View>: View {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.nativeSettingsSearchCard) private var searchCard
+    @Environment(\.nativeSettingsRowIcon) private var icon
     private let title: String
     private let detail: String?
     private let accessory: Accessory
@@ -49,21 +103,25 @@ public struct NativeSettingsRow<Accessory: View>: View {
 
     public var body: some View {
         HStack(spacing: 24) {
-            VStack(alignment: .leading, spacing: 5) {
-                // A disabled row's title goes secondary; its detail stays readable, since it usually says why. An enabled
-                // title keeps the style it inherits (white on a gradient card).
-                if isEnabled {
-                    Text(title).font(.system(size: 13, weight: .medium))
-                } else {
-                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-                }
-                if let detail {
-                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                if let icon { NativeSettingsRowIconView(icon: icon) }
+                VStack(alignment: .leading, spacing: 5) {
+                    // A disabled row's title goes secondary; its detail stays readable, since it usually says why. An
+                    // enabled title keeps the style it inherits (white on a gradient card).
+                    if isEnabled {
+                        Text(title).font(.system(size: 13, weight: .medium))
+                    } else {
+                        Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
+                    }
+                    if let detail {
+                        Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             Spacer(minLength: 0)
-            accessory
+            // The icon is this row's: a row inside the accessory does not repeat it.
+            accessory.environment(\.nativeSettingsRowIcon, nil)
         }
         .nativeSettingsSearchable(NativeSettingsSearchEntry(kind: .row, title: title, detail: detail, card: searchCard),
                                   cornerRadius: 10, outset: 8)
@@ -258,33 +316,43 @@ private struct NativeSettingsSidebar: View {
                 .padding(.horizontal, 12).padding(.bottom, 12)
             // The list scrolls under the header with a visible scroller and room after the last row, so the last
             // page is never hidden behind a footer (it was: "Providers" sat half cut above one in a 760 pt window).
-            ScrollView {
-                Group {
-                    if searching {
-                        NativeSettingsSearchResults(
-                            query: query, store: store, search: search, open: open,
-                            clear: {
-                                query = ""
-                                searchFocused = true
-                            })
-                    } else {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(store.sections) { section in
-                                VStack(alignment: .leading, spacing: 1) {
-                                    if !section.title.isEmpty {
-                                        Text(section.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(
-                                            .secondary
-                                        )
-                                        .padding(.horizontal, 10).padding(.bottom, 4)
+            // The selected row is scrolled into view when the window opens on a page, when a search or a link picks
+            // one, and when a search ends: opened on Daemon or Usage charts, the list showed its top and no row
+            // looked selected (hub UX C59). A nil anchor scrolls the least, so a click on a visible row moves nothing.
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Group {
+                        if searching {
+                            NativeSettingsSearchResults(
+                                query: query, store: store, search: search, open: open,
+                                clear: {
+                                    query = ""
+                                    searchFocused = true
+                                })
+                        } else {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(store.sections) { section in
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        if !section.title.isEmpty {
+                                            Text(section.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(
+                                                .secondary
+                                            )
+                                            .padding(.horizontal, 10).padding(.bottom, 4)
+                                        }
+                                        ForEach(section.pages) { page in navigationRow(page) }
                                     }
-                                    ForEach(section.pages) { page in navigationRow(page) }
                                 }
                             }
                         }
-                    }
-                }.padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 16)
+                    }.padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 16)
+                }
+                .scrollIndicators(.automatic)
+                .onAppear { revealSelection(proxy, animated: false) }
+                .onChange(of: store.selectedPageID) { _, _ in revealSelection(proxy, animated: true) }
+                .onChange(of: searching) { _, now in
+                    if !now { revealSelection(proxy, animated: false) }
+                }
             }
-            .scrollIndicators(.automatic)
         }.frame(width: 238)
             .titlebarBackground(Color.white.opacity(0.025))
             // The hidden pages are drawn for a moment when the field takes the keyboard or a search starts, usually
@@ -333,5 +401,20 @@ private struct NativeSettingsSidebar: View {
             }
             .accessibilityIdentifier("settings.page.\(page.id)")
             .accessibilityAddTraits(selected ? .isSelected : [])
+            .id(Self.rowID(page.id))
+    }
+
+    private static func rowID(_ pageID: String) -> String { "settings.sidebar.\(pageID)" }
+
+    /// Brings the selected page's row into view after the list has laid out. Searching shows no rows to scroll to.
+    private func revealSelection(_ proxy: ScrollViewProxy, animated: Bool) {
+        guard let id = store.selectedPageID, !searching else { return }
+        DispatchQueue.main.async {
+            if animated, !(systemStill || appearance.reduceMotion) {
+                withAnimation(.easeInOut(duration: 0.18)) { proxy.scrollTo(Self.rowID(id)) }
+            } else {
+                proxy.scrollTo(Self.rowID(id))
+            }
+        }
     }
 }

@@ -10,7 +10,7 @@ public struct IconButton: View {
     var accent: Color?
     let action: () -> Void
 
-    /// `tint` colours the glyph; `accent` the hover disc (the kit's amber by default).
+    /// `tint` colours the glyph; `accent` the hover disc (by default the kit's amber, or the look's own wash).
     public init(systemName: String, tooltip: String, size: CGFloat = 12, tint: Color? = nil, accent: Color? = nil, action: @escaping () -> Void) {
         self.systemName = systemName
         self.tooltip = tooltip
@@ -33,7 +33,7 @@ public struct IconButton: View {
             .contentShape(Rectangle())
         if live {
             Button(action: action) { glyph }
-                .buttonStyle(.genHoverIcon(accent: accent ?? KitTheme.accent))
+                .buttonStyle(.genHoverIcon(accent: accent))
                 .instantTooltip(tooltip)
                 .accessibilityLabel(Text(tooltip))
         } else {

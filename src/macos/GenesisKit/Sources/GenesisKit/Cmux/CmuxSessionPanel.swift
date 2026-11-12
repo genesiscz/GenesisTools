@@ -24,6 +24,7 @@ public struct CmuxSessionPanel: View {
     let lastPane: CmuxTarget?
     @Binding var choosing: Bool
     @Binding var notice: Notice?
+    @State private var notices = NoticeStackModel()
     var modeKey: String
     var modeStore: UserDefaults
     let focus: (() -> Void)?
@@ -106,9 +107,7 @@ public struct CmuxSessionPanel: View {
                     GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { choosing = opening }
                 }
             }
-            if let current = notice {
-                NoticePill(text: current.text, isError: current.isError) { notice = nil }
-            }
+
             if choosing {
                 CmuxTargetPicker(tree: tree, loading: loading, highlightSession: sessionId, modeKey: modeKey, modeStore: modeStore, reload: reload, onPick: open)
                     .padding(.top, 2)
@@ -116,6 +115,12 @@ public struct CmuxSessionPanel: View {
             }
         }
         .disabled(busy)
+        .noticeStack(notices)
+        .onChange(of: notice, initial: true) { _, current in
+            guard let current else { return }
+            notices.push(StackedNotice(text: current.text, tone: current.isError ? .error : .success))
+            notice = nil
+        }
     }
 
     /// One labelled value per cell, two per row: as one "window:1 · workspace:1 · …" line it
