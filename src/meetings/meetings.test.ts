@@ -5165,6 +5165,7 @@ describe.skipIf(!Bun.which("ffmpeg"))("audio clip source clock", () => {
         silence = join(folder, "silence.wav");
         const make = async (args: string[]) => {
             const process = Bun.spawn(["ffmpeg", "-y", "-v", "error", ...args], {
+                env: globalThis.process.env,
                 stdin: "ignore",
                 stdout: "ignore",
                 stderr: "pipe",
