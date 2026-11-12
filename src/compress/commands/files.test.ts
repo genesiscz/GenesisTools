@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compressPath } from "@genesiscz/utils/compress/operations";
 import { out } from "@genesiscz/utils/logger";
+import * as prompts from "@genesiscz/utils/prompts/p";
+import { Command } from "commander";
 import { runCat, runVerify } from "./files";
+import { registerTransparentCommands } from "./transparent";
 
 const root = mkdtempSync(join(tmpdir(), "compress-cat-test-"));
 
@@ -64,5 +67,29 @@ describe("tools compress verify", () => {
             `${record.target}: ../outside.txt is not inside ${folder}`,
             expect.stringContaining(`${broken}: does not decode`),
         ]);
+    });
+});
+
+describe.skipIf(process.platform !== "darwin")("tools compress transparent", () => {
+    it("opens the picker for a bare algorithm in an interactive terminal", async () => {
+        const realIsTty = process.stdin.isTTY;
+        const select = spyOn(prompts, "select").mockResolvedValue("lzvn");
+        const printed = spyOn(out, "result").mockImplementation(() => {});
+        const program = new Command("compress");
+        registerTransparentCommands(program);
+        const folder = join(root, "algorithm-picker");
+        mkdirSync(folder);
+        Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true, writable: true });
+        try {
+            await program.parseAsync(["transparent", "plan", folder, "--algorithm", "--json"], { from: "user" });
+            expect(select).toHaveBeenCalledTimes(1);
+            expect(select.mock.calls[0][0].options.map((option) => option.value)).toEqual(["zlib", "lzvn", "lzfse"]);
+            expect(process.exitCode ?? 0).toBe(0);
+        } finally {
+            select.mockRestore();
+            printed.mockRestore();
+            process.exitCode = 0;
+            Object.defineProperty(process.stdin, "isTTY", { value: realIsTty, configurable: true, writable: true });
+        }
     });
 });

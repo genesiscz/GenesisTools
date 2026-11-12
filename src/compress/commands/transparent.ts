@@ -1,4 +1,4 @@
-import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { availableTransparentWriter, type TransparentWriter } from "@genesiscz/utils/compress/transparent";
 import type { TransparentAlgorithm } from "@genesiscz/utils/compress/transparent-native";
 import { formatBytes } from "@genesiscz/utils/format";
@@ -8,18 +8,21 @@ import type { Command } from "commander";
 import { type TransparentOptions as Options, runTransparentPaths } from "../lib/transparent";
 
 const ALGORITHMS = ["zlib", "lzvn", "lzfse"] as const;
-function writerFor(value: string | boolean | undefined): TransparentWriter | null {
+async function writerFor(value: string | boolean | undefined, mode: string): Promise<TransparentWriter | null> {
     if (value === undefined) {
         return availableTransparentWriter();
     }
 
-    if (typeof value !== "string" || !ALGORITHMS.includes(value as TransparentAlgorithm)) {
-        out.println(suggestEnumFlag("tools compress transparent plan", "--algorithm", ALGORITHMS));
-        process.exitCode = 1;
-        return null;
-    }
-
-    return availableTransparentWriter(value as TransparentAlgorithm);
+    const selected = await pickEnumFlag({
+        tool: "compress",
+        subcommand: ["transparent", mode],
+        flag: "--algorithm",
+        given: value,
+        values: ALGORITHMS,
+        fallback: availableTransparentWriter().algorithm,
+        accepts: (input: string): input is TransparentAlgorithm => ALGORITHMS.includes(input as TransparentAlgorithm),
+    });
+    return selected === null ? null : availableTransparentWriter(selected);
 }
 
 export function registerTransparentCommands(program: Command): void {
@@ -53,7 +56,7 @@ export function registerTransparentCommands(program: Command): void {
             .option("--on-battery", "explicitly permit apply on battery")
             .option("--json", "machine-readable result")
             .action(async (paths: string[], options: Options) => {
-                const writer = writerFor(options.algorithm);
+                const writer = await writerFor(options.algorithm, mode);
                 if (!writer) {
                     return;
                 }

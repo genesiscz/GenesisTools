@@ -6,6 +6,7 @@
 import {
     closeSync,
     existsSync,
+    fstatSync,
     linkSync,
     lstatSync,
     openSync,
@@ -18,6 +19,7 @@ import { basename, dirname, join } from "node:path";
 import { fileFlags } from "@genesiscz/utils/fs/cloud-placeholder";
 import { logger } from "@genesiscz/utils/logger";
 import { cloneFile, getPrivateSize } from "@genesiscz/utils/macos/apfs";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import {
     encodedSampleBytes,
     restoreFileTimes,
@@ -71,7 +73,16 @@ export type Outcome = {
     /** Kernel private bytes of the old inode immediately before its unlink. Unknown earns zero saving. */
     releasedBytes?: number;
     /** The original stays until settlement proves no writer can still use it. */
-    old?: { path: string; ino: number; size: number; mtimeMs: number; mtimeNs: string; newIno: number };
+    old?: {
+        path: string;
+        ino: number;
+        size: number;
+        mtimeMs: number;
+        mtimeNs: string;
+        ctimeNs: string;
+        newIno: number;
+        newCtimeNs: string;
+    };
 };
 export type Skips = Record<"young" | "small" | "too-big" | "open" | "compact" | "linked" | "other-type", number>;
 
@@ -162,6 +173,45 @@ export type MirrorOutcome = {
  * (measured 2026-11-10), so the mirror copy is replaced by a clone of the compressed original, and only then
  * are the plain blocks free. It is replaced only when it holds the same bytes.
  */
+/** Refuse metadata differences rather than replacing a partner's access policy or attributes. */
+async function samePartnerMetadata(source: string, partner: string): Promise<boolean> {
+    const a = lstatSync(source);
+    const b = lstatSync(partner);
+    if (
+        a.mode !== b.mode ||
+        a.uid !== b.uid ||
+        a.gid !== b.gid ||
+        ((fileFlags(source) ?? -1) & ~UF_COMPRESSED) !== ((fileFlags(partner) ?? -2) & ~UF_COMPRESSED)
+    ) {
+        return false;
+    }
+    for (const command of [
+        ["/usr/bin/xattr", "-lx"],
+        ["/bin/ls", "-lde"],
+    ]) {
+        const results = await Promise.all(
+            [source, partner].map((file) =>
+                boundedCommand({
+                    command: [...command, file],
+                    timeoutMs: 5000,
+                    maxBufferBytes: 1024 * 1024,
+                })
+            )
+        );
+        if (results.some((result) => result.status !== 0 || result.error)) {
+            return false;
+        }
+        // A single-file ls header contains the name; subsequent lines contain the ACL.
+        const values = results.map((result) =>
+            command[0] === "/bin/ls" ? result.stdout.split("\n").slice(1).join("\n") : result.stdout
+        );
+        if (values[0] !== values[1]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /** Refresh a partner with the same transaction and held-descriptor settlement as an original. */
 export async function clonePartner(
     source: string,
@@ -184,8 +234,14 @@ export async function clonePartner(
         algorithm,
         maxBytes: Number.MAX_SAFE_INTEGER,
         write: async ({ target }) => {
+            if (!(await samePartnerMetadata(source, candidate.path))) {
+                return { code: 1, err: "clone partner metadata differs or could not be verified; partner preserved" };
+            }
             cloneFile(source, target);
             restoreFileTimes(candidate.path, target);
+            if (!(await samePartnerMetadata(target, candidate.path))) {
+                return { code: 1, err: "clone partner metadata changed during copy; partner preserved" };
+            }
             return { code: 0, err: "" };
         },
     });
@@ -292,6 +348,7 @@ export async function compressOne(c: Candidate, writer: TransparentWriter = DITT
         };
     }
 
+    const startingCtime = lstatSync(c.path, { bigint: true }).ctimeNs;
     const copy = await writer.write({ source: c.path, target: tmp });
 
     if (copy.code !== 0) {
@@ -330,7 +387,14 @@ export async function compressOne(c: Candidate, writer: TransparentWriter = DITT
     const now = lstatSync(c.path);
     const precise = lstatSync(c.path, { bigint: true });
     const mtimeChanged = c.mtimeNs === undefined ? now.mtimeMs !== c.mtimeMs : precise.mtimeNs.toString() !== c.mtimeNs;
-    if (!now.isFile() || now.nlink !== 1 || now.ino !== c.ino || now.size !== c.size || mtimeChanged) {
+    if (
+        !now.isFile() ||
+        now.nlink !== 1 ||
+        now.ino !== c.ino ||
+        now.size !== c.size ||
+        mtimeChanged ||
+        precise.ctimeNs !== startingCtime
+    ) {
         return fail("changed", "the file changed during the copy");
     }
 
@@ -350,18 +414,64 @@ export async function compressOne(c: Candidate, writer: TransparentWriter = DITT
             size: c.size,
             mtimeMs: now.mtimeMs,
             mtimeNs: precise.mtimeNs.toString(),
+            ctimeNs: lstatSync(old, { bigint: true }).ctimeNs.toString(),
             newIno: t.ino,
+            newCtimeNs: lstatSync(c.path, { bigint: true }).ctimeNs.toString(),
         },
     };
 }
 
+/** Compare through owned descriptors and reject changes during the read, including a replaced path. */
+function equalStableFiles(left: string, right: string, leftInode: number, rightInode: number): boolean {
+    const descriptors: number[] = [];
+    try {
+        descriptors.push(openSync(left, "r"));
+        descriptors.push(openSync(right, "r"));
+        const before = descriptors.map((fd) => fstatSync(fd, { bigint: true }));
+        if (
+            before[0].ino !== BigInt(leftInode) ||
+            before[1].ino !== BigInt(rightInode) ||
+            before[0].size !== before[1].size
+        ) {
+            return false;
+        }
+        const buffers = [Buffer.alloc(128 * 1024), Buffer.alloc(128 * 1024)];
+        let position = 0;
+        while (true) {
+            const length = readSync(descriptors[0], buffers[0], 0, buffers[0].length, position);
+            const other = readSync(descriptors[1], buffers[1], 0, buffers[1].length, position);
+            if (length !== other || !buffers[0].subarray(0, length).equals(buffers[1].subarray(0, other))) {
+                return false;
+            }
+            if (length === 0) {
+                break;
+            }
+            position += length;
+        }
+        return descriptors.every((fd, i) => {
+            const after = fstatSync(fd, { bigint: true });
+            const named = lstatSync(i === 0 ? left : right, { bigint: true });
+            return (
+                after.ino === before[i].ino &&
+                after.size === before[i].size &&
+                after.ctimeNs === before[i].ctimeNs &&
+                named.ino === after.ino &&
+                named.ctimeNs === after.ctimeNs
+            );
+        });
+    } catch (error) {
+        logger.debug({ error }, "transparent compression final byte comparison could not be verified");
+        return false;
+    } finally {
+        for (const fd of descriptors) {
+            closeSync(fd);
+        }
+    }
+}
+
 /**
- * Finish a swap: drop the original that was kept aside, or put it back.
- *
- * A writer that opened the file before the swap writes into the ORIGINAL inode, which the path no longer names.
- * So the original goes back when a process still holds it (`openInodes`, a pass taken AFTER the swaps) or when
- * its size or mtime changed since the swap. When the compressed file changed too (a second writer appended by
- * path), both are kept and the caller reports it: `<name>.cold-conflict` holds the original.
+ * Retire an unchanged original only after open-inode, timestamp and byte checks. A changed old inode goes back
+ * when the new one is untouched; otherwise both versions survive under a unique .cold-conflict-* name.
  */
 export function settle(o: Outcome, openInodes: Set<number>): Outcome {
     if (o.status !== "compressed" || !o.old) {
@@ -382,9 +492,24 @@ export function settle(o: Outcome, openInodes: Set<number>): Outcome {
         return { ...o, status: "failed", after: o.before, note: "original aside identity changed; preserving it" };
     }
 
-    const written = st.size !== old.size || lstatSync(old.path, { bigint: true }).mtimeNs.toString() !== old.mtimeNs;
+    const preciseOld = lstatSync(old.path, { bigint: true });
+    const written =
+        st.size !== old.size ||
+        preciseOld.mtimeNs.toString() !== old.mtimeNs ||
+        preciseOld.ctimeNs.toString() !== old.ctimeNs;
 
     if (!written && !openInodes.has(old.ino)) {
+        // Own link/rename operations also change ctime. Compare actual bytes to cover a writer finishing in that window.
+        if (!equalStableFiles(old.path, o.path, old.ino, old.newIno)) {
+            const kept = preserveConflict(old.path, o.path);
+            return {
+                ...o,
+                old: undefined,
+                status: "conflict",
+                after: o.before,
+                note: `final bytes or identity changed; original preserved as ${kept}`,
+            };
+        }
         const releasedBytes = getPrivateSize(old.path) ?? 0;
         drop(old.path);
         return { ...o, old: undefined, releasedBytes };
@@ -404,7 +529,8 @@ export function settle(o: Outcome, openInodes: Set<number>): Outcome {
         (cur.ino === old.newIno &&
             !openInodes.has(cur.ino) &&
             cur.size === old.size &&
-            lstatSync(o.path, { bigint: true }).mtimeNs.toString() === old.mtimeNs)
+            lstatSync(o.path, { bigint: true }).mtimeNs.toString() === old.mtimeNs &&
+            lstatSync(o.path, { bigint: true }).ctimeNs.toString() === old.newCtimeNs)
     ) {
         renameSync(old.path, o.path);
         return {

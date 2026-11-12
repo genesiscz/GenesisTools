@@ -57,8 +57,9 @@ It skips young files, files below the minimum, hard links, sparse and compressed
 A failed or empty `lsof` pass stops apply. Apply skips battery power unless `--on-battery` is explicit.
 
 Clone partners come from the existing clone metadata index, the current native listing, and explicit mirror hints.
-Every partner is byte-compared before a compressed clone replaces it. Originals are held under `.cold-old-*` until
-a final open-inode check and exact timestamp checks establish whether to retire or restore them. Descriptor appends
+Every partner is byte-compared before a compressed clone replaces it. Partners with different permissions, owner,
+flags, ACLs or extended attributes are left untouched and earn no saving. Originals are held under `.cold-old-*` until
+a final open-inode check, exact mtime/ctime checks and a stable byte comparison establish whether to retire or restore them. Descriptor appends
 restore the original inode; when both versions changed, both are kept with a unique `.cold-conflict-*` name.
 A later apply recovers a dead run's transaction files through the same preservation rules.
 
