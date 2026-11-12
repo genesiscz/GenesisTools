@@ -21,7 +21,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         let timeline = ScreenTimeline(meeting: "m1", folder: "/fixture", displays: [], frames: [first, second, other])
         let model = FrameReviewModel(meeting: "m1", file: first.file, at: 10, player: nil, defaults: .standard, timeline: timeline)
         model.query = "cafe"
-        XCTAssertEqual(model.matches.map(\.frame.file), ["a.png", "c.png"])
+        XCTAssertEqual(model.matches.compactMap { $0.frame?.file }, ["a.png", "c.png"])
         model.nextMatch(1)
         XCTAssertEqual(model.frame?.file, "c.png")
         XCTAssertEqual(model.display, 2)
@@ -32,6 +32,47 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         model.step(-1, seek: false)
         XCTAssertEqual(model.time, 10)
         XCTAssertEqual(FrameReviewModel.nearest(in: [first, second], at: 0)?.file, "a.png")
+    }
+
+    func testFrameReviewGroupsRepeatedOCRAndSearchesBothSources() throws {
+        func frame(_ file: String, _ time: Double, _ text: String, _ display: Int = 1) -> TimelineFrame {
+            let box = OcrBox(x: 10, y: 20, width: 120, height: 30, text: text, confidence: 1)
+            return TimelineFrame(file: file, path: "/fixture/\(file)", at: "2026-11-01T10:00:00Z", meetingSec: time,
+                                 displayId: display, width: 800, height: 600, lineCount: 1, changed: [box], lines: [box])
+        }
+        let frames = [frame("a", 10, "The API is ready"), frame("b", 20, "The API is ready"),
+                      frame("c", 30, "Other text"), frame("d", 40, "The API is ready"), frame("e", 10, "The API is ready", 2)]
+        let transcript = MeetingTranscript(meeting: "m", entries: [
+            TranscriptLine(id: "l1", startSec: 5, speaker: "Alex", text: "Before this"),
+            TranscriptLine(id: "l2", startSec: 15, speaker: "Jordan", text: "The API changed"),
+            TranscriptLine(id: "l3", startSec: 25, speaker: "Alex", text: "After this")])
+        let model = FrameReviewModel(meeting: "m", file: "a", at: 10, player: nil, defaults: .standard,
+            timeline: ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: frames), transcript: transcript)
+        model.query = "api"
+        XCTAssertEqual(model.matches.count, 3)
+        let grouped = model.matches.first { $0.frame?.file == "a" }
+        XCTAssertEqual(grouped?.occurrences, 3)
+        XCTAssertEqual(grouped?.fromSec, 10)
+        XCTAssertEqual(grouped?.toSec, 40)
+        XCTAssertEqual(grouped?.seenAt, [10, 20, 40])
+        model.chooseMatch(try XCTUnwrap(grouped))
+        model.nextAppearance(1)
+        XCTAssertEqual(model.time, 20)
+        model.searchSource = .transcript
+        XCTAssertEqual(model.matches.count, 1)
+        XCTAssertEqual(model.selectedMatch?.speaker, "Jordan")
+        XCTAssertEqual(model.time, 15)
+        XCTAssertEqual(model.context.map(\.speaker), ["Alex", "Jordan", "Alex"])
+        model.searchSource = .ocr
+        XCTAssertEqual(model.matches.count, 2)
+        XCTAssertTrue(model.matches.allSatisfy { $0.source == .ocr })
+    }
+
+    func testFrameReviewHighlightsEveryExactMatchIncludingAccents() {
+        let text = "Café, CAFE and a longer sentence"
+        let ranges = FrameReviewModel.highlightRanges(in: text, query: "cafe")
+        XCTAssertEqual(ranges.map { (text as NSString).substring(with: $0) }, ["Café", "CAFE"])
+        XCTAssertTrue(FrameReviewModel.highlightRanges(in: text, query: "  ").isEmpty)
     }
 
     // MARK: Fixtures (invented people)

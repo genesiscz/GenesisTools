@@ -268,6 +268,25 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertEqual(player.stack.map(\.target), [.item("i2")], "a row starts over")
     }
 
+    func testFrameReviewDragDoesNotSeekUntilRelease() async throws {
+        engine.audio = .init(path: engine.folder.appendingPathComponent("upload.wav").path, tracks: 1, channels: 2, durationSec: 3600)
+        let player = makePlayer()
+        player.playMeeting("m", at: 30)
+        try await until("recording plays") { player.phase == .playing }
+        player.pause()
+        let before = sounds.last?.currentTime
+        let review = FrameReviewModel(meeting: "m", file: "a.png", at: 30, player: player, defaults: defaults)
+        review.sourceDuration = 3600
+        review.beginScrub()
+        for step in 0..<1000 { review.scrub(to: Double(step), seek: true) }
+        XCTAssertEqual(sounds.last?.currentTime, before)
+        XCTAssertTrue(review.isScrubbing)
+        review.endScrub(seek: true)
+        XCTAssertEqual(sounds.last?.currentTime, 999)
+        XCTAssertEqual(player.phase, .paused)
+        XCTAssertFalse(review.isScrubbing)
+    }
+
     func testFrameReviewSeekingKeepsAPausedRecordingPaused() async throws {
         engine.audio = .init(path: engine.folder.appendingPathComponent("upload.ogg").path, tracks: 1, channels: 2, durationSec: 3600)
         let player = makePlayer()

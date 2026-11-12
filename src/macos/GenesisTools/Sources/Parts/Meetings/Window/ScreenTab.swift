@@ -87,7 +87,7 @@ struct FrameRow: View, Equatable {
 
     /// The lines in reading order, with the band at the frame's top (the menu bar: its top 4 %) moved to the end. The
     /// OCR reads top down, so a display's first frame listed "Messages, Edit, View, Conversation…" in all six places,
-    /// and the content that changed stood behind "N more lines…". Nothing is left out; the sheet still boxes every line.
+    /// and the content that changed stood behind "N more lines…". Nothing is left out; the viewer can show every line.
     static func listed(_ lines: [OcrBox], frameHeight: Double) -> [OcrBox] {
         let band = frameHeight * 0.04
         let top = lines.filter { $0.y + $0.height / 2 < band }
