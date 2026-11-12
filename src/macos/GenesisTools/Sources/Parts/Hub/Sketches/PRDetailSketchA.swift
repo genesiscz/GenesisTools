@@ -570,6 +570,7 @@ private struct DiffColumn: View {
                     }
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) { ReviewVariantStatus(model: review) }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < ReviewRootView.wrapBelow }) { review.fitWrap(narrow: $0) }
         .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < HubDiffLayout.autoSplitBelow }) { review.fitStyle(narrow: $0) }
