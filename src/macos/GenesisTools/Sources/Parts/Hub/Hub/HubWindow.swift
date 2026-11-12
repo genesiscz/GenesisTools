@@ -2435,7 +2435,6 @@ struct HubRootView: View {
         .hubSurface(.content)
         // The window style, glass and General → Theme, for every surface above (Hub/HubStyle.swift).
         .modifier(HubStyleHost())
-        .environment(\.transcriptSubjectAbove, model.mode == .sessions)
         .preferredColorScheme(.dark)
         // Every stall and dropped-frame line in app-perf.log names this (GenesisKit Perf/PerfContext.swift).
         .task(id: perfArea) { PerfContext.area = perfArea }
@@ -3236,6 +3235,7 @@ struct SessionDetailView: View {
                 }
             }
         }
+        .environment(\.transcriptSubjectAbove, HubLayout.option("transcript") == "a" && agent?.node == nil)
         // Only the count is state: a resize step that keeps the same panes changes nothing here.
         .onGeometryChange(for: Int.self, of: { Self.fittingCount(visible, width: $0.size.width) }) { count in
             if fitting != count {

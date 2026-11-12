@@ -190,12 +190,12 @@ struct UsageSettingsSketchDaemonB: View {
                 UsageSettingsSketchRuleB()
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Recent runs").font(.system(size: 12, weight: .medium))
-                    DaemonRunList(runs: Array(stats.recentRuns.prefix(8)), store: store)
+                    DaemonRunList(runs: Array(stats.recentRuns.prefix(8)), store: store).id(task.name)
                 }
                 .usageSketchRowB()
             }
             UsageSettingsSketchRuleB()
-            DaemonTaskEditor(task: task, store: store)
+            DaemonTaskEditor(task: task, store: store).id(task.name)
             .usageSketchRowB()
         }
     }

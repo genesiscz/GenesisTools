@@ -10,14 +10,19 @@ struct ListVariantInboxKeys: ViewModifier {
     let inbox: HubInboxModel
     let entries: [ListVariantInboxEntry]
     let selected: String?
+    let focused: FocusState<Bool>.Binding
     let select: (ListVariantInboxEntry) -> Void
-    @FocusState private var focused: Bool
 
     func body(content: Content) -> some View {
         content
             .focusable()
             .focusEffectDisabled()
-            .focused($focused)
+            .focused(focused)
+            .simultaneousGesture(TapGesture().onEnded {
+                DispatchQueue.main.async {
+                    if !(NSApp.keyWindow?.firstResponder is NSTextView) { focused.wrappedValue = true }
+                }
+            }, including: .all)
             .onKeyPress(phases: .down) { press in
                 guard !(NSApp.keyWindow?.firstResponder is NSTextView),
                       !press.modifiers.contains(.command), !press.modifiers.contains(.control),

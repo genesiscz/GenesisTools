@@ -498,6 +498,7 @@ extension ListsSketchA {
 
         var heading: String {
             if let title = item.title, !title.trimmed.isEmpty { return title }
+            if let prompt = item.questions?.first?.prompt, !prompt.trimmed.isEmpty { return prompt }
             if let first = (item.prompt ?? "").split(separator: "\n").first { return String(first) }
             return WidgetWords.decision(item.number)
         }
@@ -741,13 +742,10 @@ extension ListsSketchA {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .genScrollBars()
                 }
-                .focusable()
-                .focusEffectDisabled()
-                .focused($keys)
 
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .modifier(ListVariantInboxKeys(inbox: inbox, entries: entries.map { ListVariantInboxEntry(session: $0.session, item: $0.item) }, selected: current?.item.id) { entry in
+            .modifier(ListVariantInboxKeys(inbox: inbox, entries: entries.map { ListVariantInboxEntry(session: $0.session, item: $0.item) }, selected: current?.item.id, focused: $keys) { entry in
                 inbox.selectedID = entry.session.id; inbox.keyCardID = entry.item.id
             })
         }
@@ -827,7 +825,7 @@ extension ListsSketchA {
         @ViewBuilder
         private func card(_ entry: Entry) -> some View {
             if entry.item.isForm {
-                InboxFormCard(inbox: inbox, item: entry.item)
+                InboxFormCard(inbox: inbox, item: entry.item).id(entry.item.id)
             } else {
                 InboxDecisionCard(model: model, inbox: inbox, session: entry.session, item: entry.item, keyed: keys)
                     .liveRow(selected: true)
@@ -973,6 +971,10 @@ extension ListsSketchA {
         var body: some View {
             let events = timeline.shown(filter: model.filter)
             let items = ListsSketchA.fold(events)
+            let nestedIDs = Set(items.flatMap { item -> [String] in
+                if case .run(let run) = item { return (run.commits + run.pushes).map(\.rowID) }
+                return []
+            })
             let runs = items.filter { if case .run = $0 { return true } else { return false } }.count
             VStack(spacing: 0) {
                 header(events: events.count, rows: items.count, runs: runs)
@@ -1013,9 +1015,14 @@ extension ListsSketchA {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .safeAreaInset(edge: .bottom) { ListVariantActivityFooter(timeline: timeline) }
             .onReceive(find.$isOpen) { searching = $0 }
-            .panelFind(find, revision: events.map(\.rowID).joined(separator: "|")) {
-                events.map { TimelineRowView.searchable($0, detail: timeline.details[$0.id], commitPrefix: commitPrefix) }
+            .panelFind(find, revision: findRevision(events)) {
+                events.map { TimelineRowView.searchable($0, detail: timeline.isExpanded($0) ? timeline.details[$0.id] : nil, compact: nestedIDs.contains($0.rowID), commitPrefix: commitPrefix) }
             }
+        }
+
+        private func findRevision(_ events: [TimelineEvent]) -> String {
+            let open = events.filter(timeline.isExpanded).map { "\($0.id)\(timeline.details[$0.id] == nil ? "" : "+")" }
+            return events.map(\.rowID).joined(separator: "|") + ";" + open.joined(separator: "|") + "\(commitPrefix)"
         }
 
         @ViewBuilder
@@ -1036,6 +1043,11 @@ extension ListsSketchA {
                         eventRow(commit, nested: true)
                     }
                     .transition(.genReveal)
+                    if searching {
+                        ForEach(run.pushes, id: \.rowID) { push in
+                            eventRow(push, nested: true)
+                        }
+                    }
                 }
             }
         }

@@ -24,7 +24,7 @@ struct InboxFindHost: View {
             }
         }
             .onReceive(find.$revealToken) { _ in
-                guard let hit = find.current,
+                guard HubLayout.option("lists") != nil, let hit = find.current,
                       let session = sessions.first(where: { $0.items.contains(where: { $0.id == hit.row }) }) else { return }
                 inbox.selectedID = session.id
                 inbox.keyCardID = hit.row

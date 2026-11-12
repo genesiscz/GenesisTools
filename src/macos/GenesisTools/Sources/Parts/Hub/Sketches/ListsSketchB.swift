@@ -465,6 +465,7 @@ extension ListsSketchB {
 
         var heading: String {
             if let title = item.title, !title.trimmed.isEmpty { return title }
+            if let prompt = item.questions?.first?.prompt, !prompt.trimmed.isEmpty { return prompt }
             if let first = (item.prompt ?? "").split(separator: "\n").first { return String(first) }
             return WidgetWords.decision(item.number)
         }
@@ -629,6 +630,7 @@ extension ListsSketchB {
 
     /// The page: one line per question, grouped by triage section; the open line shows its decision card.
     struct InboxTable: View {
+        @FocusState private var keys: Bool
         var model: HubModel
         @ObservedObject var inbox: HubInboxModel
         @ObservedObject private var pick = InboxPick.shared
@@ -644,6 +646,7 @@ extension ListsSketchB {
             VStack(spacing: 0) {
                 header(all: all, shown: shown.count)
                 PanelFindBarSlot()
+                ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         if shown.isEmpty, inbox.loading {
@@ -657,7 +660,7 @@ extension ListsSketchB {
                             if !rows.isEmpty {
                                 Section {
                                     ForEach(rows) { entry in
-                                        line(entry, open: entry.id == open)
+                                        line(entry, open: entry.id == open).id(entry.id)
                                     }
                                 } header: {
                                     sectionHeader(bucket, count: rows.count)
@@ -668,6 +671,10 @@ extension ListsSketchB {
                     .padding(.bottom, 16)
                     .genScrollBars()
                 }
+                .onChange(of: open) { _, id in
+                    if let id { proxy.scrollTo(id, anchor: .center) }
+                }
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onChange(of: inbox.focusRequest, initial: true) { _, _ in
@@ -676,7 +683,7 @@ extension ListsSketchB {
                 pick.project = nil
                 pick.open = id
             }
-            .modifier(ListVariantInboxKeys(inbox: inbox, entries: shown.map { ListVariantInboxEntry(session: $0.session, item: $0.item) }, selected: open) { entry in
+            .modifier(ListVariantInboxKeys(inbox: inbox, entries: shown.map { ListVariantInboxEntry(session: $0.session, item: $0.item) }, selected: open, focused: $keys) { entry in
                 inbox.selectedID = entry.session.id; inbox.keyCardID = entry.item.id; pick.open = entry.item.id
             })
         }
@@ -692,9 +699,9 @@ extension ListsSketchB {
             if open {
                 VStack(alignment: .leading, spacing: 8) {
                     if entry.item.isForm {
-                        InboxFormCard(inbox: inbox, item: entry.item)
+                        InboxFormCard(inbox: inbox, item: entry.item).id(entry.item.id)
                     } else {
-                        InboxDecisionCard(model: model, inbox: inbox, session: entry.session, item: entry.item)
+                        InboxDecisionCard(model: model, inbox: inbox, session: entry.session, item: entry.item, keyed: keys)
                             .liveRow(selected: true)
                     }
                     if !entry.session.draftedItems.isEmpty {
@@ -973,9 +980,14 @@ extension ListsSketchB {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .safeAreaInset(edge: .bottom) { ListVariantActivityFooter(timeline: timeline) }
             .onReceive(find.$isOpen) { searching = $0 }
-            .panelFind(find, revision: events.map(\.rowID).joined(separator: "|")) {
-                events.map { TimelineRowView.searchable($0, detail: timeline.details[$0.id], commitPrefix: commitPrefix) }
+            .panelFind(find, revision: findRevision(events)) {
+                events.map { TimelineRowView.searchable($0, detail: timeline.isExpanded($0) ? timeline.details[$0.id] : nil, compact: true, commitPrefix: commitPrefix) }
             }
+        }
+
+        private func findRevision(_ events: [TimelineEvent]) -> String {
+            let open = events.filter(timeline.isExpanded).map { "\($0.id)\(timeline.details[$0.id] == nil ? "" : "+")" }
+            return events.map(\.rowID).joined(separator: "|") + ";" + open.joined(separator: "|") + "\(commitPrefix)"
         }
 
         @ViewBuilder
@@ -1013,6 +1025,9 @@ extension ListsSketchB {
                         eventRow(commit, nested: true)
                     }
                     .transition(.genReveal)
+                    if searching, let push = group.push {
+                        eventRow(push, nested: true)
+                    }
                 }
             }
             Spacer().frame(height: 10)
