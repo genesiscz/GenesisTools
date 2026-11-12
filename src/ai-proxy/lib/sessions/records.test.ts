@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runSessionCompaction } from "@app/ai-proxy/commands/session-use";
@@ -11,6 +12,7 @@ import {
     routeDenial,
     sessionKeyRejection,
 } from "@app/ai-proxy/lib/clients";
+import { captureUpstreamFailure } from "@app/ai-proxy/lib/debug-capture";
 import { loadCompaction, restoreCompaction } from "@app/ai-proxy/lib/sessions/codex-compaction";
 import {
     _resetSessionKeyIndexForTest,
@@ -43,6 +45,7 @@ import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
+import { realGenesisToolsRoot } from "@genesiscz/utils/storage/real-home-guard";
 
 const SESSION = "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b";
 const originalHome = env.get("GENESIS_TOOLS_HOME");
@@ -161,6 +164,65 @@ describe("session records", () => {
         expect(readFileSync(result.backup ?? "", "utf8")).toBe("unreadable original");
         expect(loadCompaction(marker)?.id).toBe(marker);
         expect(statSync(destination).mode & 0o777).toBe(0o600);
+    });
+
+    it("writes the debug capture, which holds the request body unredacted, 0600 in a 0700 folder", () => {
+        const dir = join(getAiProxyStorage().getBaseDir(), "debug");
+        // An older proxy left the folder 0755.
+        mkdirSync(dir, { recursive: true });
+        chmodSync(dir, 0o755);
+        env.testing.set("AI_PROXY_DEBUG_CAPTURE", "1");
+
+        try {
+            captureUpstreamFailure({
+                provider: "openai-sub",
+                account: "work",
+                model: "gpt-fixture",
+                status: 400,
+                requestBody: '{"input":"a pasted key"}',
+                responseBody: "bad request",
+            });
+        } finally {
+            env.testing.unset("AI_PROXY_DEBUG_CAPTURE");
+        }
+
+        const path = join(dir, "last-openai-sub-failure.json");
+        expect(readFileSync(path, "utf8")).toContain("a pasted key");
+        expect(statSync(path).mode & 0o777).toBe(0o600);
+        expect(statSync(dir).mode & 0o777).toBe(0o700);
+    });
+
+    it("never creates or tightens a debug folder in the real store, as a storage cached before the sandbox would name", () => {
+        const realDir = join(realGenesisToolsRoot(), "ai-proxy");
+        const inReal = (calls: unknown[][]): unknown[][] => calls.filter(([path]) => String(path).startsWith(realDir));
+        // Stubs that record AND throw: even with the guard switched off (GENESIS_TOOLS_ALLOW_REAL_HOME_IN_TESTS), the
+        // capture stops at its first folder call, before any write reaches the real store.
+        const refuse = (): never => {
+            throw new Error("the test refuses to touch the real store");
+        };
+        const baseDir = spyOn(getAiProxyStorage(), "getBaseDir").mockReturnValue(realDir);
+        const mkdir = spyOn(fs, "mkdirSync").mockImplementation(refuse);
+        const chmod = spyOn(fs, "chmodSync").mockImplementation(refuse);
+        env.testing.set("AI_PROXY_DEBUG_CAPTURE", "1");
+
+        try {
+            captureUpstreamFailure({
+                provider: "openai-sub",
+                account: "work",
+                model: "gpt-fixture",
+                status: 400,
+                requestBody: "{}",
+                responseBody: "bad request",
+            });
+
+            expect(inReal(mkdir.mock.calls)).toEqual([]);
+            expect(inReal(chmod.mock.calls)).toEqual([]);
+        } finally {
+            env.testing.unset("AI_PROXY_DEBUG_CAPTURE");
+            chmod.mockRestore();
+            mkdir.mockRestore();
+            baseDir.mockRestore();
+        }
     });
 
     it("writes the record 0600 in a 0700 folder, with the key's hash and never the key", () => {

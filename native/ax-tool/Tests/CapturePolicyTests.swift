@@ -212,6 +212,11 @@ final class DisplayChangeTests: XCTestCase {
         XCTAssertNil(captureEarlyEnd(cancelled: false, displayRemoved: false, streamFailed: false))
         XCTAssertEqual(CaptureEarlyEnd.displayRemoved.rawValue, "display-removed")
         XCTAssertEqual(CaptureEarlyEnd.streamError.rawValue, "stream-error")
+        XCTAssertEqual(
+            captureEarlyEnd(cancelled: false, displayRemoved: true, streamFailed: false, exclusionUnresolved: true),
+            .exclusionUnresolved
+        )
+        XCTAssertEqual(CaptureEarlyEnd.exclusionUnresolved.rawValue, "exclusion-unresolved")
     }
 
     func testFocusDisplayFollowsTheWindowThenTheMouse() {

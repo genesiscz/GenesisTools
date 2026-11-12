@@ -595,7 +595,7 @@ tools git worktree backup /tmp/cc/shop/<session>/worktrees/fix-x --remove --note
 | `--dry-run` | Print the plan and the blockers; write nothing (every git read runs with `--no-optional-locks`) |
 | `--remove` | Remove the worktree once the proof passed and nothing changed during the backup |
 | `--note <text>` | What the work was, written into the README |
-| `--max-copy-mb <n>` | Refuse when the untracked and ignored files to copy exceed this many MiB (default 512) |
+| `--max-copy-mb <n>` | Refuse when the untracked and ignored files to copy exceed this many MiB, a plain decimal number (default 512) |
 | `--json` | The plan (with `--dry-run`) or the result as JSON on stdout |
 
 The backup goes to `~/.genesis-tools/backups/worktrees/<YYYY-MM-DD>-<repo>-<worktree>/` (`-2`, `-3`, ... when the name
@@ -606,7 +606,9 @@ secrets such as `.env.local`:
   upstream when it has one. Without an upstream, it compares two candidates, `origin/HEAD` and the branch the main
   checkout has out (unless that is this worktree's own branch), and takes the merge base that leaves the fewest
   commits in `<base>..HEAD`. So a worktree cut from a feature branch gets its own commits, not the whole feature
-  branch. Merge commits are skipped and counted.
+  branch. When neither gives a merge base (a bare clone has no `origin/HEAD` and no main-checkout branch), the base
+  is the one commit where the commits that no other branch, remote branch or tag holds start. Without any base the
+  backup has no commit patches and `--remove` refuses. Merge commits are skipped and counted.
 - `uncommitted-on-<short HEAD>.patch`: `git diff HEAD --binary`, the working copy of every changed tracked file.
 - `staged-on-<short HEAD>.patch`: `git diff --cached HEAD --binary`, the index, when it differs from HEAD. It is a
   separate patch because a staged version can differ from the working copy (a partly staged file, or a file staged
@@ -616,7 +618,8 @@ secrets such as `.env.local`:
   skipped; sockets and fifos are listed, not copied.
 - `README.md` with the restore commands, and `backup.json` with the full result.
 - When HEAD holds commits that no branch, remote branch or tag holds, the ref
-  `refs/backups/worktrees/<folder name>` keeps them alive in the repository.
+  `refs/backups/worktrees/<folder name>` keeps them alive in the repository. It is never moved: when that name is
+  taken (a same-day backup in another backup root), the new ref gets `-2`, `-3`, ...
 
 The proof runs in a scratch repository that borrows the source's objects: `git apply --cached --check` of the
 uncommitted patch on HEAD's tree; the staged patch applied on HEAD's tree, which must build the same tree as a copy
@@ -627,10 +630,15 @@ fingerprint again (HEAD, the working-tree and index diffs, the untracked and ign
 mtime and contents) and refuses when anything changed. It runs `git worktree remove --force` once, so a locked
 worktree stays refused. The branch stays in the repository.
 
-It refuses before writing anything when a merge, rebase, cherry-pick, revert or bisect is in progress, when the
-worktree has initialized submodules, when the index has unmerged entries, when the copy exceeds the limit, or when
-another worktree lives inside the folder. With `--remove` it also refuses a locked worktree and one where a process
-has its working directory. Exit 1 on any refusal.
+It refuses before writing anything when a merge, rebase, cherry-pick, revert or bisect is in progress, when the worktree
+has initialized submodules, when the index has unmerged entries, when the copy exceeds the limit, or when another
+worktree lives inside the folder. It also refuses when `assume-unchanged` or `skip-worktree` hides an edit, a deletion
+or an executable-bit change of a tracked file from `git diff` (no patch would hold it; the bytes are compared without
+clean filters, which a read-only plan never starts, so a filtered file counts as changed), and when the backup root lies
+inside the worktree (symlinks resolved), because a removal would delete the backup too. With `--remove` it also refuses
+a locked worktree, one where a process has its working directory, and one with no base. Exit 0 when the backup did what
+was asked; exit 2 when the backup is written and proven but `--remove` kept the worktree (it changed, or a process
+started in it, during the backup), so the backup is usable; exit 1 on any other refusal.
 
 Code that needs the same backup calls `planWorktreeBackup` and `backupWorktree` from `@genesiscz/utils/git`.
 

@@ -1063,6 +1063,13 @@ func cmdCaptureScreen() {
         guard let scDisplay = content.displays.first(where: { $0.displayID == display.id }) else {
             errorExit("display \(display.id) is not shareable", code: "display-missing")
         }
+        // Fail closed: a window the caller asked to leave out that is not listed cannot be left out, and it would be
+        // filmed. The border's panels stay best effort (`shareableContent` warns about them).
+        do {
+            try requireExclusionsListed(options.selection.excludedWindowIDs, in: content)
+        } catch {
+            errorExit("\(error.localizedDescription), so nothing was recorded; try again", code: "failed")
+        }
         let excluded = indicator.windowIDs.union(options.selection.excludedWindowIDs)
         filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
         pointSize = sourceRect?.size ?? display.bounds.size
@@ -1201,7 +1208,7 @@ func cmdCaptureScreen() {
     audio?.close()
     recorder.finishVideo(stoppedAt: stoppedAt)
     let endedEarly = captureEarlyEnd(cancelled: cancelled || host.stopRequested, displayRemoved: host.displayRemoved,
-                                     streamFailed: streamFailure != nil)
+                                     streamFailed: streamFailure != nil, exclusionUnresolved: host.exclusionFailure != nil)
 
     let outURL = URL(fileURLWithPath: options.outDir)
     let frames: [[String: Any]] = recorder.kept.map { frame in
@@ -1262,6 +1269,9 @@ func cmdCaptureScreen() {
     }
     if let endedEarly {
         data["endedEarly"] = endedEarly.rawValue
+    }
+    if let exclusionFailure = host.exclusionFailure {
+        data["endedEarlyReason"] = exclusionFailure
     }
     if let streamFailure {
         data["streamError"] = streamFailure.localizedDescription
@@ -1348,6 +1358,8 @@ private final class ScreenStreamHost {
     private(set) var displaysUsed: [CGDirectDisplayID]
     /// The recorded display is gone and the recording ends with `display-removed`.
     var displayRemoved = false
+    /// Why a restart could not leave the excluded windows out; it ended the recording (`exclusion-unresolved`).
+    var exclusionFailure: String?
     /// The reconfiguration callback saw the recorded display leave while following focus.
     var displayLost = false
     /// A `stop` command or the end of stdin: end like SIGINT.
@@ -1597,11 +1609,14 @@ private final class ScreenStreamHost {
         let previousDisplay = display
         let previousSize = outputSize(for: display)
         let excluded = excludedWindowIDs
+        let requested = options.selection.excludedWindowIDs
         let stream = self.stream
         let recorder = self.recorder
         Task {
             do {
-                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                // A listing without a window the movie leaves out throws: the recording stays on its display, whose
+                // filter still leaves the window out.
+                let content = try await listedContent(requested)
                 guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else {
                     throw NSError(domain: "ax-tool", code: 2, userInfo: [NSLocalizedDescriptionKey: "display \(target) is not shareable"])
                 }
@@ -1639,9 +1654,9 @@ private final class ScreenStreamHost {
     private func restart(on target: CGDirectDisplayID) {
         let geometry = displayGeometry(target)
         do {
-            let content = try awaitResult(timeoutSeconds: 10) {
-                try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            }
+            // The old stream is gone with its display: a new one that cannot leave the window out ends the recording.
+            let requested = options.selection.excludedWindowIDs
+            let content = try awaitResult(timeoutSeconds: 10) { try await listedContent(requested) }
             guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else { return }
             indicator.update([geometry.bounds])
             let excluded = excludedWindowIDs
@@ -1662,8 +1677,13 @@ private final class ScreenStreamHost {
             adopt(geometry)
             deadTicks = 0
         } catch {
-            recorder.warn("could not restart the recording on display \(target): \(error.localizedDescription)")
-            CaptureEvents.error("failed", "could not restart the recording on display \(target): \(error.localizedDescription)")
+            let reason = "could not restart the recording on display \(target): \(error.localizedDescription)"
+            recorder.warn(reason)
+            CaptureEvents.error("failed", reason)
+            if error is UnresolvedExclusions {
+                // Not a plain lost display: the result names it, so the session pauses with the reason.
+                exclusionFailure = reason
+            }
             displayRemoved = true
         }
     }
@@ -1688,7 +1708,7 @@ func shareableContent(listing windowIDs: Set<CGWindowID>, timeout: TimeInterval 
         wait: { RunLoop.current.run(until: Date().addingTimeInterval($0)) },
         fetch: { remaining in
             try awaitResult(timeoutSeconds: remaining ?? 30) {
-                try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             }
         },
         isListed: { content in windowIDs.isSubset(of: Set(content.windows.map(\.windowID))) }
@@ -1703,6 +1723,38 @@ func shareableContent(listing windowIDs: Set<CGWindowID>, timeout: TimeInterval 
         FileHandle.standardError.write(Data("ax-tool: listing the windows again failed (\(reason)); the movie may show the recording border or a window it leaves out\n".utf8))
     }
     return polled.value
+}
+
+/// Throws when a window the caller asked the movie to leave out still exists but `content` does not list it: a display
+/// filter built from `content` could not leave it out, so the movie would show it. Every display filter of a recording
+/// (the start, a display switch, a restart) checks this; the recording border's panels stay best effort.
+func requireExclusionsListed(_ requested: Set<CGWindowID>, in content: SCShareableContent) throws {
+    let unresolved = unlistedExclusions(requested, in: content)
+    guard unresolved.isEmpty else { throw UnresolvedExclusions(ids: unresolved) }
+}
+
+private func unlistedExclusions(_ requested: Set<CGWindowID>, in content: SCShareableContent) -> [CGWindowID] {
+    unresolvedExclusions(requested: requested, listed: Set(content.windows.map(\.windowID)), exists: windowExists)
+}
+
+/// The shareable content of a display switch or a restart once it lists every window in `requested`, asking again
+/// for at most `timeout` seconds (`awaitExclusionsListed`). Off-screen windows are listed too: a minimized window
+/// the movie leaves out must be in the filter when it comes back. Throws `UnresolvedExclusions` past the deadline.
+func listedContent(_ requested: Set<CGWindowID>, timeout: TimeInterval = 1) async throws -> SCShareableContent {
+    try await awaitExclusionsListed(
+        timeout: timeout,
+        sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
+        fetch: { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false) },
+        unresolved: { unlistedExclusions(requested, in: $0) }
+    )
+}
+
+/// Whether the window server still has the window, on screen or not. `.optionAll` lists off-screen windows too; Apple
+/// documents `.optionIncludingWindow` as meaningful only beside an above or below option. A list the window server
+/// does not give counts as "exists", so an exclusion check fails closed.
+func windowExists(_ id: CGWindowID) -> Bool {
+    guard let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[CFString: Any]] else { return true }
+    return info.contains { ($0[kCGWindowNumber] as? CGWindowID) == id }
 }
 
 func awaitResult<T>(timeoutSeconds: Double = 30, _ operation: @escaping () async throws -> T) throws -> T {

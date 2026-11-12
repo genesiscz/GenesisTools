@@ -130,6 +130,10 @@ export async function runCodesignTrust({ fromNotice }: { fromNotice: boolean }):
         out.log.info(`Its full output (one block per key): ${outputFile}`);
     }
 
+    if (result.markerError) {
+        out.log.warn(`The keychain change stands, but ${result.markerError}, so the next build asks again.`);
+    }
+
     const sign = identities.find((id) => id.name === signedWith)?.hash ?? signedWith;
 
     if (!sign) {

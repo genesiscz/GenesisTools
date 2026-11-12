@@ -106,7 +106,7 @@ export function registerHar(program: Command): void {
         .option("--from-buffer", "dump a leftover buffer although its recorder already exited")
         .option(
             "--sanitize",
-            "redact Cookie, Set-Cookie, Authorization headers, cookie values, and password/token/code POST params"
+            "redact Cookie, Set-Cookie, Authorization headers, cookie values, and password/token/code params in POST bodies, URLs and page titles"
         )
         .option("--no-bodies", "live window: skip Network.getResponseBody calls")
         .option("--analyze", `run ${toolCommand("har-analyzer load")} on the result`)

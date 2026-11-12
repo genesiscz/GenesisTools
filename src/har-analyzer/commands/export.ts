@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
-import { type RedactorOptions, redactEntry } from "@app/har-analyzer/core/redactor";
+import { type RedactorOptions, redactHar } from "@app/har-analyzer/core/redactor";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, HarEntry, HarFile, OutputOptions } from "@app/har-analyzer/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -14,8 +14,9 @@ const SANITIZE_OPTIONS: RedactorOptions = {
     styles: { token: "label", session: "label", cookie: "label", jwt: "label" },
 };
 
-export function sanitizeEntry(entry: HarEntry, index: number): HarEntry {
-    return redactEntry(entry, index, SANITIZE_OPTIONS).entry;
+/** The whole exported file: the entries, then the page titles (a navigation URL) and the final JWT sweep of the log. */
+export function sanitizeExport(har: HarFile): HarFile {
+    return redactHar(har, SANITIZE_OPTIONS).har;
 }
 
 function stripBodies(entry: HarEntry): HarEntry {
@@ -70,19 +71,18 @@ export function registerExportCommand(program: Command): void {
                 let entries = harFile.log.entries.filter((_, i) => filteredIndices.has(i));
 
                 // Apply transformations
-                if (options.sanitize) {
-                    entries = entries.map((entry, i) => sanitizeEntry(entry, i));
-                }
                 if (options.stripBodies) {
                     entries = entries.map(stripBodies);
                 }
 
-                const exportedHar: HarFile = {
+                const filteredHar: HarFile = {
                     log: {
                         ...harFile.log,
                         entries,
                     },
                 };
+                // The page list is copied whole, and a page title holds the URL it opened.
+                const exportedHar = options.sanitize ? sanitizeExport(filteredHar) : filteredHar;
 
                 const json = SafeJSON.stringify(exportedHar, null, 2);
 

@@ -820,6 +820,14 @@ tools control capture session \
 made of segments: one recorder run stops after 180 s, so a longer recording chains runs, and stop joins them into one
 movie.
 
+A window named in `--exclude-window-ids` that still exists but that screen capture does not list within a second fails
+the start with code `failed`, and nothing is recorded: the recorder cannot leave out a window it cannot see, and the
+movie would show it. A live switch inside one recorder run (`--follow-focus`, or the `ax-tool --control-stdin`
+`switch` above) checks it again, for up to a second, and keeps the recording on its display when the check fails; a
+restart after the recorded display went away ends that run with `endedEarly: "exclusion-unresolved"`, and the
+session pauses with the reason. A session `switch` (below) stops the segment and starts a new one on the new target,
+so it runs the start's check: when that fails, the session pauses and nothing records on the old display.
+
 With `--stop-on-stdin` it reads one JSON command per stdin line, and the end of stdin stops and keeps the recording:
 
 - `{"cmd":"pause"}`, `{"cmd":"resume"}`, `{"cmd":"restart"}`, `{"cmd":"stop"}` and `{"cmd":"discard"}`.

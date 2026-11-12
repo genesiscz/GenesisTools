@@ -331,6 +331,24 @@ final class VaultUnlockTests: XCTestCase {
         }
     }
 
+    /// The CLI loader (`src/utils/ai/gate/auto-allow.ts`) refuses the same files, so both sides agree on what is off.
+    func testAnAutoAllowKeyOfTheWrongTypeTurnsTheFeatureOffAndNullIsTheDefault() throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("vault-auto-allow-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let path = (directory as NSString).appendingPathComponent("vault-auto-allow.json")
+        let load = { (json: String) -> VaultAutoAllowSettings in
+            FileManager.default.createFile(atPath: path, contents: Data(json.utf8))
+            return VaultAutoAllowSettings.load(from: path)
+        }
+
+        for json in [#"{"enabled": "false"}"#, #"{"notify": 1}"#, #"{"commands": "ai usage"}"#, #"{"agentApps": [1]}"#] {
+            XCTAssertEqual(load(json), .disabled, "a wrong type never widens the list: \(json)")
+        }
+        XCTAssertEqual(load(#"{"enabled": null, "commands": null}"#), VaultAutoAllowSettings())
+        XCTAssertEqual(load(#"{"notify": false}"#), VaultAutoAllowSettings(notify: false))
+    }
+
     func testGrantTransactionsWaitForTheSharedPidLockAndReloadAfterRevocation() async throws {
         let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("vault-store-\(UUID().uuidString)")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
