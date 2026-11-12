@@ -27,7 +27,7 @@ let allParts: [AppPart] = [
     // The feature settings window (`--features`): General, Background, About, plus each linked part's plug-in.
     AppPart(id: "features", target: "GenesisToolsFeatures", path: "Sources/Parts/Features"),
     // The hub, the widget and Clicky have pages in that window, so a build with one of them makes it too.
-    AppPart(id: "hub", target: "GenesisToolsHub", path: "Sources/Parts/Hub", requires: ["features"], kits: ["GenesisKitCharts", "GenesisKitDisk"]),
+    AppPart(id: "hub", target: "GenesisToolsHub", path: "Sources/Parts/Hub", requires: ["features"], kits: ["GenesisKitCharts"]),
     AppPart(id: "widget", target: "GenesisToolsWidget", path: "Sources/Parts/Widget", requires: ["features"]),
     AppPart(id: "clicky", target: "GenesisToolsClicky", path: "Sources/Parts/Clicky", requires: ["features"]),
     AppPart(id: "markdown", target: "GenesisToolsMarkdown", path: "Sources/Parts/Markdown"),
