@@ -122,7 +122,7 @@ final class MeetingDetailModel {
     init(id: String, window: MeetingsWindowModel?, notices: NoticeStackModel? = nil, service: MeetingsService? = nil) {
         self.id = id
         self.window = window
-        self.notices = notices ?? window?.makeNoticeStack() ?? NoticeStackModel(timing: { MeetingsPreferences.noticeTiming() })
+        self.notices = notices ?? window?.makeNoticeStack() ?? MeetingsPreferences.makeNoticeStack()
         self.service = service ?? window?.service
     }
 

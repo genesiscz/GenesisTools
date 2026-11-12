@@ -17,6 +17,7 @@ final class KitCatalogTests: XCTestCase {
         "KitTextWidth.swift": "measures a label's width for a control that picks its shape",
         "LatestScrollAnchor.swift": "scroll behaviour",
         "MouseClick.swift": "reads the click count of an event",
+        "NoticeStackInteraction.swift": "tracks input for NoticeStack without drawing a separate control",
         "OverlayScrollViewport.swift": "a container",
         "ScrollViewPositioning.swift": "scroll behaviour",
         "WindowMoveGesture.swift": "a gesture",

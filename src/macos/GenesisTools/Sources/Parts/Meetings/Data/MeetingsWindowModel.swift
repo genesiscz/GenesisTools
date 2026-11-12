@@ -193,8 +193,7 @@ final class MeetingsWindowModel {
         noticePlace = MeetingsPreferences.noticePlace(defaults)
         sidePanelOpen = defaults.bool(forKey: Self.sidePanelOpenKey)
         sidePanelFolded = Set(defaults.stringArray(forKey: Self.sidePanelFoldedKey) ?? [])
-        notices = NoticeStackModel(clock: noticeClock, timing: { [defaults] in MeetingsPreferences.noticeTiming(defaults) },
-                                   maxVisible: { [defaults] in MeetingsPreferences.Notices.maxVisible.value(defaults) })
+        notices = MeetingsPreferences.makeNoticeStack(clock: noticeClock, defaults: defaults)
     }
 
     /// The window's notice stack; every pane pushes into it.
@@ -221,6 +220,7 @@ final class MeetingsWindowModel {
     /// A window setting changed (the side panel wrote one, or the window came back after the Settings page): the values
     /// the window model holds read again. The views read every other window setting from the defaults themselves.
     func windowSettingsChanged() {
+        notices.refreshSettings()
         let place = MeetingsPreferences.noticePlace(defaults)
         if place != noticePlace { noticePlace = place }
     }

@@ -93,6 +93,14 @@ enum MeetingsPreferences {
         NoticeStackTiming(actionSeconds: Double(noticeSeconds(defaults)), plainSeconds: Double(plainNoticeSeconds(defaults)))
     }
 
+    @MainActor static func makeNoticeStack(clock: NoticeClock? = nil, defaults: UserDefaults = .standard) -> NoticeStackModel {
+        NoticeStackModel(clock: clock, timing: { noticeTiming(defaults) },
+                         maxVisible: { Notices.maxVisible.value(defaults) }, interaction: {
+            NoticeStackInteractionPolicy(pauseWhenInactive: Notices.pauseWhenInactive.value(defaults),
+                                         passScrollWhenFits: Notices.passScrollWhenFits.value(defaults))
+        })
+    }
+
     /// Removes the keys this version replaced, and carries a renamed key's value over. Run once when the window's model
     /// starts; no reader uses the old keys.
     static func migrate(_ defaults: UserDefaults = .standard) {
@@ -208,6 +216,14 @@ extension MeetingsPreferences {
 
     /// The notice stack (F4 keys stay in `MeetingsPreferences`; this adds the visible count).
     enum Notices {
+        static let pauseWhenInactive = MeetingsWindowSetting(
+            key: "meetings.notices.pauseWhenInactive", defaultValue: true, choices: [true, false],
+            title: "Keep notices while the window is inactive",
+            detail: "Pause their expiry clocks until this window is active again.")
+        static let passScrollWhenFits = MeetingsWindowSetting(
+            key: "meetings.notices.passScrollWhenFits", defaultValue: true, choices: [true, false],
+            title: "Scroll the page through short notices",
+            detail: "Wheel scrolling reaches the page when the notice stack fits without scrolling.")
         static let maxVisible = MeetingsWindowSetting(
             key: "meetings.notices.maxVisible", defaultValue: 3, choices: [2, 3, 5, 8],
             title: "Notices shown at once", detail: "Older notices fold into “+N more”.")

@@ -318,6 +318,89 @@ final class NoticeStackTests: XCTestCase {
         XCTAssertTrue(stackFrame.insetBy(dx: -1, dy: -1).contains(newest), "the newest notice is in view: \(newest) in \(stackFrame)")
     }
 
+    func testInactiveWindowAndHoverPauseReasonsDoNotCancelEachOther() {
+        let clock = ManualNoticeClock()
+        var policy = NoticeStackInteractionPolicy(pauseWhenInactive: true, passScrollWhenFits: true)
+        let model = NoticeStackModel(clock: clock, announces: false, interaction: { policy })
+        let id = model.push(StackedNotice(text: "Saved", lasting: .seconds(10)))
+        clock.advance(by: 3)
+        model.updateInteraction(pointerInside: false, windowIsKey: false)
+        clock.advance(by: 100)
+        XCTAssertEqual(model.remaining(id), 7)
+        model.updateInteraction(pointerInside: true, windowIsKey: true)
+        XCTAssertTrue(model.isPaused, "activation must not cancel the hover pause")
+        model.updateInteraction(pointerInside: false, windowIsKey: true)
+        clock.advance(by: 2)
+        XCTAssertEqual(model.remaining(id), 5)
+        model.updateInteraction(pointerInside: false, windowIsKey: false)
+        policy.pauseWhenInactive = false
+        model.updateInteraction(pointerInside: false, windowIsKey: false)
+        clock.advance(by: 5)
+        XCTAssertFalse(model.contains(id), "a changed policy applies to the existing timer")
+    }
+
+    func testShortStackStopsOwningAScrollViewWhenTheSettingChanges() async throws {
+        var policy = NoticeStackInteractionPolicy()
+        let model = NoticeStackModel(clock: ManualNoticeClock(), announces: false, interaction: { policy })
+        model.push(StackedNotice(text: "Saved", lasting: .untilDismissed))
+        let host = NSHostingView(rootView: NoticeStackView(model, maxWidth: 400, maxHeight: 150))
+        func scrolls(_ view: NSView) -> Int {
+            (view is NSScrollView ? 1 : 0) + view.subviews.reduce(0) { $0 + scrolls($1) }
+        }
+        _ = try await settledHeight(host)
+        XCTAssertEqual(scrolls(host), 1)
+        policy.passScrollWhenFits = true
+        model.refreshSettings()
+        _ = try await settledHeight(host)
+        XCTAssertEqual(scrolls(host), 0)
+        for index in 1...12 { model.push(StackedNotice(text: "Notice \(index)", lasting: .untilDismissed)) }
+        _ = try await settledHeight(host)
+        XCTAssertEqual(scrolls(host), 1, "overflow still scrolls its own notices")
+    }
+
+    func testShortStackWheelTargetsThePageInItsColumn() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        func addScroll(_ frame: NSRect) -> NSScrollView {
+            let scroll = NSScrollView(frame: frame)
+            scroll.documentView = NSView(frame: NSRect(x: 0, y: 0, width: frame.width, height: 2000))
+            root.addSubview(scroll)
+            return scroll
+        }
+        let page = addScroll(NSRect(x: 0, y: 100, width: 500, height: 500))
+        let inspector = addScroll(NSRect(x: 510, y: 0, width: 290, height: 600))
+        XCTAssertTrue(NoticeStackInteractionView.scrollTarget(at: NSPoint(x: 250, y: 50), in: root) === page,
+                      "a notice in the playback inset routes up to its page")
+        XCTAssertTrue(NoticeStackInteractionView.scrollTarget(at: NSPoint(x: 600, y: 50), in: root) === inspector)
+        XCTAssertNil(NoticeStackInteractionView.scrollTarget(at: NSPoint(x: 505, y: 50), in: root),
+                     "a gap between panes does not scroll either pane")
+    }
+
+    func testShrinkingAwayFromAStationaryPointerReleasesThePause() throws {
+        let clock = ManualNoticeClock()
+        let model = stack(clock)
+        let id = model.push(StackedNotice(text: "Saved", lasting: .seconds(6)))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+        let tracking = NoticeStackInteractionView(frame: container.bounds)
+        tracking.model = model
+        container.addSubview(tracking)
+        let window = NSWindow(contentRect: container.bounds, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = container
+        window.orderInForSnapshot()
+        defer { window.close() }
+        let stationary = window.convertPoint(toScreen: NSPoint(x: 50, y: 75))
+        tracking.pointerLocation = { stationary }
+        tracking.refreshInteraction()
+        XCTAssertTrue(model.isPaused)
+        clock.advance(by: 20)
+        XCTAssertTrue(model.contains(id))
+        tracking.setFrameSize(NSSize(width: 100, height: 20))
+        tracking.refreshInteraction()
+        XCTAssertFalse(model.isPaused, "new bounds exclude the unchanged pointer: bounds \(tracking.bounds), visible \(tracking.visibleRect), local \(tracking.convert(window.convertPoint(fromScreen: stationary), from: nil))")
+        clock.advance(by: 6)
+        XCTAssertFalse(model.contains(id))
+    }
+
     /// The frame `name` reports once it holds still for three layout rounds.
     private func settledFrame(_ name: String, in host: NSView) async throws -> CGRect {
         var last: CGRect?

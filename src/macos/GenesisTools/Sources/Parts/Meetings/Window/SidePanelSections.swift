@@ -358,6 +358,8 @@ enum SidePanelCatalog {
                          value: .text(MeetingsPreferences.noticePlace(defaults).rawValue),
                          defaultValue: .text(MeetingsPreferences.NoticePlace.bottom.rawValue)),
             row(MeetingsPreferences.Notices.maxVisible, value: MeetingsPreferences.Notices.maxVisible.value(defaults)),
+            row(MeetingsPreferences.Notices.pauseWhenInactive, value: MeetingsPreferences.Notices.pauseWhenInactive.value(defaults)),
+            row(MeetingsPreferences.Notices.passScrollWhenFits, value: MeetingsPreferences.Notices.passScrollWhenFits.value(defaults)),
         ], settingsAnchor: MeetingsSettingsPages.noticesAnchor)
         let timelineOn: [SidePanelValue] = [.flag(true)]
         let panes = SidePanelSection(id: "panes", title: "Timeline and Panes", rows: [

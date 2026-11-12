@@ -58,7 +58,7 @@ final class MeetingsSettingsModel {
     init(writes: Bool = true, notices: NoticeStackModel? = nil, service: MeetingsService? = nil) {
         self.writes = writes
         self.service = service ?? MeetingsService.shared
-        self.notices = notices ?? NoticeStackModel(timing: { MeetingsPreferences.noticeTiming() })
+        self.notices = notices ?? MeetingsPreferences.makeNoticeStack()
     }
 
     /// Every read has ended, with data or with its error (a snapshot waits for this).

@@ -37,6 +37,23 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertEqual(sections.first { $0.id == "notices" }?.settingsAnchor, MeetingsSettingsPages.noticesAnchor)
     }
 
+    func testNoticeInteractionChoicesPersistAndReachTheExistingStack() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsPreferences.makeNoticeStack(defaults: defaults)
+        XCTAssertEqual(model.interactionPolicy, NoticeStackInteractionPolicy(pauseWhenInactive: true, passScrollWhenFits: true))
+        let rows = try XCTUnwrap(SidePanelCatalog.windowSections(defaults).first { $0.id == "notices" }).rows
+        for key in [MeetingsPreferences.Notices.pauseWhenInactive.key, MeetingsPreferences.Notices.passScrollWhenFits.key] {
+            let row = try XCTUnwrap(rows.first { $0.id == key })
+            XCTAssertEqual(row.value, .flag(true))
+            SidePanelCatalog.write(.flag(false), key: key, to: defaults)
+        }
+        let reopened = try XCTUnwrap(UserDefaults(suiteName: suite))
+        XCTAssertFalse(MeetingsPreferences.Notices.pauseWhenInactive.value(reopened))
+        XCTAssertFalse(MeetingsPreferences.Notices.passScrollWhenFits.value(reopened))
+        XCTAssertEqual(model.interactionPolicy, NoticeStackInteractionPolicy())
+    }
+
     func testAChangedValueShowsAndTheSectionCanReset() throws {
         let (defaults, suite) = try defaults()
         defer { defaults.removePersistentDomain(forName: suite) }
