@@ -1409,7 +1409,14 @@ describe("an export never writes over its own input", () => {
             expect(direct.error).toContain("would overwrite its input");
             expect(readFileSync(movie, "utf8")).toBe("original");
 
-            const real = await exportAs(path, { out: realpathSync(movie).toUpperCase(), overwrite: true });
+            const canonicalMovie = realpathSync(movie);
+            const upperCaseAlias = canonicalMovie.toUpperCase();
+            // A case-sensitive filesystem gives that spelling a different path, not an alias of this input.
+            const sameInput =
+                existsSync(upperCaseAlias) && realpathSync(upperCaseAlias) === canonicalMovie
+                    ? upperCaseAlias
+                    : canonicalMovie;
+            const real = await exportAs(path, { out: sameInput, overwrite: true });
             expect(real.error).toContain("would overwrite its input");
 
             const link = join(root, "link.mp4");
