@@ -628,6 +628,11 @@ describe("the frame index and the OCR worker (two phases)", () => {
         expect([local?.getDate(), local?.getHours(), local?.getMinutes()]).toEqual([new Date(start).getDate(), 15, 56]);
         expect(parseRereadSince("2026-11-11T14:56:00.000Z", { start })?.toISOString()).toBe("2026-11-11T14:56:00.000Z");
         expect(parseRereadSince("soon", { start })).toBeUndefined();
+        for (const raw of ["24:00", "25:10", "15:75", "15:56:99", "23:59:60"]) {
+            expect(parseRereadSince(raw, { start })).toBeUndefined();
+        }
+        const lastSecond = parseRereadSince("23:59:59", { start });
+        expect([lastSecond?.getHours(), lastSecond?.getMinutes(), lastSecond?.getSeconds()]).toEqual([23, 59, 59]);
     });
 
     it("ensureOcrWorkers starts a worker only for a recent meeting with frames that have no OCR row", async () => {

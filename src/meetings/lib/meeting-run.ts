@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
     defaultOcrLanguages,
@@ -22,7 +22,7 @@ import type { FrameRecording } from "@genesiscz/utils/screen-recorder/recording"
 import type { PieceTarget } from "@genesiscz/utils/screen-recorder/targets";
 import type { CaptureResult } from "@genesiscz/utils/screen-recorder/types";
 import { CallTimeline } from "./call-timeline";
-import { appendFrameIndex } from "./frame-index";
+import { appendFrameIndex, readFrameIndex } from "./frame-index";
 import { LiveOcrSettings, meetingOcrSettings, OCR_SETTINGS_FILE } from "./ocr-worker";
 import { type RecorderStateFile, RecordingRecord } from "./recorder-adapters";
 import { meetingMovieZeroMs } from "./recording-manifest";
@@ -133,10 +133,24 @@ export class MeetingRun {
         return this.zeroMs;
     }
 
-    /** When the last frame landed in the meeting's frames folder (its mtime), or now when it has none. */
+    /** The interrupted run's last indexed frame, or its start when no frame belongs to that run. */
     private lastFrameAt(): string {
-        const at = existsSync(this.framesDir) ? statSync(this.framesDir).mtime : new Date();
-        return at.toISOString();
+        const open = this.recordingRecord.spans.at(-1);
+        if (!open || open.to) {
+            return this.state.startedAt;
+        }
+
+        const start = Date.parse(open.from);
+        const restart = Date.parse(this.state.startedAt);
+        let latest = start;
+        for (const frame of readFrameIndex(this.folder)) {
+            const at = Date.parse(frame.at);
+            if (at >= start && at <= restart) {
+                latest = Math.max(latest, at);
+            }
+        }
+
+        return new Date(latest).toISOString();
     }
 
     /**

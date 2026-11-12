@@ -2856,6 +2856,7 @@ describe("the meetings recorder loop", () => {
         displays: DisplayInfo[][];
         steps: Step[];
         failOnJpeg?: boolean;
+        prepare?: (store: MeetingStore, id: string) => Promise<void>;
         beforeJpeg?: (png: string) => Promise<void>;
         liveControl?: boolean;
         liveSettings?: boolean;
@@ -2901,6 +2902,7 @@ describe("the meetings recorder loop", () => {
             { title: "Recorder check", start: "2026-11-03T12:00:00.000Z", createdBy: "record" },
             { command: "record start", change: "created" }
         );
+        await options.prepare?.(store, created.id);
         const liveDir = mkdtempSync(join(tmpdir(), "live-meeting-"));
         const notes: RecorderNote[] = [];
         const ocrStarts: string[] = [];
@@ -3000,6 +3002,56 @@ describe("the meetings recorder loop", () => {
             folder,
             saved: store.read(created.id),
         };
+    }
+
+    for (const keptFrame of [false, true]) {
+        test(`a restarted recording closes the dead run at its own ${keptFrame ? "last indexed frame" : "start when no frame was kept"}`, async () => {
+            const first = { from: "2026-11-03T12:00:00.000Z", to: "2026-11-03T12:30:00.000Z" };
+            const interruptedAt = "2026-11-03T13:00:00.000Z";
+            const lastAt = "2026-11-03T13:00:20.000Z";
+            const run = await recordWith({
+                displays: [[builtIn]],
+                steps: ["frames"],
+                prepare: async (store, id) => {
+                    await store.update(id, { command: "test", change: "dead run" }, (record) => {
+                        record.recording = {
+                            status: "recording",
+                            startedAt: first.from,
+                            spans: [first, { from: interruptedAt }],
+                        };
+                    });
+                    const frames = join(store.folder(id), "frames");
+                    mkdirSync(frames);
+                    const times = [first.to, ...(keptFrame ? [lastAt] : [])];
+                    const rows = times.map((at, index) => ({
+                        file: `frames/earlier-${index}-d1.jpg`,
+                        at,
+                        displayId: 1,
+                        changePercent: 100,
+                        reason: "first",
+                    }));
+                    for (const row of rows) {
+                        writeFileSync(join(store.folder(id), row.file), "jpeg");
+                    }
+                    writeFileSync(
+                        join(store.folder(id), "frames.jsonl"),
+                        `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`
+                    );
+                    utimesSync(frames, new Date(first.to), new Date(first.to));
+                },
+            });
+            const saved = new MeetingStore(run.store.storage).read(run.saved!.id)!;
+            expect(saved.recording?.spans?.[1]).toEqual({
+                from: interruptedAt,
+                to: keptFrame ? lastAt : interruptedAt,
+                stopReason: "interrupted",
+            });
+            const coverage = screenCaptureCoverage({ record: saved, zeroMs: Date.parse(first.from) });
+            expect(coverage.recordingSpans?.[0]).toEqual({ fromSec: 0, toSec: 1800 });
+            expect(coverage.recordingSpans?.filter((span) => span.fromSec === 3600)).toEqual(
+                keptFrame ? [{ fromSec: 3600, toSec: 3620 }] : []
+            );
+        });
     }
 
     test("every display at once, named by id; a display that leaves between pieces leaves without an error", async () => {
@@ -5935,6 +5987,10 @@ describe("capture coverage evidence", () => {
     test("invalid or unfinished metadata cannot manufacture a positive coverage range", () => {
         expect(coverage({ spans: [{ from: at(60), to: at(0) }] })).toEqual({});
         expect(coverage({ spans: [{ from: at(0), to: at(0) }] })).toEqual({});
+        expect(coverage({ spans: [{ from: at(0), stopReason: "interrupted" }] })).toEqual({});
+        expect(coverage({ spans: [{ from: at(0), to: at(0), stopReason: "interrupted" }] })).toEqual({
+            recordingSpans: [],
+        });
         expect(
             coverage({ spans: [{ from: at(0), to: at(60) }], displaySpans: [{ displayId: 1, from: at(0) }] })
         ).toEqual({

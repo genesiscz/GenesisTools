@@ -83,7 +83,7 @@ export class RecordingRecord {
         const open = this.spans.at(-1);
 
         if (open && !open.to) {
-            open.to = at;
+            open.to = Date.parse(at) < Date.parse(open.from) ? open.from : at;
             open.stopReason = stopReason;
         }
     }

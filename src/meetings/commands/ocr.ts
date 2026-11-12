@@ -27,11 +27,14 @@ export function parseRereadSince(raw: string, record: Pick<MeetingRecord, "start
     if (clock) {
         const day = new Date(record.start);
 
-        if (!Number.isFinite(day.getTime())) {
+        const hours = Number(clock[1]);
+        const minutes = Number(clock[2]);
+        const seconds = Number(clock[3] ?? 0);
+        if (!Number.isFinite(day.getTime()) || hours > 23 || minutes > 59 || seconds > 59) {
             return undefined;
         }
 
-        day.setHours(Number(clock[1]), Number(clock[2]), Number(clock[3] ?? 0), 0);
+        day.setHours(hours, minutes, seconds, 0);
         return day;
     }
 

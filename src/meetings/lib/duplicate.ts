@@ -1,6 +1,5 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
     MEETING_FILE,
@@ -89,18 +88,33 @@ export async function duplicateMeeting(request: DuplicateRequest): Promise<Dupli
 /** Rewrites every string of the record that starts in `from` to start in `to`. False when none does. */
 export function repointPaths(record: MeetingRecord, from: string, to: string): boolean {
     const { history, ...rest } = record;
-    const escapedFrom = SafeJSON.stringify(from).slice(1, -1);
-    const text = SafeJSON.stringify(rest);
+    let changed = false;
+    const repoint = (value: unknown): unknown => {
+        if (typeof value === "string") {
+            if (value === from || value.startsWith(`${from}/`)) {
+                changed = true;
+                return `${to}${value.slice(from.length)}`;
+            }
 
-    if (!text.includes(escapedFrom)) {
+            return value;
+        }
+
+        if (Array.isArray(value)) {
+            return value.map(repoint);
+        }
+
+        if (value !== null && typeof value === "object") {
+            return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, repoint(child)]));
+        }
+
+        return value;
+    };
+    const moved = repoint(rest);
+
+    if (!changed) {
         return false;
     }
 
-    const escapedTo = SafeJSON.stringify(to).slice(1, -1);
-    const moved = meetingRecordSchema.parse({
-        ...SafeJSON.parse(text.replaceAll(escapedFrom, escapedTo), { strict: true }),
-        history,
-    });
-    Object.assign(record, moved);
+    Object.assign(record, meetingRecordSchema.parse(moved), { history });
     return true;
 }

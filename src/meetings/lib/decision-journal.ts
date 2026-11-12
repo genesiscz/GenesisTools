@@ -658,6 +658,14 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
     answer: {
         mutate: (record, action, context) => {
             const { now, listenBelow } = context;
+            if (action.replaces) {
+                const id = itemIdOf(record, action.question);
+                const earlier = context.entryOf(action.replaces);
+                if (earlier?.action.kind !== "answer" || (earlier.question !== id && !earlier.settled.includes(id))) {
+                    throw new Error("The replacement token must name an earlier answer to this question");
+                }
+            }
+
             // A changed answer: the earlier one is undone first, in this same entry, so its Undo brings it back.
             const undone = action.replaces
                 ? ACTIONS.revert.mutate(record, { kind: "revert", token: action.replaces }, context).corrections
@@ -1416,10 +1424,8 @@ export class DecisionJournal {
         const revertedBy = new Map<string, string>();
 
         // An Undo that gave back every item its entry decided (the window and `reopen --token` name them) undid it whole.
-        for (const entry of entries) {
-            // A changed answer undid the answer it replaces whole, in its own entry.
-            if (entry.action.kind === "answer" && entry.action.replaces && byToken.has(entry.action.replaces)) {
-                revertedBy.set(entry.action.replaces, entry.token);
+        for (const entry of entries.toReversed()) {
+            if (revertedBy.has(entry.token)) {
                 continue;
             }
 
@@ -1429,6 +1435,17 @@ export class DecisionJournal {
 
             if (target && (decided ?? []).every((id) => undone.has(id))) {
                 revertedBy.set(target.token, entry.token);
+            }
+        }
+
+        for (const entry of entries) {
+            if (
+                entry.action.kind === "answer" &&
+                entry.action.replaces &&
+                byToken.has(entry.action.replaces) &&
+                !revertedBy.has(entry.token)
+            ) {
+                revertedBy.set(entry.action.replaces, entry.token);
             }
         }
 

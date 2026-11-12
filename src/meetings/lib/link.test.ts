@@ -459,6 +459,30 @@ describe("duplicate: a second record of one meeting", () => {
         writeFileSync(join(store.folder(original.id), "ScreenOCR.md"), "# Screen words\n");
         await store.update(original.id, { command: "test", change: "frames" }, (record) => {
             record.recording = { framesDir, frames: 1 };
+            record.context = [
+                { id: "c1", kind: "file", ref: store.folder(original.id), addedAt: record.start, addedBy: "user" },
+                {
+                    id: "c2",
+                    kind: "file",
+                    ref: `${store.folder(original.id)}/clips/one.wav`,
+                    addedAt: record.start,
+                    addedBy: "user",
+                },
+                {
+                    id: "c3",
+                    kind: "file",
+                    ref: `${store.folder(original.id)}-2/clips/other.wav`,
+                    addedAt: record.start,
+                    addedBy: "user",
+                },
+                {
+                    id: "c4",
+                    kind: "note",
+                    ref: `See ${store.folder(original.id)}/frames for context`,
+                    addedAt: record.start,
+                    addedBy: "user",
+                },
+            ];
         });
 
         const result = await duplicateMeeting({ store, ref: original.id });
@@ -477,6 +501,12 @@ describe("duplicate: a second record of one meeting", () => {
         expect(copy?.history[0]?.change).toBe(`duplicated from ${original.id}`);
         expect(store.read(original.id)?.recording?.framesDir).toBe(framesDir);
         expect(store.read(original.id)?.title).toBe("Planning");
+        expect(new MeetingStore(store.storage).read(result.id)?.context.map((entry) => entry.ref)).toEqual([
+            store.folder(result.id),
+            `${store.folder(result.id)}/clips/one.wav`,
+            `${store.folder(original.id)}-2/clips/other.wav`,
+            `See ${store.folder(original.id)}/frames for context`,
+        ]);
     });
 
     test("a given title wins, and an untitled meeting's copy has a name", async () => {

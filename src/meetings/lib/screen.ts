@@ -29,13 +29,19 @@ export interface RecordedSpan {
  * the spans, each `record start` in the history that reached the screen until its stop.
  */
 export function recordedSpans(record: MeetingRecord, now = Date.now()): RecordedSpan[] {
-    const kept = (record.recording?.spans ?? []).map((span) => {
+    const saved = record.recording?.spans ?? [];
+    const kept = saved.map((span) => {
         const fromMs = Date.parse(span.from);
         const open = record.recording?.status === "recording" ? now : fromMs;
         return { fromMs, toMs: span.to ? Date.parse(span.to) : open };
     });
     const firstKept = kept[0]?.fromMs ?? Number.POSITIVE_INFINITY;
-    return [...historySpans(record, now).filter((span) => span.toMs <= firstKept), ...kept];
+    // An interrupted run without a kept frame ends where it began: it claims no captured time.
+    const captured = kept.filter(
+        (span, index) =>
+            saved[index]?.stopReason !== "interrupted" || saved[index]?.to === undefined || span.toMs !== span.fromMs
+    );
+    return [...historySpans(record, now).filter((span) => span.toMs <= firstKept), ...captured];
 }
 
 /**
