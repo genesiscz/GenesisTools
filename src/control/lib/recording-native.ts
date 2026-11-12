@@ -39,6 +39,9 @@ const { log } = logger.scoped("control-recording-native");
 /** The `[screen-recording-denied]` code GenesisKit's `WidgetCaptureError` already recognizes. */
 export const SCREEN_RECORDING_DENIED = "screen-recording-denied";
 
+/** ax-tool could not keep a requested window out after a display restart. */
+export const EXCLUSION_UNRESOLVED = "exclusion-unresolved";
+
 /**
  * Motion threshold for the recorder's frame-rate policy. A session keeps one PNG (`maxFrames: 1`), so the threshold
  * only decides when the stream drops to the idle rate; a low one keeps typing and small edits at the active rate.
@@ -232,6 +235,8 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                     data?: {
                         stats?: { durationMs?: unknown; capturedFrames?: unknown; movieMs?: unknown };
                         warnings?: unknown;
+                        endedEarly?: unknown;
+                        endedEarlyReason?: unknown;
                     };
                 } | null;
                 const reported = envelope?.data?.stats?.durationMs;
@@ -243,7 +248,8 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 // ffprobe); its keptFrames and droppedFrames are the stills of a frames recording, not the movie's.
                 const captured = envelope?.data?.stats?.capturedFrames;
                 const frameStats = typeof captured === "number" ? { frames: captured } : {};
-                const endedBy = signal.aborted ? "stop" : result.captureFailed ? "failure" : "deadline";
+                const excluded = envelope?.data?.endedEarly === EXCLUSION_UNRESOLVED;
+                const endedBy = signal.aborted ? "stop" : result.captureFailed || excluded ? "failure" : "deadline";
                 const nativeWarnings = Array.isArray(envelope?.data?.warnings)
                     ? envelope.data.warnings.filter((warning): warning is string => typeof warning === "string")
                     : [];
@@ -265,6 +271,13 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                         );
                     }
                 }
+                if (excluded && !result.captureFailed) {
+                    const reason = envelope?.data?.endedEarlyReason;
+                    const error =
+                        typeof reason === "string" ? reason : "the recording could not leave the excluded windows out";
+                    return { ok, endedBy, durationMs, ...movieMs, ...frameStats, error, code: EXCLUSION_UNRESOLVED };
+                }
+
                 if (!result.captureFailed) {
                     return { ok, endedBy, durationMs, ...movieMs, ...frameStats, ...(error ? { error } : {}) };
                 }
@@ -376,11 +389,16 @@ export async function titleAudioTracks(movie: string, titles: string[]): Promise
     }
 
     const temporary = `${movie}.titled.mp4`;
-    await runVideoCommand({
-        command: audioTitlesArgv({ input: movie, output: temporary, titles }),
-        timeoutMs: 120_000,
-    });
-    await rename(temporary, movie);
+
+    try {
+        await runVideoCommand({
+            command: audioTitlesArgv({ input: movie, output: temporary, titles }),
+            timeoutMs: 120_000,
+        });
+        await rename(temporary, movie);
+    } finally {
+        await rm(temporary, { force: true });
+    }
 }
 
 /** The joiner of a recording whose tracks are `audioTitles` (`audioTrackTitles(options.audio)`). */
