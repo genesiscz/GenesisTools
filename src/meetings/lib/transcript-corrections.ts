@@ -183,6 +183,7 @@ export function correctionsOf(
             fromSec: assignment.fromSec - LINE_AT_TOLERANCE_SEC,
             toSec: assignment.toSec + LINE_AT_TOLERANCE_SEC,
             speaker: assignment.person,
+            overrideJoin: true,
         })),
     ];
     // A joined word makes the two lines one voice: the line before the cut takes the voice a range gives the line

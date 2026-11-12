@@ -37,6 +37,80 @@ const transcript = [
 ];
 
 describe("the corrections pipeline", () => {
+    test.each([
+        ["Speaker 5", 0, "Alice Example", "Carol Example"],
+        ["Carol Example", 10, "Alice Example", "Alice Example"],
+    ])("an explicit assignment of %s survives a join", (label, atSec, person, remainder) => {
+        const record = meetingRecordSchema.parse({
+            ...base,
+            speakers: {
+                ...base.speakers,
+                assignments: [
+                    { id: "a1", label, fromSec: atSec, toSec: atSec, person, at: "2026-11-03T10:00:00.000Z" },
+                ],
+            },
+            items: [item({ id: "i1", kind: "join", atSec: 10, joined: "dotáhnu", speaker: "Join voice" })],
+        });
+        const result = correctTranscript({
+            record,
+            transcript: transcript.slice(0, 2),
+            config,
+            format: "md",
+            dictionary: false,
+        });
+        expect(result.entries[0]).toMatchObject({ text: "Jak to dotáhnu", speaker: person });
+        expect(result.entries[1]).toMatchObject({ text: "do konce.", speaker: remainder });
+    });
+
+    test("a chained join keeps every source address and the latest explicit assignment wins", () => {
+        const named = (withLater: boolean) =>
+            meetingRecordSchema.parse({
+                ...base,
+                speakers: {
+                    ...base.speakers,
+                    assignments: [
+                        ...(withLater
+                            ? [
+                                  {
+                                      id: "a2",
+                                      label: "C",
+                                      fromSec: 10,
+                                      toSec: 10,
+                                      person: "Later Example",
+                                      at: "2026-11-04T10:00:00.000Z",
+                                  },
+                              ]
+                            : []),
+                        {
+                            id: "a1",
+                            label: "B",
+                            fromSec: 5,
+                            toSec: 5,
+                            person: "Earlier Example",
+                            at: "2026-11-03T10:00:00.000Z",
+                        },
+                    ],
+                },
+                items: [
+                    item({ id: "i1", kind: "join", atSec: 5, joined: "One two", speaker: "B" }),
+                    item({ id: "i2", kind: "join", atSec: 10, joined: "two three", speaker: "C" }),
+                ],
+            });
+        const words = [line("A", 0, "One"), line("B", 5, "two"), line("C", 10, "three")];
+        for (const withLater of [false, true]) {
+            const result = correctTranscript({
+                record: named(withLater),
+                transcript: words,
+                config,
+                format: "md",
+                dictionary: false,
+            });
+            expect(result.entries).toEqual([
+                { startSec: 0, text: "One two three", speaker: withLater ? "Later Example" : "Earlier Example" },
+            ]);
+        }
+    });
+
     test("a speaker answered in decomposed form (from the window) is one speaker with the composed one", () => {
         const composed = "Zoë Example";
         const decomposed = composed.normalize("NFD");
