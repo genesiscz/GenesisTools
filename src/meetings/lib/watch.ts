@@ -1,17 +1,16 @@
-import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { type NotificationAction, sendNotification } from "@genesiscz/utils/macos/notifications";
 import { type MeetingsConfig, MeetingsConfigStore, type SourceSettings } from "@genesiscz/utils/meetings/config";
-import type { MeetingRecord, MeetingStore, RecordingBlock, RecordingSpan } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
 import { type LiveRecording, MEETING_SOURCE_IDS, type MeetingSourceId } from "@genesiscz/utils/meetings/sources";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { assignSweep, hasOpenAssignSteps } from "./assign";
 import { linkSource } from "./link";
 import { ensureOcrWorkers } from "./ocr-worker";
-import { readRecorderState, recorderFiles } from "./recorder-shared";
+import { interruptedRecording } from "./recorder-adapters";
+import { lastRecordingActivity, readRecorderState } from "./recorder-shared";
 import { pruneCapturesDaily } from "./retention";
 import { meetingSource } from "./sources";
 import {
@@ -102,39 +101,12 @@ function defaultDeps(store: MeetingStore): WatchDeps {
                 })
             ).record,
         run: (args) => execTool(args, { timeout: TOOL_TIMEOUT_MS }),
-        lastActivityAt: (meetingId) => {
-            const frames = join(store.folder(meetingId), "frames");
-            // The state is saved after each capture piece even when its still image has not changed.
-            const state = recorderFiles(store).state;
-            const activity = [frames, state].filter(existsSync).map((file) => statSync(file).mtimeMs);
-            return activity.length > 0 ? Math.max(...activity) : undefined;
-        },
+        lastActivityAt: (meetingId) => lastRecordingActivity(store, meetingId),
         endInterrupted: async (meetingId, at) => {
             await store.update(meetingId, { command: "watch", change: "recorder died; recording ended" }, (current) => {
-                if (!current.recording) {
-                    return;
+                if (current.recording) {
+                    current.recording = interruptedRecording(current.recording, at);
                 }
-
-                const close = <T extends RecordingSpan>(span: T) =>
-                    span.to
-                        ? span
-                        : {
-                              ...span,
-                              to: Date.parse(at) < Date.parse(span.from) ? span.from : at,
-                              stopReason: "error",
-                              interrupted: true as const,
-                          };
-                const spans = current.recording.spans?.map(close);
-                const displaySpans = current.recording.displaySpans?.map(close);
-                current.recording = {
-                    ...current.recording,
-                    status: "stopped",
-                    stopReason: "error",
-                    interrupted: true,
-                    stoppedAt: at,
-                    spans,
-                    displaySpans,
-                };
             });
         },
         notify: async (note) => {
