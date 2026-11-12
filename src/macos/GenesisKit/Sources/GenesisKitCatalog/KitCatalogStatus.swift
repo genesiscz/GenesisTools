@@ -114,7 +114,7 @@ extension KitCatalog {
         CatalogEntry(id: "provider-badge", group: "Identity", name: "Provider badge", summary: "The agent harness mark, with a letter fallback for an unknown harness. Identity colour does not imply a status.",
             source: "GenesisKit/Controls/ProviderBadge.swift", critique: ["Keep identity distinct from success, failure and active selection.", "The fallback must stay readable without a downloaded image."],
             sections: [CatalogSection("Harness and size", [
-                CatalogVariant("Known harnesses") { HStack { ProviderBadge(provider: "claude"); ProviderBadge(provider: "codex"); ProviderBadge(provider: "grok") } },
+                CatalogVariant("Known harnesses") { HStack { ForEach(Harness.allCases, id: \.rawValue) { ProviderBadge(provider: $0.rawValue) } } },
                 CatalogVariant("Unknown harness") { ProviderBadge(provider: "example", size: 24) },
                 CatalogVariant("Large") { ProviderBadge(provider: "codex", size: 32) },
             ])])
