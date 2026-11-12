@@ -232,6 +232,8 @@ private extension View {
 
 private struct MeetingsSidebar: View {
     @Bindable var model: MeetingsWindowModel
+    @Environment(\.kitLook) private var look
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let overview = model.overview.value
@@ -267,7 +269,9 @@ private struct MeetingsSidebar: View {
             Label(title, systemImage: symbol)
             Spacer(minLength: 4)
             if let count, count > 0 {
-                Text(verbatim: "\(count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                Text(verbatim: "\(count)").font(.system(size: 11, weight: place == .needs ? .semibold : .regular).monospacedDigit())
+                    .foregroundStyle(place == .needs && look != .classic
+                                     ? (scheme == .dark ? KitHue.care.ink : KitHue.care.solid) : Color.secondary)
                     .accessibilityLabel(Plural.count(count, "meeting"))
             }
         }
@@ -607,6 +611,10 @@ private struct NotInPlaceNote: View {
 private struct NeedsRow: View {
     let meeting: OverviewMeeting
     let reason: String
+    @Environment(\.kitLook) private var look
+    @Environment(\.colorScheme) private var scheme
+
+    private var hue: KitHue { meeting.badges.openQuestions > 0 ? .ask : .care }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -616,7 +624,8 @@ private struct NeedsRow: View {
                 Text(verbatim: "\(MeetingsFormat.dayTitle(meeting.day)) \(MeetingsFormat.time(meeting.start))")
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             }
-            Text(verbatim: reason).font(.system(size: 11.5)).foregroundStyle(.secondary)
+            Text(verbatim: reason).font(.system(size: 11.5))
+                .foregroundStyle(look == .classic ? Color.secondary : (scheme == .dark ? hue.ink : hue.solid))
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
