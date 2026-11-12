@@ -910,6 +910,16 @@ describe("listen answers without a service", () => {
                 decision: { entry: { reason: "confirmed spelling" } },
             });
             expect(printed).toHaveLength(2);
+            const applied = z
+                .object({ entry: z.object({ token: z.string() }) })
+                .parse(SafeJSON.parse(String(printed[1])));
+            const undo = new Command().exitOverride();
+            await registerRequestedTrees({ program: undo, registrars: MEETINGS_REGISTRARS, requested: "reopen" });
+            await undo.parseAsync(["reopen", meeting.id, "--token", applied.entry.token, "--json"], { from: "user" });
+            expect(new MeetingStore().read(meeting.id)?.items[0]).toMatchObject({
+                status: "suggested",
+                proposed: "Aster",
+            });
         } finally {
             output.mockRestore();
             process.exitCode = 0;

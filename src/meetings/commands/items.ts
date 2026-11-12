@@ -519,6 +519,10 @@ async function reopen(
     ids: string[],
     opts: { token?: string; reason?: string; json?: boolean }
 ): Promise<void> {
+    if (!opts.token && ids.length === 0) {
+        fail(new Error("Name the items to reopen, or pass --token to undo a whole decision."));
+        return;
+    }
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
 
@@ -530,7 +534,12 @@ async function reopen(
         const reason = opts.reason ? { reason: opts.reason } : {};
         const decided = await withMeetingsClient((client) =>
             opts.token
-                ? client.call("decision.revert", { meeting: record.id, token: opts.token, items: ids, ...reason })
+                ? client.call("decision.revert", {
+                      meeting: record.id,
+                      token: opts.token,
+                      ...(ids.length > 0 ? { items: ids } : {}),
+                      ...reason,
+                  })
                 : client.call("decision.apply", {
                       meeting: record.id,
                       action: { kind: "reopen", items: ids },
@@ -847,7 +856,7 @@ export function registerItemCommands(program: Command): void {
     program
         .command("reopen")
         .argument("<meeting>", MEETING_REF)
-        .argument("<items...>", "item ids: i1 i2 …, or with --token a question's number: Q12")
+        .argument("[items...]", "item ids: i1 i2 …; omit with --token to undo the whole decision")
         .description(
             "Put confirmed or rejected items back to suggested: the Undo of confirm and reject, and with --token of any decision journal entry"
         )
