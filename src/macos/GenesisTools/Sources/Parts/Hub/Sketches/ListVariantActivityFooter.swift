@@ -54,7 +54,7 @@ struct ListVariantLoadFailure: View {
                     NoticePill(text: message, tone: .error).textSelection(.enabled)
                     Button("Try again", action: retry)
                         .buttonStyle(.genHoverPlain())
-                        .instantTooltip("Repeat the failed activity load")
+                        .instantTooltip("Repeat the failed load")
                 }
             }
         }

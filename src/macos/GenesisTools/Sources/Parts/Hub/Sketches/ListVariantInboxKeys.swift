@@ -34,6 +34,7 @@ struct ListVariantInboxKeys: ViewModifier {
                     return .handled
                 }
                 let entry = entries[index]
+                guard entry.item.isOpen else { return .ignored }
                 if press.key == .return {
                     inbox.focusNote(entry.item.id)
                     return .handled

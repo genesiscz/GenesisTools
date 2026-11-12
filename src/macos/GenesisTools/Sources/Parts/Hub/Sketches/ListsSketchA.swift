@@ -719,6 +719,9 @@ extension ListsSketchA {
             VStack(spacing: 0) {
                 header(entries, index: index)
                 PanelFindBarSlot()
+                if let failure = inbox.error {
+                    ListVariantLoadFailure(failure) { inbox.load() }
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         if let current {

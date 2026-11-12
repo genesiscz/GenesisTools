@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Option A of the "transcript" sketch (`--sketch transcript=a`): "the conversation reads first".
-/// Every run of tool calls between two messages is one quiet line ("Ran 3 commands · Read 2 files"), at every
+/// Every consecutive run of tool calls is one quiet line ("Ran 3 commands · Read 2 files"), at every
 /// verbosity; a reply is a message with its author line and 14 pt text on a reading measure (C18, C19). The
 /// session's title leaves the pane for the hub's one subject header in the title bar (C17); the pane keeps one
 /// slim row with the folder, the branch, the counters and the actions.

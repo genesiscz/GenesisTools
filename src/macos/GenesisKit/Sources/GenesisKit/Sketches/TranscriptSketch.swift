@@ -19,8 +19,8 @@ public enum TranscriptSketch {
     /// "a", "b", or nil for the current views.
     @MainActor public static var option: String? { HubLayout.option("transcript") }
 
-    /// Option A folds every run of tool calls between two messages into one line, at every verbosity (today only
-    /// Minimal folds them).
+    /// Option A folds consecutive tool calls into one line at every verbosity. Visible thinking keeps its
+    /// chronological position and separates runs; Minimal hides thinking and can combine those runs.
     @MainActor static var foldsToolRuns: Bool { option == "a" }
 
     /// Tool calls honor the reader's verbosity choice in every layout.
