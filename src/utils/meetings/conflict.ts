@@ -17,6 +17,8 @@ export const MEETINGS_CONFLICT_CODES = [
     "dictionary-exists",
     /** The source meeting is linked to another record already (`link`): two records of one call split it. */
     "source-linked",
+    /** Meetings still have the project a removal names (`projects remove` without `--unassign`). */
+    "project-in-use",
 ] as const;
 export type MeetingsConflictCode = (typeof MEETINGS_CONFLICT_CODES)[number];
 

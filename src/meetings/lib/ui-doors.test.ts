@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { LinkGate } from "@genesiscz/utils/browser-router/link-gate";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as ocrBoxes from "@genesiscz/utils/macos/ocr-boxes";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { readCorrections } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
@@ -327,6 +328,91 @@ describe("screen timeline", () => {
             expect(afterOldWorker.focusSpans).toEqual(timeline.focusSpans);
         } finally {
             client.close();
+        }
+    });
+
+    test("one frame turns into boxes only itself and its display's frame before it, and stops there", async () => {
+        const { meetings } = stores();
+        const created = await meetings.create(
+            { title: "Demo", start: "2026-11-05T08:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const folder = meetings.folder(created.id);
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        const canvas = createCanvas(400, 200);
+        canvas.getContext("2d").fillRect(0, 0, 400, 200);
+        const block = (text: string, y: number) => ({
+            text,
+            confidence: 1,
+            bounds: { x: 0.1, y, width: 0.5, height: 0.1 },
+        });
+        const row = (file: string, second: number, displayId: number, lines: string[]) => ({
+            file,
+            at: `2026-11-05T08:00:${String(second).padStart(2, "0")}.000Z`,
+            displayId,
+            text: lines.join("\n"),
+            blocks: lines.map((line, index) => block(line, 0.8 - index * 0.2)),
+        });
+        // Written out of time order, as two displays append: the timeline sorts by time.
+        const rows = [
+            row("frames/c-d1.png", 30, 1, ["Agenda", "Budget totals"]),
+            row("frames/a-d1.png", 10, 1, ["Agenda", "Item one"]),
+            row("frames/b-d2.png", 15, 2, ["Chat", "Hello"]),
+            row("frames/b-d1.png", 20, 1, ["Agenda", "Item two"]),
+            row("frames/d-d2.png", 25, 2, ["Chat", "Bye"]),
+            row("frames/e-d1.png", 40, 1, ["Agenda", "Item four"]),
+        ];
+
+        for (const one of rows) {
+            writeFileSync(join(folder, one.file), canvas.toBuffer("image/png"));
+        }
+
+        writeFileSync(join(folder, "ocr.jsonl"), `${rows.map((one) => SafeJSON.stringify(one)).join("\n")}\n`);
+        for (const one of rows) {
+            appendFrameIndex(folder, {
+                file: one.file,
+                at: new Date(one.at),
+                displayId: one.displayId,
+                changePercent: 0,
+                reason: "change",
+            });
+        }
+        const pending = "frames/pending-d1.png";
+        writeFileSync(join(folder, pending), canvas.toBuffer("image/png"));
+        appendFrameIndex(folder, {
+            file: pending,
+            at: new Date("2026-11-05T08:00:26.000Z"),
+            displayId: 1,
+            changePercent: 0,
+            reason: "change",
+        });
+        const whole = await screenTimeline({ store: meetings, record: created });
+        const boxes = spyOn(ocrBoxes, "frameBoxes");
+
+        try {
+            const one = await screenTimeline({ store: meetings, record: created, frame: "frames/c-d1.png" });
+
+            // b-d1 (the frame before it on display 1) and c-d1: not a-d1, display 2, or e-d1 after it.
+            expect(boxes).toHaveBeenCalledTimes(2);
+            expect(one.frames.map((frame) => frame.file)).toEqual(["frames/c-d1.png"]);
+            // The same changed lines as the whole timeline shows for it.
+            const inWhole = whole.frames.find((frame) => frame.file === "frames/c-d1.png");
+            expect(inWhole).toBeDefined();
+            expect(one.frames[0]?.changed).toEqual(inWhole?.changed ?? []);
+            expect(one.frames[0]?.changed.map((line) => line.text)).toEqual(["Budget totals"]);
+
+            boxes.mockClear();
+            const first = await screenTimeline({ store: meetings, record: created, frame: "frames/b-d2.png" });
+            expect(boxes).toHaveBeenCalledTimes(1);
+            expect(first.frames[0]?.changed.map((line) => line.text)).toEqual(["Chat", "Hello"]);
+
+            boxes.mockClear();
+            await expect(
+                screenTimeline({ store: meetings, record: created, frame: "frames/nosuch.png" })
+            ).rejects.toThrow(`No frame "frames/nosuch.png" in ${created.id}`);
+            expect(boxes).not.toHaveBeenCalled();
+        } finally {
+            boxes.mockRestore();
         }
     });
 
@@ -894,6 +980,76 @@ describe("projects rename and remove", () => {
         );
         return { config, meetings, used: used.id };
     }
+
+    test("a rename checks both names inside the config lock, so a name taken meanwhile is never overwritten", async () => {
+        const { config, meetings } = await withProject();
+        await config.addProject("work");
+        await config.setProjectLabels("work", { add: ["Kept"] });
+        const before = await config.read();
+        // What the caller saw before another process added "work": the rename must not trust it.
+        const seen = { ...before, projects: { wrok: before.projects.wrok } };
+        const stale = new (class extends MeetingsConfigStore {
+            override async read() {
+                return seen;
+            }
+        })(config.storage);
+
+        await expect(renameProject({ config: stale, store: meetings, from: "wrok", to: "work" })).rejects.toThrow(
+            "exists already"
+        );
+        expect((await config.read()).projects.work?.labels).toEqual(["Kept"]);
+        await expect(renameProject({ config, store: meetings, from: "gone", to: "other" })).rejects.toThrow(
+            "No project gone"
+        );
+    });
+
+    test("a meeting moved to another project after the list was read keeps it on rename and on remove", async () => {
+        const { config, meetings, used } = await withProject();
+        await config.addProject("other");
+        // The list both commands read before another process moved the meeting to "other".
+        const seen = meetings.list();
+        const stale = new (class extends MeetingStore {
+            override list() {
+                return seen;
+            }
+        })(meetings.storage);
+        await meetings.update(used, { command: "test", change: "moved" }, (next) => {
+            next.project = "other";
+        });
+        const historyLength = meetings.read(used)?.history.length;
+
+        expect((await renameProject({ config, store: stale, from: "wrok", to: "work" })).meetings).toEqual([]);
+        expect(meetings.read(used)?.project).toBe("other");
+
+        await config.addProject("wrok");
+        const removed = await removeProject({
+            config,
+            store: stale,
+            name: "wrok",
+            unassign: true,
+            backupRoot: join(meetings.root, "..", "backups"),
+        });
+
+        expect(removed.unassigned).toEqual([]);
+        expect(meetings.read(used)?.project).toBe("other");
+        expect(meetings.read(used)?.history).toHaveLength(historyLength ?? -1);
+    });
+
+    test("removing a project twice in one minute keeps both removed blocks", async () => {
+        const { config, meetings } = stores();
+        const backupRoot = join(meetings.root, "..", "backups");
+        const now = new Date(2026, 10, 9, 10, 15);
+        await config.addProject("side");
+        await config.setProjectLabels("side", { add: ["First"] });
+        const first = await removeProject({ config, store: meetings, name: "side", backupRoot, now });
+        await config.addProject("side");
+        await config.setProjectLabels("side", { add: ["Second"] });
+        const second = await removeProject({ config, store: meetings, name: "side", backupRoot, now });
+
+        expect(second.backup).not.toBe(first.backup);
+        expect(SafeJSON.parse(readFileSync(first.backup, "utf8"))).toMatchObject({ block: { labels: ["First"] } });
+        expect(SafeJSON.parse(readFileSync(second.backup, "utf8"))).toMatchObject({ block: { labels: ["Second"] } });
+    });
 
     test("a rename moves the block, the folder pairing and the meetings' project", async () => {
         const { config, meetings, used } = await withProject();

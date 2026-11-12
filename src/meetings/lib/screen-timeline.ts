@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { changedLines, frameBoxes, imageSize, type OcrBox } from "@genesiscz/utils/macos/ocr-boxes";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
@@ -106,8 +107,29 @@ export async function screenTimeline(options: {
     const sizes = new Map<number | undefined, { width: number; height: number }>();
     const previous = new Map<number | undefined, OcrBox[]>();
     const frames: TimelineFrame[] = [];
+    const noFrame = () =>
+        new Error(
+            `No frame "${options.frame}" in ${record.id}. List the frames: ${toolCommand("meetings", "screen", record.id, "--timeline")}`
+        );
+    const wantedIndex = options.frame ? rows.findIndex((row) => row.file === options.frame) : -1;
+    const wanted = rows[wantedIndex];
 
-    for (const row of rows) {
+    if (options.frame && !wanted) {
+        throw noFrame();
+    }
+
+    const earlier = wanted
+        ? rows.slice(0, wantedIndex).findLastIndex((row) => row.displayId === wanted.displayId && !row.pending)
+        : -1;
+
+    for (const [index, row] of rows.entries()) {
+        if (wanted && index > wantedIndex) {
+            break;
+        }
+
+        if (wanted && row.displayId !== wanted.displayId) {
+            continue;
+        }
         const path = join(folder, row.file);
         let size = sizes.get(row.displayId);
 
@@ -121,6 +143,10 @@ export async function screenTimeline(options: {
             sizes.set(row.displayId, size);
         }
 
+        if (wanted && index !== wantedIndex && index !== earlier) {
+            continue;
+        }
+
         // A frame OCR has not read yet shows no lines and leaves its display's earlier lines as they were.
         const boxes = row.pending ? [] : frameBoxes(row.blocks, size).lines;
         const changed = row.pending ? [] : changedLines(previous.get(row.displayId), boxes);
@@ -129,7 +155,7 @@ export async function screenTimeline(options: {
             previous.set(row.displayId, boxes);
         }
 
-        if (options.frame && row.file !== options.frame) {
+        if (wanted && index !== wantedIndex) {
             continue;
         }
 
@@ -147,6 +173,10 @@ export async function screenTimeline(options: {
             ...(options.all || options.frame ? { lines: boxes } : {}),
             ...(row.pending ? { pending: true } : {}),
         });
+    }
+
+    if (options.frame && frames.length === 0) {
+        throw noFrame();
     }
 
     const names = new Map((record.recording?.displays ?? []).map((display) => [display.id, display.name]));
