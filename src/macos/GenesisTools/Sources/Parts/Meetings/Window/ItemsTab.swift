@@ -225,10 +225,9 @@ struct ItemsTab: View {
                 if let row = shown.first(where: { $0.id == id }), row.isOpen { detail.window?.player.precut(row.target, in: detail.id) }
             }
         }
-        // The notices float over the list's bottom (or top) edge. That edge's room is kept clear while they show, so a
-        // row the list keeps in view after a Skip or an answer stands above them, not under "Skipped Q2 · Undo". The
-        // rows do not move when a notice comes or goes: only how far the list scrolls to show a row changes.
-        .safeAreaInset(edge: noticeEdge, spacing: 0) { Color.clear.frame(height: noticeRoom) }
+        // Keep room below the list for bottom notices. Top notices overlay it: changing a top safe-area inset would
+        // shift every row when a notice appears, expires or is dismissed.
+        .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: noticeEdge == .bottom ? noticeRoom : 0) }
         .safeAreaInset(edge: .top, spacing: 0) {
             BulkConfirmBar(detail: detail, items: items, open: open, questions: questions, filter: $detail.itemsFilter,
                            applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)

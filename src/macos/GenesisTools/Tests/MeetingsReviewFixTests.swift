@@ -453,6 +453,39 @@ final class MeetingsReviewFixTests: XCTestCase {
         XCTAssertEqual(detail.selectedRow, "loading-row")
     }
 
+    func testNoticeChangesKeepTheItemsViewportAndRowsInPlace() throws {
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        for place in ["top", "bottom"] {
+            defaults.set(place, forKey: MeetingsPreferences.noticePlaceKey)
+            let model = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+            let detail = MeetingDetailModel(id: "m", window: model)
+            detail.rows = .loaded(try termRows())
+            let host = hostedItems(detail, height: 700)
+            defer { host.orderOut(nil); host.close() }
+            settle()
+            let scroll = try XCTUnwrap(Self.scrollView(in: host.contentView))
+            let initialTop = scroll.contentView.convert(scroll.contentView.bounds, to: nil).maxY
+            let initialRow = try XCTUnwrap(FrameProbe.frames["meetings.row.r1"])
+            func checkLayout(_ count: Int) throws {
+                let top = scroll.contentView.convert(scroll.contentView.bounds, to: nil).maxY
+                let row = try XCTUnwrap(FrameProbe.frames["meetings.row.r1"])
+                XCTAssertEqual(top, initialTop, accuracy: 1, "\(place), \(count) notices moved the viewport top")
+                XCTAssertEqual(row.minY, initialRow.minY, accuracy: 1, "\(place), \(count) notices moved an unchanged row")
+                XCTAssertNil(detail.selectedRow)
+            }
+            let ids = (1...7).map { detail.notices.push(StackedNotice(text: "Notice \($0)")) }
+            settle()
+            try checkLayout(7)
+            for (index, id) in ids.enumerated() {
+                detail.notices.dismiss(id)
+                settle()
+                try checkLayout(6 - index)
+            }
+        }
+    }
+
     func testAnOversizedSelectedRowShowsItsHeadingAtTheTop() throws {
         FrameProbe.enabled = true
         FrameProbe.reset()
