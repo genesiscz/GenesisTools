@@ -8,6 +8,68 @@ import XCTest
 /// The hub's pure rules: pane order, request flags, the scratch settings of scripted runs, and the
 /// proposal document the review window reads and writes back.
 final class HubLogicTests: XCTestCase {
+    @MainActor
+    func testAHeadMoveDropsALinkLookupAskedAgainstTheOldHeadAndAsksAgain() throws {
+        let (pr, model, _, pick) = try rewrittenFixture()
+        var applied: [String] = []
+
+        let old = model.beginLocalLookup(pick)
+        XCTAssertNil(model.pendingCommit, "pickLocalCommits clears the pick while git runs")
+        model.dropLocalLookup(movingTo: pr)
+        model.finishRangeLookup(old) { applied.append("old head") }
+        XCTAssertTrue(applied.isEmpty, "an answer for the old head sets no scope or notice")
+        XCTAssertEqual(model.pendingCommit, pick, "the link is asked again against the new head")
+
+        let parent = model.beginRangeLookup()
+        model.dropLocalLookup(movingTo: pr)
+        model.finishRangeLookup(parent) { applied.append("parent") }
+        XCTAssertEqual(applied, ["parent"], "a head move keeps a parent lookup")
+
+        model.showWholePR()
+        let other = PRCommitPick(ref: HubPRRef(project: "acme/other", number: 9), sha: "c3e3ad830", asked: Date())
+        let current = model.beginLocalLookup(other)
+        model.dropLocalLookup(movingTo: pr)
+        model.finishRangeLookup(current) { applied.append("other PR") }
+        XCTAssertEqual(applied, ["parent", "other PR"], "a head move of one PR drops no lookup of another")
+        XCTAssertNil(model.pendingCommit, "nor makes another PR's link pending")
+
+        let answered = model.beginLocalLookup(pick)
+        model.finishRangeLookup(answered) { applied.append("answered") }
+        model.dropLocalLookup(movingTo: pr)
+        XCTAssertEqual(applied.last, "answered")
+        XCTAssertNil(model.pendingCommit, "a lookup that answered is not asked again")
+    }
+
+    func testALinkLookupBuildsADeferredReviewEvenAfterThePickWent() {
+        let follow = { (pending: Bool, names: Bool, deferred: Bool, onScreen: Bool) in
+            PRsModel.linkLookupFollowUp(pickStillPending: pending, linkNamesSelected: names, reviewDeferred: deferred, reviewOnScreen: onScreen)
+        }
+        XCTAssertEqual(follow(false, true, true, false), .buildReview, "detailFailed cleared the pick while the review was deferred")
+        XCTAssertEqual(follow(false, true, false, true), .nothing, "the pick went and the review is already on screen")
+        XCTAssertEqual(follow(true, true, false, true), .pickCommit)
+        XCTAssertEqual(follow(true, true, true, false), .buildReview)
+        XCTAssertEqual(follow(false, false, true, false), .nothing, "another PR is on screen")
+        XCTAssertEqual(follow(true, false, false, false), .nothing)
+    }
+
+    func testOnlyEndedAgentsFoldIntoTheFinishedRow() {
+        func node(_ id: String, _ status: String, kind: String = "subagent", children: [AgentNode]? = nil) -> AgentNode {
+            AgentNode(id: id, harness: "claude", kind: kind, status: status, lastAt: "", children: children)
+        }
+        let children = [
+            node("done", "completed"),
+            node("broke", "failed"),
+            node("stopped", "killed"),
+            node("waiting", "idle", kind: "teammate"),
+            node("parent", "completed", children: [node("helper", "idle", kind: "teammate")]),
+            node("open", "completed"),
+        ]
+        let split = AgentTree.foldFinished(children) { $0.id == "open" }
+        XCTAssertEqual(split.live.map(\.id), ["waiting", "parent", "open"])
+        XCTAssertEqual(split.finished.map(\.id), ["done", "broke", "stopped"])
+        XCTAssertTrue(AgentTree.foldFinished(children) { _ in true }.finished.isEmpty, "the fold off keeps every row")
+    }
+
     override class func setUp() {
         super.setUp()
         HubDefaults.isolate()
