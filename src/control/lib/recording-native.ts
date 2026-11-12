@@ -33,6 +33,9 @@ const { log } = logger.scoped("control-recording-native");
 /** The `[screen-recording-denied]` code GenesisKit's `WidgetCaptureError` already recognizes. */
 export const SCREEN_RECORDING_DENIED = "screen-recording-denied";
 
+/** ax-tool's `endedEarly` when a restart could not leave the excluded windows out; also the segment's `code`. */
+export const EXCLUSION_UNRESOLVED = "exclusion-unresolved";
+
 /**
  * Motion threshold for the recorder's frame-rate policy. A session keeps one PNG (`maxFrames: 1`), so the threshold
  * only decides when the stream drops to the idle rate; a low one keeps typing and small edits at the active rate.
@@ -225,7 +228,11 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 sessionDir = result.sessionDir;
                 const envelope = result.capture as {
                     error?: unknown;
-                    data?: { stats?: { durationMs?: unknown; capturedFrames?: unknown; movieMs?: unknown } };
+                    data?: {
+                        stats?: { durationMs?: unknown; capturedFrames?: unknown; movieMs?: unknown };
+                        endedEarly?: unknown;
+                        endedEarlyReason?: unknown;
+                    };
                 } | null;
                 const reported = envelope?.data?.stats?.durationMs;
                 const durationMs = typeof reported === "number" && reported > 0 ? reported : undefined;
@@ -236,12 +243,23 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 // ffprobe); its keptFrames and droppedFrames are the stills of a frames recording, not the movie's.
                 const captured = envelope?.data?.stats?.capturedFrames;
                 const frameStats = typeof captured === "number" ? { frames: captured } : {};
-                const endedBy = signal.aborted ? "stop" : result.captureFailed ? "failure" : "deadline";
+                // A following run whose restart on another display could not leave the excluded windows out ended
+                // itself (ax-tool's `exclusion-unresolved`): a failure, so the session pauses and says why instead of
+                // starting the next segment as after a deadline.
+                const excluded = envelope?.data?.endedEarly === EXCLUSION_UNRESOLVED;
+                const endedBy = signal.aborted ? "stop" : result.captureFailed || excluded ? "failure" : "deadline";
                 const error =
                     typeof envelope?.error === "string" ? envelope.error : result.warnings.at(-1) || undefined;
                 // A stop can land on a recorder that already failed, or kill one that did not finish its movie in
                 // time, so a failed run's movie is probed whatever ended it: an unfinished one would break every save.
                 const ok = existsSync(output) && (!result.captureFailed || (await playable(output)));
+                if (excluded && !result.captureFailed) {
+                    const reason = envelope?.data?.endedEarlyReason;
+                    const error =
+                        typeof reason === "string" ? reason : "the recording could not leave the excluded windows out";
+                    return { ok, endedBy, durationMs, ...movieMs, ...frameStats, error, code: EXCLUSION_UNRESOLVED };
+                }
+
                 if (!result.captureFailed) {
                     return { ok, endedBy, durationMs, ...movieMs, ...frameStats };
                 }

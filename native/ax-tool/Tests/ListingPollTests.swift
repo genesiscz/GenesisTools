@@ -63,4 +63,53 @@ final class ListingPollTests: XCTestCase {
         XCTAssertEqual(unlisted.value, 1)
         XCTAssertEqual(unlisted.end, .deadline)
     }
+
+    func testARequestedExclusionThatStillExistsButIsNotListedIsUnresolved() {
+        let open: Set<UInt32> = [7, 9]
+        let unresolved = unresolvedExclusions(requested: [7, 8, 9, 11], listed: [8, 3], exists: { open.contains($0) })
+        // 8 is listed, so the filter leaves it out; 11 is gone, so it cannot be filmed.
+        XCTAssertEqual(unresolved, [7, 9])
+        XCTAssertEqual(unresolvedExclusions(requested: [], listed: [], exists: { _ in true }), [])
+    }
+
+    func testAnExclusionMissingFromOneListingIsAskedForAgainBeforeARefusal() async throws {
+        let clock = TestClock()
+        var answers: [[UInt32]] = [[7], []]
+        var asked = 0
+        let listed = try await awaitExclusionsListed(
+            timeout: 1,
+            now: { clock.time },
+            sleep: { clock.advance($0) },
+            fetch: { () -> [UInt32] in
+                asked += 1
+                return answers.removeFirst()
+            },
+            unresolved: { $0 }
+        )
+        XCTAssertEqual(listed, [])
+        XCTAssertEqual(asked, 2)
+    }
+
+    func testAnExclusionThatStaysUnlistedIsRefusedAtTheDeadlineWithItsWindows() async {
+        let clock = TestClock()
+        var asked = 0
+        do {
+            _ = try await awaitExclusionsListed(
+                timeout: 1,
+                now: { clock.time },
+                sleep: { clock.advance($0) },
+                fetch: { () -> [UInt32] in
+                    asked += 1
+                    return [7, 9]
+                },
+                unresolved: { $0 }
+            )
+            XCTFail("an exclusion that is never listed must be refused")
+        } catch {
+            XCTAssertEqual(error as? UnresolvedExclusions, UnresolvedExclusions(ids: [7, 9]))
+            XCTAssertEqual(error.localizedDescription, "windows 7,9 must be left out of the movie but screen capture does not list them yet")
+        }
+        // A 1 s budget in 0.1 s pauses: the first ask and ten more.
+        XCTAssertEqual(asked, 11)
+    }
 }
