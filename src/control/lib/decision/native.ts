@@ -75,7 +75,7 @@ export interface ControlDriver {
     ): Promise<AxResult>;
 }
 /** Mirrors the `--prepare` allowlist in WorkflowArguments.validateAction. */
-const PREPARABLE_ACTIONS = new Set(["press", "click", "key", "type", "paste", "select", "set"]);
+const PREPARABLE_ACTIONS = new Set(["press", "click", "key", "type", "paste", "select", "set", "drag"]);
 /** Mirrors the `--target-key` allowlist in WorkflowArguments.validateAction. */
 const TARGET_KEY_ACTIONS = new Set([
     "press",

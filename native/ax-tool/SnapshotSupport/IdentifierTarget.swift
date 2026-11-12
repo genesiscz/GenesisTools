@@ -112,6 +112,15 @@ public func resolveIdentifierTarget(_ identifier: String, app: String, depth: In
     guard !identifier.isEmpty else {
         throw SnapshotError.invalid("--by-identifier needs a non-empty AXIdentifier")
     }
+    let incomplete = windows.filter { window in window.rows.contains { $0["childrenUnreadable"] is String } }
+    guard incomplete.isEmpty, skipped.isEmpty else {
+        let unreadable = incomplete.map { "window \($0.index) has unreadable children" }
+        let unobserved = skipped.map { "unobserved window \($0)" }
+        throw SnapshotError.refusal(.missingTarget,
+            "cannot prove the AXIdentifier \"\(identifier)\" is unique; searched \(windows.count) of \(windows.count + skipped.count) window(s). "
+                + (unreadable + unobserved).joined(separator: "; ")
+                + ". Narrow to a fully observed window, or run see and act on the observed element.")
+    }
     let matches = identifierMatches(identifier, in: windows)
 
     if let only = matches.first, matches.count == 1 {

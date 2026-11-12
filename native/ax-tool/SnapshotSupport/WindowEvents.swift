@@ -147,6 +147,43 @@ public final class WindowEventFactory {
         return event
     }
 
+    /// A foreground click enters the global HID stream; a background click keeps the window-addressed route.
+    /// The gate owns the matching release, including when the user takes over after mouse-down.
+    public func pressClick(point: CGPoint, button: CGMouseButton, clickCount: Int, modifiers: CGEventFlags,
+                           background: Bool, pid: pid_t, gate: SyntheticInputGate,
+                           post: @escaping (CGEvent, pid_t?) -> Void = { event, target in
+                               if let target { event.postToPid(target) } else { event.post(tap: .cghidEventTap) }
+                           }) throws -> SyntheticInputGate.Held {
+        let types: (CGEventType, CGEventType, NSEvent.EventType, NSEvent.EventType)
+        switch button {
+        case .left: types = (.leftMouseDown, .leftMouseUp, .leftMouseDown, .leftMouseUp)
+        case .right: types = (.rightMouseDown, .rightMouseUp, .rightMouseDown, .rightMouseUp)
+        case .center: types = (.otherMouseDown, .otherMouseUp, .otherMouseDown, .otherMouseUp)
+        default: throw WindowEventError.unavailable("unsupported mouse button")
+        }
+        let down: CGEvent
+        let up: CGEvent
+        if background {
+            down = try mouse(type: types.2, point: point, clickCount: clickCount)
+            up = try mouse(type: types.3, point: point, clickCount: clickCount)
+        } else {
+            guard point.x.isFinite, point.y.isFinite, bounds.contains(point),
+                  let pressed = CGEvent(mouseEventSource: nil, mouseType: types.0, mouseCursorPosition: point, mouseButton: button),
+                  let released = CGEvent(mouseEventSource: nil, mouseType: types.1, mouseCursorPosition: point, mouseButton: button) else {
+                throw WindowEventError.unavailable("cannot make a foreground click inside snapshot window \(windowID)")
+            }
+            down = pressed
+            up = released
+        }
+        for event in [down, up] {
+            event.flags = modifiers
+            event.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
+            event.setIntegerValueField(.mouseEventButtonNumber, value: Int64(button.rawValue))
+        }
+        let target = background ? pid : nil
+        return try gate.press({ post(down, target) }, release: { post(up, target) })
+    }
+
     /// `frame` nil: the point must lie in the snapshot window and is located against it. A frame: the window's bounds
     /// right now, for a step of an `--allow-outside` drag; the point may lie anywhere.
     public func mouse(type: NSEvent.EventType, point: CGPoint, clickCount: Int, frame: CGRect? = nil) throws -> CGEvent {

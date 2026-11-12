@@ -170,7 +170,11 @@
         "id": 2,
         "error": {
           "code": 1012,
-          "message": "another recorder host is connected (pid 4242)"
+          "message": "another recorder host is connected (pid 4242)",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "recorder"
+          }
         }
       }
     },
@@ -193,7 +197,11 @@
         "id": 3,
         "error": {
           "code": 1011,
-          "message": "the recorder service speaks protocol 1, not 2"
+          "message": "the recorder service speaks protocol 1, not 2",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "recorder"
+          }
         }
       }
     },
@@ -492,7 +500,11 @@
         "id": 8,
         "error": {
           "code": 1016,
-          "message": "the edit is at revision 2 (by agent), not 1"
+          "message": "the edit is at revision 2 (by agent), not 1",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "recorder"
+          }
         }
       }
     },
@@ -643,7 +655,11 @@
         "id": 11,
         "error": {
           "code": 1018,
-          "message": "nothing to redo in this edit"
+          "message": "nothing to redo in this edit",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "recorder"
+          }
         }
       }
     },
@@ -1091,7 +1107,11 @@
         "id": 32,
         "error": {
           "code": 1021,
-          "message": "the editor window of Talk has a drag that is not saved yet; let it finish, then close it"
+          "message": "the editor window of Talk has a drag that is not saved yet; let it finish, then close it",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "recorder"
+          }
         }
       }
     },
@@ -1242,7 +1262,11 @@
         "id": 26,
         "error": {
           "code": 1014,
-          "message": "Camera access is off for GenesisTools (System Settings → Privacy & Security → Camera)"
+          "message": "Camera access is off for GenesisTools (System Settings → Privacy & Security → Camera)",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "recorder"
+          }
         }
       }
     },
@@ -1263,7 +1287,11 @@
         "id": 27,
         "error": {
           "code": 1015,
-          "message": "the camera records FaceTime already"
+          "message": "the camera records FaceTime already",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "recorder"
+          }
         }
       }
     },
@@ -1757,7 +1785,11 @@
         "id": 23,
         "error": {
           "code": 1013,
-          "message": "cancelled"
+          "message": "cancelled",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "recorder"
+          }
         }
       }
     },
@@ -2237,7 +2269,11 @@
         "id": 6,
         "error": {
           "code": 1020,
-          "message": "no live recording \"recorder-9999-gone\" is registered with the recorder service"
+          "message": "no live recording \"recorder-9999-gone\" is registered with the recorder service",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "recorder"
+          }
         }
       }
     },

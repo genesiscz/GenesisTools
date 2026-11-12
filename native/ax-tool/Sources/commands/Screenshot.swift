@@ -14,6 +14,7 @@ struct CapturedWindowImage {
     let bounds: CGRect
     let windowID: CGWindowID
     let otherWindowTitles: [String]
+    let otherWindowIDs: [CGWindowID]
 }
 
 func captureWindowCGImage(_ appName: String) -> CapturedWindowImage {
@@ -87,7 +88,8 @@ func captureWindowCGImageFull(_ appName: String) -> CapturedWindowImage {
         if matches.isEmpty {
             jsonOutput(["ok": false,
                 "error": "no window matching '\(ws)' in \(appName)",
-                "candidates": appWindows.map { axTitleFor($0) ?? windowName($0) }])
+                "candidates": appWindows.map { axTitleFor($0) ?? windowName($0) },
+                "windowIds": appWindows.compactMap { $0[kCGWindowNumber] as? CGWindowID }])
             exit(1)
         }
         if matches.count > 1 {
@@ -120,9 +122,10 @@ func captureWindowCGImageFull(_ appName: String) -> CapturedWindowImage {
     let b = win[kCGWindowBounds] as? [String: Any]
     let bounds = CGRect(x: (b?["X"] as? Double) ?? 0, y: (b?["Y"] as? Double) ?? 0,
                         width: (b?["Width"] as? Double) ?? 1, height: (b?["Height"] as? Double) ?? 1)
-    let others = appWindows.filter { ($0[kCGWindowNumber] as? CGWindowID) != windowID }.map { windowName($0) }
+    let others = appWindows.filter { ($0[kCGWindowNumber] as? CGWindowID) != windowID }
     return CapturedWindowImage(image: cgImage, title: windowName(win), pid: pid, bounds: bounds,
-                               windowID: windowID, otherWindowTitles: others)
+                               windowID: windowID, otherWindowTitles: others.map(windowName),
+                               otherWindowIDs: others.compactMap { $0[kCGWindowNumber] as? CGWindowID })
 }
 
 func cmdScreenshot(appName: String, path: String) {
@@ -135,6 +138,8 @@ func cmdScreenshot(appName: String, path: String) {
     // a title or an id reports a guess where there was an exact choice.
     if !others.isEmpty && argValue("--window") == nil && argValue("--window-id") == nil {
         result["otherWindows"] = others
+        // Unnamed windows cannot be selected by title, and some owners expose no AX windows.
+        result["otherWindowIds"] = captured.otherWindowIDs
         result["pickedBy"] = "largest-area (pass --window <title> or --window-id <id> to target another)"
     }
 

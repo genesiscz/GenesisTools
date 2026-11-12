@@ -62,6 +62,7 @@ private final class FakeSource: HierarchySource {
             throw VanishedElement()
         }
         if let error = node.childrenError {
+            if error == .failure { throw UnreadableChildren(error.rawValue) }
             throw ObservedTreeError("AX tree read failed (\(error.rawValue)); refresh instead of assuming an empty subtree")
         }
         return node.children.map(self.element)
@@ -118,6 +119,20 @@ final class ObservedTreeBuilderTests: XCTestCase {
         XCTAssertEqual(tree.rows[3]["valueSettable"] as? Bool, false, "an element with a value reports settability")
         XCTAssertEqual(tree.frames.count, 4)
         XCTAssertEqual(tree.digest.count, 64)
+    }
+
+    func testPopoverEscapesItsOwningScrollClip() throws {
+        let fake = FakeSource()
+        fake.nodes[1] = FakeNode(role: "AXWindow", children: [2], frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        fake.nodes[2] = FakeNode(role: "AXScrollArea", children: [3, 5], frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        fake.nodes[3] = FakeNode(role: "AXPopover", children: [4], frame: CGRect(x: 200, y: 150, width: 150, height: 100))
+        fake.nodes[4] = FakeNode(role: "AXTextField", frame: CGRect(x: 210, y: 160, width: 100, height: 20))
+        fake.nodes[5] = FakeNode(role: "AXTextField", frame: CGRect(x: 210, y: 160, width: 100, height: 20))
+
+        let tree = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window")
+        XCTAssertEqual(tree.rows[2]["visible"] as? Bool, true)
+        XCTAssertEqual(tree.rows[3]["visible"] as? Bool, true)
+        XCTAssertEqual(tree.rows[4]["visible"] as? Bool, false, "ordinary scroll children keep their clip")
     }
 
     func testAVanishedElementLeavesNoRowAndNoSubtree() throws {
@@ -594,5 +609,33 @@ final class DocumentScopeTests: XCTestCase {
         let churned = try tree(browser(tabs: ["Extensions - 170 MB"]))
         XCTAssertNil(remapDocumentTarget(observedIndex: tab, observed: try documentScope(observed.rows),
                                          current: try documentScope(churned.rows)))
+    }
+}
+
+extension ObservedTreeBuilderTests {
+    func testUnreadableBranchIsDisclosedAndReadableSiblingSurvives() throws {
+        let fake = source()
+        fake.nodes[3]?.childrenError = .failure
+        let partial = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window")
+        XCTAssertEqual(partial.rows.map { $0["role"] as? String }, ["AXWindow", "AXButton", "AXGroup"])
+        XCTAssertEqual(partial.rows[2]["childrenUnreadable"] as? String, UnreadableChildren(-25200).localizedDescription)
+        XCTAssertEqual(partial.rows[1]["actions"] as? [String], ["AXPress", "AXShowMenu"])
+        fake.nodes[3]?.childrenError = nil
+        let complete = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window")
+        XCTAssertNotEqual(partial.digest, complete.digest, "A repaired subtree invalidates the partial snapshot")
+        fake.nodes[1]?.childrenError = .failure
+        XCTAssertThrowsError(try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window"))
+    }
+
+    func testQueryDisclosesUnreadableSiblingWithoutHidingItsMatch() throws {
+        let fake = source()
+        fake.nodes[3]?.childrenError = .failure
+        let result = try buildQueryTree(root: fake.element(1), source: fake, depth: 5,
+                                       query: TreeQuery(text: "Save", role: "AXButton"))
+        XCTAssertEqual(result.report.matches, 1)
+        XCTAssertEqual(result.report.unreadableSubtrees, 1)
+        XCTAssertEqual(result.tree.unreadableSubtrees, 1)
+        XCTAssertEqual(result.tree.rows.map { $0["role"] as? String }, ["AXWindow", "AXButton", "AXGroup"])
+        XCTAssertNotNil(result.tree.rows[2]["childrenUnreadable"])
     }
 }

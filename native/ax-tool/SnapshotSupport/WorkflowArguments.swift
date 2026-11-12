@@ -158,7 +158,7 @@ public struct WorkflowArguments {
         if let modifiers = values["--modifiers"] {
             _ = try NativeKeyChord.modifiers(modifiers)
         }
-        try reject(["--prepare"], unless: ["press","click","key","type","paste","select","set"])
+        try reject(["--prepare"], unless: ["press","click","key","type","paste","select","set","drag"])
         // A target key is the row's identity, so it is useful to every action that names a row,
         // not only to the prepared ones. It is what lets a live-updating window stay actionable.
         try reject(["--target-key"], unless: ["press","click","key","type","paste","select","set","perform","focus","hover","move","drag","scroll","get"])
@@ -185,8 +185,9 @@ public struct WorkflowArguments {
         if revalidateScope == "element", values["--target-key"] == nil {
             throw WorkflowArgumentError.invalid("--revalidate-scope element requires --target-key from the row you observed")
         }
-        if flags.contains("--prepare"), flags.contains("--background") || values["--coords"] != nil || values["--region"] != nil {
-            throw WorkflowArgumentError.invalid("--prepare requires a foreground element action, not coordinates or regions")
+        let localDrag = action == "drag" && values["--frame"] == "window"
+        if flags.contains("--prepare"), flags.contains("--background") || values["--region"] != nil || (values["--coords"] != nil && !localDrag) {
+            throw WorkflowArgumentError.invalid("--prepare requires a foreground element action or a window-relative drag")
         }
         // hover deliberately excluded from --background: the whole point is to move the REAL
         // pointer, and a window-addressed event does not.

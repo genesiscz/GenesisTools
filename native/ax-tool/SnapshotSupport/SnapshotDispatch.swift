@@ -1,6 +1,53 @@
 import Foundation
 
+/// Resolve the caller's coordinate frame before comparing a point with AX's global frames.
+/// Window-relative points follow the current window origin, including negative display origins.
+public func snapshotCoordinatePoint(_ raw: String, frame: String, window: CGRect) throws -> CGPoint {
+    let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
+    let numbers = parts.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+    guard parts.count == 2, numbers.count == 2, numbers.allSatisfy({ $0.isFinite }) else {
+        throw WindowEventError.unavailable("coordinates require two finite numbers x,y")
+    }
+    guard frame == "screen" || frame == "window" else {
+        throw WindowEventError.unavailable("coordinate frame must be screen or window")
+    }
+    let given = CGPoint(x: numbers[0], y: numbers[1])
+    return frame == "window"
+        ? CGPoint(x: window.minX + given.x, y: window.minY + given.y)
+        : given
+}
+
+/// Incomplete branches cannot validate a target inside them, a containing target, or their pixels.
+/// A readable sibling remains subject to the ordinary modal, ownership and hit-test checks.
+private func validateReadableTarget(rows: [[String: Any]], target: Int, point: CGPoint?) throws {
+    func end(of index: Int) -> Int {
+        let depth = rows[index]["depth"] as? Int ?? 0
+        var end = index + 1
+        while end < rows.count, (rows[end]["depth"] as? Int ?? 0) > depth { end += 1 }
+        return end
+    }
+    for index in rows.indices {
+        guard let reason = rows[index]["childrenUnreadable"] as? String else { continue }
+        let blocked: Bool
+        if let point {
+            let frame = CGRect(x: (rows[index]["x"] as? NSNumber)?.doubleValue ?? 0,
+                               y: (rows[index]["y"] as? NSNumber)?.doubleValue ?? 0,
+                               width: (rows[index]["width"] as? NSNumber)?.doubleValue ?? 0,
+                               height: (rows[index]["height"] as? NSNumber)?.doubleValue ?? 0)
+            blocked = frame.isEmpty || frame.contains(point)
+        } else {
+            blocked = (index..<end(of: index)).contains(target)
+                || (rows.indices.contains(target) && (target..<end(of: target)).contains(index))
+        }
+        if blocked {
+            throw SnapshotDispatchError.rejected("target cannot be validated: \(reason); refresh before acting",
+                                                 category: .missingTarget)
+        }
+    }
+}
+
 public func validateModalTarget(rows: [[String: Any]], target: Int, point: CGPoint? = nil) throws {
+    try validateReadableTarget(rows: rows, target: target, point: point)
     for index in rows.indices {
         let row = rows[index]
         let modal = row["role"] as? String == "AXSheet" || ["1", "true"].contains(String(describing: row["AXModal"] ?? ""))

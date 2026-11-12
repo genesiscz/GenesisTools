@@ -55,3 +55,21 @@ public func attachedSheetCandidates(
     }
     return sheets
 }
+
+/// A non-key popup belongs to the focused window only through that window's currently focused control.
+/// The control must explicitly link to an element in the popup; same process or nearby geometry is insufficient.
+public func linkedPopupBelongsToFocusedWindow(
+    popup: CFTypeRef,
+    focusedWindow: CFTypeRef,
+    focusedControl: CFTypeRef?,
+    windowOf: (CFTypeRef) -> CFTypeRef?,
+    linkedElements: (CFTypeRef) -> [CFTypeRef],
+    maximumLinks: Int = 64
+) -> Bool {
+    guard let focusedControl, let parent = windowOf(focusedControl), CFEqual(parent, focusedWindow) else { return false }
+    for linked in linkedElements(focusedControl).prefix(max(0, maximumLinks)) {
+        if CFEqual(linked, popup) { return true }
+        if let owner = windowOf(linked), CFEqual(owner, popup) { return true }
+    }
+    return false
+}

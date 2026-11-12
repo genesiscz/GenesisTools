@@ -257,6 +257,33 @@ final class DisplayChangeTests: XCTestCase {
         XCTAssertEqual((0 - wide.minX) / wide.width, 0, accuracy: 0.0001)
     }
 
+    func testWindowCursorMapsToTheCompositedPictureAndRejectsOutsideClicks() throws {
+        let window = CGRect(x: -800, y: 100, width: 600, height: 400)
+        let output = CGSize(width: 1920, height: 1080)
+        let geometry = CursorTrackGeometry(rect: cursorTrackRect(display: window, movie: output), clickRegions: [window])
+        let button = CGPoint(x: window.minX + 120, y: window.minY + 80)
+        let point = try XCTUnwrap(geometry.normalized(button))
+        let destination = CaptureCanvasGeometry(canvas: window, output: output).destination(for: window)
+        XCTAssertEqual(point.x * output.width, destination.minX + 120 * destination.width / window.width, accuracy: 0.001)
+        XCTAssertEqual(point.y * output.height, output.height - destination.maxY + 80 * destination.height / window.height, accuracy: 0.001)
+        XCTAssertTrue(geometry.acceptsClick(at: button))
+        XCTAssertFalse(geometry.acceptsClick(at: CGPoint(x: window.maxX + 1, y: button.y)))
+        let moved = window.offsetBy(dx: 300, dy: -90)
+        let after = CursorTrackGeometry(rect: cursorTrackRect(display: moved, movie: output), clickRegions: [moved])
+        XCTAssertEqual(after.normalized(CGPoint(x: button.x + 300, y: button.y - 90)), point)
+    }
+
+    func testIsolatedCursorDoesNotRecordClicksInTheGapBetweenSelectedWindows() {
+        let windows = [CGRect(x: 0, y: 0, width: 100, height: 100), CGRect(x: 200, y: 0, width: 100, height: 100)]
+        let canvas = windows[0].union(windows[1])
+        let geometry = CursorTrackGeometry(rect: cursorTrackRect(display: canvas, movie: CGSize(width: 600, height: 200)),
+                                           clickRegions: windows)
+        XCTAssertTrue(geometry.acceptsClick(at: CGPoint(x: 50, y: 50)))
+        XCTAssertTrue(geometry.acceptsClick(at: CGPoint(x: 250, y: 50)))
+        XCTAssertFalse(geometry.acceptsClick(at: CGPoint(x: 150, y: 50)))
+        XCTAssertFalse(geometry.acceptsClick(at: CGPoint(x: -50, y: 50)))
+    }
+
     func testCursorTrackRectKeepsTheFirstDisplayAndAFreeSizedStream() {
         let laptop = CGRect(x: 0, y: 0, width: 2056, height: 1329)
         let same = cursorTrackRect(display: laptop, movie: CGSize(width: 4112, height: 2658))

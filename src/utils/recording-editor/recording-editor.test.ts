@@ -587,7 +587,8 @@ describe.skipIf(skip.integration)("the editor on a video, and the frame review o
         expect(direct.frames.map((frame) => sha(frame.path))).toEqual(evidence.frames.map((frame) => sha(frame.path)));
         expect(direct.sheets.map((sheet) => sha(sheet.path))).toEqual(evidence.sheets.map((sheet) => sha(sheet.path)));
 
-        // Frozen from the pre-adapter implementation at 13733a8342 using the same generated video.
+        // Frames remain frozen at 13733a8342. Sheets include the explicit mono font introduced by fc8c27a698;
+        // each regenerated sheet tile was decoded and checked against these unchanged frame pixels.
         expect(evidence.frames.map((frame) => sha(frame.path))).toEqual(legacyEvidence[0].frames);
         expect(evidence.sheets.map((sheet) => sha(sheet.path))).toEqual(legacyEvidence[0].sheets);
         const ranged = await prepareVideoEvidence({
@@ -3487,6 +3488,20 @@ describe("the effects sheet on source time", () => {
 });
 
 describe("a cursor track with a torn line", () => {
+    test("orders delayed clicks by their original time without rewriting the track", () => {
+        const path = join(workspace(), "cursor.jsonl");
+        const text =
+            '{"t":1000,"x":0.5,"y":0.5,"shape":"arrow"}\n{"t":900,"x":0.3,"y":0.4,"click":"left"}\n{"t":900,"x":0.4,"y":0.4,"click":"right"}\n{"t":1100,"x":0.6,"y":0.6}\n';
+        writeFileSync(path, text);
+        expect(readCursorTrack(path).map((row) => [row.ms, row.click])).toEqual([
+            [900, "left"],
+            [900, "right"],
+            [1000, undefined],
+            [1100, undefined],
+        ]);
+        expect(readFileSync(path, "utf8")).toBe(text);
+    });
+
     test("skips the line that does not parse and keeps the rows around it", () => {
         const path = join(workspace(), "cursor.jsonl");
         writeFileSync(path, '{"t":0,"x":1,"y":2}\n{"t": 12, "x"\n{"t":40,"x":3,"y":4,"click":"left"}\n');

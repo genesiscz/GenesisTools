@@ -28,6 +28,7 @@ export const recordingManifestSchema = z.object({
             file: z.string(),
             atMs: z.number().nonnegative(),
             displayId: z.number().optional(),
+            focusedDisplayId: z.number().optional(),
             changePercent: z.number().default(0),
             reason: z.string().default("change"),
         })

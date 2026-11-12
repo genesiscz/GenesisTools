@@ -8,6 +8,10 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type Annotation, type PresetName, parseRect } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 
+/** Movie data streams to disk; frame-only captures retain a short bounded collection. */
+export const NATIVE_MOVIE_MAX_SECONDS = 4 * 60 * 60;
+export const NATIVE_FRAMES_MAX_SECONDS = 180;
+
 export const CAPTURE_HELP = `control capture — native recording + timed UI actions
 
 NATIVE DEFAULT
@@ -123,7 +127,7 @@ PLAN CONTRACT (TypeScript)
       audio?: ("system" | "mic")[]; // native, not isolated: audio tracks in videoOut and/or .m4a sidecars
       micDevice?: string;         // native: input UID from \`ax-tool audio-devices\` (needs audio "mic")
       audioSidecar?: boolean;     // native: also write audio-<source>.m4a next to the frames
-      cursorTrack?: string;       // native, not isolated: the pointer as JSON lines (t, x, y 0-1, click) for auto zoom
+      cursorTrack?: string;       // native: the pointer as JSON lines (t, x, y, click) for auto zoom
       cursorShapes?: string;      // native, needs cursorTrack: hide the system cursor; its images go to this folder
       app?: string;               // window mode
       windowTitle?: string;       // window mode narrowing
@@ -376,8 +380,8 @@ NOTES
   - You CANNOT request "exactly N frames": duration/fps/threshold set a budget and
     peekaboo keeps K frames where motion crossed threshold. Need fewer tiles?
     Raise threshold, lower fps, shorten the crop window — or recrop.
-  - Plans are validated on load; suspicious values (duration > 180 — seconds, not
-    ms!; threshold > 100; zero-size regions) produce warnings in the result JSON.
+  - Duration is seconds: frame-only captures allow 180; streamed movies allow
+    14400 (four hours). Invalid durations, thresholds and regions produce warnings.
   - The run result carries a warnings[] array — READ IT. "actions fired but only
     1 frame kept" means your motion never made it to pixels (wrong screen, wrong
     focus, scroll over dead UI).
@@ -492,7 +496,7 @@ export interface CaptureSpec {
     micDevice?: string;
     /** Native: also write `audio-<source>.m4a` next to the frames. */
     audioSidecar?: boolean;
-    /** Native, not isolated: write the pointer (positions and clicks) as JSON lines to this file. */
+    /** Native: write the pointer (positions and clicks) as JSON lines to this file. */
     cursorTrack?: string;
     /** Native, needs cursorTrack: no system cursor in the movie; each cursor image goes into this folder for the editor. */
     cursorShapes?: string;
@@ -642,7 +646,7 @@ export function validatePlan(plan: Plan): string[] {
     const warnings: string[] = [];
     const cap = plan.capture;
 
-    if (cap?.duration > 180) {
+    if (cap?.duration > (cap?.videoOut ? NATIVE_MOVIE_MAX_SECONDS : NATIVE_FRAMES_MAX_SECONDS)) {
         warnings.push(`capture.duration=${cap.duration} — unit is SECONDS; did you mean ms?`);
     }
 

@@ -10,13 +10,43 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import serviceExamples from "@app/recorder/lib/__fixtures__/service-protocol.json";
 import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "@app/recorder/lib/protocol-fixtures";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { RpcError, rpcErrorBody } from "@genesiscz/utils/rpc/errors";
 
 const FIXTURES = join(import.meta.dir, "..", "..", "src", "recorder", "lib", "__fixtures__");
 
+/** Refreshes the service's error metadata while keeping the captured method examples and Swift host replies. */
+function serviceProtocolExamples() {
+    return {
+        ...serviceExamples,
+        examples: serviceExamples.examples.map((example) => {
+            const reply = "reply" in example ? example.reply : undefined;
+            if (!example.direction.endsWith("→service") || !reply || !("error" in reply) || !reply.error) {
+                return example;
+            }
+
+            const error = reply.error;
+            return {
+                ...example,
+                reply: {
+                    ...reply,
+                    error: rpcErrorBody(
+                        new RpcError(error.code, error.message, "data" in error ? error.data : undefined, {
+                            stack: "<stack>",
+                        }),
+                        "recorder"
+                    ),
+                },
+            };
+        }),
+    };
+}
+
 const files: Record<string, unknown> = {
+    "service-protocol.json": serviceProtocolExamples(),
     "service-protocol.schemas.json": protocolJsonSchemas(),
     "editor-golden.json": editorGolden(),
     "screen-hit-ops.json": screenHitOpsFixture(),

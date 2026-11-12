@@ -525,7 +525,7 @@ describe("probeGenesisTools", () => {
 
         expect(decision).toMatchObject({
             kind: "run",
-            argv: ["tools", "meetings", "play", "2026-01-01_10-00", "--at", "1:02:03", "--moment"],
+            argv: ["tools", "meetings", "play", "2026-01-01_10-00", "--at", "1:02:03", "--moment", "--window"],
         });
     });
 });

@@ -65,6 +65,7 @@ const snapshotSchema = observationSchema.and(
             .object({ capture: z.object({ pngHash: z.string(), id: z.string() }).passthrough().optional() })
             .passthrough()
             .optional(),
+        unreadableSubtrees: z.number().int().nonnegative().optional(),
         query: z
             .object({
                 text: z.string(),
@@ -88,6 +89,7 @@ export interface ComputerElement {
     url?: string;
     value?: string | number | boolean;
     truncated?: Array<"label" | "value">;
+    childrenUnreadable?: string;
     enabled: boolean;
     focused: boolean;
     actions: Array<{
@@ -103,6 +105,7 @@ export interface ComputerElement {
 }
 export interface ComputerState {
     observationRecovery?: { retries: number };
+    unreadableSubtrees?: number;
     app: string;
     revision: string;
     pid: number;
@@ -209,6 +212,7 @@ function projectRow({
             ...(label.length > textLimit ? ["label" as const] : []),
             ...(typeof row.AXValue === "string" && row.AXValue.length > textLimit ? ["value" as const] : []),
         ],
+        childrenUnreadable: typeof row.childrenUnreadable === "string" ? row.childrenUnreadable : undefined,
         identifier: row.AXIdentifier,
         url: row.AXURL,
         value: typeof row.AXValue === "string" ? row.AXValue.slice(0, textLimit) : row.AXValue,
@@ -246,6 +250,11 @@ function describeElements({
     return [
         `${app} · window ${record.snapshot.window.id} · revision ${record.revision}`,
         ...(record.snapshot.query ? [describeQueryWalk(record.snapshot.query)] : []),
+        ...(record.snapshot.unreadableSubtrees
+            ? [
+                  `Partial observation: ${record.snapshot.unreadableSubtrees} unreadable subtree(s). Their children are unknown, not empty.`,
+              ]
+            : []),
         summary ?? `${record.snapshot.elements.length} observed elements.`,
         `Rows ${offset}–${offset + elements.length}; text values limited to ${textLimit} characters. Use get_elements or find for more.`,
         ...lines,
@@ -630,6 +639,7 @@ export class ComputerUse {
             app,
             revision: record.revision,
             observationRecovery: snapshot.observationRecovery,
+            unreadableSubtrees: snapshot.unreadableSubtrees,
             pid: snapshot.pid,
             window: snapshot.window,
             scope: snapshot.scope,

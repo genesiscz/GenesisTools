@@ -113,6 +113,14 @@ final class WorkflowArgumentsTests: XCTestCase {
         XCTAssertThrowsError(try WorkflowArguments(base, command: "act"), "An unpinned index cannot bypass full-window validation")
     }
 
+    func testPreparedDragUsesWindowRelativeCoordinatesAndRemainsForeground() {
+        let base = ["--app", "Fixture", "--snapshot", "token", "--action", "drag", "--coords", "100,200",
+                    "--to", "100,300", "--prepare", "--target-key", String(repeating: "a", count: 64)]
+        XCTAssertNoThrow(try WorkflowArguments(base + ["--frame", "window"], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(base, command: "act"), "screen coordinates cannot follow a window moved during focus")
+        XCTAssertThrowsError(try WorkflowArguments(base + ["--frame", "window", "--background"], command: "act"))
+    }
+
     func testOnlyADragMayLeaveTheWindow() throws {
         // The parser keeps a list of flags per command; a flag missing from it is refused as an unknown
         // option before anything runs, which is how the first --allow-outside build failed live.
@@ -308,5 +316,88 @@ extension WorkflowArgumentsTests {
                         ["--scope", "window", "--query-role", "AXButton"]] {
             XCTAssertThrowsError(try WorkflowArguments(["--app", "Brave"] + invalid, command: "see"), "\(invalid)")
         }
+    }
+}
+
+extension WorkflowArgumentsTests {
+    func testPrintableShortcutsResolveLogicalLettersInTheSuppliedLayout() throws {
+        let translated: [UInt16: String] = [6: "y", 16: "z"]
+        let chord = try NativeKeyChord("CMD+Z", characterForKey: { code, _ in translated[code] })
+        XCTAssertEqual(chord.code, 16, "The active layout's z key must be used, not the US-position y key")
+        XCTAssertEqual(chord.flags, .maskCommand)
+        XCTAssertEqual(try NativeKeyChord("cmd,z").code, 6, "The pure parser remains layout independent")
+    }
+}
+
+extension WorkflowArgumentsTests {
+    func testRecordedPhysicalKeyCodesBypassTheCurrentKeyboardLayout() throws {
+        for code: UInt16 in [0, 12, 16, 18, 43, 124] {
+            let chord = try NativeKeyChord("cmd+shift+code:\(code)", characterForKey: { _, _ in
+                XCTFail("A recorded physical code must not be translated as a layout character")
+                return "q"
+            })
+            XCTAssertEqual(chord.code, code)
+            XCTAssertEqual(chord.flags, [.maskCommand, .maskShift])
+        }
+        for key in ["code:-1", "code:128", "code:1.5", "code:", "code:16,z"] {
+            XCTAssertThrowsError(try NativeKeyChord(key), key)
+        }
+    }
+
+    func testLayoutResolutionPreservesModifiersAndUsesTheCommandLayer() throws {
+        var seenFlags: [CGEventFlags] = []
+        let chord = try NativeKeyChord("cmd+shift+alt+ctrl+fn+z", characterForKey: { code, flags in
+            seenFlags.append(flags)
+            return code == 16 && flags == .maskCommand ? "z" : nil
+        })
+        XCTAssertEqual(chord.code, 16)
+        XCTAssertEqual(chord.flags, [.maskCommand, .maskShift, .maskAlternate, .maskControl, .maskSecondaryFn])
+        XCTAssertFalse(seenFlags.isEmpty)
+        XCTAssertTrue(seenFlags.allSatisfy { $0 == .maskCommand })
+        let withoutCommand = try NativeKeyChord("shift+z", characterForKey: { code, flags in
+            XCTAssertTrue(flags.isEmpty)
+            return code == 16 ? "z" : nil
+        })
+        XCTAssertEqual(withoutCommand.code, 16)
+        XCTAssertEqual(withoutCommand.flags, .maskShift)
+    }
+
+    func testLayoutResolutionKeepsSpecialKeysAndUnresolvedPrintableKeys() throws {
+        for key in ["left", "return", "tab", "f1", "f20", "kp_0", "kp_add", "kp_enter"] {
+            let chord = try NativeKeyChord("cmd+" + key, characterForKey: { _, _ in
+                XCTFail("Special key \(key) must not be translated")
+                return nil
+            })
+            XCTAssertEqual(chord.code, try NativeKeyChord(key).code)
+            XCTAssertEqual(chord.flags, .maskCommand)
+        }
+        XCTAssertEqual(try NativeKeyChord("cmd+z", characterForKey: { _, _ in nil }).code, 6)
+        XCTAssertThrowsError(try NativeKeyChord("cmd,not-a-key", characterForKey: { _, _ in "z" }))
+    }
+
+    func testLegacyHotkeyPunctuationAliasesUseTheSharedLayoutResolver() throws {
+        let aliases: [String: UInt16] = ["dot": 47, "quote": 39, "dash": 27, "equals": 24,
+                                        "leftbracket": 33, "rightbracket": 30, "backtick": 50]
+        for (alias, code) in aliases {
+            XCTAssertEqual(try NativeKeyChord("cmd," + alias).code, code)
+            let resolved = try NativeKeyChord("cmd," + alias, characterForKey: { candidate, flags in
+                XCTAssertEqual(flags, .maskCommand)
+                return candidate == 0 ? ["dot": ".", "quote": "'", "dash": "-", "equals": "=",
+                                         "leftbracket": "[", "rightbracket": "]", "backtick": "`"][alias] : nil
+            })
+            XCTAssertEqual(resolved.code, 0, "The alias must resolve by its logical character too")
+        }
+    }
+
+    func testLayoutResolutionUsesNamedPunctuationAndPrefersTheExistingPosition() throws {
+        let punctuation = try NativeKeyChord("cmd+slash", characterForKey: { code, _ in code == 27 ? "/" : nil })
+        XCTAssertEqual(punctuation.code, 27)
+        var searched: [UInt16] = []
+        let existing = try NativeKeyChord("cmd+z", characterForKey: { code, _ in
+            searched.append(code)
+            return "z"
+        })
+        XCTAssertEqual(existing.code, 6)
+        XCTAssertEqual(searched, [6], "Do not move a key whose original position already matches")
     }
 }

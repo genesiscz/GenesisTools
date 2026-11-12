@@ -23,6 +23,9 @@ struct LiveHierarchySource: HierarchySource {
         if read == .invalidUIElement, let root, !CFEqual(element, root) {
             throw VanishedElement()
         }
+        if read == .failure, let root, !CFEqual(element, root) {
+            throw UnreadableChildren(read.rawValue)
+        }
         guard read == .success || read == .attributeUnsupported || read == .noValue else {
             throw ObservedTreeError("AX tree read failed (\(read.rawValue)); refresh instead of assuming an empty subtree",
                                     vanished: read == .invalidUIElement)
@@ -481,6 +484,7 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
             "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "bulk": workflowBulkUsed,
             // The count of the tree these elements came from, not of the second read that checked it.
             "vanishedDuringWalk": tree.vanished,
+            "unreadableSubtrees": tree.unreadableSubtrees,
             "elements": publicRows]
     if !queryReport.isEmpty {
         output["query"] = queryReport
@@ -838,7 +842,45 @@ func cmdSee(appName _: String) {
     }
 }
 
+/// The focused field can explicitly link to a non-key child panel, as an autocomplete list does.
+/// Re-read the live link for every admission; a stale popup identity is never enough after it closes.
+private func workflowLinkedPopup(_ window: ObservedWindow, focused: CFTypeRef) -> Bool {
+    guard CFGetTypeID(focused) == AXUIElementGetTypeID(),
+          ["AXSystemDialog", "AXFloatingWindow", "AXSystemFloatingWindow"].contains(axStringAttribute(window.ax, "AXSubrole") ?? "") else {
+        return false
+    }
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(window.ax, &pid) == .success, pid > 0 else { return false }
+    let deadline = Date().addingTimeInterval(min(0.5, workflowRemaining() ?? 0.5))
+    func owned(_ value: CFTypeRef) -> AXUIElement? {
+        guard Date() < deadline, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        let element = value as! AXUIElement
+        var owner: pid_t = 0
+        guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { return nil }
+        if !CFEqual(element, window.ax) {
+            _ = AXUIElementSetMessagingTimeout(element, Float(max(0.05, deadline.timeIntervalSinceNow)))
+        }
+        return element
+    }
+    guard owned(focused) != nil else { return false }
+    let control = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedUIElement")
+    return linkedPopupBelongsToFocusedWindow(popup: window.ax, focusedWindow: focused, focusedControl: control,
+        windowOf: { value in
+            guard let element = owned(value) else { return nil }
+            for name in ["AXWindow", "AXTopLevelUIElement"] {
+                guard Date() < deadline else { return nil }
+                if let owner = axAttribute(element, name), let owner = owned(owner) { return owner }
+            }
+            return nil
+        }, linkedElements: { value in
+            guard let element = owned(value), Date() < deadline,
+                  let linked = axAttribute(element, "AXLinkedUIElements") as? [AXUIElement] else { return [] }
+            return linked.prefix(64).filter { owned($0) != nil }
+        })
+}
+
 private func workflowOwnsFocusedWindow(_ window: ObservedWindow, focused: CFTypeRef) -> Bool {
+    if CFEqual(window.ax, focused) || workflowLinkedPopup(window, focused: focused) { return true }
     guard CFGetTypeID(focused) == AXUIElementGetTypeID() else { return false }
     let deadline = Date().addingTimeInterval(min(0.5, workflowRemaining() ?? 0.5))
     // Each element read carries its own timeout, bounded by what is left of the deadline. The
@@ -950,6 +992,10 @@ private func workflowFocus(_ window: ObservedWindow, pid: pid_t, element: AXUIEl
                 + "then observe again")
         }
         let focusedWindow = axAttribute(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute as String)
+        if CFEqual(element, window.ax), let focusedWindow, workflowLinkedPopup(window, focused: focusedWindow) {
+            workflowFrontWindow(window, pid: pid)
+            return
+        }
         let alreadyFocused = frontmostPid() == pid && focusedWindow.map {
             workflowOwnsFocusedWindow(window, focused: $0)
         } == true
@@ -1143,11 +1189,14 @@ func cmdAct(appName _: String) {
             : coordinateStaleRefusal(error, windowStableKey: tree.rows.first?["stableKey"] as? String))
     }
     let element = tree.elements[elementIndex]
+    func targetPoint(in bounds: CGRect) throws -> CGPoint? {
+        try rawCoords.map {
+            try snapshotCoordinatePoint($0, frame: workflowArgument("--frame") ?? "screen", window: bounds)
+        }
+    }
     ActionCursor.describe(element)
     if action != "get", !(action == "focus" && elementIndex == 0) {
-        let coordinates = rawCoords?.split(separator: ",").compactMap { Double($0) }
-        let point = coordinates?.count == 2 ? CGPoint(x: coordinates![0], y: coordinates![1]) : nil
-        do { try validateModalTarget(rows: tree.rows, target: elementIndex, point: point) }
+        do { try validateModalTarget(rows: tree.rows, target: elementIndex, point: targetPoint(in: window.bounds)) }
         catch { workflowFailure(error) }
     }
     var prepared = false
@@ -1185,7 +1234,7 @@ func cmdAct(appName _: String) {
         window = refreshedWindow
         tree = refreshed
         elementIndex = nextIndex
-        do { try validateModalTarget(rows: tree.rows, target: elementIndex) }
+        do { try validateModalTarget(rows: tree.rows, target: elementIndex, point: targetPoint(in: window.bounds)) }
         catch { workflowFailure(error) }
         dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
             digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query,truncate:token.truncates)
@@ -1282,7 +1331,7 @@ func cmdAct(appName _: String) {
                     sameElement: CFEqual(element, fresh.elements[currentIndex]))
             }
 
-            try validateModalTarget(rows: fresh.rows, target: currentIndex)
+            try validateModalTarget(rows: fresh.rows, target: currentIndex, point: targetPoint(in: freshWindow.bounds))
             _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
                 digest: dispatchToken.digest, element: currentIndex, count: fresh.elements.count,
                 now: Date().timeIntervalSince1970)
@@ -1291,7 +1340,7 @@ func cmdAct(appName _: String) {
                   let currentIndex = remapDocumentTarget(observedIndex: elementIndex, observed: documentPin, current: current) else {
                 throw SnapshotError.refusal(.staleObservation, "the page changed; run see again")
             }
-            try validateModalTarget(rows: fresh.rows, target: currentIndex)
+            try validateModalTarget(rows: fresh.rows, target: currentIndex, point: targetPoint(in: freshWindow.bounds))
             _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
                 digest: dispatchToken.digest, element: currentIndex, count: fresh.elements.count,
                 now: Date().timeIntervalSince1970)
@@ -1350,7 +1399,8 @@ func cmdAct(appName _: String) {
     }
     switch action {
     case "get":
-        jsonOutput(["ok": true, "element": tree.rows[elementIndex].filter { $0.key != "identity" }, "windowId": window.id])
+        jsonOutput(["ok": true, "element": tree.rows[elementIndex].filter { $0.key != "identity" }, "windowId": window.id,
+                    "elementWindowId": nativeAXWindowID(element) ?? window.id])
         return
     case "press":
         workflowAXAction(element, action: "AXPress")
@@ -1471,18 +1521,7 @@ func cmdAct(appName _: String) {
         // window moving opts in with --frame window, and that is the one this documents.
         let coordinateFrame = workflowArgument("--frame") ?? "screen"
         func parsePoint(_ raw: String, requireInside: Bool = true) throws -> CGPoint {
-            let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
-            let numbers = parts.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-            guard parts.count == 2, numbers.count == 2, numbers.allSatisfy({ $0.isFinite }) else {
-                throw WindowEventError.unavailable("coordinates require two finite numbers x,y")
-            }
-            let given = CGPoint(x: numbers[0], y: numbers[1])
-            // A window-relative point is resolved against the window's CURRENT origin, which is
-            // the whole point: the HUD that moved from -459,-1057 to -64,-922 between two calls
-            // keeps the same window-relative coordinates.
-            let point = coordinateFrame == "window"
-                ? CGPoint(x: window.bounds.origin.x + given.x, y: window.bounds.origin.y + given.y)
-                : given
+            let point = try snapshotCoordinatePoint(raw, frame: coordinateFrame, window: window.bounds)
             guard !requireInside || window.bounds.contains(point) else {
                 throw WindowEventError.unavailable(describeOutsideWindow(point: point, window: window))
             }
@@ -1837,7 +1876,12 @@ func cmdAct(appName _: String) {
                                      try admitVisualAction()
                                  }, post: { event in
                                      ActionCursor.emit("drag", point: event.location, background: background, target: rawCoords == nil ? "ax" : "pixel", waitForPresentation: false)
-                                     inputGate.deliver { event.postToPid(pid) }
+                                     inputGate.deliver {
+                                         // AppKit's system drag session reads the pointer's event stream, not only
+                                         // events addressed to the source window. Background drags stay process-local.
+                                         if background { event.postToPid(pid) }
+                                         else { event.post(tap: .cghidEventTap) }
+                                     }
                                  })
                 Thread.sleep(forTimeInterval: 0.05)
                 if allowOutside {
@@ -1934,10 +1978,8 @@ func cmdAct(appName _: String) {
                 }
             } else {
                 let button = workflowArgument("--button") ?? "left"
-                let types: [String: (NSEvent.EventType, NSEvent.EventType)] = [
-                    "left": (.leftMouseDown, .leftMouseUp), "right": (.rightMouseDown, .rightMouseUp),
-                    "middle": (.otherMouseDown, .otherMouseUp)]
-                guard let (downType, upType) = types[button] else {
+                let buttons: [String: CGMouseButton] = ["left": .left, "right": .right, "middle": .center]
+                guard let mouseButton = buttons[button] else {
                     throw WindowEventError.unavailable("--button must be left, right or middle")
                 }
                 // Held modifiers travel on the events themselves (the app reads them from its current
@@ -1945,16 +1987,7 @@ func cmdAct(appName _: String) {
                 let modifierFlags = try workflowArgument("--modifiers").map(NativeKeyChord.modifiers) ?? []
                 for click in 1...(workflowFlag("--double") ? 2 : 1) {
                     _ = try verifyPoint(point, pin: .element)
-                    let down = try factory.mouse(type: downType, point: point, clickCount: click)
-                    let up = try factory.mouse(type: upType, point: point, clickCount: click)
-                    if !modifierFlags.isEmpty {
-                        down.flags = modifierFlags
-                        up.flags = modifierFlags
-                    }
-                    if button == "middle" {
-                        down.setIntegerValueField(.mouseEventButtonNumber, value: 2)
-                        up.setIntegerValueField(.mouseEventButtonNumber, value: 2)
-                    }
+
                     let held = try dispatchAfterPresentation(present: {
                         ActionCursor.emit("click", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel",
                                           button: button, clickCount: workflowFlag("--double") ? 2 : 1)
@@ -1962,7 +1995,10 @@ func cmdAct(appName _: String) {
                         if click == 1 { try validateAfterFeedback() }
                         _ = try verifyPoint(point, pin: .element)
                         try admitVisualAction()
-                    }, dispatch: { try inputGate.press({ down.postToPid(pid) }, release: { up.postToPid(pid) }) })
+                    }, dispatch: {
+                        try factory.pressClick(point: point, button: mouseButton, clickCount: click, modifiers: modifierFlags,
+                                               background: background, pid: pid, gate: inputGate)
+                    })
                     Thread.sleep(forTimeInterval: 0.03)
                     inputGate.release(held)
                     Thread.sleep(forTimeInterval: 0.03)
@@ -2107,7 +2143,7 @@ func cmdAct(appName _: String) {
         workflowFrontWindow(window, pid: pid, element: CFEqual(element, window.ax) ? nil : element)
         guard let keys = workflowArgument("--keys") else { workflowFailure("key requires --keys") }
         let chord: NativeKeyChord
-        do { chord = try NativeKeyChord(keys) } catch { workflowFailure(error) }
+        do { chord = try NativeKeyChord.forCurrentKeyboardLayout(keys) } catch { workflowFailure(error) }
         let source = CGEventSource(stateID: .hidSystemState)
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: chord.code, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: chord.code, keyDown: false) else {

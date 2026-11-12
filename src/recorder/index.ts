@@ -81,7 +81,7 @@ import {
     withStartOptions,
 } from "./lib/start-options";
 import { Movie, movieDemoDriver, recordingMovie } from "./lib/toolset";
-import { announcedCountdown, recordVideo, tracksPointer, videoDoneLine } from "./lib/video-recording";
+import { announcedCountdown, recordVideo, videoDoneLine } from "./lib/video-recording";
 
 const { log } = logger.scoped("recorder");
 
@@ -344,12 +344,6 @@ withStartOptions(
 
         const target = request.target ?? (await defaultStartTarget());
 
-        if (!tracksPointer(target)) {
-            out.printlnErr(
-                "note: a window or app movie has no cursor track, so the editor draws no pointer, clicks or shortcuts; record --display or --region for those"
-            );
-        }
-
         const result = await recordVideo({
             ...request,
             target,
@@ -514,7 +508,7 @@ program
         "--marker <time=label>",
         "a marker at a time of the movie (seconds or m:ss): 0:12=Login done; repeat it for more",
         (value: string, previous: string[]) => [...previous, value],
-        []
+        [] as string[]
     )
     .option("--json", "print the whole answer as JSON")
     .action(async (movie: string, flags: { title?: string; marker: string[]; json?: boolean }) => {
