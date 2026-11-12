@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { newestLoadedModuleMtime } from "@genesiscz/utils/bun/loaded-modules";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -112,7 +112,8 @@ export type ServiceHostStart<S> =
 export async function startServiceHost<S>(options: ServiceHostOptions<S>): Promise<ServiceHostStart<S>> {
     const { dir } = options;
     const { log } = logger.scoped(options.logScope);
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
     const pidPath = servicePidPath(dir);
     // A live holder keeps the claim, this process's own included: one service per folder.
     const claim = await claimPidFile(pidPath, {
@@ -251,8 +252,19 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
             label,
             ...(options.supersedes ? { supersedes: options.supersedes } : {}),
         });
-        atomicWriteFileSync(entryPath, SafeJSON.stringify(entry, null, 2));
-        return listening;
+        try {
+            chmodSync(socket, 0o600);
+            atomicWriteFileSync(entryPath, SafeJSON.stringify(entry, null, 2));
+            return listening;
+        } catch (error) {
+            listening.stopListening();
+            listening.endConnections();
+            if (existsSync(socket)) {
+                unlinkSync(socket);
+            }
+
+            throw error;
+        }
     });
 
     const check = setInterval(() => {

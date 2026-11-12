@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    realpathSync,
+    rmdirSync,
+    statSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -527,6 +537,37 @@ describe("the service host (service-host.ts)", () => {
         expect(first.status).toBe("started");
         expect(readLiveServiceEntry(dir)).toMatchObject({ protocol: 7, code: "code-a", pid: process.pid });
         expect(await host(dir)).toMatchObject({ status: "running", entry: { pid: process.pid } });
+    });
+
+    // The service reads private data for whoever connects, and `hello` is no login: another account on this Mac must
+    // not reach its folder or its socket, whether the start makes the folder or finds it open (umask 022).
+    test("a start leaves its folder owner-only (0700) and its socket owner-only (0600)", async () => {
+        const base = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const made = join(base, "made");
+        const found = join(base, "found");
+        mkdirSync(found, { mode: 0o755 });
+        chmodSync(found, 0o755);
+
+        for (const dir of [made, found]) {
+            expect((await host(dir)).status).toBe("started");
+            expect(statSync(dir).mode & 0o777).toBe(0o700);
+            expect(statSync(serviceSocketPath(dir)).mode & 0o777).toBe(0o600);
+        }
+    });
+
+    test("failed entry publication closes its socket and releases the claim for a retry", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-failed-entry-"));
+        const entry = serviceEntryPath(dir);
+        mkdirSync(entry);
+        try {
+            await expect(host(dir)).rejects.toThrow();
+            expect(existsSync(serviceSocketPath(dir))).toBe(false);
+            expect(statSync(entry).isDirectory()).toBe(true);
+        } finally {
+            rmdirSync(entry);
+        }
+
+        expect((await host(dir)).status).toBe("started");
     });
 
     test("subscribe reaches onSubscribe with its own params, and emit passes the service's filter", async () => {
