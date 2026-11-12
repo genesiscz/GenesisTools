@@ -15,6 +15,8 @@ struct SpeakersTab: View {
         MeetingsPreferences.Speakers.showQuestions.defaultValue
     @AppStorage(MeetingsPreferences.Speakers.hintChips.key) private var hintChips = MeetingsPreferences.Speakers.hintChips.defaultValue
 
+    @AppStorage(MeetingsPreferences.speakerOrderKey) private var order = MeetingsPreferences.SpeakerOrder.spoken.rawValue
+
     var body: some View {
         LoadablePane(state: detail.speakers, reading: "Reading the speakers…", retry: detail.loadSpeakers,
                      noSource: detail.noTranscriptSource("speakers")) { stats in
@@ -22,8 +24,8 @@ struct SpeakersTab: View {
                 EmptyState(symbol: "person.2", text: "No speaker yet", detail: "The speakers come from the transcript.")
             } else {
                 let renames = detail.record.value?.speakers.labels ?? [:]
-                // The most spoken first: in the CLI's order a label with 7 turns stood above one with 427.
-                let speakers = stats.speakers.sorted { $0.spokenSec > $1.spokenSec }
+                let chosenOrder = MeetingsPreferences.SpeakerOrder(rawValue: order) ?? .spoken
+                let speakers = chosenOrder.ordered(stats.speakers.map(SpeakerStat.init))
                 // The width straight from a GeometryReader, not a state an onGeometryChange sets: the window opened at
                 // its smallest size reported no change, so the rows stayed side by side and wrapped one letter per line.
                 GeometryReader { proxy in
@@ -32,7 +34,7 @@ struct SpeakersTab: View {
                         lanes(stats, names: renames)
                             .listRowSeparator(.hidden)
                         ForEach(speakers) { speaker in
-                            SpeakerRow(speaker: SpeakerStat(speaker), rename: renames[speaker.label], stacked: stacked,
+                            SpeakerRow(speaker: speaker, rename: renames[speaker.label], stacked: stacked,
                                        hints: MeetingsWords.speakerHintLines(stats.hints, for: speaker.label),
                                        play: speaker.firstSec.map { first in { detail.play(at: first, from: .speakerChip) } },
                                        chips: { line in

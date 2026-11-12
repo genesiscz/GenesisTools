@@ -343,13 +343,23 @@ private struct AddLabelButton: View {
             text = ""
             open = false
         }
+        .onChange(of: open) { _, isOpen in
+            if !isOpen { pending = nil }
+        }
     }
 
     private func commit() {
-        let label = text.trimmingCharacters(in: .whitespaces)
-        guard !label.isEmpty else { return }
-        pending = label
-        add(label)
+        switch LabelCommit(typed: text, labels: labels) {
+        case .nothing:
+            return
+        case .present:
+            pending = nil
+            text = ""
+            open = false
+        case .add(let label):
+            pending = label
+            add(label)
+        }
     }
 }
 
@@ -475,6 +485,23 @@ private struct MeetingHeaderTitle: View {
                 titleFocused = true
                 titleAccessibilityFocused = true
             }
+        }
+    }
+}
+
+enum LabelCommit: Equatable {
+    case nothing
+    case present
+    case add(String)
+
+    init(typed: String, labels: [String]) {
+        let label = typed.trimmingCharacters(in: .whitespaces)
+        if label.isEmpty {
+            self = .nothing
+        } else if labels.contains(label) {
+            self = .present
+        } else {
+            self = .add(label)
         }
     }
 }

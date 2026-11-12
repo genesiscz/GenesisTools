@@ -14,9 +14,20 @@ enum MeetingsPreferences {
         case always, noChoices
         func shows(choices: [String]) -> Bool { self == .always || choices.isEmpty }
     }
+    enum SpeakerOrder: String, CaseIterable {
+        case spoken, transcript
+
+        func ordered(_ speakers: [SpeakerStat]) -> [SpeakerStat] {
+            switch self {
+            case .spoken: speakers.sorted { $0.spokenSec > $1.spokenSec }
+            case .transcript: speakers
+            }
+        }
+    }
     static let openOnKey = "meetings.window.openOn"
     static let daysKey = "meetings.window.days"
     static let timelineKey = "meetings.timeline.lines"
+    static let speakerOrderKey = "meetings.speakers.order"
     static let afterExportKey = "meetings.export.after"
     /// When a review row offers a field for an answer its choices do not hold (`Rows`); renamed from
     /// `legacyTypedAnswerKey`, which `migrate` carries over.
@@ -72,6 +83,10 @@ enum MeetingsPreferences {
 
     static func typedAnswer(_ defaults: UserDefaults = .standard) -> TypedAnswer {
         defaults.string(forKey: typedAnswerKey).flatMap(TypedAnswer.init(rawValue:)) ?? .always
+    }
+
+    static func speakerOrder(_ defaults: UserDefaults = .standard) -> SpeakerOrder {
+        defaults.string(forKey: speakerOrderKey).flatMap(SpeakerOrder.init(rawValue:)) ?? .spoken
     }
 
     static func noticeSeconds(_ defaults: UserDefaults = .standard) -> Int {

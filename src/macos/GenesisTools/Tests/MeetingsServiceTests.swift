@@ -198,6 +198,32 @@ final class MeetingsServiceTests: XCTestCase {
     private static let design = "2026-11-03-1000-design-review"
     private static let retro = "2026-11-03-1400-retro"
 
+    func testASilentSubscribeOnANewConnectionIsTriedAgainOnAnother() async throws {
+        try writeServiceEntry()
+        let log = commands!
+        let service = MeetingsService(folder: folder, timing: .init(helloTimeout: 0.3, startThrottle: 30, refusedBackoff: 60,
+                                                                    idleClose: 60, reconnectDelay: 0.05),
+                                      pid: 4242, startService: { log.starts += 1 })
+        var resumed = 0
+        let listening = service.listen { if case .resumed = $0 { resumed += 1 } }
+        defer { listening.cancel() }
+        _ = try await service.subscribe(meeting: Self.design, events: ["meeting.changed"])
+
+        fake.silent = ["subscribe"]
+        fake.hangUp()
+        for _ in 0..<200 where fake.count("subscribe") < 3 { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertGreaterThanOrEqual(fake.count("hello"), 3, "a silent subscribe dropped its connection and a new one opened")
+        XCTAssertEqual(resumed, 0, "no subscribe was answered yet")
+
+        fake.silent = []
+        for _ in 0..<300 where resumed == 0 { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(resumed, 1, "the next connection carried the subscription and told the subscriber")
+        let hellos = fake.count("hello")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(fake.count("hello"), hellos, "an answered subscribe keeps its connection")
+        service.unsubscribe()
+    }
+
     func testPreviewServiceRequiresOptInAndADistinctDataHome() {
         let userHome = "/tmp/preview-service-user"
         func allowed(_ flag: String? = nil, _ home: String? = nil) -> Bool {

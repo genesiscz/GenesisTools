@@ -391,6 +391,11 @@ enum SidePanelCatalog {
                          defaultValue: .text(MeetingsPreferences.defaultLook.rawValue)),
         ])
         let transcript = SidePanelSection(id: "transcript", title: "Transcript and Speakers", rows: [
+            SidePanelRow(store: .window(key: MeetingsPreferences.speakerOrderKey), title: "Speakers in order of",
+                         detail: "The speaker who talked longest first, or the order the transcript first names them.",
+                         choices: [SidePanelChoice(value: .text("spoken"), title: "Most spoken"),
+                                   SidePanelChoice(value: .text("transcript"), title: "Transcript")],
+                         value: .text(MeetingsPreferences.speakerOrder(defaults).rawValue), defaultValue: .text("spoken")),
             row(Transcript.wordHighlights, value: Transcript.wordHighlights.value(defaults)),
             row(Transcript.dimPast, value: Transcript.dimPast.value(defaults)),
             row(Transcript.avatars, value: Transcript.avatars.value(defaults)),

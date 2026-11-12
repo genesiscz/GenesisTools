@@ -446,6 +446,7 @@ final class MeetingsService {
     private var subscription: MeetingsAPI.Subscribe.Params?
     /// Connects again while a subscription is kept and no connection is open (`resumeSubscription`).
     private var resuming: Task<Void, Never>?
+    private var restoreFailures = 0
     private var callsInFlight = 0
     private var idleGeneration = 0
 
@@ -554,6 +555,7 @@ final class MeetingsService {
             throw Unavailable(reason: "no Meetings service answers; the next connection subscribes")
         }
         let heard = try await call(MeetingsAPI.Subscribe.self, params, timeout: timing.helloTimeout).events
+        restoreFailures = 0
         isSubscribed = true
         return heard
     }
@@ -561,6 +563,7 @@ final class MeetingsService {
     /// Forgets the subscription and closes the connection, so the service can go idle.
     func unsubscribe() {
         subscription = nil
+        restoreFailures = 0
         isSubscribed = false
         resuming?.cancel()
         resuming = nil
@@ -790,10 +793,15 @@ final class MeetingsService {
                 do {
                     _ = try await Self.send(MeetingsAPI.Subscribe.self, subscription, on: connected, timeout: timing.helloTimeout)
                     guard self.subscription != nil, self.client === connected else { return }
+                    restoreFailures = 0
                     isSubscribed = true
                     signal(.resumed)
                 } catch {
-                    HubPerf.log("meetings.service: subscribe again failed: \(error.localizedDescription)")
+                    guard self.subscription != nil, self.client === connected else { return }
+                    restoreFailures += 1
+                    let backoff = min(timing.reconnectDelay * pow(2, Double(restoreFailures - 1)), timing.refusedBackoff)
+                    HubPerf.log("meetings.service: subscribe again failed: \(error.localizedDescription); connecting again")
+                    drop(connected, backoff: backoff)
                 }
             }
         }
