@@ -1,0 +1,315 @@
+// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/conversation.test.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { z } from "zod";
+import { type ConversationDeps, runConversation } from "./conversation";
+import { parseScenarios, type Scenario } from "./document";
+import { EvalSystemError, type ModelRef } from "./system";
+import { type FakeScript, type FakeTurn, fakeSystem } from "./testing";
+
+const Signals = z.object({
+    offered: z.array(z.object({ label: z.string(), startsAt: z.string() })),
+    emergency: z.boolean(),
+    booking: z.object({ startsAt: z.string() }).nullable(),
+});
+type Signals = z.infer<typeof Signals>;
+const Tools = ["find_free_slots", "book_appointment", "request_human"] as const;
+const Model: ModelRef = { id: "fake", label: "Fake", limitKey: "fake" };
+const Judge: ModelRef = { id: "judge", label: "Judge", limitKey: "judge" };
+const Offered = [
+    { label: "Po 8:00", startsAt: "2026-11-16T07:00:00Z" },
+    { label: "Po 9:00", startsAt: "2026-11-16T08:00:00Z" },
+];
+
+function system(
+    reply: (turn: number, text: string) => FakeTurn<Signals>,
+    extra: Partial<FakeScript<unknown, Signals, (typeof Tools)[number]>> = {}
+) {
+    return fakeSystem({
+        tools: Tools,
+        signals: Signals,
+        defaultSignals: { offered: [], emergency: false, booking: null },
+        reply: (c) => reply(c.turn, c.text),
+        ...extra,
+    });
+}
+
+function scenario(input: unknown): Scenario {
+    const parsed = parseScenarios(
+        input,
+        system(() => ({})),
+        "stdin"
+    );
+    if (!parsed.ok) {
+        assert.fail(JSON.stringify(parsed.issues));
+    }
+    return parsed.scenarios[0];
+}
+
+async function play(
+    s: Scenario,
+    fake: ReturnType<typeof system>,
+    overrides: Partial<ConversationDeps<unknown, Signals, unknown>> = {}
+) {
+    const connection = fake.connect(undefined);
+    return runConversation(
+        {
+            key: "k~fake~current~r1",
+            repeat: 1,
+            attempt: 1,
+            scenario: s,
+            cell: { scenario: s.doc.id, scenarioHash: s.hash, model: "fake", variant: "current" },
+            setup: {},
+        },
+        {
+            connection,
+            signals: Signals,
+            model: Model,
+            runId: "run-1",
+            limited: (_key, task) => task(),
+            harness: { judge: null, simulator: null },
+            putPrompt: async (text) => `p${text.length}`,
+            keepGoing: false,
+            signal: new AbortController().signal,
+            now: () => new Date("2026-11-10T10:00:00Z"),
+            ...overrides,
+        }
+    );
+}
+
+describe("runConversation", () => {
+    it("sends each turn once, fills bindings, and checks the picked time", async () => {
+        const fake = system((turn) =>
+            turn === 1
+                ? {
+                      reply: "Mám dva termíny.",
+                      toolCalls: [{ name: "find_free_slots", input: {} }],
+                      signals: { offered: Offered },
+                      systemPrompt: "PROMPT",
+                  }
+                : {
+                      reply: "Rezervováno.",
+                      toolCalls: [{ name: "book_appointment", input: { starts_at: "2026-11-16T09:00:00+01:00" } }],
+                      signals: { booking: { startsAt: "2026-11-16T08:00:00Z" } },
+                  }
+        );
+        const record = await play(
+            scenario({
+                id: "picks",
+                steps: [
+                    { user: "Termín?", expect: [{ check: { signal: "offered", size: { min: 2 } } }] },
+                    {
+                        bind: { pick: "offered[1]" },
+                        user: "Beru {{pick.label}}.",
+                        expect: [
+                            {
+                                id: "books",
+                                check: {
+                                    tool: "book_appointment",
+                                    args: { starts_at: { instant: "{{pick.startsAt}}" } },
+                                },
+                            },
+                        ],
+                    },
+                ],
+                final: [{ check: { signal: "booking.startsAt", instant: "{{pick.startsAt}}" } }],
+            }),
+            fake
+        );
+        assert.deepEqual(
+            fake.log.sent.map((s) => s.text),
+            ["Termín?", "Beru Po 9:00."]
+        );
+        assert.equal(record.outcome, "passed");
+        assert.equal(record.completed, true);
+        assert.equal(record.turns[0].promptHash, "p6");
+        assert.deepEqual(record.bindings, { pick: Offered[1] });
+        assert.equal(record.final[0].result, "pass");
+        assert.deepEqual(fake.log.closed, [{ key: "k~fake~current~r1", outcome: "passed" }]);
+        assert.equal(fake.log.opened[0].runId, "run-1");
+    });
+
+    it("an unreadable binding fails the previous turn and stops", async () => {
+        const fake = system(() => ({ reply: "Jeden termín.", signals: { offered: [Offered[0]] } }));
+        const record = await play(
+            scenario({ id: "b", steps: [{ user: "a" }, { bind: { pick: "offered[1]" }, user: "{{pick.label}}" }] }),
+            fake
+        );
+        assert.equal(fake.log.sent.length, 1);
+        assert.equal(record.outcome, "failed");
+        assert.equal(record.completed, false);
+        const verdict = record.turns[0].verdicts[0];
+        assert.equal(verdict.id, "binding:pick");
+        assert.equal(verdict.place, "binding");
+        assert.match(verdict.reason, /needed offered\[1\]; offered has 1 item, no \[1\]/);
+    });
+
+    it("keeps a proven failure when an infrastructure error follows it, and never rethrows", async () => {
+        const fake = system((turn) =>
+            turn === 1
+                ? { reply: "Volejte 155.", signals: { emergency: true } }
+                : { error: new EvalSystemError("transient", "stream dropped") }
+        );
+        const record = await play(
+            scenario({
+                id: "c",
+                steps: [
+                    { user: "a", expect: [{ severity: "safety", check: { signal: "emergency", is: false } }] },
+                    { user: "b" },
+                ],
+            }),
+            fake,
+            { keepGoing: true }
+        );
+        assert.equal(record.outcome, "failed");
+        assert.equal(record.safetyMiss, true);
+        assert.deepEqual(record.brokenBy, { kind: "transient", message: "stream dropped" });
+        assert.deepEqual(
+            fake.log.closed.map((c) => c.outcome),
+            ["failed"]
+        );
+    });
+
+    it("throws an infrastructure error before any proven failure and closes the conversation as discarded", async () => {
+        const fake = system(() => ({ error: new EvalSystemError("rate-limit", "429", { retryAfterMs: 500 }) }));
+        await assert.rejects(
+            play(scenario({ id: "d", steps: [{ user: "a" }] }), fake),
+            (e: unknown) => e instanceof EvalSystemError && e.kind === "rate-limit"
+        );
+        assert.deepEqual(
+            fake.log.closed.map((c) => c.outcome),
+            ["discarded"]
+        );
+    });
+
+    it("treats signals outside the schema as blocked", async () => {
+        const fake = fakeSystem({
+            tools: Tools,
+            signals: Signals,
+            defaultSignals: { offered: [], emergency: false, booking: null },
+            reply: () => ({ signals: { emergency: undefined } }),
+        });
+        await assert.rejects(
+            play(scenario({ id: "e", steps: [{ user: "a" }] }), fake),
+            (e: unknown) => e instanceof EvalSystemError && e.kind === "blocked"
+        );
+    });
+
+    it("stops at the first gate failure unless keepGoing", async () => {
+        const fake = system(() => ({ reply: "x" }));
+        const s = scenario({
+            id: "f",
+            steps: [{ user: "a", expect: [{ check: { tool: "find_free_slots" } }] }, { user: "b" }],
+        });
+        assert.equal((await play(s, fake)).turns.length, 1);
+        assert.equal((await play(s, fake, { keepGoing: true })).turns.length, 2);
+    });
+
+    it("choose plays the first branch whose check passes on the previous turn, and records it", async () => {
+        const asks = system((turn) => (turn === 1 ? { reply: "Kdy můžete?" } : { reply: "Dobře." }));
+        const s = scenario({
+            id: "g",
+            steps: [
+                { user: "Bolí mě zub." },
+                {
+                    choose: [
+                        {
+                            name: "offered",
+                            when: { tool: "find_free_slots" },
+                            bind: { pick: "offered[0]" },
+                            user: "Beru {{pick.label}}",
+                        },
+                        { name: "asked", otherwise: true, user: "Zítra ráno." },
+                    ],
+                },
+            ],
+        });
+        const record = await play(s, asks);
+        assert.equal(record.turns[1].choice, "asked");
+        assert.equal(record.turns[1].user.text, "Zítra ráno.");
+        const offers = system((turn) =>
+            turn === 1
+                ? { toolCalls: [{ name: "find_free_slots", input: {} }], signals: { offered: Offered } }
+                : { reply: "ok" }
+        );
+        const second = await play(s, offers);
+        assert.equal(second.turns[1].choice, "offered");
+        assert.equal(second.turns[1].user.text, "Beru Po 8:00");
+        const noMatch = scenario({
+            id: "h",
+            steps: [{ user: "a" }, { choose: [{ when: { tool: "request_human" }, user: "b" }] }],
+        });
+        const stopped = await play(noMatch, asks);
+        assert.equal(stopped.outcome, "failed");
+        assert.equal(stopped.turns[0].verdicts[0].id, "choose:s2");
+    });
+
+    it("asks the judge through complete, and a broken judge is inconclusive", async () => {
+        const answering = system(() => ({ reply: "Kdy můžete přijít?" }), {
+            complete: (request) => ({
+                text: request.purpose === "judge" ? '{"answer":"yes","reason":"it asks"}' : "",
+                usage: { inputTokens: 50, outputTokens: 5, costUsd: 0.01 },
+            }),
+        });
+        const s = scenario({ id: "j", steps: [{ user: "a", expect: [{ check: { judge: "Does it ask when?" } }] }] });
+        const record = await play(s, answering, { harness: { judge: Judge, simulator: null } });
+        assert.equal(record.outcome, "passed");
+        assert.equal(record.harnessUsage.costUsd, 0.01);
+        assert.equal(answering.log.completions[0].model, "judge");
+        const broken = system(() => ({ reply: "x" }), {
+            complete: () => {
+                throw new EvalSystemError("transient", "judge down");
+            },
+        });
+        const failed = await play(s, broken, { harness: { judge: Judge, simulator: null } });
+        assert.equal(failed.outcome, "inconclusive");
+        assert.match(failed.turns[0].verdicts[0].reason, /the judge failed: judge down/);
+        assert.equal((await play(s, answering)).outcome, "inconclusive");
+    });
+
+    it("plays a simulated block until the stop word or until", async () => {
+        let n = 0;
+        const fake = system(
+            (turn) => (turn === 2 ? { toolCalls: [{ name: "book_appointment", input: {} }] } : { reply: "?" }),
+            {
+                complete: () => ({
+                    text: ++n > 5 ? "###STOP###" : `message ${n}`,
+                    usage: { inputTokens: 1, outputTokens: 1 },
+                }),
+            }
+        );
+        const s = scenario({
+            id: "sim",
+            steps: [
+                {
+                    simulate: {
+                        persona: "You are a patient.",
+                        goal: "Book.",
+                        maxTurns: 4,
+                        until: { tool: "book_appointment" },
+                    },
+                },
+            ],
+        });
+        const record = await play(s, fake, {
+            harness: { judge: null, simulator: { id: "sim", label: "Sim", limitKey: "sim" } },
+        });
+        assert.deepEqual(record.simulator, [{ step: 0, turns: 2, endedBy: "until" }]);
+        assert.equal(record.turns[1].user.source, "simulator");
+    });
+
+    it("notes a close error without changing the outcome", async () => {
+        const fake = system(() => ({ reply: "x" }));
+        const connection = fake.connect(undefined);
+        const record = await play(scenario({ id: "z", steps: [{ user: "a" }] }), fake, {
+            connection: {
+                ...connection,
+                close: async () => {
+                    throw new Error("delete failed");
+                },
+            },
+        });
+        assert.equal(record.outcome, "passed");
+        assert.equal(record.closeError, "delete failed");
+    });
+});
