@@ -838,7 +838,45 @@ func cmdSee(appName _: String) {
     }
 }
 
+/// The focused field can explicitly link to a non-key child panel, as an autocomplete list does.
+/// Re-read the live link for every admission; a stale popup identity is never enough after it closes.
+private func workflowLinkedPopup(_ window: ObservedWindow, focused: CFTypeRef) -> Bool {
+    guard CFGetTypeID(focused) == AXUIElementGetTypeID(),
+          ["AXSystemDialog", "AXFloatingWindow", "AXSystemFloatingWindow"].contains(axStringAttribute(window.ax, "AXSubrole") ?? "") else {
+        return false
+    }
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(window.ax, &pid) == .success, pid > 0 else { return false }
+    let deadline = Date().addingTimeInterval(min(0.5, workflowRemaining() ?? 0.5))
+    func owned(_ value: CFTypeRef) -> AXUIElement? {
+        guard Date() < deadline, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        let element = value as! AXUIElement
+        var owner: pid_t = 0
+        guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { return nil }
+        if !CFEqual(element, window.ax) {
+            _ = AXUIElementSetMessagingTimeout(element, Float(max(0.05, deadline.timeIntervalSinceNow)))
+        }
+        return element
+    }
+    guard owned(focused) != nil else { return false }
+    let control = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedUIElement")
+    return linkedPopupBelongsToFocusedWindow(popup: window.ax, focusedWindow: focused, focusedControl: control,
+        windowOf: { value in
+            guard let element = owned(value) else { return nil }
+            for name in ["AXWindow", "AXTopLevelUIElement"] {
+                guard Date() < deadline else { return nil }
+                if let owner = axAttribute(element, name), let owner = owned(owner) { return owner }
+            }
+            return nil
+        }, linkedElements: { value in
+            guard let element = owned(value), Date() < deadline,
+                  let linked = axAttribute(element, "AXLinkedUIElements") as? [AXUIElement] else { return [] }
+            return linked.prefix(64).filter { owned($0) != nil }
+        })
+}
+
 private func workflowOwnsFocusedWindow(_ window: ObservedWindow, focused: CFTypeRef) -> Bool {
+    if CFEqual(window.ax, focused) || workflowLinkedPopup(window, focused: focused) { return true }
     guard CFGetTypeID(focused) == AXUIElementGetTypeID() else { return false }
     let deadline = Date().addingTimeInterval(min(0.5, workflowRemaining() ?? 0.5))
     // Each element read carries its own timeout, bounded by what is left of the deadline. The
@@ -950,6 +988,10 @@ private func workflowFocus(_ window: ObservedWindow, pid: pid_t, element: AXUIEl
                 + "then observe again")
         }
         let focusedWindow = axAttribute(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute as String)
+        if CFEqual(element, window.ax), let focusedWindow, workflowLinkedPopup(window, focused: focusedWindow) {
+            workflowFrontWindow(window, pid: pid)
+            return
+        }
         let alreadyFocused = frontmostPid() == pid && focusedWindow.map {
             workflowOwnsFocusedWindow(window, focused: $0)
         } == true

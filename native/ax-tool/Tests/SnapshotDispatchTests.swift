@@ -763,3 +763,37 @@ final class AttachedSheetScanTests: XCTestCase {
         })
     }
 }
+
+extension AttachedSheetFocusTests {
+    func testFocusedControlAdmitsOnlyItsExplicitlyLinkedPopup() {
+        let windows = ["field": "settings", "list": "popup", "other-list": "other-popup", "foreign-field": "other-settings"]
+        var links = ["list"]
+        let windowOf: (CFTypeRef) -> CFTypeRef? = { windows[$0 as! String].map { $0 as NSString } }
+        let linked: (CFTypeRef) -> [CFTypeRef] = { _ in links.map { $0 as NSString } }
+        func admitted(_ popup: String, control: String? = "field") -> Bool {
+            linkedPopupBelongsToFocusedWindow(popup: popup as NSString, focusedWindow: "settings" as NSString,
+                focusedControl: control.map { $0 as NSString }, windowOf: windowOf, linkedElements: linked)
+        }
+        XCTAssertFalse(focusedWindowBelongsToOwner(owner: "popup" as NSString, focused: "settings" as NSString,
+                                                   attachedSheets: { _ in [] }), "the sheet-only policy refused this valid child")
+        XCTAssertTrue(admitted("popup"))
+        XCTAssertFalse(admitted("other-popup"), "an unrelated window of the same process is not linked")
+        XCTAssertFalse(admitted("popup", control: "foreign-field"), "the anchor must belong to the current key window")
+        XCTAssertFalse(admitted("popup", control: nil))
+        links = []
+        XCTAssertFalse(admitted("popup"), "the live relation must disappear when the popup closes")
+        links = ["other-list"]
+        XCTAssertFalse(admitted("popup"), "a replacement popup does not authorize the stale one")
+        XCTAssertTrue(admitted("other-popup"))
+    }
+
+    func testLinkedPopupScanIsBoundedAndRequiresAWindowOwner() {
+        var reads = 0
+        XCTAssertFalse(linkedPopupBelongsToFocusedWindow(popup: "popup" as NSString, focusedWindow: "settings" as NSString,
+            focusedControl: "field" as NSString, windowOf: { value in
+                reads += 1
+                return (value as! String) == "field" ? "settings" as NSString : nil
+            }, linkedElements: { _ in (0..<100).map { "linked-\($0)" as NSString } }, maximumLinks: 3))
+        XCTAssertEqual(reads, 4)
+    }
+}
