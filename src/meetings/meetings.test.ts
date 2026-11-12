@@ -90,6 +90,7 @@ import {
     meetingLiveId,
     RecorderFailedError,
     type RecorderNote,
+    readRecorderState,
     recorderAcknowledged,
     recorderFiles,
 } from "./lib/recorder-shared";
@@ -111,8 +112,8 @@ import { printSpeakerStats } from "./lib/speakers-view";
 import { settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { transcriptDocument } from "./lib/transcript-document";
-import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
-import { readAuto } from "./lib/watch-auto";
+import { hasRecordingToWatch, type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
+import { readAuto, writeAuto } from "./lib/watch-auto";
 
 function line(speaker: string, startSec: number, text: string, speakerId?: number): TranscriptEntry {
     return { speaker, startSec, text, speakerId };
@@ -1203,7 +1204,7 @@ describe("watchOnce", () => {
         const recent = harness({
             recorder: () => dead("m-dead-recent"),
             recording: () => ({ status: "recording" }),
-            lastFrameAt: () => now - 30_000,
+            lastActivityAt: () => now - 30_000,
             endInterrupted: async (meetingId) => {
                 ended.push(meetingId);
             },
@@ -1220,7 +1221,7 @@ describe("watchOnce", () => {
             recorder: () => dead("m-dead-old"),
             recording: () => ({ status: "recording" }),
             liveRecording: async () => null,
-            lastFrameAt: () => now - 20 * 60_000,
+            lastActivityAt: () => now - 20 * 60_000,
             endInterrupted: async (meetingId) => {
                 ended.push(meetingId);
             },
@@ -1268,6 +1269,155 @@ describe("watchOnce", () => {
         recording = { status: "stopped", stopReason: "requested", stoppedAt: new Date(now + 310_000).toISOString() };
 
         expect(await watchOnce(h.store, later(900))).toBe("idle");
+    });
+
+    test("manual crash recovery works with autostart off without reading the source, and an explicit stop stays stopped", async () => {
+        const state = {
+            meetingId: "manual-off-crash",
+            pid: 999_999,
+            startedAt: live.startedAt,
+            display: 1,
+            frames: 4,
+            bytes: 10,
+        };
+        let recording: NonNullable<ReturnType<WatchDeps["recording"]>> = { status: "recording" };
+        const h = harness({
+            settings: async () => ({ ...settings, enabled: false }),
+            source: async () => {
+                throw new Error("disabled recovery must not query the source");
+            },
+            liveRecording: async () => {
+                throw new Error("disabled recovery must not query the source");
+            },
+            recorder: () => ({ running: false, state }),
+            recording: () => recording,
+            lastActivityAt: () => now - 30_000,
+        });
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 10_000 })).toBe("idle");
+        expect(h.runs).toEqual([["meetings", "record", "start", "--meeting", state.meetingId, "--yes"]]);
+        recording = { status: "stopped", stopReason: "requested" };
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 120_000 })).toBe("disabled");
+        expect(h.runs).toHaveLength(1);
+    });
+
+    test("disabled autostart expires its exact dead run, but an older auto marker does not own a later manual run", async () => {
+        for (const own of [true, false]) {
+            const meetingId = `auto-ownership-${own}`;
+            const state = { meetingId, pid: 999_999, startedAt: live.startedAt, display: 1, frames: 4, bytes: 10 };
+            const ended: string[] = [];
+            const h = harness({
+                settings: async () => ({ ...settings, enabled: false }),
+                source: async () => {
+                    throw new Error("disabled recovery must not query the source");
+                },
+                liveRecording: async () => {
+                    throw new Error("disabled recovery must not query the source");
+                },
+                recorder: () => ({ running: false, state }),
+                recording: () => ({ status: "recording" }),
+                lastActivityAt: () => now - 30_000,
+                endInterrupted: async (id) => {
+                    ended.push(id);
+                },
+            });
+            writeAuto(h.store, {
+                sourceMeetingId: "w1",
+                meetingId,
+                startedAt: live.startedAt,
+                recorderStartedAt: own ? state.startedAt : "2026-11-02T14:00:00.000Z",
+            });
+            expect(await watchOnce(h.store, { deps: h.deps, now })).toBe(own ? "disabled" : "started");
+            expect(ended).toEqual(own ? [meetingId] : []);
+            expect(h.runs).toHaveLength(own ? 0 : 1);
+        }
+    });
+
+    test("expiring a manual orphan closes and persists its recording and focused-display intervals", async () => {
+        const h = harness({
+            settings: async () => ({ ...settings, enabled: false }),
+            liveRecording: async () => null,
+            lastActivityAt: () => now - 20 * 60_000,
+        });
+        const created = await h.store.create(
+            { title: "Recovery fixture", start: live.startedAt, createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const from = new Date(now - 25 * 60_000).toISOString();
+        await h.store.update(created.id, { command: "test", change: "open intervals" }, (record) => {
+            record.recording = { status: "recording", spans: [{ from }], displaySpans: [{ from, displayId: 7 }] };
+        });
+        h.deps.recorder = () => ({
+            running: false,
+            state: { meetingId: created.id, pid: 999_999, startedAt: from, display: 1, frames: 4, bytes: 10 },
+        });
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("disabled");
+        const saved = new MeetingStore(h.store.storage).read(created.id)?.recording;
+        const to = new Date(now - 20 * 60_000).toISOString();
+        expect(saved).toMatchObject({
+            status: "stopped",
+            stoppedAt: to,
+            stopReason: "error",
+            interrupted: true,
+            spans: [{ from, to, stopReason: "error", interrupted: true }],
+            displaySpans: [{ from, to, displayId: 7, stopReason: "error", interrupted: true }],
+        });
+        expect(SafeJSON.parse(readFileSync(h.store.path(created.id), "utf8"))).toMatchObject({
+            recording: { stopReason: "error", interrupted: true, displaySpans: [{ to, displayId: 7 }] },
+        });
+        expect(h.runs).toEqual([]);
+    });
+
+    test("a static screen's recorder state heartbeat keeps recovery recent, and watcher ownership follows the persisted run", async () => {
+        const h = harness({
+            settings: async () => ({ ...settings, enabled: false }),
+            source: async () => {
+                throw new Error("disabled recovery must not query the source");
+            },
+            liveRecording: async () => {
+                throw new Error("disabled recovery must not query the source");
+            },
+        });
+        const created = await h.store.create(
+            { title: "Static recovery", start: live.startedAt, createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        await h.store.update(created.id, { command: "test", change: "recording" }, (record) => {
+            record.recording = { status: "recording" };
+        });
+        const frames = join(h.store.folder(created.id), "frames");
+        mkdirSync(frames);
+        const oldFrame = new Date(now - 20 * 60_000);
+        utimesSync(frames, oldFrame, oldFrame);
+        const files = recorderFiles(h.store);
+        writeFileSync(
+            files.state,
+            SafeJSON.stringify({
+                meetingId: created.id,
+                pid: 999_999,
+                startedAt: live.startedAt,
+                display: 1,
+                frames: 1,
+                bytes: 10,
+                lastFrameAt: oldFrame.toISOString(),
+            })
+        );
+        const heartbeat = new Date(now - 30_000);
+        utimesSync(files.state, heartbeat, heartbeat);
+        h.deps.recorder = () => readRecorderState(h.store);
+        expect(hasRecordingToWatch(h.store)).toBe(true);
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
+        expect(h.runs).toEqual([["meetings", "record", "start", "--meeting", created.id, "--yes"]]);
+        await h.store.update(created.id, { command: "test", change: "explicit stop" }, (record) => {
+            record.recording = { ...record.recording, status: "stopped", stopReason: "requested" };
+        });
+        expect(hasRecordingToWatch(new MeetingStore(h.store.storage))).toBe(false);
+        writePidFile(files.pid);
+        try {
+            expect(hasRecordingToWatch(h.store)).toBe(true);
+        } finally {
+            clearPidFile(files.pid);
+        }
     });
 
     test("off: nothing happens", async () => {
