@@ -4,6 +4,9 @@
         "src/azure-devops/lib/ancestors.ts": 1,
         "src/azure-devops/timelog-api.ts": 1
     },
+    "roster-app-status-outside-permissions": {
+        "src/update/index.ts": 1
+    },
     "roster-cdp-conn-outside-connect": {},
     "roster-cdp-socket-outside-connect": {},
     "roster-cmux-send-outside-surface-input": {
@@ -32,8 +35,13 @@
         "src/utils/rm/trash.ts": 1,
         "src/utils/storage/file-lock.ts": 1
     },
+    "roster-mcp-backup-prompt-outside-cycle": {
+        "src/mcp-manager/utils/config.utils.ts": 2
+    },
     "roster-mcp-provider-write-outside-cycle": {},
     "roster-provider-fetch-outside-exchange": {
         "src/ai-proxy/lib/providers/openai-subscription.ts": 1
-    }
+    },
+    "roster-provider-pool-outside-lifecycle": {},
+    "roster-session-listing-outside-claude": {}
 }

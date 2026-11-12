@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import adoFetchOutsideApi from "./ado-fetch-outside-api.definition";
+import appStatusOutsidePermissions from "./app-status-outside-permissions.definition";
 import cdpConnOutsideConnect from "./cdp-conn-outside-connect.definition";
 import cdpSocketOutsideConnect from "./cdp-socket-outside-connect.definition";
 import cmuxSendOutsideSurfaceInput from "./cmux-send-outside-surface-input.definition";
@@ -10,12 +11,16 @@ import type { RosterDefinition } from "./define";
 import doctorDirectDelete from "./doctor-direct-delete.definition";
 import launchctlOutsideLaunchdAgent from "./launchctl-outside-launchd-agent.definition";
 import lockUnlinkOutsidePidfile from "./lock-unlink-outside-pidfile.definition";
+import mcpBackupPromptOutsideCycle from "./mcp-backup-prompt-outside-cycle.definition";
 import mcpProviderWriteOutsideCycle from "./mcp-provider-write-outside-cycle.definition";
 import providerFetchOutsideExchange from "./provider-fetch-outside-exchange.definition";
+import providerPoolOutsideLifecycle from "./provider-pool-outside-lifecycle.definition";
+import sessionListingOutsideClaude from "./session-listing-outside-claude.definition";
 
 /** Every roster. A new one is a `<name>.definition.ts` file in this folder plus one line here. */
 export const ROSTER_DEFINITIONS: readonly RosterDefinition[] = [
     adoFetchOutsideApi,
+    appStatusOutsidePermissions,
     cdpConnOutsideConnect,
     cdpSocketOutsideConnect,
     cmuxSendOutsideSurfaceInput,
@@ -23,8 +28,11 @@ export const ROSTER_DEFINITIONS: readonly RosterDefinition[] = [
     doctorDirectDelete,
     launchctlOutsideLaunchdAgent,
     lockUnlinkOutsidePidfile,
+    mcpBackupPromptOutsideCycle,
     mcpProviderWriteOutsideCycle,
     providerFetchOutsideExchange,
+    providerPoolOutsideLifecycle,
+    sessionListingOutsideClaude,
 ];
 
 /** The manifest `generate.ts` writes: per roster, the files that still hold the pattern and how many times. */
