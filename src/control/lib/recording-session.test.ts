@@ -468,6 +468,32 @@ describe("RecordingSession", () => {
         expect(await recording.finished).toBe("done");
     });
 
+    it("a joined movie's spans are as long as the join measured each segment, like its cursor track", async () => {
+        const { recorder, runs } = fakeRecorder({ armLater: true, movieMs: 2500 });
+        const recording = session(recorder, {
+            join: async ({ segments, output }) => {
+                await writeFile(output, "joined");
+                return { durationMs: 4990, lengthsMs: segments.map((_, position) => [2467, 2523][position]) };
+            },
+        });
+        await recording.start();
+        clock = 1_001_400;
+        runs[0].arm({ firstFrameAt: 1_000_800 });
+        clock = 1_003_300;
+        await recording.command({ cmd: "pause" });
+        clock = 1_060_000;
+        await recording.command({ cmd: "resume" });
+        clock = 1_060_900;
+        runs[1].arm({ firstFrameAt: 1_060_550 });
+        clock = 1_063_000;
+        await recording.command({ cmd: "stop" });
+        expect(await recording.finished).toBe("done");
+        expect(recording.movieSpans()).toEqual([
+            { sourceStartMs: 0, firstFrameEpochMs: 1_000_800, lengthMs: 2467 },
+            { sourceStartMs: 2467, firstFrameEpochMs: 1_060_550, lengthMs: 2523 },
+        ]);
+    });
+
     it("one segment is moved into place without a join", async () => {
         const { recorder } = fakeRecorder();
         const recording = session(recorder);
@@ -1462,7 +1488,8 @@ describe("a joined cursor track on the joined movie's clock", () => {
         await writeFile(cursorTrackPath(segments[1].path), '{"t":100.0,"x":0.5,"y":0.6,"click":"left"}\n');
         const output = join(root, "joined.mp4");
 
-        await segmentJoiner()({ segments, output });
+        const joined = await segmentJoiner()({ segments, output });
+        expect(joined.lengthsMs).toEqual([2530, 2513]);
 
         expect((await readFile(cursorTrackPath(output), "utf8")).trim().split("\n")).toEqual([
             '{"t":0.0,"x":0.1,"y":0.2}',

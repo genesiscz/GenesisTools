@@ -186,8 +186,11 @@ export function movieFrameStats(
     return { frames, averageFps };
 }
 
-/** Joins finished segments into `output`, one H.264 MP4, and returns the joined movie's length. */
-export type SegmentJoiner = (input: { segments: FinishedSegment[]; output: string }) => Promise<{ durationMs: number }>;
+/** Joins segments and reports their measured lengths, shared by cursor offsets and camera spans. */
+export type SegmentJoiner = (input: {
+    segments: FinishedSegment[];
+    output: string;
+}) => Promise<{ durationMs: number; lengthsMs?: number[] }>;
 
 /** A saved movie's length (ms), measured the way a `SegmentJoiner` measures the movie it joined. */
 export type MovieMeasure = (path: string) => Promise<number>;
@@ -784,8 +787,16 @@ export class RecordingSession {
     private async joinMovie(ordered: FinishedSegment[]): Promise<number> {
         const temporary = this.temporaryOutput();
         try {
-            const { durationMs } = await this.options.join({ segments: ordered, output: temporary });
+            const { durationMs, lengthsMs } = await this.options.join({ segments: ordered, output: temporary });
             await this.moveMovie(temporary);
+
+            if (lengthsMs?.length === ordered.length) {
+                for (const [position, segment] of ordered.entries()) {
+                    segment.movieMs = lengthsMs[position];
+                }
+            }
+
+            this.movieMs = durationMs;
             return durationMs;
         } finally {
             await unlink(cursorTrackPath(temporary)).catch((error: unknown) => {
