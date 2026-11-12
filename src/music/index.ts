@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { readFile, writeFile } from "node:fs/promises";
 import { runTool } from "@genesiscz/utils/cli";
+import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import {
@@ -19,6 +20,7 @@ import {
     tapAudio,
     tapAudition,
     verifySoundfont,
+    withMusicSignal,
 } from "@genesiscz/utils/music";
 import { publishAudio } from "@genesiscz/utils/music/process";
 import { Command, InvalidArgumentError } from "commander";
@@ -189,4 +191,15 @@ program
         out.result({ output: options.out, key: options.all ? "all-ten" : key });
     });
 
-await runTool(program, { tool: "music" });
+await withInterrupt(
+    async (signal) => {
+        try {
+            await withMusicSignal({ signal, run: () => runTool(program, { tool: "music" }) });
+        } finally {
+            if (signal.aborted) {
+                process.exitCode = 130;
+            }
+        }
+    },
+    { handleTermination: true }
+);

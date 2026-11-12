@@ -2,6 +2,7 @@ export { auditionMusic } from "./audition";
 export { measureAudio, parseLoudness, probeMedia } from "./measure";
 export { encodeMidi } from "./midi";
 export { mixMusic, musicFilterGraph, placeMusic } from "./mix";
+export { withMusicSignal } from "./process";
 export { renderScore } from "./render";
 export { builtinScore, TRACK_KEYS } from "./scores";
 export { installSoundfont, PINNED_SOUNDFONT, soundfontPaths, verifySoundfont } from "./soundfont";

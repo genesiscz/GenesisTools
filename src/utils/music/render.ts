@@ -30,6 +30,8 @@ export function fluidSynthArgs(options: { soundfont: string; midi: string; raw: 
         "-o",
         "synth.cpu-cores=1",
         "-o",
+        "synth.midi-bank-select=xg",
+        "-o",
         "player.timing-source=sample",
         options.soundfont,
         options.midi,

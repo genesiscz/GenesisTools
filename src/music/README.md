@@ -68,7 +68,8 @@ tools music render --score score.json --out out/custom.m4a
 A score has key, title, bpm, seconds, end and parts. Each part has a GM program number from 0 to 127, percussion,
 volume, pan, and notes. Each note has at and duration in seconds, a MIDI pitch and velocity. end is the written
 ending that the mix aligns, and must fit inside seconds. Notes cannot extend past the score. Program numbers are
-zero-based; percussion uses MIDI channel 10.
+zero-based. Each part has an independent MIDI channel for volume and pan. The first percussion part uses channel 10;
+additional drum parts use XG bank selection on separate channels. FluidSynth 2.3.5 or newer is required.
 
 An explicit --soundfont file may select another sample bank. Its hash is printed, and its license remains the
 caller's responsibility. The default cached asset always receives the pinned file and license checks.
@@ -121,3 +122,7 @@ The four compositions and ten tap definitions originate from
 [Kalendora's pushed music branch](https://github.com/arwen96/Kalendora/tree/481f90467dafdc609cfc834993855299b7410f94/video/scripts).
 Copied source carries the exact source path, timestamp and commit header. Runtime rendering, MIDI encoding and the
 shared mastering/mix implementation are owned here. Generated audio remains a build product outside git.
+
+Ctrl-C or SIGTERM cancels owned child process groups and removes temporary audio before returning. A completed
+replacement is published only while the operation remains active. Library callers can use
+`withMusicSignal({ signal, run: () => renderScore(options) })` to apply the same cancellation scope.

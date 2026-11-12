@@ -1,12 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseLoudness } from "./measure";
+import { Executor } from "@genesiscz/utils/cli/executor";
+import { waitForPath } from "@genesiscz/utils/fs/watcher";
+import { parseLoudness, probeMedia } from "./measure";
 import { encodeMidi } from "./midi";
 import { mixMusic, musicFilterGraph, placeMusic } from "./mix";
-import { publishAudio } from "./process";
+import { publishAudio, runAudio, withMusicSignal } from "./process";
 import { fluidSynthArgs, renderScore } from "./render";
 import { builtinScore, TRACK_KEYS } from "./scores";
 import { TAPS, tapAudio, tapAudition } from "./taps";
@@ -81,6 +83,21 @@ describe("music score and MIDI", () => {
         expect(midi.includes(Buffer.from([0x99, 60, 90]))).toBe(true);
         expect(midi.includes(Buffer.from([0x9a, 60, 90]))).toBe(true);
         expect(midi.includes(Buffer.from([0x9b, 60, 90]))).toBe(true);
+    });
+
+    test("percussion parts retain independent volume and pan controllers", () => {
+        const part = minimal.parts[0];
+        const midi = encodeMidi({
+            ...minimal,
+            parts: [
+                { ...part, name: "kick", percussion: true, volume: 1, pan: 0 },
+                { ...part, name: "snare", percussion: true, volume: 127, pan: 127 },
+            ],
+        });
+        expect(midi.includes(Buffer.from([0xb9, 7, 1]))).toBe(true);
+        expect(midi.includes(Buffer.from([0xb0, 7, 127]))).toBe(true);
+        expect(midi.includes(Buffer.from([0xb9, 10, 0]))).toBe(true);
+        expect(midi.includes(Buffer.from([0xb0, 10, 127]))).toBe(true);
     });
 
     test("refuses invalid notes and written ends before rendering", () => {
@@ -158,6 +175,87 @@ describe("placement and effects ducking", () => {
 });
 
 describe("measurement, effects and publishing", () => {
+    test("media duration follows the selected picture rather than a longer audio tail", async () => {
+        const exec = spyOn(Executor.prototype, "exec").mockResolvedValue({
+            success: true,
+            exitCode: 0,
+            stderr: "",
+            stdout: '{"streams":[{"codec_type":"video","duration":"1"},{"codec_type":"audio","duration":"2"}],"format":{"duration":"2"}}',
+        });
+        try {
+            expect(await probeMedia("fixture.mp4")).toEqual({ seconds: 1, video: true, audio: true });
+        } finally {
+            exec.mockRestore();
+        }
+    });
+
+    test("cancellation stops an active child before it is released normally", async () => {
+        const folder = await mkdtemp(join(tmpdir(), "music-cancel-child-"));
+        const ready = join(folder, "ready");
+        const release = join(folder, "release");
+        const controller = new AbortController();
+        const reason = new Error("stop music");
+        const script = `import { watch, writeFileSync, existsSync } from "node:fs";
+            import { join } from "node:path";
+            const folder = process.argv[1];
+            const watcher = watch(folder, () => {
+                if (existsSync(join(folder, "release"))) { watcher.close(); process.exit(0); }
+            });
+            setTimeout(() => process.exit(0), 10000);
+            writeFileSync(join(folder, "ready"), "ready");`;
+        const outcome = withMusicSignal({
+            signal: controller.signal,
+            run: () => runAudio([process.execPath, "-e", script, folder]),
+        }).then(
+            () => undefined,
+            (error: unknown) => error
+        );
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            expect(await waitForPath(ready, { timeoutMs: 5000 })).toBe(true);
+            controller.abort(reason);
+            const completed = await Promise.race([
+                outcome,
+                new Promise<never>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error("audio child ignored cancellation")), 3000);
+                }),
+            ]);
+            expect(completed).toBe(reason);
+        } finally {
+            clearTimeout(timer);
+            await writeFile(release, "release");
+            await outcome;
+            await rm(folder, { recursive: true, force: true });
+        }
+    });
+
+    test("cancellation between preparation and publication preserves an existing output", async () => {
+        const folder = await mkdtemp(join(tmpdir(), "music-cancel-publish-"));
+        const output = join(folder, "out.wav");
+        const controller = new AbortController();
+        try {
+            await writeFile(output, "old");
+            await expect(
+                withMusicSignal({
+                    signal: controller.signal,
+                    run: () =>
+                        publishAudio({
+                            output,
+                            overwrite: true,
+                            prepare: async (temporary) => {
+                                await writeFile(temporary, "new");
+                                controller.abort(new Error("stop before publication"));
+                            },
+                        }),
+                })
+            ).rejects.toThrow("stop before publication");
+            expect(await readFile(output, "utf8")).toBe("old");
+            expect(await readdir(folder)).toEqual(["out.wav"]);
+        } finally {
+            await rm(folder, { recursive: true, force: true });
+        }
+    });
+
     test("parses ffmpeg loudness and rejects silence or missing measurement evidence", () => {
         expect(parseLoudness('log\n{"input_i":"-20.04","input_tp":"-6.63"}')).toEqual({
             lufs: -20.04,

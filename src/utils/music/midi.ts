@@ -59,19 +59,24 @@ export function encodeMidi(input: Score): Buffer {
             end
         ),
     ];
-    let pitched = 0;
+    let nextChannel = 0;
+    let drumChannelUsed = false;
 
     for (const part of score.parts) {
-        let channel = 9;
-
-        if (!part.percussion) {
-            if (pitched === 9) {
-                pitched++;
+        let channel: number;
+        if (part.percussion && !drumChannelUsed) {
+            channel = 9;
+            drumChannelUsed = true;
+        } else {
+            if (nextChannel === 9) {
+                nextChannel++;
             }
-
-            channel = pitched++;
+            channel = nextChannel++;
         }
+        // XG bank select gives every drum part its own channel and controller state.
         const events: Event[] = [
+            { tick: 0, order: -5, bytes: [0xb0 | channel, 0, part.percussion ? 127 : 0] },
+            { tick: 0, order: -4, bytes: [0xb0 | channel, 32, 0] },
             { tick: 0, order: -3, bytes: [0xc0 | channel, part.program] },
             { tick: 0, order: -2, bytes: [0xb0 | channel, 7, part.volume] },
             { tick: 0, order: -1, bytes: [0xb0 | channel, 10, part.pan] },

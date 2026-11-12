@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import { fileHash } from "./process";
+import { fileHash, musicSignal } from "./process";
 
 export const PINNED_SOUNDFONT = {
     name: "GeneralUser GS",
@@ -20,7 +20,9 @@ export function soundfontPaths(): { file: string; license: string } {
 }
 
 async function verifiedDownload(remote: string, hash: string): Promise<Uint8Array> {
-    const response = await fetch(remote, { signal: AbortSignal.timeout(120_000) });
+    const scoped = musicSignal();
+    const timeout = AbortSignal.timeout(120_000);
+    const response = await fetch(remote, { signal: scoped ? AbortSignal.any([scoped, timeout]) : timeout });
 
     if (!response.ok) {
         throw new Error(`SoundFont download failed: HTTP ${response.status}`);
@@ -43,6 +45,7 @@ export async function installSoundfont(): Promise<{ file: string; license: strin
         verifiedDownload(`${base}GeneralUser-GS.sf2`, PINNED_SOUNDFONT.sha256),
         verifiedDownload(`${base}documentation/LICENSE.txt`, PINNED_SOUNDFONT.licenseSha256),
     ]);
+    musicSignal()?.throwIfAborted();
     await mkdir(join(locations.file, ".."), { recursive: true });
     await writeFile(locations.license, license);
     await writeFile(locations.file, font);

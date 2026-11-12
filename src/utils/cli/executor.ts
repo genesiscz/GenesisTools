@@ -620,6 +620,8 @@ export interface ExecutorOptions {
 }
 
 export interface ExecCallOptions {
+    /** Cancel the owned process group and wait for it to stop. */
+    signal?: AbortSignal;
     /** Override working directory for this call */
     cwd?: string;
     /** Override/extend environment variables for this call */
@@ -734,6 +736,7 @@ export class Executor {
             timeoutMs: deadline.ms === 0 ? NO_DEADLINE_MS : deadline.ms,
             cwd,
             environment: env,
+            signal: options?.signal,
             maxBufferBytes: 64 * 1024 * 1024,
         });
 
