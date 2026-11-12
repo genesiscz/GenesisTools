@@ -175,6 +175,15 @@ describe("region tiles", () => {
         }
     });
 
+    it("a tilePx of 0, below 1 or not finite plans the default grid instead of looping forever or reading nothing", () => {
+        const size = { width: 2880, height: 1205 };
+        const standard = planOcrTiles(size);
+
+        for (const bad of [Number.POSITIVE_INFINITY, 0, 0.5, -960, Number.NaN]) {
+            expect(planOcrTiles(size, bad)).toEqual(standard);
+        }
+    });
+
     it("keeps the whole line when a seam tile read only a cut piece of it, in either order", () => {
         const whole = {
             text: "Monitor event: dialog open",
