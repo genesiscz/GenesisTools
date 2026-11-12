@@ -130,6 +130,15 @@ final class NoticeStackTests: XCTestCase {
         XCTAssertEqual(NoticeStackModel.split(model.notices, max: model.visibleLimit).shown.count, 5, "no limit shows all")
     }
 
+    func testExpandedOverflowStaysExpandedUntilTheNoticesFit() {
+        let notices = (1...5).map { StackedNotice(text: "Notice \($0)") }
+        XCTAssertTrue(NoticeStackView.expansionAfterChange(showsAll: true, notices: notices, limit: 3))
+        XCTAssertFalse(NoticeStackView.expansionAfterChange(showsAll: false, notices: notices, limit: 3))
+        XCTAssertFalse(NoticeStackView.expansionAfterChange(showsAll: true, notices: Array(notices.prefix(3)), limit: 3))
+        XCTAssertFalse(NoticeStackView.expansionAfterChange(showsAll: true, notices: notices, limit: nil))
+        XCTAssertFalse(NoticeStackView.expansionAfterChange(showsAll: true, notices: [], limit: 3))
+    }
+
     /// The "+N more" chip is a control: the shared hover (a brighter chip, the pointing hand), never a plain style that
     /// shows neither (ux checklist, Affordance).
     func testTheMoreChipHasTheSharedHover() {

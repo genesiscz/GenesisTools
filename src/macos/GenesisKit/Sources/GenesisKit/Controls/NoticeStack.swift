@@ -430,6 +430,10 @@ public struct NoticeStackView: View {
         edge == .bottom ? notices.reversed() : notices
     }
 
+    static func expansionAfterChange(showsAll: Bool, notices: [StackedNotice], limit: Int?) -> Bool {
+        showsAll && !NoticeStackModel.split(notices, max: limit).folded.isEmpty
+    }
+
     public var body: some View {
         let notices = model.notices
         if !notices.isEmpty {
@@ -457,12 +461,17 @@ public struct NoticeStackView: View {
             .frame(height: min(contentHeight, maxHeight))
             .frameProbe("notice-stack")
             .background(NoticeStackInteractionProbe(model: model, passScroll: contentHeight <= maxHeight))
-            .onDisappear { model.setPaused(false) }
+            .onDisappear {
+                model.setPaused(false)
+                showsAll = Self.expansionAfterChange(showsAll: showsAll, notices: model.notices, limit: model.visibleLimit)
+            }
             .animation(GenMotion.animation(expanding: true, reduceMotion: reduceMotion), value: notices.map(\.id))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Notices")
             .accessibilityIdentifier("notice-stack")
-            .onChange(of: split.folded.isEmpty) { _, none in if none { showsAll = false } }
+            .onChange(of: NoticeStackModel.split(notices, max: model.visibleLimit).folded.isEmpty) { _, _ in
+                showsAll = Self.expansionAfterChange(showsAll: showsAll, notices: notices, limit: model.visibleLimit)
+            }
         }
     }
 
