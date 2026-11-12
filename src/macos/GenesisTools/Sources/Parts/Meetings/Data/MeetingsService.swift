@@ -336,7 +336,7 @@ struct MeetingListRow: Decodable, Equatable {
 /// by itself (`resumeSubscription`).
 @MainActor
 final class MeetingsService {
-    /// The window's service: nil in the preview build and under XCTest, and when it is turned off with
+    /// The window's service: nil in Preview unless explicitly enabled with an isolated home, under XCTest, and when turned off with
     /// `GENESIS_MEETINGS_SERVICE=0` or `defaults write com.genesiscz.genesistools meetings.service -bool NO`. Every
     /// read then runs as a command, as before. The service folder is under `genesisHome()`, so a sandbox home
     /// (`GENESIS_TOOLS_HOME`) has its own service; a service answers only when its `sourceRoot` is the checkout of the
@@ -345,7 +345,7 @@ final class MeetingsService {
     /// set.
     static let shared: MeetingsService? = {
         let environment = ProcessInfo.processInfo.environment
-        guard !NativePreview.enabled, NSClassFromString("XCTestCase") == nil,
+        guard (!NativePreview.enabled || allowsPreviewService(environment: environment)), NSClassFromString("XCTestCase") == nil,
               environment["GENESIS_MEETINGS_SERVICE"] != "0",
               UserDefaults.standard.object(forKey: "meetings.service") as? Bool ?? true else { return nil }
         let overridden = environment["GENESIS_TOOLS_HOME"] != nil || environment["GENESIS_TOOLS_BIN"] != nil
@@ -353,6 +353,16 @@ final class MeetingsService {
                                checkout: .init(root: { ToolsBridge.workingDirectory(forBinary: ToolsBridge.defaultBinaryPath()).path },
                                                acceptsUnnamed: !overridden))
     }()
+
+    /// Preview can exercise service-only controls with the existing opt-in switch, but must not use the real data home.
+    static func allowsPreviewService(environment: [String: String], userHome: String = NSHomeDirectory()) -> Bool {
+        guard environment["GENESIS_MEETINGS_SERVICE"] == "1",
+              let override = environment[GenesisToolsHome.variable]?.trimmingCharacters(in: .whitespaces),
+              override.hasPrefix("/") else { return false }
+        let candidate = URL(fileURLWithPath: override).standardizedFileURL.resolvingSymlinksInPath()
+        let real = URL(fileURLWithPath: userHome).standardizedFileURL.resolvingSymlinksInPath()
+        return candidate.path != real.path
+    }
 
     /// Which service this window may use: the one whose `sourceRoot` (service.json, the checkout its code runs from) is
     /// `root()`, the checkout of the `tools` the window runs. A service of another checkout answers with other code

@@ -198,6 +198,24 @@ final class MeetingsServiceTests: XCTestCase {
     private static let design = "2026-11-03-1000-design-review"
     private static let retro = "2026-11-03-1400-retro"
 
+    func testPreviewServiceRequiresOptInAndADistinctDataHome() {
+        let userHome = "/tmp/preview-service-user"
+        func allowed(_ flag: String? = nil, _ home: String? = nil) -> Bool {
+            var environment: [String: String] = [:]
+            environment["GENESIS_MEETINGS_SERVICE"] = flag
+            environment["GENESIS_TOOLS_HOME"] = home
+            return MeetingsService.allowsPreviewService(environment: environment, userHome: userHome)
+        }
+        XCTAssertFalse(allowed())
+        XCTAssertFalse(allowed(nil, "/tmp/preview-service-fixture"))
+        XCTAssertFalse(allowed("1"))
+        XCTAssertFalse(allowed("1", userHome))
+        XCTAssertFalse(allowed("1", "\(userHome)/sub/.."))
+        XCTAssertFalse(allowed("1", "relative-fixture"))
+        XCTAssertFalse(allowed("0", "/tmp/preview-service-fixture"))
+        XCTAssertTrue(allowed("1", "/tmp/preview-service-fixture"))
+    }
+
     // MARK: The fixture
 
     /// The params decode as the Swift type and encode back to the same object.
