@@ -416,6 +416,8 @@ private struct MeetingHeaderTitle: View {
     @State private var draft = ""
     @State private var cancelled = false
     @FocusState private var focused: Bool
+    @FocusState private var titleFocused: Bool
+    @AccessibilityFocusState private var titleAccessibilityFocused: Bool
 
     var body: some View {
         if editing {
@@ -423,12 +425,16 @@ private struct MeetingHeaderTitle: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 17, weight: .semibold))
                 .focused($focused)
-                .onSubmit { finish(save: true) }
-                .onExitCommand { finish(save: false) }
+                .onSubmit { finish(save: true, restoreFocus: true) }
+                .onExitCommand { finish(save: false, restoreFocus: true) }
                 .onAppear {
                     draft = editable
                     cancelled = false
-                    focused = true
+                    // A menu action inserts this field before AppKit restores the menu's old responder.
+                    DispatchQueue.main.async {
+                        guard editing else { return }
+                        focused = true
+                    }
                 }
                 .onChange(of: focused) { _, now in
                     if !now { finish(save: !cancelled) }
@@ -440,16 +446,30 @@ private struct MeetingHeaderTitle: View {
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { editing = true }
                 .instantTooltip("Double-click to rename")
+                .focusable()
+                .focused($titleFocused)
+                .onKeyPress(.return) {
+                    editing = true
+                    return .handled
+                }
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction(named: "Rename") { editing = true }
+                .accessibilityFocused($titleAccessibilityFocused)
                 .accessibilityIdentifier("meetings.detail.title")
         }
     }
 
-    private func finish(save: Bool) {
+    private func finish(save: Bool, restoreFocus: Bool = false) {
         guard editing else { return }
         cancelled = !save
         if save { rename(draft) }
         editing = false
+        if restoreFocus {
+            DispatchQueue.main.async {
+                guard !editing else { return }
+                titleFocused = true
+                titleAccessibilityFocused = true
+            }
+        }
     }
 }

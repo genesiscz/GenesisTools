@@ -309,6 +309,10 @@ final class MeetingsReviewRowTests: XCTestCase {
         let rows = try rows().rows
         XCTAssertEqual(ItemsTab.returnAction(for: rows[1], key: .edit), .edit, "R11: Return opens the editor")
         XCTAssertEqual(ItemsTab.returnAction(for: rows[1], key: .confirm), .choose(rows[1].choices[0]), "or takes the suggestion")
+        XCTAssertEqual(ItemsTab.returnAction(for: rows[1], key: .edit, editing: true), .submit,
+                       "the second Return saves the existing draft instead of reopening its editor")
+        XCTAssertEqual(ItemsTab.returnAction(for: rows[0], key: .confirm, editing: true), .submit,
+                       "an active custom answer takes precedence over the suggested choice")
         XCTAssertEqual(rows[1].choices[0].action.decision(on: rows[1]), .confirm(["i2"]))
         XCTAssertEqual(rows[1].choices[1].action.decision(on: rows[1]), .reject(["i2"]))
         XCTAssertEqual(rows[0].choices[0].action.decision(on: rows[0]), .answer("q1", "Dana Example"))

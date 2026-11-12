@@ -212,6 +212,13 @@ struct ItemsTab: View {
                 guard let id = detail.selectedRow, visible.contains(id) else { return }
                 keepInView(id, proxy: proxy)
             }
+            .onChange(of: detail.editingRow) { previous, current in
+                guard let previous, current == nil, detail.selectedRow == previous else { return }
+                DispatchQueue.main.async {
+                    guard detail.editingRow == nil, detail.selectedRow == previous else { return }
+                    focused = true
+                }
+            }
             .onChange(of: detail.selectedRow) { _, id in
                 guard let id else { return }
                 keepInView(id, proxy: proxy)
@@ -315,7 +322,8 @@ struct ItemsTab: View {
     private func returnPressed(_ rows: [ReviewRow]) -> KeyPress.Result {
         guard let row = selected(rows), row.isOpen else { return .ignored }
         let key = MeetingsPreferences.Rows.ReturnKey(rawValue: returnKey) ?? .edit
-        switch Self.returnAction(for: row, key: key) {
+        switch Self.returnAction(for: row, key: key, editing: detail.editingRow == row.id) {
+        case .submit: detail.submitDraft(on: row)
         case .edit: detail.edit(row)
         case .choose(let choice): detail.choose(choice, on: row)
         case .none: return .ignored
@@ -325,12 +333,14 @@ struct ItemsTab: View {
 
     enum ReturnAction: Equatable {
         case edit
+        case submit
         case choose(RowChoice)
         case none
     }
 
     /// What Return does on an open row.
-    static func returnAction(for row: ReviewRow, key: MeetingsPreferences.Rows.ReturnKey) -> ReturnAction {
+    static func returnAction(for row: ReviewRow, key: MeetingsPreferences.Rows.ReturnKey, editing: Bool = false) -> ReturnAction {
+        if editing { return .submit }
         if key == .edit, row.edit != "none" { return .edit }
         guard let choice = row.choices.first(where: { $0.role == "suggested" }) ?? row.choices.first(where: { $0.role != "skip" })
         else { return row.edit != "none" ? .edit : .none }
