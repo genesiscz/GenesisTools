@@ -4,7 +4,9 @@
  * `src/recorder/lib/__fixtures__/service-protocol.schemas.json` (protocolJsonSchemas) and
  * `src/recorder/lib/__fixtures__/editor-golden.json` (editorGolden: example ops, edits, op tags, hello's methods) and
  * `src/recorder/lib/__fixtures__/screen-hit-ops.json` (screenHitOpsFixture: screen hits with their edit ops).
- * `src/recorder/lib/service.test.ts` fails when a committed file differs from what this writes.
+ * The service error metadata of `service-protocol.json` is refreshed through rpcErrorBody; the captured method
+ * examples and Swift host replies stay as they are. A live protocol refusal is checked against its error example
+ * in `src/recorder/lib/service.test.ts`, beside the schema and generated-file checks.
  *
  * It also writes `src/utils/recording-editor/__fixtures__/frame-rules.json` (frameRules below): cases of the four frame
  * rules that the TypeScript side and the Swift renderer both compute (output and source time, join detection, the zoom
@@ -16,6 +18,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import serviceExamples from "@app/recorder/lib/__fixtures__/service-protocol.json";
 import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "@app/recorder/lib/protocol-fixtures";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -28,6 +31,7 @@ import {
     snappedRedactionSpans,
     sourceTimeOf,
 } from "@genesiscz/utils/recording-editor/project";
+import { RpcError, rpcErrorBody } from "@genesiscz/utils/rpc/errors";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const RECORDER_FIXTURES = join(ROOT, "src", "recorder", "lib", "__fixtures__");
@@ -254,8 +258,36 @@ export function frameRules() {
     };
 }
 
+/** Refreshes the service's error metadata while keeping the captured method examples and Swift host replies. */
+function serviceProtocolExamples() {
+    return {
+        ...serviceExamples,
+        examples: serviceExamples.examples.map((example) => {
+            const reply = "reply" in example ? example.reply : undefined;
+            if (!example.direction.endsWith("→service") || !reply || !("error" in reply) || !reply.error) {
+                return example;
+            }
+
+            const error = reply.error;
+            return {
+                ...example,
+                reply: {
+                    ...reply,
+                    error: rpcErrorBody(
+                        new RpcError(error.code, error.message, "data" in error ? error.data : undefined, {
+                            stack: "<stack>",
+                        }),
+                        "recorder"
+                    ),
+                },
+            };
+        }),
+    };
+}
+
 if (import.meta.main) {
     const files: Array<[string, unknown]> = [
+        [join(RECORDER_FIXTURES, "service-protocol.json"), serviceProtocolExamples()],
         [join(RECORDER_FIXTURES, "service-protocol.schemas.json"), protocolJsonSchemas()],
         [join(RECORDER_FIXTURES, "editor-golden.json"), editorGolden()],
         [join(RECORDER_FIXTURES, "screen-hit-ops.json"), screenHitOpsFixture()],

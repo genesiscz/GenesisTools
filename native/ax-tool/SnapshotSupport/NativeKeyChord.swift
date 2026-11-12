@@ -17,7 +17,7 @@ public struct NativeKeyChord {
             case "shift": flags.insert(.maskShift)
             case "fn": flags.insert(.maskSecondaryFn)
             default:
-                guard resolved == nil, let code = Self.codes[key] else {
+                guard resolved == nil, let code = Self.codes[key] ?? Self.physicalCode(key) else {
                     throw WorkflowArgumentError.invalid("key requires exactly one supported key with optional modifiers; use named punctuation keys")
                 }
                 resolved = code
@@ -129,6 +129,12 @@ public struct NativeKeyChord {
             remaining -= slice
         }
         try check()
+    }
+
+    /// Recorded shortcuts name a physical position so replay does not translate it a second time.
+    private static func physicalCode(_ key: String) -> CGKeyCode? {
+        guard key.hasPrefix("code:"), let code = CGKeyCode(key.dropFirst(5)), code <= 127 else { return nil }
+        return code
     }
 
     private static func printableCharacter(_ key: String) -> String? {

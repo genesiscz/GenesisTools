@@ -84,7 +84,10 @@ export class RecordingRecord {
 
         if (open && !open.to) {
             open.to = Date.parse(at) < Date.parse(open.from) ? open.from : at;
-            open.stopReason = stopReason;
+            open.stopReason = stopReason === "interrupted" ? "error" : stopReason;
+            if (stopReason === "interrupted") {
+                open.interrupted = true;
+            }
         }
     }
 

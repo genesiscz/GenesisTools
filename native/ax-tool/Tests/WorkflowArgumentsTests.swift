@@ -330,6 +330,20 @@ extension WorkflowArgumentsTests {
 }
 
 extension WorkflowArgumentsTests {
+    func testRecordedPhysicalKeyCodesBypassTheCurrentKeyboardLayout() throws {
+        for code: UInt16 in [0, 12, 16, 18, 43, 124] {
+            let chord = try NativeKeyChord("cmd+shift+code:\(code)", characterForKey: { _, _ in
+                XCTFail("A recorded physical code must not be translated as a layout character")
+                return "q"
+            })
+            XCTAssertEqual(chord.code, code)
+            XCTAssertEqual(chord.flags, [.maskCommand, .maskShift])
+        }
+        for key in ["code:-1", "code:128", "code:1.5", "code:", "code:16,z"] {
+            XCTAssertThrowsError(try NativeKeyChord(key), key)
+        }
+    }
+
     func testLayoutResolutionPreservesModifiersAndUsesTheCommandLayer() throws {
         var seenFlags: [CGEventFlags] = []
         let chord = try NativeKeyChord("cmd+shift+alt+ctrl+fn+z", characterForKey: { code, flags in

@@ -16,6 +16,9 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `set <meeting> --project <name> \| --title <text>` | Change a field |
 | `link <meeting> wisprflow:<id>` | Attach a source's meeting to an existing record. A source meeting that another record holds is refused with `[source-linked]` and the `merge` command, because two records would split one call. When the call started before the record (a record made when a screen recording started), the record's start becomes the call's, so its times match the transcript |
 | `merge <meeting> --into <meeting> [--dry-run] [--json]` | Make two records of one call one: the frames, sound and their rows move into the record that stays, the recording blocks, context, labels, people and history merge, the start is the earlier one, and a generated title (`Meeting 14:29`) gives way to the call's. Both folders are cloned into `~/.genesis-tools/backups/meetings/<YYYY-MM-DD-HHMM>-merge-<meeting>/` first, with a `README.md` of restore steps; the record that goes away moves there, its editor files are made again on the next open, and its open project question is withdrawn. Refused for records of two source meetings, a record with items (decide them first), a record being recorded, and frame names in both |
+| `revisions <meeting> [--json]` | Revision tokens for each part of the Meetings window, so clients can skip unchanged reads. These are change tokens, not saved versions to restore |
+| `duplicate <meeting> [--title <text>] [--json]` | Copy the meeting record and its files under a new id; keep its source link and reference material. A meeting being recorded must be stopped first |
+| `word-timings generate <meeting> --from <seconds> --to <seconds> --model <id> [--language <code>] [--json]` | Generate local word timing evidence for a bounded audio range with an already cached timestamp-enabled model; save coverage and provenance for later playback |
 | `context add <meeting> [file\|url] [--title] [--note]`, `context list`, `context remove` | Reference material; a file is kept as its path, never copied |
 | `speakers stats <meeting> [--attendance <platform>\|<file>]` | Per label: origin, turns, spoken time, spans, with hints. A span joins turns up to `--gap` apart (2 minutes): it says when the label was there. `--json` also lists each turn by itself as `talk`, which the Meetings window draws as the talk-time lanes |
 | `speakers rename <meeting> <label> <name>` | Rename a label for this meeting |
@@ -576,3 +579,29 @@ A receiving agent must acknowledge a comment before acting on it. If withdrawal 
 In the REPL, the same operations are `meeting.comments()`, `meeting.readComment(id)` and `meeting.withdrawComment(id)`. They use the same service or in-process implementation as the window and CLI. The CLI also provides `comments stage`, `comments unstage` and `comments send` for scripts and for the window's fallback path.
 
 Routed timestamp links prefer the already-open Meetings window and push their Moment onto its playback stack. `play --moment --window` uses the same path, retaining per-call tone, padding, length and screen options. With no open Meetings window it uses the command player. An explicit `--player`, `--clip`, `--json` or `--no-start` keeps the command's existing behavior.
+
+## Where the data lives
+
+The default root is `~/.genesis-tools/meetings/`; `GENESIS_TOOLS_HOME` selects another GenesisTools data home.
+`config.json` holds projects, source matching, the dictionary and playback/capture settings. Each meeting has its
+own folder and `meeting.json`; context files outside it remain references. The current API groups the repeat switch
+and gap under `global.playback.listen.repeat`. The saved version 7 file retains the boolean `repeat` and numeric
+`repeatGapSec` that older stable builds read; the loader groups them for current callers.
+
+A recorded meeting keeps images in `frames/`, their times and displays in `frames.jsonl`, and recognized text in
+`ocr.jsonl`. OCR can lag behind capture; a missing OCR row does not mean a missing frame. The decision journal is
+`decisions.ndjson`, and listen/answer events are in `questions.ndjson`. Keep these files with the record when making
+a backup. Merge and project-change backups are kept under `~/.genesis-tools/backups/meetings/`.
+
+## Troubleshooting
+
+- If the service is unavailable, use `tools meetings serve --status`. Start it with `tools meetings serve --detach`;
+  `--no-idle` keeps it running without an idle timeout.
+- If recording fails or gives only the desktop, check `tools meetings record status` and `tools control doctor`
+  before changing capture settings. A missing privacy grant is not proof of an empty screen.
+- If frames have no text yet, use `tools meetings ocr <meeting> --follow`. Use `--retry-failed` for failed reads, or
+  `--reread-empty-since 15:56` for empty reads since that local time on the meeting's day.
+- Inspect failed command records with `tools genesis-tools logs failures`. The failure's saved context belongs to
+  that event; opening Details does not run the failed command again.
+- To take back a review decision, use its journal token with `tools meetings journal <meeting>` and the Undo/reopen
+  command it names. `revisions` only reports change tokens; it does not restore older transcript content.

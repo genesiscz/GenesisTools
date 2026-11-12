@@ -27,18 +27,6 @@ const KEYCODE_NAMES: Record<number, string> = {
     126: "up",
 };
 
-// US-layout virtual keycodes for hotkey synthesis — layout-independent, so a
-// Czech-layout cmd+1 (char "+") still replays as "cmd,1" via Swift's KEY_MAP.
-// biome-ignore format: keep the keycode table dense
-const COMBO_KEYCODE_NAMES: Record<number, string> = {
-    ...KEYCODE_NAMES,
-    0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x", 8: "c",
-    9: "v", 11: "b", 12: "q", 13: "w", 14: "e", 15: "r", 16: "y", 17: "t",
-    18: "1", 19: "2", 20: "3", 21: "4", 22: "6", 23: "5", 25: "9", 26: "7",
-    28: "8", 29: "0", 31: "o", 32: "u", 34: "i", 35: "p", 37: "l", 38: "j",
-    40: "k", 45: "n", 46: "m",
-};
-
 interface SessionState {
     mode: "commands" | "activity" | "all";
     startedAt: number;
@@ -167,7 +155,7 @@ function commandsToSteps(lines: CommandLine[], ownSrc?: string): TimedStep[] {
 }
 
 /** Raw user activity (activity.jsonl events) -> plan steps, with coalescing. */
-function activityToSteps(events: RecEvent[], epochBase: number): TimedStep[] {
+export function activityToSteps(events: RecEvent[], epochBase: number): TimedStep[] {
     const steps: TimedStep[] = [];
     let textBuf = "";
     let textApp: string | undefined;
@@ -270,11 +258,16 @@ function activityToSteps(events: RecEvent[], epochBase: number): TimedStep[] {
             flushText();
             flushScroll();
             const keyName =
-                COMBO_KEYCODE_NAMES[keycode] ?? (e.char && e.char >= " " ? e.char.toLowerCase() : undefined);
+                named ??
+                (Number.isInteger(keycode) && keycode >= 0 && keycode <= 127
+                    ? `code:${keycode}`
+                    : e.char && e.char >= " "
+                      ? e.char.toLowerCase()
+                      : undefined);
             if (keyName) {
                 steps.push({
                     ts: epochBase + e.ts,
-                    step: { do: "hotkey", keys: [...mods.filter((m) => m !== "shift"), keyName].join(","), app: e.app },
+                    step: { do: "hotkey", keys: [...mods, keyName].join(","), app: e.app },
                 });
             }
             continue;

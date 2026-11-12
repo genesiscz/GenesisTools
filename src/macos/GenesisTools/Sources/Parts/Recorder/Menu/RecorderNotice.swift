@@ -62,7 +62,7 @@ enum RecorderNotice {
         switch style {
         case .notice: outlets.notice(report, retry)
         case .alert:
-            let more = [report.summary, report.hasLog ? report.log : nil].compactMap { $0 }.joined(separator: "\n\n")
+            let more = [report.summary, report.hasLog ? report.rawText() : nil].compactMap { $0 }.joined(separator: "\n\n")
             outlets.alert(report.headline, more.isEmpty ? nil : more)
         }
     }

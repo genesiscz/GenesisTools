@@ -283,14 +283,19 @@ export type MeetingItem = z.infer<typeof meetingItemSchema>;
 export const RECORDING_STOP_REASONS = ["requested", "paused", "failed", "error", "interrupted"] as const;
 export type RecordingStopReason = (typeof RECORDING_STOP_REASONS)[number];
 
-const recordingSpanSchema = z.object({
-    from: isoTime,
-    to: isoTime.optional(),
-    stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
-});
+const recordingSpanSchema = z
+    .object({
+        from: isoTime,
+        to: isoTime.optional(),
+        /** Unknown future reasons must not hide the meeting. */
+        stopReason: z.string().min(1).optional(),
+        /** Interrupted runs keep the legacy error reason and this detail for current readers. */
+        interrupted: z.literal(true).optional(),
+    })
+    .loose();
 export type RecordingSpan = z.infer<typeof recordingSpanSchema>;
 /** One stretch a display was captured: a live switch or a follow-focus frame on another display starts the next. */
-export const recordingDisplaySpanSchema = recordingSpanSchema.extend({ displayId: z.number() });
+export const recordingDisplaySpanSchema = recordingSpanSchema.extend({ displayId: z.number() }).strip();
 export type RecordingDisplaySpan = z.infer<typeof recordingDisplaySpanSchema>;
 
 /**
@@ -302,7 +307,7 @@ export const recordingBlockSchema = z
         startedAt: isoTime.optional(),
         stoppedAt: isoTime.optional(),
         status: z.enum(["recording", "paused", "stopped"]).optional(),
-        stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
+        stopReason: z.string().min(1).optional(),
         backend: z.string().optional(),
         /** The display policy of the last start: `all`, `follow-focus`, `main` or an index. */
         displayPolicy: z.union([z.string(), z.number()]).optional(),

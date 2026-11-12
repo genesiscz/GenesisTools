@@ -9,6 +9,7 @@ import { DEFAULT_OCR_TILE_PX } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { z } from "zod";
 import {
     fillerListsOf,
     languageSettings,
@@ -350,7 +351,37 @@ describe("meetings config", () => {
         expect(sourceFolders(await config.read(), "work")).toEqual([{ source: "wisprflow", folder: "Work" }]);
     });
 
-    test("version 6 nests repeat without losing either setting, and persists the migration once", async () => {
+    test("saved repeat settings still parse in an older build after migration and edits", async () => {
+        const config = store();
+        const legacyListen = z.object({
+            repeat: z.boolean().default(true),
+            repeatGapSec: z.number().min(0).max(10).default(1),
+        });
+        const legacyConfig = z.object({ global: z.object({ playback: z.object({ listen: legacyListen }) }) });
+        await config.storage.setConfig({
+            version: 6,
+            global: { playback: { listen: { repeat: { enabled: false, gapSec: 2.5 } } } },
+            futureKey: { keep: true },
+        });
+        expect((await config.read()).global.playback.listen.repeat).toEqual({ enabled: false, gapSec: 2.5 });
+        const saved = await config.storage.getConfig();
+        expect(legacyConfig.parse(saved).global.playback.listen).toEqual({ repeat: false, repeatGapSec: 2.5 });
+        const bytes = fs.readFileSync(config.path, "utf8");
+        await new MeetingsConfigStore(config.storage).read();
+        expect(fs.readFileSync(config.path, "utf8")).toBe(bytes);
+        await config.update((raw) => {
+            raw.global = { playback: { listen: { repeat: { enabled: true, gapSec: 0.5 } } } };
+        });
+        const edited = await config.storage.getConfig();
+        expect(legacyConfig.parse(edited).global.playback.listen).toEqual({ repeat: true, repeatGapSec: 0.5 });
+        expect(edited).toHaveProperty("futureKey.keep", true);
+        expect((await new MeetingsConfigStore(config.storage).read()).global.playback.listen.repeat).toEqual({
+            enabled: true,
+            gapSec: 0.5,
+        });
+    });
+
+    test("version 7 preserves repeat and its gap in the API and the older saved shape", async () => {
         const config = store();
         await config.storage.setConfig({
             version: 5,
@@ -360,10 +391,9 @@ describe("meetings config", () => {
         expect(read.global.playback.listen.repeat).toEqual({ enabled: false, gapSec: 2.5 });
         const reopened = await config.storage.getConfig();
         expect(reopened).toMatchObject({
-            version: 6,
-            global: { playback: { listen: { repeat: { enabled: false, gapSec: 2.5 } } } },
+            version: MEETINGS_CONFIG_VERSION,
+            global: { playback: { listen: { repeat: false, repeatGapSec: 2.5 } } },
         });
-        expect(SafeJSON.stringify(reopened)).not.toContain("repeatGapSec");
         const nested = meetingsConfigSchema.parse({
             version: 5,
             global: { playback: { listen: { repeat: { enabled: true, gapSec: 3 }, repeatGapSec: 9 } } },
@@ -378,7 +408,7 @@ describe("meetings config", () => {
         expect(migrateMeetingsConfig(raw)).toBe(true);
         expect(raw).toEqual({
             version: MEETINGS_CONFIG_VERSION,
-            global: { playback: { listen: { tone: { enabled: false, leadSec: 0.8 }, repeat: { enabled: false } } } },
+            global: { playback: { listen: { tone: { enabled: false, leadSec: 0.8 }, repeat: false } } },
         });
         expect(migrateMeetingsConfig(raw)).toBe(false);
         expect(meetingsConfigSchema.parse(v3).global.playback.listen.tone).toEqual({
@@ -396,7 +426,7 @@ describe("meetings config", () => {
         expect((await config.read()).global.playback.listen.tone.leadSec).toBe(0.8);
         expect(await config.storage.getConfig()).toEqual({
             version: MEETINGS_CONFIG_VERSION,
-            global: { playback: { listen: { tone: { enabled: false, leadSec: 0.8 }, repeat: { enabled: false } } } },
+            global: { playback: { listen: { tone: { enabled: false, leadSec: 0.8 }, repeat: false } } },
         });
     });
 
@@ -650,6 +680,26 @@ describe("meeting records", () => {
         stores += 1;
         return new MeetingStore(new Storage(`meetings-test-${stores}`));
     }
+
+    test("future recording stop reasons stay readable and survive a saved edit", async () => {
+        const store = records();
+        const created = await store.create(
+            { title: "Future recorder", start: "2026-11-05T11:00:00.000Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const recording = {
+            stopReason: "future-stop",
+            spans: [
+                { from: created.start, to: created.start, stopReason: "future-span", futureDetail: { keep: true } },
+            ],
+        };
+        fs.writeFileSync(store.path(created.id), SafeJSON.stringify({ ...created, recording }));
+        expect(new MeetingStore(store.storage).read(created.id)?.recording).toMatchObject(recording);
+        await store.update(created.id, { command: "set", change: "title" }, (record) => {
+            record.title = "Edited future recorder";
+        });
+        expect(new MeetingStore(store.storage).read(created.id)?.recording).toMatchObject(recording);
+    });
 
     test("the id is the local start and a whole-word title slug; a second one gets -2", async () => {
         const store = records();

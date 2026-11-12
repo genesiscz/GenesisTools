@@ -41,7 +41,7 @@ export const projectNameSchema = z
 const strings = z.array(z.string().trim().min(1)).default([]);
 
 /** The config shape this code writes. Older files are migrated on the first read (`migrateMeetingsConfig`). */
-export const MEETINGS_CONFIG_VERSION = 6;
+export const MEETINGS_CONFIG_VERSION = 7;
 
 /**
  * How a meeting finds its project, by the facts every meeting has: its calendar entry, its title and its people. A
@@ -662,8 +662,8 @@ function migrateToV5(raw: Record<string, unknown>): void {
     delete listen.padSec;
 }
 
-/** Version 6 groups the repeat switch with its gap. A value already in the new place wins. */
-function migrateToV6(raw: Record<string, unknown>): void {
+/** The current API groups repeat and its gap; old files keep the scalar switch and gap. */
+function repeatInMemory(raw: Record<string, unknown>): void {
     const global = isObject(raw.global) ? raw.global : undefined;
     const playback = global && isObject(global.playback) ? global.playback : undefined;
     const listen = playback && isObject(playback.listen) ? playback.listen : undefined;
@@ -672,6 +672,10 @@ function migrateToV6(raw: Record<string, unknown>): void {
     }
 
     const previous = listen.repeat;
+    if (previous !== undefined && typeof previous !== "boolean" && !isObject(previous)) {
+        return;
+    }
+
     const repeat = isObject(previous) ? previous : {};
     if (typeof previous === "boolean") {
         repeat.enabled = previous;
@@ -683,6 +687,22 @@ function migrateToV6(raw: Record<string, unknown>): void {
 
     listen.repeat = repeat;
     delete listen.repeatGapSec;
+}
+
+/** Version 7 restores the types older builds read, without changing the current API's grouped settings. */
+function repeatOnDisk(raw: Record<string, unknown>): void {
+    const global = isObject(raw.global) ? raw.global : undefined;
+    const playback = global && isObject(global.playback) ? global.playback : undefined;
+    const listen = playback && isObject(playback.listen) ? playback.listen : undefined;
+    if (!listen || !isObject(listen.repeat)) {
+        return;
+    }
+
+    const repeat = listen.repeat;
+    listen.repeat = repeat.enabled === undefined ? true : repeat.enabled;
+    if (repeat.gapSec !== undefined) {
+        listen.repeatGapSec = repeat.gapSec;
+    }
 }
 
 /**
@@ -706,7 +726,8 @@ export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
 
     migrateToV4(raw);
     migrateToV5(raw);
-    migrateToV6(raw);
+    repeatInMemory(raw);
+    repeatOnDisk(raw);
     raw.version = MEETINGS_CONFIG_VERSION;
     return true;
 }
@@ -719,6 +740,7 @@ export const meetingsConfigSchema = z.preprocess((value) => {
 
     const copy = structuredClone(value);
     migrateMeetingsConfig(copy);
+    repeatInMemory(copy);
     return copy;
 }, storedConfigSchema);
 
@@ -875,6 +897,7 @@ export class MeetingsConfigStore {
 
         await this.storage.atomicConfigUpdate<Record<string, unknown>>((raw) => {
             migrateMeetingsConfig(raw);
+            repeatInMemory(raw);
             mutate(raw);
             const parsed = meetingsConfigSchema.safeParse(raw);
 
@@ -883,6 +906,7 @@ export class MeetingsConfigStore {
             }
 
             validated = parsed.data;
+            repeatOnDisk(raw);
         });
 
         log.debug({ path: this.path }, "meetings config updated");

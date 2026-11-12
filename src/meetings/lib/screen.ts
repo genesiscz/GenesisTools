@@ -39,7 +39,9 @@ export function recordedSpans(record: MeetingRecord, now = Date.now()): Recorded
     // An interrupted run without a kept frame ends where it began: it claims no captured time.
     const captured = kept.filter(
         (span, index) =>
-            saved[index]?.stopReason !== "interrupted" || saved[index]?.to === undefined || span.toMs !== span.fromMs
+            (saved[index]?.stopReason !== "interrupted" && saved[index]?.interrupted !== true) ||
+            saved[index]?.to === undefined ||
+            span.toMs !== span.fromMs
     );
     return [...historySpans(record, now).filter((span) => span.toMs <= firstKept), ...captured];
 }

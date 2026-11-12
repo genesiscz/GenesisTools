@@ -61,6 +61,7 @@ import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import { sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
+import { z } from "zod";
 import { claimWatcher, watcherPidPath } from "./commands/watch";
 import { buildQuestion } from "./lib/assign";
 import { CallTimeline } from "./lib/call-timeline";
@@ -3041,10 +3042,21 @@ describe("the meetings recorder loop", () => {
                 },
             });
             const saved = new MeetingStore(run.store.storage).read(run.saved!.id)!;
+            const legacySpan = z.object({
+                from: z.string(),
+                to: z.string().optional(),
+                stopReason: z.enum(["requested", "paused", "failed", "error"]).optional(),
+            });
+            const legacyRecord = z.object({ recording: z.object({ spans: z.array(legacySpan) }) });
+            expect(
+                legacyRecord.parse(SafeJSON.parse(readFileSync(run.store.path(saved.id), "utf8"))).recording.spans[1]
+                    ?.stopReason
+            ).toBe("error");
             expect(saved.recording?.spans?.[1]).toEqual({
                 from: interruptedAt,
                 to: keptFrame ? lastAt : interruptedAt,
-                stopReason: "interrupted",
+                stopReason: "error",
+                interrupted: true,
             });
             const coverage = screenCaptureCoverage({ record: saved, zeroMs: Date.parse(first.from) });
             expect(coverage.recordingSpans?.[0]).toEqual({ fromSec: 0, toSec: 1800 });

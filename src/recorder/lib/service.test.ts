@@ -2032,6 +2032,30 @@ describe("the protocol fixture the Swift host tests read", () => {
         "recording.event recording→service": recordingEventSchema.omit({ id: true }),
     };
 
+    test("the protocol error example carries the evidence a live service sends", async () => {
+        const { service } = await serviceFixture();
+        const client = await connect(service.entry);
+        const failure = await client
+            .call("hello", { ...hello("client"), protocol: 2 })
+            .catch((error: unknown) => error);
+        client.close();
+        expect(failure).toBeInstanceOf(RpcError);
+        if (!(failure instanceof RpcError)) {
+            throw new Error("Expected a refused protocol");
+        }
+        expect(failure.stack).toContain("at hello (");
+        const example = fixture.examples.find(
+            (entry) => "reply" in entry && entry.reply?.error?.code === RPC_ERRORS.protocolMismatch
+        );
+        const error: unknown = example && "reply" in example ? example.reply?.error : undefined;
+        expect(error).toEqual({
+            code: failure.code,
+            message: failure.message,
+            stack: "<stack>",
+            issue: failure.issue,
+        });
+    });
+
     test("the JSON Schema file is what the zod schemas make (bun scripts/recorder/write-protocol-fixtures.ts)", () => {
         expect(SafeJSON.parse(SafeJSON.stringify(protocolJsonSchemas()), { strict: true })).toEqual(schemasFixture);
     });
