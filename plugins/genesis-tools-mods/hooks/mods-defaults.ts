@@ -4,7 +4,7 @@ import type { ModsSettings } from "./settings";
 
 /** Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`. */
 export const MODS_DEFAULTS: ModsSettings = {
-    diff: { fullDiff: true, collapseGitSync: true },
+    diff: { fullDiff: true, collapseGitSync: true, bottomRow: true, filesOnly: false },
     idleCompact: { enabled: true, minutes: 56, minTokens: 200000 },
     agentModel: { enabled: false, format: "label" },
     agentRow: { enabled: false, format: "version", effort: true },

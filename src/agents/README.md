@@ -894,6 +894,16 @@ every file; a click on the diff itself still opens the group's calls. The diff o
 behind one `[ show diff from git pull ]` button, because it is other people's work arriving.
 `config set mods.diff.collapseGitSync false --write` draws it like any other call.
 
+`[ files only (everywhere) ]` beside it folds every diff block of the session to its file names: the blocks already
+drawn and the ones drawn later. It then reads `[ show diff (everywhere) ]`, which opens them again. It forgets the
+files folded one by one before; a file or a block still folds and opens by itself after it.
+`config set mods.diff.filesOnly true --write` starts every session that way (off by default).
+
+Under an open diff the mod draws a second row: `[ ↑ top ]` jumps to the top of the block, and `[ files only ]` and
+`[ files only (everywhere) ]` stand there again, so a long diff folds from where the reading ended. These buttons
+scroll to the block's top first and fold after that; otherwise the window would stay where the block's end was.
+`config set mods.diff.bottomRow false --write` removes the row (on by default).
+
 #### The idle-compaction mod (`mods.idleCompact`, on)
 
 The plugin compacts an idle Claude session 56 minutes after its last turn (`mods.idleCompact.minutes`, 1 to 59),
