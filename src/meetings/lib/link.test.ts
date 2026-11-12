@@ -17,6 +17,7 @@ import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/rec
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { AssignInbox } from "./assign-inbox";
+import { copyTitle, duplicateMeeting } from "./duplicate";
 import { applySource, assertSourceFree, playLinksFor, sourceHolders } from "./link";
 import { mergeMeetings } from "./merge";
 
@@ -314,34 +315,22 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
         expect(cancelled).toEqual([]);
     });
 
-    test("records of two calls, or frames that share a name, are refused before anything moves", async () => {
-        const two = await call({ otherSource: true });
+    test.each(["frames.jsonl", "ocr.jsonl", "audio.jsonl"])(
+        "a torn %s is refused before any frame moves, naming the file and line",
+        async (name) => {
+            const { store, from, into, inbox, backupRoot } = await call();
+            const ocr = join(store.folder(from), name);
+            writeFileSync(ocr, '{"at":"2026-11-05T13:03:00.000Z"}\n{"file":"frames/cut');
 
-        await expect(
-            mergeMeetings({ store: two.store, fromId: two.from, intoId: two.into, inbox: two.inbox })
-        ).rejects.toThrow("hold different source meetings");
-
-        const same = await call({ collide: true });
-
-        await expect(
-            mergeMeetings({ store: same.store, fromId: same.from, intoId: same.into, inbox: same.inbox })
-        ).rejects.toThrow("frames/14-03-00-000-d1.jpg is in both records");
-        expect(readdirSync(join(same.store.folder(same.from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
-    });
-
-    test("a row file with a half-written line is refused before any frame moves, naming the file and line", async () => {
-        const { store, from, into, inbox, backupRoot } = await call();
-        const ocr = join(store.folder(from), "ocr.jsonl");
-        appendFileSync(ocr, '{"file":"frames/cut');
-
-        await expect(mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot })).rejects.toThrow(
-            `${ocr}:2 is not a JSON row`
-        );
-        expect(readdirSync(join(store.folder(from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
-        expect(readdirSync(join(store.folder(into), "frames"))).toEqual(["14-29-25-000-d1.jpg"]);
-        expect(store.read(from)?.id).toBe(from);
-        expect(existsSync(backupRoot)).toBe(false);
-    });
+            await expect(mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot })).rejects.toThrow(
+                `${ocr}:2 is not a JSON row`
+            );
+            expect(readdirSync(join(store.folder(from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
+            expect(readdirSync(join(store.folder(into), "frames"))).toEqual(["14-29-25-000-d1.jpg"]);
+            expect(store.read(from)?.id).toBe(from);
+            expect(existsSync(backupRoot)).toBe(false);
+        }
+    );
 
     test("the backup is owner-only whatever the umask, down to every folder and file it clones", async () => {
         const { store, from, into, inbox, backupRoot } = await call();
@@ -430,5 +419,109 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
         ).rejects.toThrow("keeps attendance on its own recording clock");
         expect(linkedInto.store.read(linkedInto.from)?.attendance?.people).toHaveLength(1);
         expect(existsSync(linkedInto.backupRoot)).toBe(false);
+    });
+
+    test("records of two calls, or frames that share a name, are refused before anything moves", async () => {
+        const two = await call({ otherSource: true });
+
+        await expect(
+            mergeMeetings({ store: two.store, fromId: two.from, intoId: two.into, inbox: two.inbox })
+        ).rejects.toThrow("hold different source meetings");
+
+        const same = await call({ collide: true });
+
+        await expect(
+            mergeMeetings({ store: same.store, fromId: same.from, intoId: same.into, inbox: same.inbox })
+        ).rejects.toThrow("frames/14-03-00-000-d1.jpg is in both records");
+        expect(readdirSync(join(same.store.folder(same.from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
+    });
+});
+
+describe("duplicate: a second record of one meeting", () => {
+    test("the copy keeps the fields, items and files, its paths point into its own folder, and the original stays", async () => {
+        stores += 1;
+        const store = new MeetingStore(new Storage(`meetings-duplicate-${process.pid}-${stores}`));
+        const original = await store.create(
+            {
+                title: "Planning",
+                start: "2026-11-05T13:02:36.000Z",
+                createdBy: "record",
+                project: "work",
+                labels: ["Checkout"],
+                sources: { wisprflow: { meetingId: "call-1" } },
+                exports: [{ path: "/notes/Planning.md", sha256: "abc", at: "2026-11-05T14:00:00.000Z" }],
+            },
+            { command: "test", change: "created" }
+        );
+        const framesDir = join(store.folder(original.id), "frames");
+        mkdirSync(framesDir, { recursive: true });
+        writeFileSync(join(framesDir, "0001.jpg"), "jpg");
+        writeFileSync(join(store.folder(original.id), "ScreenOCR.md"), "# Screen words\n");
+        await store.update(original.id, { command: "test", change: "frames" }, (record) => {
+            record.recording = { framesDir, frames: 1 };
+            record.context = [
+                { id: "c1", kind: "file", ref: store.folder(original.id), addedAt: record.start, addedBy: "user" },
+                {
+                    id: "c2",
+                    kind: "file",
+                    ref: `${store.folder(original.id)}/clips/one.wav`,
+                    addedAt: record.start,
+                    addedBy: "user",
+                },
+                {
+                    id: "c3",
+                    kind: "file",
+                    ref: `${store.folder(original.id)}-2/clips/other.wav`,
+                    addedAt: record.start,
+                    addedBy: "user",
+                },
+                {
+                    id: "c4",
+                    kind: "note",
+                    ref: `See ${store.folder(original.id)}/frames for context`,
+                    addedAt: record.start,
+                    addedBy: "user",
+                },
+            ];
+        });
+
+        const result = await duplicateMeeting({ store, ref: original.id });
+        const copy = store.read(result.id);
+
+        expect(result.title).toBe("Planning (copy)");
+        expect(result.id).not.toBe(original.id);
+        expect(copy?.project).toBe("work");
+        expect(copy?.labels).toEqual(["Checkout"]);
+        expect(copy?.sources).toEqual({ wisprflow: { meetingId: "call-1" } });
+        expect(copy?.exports).toBeUndefined();
+        expect(copy?.recording?.framesDir).toBe(join(store.folder(result.id), "frames"));
+        expect(readFileSync(join(store.folder(result.id), "frames", "0001.jpg"), "utf8")).toBe("jpg");
+        expect(readFileSync(join(store.folder(result.id), "ScreenOCR.md"), "utf8")).toBe("# Screen words\n");
+        expect(readFileSync(join(store.folder(original.id), "ScreenOCR.md"), "utf8")).toBe("# Screen words\n");
+        expect(copy?.history[0]?.change).toBe(`duplicated from ${original.id}`);
+        expect(store.read(original.id)?.recording?.framesDir).toBe(framesDir);
+        expect(store.read(original.id)?.title).toBe("Planning");
+        expect(new MeetingStore(store.storage).read(result.id)?.context.map((entry) => entry.ref)).toEqual([
+            store.folder(result.id),
+            `${store.folder(result.id)}/clips/one.wav`,
+            `${store.folder(original.id)}-2/clips/other.wav`,
+            `See ${store.folder(original.id)}/frames for context`,
+        ]);
+    });
+
+    test("a given title wins, and an untitled meeting's copy has a name", async () => {
+        stores += 1;
+        const store = new MeetingStore(new Storage(`meetings-duplicate-${process.pid}-${stores}`));
+        const original = await store.create(
+            { title: "Planning", start: "2026-11-05T13:02:36.000Z", createdBy: "new" },
+            { command: "test", change: "created" }
+        );
+
+        const result = await duplicateMeeting({ store, ref: original.id, title: "Planning B" });
+        expect(result.title).toBe("Planning B");
+        const reopened = new MeetingStore(store.storage).read(result.id)!;
+        expect(reopened.history).toHaveLength(1);
+        expect(reopened.history[0]?.change).toBe(`duplicated from ${original.id}`);
+        expect(copyTitle("  ")).toBe("Untitled meeting (copy)");
     });
 });

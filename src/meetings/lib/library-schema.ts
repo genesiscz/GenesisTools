@@ -1,8 +1,11 @@
+import { pairedBySchema } from "@genesiscz/utils/meetings/people";
 import { ABBR_EXPANSIONS, dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
 import type { PhraseTest } from "./dictionary-test";
 import type { MatchPreviewRow } from "./match-preview";
 import type { ProjectRemoval, ProjectRename } from "./project-admin";
+import type { PairedFromMeetings, ProjectMeetingPerson } from "./project-people";
+import type { ProjectSuggestions } from "./project-suggestions";
 import type { DictionaryShowView } from "./window-reads";
 
 /**
@@ -75,6 +78,34 @@ export const projectRemovalSchema = z.object({
 
 /** A person as a project pairing names one: a name, and the address when it is known. */
 export const pairedPersonRefSchema = z.object({ name: z.string(), email: z.string().optional() });
+
+/** A person the project's meetings name who is not paired with it yet (`projects.meetingPeople`). */
+export const projectMeetingPersonSchema = z.object({
+    name: z.string(),
+    email: z.string().optional(),
+    /** How many of the project's meetings name them. */
+    meetings: z.number().int().min(1),
+    /** The newest of those meetings. */
+    last: z.object({ id: z.string(), title: z.string(), start: z.string() }),
+}) satisfies z.ZodType<ProjectMeetingPerson>;
+
+/** What `projects.pairFromMeetings` paired, each person with the source the pairing names. */
+export const pairedFromMeetingsSchema = z.object({
+    project: z.string(),
+    paired: z.array(z.object({ name: z.string(), email: z.string().optional(), by: pairedBySchema })),
+}) satisfies z.ZodType<PairedFromMeetings>;
+
+/** The values the settings page's rule fields offer (`projects.suggestions`). */
+export const projectSuggestionsSchema = z.object({
+    /** Per source: its folders, from its own list or from the folders its meetings sit in. */
+    folders: z.record(
+        z.string(),
+        z.object({ values: z.array(z.string()), from: z.enum(["source", "meetings"]), reason: z.string().optional() })
+    ),
+    calendars: z.object({ values: z.array(z.string()), reason: z.string().optional() }),
+    titleWords: z.array(z.string()),
+    labels: z.array(z.string()),
+}) satisfies z.ZodType<ProjectSuggestions>;
 
 /** One pairing an unpair removed. `left`: the person is no longer paired with the project at all. */
 export const unpairedSchema = z.object({

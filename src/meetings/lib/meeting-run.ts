@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync } from "node:
 import { join } from "node:path";
 import {
     defaultOcrLanguages,
-    EMPTY_FRAME_CHARS,
+    errorText,
     frameName,
     framesOnDisk,
     log,
@@ -22,6 +22,8 @@ import type { FrameRecording } from "@genesiscz/utils/screen-recorder/recording"
 import type { PieceTarget } from "@genesiscz/utils/screen-recorder/targets";
 import type { CaptureResult } from "@genesiscz/utils/screen-recorder/types";
 import { CallTimeline } from "./call-timeline";
+import { appendFrameIndex, readFrameIndex } from "./frame-index";
+import { LiveOcrSettings, meetingOcrSettings, OCR_SETTINGS_FILE } from "./ocr-worker";
 import { type RecorderStateFile, RecordingRecord } from "./recorder-adapters";
 import { meetingMovieZeroMs } from "./recording-manifest";
 import { meetingSource, sourceRefOf } from "./sources";
@@ -50,6 +52,10 @@ export class MeetingRun {
     readonly displays: PolicyDisplays;
     private readonly stateFile: RecorderStateFile<RecorderState>;
     private failureNoticeOpen: boolean;
+    /** When the current run of failed captures that the recording outlives began; undefined while captures work. */
+    private strugglingSince?: number;
+    /** The OCR settings the worker reads before each frame: written at the start and at each live change. */
+    private readonly ocrSettings: LiveOcrSettings;
     private runFrames = 0;
     private audioFiles = 0;
     private zeroMs?: number;
@@ -71,6 +77,7 @@ export class MeetingRun {
         this.folder = store.folder(meetingId);
         this.framesDir = join(this.folder, "frames");
         this.pieceDir = join(this.folder, ".piece");
+        this.ocrSettings = new LiveOcrSettings(join(this.folder, OCR_SETTINGS_FILE));
         const { audio: audioConfig, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
         this.nativeKeys = nativeKeys;
         this.settings = {
@@ -79,16 +86,7 @@ export class MeetingRun {
             threshold: capture.threshold * 100,
             maxLongSide: capture.resolutionCap,
             heartbeatSec: nativeKeys.heartbeatSec ?? 0,
-            ocr: {
-                enabled: true,
-                languages: options.ocrLanguages ?? defaultOcrLanguages(),
-                minChars: 0,
-                threshold: capture.ocr.threshold * 100,
-                skipTextless: capture.ocr.skipTextless,
-                region: capture.ocr.region,
-                read: capture.ocr.read,
-                tilePx: capture.ocr.tilePx,
-            },
+            ocr: meetingOcrSettings(capture, options.ocrLanguages ?? defaultOcrLanguages()),
         };
         this.audio = {
             sources: options.audio ?? audioConfig?.sources ?? [],
@@ -135,11 +133,36 @@ export class MeetingRun {
         return this.zeroMs;
     }
 
-    /** The loop starts: an empty piece folder, the state file, an open span, and the record's recording block. */
+    /** The interrupted run's last indexed frame, or its start when no frame belongs to that run. */
+    private lastFrameAt(): string {
+        const open = this.recordingRecord.spans.at(-1);
+        if (!open || open.to) {
+            return this.state.startedAt;
+        }
+
+        const start = Date.parse(open.from);
+        const restart = Date.parse(this.state.startedAt);
+        let latest = start;
+        for (const frame of readFrameIndex(this.folder)) {
+            const at = Date.parse(frame.at);
+            if (at >= start && at <= restart) {
+                latest = Math.max(latest, at);
+            }
+        }
+
+        return new Date(latest).toISOString();
+    }
+
+    /**
+     * The loop starts: an empty piece folder, the state file, an open span, the record's recording block, and the
+     * meeting's OCR worker.
+     */
     async begin(recording: FrameRecording<string[]>): Promise<void> {
         rmSync(this.pieceDir, { recursive: true, force: true });
         mkdirSync(this.pieceDir, { recursive: true });
         this.saveState();
+        // A span still open here is a run whose process died without a stop: it ends at its last kept frame.
+        this.recordingRecord.closeSpan("interrupted", this.lastFrameAt());
         this.recordingRecord.openSpan();
         await this.recordingRecord.start({
             startedAt: this.state.startedAt,
@@ -147,9 +170,21 @@ export class MeetingRun {
             displayPolicy: this.displays.policy,
             displaySpans: recording.displayBook.intervals,
         });
+
+        // The second phase: the meeting's OCR worker follows the frame index until this recording stops.
+        this.writeOcrSettings(recording);
+
+        try {
+            this.deps.startOcr(this.store, this.meetingId);
+        } catch (err) {
+            log.warn(
+                { err, meeting: this.meetingId },
+                "the OCR worker could not be started; the watcher starts it later"
+            );
+        }
     }
 
-    /** A capture recorded again: an open failure notice in the record is cleared. */
+    /** A capture recorded again: an open failure notice in the record is cleared, and a "keeps failing" one is answered. */
     async captureWorksAgain(): Promise<void> {
         if (this.failureNoticeOpen) {
             this.failureNoticeOpen = false;
@@ -157,6 +192,46 @@ export class MeetingRun {
                 delete recordingBlock.failureNotifiedAt;
             });
         }
+
+        if (this.strugglingSince !== undefined) {
+            const lostSec = Math.round((Date.now() - this.strugglingSince) / 1000);
+            this.strugglingSince = undefined;
+            log.info({ lostSec, meeting: this.meetingId }, "capture works again after failures");
+
+            if (this.capture.failureNotices !== "failing-and-recovered") {
+                return;
+            }
+
+            await this.deps.notify({
+                title: "Screen recording works again",
+                message: `The capture records again after about ${lostSec} s of failures.`,
+                open: this.folder,
+            });
+        }
+    }
+
+    /**
+     * `count` captures in a row failed with an error the recording outlives (an ax-tool being rebuilt, a timeout): the
+     * recording goes on trying, and says so once until a capture records again.
+     */
+    async captureStruggling(count: number, err: unknown): Promise<void> {
+        if (this.strugglingSince !== undefined) {
+            return;
+        }
+
+        this.strugglingSince = Date.now();
+        this.note(`capture failed ${count} times in a row: ${errorText(err)}; it keeps trying`);
+        log.warn({ err, count, meeting: this.meetingId }, "capture keeps failing; the recording keeps trying");
+
+        if (this.capture.failureNotices === "off") {
+            return;
+        }
+
+        await this.deps.notify({
+            title: "Screen capture is failing",
+            message: `${errorText(err)}. The recording keeps trying every minute until it works again.`,
+            open: this.folder,
+        });
     }
 
     /** Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`. */
@@ -185,7 +260,10 @@ export class MeetingRun {
         }
     }
 
-    /** Keeps a capture's frames as JPEGs with their OCR. `streamed`: the socket announced them as they landed. */
+    /**
+     * Keeps a capture's frames as JPEGs, each listed in the frame index for the OCR worker. `streamed`: the socket
+     * announced them as they landed.
+     */
     async keepFrames({
         recording,
         output,
@@ -203,6 +281,8 @@ export class MeetingRun {
     }): Promise<void> {
         const { state } = this;
         let done = 0;
+        // A live OCR change (`settings.set`) reaches the worker before the frames it applies to are listed.
+        this.writeOcrSettings(recording);
 
         for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {
             let kept: KeptFrame;
@@ -213,16 +293,11 @@ export class MeetingRun {
                     originMs: Date.parse(state.startedAt),
                     displayId: frame.displayId ?? target.displayId,
                 });
+                appendFrameIndex(this.folder, kept);
             } catch (err) {
-                // A frame that cannot be kept (its conversion failed) costs that frame, not the recording.
+                // A frame that cannot be kept (its conversion or its index line failed) costs that frame, not the recording.
                 log.warn({ err, frame: frame.path }, "a frame could not be kept; frame skipped");
                 continue;
-            }
-
-            if (kept.read && state.frames === 0 && kept.read.text.trim().length < EMPTY_FRAME_CHARS) {
-                this.note(
-                    `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`
-                );
             }
 
             state.frames += 1;
@@ -236,6 +311,17 @@ export class MeetingRun {
 
             done += 1;
             onFrame(done);
+        }
+    }
+
+    private writeOcrSettings(recording: FrameRecording<string[]>): void {
+        try {
+            this.ocrSettings.write(recording.settings.ocr);
+        } catch (err) {
+            log.warn(
+                { err, meeting: this.meetingId },
+                "the OCR settings could not be written; the worker keeps its own"
+            );
         }
     }
 

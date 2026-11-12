@@ -10,7 +10,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { exportMeeting } from "../lib/export";
 import type { MeetingBadges } from "../lib/overview";
-import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
+import { fail, resolveEnum, TOOL } from "../lib/shared";
 import { isWindowTab, openMeetingsWindow, WINDOW_TABS } from "../lib/window";
 import { overviewRead, windowJson } from "../lib/window-reads";
 
@@ -58,7 +58,7 @@ async function overview(opts: { days?: string; json?: boolean }): Promise<void> 
         out.println(table.toString());
         ui.dim(`${view.meetings.length} meetings in ${days} days; ${view.needsYou.total} need you`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -119,7 +119,7 @@ async function exportCommand(
             ui.info(`${result.kept} holds edits, so it ${result.written ? "stays as it was" : "would stay"}`);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -155,7 +155,7 @@ async function windowCommand(
             onStep: (line) => ui.info(line),
         });
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

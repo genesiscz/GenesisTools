@@ -1,23 +1,294 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
+import { z } from "zod";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
+import { MeetingComments } from "./comments";
+import { journalEntrySchema } from "./decision-actions";
+import { DecisionJournal } from "./decision-journal";
 import { meetingListRow, selectMeetings } from "./list-rows";
+import { planMoment } from "./moment";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
-import { enumHint, errorText, formatFlag } from "./shared";
+import { InProcessMeetingsClient } from "./service/client";
+import { MeetingsServiceError } from "./service/handlers";
+import * as momentHandlers from "./service/moment-handlers";
+import { enumHint, errorJSON, errorText, fail, formatFlag } from "./shared";
 import { linkedSource } from "./sources";
 
 /**
  * What the `tools meetings` commands promise a script or the Meetings window: a refusal names a command that runs,
  * an error code leads its sentence, a JSON shape stays. Each test pins one promise.
  */
+test("service comment refusals keep their code in human and JSON errors", () => {
+    const error = new MeetingsServiceError("already-read", "The receiver acknowledged it.");
+    expect(errorText(error)).toBe("[already-read] The receiver acknowledged it.");
+    expect(SafeJSON.parse(errorJSON(error), { strict: true })).toMatchObject({
+        error: { data: { code: "already-read" } },
+    });
+});
+
+test("standalone subscription flags fail before resolving or reading a meeting", async () => {
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    const human = spyOn(ui, "err").mockImplementation(() => {});
+    const resolve = spyOn(MeetingStore.prototype, "resolve");
+    try {
+        for (const flag of ["--with-comments", "--from-start", "--follow"]) {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+            await program.parseAsync(["listen", "missing", flag], { from: "user" });
+            expect(process.exitCode).toBe(1);
+            expect(human).toHaveBeenLastCalledWith(
+                "--with-comments, --from-start and --follow require --subscribe-answers."
+            );
+        }
+        expect(resolve).not.toHaveBeenCalled();
+    } finally {
+        raw.mockRestore();
+        human.mockRestore();
+        resolve.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("saved clips reject playback and read-only flags before touching the meeting", async () => {
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    const human = spyOn(ui, "err").mockImplementation(() => {});
+    const resolve = spyOn(MeetingStore.prototype, "resolve");
+    try {
+        for (const flag of ["--clip", "--no-start", "--window"]) {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
+            await program.parseAsync(["play", "missing", "--at", "10", "--save", flag], { from: "user" });
+            expect(human).toHaveBeenLastCalledWith(
+                "--save keeps a clip without playing it; omit --clip, --no-start, --window and --player."
+            );
+        }
+        expect(resolve).not.toHaveBeenCalled();
+    } finally {
+        raw.mockRestore();
+        human.mockRestore();
+        resolve.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("--clip --no-start plans once without cutting, saving or starting a player", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Plan only", start: "2026-11-09T10:00:00Z", end: "2026-11-09T10:02:00Z", createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const planned = {
+        ...planMoment({
+            record,
+            transcript: [],
+            listen: meetingsConfigSchema.parse({}).global.playback.listen,
+            target: { kind: "range", fromSec: 2, toSec: 4 },
+        }),
+        audioPath: "/fixture/audio.wav",
+    };
+    const plan = spyOn(momentHandlers, "planMomentCall").mockResolvedValue({ moment: planned });
+    const cut = spyOn(momentHandlers, "clipMomentCall").mockRejectedValue(new Error("must not cut"));
+    const save = spyOn(momentHandlers, "saveMomentCall").mockRejectedValue(new Error("must not save"));
+    const printed = spyOn(out, "result").mockImplementation(() => {});
+    const error = spyOn(ui, "err").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
+        await program.parseAsync(
+            ["play", record.id, "--target", '{"kind":"range","fromSec":2,"toSec":4}', "--clip", "--no-start", "--json"],
+            { from: "user" }
+        );
+        expect(plan).toHaveBeenCalledTimes(1);
+        expect(cut).not.toHaveBeenCalled();
+        expect(save).not.toHaveBeenCalled();
+        expect(error).not.toHaveBeenCalled();
+        expect(printed).toHaveBeenCalledWith(SafeJSON.stringify(planned, null, 2));
+        expect(existsSync(join(store.folder(record.id), "moments"))).toBe(false);
+    } finally {
+        plan.mockRestore();
+        cut.mockRestore();
+        save.mockRestore();
+        printed.mockRestore();
+        error.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("the items column keeps a long quote's source inside its width", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        {
+            title: "Quote",
+            start: "2026-11-09T10:00:00Z",
+            createdBy: "new",
+            items: [
+                {
+                    id: "i1",
+                    kind: "term",
+                    status: "suggested",
+                    suggestedAt: "2026-11-09T10:00:00Z",
+                    rules: [],
+                    heard: "category data",
+                    quote: { text: `categoryData: ${"string | number | ".repeat(8)}null`, source: "dto.ts:12" },
+                },
+            ],
+        },
+        { command: "test", change: "fixture" }
+    );
+    const printed: string[] = [];
+    const output = spyOn(out, "println").mockImplementation((text: string) => {
+        printed.push(text);
+    });
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "items" });
+        await program.parseAsync(["items", record.id], { from: "user" });
+        expect(printed.join("\n")).toContain('…" (quote from dto.ts:12)');
+    } finally {
+        output.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("screen --timeline --frame and --all print unchanged OCR lines as requested", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Screen lines", start: "2026-11-09T10:00:00Z", createdBy: "record" },
+        { command: "test", change: "fixture" }
+    );
+    const folder = store.folder(record.id);
+    mkdirSync(join(folder, "frames"), { recursive: true });
+    const image = createCanvas(400, 200).toBuffer("image/png");
+    const rows = ["Old item", "New item"].map((text, index) => ({
+        file: `frames/${index}.png`,
+        at: `2026-11-09T10:00:0${index}.000Z`,
+        displayId: 1,
+        text: `Agenda\n${text}`,
+        blocks: ["Agenda", text].map((text, i) => ({
+            text,
+            confidence: 1,
+            bounds: { x: 0.1, y: 0.8 - i * 0.3, width: 0.6, height: 0.1 },
+        })),
+    }));
+    for (const row of rows) {
+        writeFileSync(join(folder, row.file), image);
+    }
+    writeFileSync(join(folder, "ocr.jsonl"), `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`);
+    const printed: string[] = [];
+    const output = spyOn(out, "println").mockImplementation((text: string) => {
+        printed.push(text);
+    });
+    try {
+        for (const flags of [["--frame", "frames/1.png"], ["--all"]]) {
+            printed.length = 0;
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "screen" });
+            await program.parseAsync(["screen", record.id, "--timeline", ...flags], { from: "user" });
+            expect(printed.filter((line) => line === "    Agenda")).toHaveLength(flags[0] === "--all" ? 2 : 1);
+            expect(printed).toContain("    New item");
+        }
+    } finally {
+        output.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("reopen --token with no items undoes a speaker rename; without a token it still needs the items", async () => {
+    // The command reads the default store, which the test preload keeps in a sandbox.
+    const store = new MeetingStore();
+    const created = await store.create(
+        { title: "Harbor sync", start: "2026-11-05T10:00:00.000Z", createdBy: "new", speakers: { labels: {} } },
+        { command: "test", change: "fixture" }
+    );
+    const renamed = await new DecisionJournal({ store }).apply({
+        meeting: created.id,
+        action: { kind: "rename", label: "S1", name: "Dana Example" },
+        actor: { kind: "cli" },
+    });
+    expect(store.read(created.id)?.speakers.labels).toEqual({ S1: "Dana Example" });
+
+    const printed: string[] = [];
+    const errors: string[] = [];
+    const result = spyOn(out, "result").mockImplementation((text: string) => {
+        printed.push(text);
+    });
+    const err = spyOn(ui, "err").mockImplementation((line: string) => {
+        errors.push(line);
+    });
+
+    try {
+        const run = async (...args: string[]) => {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "reopen" });
+            await program.parseAsync(args, { from: "user" });
+        };
+
+        await run("reopen", created.id);
+        expect(errors).toEqual(["Name the items to reopen, or pass --token to undo a whole decision."]);
+
+        await run("reopen", created.id, "--token", renamed.entry!.token, "--json");
+    } finally {
+        result.mockRestore();
+        err.mockRestore();
+        process.exitCode = 0;
+    }
+
+    expect(errors).toHaveLength(1);
+    expect(store.read(created.id)?.speakers.labels).toEqual({});
+    expect(SafeJSON.parse(printed[0]!)).toMatchObject({
+        entry: { action: { kind: "revert", token: renamed.entry!.token }, labels: [{ label: "S1" }] },
+    });
+});
+
+const failureRecordSchema = z.object({
+    error: z.object({
+        message: z.string(),
+        stack: z.string(),
+        issue: z.object({ tool: z.string(), title: z.string().optional() }),
+    }),
+});
+
+test("a CLI failure emits its original stack and issue as redacted JSON on stderr", () => {
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    const human = spyOn(ui, "err").mockImplementation(() => {});
+    const error = Object.assign(new Error("refused"), { issue: { title: "Original refusal" } });
+    error.stack =
+        "Error: refused\n    at originalThrow (/fixture/source.ts:12:3) sk-ant-abcdefghijklmnopqrstuvwxyz0123";
+    try {
+        fail(error);
+        expect(process.exitCode).toBe(1);
+        expect(human).toHaveBeenCalledWith("refused");
+        expect(raw).toHaveBeenCalledTimes(1);
+        const record = failureRecordSchema.parse(SafeJSON.parse(raw.mock.calls[0][0]));
+        expect(record.error.message).toBe("refused");
+        expect(record.error.stack).toContain("at originalThrow (/fixture/source.ts:12:3)");
+        expect(record.error.stack).not.toContain("sk-ant-abcdefghijklmnopqrstuvwxyz0123");
+        expect(record.error.issue).toEqual({ tool: "meetings", title: "Original refusal" });
+        raw.mockClear();
+        fail(new Error("Context: refused", { cause: error }));
+        const contextual = failureRecordSchema.parse(SafeJSON.parse(raw.mock.calls[0][0]));
+        expect(contextual.error.message).toBe("Context: refused");
+        expect(contextual.error.stack).toBe(record.error.stack);
+        expect(contextual.error.issue).toEqual(record.error.issue);
+    } finally {
+        raw.mockRestore();
+        human.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 describe("enum refusals print a command that runs", () => {
     const argv = process.argv;
 
@@ -112,7 +383,8 @@ describe("startup imports", () => {
             'const has = () => Object.keys(require.cache).some((key) => key.includes("@napi-rs/canvas"));',
             'await import("./src/meetings/commands/record.ts");',
             "const before = has();",
-            'await import("@genesiscz/utils/image/render-plan");',
+            // Loading the addon itself is the positive control for this stack's loader.
+            'await import("@napi-rs/canvas");',
             "console.log(JSON.stringify({ before, after: has() }));",
         ].join("\n");
         const child = Bun.spawn(["bun", "-e", probe], {
@@ -216,12 +488,16 @@ describe("a meeting without a transcript source", () => {
         const err = spyOn(ui, "err").mockImplementation((line: string) => {
             errors.push(line);
         });
+        const raw = spyOn(ui, "raw").mockImplementation(() => {});
 
         try {
             const program = new Command().exitOverride();
             await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "evidence" });
             await program.parseAsync(["evidence", created.id], { from: "user" });
+            const record = failureRecordSchema.parse(SafeJSON.parse(raw.mock.calls[0][0]));
+            expect(record.error.stack).toContain("at linkedSource");
         } finally {
+            raw.mockRestore();
             err.mockRestore();
             process.exitCode = 0;
         }
@@ -311,6 +587,16 @@ describe("list --json prints one summary row per meeting, and --limit keeps the 
             expect(selectMeetings(store, { project: "work", limit: 1 }).map((one) => one.id)).toEqual([b]);
             expect(read).toHaveBeenCalledTimes(2);
             expect(selectMeetings(store, {}).map((one) => one.id)).toEqual([c, b, a]);
+            read.mockClear();
+            const client = new InProcessMeetingsClient({ deps: { store: () => store } });
+            try {
+                expect(
+                    (await client.call("meetings.list", { project: "work", limit: 1, full: true })).map((one) => one.id)
+                ).toEqual([b]);
+                expect(read).toHaveBeenCalledTimes(2);
+            } finally {
+                client.close();
+            }
         } finally {
             read.mockRestore();
         }
@@ -450,6 +736,17 @@ describe("rows --json: the review rows (F3)", () => {
         expect(reviewRow(record, record.items[2]!).answer).toBeUndefined();
     });
 
+    test.each(["rejected", "suggested"] as const)(
+        "a %s question does not publish its retained answer",
+        async (status) => {
+            const { reviewRow } = await import("./review-rows");
+            const question = { ...record.items[5]!, status };
+            expect(question).toMatchObject({ kind: "question", answer: "EMP" });
+            expect(reviewRow(record, question).answer).toBeUndefined();
+            expect(question).toMatchObject({ status, answer: "EMP" });
+        }
+    );
+
     test("a question reads as parts: who, when, what it asks without the baked time, what it settles", async () => {
         const { reviewRow } = await import("./review-rows");
         const speaker = reviewRow(record, record.items[3]!);
@@ -479,19 +776,19 @@ describe("rows --json: the review rows (F3)", () => {
         expect([speaker.edit, speaker.needs, speaker.target]).toEqual(["answer", "listen", { kind: "item", id: "i4" }]);
     });
 
-    test("choices are typed with confidence: the earlier answer first, then scored ones, then the rest, then the actions", async () => {
+    test("choices are typed with confidence: highest scores first including earlier answers, then unscored actions", async () => {
         const { reviewRow } = await import("./review-rows");
         const term = reviewRow(record, record.items[2]!);
         const speaker = reviewRow(record, record.items[3]!);
 
         expect(term.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
-            ["earlier", "EMP", 0.7],
             ["presumed", "AMP", 0.82],
+            ["earlier", "EMP", 0.7],
             ["heard", "OMP", 0.4],
             ["none", "none of these", undefined],
             ["skip", "skip", undefined],
         ]);
-        expect(term.choices[0]).toMatchObject({ hint: "as at 00:30", action: { kind: "answer", answer: "EMP" } });
+        expect(term.choices[1]).toMatchObject({ hint: "as at 00:30", action: { kind: "answer", answer: "EMP" } });
         expect(speaker.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
             ["suggested", "Alice Example", 0.6],
             ["candidate", "Bob Example", undefined],
@@ -549,6 +846,37 @@ describe("rows --json: the review rows (F3)", () => {
             { term: "EMP", confidence: 0.7 },
             { term: "OMP", confidence: 0.4 },
         ]);
+    });
+
+    test("Wave E: a better-scoring speaker candidate precedes the suggestion without changing its action", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const item = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i90",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    suggestedAt: at,
+                    fromSec: 10,
+                    toSec: 20,
+                    label: "Speaker 1",
+                    speaker: "Alice Example",
+                    candidates: ["Alice Example", "Bob Example"],
+                    confidence: 0.4,
+                    evidence: {
+                        candidateScores: [
+                            { speaker: "Alice Example", confidence: 0.4, evidence: [] },
+                            { speaker: "Bob Example", confidence: 0.9, evidence: [] },
+                        ],
+                    },
+                },
+            ],
+        }).items[0]!;
+        const row = reviewRow(record, item);
+        expect(row.choices.map((choice) => choice.value)).toEqual(["Bob Example", "Alice Example", "none of these"]);
+        expect(row.choices[0]?.action).toEqual({ kind: "confirm", speaker: "Bob Example" });
+        expect(row.choices[1]?.action).toEqual({ kind: "confirm" });
     });
 
     test("speaker choices carry the range's typed candidate scores (G31): highest first, none without a score", async () => {
@@ -702,5 +1030,165 @@ describe("rows --json: the review rows (F3)", () => {
             reason: "the calendar says so",
             at,
         });
+    });
+});
+
+describe("comment commands without a service", () => {
+    test("stage, send and acknowledge use the persisted comment state", async () => {
+        const store = new MeetingStore();
+        const meeting = await store.create(
+            { title: "Comment command", start: "2026-11-02T14:00:00.000Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const printed: string[] = [];
+        const output = spyOn(out, "result").mockImplementation((value) => printed.push(String(value)));
+        const run = async (...args: string[]) => {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "comments" });
+            await program.parseAsync(["comments", ...args, "--json"], { from: "user" });
+        };
+        try {
+            await run("stage", meeting.id, "--target", '{"kind":"time","atSec":3}', "--text", "Check this word");
+            await run("send", meeting.id);
+            await run("read", meeting.id, "c1");
+            expect(printed).toHaveLength(3);
+            expect(MeetingComments.of(new MeetingStore(), meeting.id).list()[0]).toMatchObject({
+                id: "c1",
+                state: "sent",
+                text: "Check this word",
+                readAt: expect.any(String),
+            });
+        } finally {
+            output.mockRestore();
+            process.exitCode = 0;
+        }
+    });
+});
+
+describe("listen answers without a service", () => {
+    test("Wave E: decide plans without writing and applies a typed action through the fallback adapter", async () => {
+        const at = "2026-11-02T14:00:00.000Z";
+        const store = new MeetingStore();
+        const meeting = await store.create(
+            {
+                title: "Decision command",
+                start: at,
+                createdBy: "new",
+                items: [
+                    {
+                        id: "i1",
+                        kind: "term",
+                        status: "suggested",
+                        heard: "Atlas",
+                        proposed: "Aster",
+                        confidence: 0.8,
+                        rules: [],
+                        suggestedAt: at,
+                    },
+                ],
+            },
+            { command: "test", change: "fixture" }
+        );
+        const printed: unknown[] = [];
+        const output = spyOn(out, "result").mockImplementation((value) => {
+            printed.push(value);
+        });
+        const action = SafeJSON.stringify({ kind: "respell", item: "i1", text: "Azure" });
+        const execute = async (plan: boolean) => {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "decide" });
+            await program.parseAsync(
+                [
+                    "decide",
+                    meeting.id,
+                    "--action",
+                    action,
+                    "--reason",
+                    "confirmed spelling",
+                    "--json",
+                    ...(plan ? ["--plan"] : []),
+                ],
+                { from: "user" }
+            );
+        };
+        try {
+            await execute(true);
+            expect(new MeetingStore().read(meeting.id)?.items[0]?.status).toBe("suggested");
+            await execute(false);
+            expect(new MeetingStore().read(meeting.id)?.items[0]).toMatchObject({
+                status: "confirmed",
+                proposed: "Azure",
+                decision: { entry: { reason: "confirmed spelling" } },
+            });
+            expect(printed).toHaveLength(2);
+            const applied = z
+                .object({ entry: z.object({ token: z.string() }) })
+                .parse(SafeJSON.parse(String(printed[1])));
+            const undo = new Command().exitOverride();
+            await registerRequestedTrees({ program: undo, registrars: MEETINGS_REGISTRARS, requested: "reopen" });
+            await undo.parseAsync(["reopen", meeting.id, "--token", applied.entry.token, "--json"], { from: "user" });
+            expect(new MeetingStore().read(meeting.id)?.items[0]).toMatchObject({
+                status: "suggested",
+                proposed: "Aster",
+            });
+        } finally {
+            output.mockRestore();
+            process.exitCode = 0;
+        }
+    });
+
+    test("--except stays open and --replaces changes an answered question atomically", async () => {
+        const store = new MeetingStore();
+        const at = "2026-11-02T14:00:00.000Z";
+        const meeting = await store.create(
+            {
+                title: "Planning",
+                start: at,
+                createdBy: "new",
+                items: ["i1", "i2"].map((id) => ({
+                    id,
+                    kind: "question",
+                    status: "suggested",
+                    about: "term",
+                    heard: "Ada",
+                    fromSec: 10,
+                    toSec: 20,
+                    question: "Which word?",
+                    choices: ["Atlas", "Aster"],
+                    decides: [],
+                    rules: [],
+                    suggestedAt: at,
+                })),
+            },
+            { command: "test", change: "fixture" }
+        );
+        const printed: string[] = [];
+        const result = spyOn(out, "result").mockImplementation((value) => {
+            printed.push(String(value));
+        });
+        const run = async (...flags: string[]) => {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+            await program.parseAsync(["listen", meeting.id, "--item", "i1", ...flags, "--json"], { from: "user" });
+        };
+        try {
+            await run("--answer", "Atlas", "--except", "i2");
+            const first = journalEntrySchema.parse(SafeJSON.parse(printed[0]!, { strict: true }));
+            expect(first.token).toBeString();
+            expect(new MeetingStore().read(meeting.id)?.items.map((item) => item.status)).toEqual([
+                "confirmed",
+                "suggested",
+            ]);
+            await run("--answer", "Aster", "--except", "i2", "--replaces", first.token);
+            const saved = new MeetingStore().read(meeting.id)!;
+            expect(saved.items[0]).toMatchObject({ answer: "Aster", status: "confirmed" });
+            expect(saved.items[1]?.status).toBe("suggested");
+            expect(SafeJSON.parse(printed[1]!, { strict: true })).toMatchObject({
+                action: { kind: "answer", except: ["i2"], replaces: first.token },
+            });
+        } finally {
+            result.mockRestore();
+            process.exitCode = 0;
+        }
     });
 });

@@ -1,24 +1,25 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError, MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
-import * as serviceHost from "@genesiscz/utils/rpc/service-host";
+import { WordTimingCache, wordTimingFile } from "@genesiscz/utils/meetings/word-timing-cache";
+import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { Command } from "commander";
 import { z } from "zod";
-import { registerServeCommand } from "../../commands/serve";
 import { MeetingComments } from "../comments";
+import { persistClip } from "../saved-clip";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
+import { wordTimingModelFiles } from "../word-timing-worker";
+import { generateWordTimings, type WordTimingGenerateDeps, type WordTimingInput } from "../word-timings";
 import fixture from "./__fixtures__/meetings-protocol.json";
 import {
     MEETINGS_EVENTS,
@@ -41,6 +42,7 @@ import {
     openMeetingsClient,
     SocketMeetingsClient,
 } from "./client";
+import { MeetingsFolderWatch } from "./folder-watch";
 import { type MeetingsHandlerDeps, MeetingsServiceError } from "./handlers";
 import { type MeetingsServiceOptions, startMeetingsService } from "./service";
 
@@ -256,6 +258,11 @@ const quietDeps: MeetingsHandlerDeps = {
         mkdirSync(dirname(path), { recursive: true });
         writeFileSync(path, "RIFF");
     },
+    // Invented folder and calendar lists, so a suggestion never reads Wispr Flow or the Calendar app of this Mac.
+    suggestionReads: () => ({
+        sourceFolders: async () => ["Design", "Ops"],
+        calendarNames: async () => ({ names: ["Work", "Home"] }),
+    }),
     // An address book with one invented contact, so a people answer never reads this Mac's Contacts.
     contacts: () =>
         new ContactsPeopleSource({
@@ -270,7 +277,9 @@ const quietDeps: MeetingsHandlerDeps = {
     }),
 };
 
-async function startService(options: { dir?: string; watch?: MeetingsServiceOptions["watch"] } = {}) {
+async function startService(
+    options: { dir?: string; watch?: MeetingsServiceOptions["watch"]; deps?: Partial<MeetingsHandlerDeps> } = {}
+) {
     const { store, config, linkedSource } = scratchStore();
     const dir = options.dir ?? serviceDir();
     const start = await startMeetingsService({
@@ -282,6 +291,7 @@ async function startService(options: { dir?: string; watch?: MeetingsServiceOpti
         code: CODE,
         watch: options.watch ?? false,
         ...quietDeps,
+        ...options.deps,
     });
 
     if (start.status !== "started") {
@@ -381,10 +391,10 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         const missing = await failure(client.call("meeting.show", { ref: "nope" }));
         expect(missing).toBeInstanceOf(MeetingsServiceError);
         expect(missing).toMatchObject({ code: "meeting-not-found" });
-        expect(errorText(missing)).toBe('No meeting "nope". List them: tools meetings list');
+        expect(errorText(missing)).toBe('[meeting-not-found] No meeting "nope". List them: tools meetings list');
         const ambiguous = await failure(client.call("meeting.show", { ref: "2026-11-03" }));
         expect(ambiguous).toMatchObject({ code: "meeting-ref" });
-        expect(errorText(ambiguous)).toBe(`"2026-11-03" fits 2 meetings: ${RETRO.id}, ${REVIEW.id}`);
+        expect(errorText(ambiguous)).toBe(`[meeting-ref] "2026-11-03" fits 2 meetings: ${RETRO.id}, ${REVIEW.id}`);
     });
 
     test("meeting.transcript answers the corrected lines; a meeting without a source keeps its state code", async () => {
@@ -467,6 +477,216 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(heard[1]?.params).toEqual({ meeting: REVIEW.id, token: applied.entry!.token, entry: reverted.entry });
     });
 
+    test("question wording edits reach both adapters and undo without changing the answer", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        await store.update(REVIEW.id, { command: "test", change: "question wording" }, (record) => {
+            record.items.push(
+                ...meetingRecordSchema.parse({
+                    ...record,
+                    items: [
+                        {
+                            id: "i2",
+                            kind: "question",
+                            about: "term",
+                            status: "confirmed",
+                            answer: "API",
+                            heard: "Ada",
+                            question: "Which word?",
+                            choices: ["API", "ADA"],
+                            decides: ["i1"],
+                            fromSec: 2,
+                            toSec: 6,
+                            rules: [],
+                            suggestedAt: NOW.toISOString(),
+                        },
+                    ],
+                }).items
+            );
+        });
+        const before = store.read(REVIEW.id)!.items.find((item) => item.id === "i2");
+        if (before?.kind !== "question") {
+            throw new Error("fixture must hold a question");
+        }
+        const action = {
+            kind: "rephrase",
+            question: "i2",
+            text: "Which interface did they name?",
+            expectedText: "Which word?",
+        } as const;
+        const plan = await client.call("decision.plan", { meeting: REVIEW.id, action });
+        expect(plan.entry?.decided).toEqual([]);
+        const applied = await client.call("decision.apply", { meeting: REVIEW.id, action, onDecided: "refuse" });
+        expect(new MeetingStore(store.storage).read(REVIEW.id)!.items.find((item) => item.id === "i2")).toEqual({
+            ...before,
+            question: action.text,
+        });
+        expect(
+            (await client.call("meeting.rows", { meeting: REVIEW.id })).rows.find((row) => row.id === "i2")?.parts
+        ).toContainEqual({ kind: "asks", pieces: [{ text: action.text }] });
+        const conflict = await failure(client.call("decision.apply", { meeting: REVIEW.id, action }));
+        expect(conflict.message).toContain("wording changed");
+        await client.call("decision.revert", { meeting: REVIEW.id, token: applied.entry!.token });
+        expect(new MeetingStore(store.storage).read(REVIEW.id)!.items.find((item) => item.id === "i2")).toEqual(before);
+    });
+
+    test("a spelling plan lists source occurrences and its selected reach survives both adapters", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        await store.update(REVIEW.id, { command: "test", change: "selective spelling" }, (record) => {
+            record.items.push({
+                id: "i2",
+                kind: "term",
+                status: "suggested",
+                heard: "the",
+                proposed: "THIS",
+                atSec: 2,
+                evidence: { transcriptLine: 0 },
+                rules: [],
+                suggestedAt: "2026-11-03T09:47:00.000Z",
+            });
+        });
+        const planned = await client.call("decision.plan", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i2"] },
+        });
+        expect(planned.reach.spelling).toMatchObject({
+            dictionary: true,
+            occurrences: [
+                { line: 0, selected: true, primary: true },
+                { line: 1, selected: true, primary: false },
+            ],
+        });
+        const reach = { lines: [{ atSec: 9, line: 1 }], dictionary: false };
+        const applied = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i2"], reach },
+        });
+        expect(new MeetingStore(store.storage).read(REVIEW.id)?.items.find((item) => item.id === "i2")).toMatchObject({
+            reach,
+        });
+        const transcript = await client.call("meeting.transcript", { ref: REVIEW.id, dictionary: false });
+        expect(transcript.entries.map((line) => line.text)).toEqual([
+            "Let us start with the checkout.",
+            "THIS button moved to THIS right.",
+        ]);
+        const restricted = await client.call("decision.plan", {
+            meeting: REVIEW.id,
+            action: {
+                kind: "confirm",
+                items: ["i2"],
+                reach: { lines: [{ atSec: 2, line: 0 }], dictionary: false },
+            },
+        });
+        expect(restricted.reach.spelling?.occurrences).toHaveLength(2);
+        await client.call("decision.revert", { meeting: REVIEW.id, token: applied.entry!.token });
+        expect(
+            new MeetingStore(store.storage).read(REVIEW.id)?.items.find((item) => item.id === "i2")
+        ).not.toHaveProperty("reach");
+    });
+
+    test("decision.apply returns every changed row, including settled and excluded look-alike choices", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const at = "2026-11-03T09:47:00.000Z";
+        await store.update(REVIEW.id, { command: "test", change: "word questions" }, (record) => {
+            record.items = meetingRecordSchema.parse({
+                ...record,
+                items: [
+                    ...[50, 70].map((atSec, index) => ({
+                        id: `i${index + 1}`,
+                        kind: "term",
+                        status: "suggested",
+                        heard: "Ada",
+                        proposed: "ADA",
+                        atSec,
+                        rules: [],
+                        suggestedAt: at,
+                    })),
+                    ...[50, 70, 90, 110].map((fromSec, index) => ({
+                        id: `i${index + 3}`,
+                        kind: "question",
+                        status: "suggested",
+                        about: "term",
+                        heard: "Ada",
+                        fromSec,
+                        toSec: fromSec + 4,
+                        question: "Which word?",
+                        choices: ["ADA"],
+                        decides: index < 2 ? [`i${index + 1}`] : [],
+                        priority: index === 3 ? 0.1 : 0.9,
+                        rules: [],
+                        suggestedAt: at,
+                    })),
+                ],
+            }).items;
+        });
+        const before = await client.call("meeting.rows", { meeting: REVIEW.id, lowPriority: "show" });
+        const applied = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            lowPriority: "show",
+            action: { kind: "answer", question: "i3", answer: "ADO", except: ["i5", "i6"] },
+        });
+        const after = await client.call("meeting.rows", { meeting: REVIEW.id, lowPriority: "show" });
+        const patch = applied.rows!;
+        expect(applied.entry?.settled).toEqual(["i4"]);
+        expect(patch.changes.map((change) => change.id).sort()).toEqual(["i1", "i2", "i3", "i4", "i5", "i6"]);
+        for (const change of patch.changes) {
+            expect(change.before).toEqual(before.rows.find((row) => row.id === change.id));
+            expect(change.after).toEqual(after.rows.find((row) => row.id === change.id));
+        }
+        expect(patch.order).toEqual(after.rows.map((row) => row.id));
+        expect(patch.hidden).toEqual({ before: before.hidden, after: after.hidden });
+        expect(patch.changes.find((change) => change.id === "i5")?.after).toMatchObject({
+            status: "suggested",
+            choices: expect.arrayContaining([expect.objectContaining({ value: "ADO", role: "earlier" })]),
+        });
+        const reopened = new MeetingStore(store.storage);
+        expect(reopened.read(REVIEW.id)?.items.find((item) => item.id === "i4")?.status).toBe("confirmed");
+        expect(reopened.read(REVIEW.id)?.items.find((item) => item.id === "i5")?.status).toBe("suggested");
+    });
+
+    test("a decision patch carries hidden rows becoming visible and leaves unchanged rows out", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        await store.update(REVIEW.id, { command: "test", change: "low question" }, (record) => {
+            record.items = meetingRecordSchema.parse({
+                ...record,
+                items: [
+                    ...record.items,
+                    {
+                        id: "i2",
+                        kind: "question",
+                        status: "suggested",
+                        about: "speaker",
+                        fromSec: 12,
+                        toSec: 30,
+                        question: "Who speaks?",
+                        choices: ["Alex Example"],
+                        decides: ["i1"],
+                        priority: 0.1,
+                        rules: [],
+                        suggestedAt: "2026-11-03T09:47:00.000Z",
+                    },
+                ],
+            }).items;
+        });
+        const result = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "answer", question: "i2", answer: "Alex Example" },
+        });
+        expect(result.rows?.hidden).toEqual({
+            before: { lowPriority: 1, minPriority: 0.5 },
+            after: { lowPriority: 0, minPriority: 0.5 },
+        });
+        expect(result.rows?.changes.find((change) => change.id === "i2")).toMatchObject({
+            after: { status: "confirmed" },
+        });
+        expect(result.rows?.changes.find((change) => change.id === "i2")?.before).toBeUndefined();
+        const unchanged = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+        });
+        expect(unchanged.entry).toBeUndefined();
+        expect(unchanged.rows).toBeUndefined();
+    });
+
     test("decision.plan answers the entry and its reach and writes nothing", async () => {
         const { client, store } = await ADAPTERS[kind]();
         const before = store.read(REVIEW.id);
@@ -479,6 +699,51 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(planned.reach).toEqual({ items: [], dictionary: [] });
         expect(store.read(REVIEW.id)).toEqual(before);
         expect((await client.call("journal.read", { meeting: REVIEW.id })).entries).toEqual([]);
+    });
+
+    test("decision.plan of an answer lists a target outside the asked span with its own quote, value and time", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        await store.update(REVIEW.id, { command: "test", change: "a question" }, (record) => {
+            record.items.push(
+                {
+                    kind: "speaker-range",
+                    label: "Speaker 2",
+                    fromSec: 0,
+                    toSec: 20,
+                    candidates: ["Alex Example", "Dana Example"],
+                    id: "i2",
+                    status: "suggested",
+                    rules: [],
+                    suggestedAt: "2026-11-03T09:47:00.000Z",
+                },
+                {
+                    kind: "question",
+                    about: "speaker",
+                    fromSec: 25,
+                    toSec: 30,
+                    question: "Who speaks under Speaker 2?",
+                    choices: ["Alex Example", "Dana Example"],
+                    decides: ["i2"],
+                    id: "i3",
+                    status: "suggested",
+                    rules: [],
+                    suggestedAt: "2026-11-03T09:47:00.000Z",
+                }
+            );
+        });
+        const planned = await client.call("decision.plan", {
+            meeting: REVIEW.id,
+            action: { kind: "answer", question: "i3", answer: "Alex Example" },
+        });
+        const [target] = planned.reach.items;
+
+        expect(planned.reach.items).toHaveLength(1);
+        expect(target).toMatchObject({ id: "i2", role: "sets", before: "Speaker 2", after: "Alex Example" });
+        // Its own voice only: Dana's line in the same span is not its evidence.
+        expect(target?.row?.parts).toContainEqual({ kind: "said", text: "The button moved to the right." });
+        expect(target?.row?.parts).toContainEqual(
+            expect.objectContaining({ kind: "when", target: { kind: "item", id: "i2" } })
+        );
     });
 
     test("onDecided refuse: an item decided since is refused with already-decided and the entry that decided it", async () => {
@@ -510,6 +775,101 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             items: ["i1"],
             entry: { token: first.entry!.token },
         });
+    });
+
+    test("Wave E: the Moment service preserves an explicit request for no tone", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const params = { meeting: REVIEW.id, target: { kind: "item" as const, id: "i1" }, tone: false };
+        const planned = await client.call("moment.plan", params);
+        expect(planned.moment?.tone).toBeUndefined();
+        const clipped = await client.call("moment.clip", params);
+        expect(clipped.tone).toBeUndefined();
+    });
+
+    test("saving a clip keeps audio in the meeting and concurrent repeats share one Context entry", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const params = {
+            meeting: REVIEW.id,
+            target: { kind: "range" as const, fromSec: 2, toSec: 4 },
+            padSec: 0,
+            padAfterSec: 0,
+            tone: false,
+            screen: false,
+        };
+        const cached = await client.call("moment.clip", params);
+        const bytes = await Bun.file(cached.path).arrayBuffer();
+        const saved = await Promise.all(
+            [1, 2].map(() => client.call("moment.save", { ...params, quote: "The selected words" }))
+        );
+        expect(saved[0]!.entry.id).toBe(saved[1]!.entry.id);
+        expect(saved.filter((result) => result.created)).toHaveLength(1);
+        expect(saved[0]!.entry).toMatchObject({
+            kind: "file",
+            ref: saved[0]!.clip.path,
+            note: "The selected words",
+            title: "Clip 00:02–00:04",
+        });
+        expect(saved[0]!.clip.path).toStartWith(`${store.folder(REVIEW.id)}/clips/`);
+        expect(await Bun.file(saved[0]!.clip.path).arrayBuffer()).toEqual(bytes);
+        const reopened = new MeetingStore(store.storage).read(REVIEW.id)!;
+        expect(reopened.context).toEqual([saved[0]!.entry]);
+        expect(reopened.history.filter((entry) => entry.command === "clip save")).toHaveLength(1);
+        const { unlink } = await import("node:fs/promises");
+        await unlink(cached.path);
+        expect(await Bun.file(saved[0]!.clip.path).arrayBuffer()).toEqual(bytes);
+    });
+
+    test("a failed Context write removes only its newly copied clip", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const params = {
+            meeting: REVIEW.id,
+            target: { kind: "range" as const, fromSec: 6, toSec: 7 },
+            padSec: 0,
+            padAfterSec: 0,
+            tone: false,
+            screen: false,
+        };
+        const cached = await client.call("moment.clip", params);
+        const { basename } = await import("node:path");
+        const artifact = join(store.folder(REVIEW.id), "clips", basename(cached.path));
+        const update = store.update;
+        store.update = async () => {
+            throw new Error("simulated Context write failure");
+        };
+        try {
+            expect((await failure(client.call("moment.save", params))).message).toContain(
+                "simulated Context write failure"
+            );
+            expect(await Bun.file(artifact).exists()).toBe(false);
+            expect(await Bun.file(cached.path).exists()).toBe(true);
+            expect(new MeetingStore(store.storage).read(REVIEW.id)!.context).toEqual([]);
+        } finally {
+            store.update = update;
+        }
+    });
+
+    test("a save canceled while waiting for the record lock leaves no artifact or Context entry", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const clip = await client.call("moment.clip", {
+            meeting: REVIEW.id,
+            target: { kind: "range", fromSec: 5, toSec: 6 },
+        });
+        const controller = new AbortController();
+        const update = store.update;
+        store.update = async (...args) => {
+            controller.abort();
+            return update.apply(store, args);
+        };
+        try {
+            await expect(
+                persistClip({ store, record: store.read(REVIEW.id)!, clip, signal: controller.signal })
+            ).rejects.toThrow();
+            const { basename } = await import("node:path");
+            expect(await Bun.file(join(store.folder(REVIEW.id), "clips", basename(clip.path))).exists()).toBe(false);
+            expect(new MeetingStore(store.storage).read(REVIEW.id)!.context).toEqual([]);
+        } finally {
+            store.update = update;
+        }
     });
 
     test("moment.plan answers the Moment, or the target's refusal; moment.clip cuts it into the cache once", async () => {
@@ -547,6 +907,35 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(none).toMatchObject({ code: "unplayable", data: { code: "unplayable", reason: "no-audio" } });
     });
 
+    test("a receiver reads comments explicitly; only unread comments can be withdrawn", async () => {
+        const { client, store } = await ADAPTERS[kind](agentHello);
+        await client.call("comment.stage", {
+            meeting: REVIEW.id,
+            target: { kind: "time", atSec: 2 },
+            text: "Read this",
+        });
+        await client.call("comment.stage", {
+            meeting: REVIEW.id,
+            target: { kind: "time", atSec: 3 },
+            text: "Withdraw this",
+        });
+        await client.call("comment.send", { meeting: REVIEW.id });
+        const read = await client.call("comment.read", { meeting: REVIEW.id, id: "c1" });
+        expect(read.readAt).toBe(NOW.toISOString());
+        expect(await failure(client.call("comment.withdraw", { meeting: REVIEW.id, id: "c1" }))).toMatchObject({
+            code: "already-read",
+        });
+        const withdrawn = await client.call("comment.withdraw", { meeting: REVIEW.id, id: "c2" });
+        expect(withdrawn.withdrawnAt).toBe(NOW.toISOString());
+        expect(await failure(client.call("comment.read", { meeting: REVIEW.id, id: "c2" }))).toMatchObject({
+            code: "withdrawn-comment",
+        });
+        expect(MeetingComments.of(store, REVIEW.id).list()).toMatchObject([
+            { id: "c1", readAt: NOW.toISOString() },
+            { id: "c2", withdrawnAt: NOW.toISOString() },
+        ]);
+    });
+
     test("comments: staged until sent, sent to the listeners with a journal entry and comment.sent, and never taken back", async () => {
         const { client, store } = await ADAPTERS[kind](agentHello);
         const heard: MeetingsEventMessage[] = [];
@@ -560,6 +949,11 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         });
         await client.call("comment.stage", { meeting: REVIEW.id, target: { kind: "time", atSec: 4 }, text: "Drop it" });
         const unstaged = await client.call("comment.unstage", { meeting: REVIEW.id, id: "c2" });
+        expect(await client.call("comment.send", { meeting: REVIEW.id, requireListener: true })).toEqual({
+            sent: [],
+            listeners: [],
+        });
+        expect(MeetingComments.of(store, REVIEW.id).list()[0]?.state).toBe("staged");
         MeetingComments.of(store, REVIEW.id, { now: () => NOW }).join({ pid: LISTENER_PID, actor: { kind: "listen" } });
         const listed = await client.call("comment.list", { meeting: REVIEW.id });
         const sent = await client.call("comment.send", { meeting: REVIEW.id, reason: "for the next round" });
@@ -680,6 +1074,16 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         });
     });
 
+    test("a person's meetings are complete and available through either adapter", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const history = await client.call("people.meetings", { person: "Alex Example" });
+        expect(history.person.name).toBe("Alex Example");
+        expect(history.meetings.map((meeting) => meeting.meeting)).toEqual([REVIEW.id]);
+        expect(history.meetings[0]?.as).toContain("participant");
+        const unknown = await failure(client.call("people.meetings", { person: "Nobody Example" }));
+        expect(unknown).toMatchObject({ code: "unknown-person" });
+    });
+
     test("the timeline reads: line ends, speakers, screen, waveform; and the overview", async () => {
         const { client } = await ADAPTERS[kind]();
         const transcript = await client.call("meeting.transcript", { ref: REVIEW.id });
@@ -702,6 +1106,35 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(screen).toEqual({ meeting: REVIEW.id, recorded: false, displays: [], frames: [] });
         expect(waveform).toEqual({ meeting: REVIEW.id, fromSec: 0, toSec: 10, peaks: [0.25, 0.25, 1, 0.25, 0.25] });
         expect(overview.meetings.map((one) => one.id)).toEqual([RETRO.id, REVIEW.id]);
+    });
+
+    test("manual assignment pairs only its meeting and Undo removes only its own source", async () => {
+        const { client, store, config } = await ADAPTERS[kind]();
+        await config.addProject("Atlas");
+        await store.update(RETRO.id, { command: "test", change: "another project meeting" }, (record) => {
+            record.project = "Atlas";
+            record.participants = [{ name: "Bob Example", from: ["calendar"] }];
+        });
+        const receipt = await client.call("projects.pairFromMeetings", { project: "Atlas", meeting: REVIEW.id });
+        expect(receipt.paired.map((person) => person.name)).toEqual(["Alex Example"]);
+        const added = receipt.paired[0];
+        if (!added) {
+            throw new Error("pairing receipt missing");
+        }
+        const later = { kind: "calendar" as const, from: "calendar", entryId: "later", at: NOW.toISOString() };
+        await config.pairPeople({ project: "Atlas", people: [{ name: added.name }], by: later });
+        expect(
+            await client.call("projects.unpair", { project: "Atlas", person: { name: added.name }, by: added.by })
+        ).toEqual({ removed: [{ name: added.name, project: "Atlas", left: false }] });
+        expect((await new MeetingsConfigStore(config.storage).read()).projects.Atlas?.match?.people).toEqual([
+            { name: added.name, pairedBy: [later] },
+        ]);
+        expect(
+            (await client.call("projects.meetingPeople", { project: "Atlas" })).map((person) => person.name)
+        ).toEqual(["Bob Example"]);
+        const moved = await failure(client.call("projects.pairFromMeetings", { project: "Other", meeting: REVIEW.id }));
+        expect(moved.message).toContain("no longer has project Other");
+        expect(moved).toMatchObject({ code: "project-changed" });
     });
 
     test("the projects: add, labels, preview, rename, unpair and remove answer what their commands print", async () => {
@@ -752,6 +1185,43 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect((await failure(client.call("projects.unpair", { project: "Harbor" }))).message).toContain(
             "Name a calendar entry"
         );
+
+        // The design review has Harbor and names Alex (a participant and a named speaker) and the owner: Alex is offered.
+        expect(await client.call("projects.meetingPeople", { project: "Harbor" })).toEqual([
+            {
+                name: "Alex Example",
+                meetings: 1,
+                last: { id: REVIEW.id, title: "Design review", start: "2026-11-03T09:00:00.000Z" },
+            },
+        ]);
+        expect((await failure(client.call("projects.meetingPeople", { project: "Nowhere" }))).message).toContain(
+            "No project Nowhere"
+        );
+        const paired = await client.call("projects.pairFromMeetings", { project: "Harbor" });
+        expect(paired).toEqual({
+            project: "Harbor",
+            paired: [
+                {
+                    name: "Alex Example",
+                    by: {
+                        kind: "manual",
+                        at: NOW.toISOString(),
+                        note: "from the meeting “Design review” on 2026-11-03",
+                    },
+                },
+            ],
+        });
+        expect((await config.read()).projects.Harbor?.match?.people.map((one) => one.name)).toEqual(["Alex Example"]);
+        expect(await client.call("projects.meetingPeople", { project: "Harbor" })).toEqual([]);
+        expect(await client.call("projects.unpair", { project: "Harbor", person: { name: "Alex Example" } })).toEqual({
+            removed: [{ project: "Harbor", name: "Alex Example", left: true }],
+        });
+
+        const suggestions = await client.call("projects.suggestions", {});
+        expect(suggestions.folders.wisprflow).toEqual({ values: ["Design", "Ops"], from: "source" });
+        expect(suggestions.calendars).toEqual({ values: ["Home", "Work"] });
+        expect(suggestions.labels).toEqual(["Checkout"]);
+        expect(suggestions.titleWords).toEqual(["Design", "Retro", "review"]);
 
         expect((await failure(client.call("projects.remove", { name: "Harbor" }))).message).toContain(
             `1 meeting has the project Harbor: ${REVIEW.id}`
@@ -861,53 +1331,75 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
     });
 });
 
-describe("the socket client's subscription", () => {
-    // The dedicated service now supports unsubscribe. Stopping the last listener must stop events on the wire;
-    // an empty subscribe would still hear every meeting.
-    test("the last listener's stop leaves the connection subscribed to nothing, not to every event", async () => {
-        const { service } = await startService();
-        const sent = spyOn(RpcSocketClient.prototype, "call");
-        let unsubscribe: unknown;
-
-        try {
-            const client = await SocketMeetingsClient.connect(service.entry, hello);
-            closing.push(() => client.close());
-            const stop = await client.subscribe({ meeting: REVIEW.id, events: ["meeting.changed"] }, () => {});
-            stop();
-            // The socket answers in order: the stop's unsubscribe went out before this call.
-            await client.call("meetings.list", { limit: 1 });
-            unsubscribe = sent.mock.calls.filter(([method]) => method === UNSUBSCRIBE).at(-1)?.[1];
-        } finally {
-            sent.mockRestore();
-        }
-
-        expect(unsubscribe).toEqual({});
-
-        // What unsubscribe hears on the wire, beside what the old empty subscription heard.
-        const heard = async (stop: boolean): Promise<number> => {
-            const raw = await RpcSocketClient.connect({
-                socket: service.entry.socket,
-                logScope: "test",
-                label: "test",
-            });
-            closing.push(() => raw.close());
-            let count = 0;
-            raw.onNotification(() => {
-                count += 1;
-            });
-            await raw.call("hello", hello);
-            await raw.call("subscribe", { events: [] });
-            if (stop) {
-                await raw.call(UNSUBSCRIBE, {});
-            }
-            service.emit("meeting.changed", { meeting: RETRO.id, parts: ["show"] });
-            await raw.call("meetings.list", { limit: 1 });
-            return count;
-        };
-
-        expect(await heard(false)).toBe(1);
-        expect(await heard(true)).toBe(0);
+test("an unreadable config omits the row patch without blocking a decision", async () => {
+    const { store, linkedSource } = scratchStore();
+    const client = new InProcessMeetingsClient({
+        hello,
+        deps: {
+            ...quietDeps,
+            store: () => store,
+            linkedSource,
+            config: async () => {
+                throw new Error("fixture config unreadable");
+            },
+        },
     });
+    try {
+        const result = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+        });
+        expect(result.entry?.decided).toEqual(["i1"]);
+        expect(result.rows).toBeUndefined();
+        expect(new MeetingStore(store.storage).read(REVIEW.id)?.items[0]?.status).toBe("confirmed");
+    } finally {
+        client.close();
+    }
+});
+
+test("the last listener's stop leaves the connection subscribed to nothing, not to every event", async () => {
+    const { service } = await startService();
+    const sent = spyOn(RpcSocketClient.prototype, "call");
+    let unsubscribe: unknown;
+
+    try {
+        const client = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => client.close());
+        const stop = await client.subscribe({ meeting: REVIEW.id, events: ["meeting.changed"] }, () => {});
+        stop();
+        // The socket answers in order: the stop's unsubscribe went out before this call.
+        await client.call("meetings.list", { limit: 1 });
+        unsubscribe = sent.mock.calls.filter(([method]) => method === UNSUBSCRIBE).at(-1)?.[1];
+    } finally {
+        sent.mockRestore();
+    }
+
+    expect(unsubscribe).toEqual({});
+
+    // What unsubscribe hears on the wire, beside what the old empty subscription heard.
+    const heard = async (stop: boolean): Promise<number> => {
+        const raw = await RpcSocketClient.connect({
+            socket: service.entry.socket,
+            logScope: "test",
+            label: "test",
+        });
+        closing.push(() => raw.close());
+        let count = 0;
+        raw.onNotification(() => {
+            count += 1;
+        });
+        await raw.call("hello", hello);
+        await raw.call("subscribe", { events: [] });
+        if (stop) {
+            await raw.call(UNSUBSCRIBE, {});
+        }
+        service.emit("meeting.changed", { meeting: RETRO.id, parts: ["show"] });
+        await raw.call("meetings.list", { limit: 1 });
+        return count;
+    };
+
+    expect(await heard(false)).toBe(1);
+    expect(await heard(true)).toBe(0);
 });
 
 describe("the Meetings service's connections", () => {
@@ -935,6 +1427,16 @@ describe("the Meetings service's connections", () => {
         expect(otherCode.message).toBe(`the meetings service runs the code of another checkout (${CODE})`);
     });
 
+    test("a subscription before hello is refused without registering it", async () => {
+        const { service } = await startService();
+        const raw = await rawConnection(service.entry.socket);
+        const early = await raw.request(SUBSCRIBE, { events: ["meeting.changed"] });
+        expect(early.reply.error).toMatchObject({ data: { code: "no-hello" } });
+        service.emit("meeting.changed", { meeting: REVIEW.id, parts: ["show"] });
+        await raw.request("hello", { role: "window", protocol: MEETINGS_PROTOCOL });
+        expect(raw.lines.filter((line) => line.method === "meeting.changed")).toEqual([]);
+    });
+
     test("the service refuses a meeting filter that does not read, and after unsubscribe a connection hears nothing", async () => {
         const { service } = await startService();
         const raw = await rawConnection(service.entry.socket);
@@ -958,6 +1460,56 @@ describe("the Meetings service's connections", () => {
         const second = await startMeetingsService({ dir, idleMs: 0, code: CODE, rivalWaitMs: 500, watch: false });
 
         expect(second).toMatchObject({ status: "running", entry: { pid: service.entry.pid, code: CODE } });
+    });
+
+    test("the people book invalidates Contacts even on a meeting-scoped subscription", async () => {
+        const folder = fakeFolderEvents();
+        const { service, store } = await startService({ watch: { subscribe: folder.subscribe, coalesceMs: 0 } });
+        const client = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => client.close());
+        const heard = eventQueue();
+        await client.subscribe({ meeting: REVIEW.id, events: ["people.changed"] }, heard.push);
+        folder.raise(join(store.root, "people.json"));
+        expect(await heard.next()).toEqual({ method: "people.changed", params: {} });
+    });
+
+    test("folder watch accepts canonical and aliased paths beneath the hidden data root", async () => {
+        const scratch = realpathSync(mkdtempSync(join(tmpdir(), "mtg-watch-")));
+        const actualRoot = join(scratch, ".genesis-tools", "meetings");
+        mkdirSync(join(actualRoot, "fixture"), { recursive: true });
+        const root = join(scratch, "linked-meetings");
+        symlinkSync(actualRoot, root, "dir");
+        const source = fakeFolderEvents();
+        const heard = eventQueue();
+        const watcher = new MeetingsFolderWatch({
+            root,
+            emit: () => {},
+            commentsChanged: (meeting) => heard.push({ method: "comment.changed", params: { meeting } }),
+            subscribe: source.subscribe,
+            coalesceMs: 0,
+        });
+        await watcher.start();
+        try {
+            for (const eventRoot of [actualRoot, root]) {
+                source.raise(join(eventRoot, "fixture", "comments.ndjson"));
+                expect(await heard.next()).toEqual({ method: "comment.changed", params: { meeting: "fixture" } });
+            }
+            source.raise(join(scratch, "outside", "comments.ndjson"));
+            expect(heard.left()).toEqual([]);
+        } finally {
+            await watcher.stop();
+        }
+    });
+
+    test("listener journal changes refresh the meeting's comment receiver state", async () => {
+        const folder = fakeFolderEvents();
+        const { service, store } = await startService({ watch: { subscribe: folder.subscribe, coalesceMs: 0 } });
+        const client = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => client.close());
+        const heard = eventQueue();
+        await client.subscribe({ meeting: REVIEW.id, events: ["comment.changed"] }, heard.push);
+        folder.raise(join(store.folder(REVIEW.id), "comments.ndjson"));
+        expect(await heard.next()).toEqual({ method: "comment.changed", params: { meeting: REVIEW.id } });
     });
 
     test("the folder watch tells meeting.changed for a write outside the service, once per meeting and burst, and never for its own decisions, clips or journal lines", async () => {
@@ -992,6 +1544,16 @@ describe("the Meetings service's connections", () => {
         expect(await heard.next()).toMatchObject({ method: "decision.applied", params: { meeting: REVIEW.id } });
         // Its record write raised with another meeting's frame: only the frame tells.
         folder.raise(file(REVIEW.id, MEETING_FILE), file(RETRO.id, "frames", "0001.png"));
+        expect(await heard.next()).toEqual({
+            method: "meeting.changed",
+            params: { meeting: RETRO.id, parts: ["timeline"] },
+        });
+        await client.call("moment.save", { meeting: REVIEW.id, target: { kind: "range", fromSec: 2, toSec: 4 } });
+        expect(await heard.next()).toEqual({
+            method: "meeting.changed",
+            params: { meeting: REVIEW.id, parts: ["show"] },
+        });
+        folder.raise(file(REVIEW.id, MEETING_FILE), file(RETRO.id, "frames", "0002.png"));
         expect(await heard.next()).toEqual({
             method: "meeting.changed",
             params: { meeting: RETRO.id, parts: ["timeline"] },
@@ -1154,7 +1716,23 @@ interface Example {
 
 /** Every example of the fixture, from a live service on a scratch store over raw sockets. */
 async function captureExamples(): Promise<Example[]> {
-    const { service, store, config } = await startService();
+    const timingRoot = mkdtempSync(join(tmpdir(), "mtg-protocol-words-"));
+    const model = join(timingRoot, "model.onnx");
+    writeFileSync(model, "fixture-model");
+    const modelFiles = [wordTimingFile(model)];
+    const { service, store, config } = await startService({
+        deps: {
+            wordTimings: {
+                cache: new WordTimingCache(join(timingRoot, "cache")),
+                modelFiles: async () => modelFiles,
+                infer: async () => ({
+                    words: [{ text: "Let", startSec: 2.1, endSec: 2.4 }],
+                    pcmSha256: "fixture-pcm",
+                    modelFiles,
+                }),
+            },
+        },
+    });
     const examples: Example[] = [];
     const ask = async (
         connection: Awaited<ReturnType<typeof rawConnection>>,
@@ -1180,12 +1758,35 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meeting.show", { ref: "nope" }, "No meeting: meeting-not-found.");
     await ask(window, "meeting.show", { ref: "2026-11-03" }, "A prefix of two meetings: meeting-ref.");
     await ask(window, "meeting.transcript", { ref: REVIEW.id });
+    await ask(window, "meeting.wordTimings.generate", {
+        ref: REVIEW.id,
+        fromSec: 0,
+        toSec: 12,
+        model: "fixture/words",
+    });
     await ask(window, "meeting.transcript", { ref: RETRO.id }, "No transcript source: a meeting state.");
     await ask(window, "meeting.revisions", { ref: REVIEW.id });
     await ask(window, "meetings.list", { limit: 0 }, "A bad param: -32602 before any handler.");
     await ask(window, SUBSCRIBE, { meeting: REVIEW.id, events: ["meeting.changed"] });
+    await ask(window, SUBSCRIBE, {
+        meeting: REVIEW.id,
+        events: ["meeting.changed", "people.changed", "meeting.wordTimings.changed"],
+    });
     service.emit("meeting.changed", { meeting: REVIEW.id, parts: ["show", "transcript"] });
+    service.emit("people.changed", {});
+    service.emit("meeting.wordTimings.changed", { meeting: REVIEW.id, revision: "fixture-revision" });
     await ask(window, "meetings.list", { limit: 1 }, "Sent after the event, so the event is in before its reply.");
+
+    examples.push({
+        method: "people.changed",
+        direction: "service→client",
+        notification: window.lines.find((line) => line.method === "people.changed"),
+    });
+    examples.push({
+        method: "meeting.wordTimings.changed",
+        direction: "service→client",
+        notification: window.lines.find((line) => line.method === "meeting.wordTimings.changed"),
+    });
     const notification = window.lines.find((line) => line.method === "meeting.changed");
     examples.push({
         method: "meeting.changed",
@@ -1263,6 +1864,7 @@ async function captureExamples(): Promise<Example[]> {
         { meeting: REVIEW.id, target: { kind: "time", atSec: 9 } },
         "Cut into the clip cache."
     );
+
     await ask(window, "meeting.audio", { meeting: REVIEW.id }, "One track: the window plays the file itself.");
     await ask(
         window,
@@ -1302,6 +1904,33 @@ async function captureExamples(): Promise<Example[]> {
     );
     await ask(window, "meeting.speakers", { meeting: REVIEW.id }, "Talk time per label, its spans, and the hints.");
     await ask(window, "meeting.screen", { meeting: REVIEW.id }, "No screen recording: no frames, no pane.");
+    await ask(window, "meeting.timeline", { meeting: REVIEW.id }, "No screen recording: a useful read failure.");
+    const frameFolder = store.folder(RETRO.id);
+    mkdirSync(join(frameFolder, "frames"), { recursive: true });
+    // A one-pixel PNG is enough to verify the image metadata and pixel-box contract.
+    writeFileSync(
+        join(frameFolder, "frames/screen.png"),
+        Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jP/0AAAAASUVORK5CYII=",
+            "base64"
+        )
+    );
+    writeFileSync(
+        join(frameFolder, "ocr.jsonl"),
+        `${SafeJSON.stringify({
+            file: "frames/screen.png",
+            at: RETRO.start,
+            displayId: 1,
+            text: "Agenda",
+            blocks: [{ text: "Agenda", confidence: 1, bounds: { x: 0, y: 0, width: 1, height: 1 } }],
+        })}\n`
+    );
+    await ask(
+        window,
+        "meeting.timeline",
+        { meeting: RETRO.id, frame: "frames/screen.png" },
+        "A frame with all OCR boxes."
+    );
     await ask(
         window,
         "meeting.waveform",
@@ -1333,12 +1962,26 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "comment.send", { meeting: REVIEW.id }, "Every staged comment; the journal keeps the entry.");
     await ask(window, "comment.unstage", { meeting: REVIEW.id, id: "c1" }, "A sent comment: already-sent.");
     await ask(window, "comment.send", { meeting: REVIEW.id, ids: ["c7"] }, "No such comment: unknown-comment.");
+    await ask(window, SUBSCRIBE, { meeting: REVIEW.id, events: ["comment.changed"] });
+    await ask(window, "comment.read", { meeting: REVIEW.id, id: "c1" }, "A receiver acknowledges the first comment.");
+    await ask(window, "comment.withdraw", { meeting: REVIEW.id, id: "c1" }, "An acknowledged comment: already-read.");
+    await ask(window, "comment.stage", { meeting: REVIEW.id, target: selection, text: "Withdraw before reading" });
+    await ask(window, "comment.send", { meeting: REVIEW.id, ids: ["c3"] });
+    await ask(window, "comment.withdraw", { meeting: REVIEW.id, id: "c3" });
+    await ask(window, "comment.read", { meeting: REVIEW.id, id: "c3" }, "The withdrawal won: withdrawn-comment.");
+    await ask(window, "comment.list", { meeting: REVIEW.id }, "Read receipts and withdrawals survive reopening.");
+    examples.push({
+        method: "comment.changed",
+        direction: "service→client",
+        notification: window.lines.find((line) => line.method === "comment.changed"),
+    });
     await ask(
         window,
         "people.known",
         { query: "ex", meeting: REVIEW.id, atSec: 9 },
         "The person picker's list: ranked for the meeting and the moment, with each source's state; nothing preselected."
     );
+    await ask(window, "people.meetings", { person: "Alex Example" }, "All meetings where this person appears.");
     await ask(
         window,
         "people.add",
@@ -1458,6 +2101,24 @@ async function captureExamples(): Promise<Example[]> {
         { project: "Atlas", person: { name: "Alex Example", email: "alex@example.com" } },
         "One person from one project: nothing when they were not paired."
     );
+    await ask(
+        window,
+        "projects.suggestions",
+        {},
+        "The values the rule fields offer: each source's folders, the Calendar app's calendars, words and labels in use."
+    );
+    await ask(
+        window,
+        "projects.meetingPeople",
+        { project: "Atlas" },
+        "The people of the project's meetings not paired with it yet."
+    );
+    await ask(
+        window,
+        "projects.pairFromMeetings",
+        { project: "Atlas", people: [{ name: "Alex Example" }] },
+        "Pair one of them; a person not on a calendar entry is paired by hand, with the meeting in the note."
+    );
     await ask(window, "projects.rename", { from: "Atlas", to: "Harbor" }, "Its settings, pairings and meetings.");
     await ask(
         window,
@@ -1495,9 +2156,9 @@ async function captureExamples(): Promise<Example[]> {
     );
     await ask(
         window,
-        "decision.apply",
-        { meeting: REVIEW.id, action: { kind: "answer", question: "i999", answer: "fixture" } },
-        "An unknown question is refused by its handler: failed."
+        "moment.save",
+        { meeting: REVIEW.id, target: { kind: "range", fromSec: 2, toSec: 4 }, quote: "Saved words" },
+        "Keep audio outside the temporary clip cache and publish its Context entry."
     );
     return examples;
 }
@@ -1515,53 +2176,28 @@ function normalized(examples: Example[]): unknown {
             .replace(/"(path)":"[^"]*?(\/meetings-cache\/[^"]*?)-[0-9a-z]+\.wav"/g, '"$1":"<home>$2-<key>.wav"')
             .replace(/"path":"[^"]*\/upload\.ogg"/g, '"path":"<recording>"')
             .replace(/"path":"[^"]*\/meetings\/config\.json"/g, '"path":"<config>"')
+            .replace(
+                /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-[0-9a-z]+\.wav"/g,
+                '"$1":"<meetings>/$2-<key>.wav"'
+            )
             // A removed project's backup: under the sandbox home, named by the local time of the removal.
             .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
             .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"')
+            .replace(
+                /"(cacheRevision|revision|audioFingerprint|modelFingerprint|id)":"[a-f0-9]{64}"/g,
+                '"$1":"<timing-hash>"'
+            )
+            // An error's stack names this checkout's paths and line numbers.
+            .replace(
+                /"(path|folder)":"[^"\n]*\/(2026-11-03-1400-retro(?:\/frames\/screen\.png)?)"/g,
+                '"$1":"<meetings>/$2"'
+            )
+            .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
             // A file preset's availability is the host's (/System/Library/Sounds is on a Mac only).
             .replace(/"available":(true|false)/g, '"available":"<host>"'),
         { strict: true }
     );
 }
-
-// eve PR #754 r2: --detach always started exactly `meetings serve`, so `--detach --no-idle` got a service that exits
-// after ten idle minutes.
-describe("tools meetings serve --detach", () => {
-    test.each([
-        [
-            ["serve", "--detach", "--no-idle"],
-            ["meetings", "serve", "--no-idle"],
-        ],
-        [
-            ["serve", "--detach"],
-            ["meetings", "serve"],
-        ],
-    ])("%p starts %p", async (args, command) => {
-        const entry: serviceHost.ServiceEntry = {
-            version: 1,
-            protocol: 1,
-            pid: 1,
-            socket: "/fixture.sock",
-            startedAt: "2026-11-10T00:00:00.000Z",
-            codeStamp: 0,
-        };
-        const launch = spyOn(serviceHost, "launchService").mockResolvedValue({ status: "running", entry });
-        const result = spyOn(out, "result").mockImplementation(() => undefined);
-
-        try {
-            const program = new Command().exitOverride();
-            registerServeCommand(program);
-            await program.parseAsync(args, { from: "user" });
-
-            expect(launch).toHaveBeenCalledTimes(1);
-            expect(launch.mock.calls[0][0].command).toEqual(command);
-            expect(result).toHaveBeenCalledWith(entry);
-        } finally {
-            launch.mockRestore();
-            result.mockRestore();
-        }
-    });
-});
 
 describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
     test("a live service on the scratch store answers every example as the fixture holds it", async () => {
@@ -1573,7 +2209,19 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
             const document = {
                 protocol: MEETINGS_PROTOCOL,
                 about: "One real request and reply per Meetings service method and event (src/meetings/lib/service/api.ts), captured over raw sockets from the TypeScript service on a scratch store with invented meetings. The Swift client tests decode these; src/meetings/lib/service/service.test.ts checks every one against the method's schemas and against a live service. Regenerate: set examples to [] and run bun run test src/meetings/lib/service/service.test.ts",
-                examples: captured,
+                examples: SafeJSON.parse(
+                    SafeJSON.stringify(captured, { strict: true })
+                        .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
+                        .replace(
+                            /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-[0-9a-z]+\.wav"/g,
+                            '"$1":"<meetings>/$2-<key>.wav"'
+                        )
+                        .replace(
+                            /"(path|folder)":"[^"\n]*\/(2026-11-03-1400-retro(?:\/frames\/screen\.png)?)"/g,
+                            '"$1":"<meetings>/$2"'
+                        ),
+                    { strict: true }
+                ),
             };
             mkdirSync(join(import.meta.dir, "__fixtures__"), { recursive: true });
             writeFileSync(path, `${SafeJSON.stringify(document, { strict: true }, 2)}\n`);
@@ -1633,11 +2281,13 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
                 "already-decided",
                 "ambiguous-person",
                 "dictionary-exists",
-                "failed",
                 "project-in-use",
+                "failed",
                 "unplayable",
                 "unknown-comment",
                 "already-sent",
+                "already-read",
+                "withdrawn-comment",
                 "unknown-person",
                 "unknown-merge",
                 "code-mismatch",
@@ -1652,8 +2302,312 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
 
     test("service.json names the service's protocol and code", async () => {
         const { dir } = await startService();
-        const entry = SafeJSON.parse(await Bun.file(serviceHost.serviceEntryPath(dir)).text(), { strict: true });
+        const entry = SafeJSON.parse(await Bun.file(serviceEntryPath(dir)).text(), { strict: true });
 
         expect(entry).toMatchObject({ version: 1, protocol: MEETINGS_PROTOCOL, code: CODE });
+    });
+});
+
+describe("explicit word timing generation", () => {
+    function setup() {
+        const root = mkdtempSync(join(tmpdir(), "mtg-words-"));
+        const audioPath = join(root, "audio.wav"),
+            model = join(root, "model.onnx");
+        writeFileSync(audioPath, "audio");
+        writeFileSync(model, "model");
+        const input: WordTimingInput = {
+            audioPath,
+            live: false,
+            lines: [{ id: "l1", text: "alpha beta", startSec: 0, endSec: 2 }],
+        };
+        const cache = new WordTimingCache(join(root, "cache"));
+        const modelFiles = [wordTimingFile(model)];
+        let calls = 0;
+        const deps: WordTimingGenerateDeps = {
+            read: async () => input,
+            cache,
+            modelFiles: async () => modelFiles,
+            infer: async () => {
+                calls++;
+                return { words: [{ text: "alpha", startSec: 0.1, endSec: 0.4 }], pcmSha256: "fake-pcm", modelFiles };
+            },
+        };
+        const options = { meeting: "test-meeting", window: { fromSec: 0, toSec: 2 }, model: "test/words" };
+        return {
+            input,
+            cache,
+            deps,
+            options,
+            modelFiles,
+            get calls() {
+                return calls;
+            },
+        };
+    }
+
+    test("model provenance follows the runtime cache even when a separate hub copy exists", async () => {
+        const root = mkdtempSync(join(tmpdir(), "mtg-model-caches-"));
+        const runtime = join(root, "runtime");
+        const hub = join(root, "hub", "models--test--words");
+        const model = join(runtime, "test", "words");
+        mkdirSync(model, { recursive: true });
+        mkdirSync(hub, { recursive: true });
+        writeFileSync(join(model, "weights.onnx"), "actual");
+        writeFileSync(join(hub, "weights.onnx"), "unrelated");
+        const files = wordTimingModelFiles(runtime, "test/words");
+        expect(files.map((file) => file.path)).toEqual([join(model, "weights.onnx")]);
+        expect(() => wordTimingModelFiles(join(root, "missing"), "test/words")).toThrow("not cached");
+        const f = setup();
+        f.deps.modelFiles = async () => files;
+        f.deps.infer = async () => ({ words: [], pcmSha256: "fake-pcm", modelFiles: files });
+        await generateWordTimings(f.options, f.deps);
+        writeFileSync(join(model, "weights.onnx"), "changed actual");
+        expect(f.cache.read(f.input.lines).wordTimings.state).toBe("stale");
+    });
+
+    test("generates, reopens and reuses the completed result without more inference", async () => {
+        const f = setup();
+        const first = await generateWordTimings(f.options, f.deps);
+        expect(first.reused).toBe(false);
+        expect(first.coverage.matchedWords).toBe(1);
+        const reopened = new WordTimingCache(f.cache.folder).read(f.input.lines);
+        expect(reopened.entries[0].words?.[0].startSec).toBe(0.1);
+        const second = await generateWordTimings(f.options, f.deps);
+        expect(second.reused).toBe(true);
+        expect(second.cacheRevision).toBe(first.cacheRevision);
+        expect(f.calls).toBe(1);
+    });
+
+    test("a correction reuses raw evidence but publishes only matches to current text", async () => {
+        const f = setup();
+        await generateWordTimings(f.options, f.deps);
+        f.input.lines[0].text = "different beta";
+        const next = await generateWordTimings(f.options, f.deps);
+        expect(next.reused).toBe(true);
+        expect(next.coverage.matchedWords).toBe(0);
+        expect(f.calls).toBe(1);
+        expect(f.cache.read(f.input.lines).entries[0].words).toBeUndefined();
+    });
+
+    test("one cancelled waiter does not cancel another equal request", async () => {
+        const f = setup();
+        let started!: () => void, finish!: () => void;
+        const entered = new Promise<void>((resolve) => {
+            started = resolve;
+        });
+        const gate = new Promise<void>((resolve) => {
+            finish = resolve;
+        });
+        let calls = 0;
+        f.deps.infer = async (_input, signal) => {
+            calls++;
+            started();
+            await gate;
+            signal.throwIfAborted();
+            return {
+                words: [{ text: "alpha", startSec: 0.1, endSec: 0.4 }],
+                pcmSha256: "fake-pcm",
+                modelFiles: f.modelFiles,
+            };
+        };
+        const abort = new AbortController();
+        const first = generateWordTimings({ ...f.options, signal: abort.signal }, f.deps);
+        const firstRejected = first.then(
+            () => false,
+            () => true
+        );
+        const second = generateWordTimings(f.options, f.deps);
+        await entered;
+        abort.abort(new Error("cancel first waiter"));
+        expect(await firstRejected).toBe(true);
+        finish();
+        expect((await second).coverage.matchedWords).toBe(1);
+        expect(calls).toBe(1);
+    });
+
+    test("last waiter cancellation reaches inference and publishes no cache", async () => {
+        const f = setup();
+        let started!: () => void, killed!: () => void;
+        const entered = new Promise<void>((resolve) => {
+            started = resolve;
+        });
+        const stopped = new Promise<void>((resolve) => {
+            killed = resolve;
+        });
+        f.deps.infer = async (_input, signal) => {
+            started();
+            return new Promise((_resolve, reject) =>
+                signal.addEventListener(
+                    "abort",
+                    () => {
+                        killed();
+                        reject(signal.reason);
+                    },
+                    { once: true }
+                )
+            );
+        };
+        const abort = new AbortController();
+        const task = generateWordTimings({ ...f.options, signal: abort.signal }, f.deps);
+        const rejected = task.then(
+            () => false,
+            () => true
+        );
+        await entered;
+        abort.abort(new Error("stop generation"));
+        expect(await rejected).toBe(true);
+        await stopped;
+        expect(f.cache.read(f.input.lines).wordTimings.state).toBe("missing");
+    });
+
+    test("an immediate retry gets a fresh job while the cancelled worker is still settling", async () => {
+        const f = setup();
+        let entered!: () => void, release!: () => void;
+        const started = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        const hold = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+
+        let calls = 0;
+        f.deps.infer = async (_input, signal) => {
+            calls++;
+            if (calls === 1) {
+                entered();
+                await hold;
+                signal.throwIfAborted();
+            }
+            return {
+                words: [{ text: "alpha", startSec: 0.1, endSec: 0.4 }],
+                pcmSha256: "fake-pcm",
+                modelFiles: f.modelFiles,
+            };
+        };
+        const abort = new AbortController();
+        const first = generateWordTimings({ ...f.options, signal: abort.signal }, f.deps).catch(() => undefined);
+        await started;
+        abort.abort();
+        await first;
+        const retry = generateWordTimings(f.options, f.deps);
+        const outcome = retry.then(
+            (value) => ({ value }),
+            (error: unknown) => ({ error })
+        );
+        // Flush the retry's resolved read/model awaits before releasing the old worker.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        release();
+        const result = await outcome;
+        expect(result).toHaveProperty("value.coverage.matchedWords", 1);
+        expect(calls).toBe(2);
+    });
+
+    test("an immediate retry retires a deadline-expired worker before it settles", async () => {
+        const f = setup();
+        const deadline = new AbortController();
+        const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+        const clock = spyOn(AbortSignal, "timeout").mockImplementation((ms) =>
+            ms === 120_000 ? deadline.signal : originalTimeout(ms)
+        );
+        let entered!: () => void, release!: () => void;
+        const started = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        const hold = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let calls = 0;
+        f.deps.infer = async (_input, signal) => {
+            calls++;
+            if (calls === 1) {
+                entered();
+                await hold;
+                signal.throwIfAborted();
+            }
+            return {
+                words: [{ text: "alpha", startSec: 0.1, endSec: 0.4 }],
+                pcmSha256: "fake-pcm",
+                modelFiles: f.modelFiles,
+            };
+        };
+        try {
+            const first = generateWordTimings(f.options, f.deps).catch(() => undefined);
+            await started;
+            deadline.abort(new Error("deadline expired"));
+            clock.mockRestore();
+            const retry = generateWordTimings(f.options, f.deps);
+            const outcome = retry.then(
+                (value) => ({ value }),
+                (error: unknown) => ({ error })
+            );
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            release();
+            await first;
+            expect(await outcome).toHaveProperty("value.coverage.matchedWords", 1);
+            expect(calls).toBe(2);
+        } finally {
+            release?.();
+            clock.mockRestore();
+        }
+    });
+
+    test("a changed transcript during inference cannot publish stale timing ranges", async () => {
+        const f = setup();
+        f.deps.infer = async () => {
+            f.input.lines[0].text = "changed";
+            return { words: [], pcmSha256: "fake-pcm", modelFiles: f.modelFiles };
+        };
+        await expect(generateWordTimings(f.options, f.deps)).rejects.toThrow("changed during");
+        expect(f.cache.read(f.input.lines).wordTimings.state).toBe("missing");
+    });
+
+    test("live recordings refuse generation before loading a model", async () => {
+        const f = setup();
+        f.input.live = true;
+        f.deps.modelFiles = async () => {
+            throw new Error("must not load model");
+        };
+        await expect(generateWordTimings(f.options, f.deps)).rejects.toThrow("Stop the recording");
+    });
+
+    test("socket and in-process clients expose the same saved words and emit their own event", async () => {
+        const f = setup();
+        const wordTimings = {
+            cache: f.cache,
+            modelFiles: f.deps.modelFiles,
+            infer: async () => ({
+                words: [{ text: "Let", startSec: 2.1, endSec: 2.4 }],
+                pcmSha256: "fake-pcm",
+                modelFiles: f.modelFiles,
+            }),
+        };
+        const { service, store } = await startService({ deps: { wordTimings } });
+        const socket = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => socket.close());
+        const linked = fakeSource();
+        const direct = new InProcessMeetingsClient({
+            hello,
+            deps: {
+                store: () => store,
+                linkedSource: () => ({ source: linked, sourceMeetingId: "wf-2041" }),
+                ...quietDeps,
+                wordTimings,
+            },
+        });
+        closing.push(() => direct.close());
+        const events = eventQueue();
+        await socket.subscribe({ meeting: REVIEW.id, events: ["meeting.wordTimings.changed"] }, events.push);
+        const generated = await socket.call("meeting.wordTimings.generate", {
+            ref: REVIEW.id,
+            fromSec: 0,
+            toSec: 12,
+            model: "test/words",
+        });
+        expect(generated.coverage.matchedWords).toBe(1);
+        expect((await events.next()).method).toBe("meeting.wordTimings.changed");
+        const fromSocket = await socket.call("meeting.transcript", { ref: REVIEW.id });
+        const fromDirect = await direct.call("meeting.transcript", { ref: REVIEW.id });
+        expect(fromSocket).toEqual(fromDirect);
+        expect(fromSocket.entries[0].words?.[0].range).toEqual({ location: 0, length: 3 });
     });
 });

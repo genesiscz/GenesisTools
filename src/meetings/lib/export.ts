@@ -12,6 +12,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import type { LinkGate } from "@genesiscz/utils/browser-router/link-gate";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import type { ExportIfEdited, MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
@@ -32,6 +33,8 @@ export interface TranscriptMarkdownOptions {
     frontmatter: boolean;
     timestamps: boolean;
     playLinks: boolean;
+    /** Precomputed router facts; otherwise read this machine's gate once for the document. */
+    linkGate?: LinkGate;
 }
 
 /**
@@ -53,7 +56,7 @@ export function transcriptMarkdown(options: TranscriptMarkdownOptions): {
         ...(options.dictionary !== undefined ? { dictionary: options.dictionary } : {}),
     });
     // The links are written even while the router preset is off; the warning says how to make them open.
-    const links = options.playLinks ? playLinksFor(record.id) : undefined;
+    const links = options.playLinks ? playLinksFor(record.id, options.linkGate) : undefined;
     const markdown = transcriptDocument({
         record,
         turns: groupTurns(applied.entries),
@@ -228,6 +231,8 @@ export async function exportMeeting(options: {
     dryRun?: boolean;
     ifEdited?: ExportIfEdited;
     transcript?: TranscriptEntry[];
+    /** Share one router probe across a batch, or supply isolated routing facts for an export. */
+    linkGate?: LinkGate;
 }): Promise<ExportResult> {
     const { record, config, store } = options;
     const folder = exportFolder(config, record, options.to);
@@ -248,6 +253,7 @@ export async function exportMeeting(options: {
         frontmatter: true,
         timestamps: true,
         playLinks: true,
+        ...(options.linkGate ? { linkGate: options.linkGate } : {}),
     });
     const ifEdited = options.ifEdited ?? config.global.export.ifEdited;
     const now = new Date();

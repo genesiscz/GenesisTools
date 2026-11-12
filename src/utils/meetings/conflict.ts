@@ -5,6 +5,8 @@
 export const MEETINGS_CONFLICT_CODES = [
     /** A config value changed since the caller read it (`config set --expect`). */
     "config-stale",
+    /** The meeting no longer belongs to the project a follow-on operation targets. */
+    "project-changed",
     /** The export target holds edits the last export did not write. */
     "export-edited",
     /** The export target is a symlink or not a plain file inside the chosen folder. */

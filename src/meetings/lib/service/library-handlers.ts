@@ -5,9 +5,11 @@ import { testPhrase } from "../dictionary-test";
 import { matchPreview } from "../match-preview";
 import { projectLabels } from "../meeting-fields";
 import { removeProject, renameProject } from "../project-admin";
+import { pairFromMeetings, projectMeetingPeople } from "../project-people";
+import { projectSuggestions, type SuggestionReads } from "../project-suggestions";
 import { dictionaryShowRead } from "../window-reads";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
-import { type MeetingsHandlerDeps, refusal } from "./handlers";
+import { type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
 
 /**
  * The Meetings service's library methods (`projects.*`, `dictionary.*`, `config.edit`): the known projects, the
@@ -103,6 +105,14 @@ export async function unpairProjects(
     }
 
     const { project, person } = params;
+    if (params.by) {
+        return {
+            removed: (await config.unpairSource(project, person, params.by)).map((removed) => ({
+                project,
+                ...removed,
+            })),
+        };
+    }
     const removed = await config.unpairPerson(project, person);
     return {
         removed: removed
@@ -122,6 +132,73 @@ export async function previewProjects(
         config: await configOf(deps).read(),
         ...(params.draft ? { draft: params.draft } : {}),
         limit,
+    });
+}
+
+/** The sources' own folder lists and the Calendar app's calendars, read without asking for a grant. */
+function defaultSuggestionReads(): SuggestionReads {
+    return {
+        sourceFolders: async (source) => (await (await import("../sources")).meetingSource(source)).folders(),
+        calendarNames: async () => {
+            if (process.platform !== "darwin") {
+                return { reason: "The Calendar app exists only on macOS" };
+            }
+
+            const { MacCalendar } = await import("@genesiscz/utils/macos/apple-calendar");
+            const auth = await MacCalendar.authorizationStatus();
+
+            if (auth.status !== "fullAccess") {
+                return {
+                    reason: `Calendar access is "${auth.status}", so only the calendars the meetings name are offered`,
+                };
+            }
+
+            return { names: (await MacCalendar.listCalendarsUnguarded()).map((calendar) => calendar.title) };
+        },
+    };
+}
+
+export async function suggestProjectValues(
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<MeetingsResult<"projects.suggestions">> {
+    return projectSuggestions({
+        records: store.listBounded({ limit: 300 }).records,
+        config: await configOf(deps).read(),
+        reads: deps.suggestionReads?.() ?? defaultSuggestionReads(),
+    });
+}
+
+export async function meetingPeopleOf(
+    params: MeetingsParsedParams<"projects.meetingPeople">,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<MeetingsResult<"projects.meetingPeople">> {
+    const config = await configOf(deps).read();
+
+    if (!config.projects[params.project]) {
+        throw refusal("failed", `No project ${params.project}.`);
+    }
+
+    return projectMeetingPeople({ records: store.list(), config, project: params.project });
+}
+
+export async function pairMeetingPeople(
+    params: MeetingsParsedParams<"projects.pairFromMeetings">,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<MeetingsResult<"projects.pairFromMeetings">> {
+    const record = params.meeting ? recordOf(store, params.meeting) : undefined;
+    if (record && record.project !== params.project) {
+        throw refusal("project-changed", `The meeting ${record.id} no longer has project ${params.project}.`);
+    }
+    return pairFromMeetings({
+        records: store.list(),
+        config: configOf(deps),
+        project: params.project,
+        ...(params.people ? { people: params.people } : {}),
+        ...(record ? { meeting: record.id } : {}),
+        now: deps.now?.() ?? new Date(),
     });
 }
 

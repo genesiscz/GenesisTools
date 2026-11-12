@@ -1,7 +1,9 @@
-import { join, relative } from "node:path";
+import { realpathSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { type FileIdentity, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { createWatcher, type WatcherOptions, type WatcherSubscription } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
+import { PEOPLE_FILE } from "@genesiscz/utils/meetings/people-book";
 import { MEETING_FILE, MOMENTS_FOLDER } from "@genesiscz/utils/meetings/record";
 import { MEETING_PARTS } from "./api";
 
@@ -29,11 +31,23 @@ export function partsOfPath(relativePath: string): { meeting: string; parts: Mee
         return { meeting, parts: [...MEETING_PARTS] };
     }
 
-    if (first === "ocr.jsonl" || first === "frames" || first === "recording.json" || first === "recorder-last.json") {
+    if (
+        first === "ocr.jsonl" ||
+        first === "frames.jsonl" ||
+        first === "frames" ||
+        first === "recording.json" ||
+        first === "recorder-last.json"
+    ) {
         return { meeting, parts: ["timeline"] };
     }
 
     return undefined;
+}
+
+/** Comment and listener writes live together in this one journal. */
+function commentMeeting(relativePath: string): string | undefined {
+    const [meeting, file, ...rest] = relativePath.split(/[/\\]/);
+    return meeting && !meeting.startsWith(".") && file === "comments.ndjson" && rest.length === 0 ? meeting : undefined;
 }
 
 export interface FolderWatchOptions {
@@ -41,6 +55,8 @@ export interface FolderWatchOptions {
     root: string;
     /** Tells the subscribers of a meeting what changed. */
     emit: (meeting: string, parts: MeetingPart[]) => void;
+    peopleChanged?: () => void;
+    commentsChanged?: (meeting: string) => void;
     /** The event source; @parcel/watcher's when absent (tests pass a fake, as createWatcher allows). */
     subscribe?: WatcherOptions["subscribe"];
     coalesceMs?: number;
@@ -55,14 +71,25 @@ export interface FolderWatchOptions {
 export class MeetingsFolderWatch {
     private readonly own = new Map<string, FileIdentity>();
     private subscription?: WatcherSubscription;
+    private watchedRoot: string;
 
-    constructor(private readonly options: FolderWatchOptions) {}
+    constructor(private readonly options: FolderWatchOptions) {
+        this.watchedRoot = options.root;
+    }
 
     async start(): Promise<void> {
-        this.subscription = await createWatcher(this.options.root, (events) => this.heard(events), {
+        // Native watchers report the real path (for example /private/tmp), even when the store was opened by an alias.
+        this.watchedRoot = realpathSync(this.options.root);
+        this.subscription = await createWatcher(this.watchedRoot, (events) => this.heard(events), {
             debounceMs: this.options.coalesceMs ?? FOLDER_WATCH_COALESCE_MS,
             ignorePatterns: [`**/${MOMENTS_FOLDER}/**`, "**/evidence/**", "**/.*"],
-            filter: (event) => partsOfPath(relative(this.options.root, event.path)) !== undefined,
+            filter: (event) => {
+                const path = this.relativePath(event.path);
+                return (
+                    path !== undefined &&
+                    (path === PEOPLE_FILE || commentMeeting(path) !== undefined || partsOfPath(path) !== undefined)
+                );
+            },
             ...(this.options.subscribe ? { subscribe: this.options.subscribe } : {}),
         });
         log.debug({ root: this.options.root }, "meetings folder watched");
@@ -81,11 +108,35 @@ export class MeetingsFolderWatch {
         await this.subscription?.unsubscribe();
     }
 
+    private relativePath(path: string): string | undefined {
+        for (const root of [this.watchedRoot, this.options.root]) {
+            const candidate = relative(root, path);
+            if (!isAbsolute(candidate) && candidate !== ".." && !candidate.startsWith(`..${sep}`)) {
+                return candidate;
+            }
+        }
+        return undefined;
+    }
+
     private heard(events: Array<{ path: string }>): void {
         const changed = new Map<string, Set<MeetingPart>>();
+        let peopleChanged = false;
+        const commentMeetings = new Set<string>();
 
         for (const event of events) {
-            const relativePath = relative(this.options.root, event.path);
+            const relativePath = this.relativePath(event.path);
+            if (relativePath === undefined) {
+                continue;
+            }
+            if (relativePath === PEOPLE_FILE) {
+                peopleChanged = true;
+                continue;
+            }
+            const comments = commentMeeting(relativePath);
+            if (comments) {
+                commentMeetings.add(comments);
+                continue;
+            }
             const found = partsOfPath(relativePath);
 
             if (!found || (found.parts.length === MEETING_PARTS.length && this.isOwn(found.meeting))) {
@@ -101,6 +152,13 @@ export class MeetingsFolderWatch {
             changed.set(found.meeting, parts);
         }
 
+        if (peopleChanged) {
+            this.options.peopleChanged?.();
+        }
+
+        for (const meeting of commentMeetings) {
+            this.options.commentsChanged?.(meeting);
+        }
         for (const [meeting, parts] of changed) {
             log.debug({ meeting, parts: [...parts] }, "a meeting changed outside the service");
             this.options.emit(

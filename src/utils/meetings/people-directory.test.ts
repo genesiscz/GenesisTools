@@ -1,11 +1,12 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as darwinkit from "@genesiscz/utils/macos/darwinkit";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { meetingsConfigSchema } from "./config";
 import { PEOPLE_FILE, PeopleBook } from "./people-book";
-import { ContactsPeopleSource, type ContactsReader } from "./people-contacts";
+import { ContactsPeopleSource, type ContactsReader, darwinkitContacts } from "./people-contacts";
 import { foldText, PeopleDirectory, PeopleError, type PeopleSource, peopleDirectory } from "./people-directory";
 import { MEETING_FILE, MeetingStore } from "./record";
 
@@ -78,6 +79,18 @@ function rankedStore() {
 }
 
 describe("PeopleDirectory.known", () => {
+    test("a person's history includes every appearance in date order", async () => {
+        const { store, book } = rankedStore();
+        const directory = peopleDirectory({ store, config, book });
+        const history = await directory.meetings("Erin Example");
+        expect(history.person.name).toBe("Erin Example");
+        expect(history.meetings.map((appearance) => appearance.meeting)).toEqual(["m2", "m0"]);
+        expect(history.meetings.every((appearance) => appearance.as.includes("participant"))).toBe(true);
+        const reopened = peopleDirectory({ store: new MeetingStore(store.storage), config, book });
+        expect(await reopened.meetings(history.person.id)).toEqual(history);
+        await expect(directory.meetings("Nobody Else")).rejects.toMatchObject({ code: "unknown-person" });
+    });
+
     test("ranks the people present at the moment, then the meeting's, then other meetings, Contacts, own entries", async () => {
         const { store, book } = rankedStore();
         await book.add({ name: "Hana Example" });
@@ -172,6 +185,22 @@ describe("PeopleDirectory.known", () => {
             state: "off",
             reason: "turned off (global.people.sources.contacts)",
         });
+    });
+
+    test("an equal-size rewrite with the same modification time refreshes the people index", async () => {
+        const { store, book } = scratch([
+            meeting("m1", "2026-11-08T10:00:00Z", { participants: [{ name: "Kim Example" }] }),
+        ]);
+        const recordPath = store.path("m1");
+        const fixedTime = new Date("2026-11-08T10:00:00Z");
+        utimesSync(recordPath, fixedTime, fixedTime);
+        const size = statSync(recordPath).size;
+        const directory = peopleDirectory({ store, config: meetingsConfigSchema.parse({}), book });
+        expect((await directory.known("")).people.map((person) => person.name)).toEqual(["Kim Example"]);
+        writeRecord(store, meeting("m1", "2026-11-08T10:00:00Z", { participants: [{ name: "Lee Example" }] }));
+        utimesSync(recordPath, fixedTime, fixedTime);
+        expect(statSync(recordPath).size).toBe(size);
+        expect((await directory.known("")).people.map((person) => person.name)).toEqual(["Lee Example"]);
     });
 
     test("a changed meeting record is read again: the index follows the meetings folder", async () => {
@@ -324,4 +353,380 @@ describe("the people book and its merges", () => {
             { kind: "group", members: [] },
         ]);
     });
+});
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => {
+        resolve = done;
+    });
+    return { promise, resolve };
+}
+
+function nativeContacts(
+    options: {
+        authorized?: boolean;
+        onAuthorization?: () => Promise<{ authorized: boolean; status: string }>;
+        onFetch?: () => Promise<void>;
+        onClose?: () => Promise<void>;
+    } = {}
+) {
+    const calls: string[] = [];
+    const card = { given_name: "Alex", family_name: "Example", organization_name: "", email_addresses: [] };
+    const fetch = async (kind: string, timeout: number) => {
+        calls.push(kind);
+        expect(timeout).toBe(30_000);
+        await options.onFetch?.();
+        return { contacts: [card] };
+    };
+    const client = {
+        contacts: {
+            authorized: async ({ timeout }: { timeout: number }) => {
+                calls.push("authorized");
+                expect(timeout).toBe(30_000);
+                return (
+                    options.onAuthorization?.() ?? {
+                        authorized: options.authorized ?? true,
+                        status: options.authorized === false ? "denied" : "authorized",
+                    }
+                );
+            },
+            list: async (_query: { limit: number }, { timeout }: { timeout: number }) => fetch("list", timeout),
+            search: async (_query: { query: string; limit: number }, { timeout }: { timeout: number }) =>
+                fetch("search", timeout),
+        },
+        close: async () => {
+            calls.push("close");
+            await options.onClose?.();
+        },
+    };
+    return { client, calls };
+}
+
+describe("Contacts native generations", () => {
+    test("a refused grant recovers on the next query without replacing the source", async () => {
+        let allowed = false;
+        let created = 0;
+        let closed = 0;
+        const source = new ContactsPeopleSource(
+            darwinkitContacts({
+                createClient: () => {
+                    created += 1;
+                    const authorized = allowed;
+                    return {
+                        contacts: {
+                            authorized: async () => ({ authorized, status: authorized ? "authorized" : "denied" }),
+                            list: async () => ({ contacts: [] }),
+                            search: async () => ({ contacts: [] }),
+                        },
+                        close: async () => {
+                            closed += 1;
+                        },
+                    };
+                },
+            })
+        );
+        expect((await source.people({ text: "", limit: 5 })).state).toBe("refused");
+        allowed = true;
+        expect((await source.people({ text: "", limit: 5 })).state).toBe("ok");
+        expect(created).toBe(2);
+        expect(closed).toBe(2);
+    });
+});
+
+describe("Contacts generation lifetime", () => {
+    test("the same source observes allowed, denied, then allowed across sequential queries", async () => {
+        let allowed = true;
+        let created = 0;
+        let closed = 0;
+        const source = new ContactsPeopleSource(
+            darwinkitContacts({
+                createClient: () => {
+                    created += 1;
+                    return nativeContacts({
+                        authorized: allowed,
+                        onClose: async () => {
+                            closed += 1;
+                        },
+                    }).client;
+                },
+            })
+        );
+        expect((await source.people({ text: "", limit: 5 })).state).toBe("ok");
+        allowed = false;
+        expect((await source.people({ text: "", limit: 5 })).state).toBe("refused");
+        allowed = true;
+        expect((await source.people({ text: "", limit: 5 })).state).toBe("ok");
+        expect(created).toBe(3);
+        expect(closed).toBe(3);
+    });
+
+    test("default directories share the owner, and sequential reads use fresh native generations", async () => {
+        expect(darwinkitContacts()).toBe(darwinkitContacts());
+        const generations: ReturnType<typeof nativeContacts>[] = [];
+        const reader = darwinkitContacts({
+            createClient: () => {
+                const native = nativeContacts();
+                generations.push(native);
+                return native.client;
+            },
+        });
+        const source = new ContactsPeopleSource(reader);
+        await expect(source.people({ text: "", limit: 5 })).resolves.toMatchObject({
+            state: "ok",
+            people: [{ name: "Alex Example" }],
+        });
+        await expect(source.people({ text: "Alex", limit: 5 })).resolves.toMatchObject({ state: "ok" });
+        expect(generations).toHaveLength(2);
+        expect(generations[0]?.calls).toEqual(["authorized", "list", "close"]);
+        expect(generations[1]?.calls).toEqual(["authorized", "search", "close"]);
+    });
+
+    test("concurrent acquisition coalesces; retirement waits for the pinned fetch and for close", async () => {
+        const fetchEntered = deferred<void>();
+        const fetchDone = deferred<void>();
+        const closeEntered = deferred<void>();
+        const closeDone = deferred<void>();
+        let checks = 0;
+        const first = nativeContacts({
+            onAuthorization: async () => {
+                checks += 1;
+                return { authorized: checks === 1, status: checks === 1 ? "authorized" : "denied" };
+            },
+            onFetch: async () => {
+                fetchEntered.resolve();
+                await fetchDone.promise;
+            },
+            onClose: async () => {
+                closeEntered.resolve();
+                await closeDone.promise;
+            },
+        });
+        const second = nativeContacts();
+        let created = 0;
+        const source = new ContactsPeopleSource(
+            darwinkitContacts({
+                createClient: () => {
+                    created += 1;
+                    return created === 1 ? first.client : second.client;
+                },
+            })
+        );
+        const heldRead = source.people({ text: "", limit: 5 });
+        await fetchEntered.promise;
+        expect((await source.people({ text: "Alex", limit: 5 })).state).toBe("refused");
+        const nextReads = Array.from({ length: 8 }, () => source.people({ text: "Alex", limit: 5 }));
+        expect(created).toBe(1);
+        expect(first.calls).not.toContain("close");
+        fetchDone.resolve();
+        expect((await heldRead).state).toBe("ok");
+        await closeEntered.promise;
+        expect(created).toBe(1);
+        expect(first.calls).toEqual(["authorized", "list", "authorized", "close"]);
+        closeDone.resolve();
+        expect((await Promise.all(nextReads)).every((result) => result.state === "ok")).toBe(true);
+        expect(created).toBe(2);
+        expect(first.calls.filter((call) => call === "close")).toHaveLength(1);
+        expect(second.calls.filter((call) => call === "authorized")).toHaveLength(8);
+        expect(second.calls.filter((call) => call === "search")).toHaveLength(8);
+        expect(second.calls.filter((call) => call === "close")).toHaveLength(1);
+    });
+
+    test("concurrent denials close once, and later denials never overlap unfinished close", async () => {
+        const authEntered = deferred<void>();
+        const authDone = deferred<void>();
+        const closeEntered = deferred<void>();
+        const closeDone = deferred<void>();
+        let created = 0;
+        const first = nativeContacts({
+            onAuthorization: async () => {
+                authEntered.resolve();
+                await authDone.promise;
+                return { authorized: false, status: "denied" };
+            },
+            onClose: async () => {
+                closeEntered.resolve();
+                await closeDone.promise;
+            },
+        });
+        const second = nativeContacts({ authorized: false });
+        const source = new ContactsPeopleSource(
+            darwinkitContacts({
+                createClient: () => {
+                    created += 1;
+                    return created === 1 ? first.client : second.client;
+                },
+            })
+        );
+        const denied = Array.from({ length: 12 }, () => source.people({ text: "", limit: 5 }));
+        await authEntered.promise;
+        expect(created).toBe(1);
+        authDone.resolve();
+        expect((await Promise.all(denied)).every((result) => result.state === "refused")).toBe(true);
+        await closeEntered.promise;
+        const later = Array.from({ length: 12 }, () => source.people({ text: "", limit: 5 }));
+        expect(created).toBe(1);
+        closeDone.resolve();
+        expect((await Promise.all(later)).every((result) => result.state === "refused")).toBe(true);
+        expect(created).toBe(2);
+        expect(first.calls.filter((call) => call === "close")).toHaveLength(1);
+        expect(first.calls.filter((call) => call === "authorized")).toHaveLength(12);
+        expect(second.calls.filter((call) => call === "authorized")).toHaveLength(12);
+        expect(second.calls).not.toContain("list");
+    });
+
+    test("permission and other fetch failures remain unchanged while their completed generation closes", async () => {
+        for (const error of [
+            new darwinkit.DarwinKitError(-32002, "Contacts refused"),
+            new Error("timed out"),
+            new DOMException("Cancelled", "AbortError"),
+        ]) {
+            const first = nativeContacts({
+                onFetch: async () => {
+                    throw error;
+                },
+            });
+            const second = nativeContacts();
+            let created = 0;
+            const source = new ContactsPeopleSource(
+                darwinkitContacts({
+                    createClient: () => {
+                        created += 1;
+                        return created === 1 ? first.client : second.client;
+                    },
+                })
+            );
+            await expect(source.people({ text: "Alex", limit: 5 })).rejects.toBe(error);
+            const next = source.people({ text: "", limit: 5 });
+
+            await expect(next).resolves.toMatchObject({ state: "ok" });
+            expect(created).toBe(2);
+            expect(first.calls).toEqual(["authorized", "search", "close"]);
+        }
+    });
+
+    test("a factory failure can be retried, while a close failure cannot accumulate helpers", async () => {
+        let created = 0;
+        const source = new ContactsPeopleSource(
+            darwinkitContacts({
+                createClient: () => {
+                    created += 1;
+
+                    if (created === 1) {
+                        throw new Error("could not start");
+                    }
+
+                    return nativeContacts().client;
+                },
+            })
+        );
+        await expect(source.people({ text: "", limit: 5 })).rejects.toThrow("could not start");
+        await expect(source.people({ text: "", limit: 5 })).resolves.toMatchObject({ state: "ok" });
+        expect(created).toBe(2);
+
+        let deniedCreated = 0;
+        const closeError = new Error("could not close");
+        const denied = new ContactsPeopleSource(
+            darwinkitContacts({
+                createClient: () => {
+                    deniedCreated += 1;
+                    return nativeContacts({
+                        authorized: false,
+                        onClose: async () => {
+                            throw closeError;
+                        },
+                    }).client;
+                },
+            })
+        );
+        expect((await denied.people({ text: "", limit: 5 })).state).toBe("refused");
+        await expect(denied.people({ text: "", limit: 5 })).rejects.toBe(closeError);
+        await expect(denied.people({ text: "", limit: 5 })).rejects.toBe(closeError);
+        expect(deniedCreated).toBe(1);
+    });
+
+    test("disabled Contacts creates no helper; recovery never touches the unrelated shared client", async () => {
+        const getShared = spyOn(darwinkit, "getDarwinKit");
+        const closeShared = spyOn(darwinkit, "closeDarwinKit");
+        const retireShared = spyOn(darwinkit, "closeDarwinKitWhenIdle");
+        try {
+            const unrelated = deferred<string>();
+            let created = 0;
+            const source = new ContactsPeopleSource(
+                darwinkitContacts({
+                    createClient: () => {
+                        created += 1;
+                        return nativeContacts({ authorized: created > 1 }).client;
+                    },
+                })
+            );
+            const { store, book } = scratch([]);
+            const directory = peopleDirectory({
+                store,
+                book,
+                config: meetingsConfigSchema.parse({ global: { people: { sources: { contacts: false } } } }),
+                contacts: source,
+            });
+            expect((await directory.known("")).sources).toContainEqual({
+                kind: "contacts",
+                state: "off",
+                reason: "turned off (global.people.sources.contacts)",
+            });
+            expect(created).toBe(0);
+            expect((await source.people({ text: "", limit: 5 })).state).toBe("refused");
+            expect((await source.people({ text: "", limit: 5 })).state).toBe("ok");
+            unrelated.resolve("shared request completed");
+            expect(await unrelated.promise).toBe("shared request completed");
+            expect(getShared).not.toHaveBeenCalled();
+            expect(closeShared).not.toHaveBeenCalled();
+            expect(retireShared).not.toHaveBeenCalled();
+        } finally {
+            getShared.mockRestore();
+            closeShared.mockRestore();
+            retireShared.mockRestore();
+        }
+    });
+});
+
+test("completed successful Contacts reads do not close another reader's native lease", async () => {
+    const firstEntered = deferred<void>();
+    const secondEntered = deferred<void>();
+    const finishFirst = deferred<void>();
+    const finishSecond = deferred<void>();
+    let calls = 0;
+    const first = nativeContacts({
+        onFetch: async () => {
+            calls += 1;
+            if (calls === 1) {
+                firstEntered.resolve();
+                await finishFirst.promise;
+            } else {
+                secondEntered.resolve();
+                await finishSecond.promise;
+            }
+        },
+    });
+    const next = nativeContacts();
+    let created = 0;
+    const source = new ContactsPeopleSource(
+        darwinkitContacts({
+            createClient: () => {
+                created += 1;
+                return created === 1 ? first.client : next.client;
+            },
+        })
+    );
+    const one = source.people({ text: "", limit: 5 });
+    const two = source.people({ text: "Alex", limit: 5 });
+    await Promise.all([firstEntered.promise, secondEntered.promise]);
+    finishFirst.resolve();
+    expect((await one).state).toBe("ok");
+    expect(first.calls).not.toContain("close");
+    const after = source.people({ text: "", limit: 5 });
+    expect(created).toBe(1);
+    finishSecond.resolve();
+    expect((await two).state).toBe("ok");
+    expect((await after).state).toBe("ok");
+    expect(created).toBe(2);
+    expect(first.calls.filter((call) => call === "close")).toHaveLength(1);
 });

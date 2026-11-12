@@ -1,5 +1,10 @@
 import { correctionSchema } from "@genesiscz/utils/meetings/corrections";
-import { meetingItemSchema, savedDecisionActorSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
+import {
+    meetingItemSchema,
+    savedDecisionActorSchema,
+    speakerAssignmentSchema,
+    spellingReachSchema,
+} from "@genesiscz/utils/meetings/record";
 import { z } from "zod";
 import { sentCommentSchema } from "./comment-schema";
 import { findingSchema } from "./findings";
@@ -27,10 +32,18 @@ export const DECISION_ACTION_OPTIONS = [
         speaker: z.string().optional(),
         /** A term's right spelling, when the proposal is wrong. */
         proposed: z.string().optional(),
+        reach: spellingReachSchema.optional(),
     }),
     z.object({ kind: z.literal("reject"), items: z.array(itemRef), minConfidence: z.number().optional() }),
     /** The item's value edited in place (a term's spelling, a range's speaker, a join's word): it is confirmed so. */
-    z.object({ kind: z.literal("respell"), item: itemRef, text: z.string() }),
+    z.object({ kind: z.literal("respell"), item: itemRef, text: z.string(), reach: spellingReachSchema.optional() }),
+    /** Changes a question's wording without answering it or changing its targets. */
+    z.object({
+        kind: z.literal("rephrase"),
+        question: itemRef,
+        text: z.string().trim().min(1),
+        expectedText: z.string().optional(),
+    }),
     z.object({
         kind: z.literal("answer"),
         question: itemRef,
@@ -41,6 +54,17 @@ export const DECISION_ACTION_OPTIONS = [
          * settles them with the same answer, as `listen` does.
          */
         lookAlikes: z.enum(["settle", "leave"]).optional(),
+        /**
+         * Items this answer must not change: targets of the question or look-alike questions struck in the window's
+         * "This also affects" sheet. A struck target leaves the question (it no longer decides it) and stays as it
+         * was, as does a struck look-alike question. Either leaves the transaction, so an Undo never touches it.
+         */
+        except: z.array(itemRef).optional(),
+        /**
+         * The token of this question's earlier answer that this one replaces (the window's "change the answer"): the
+         * earlier entry is undone and this answer made in one entry, so its Undo brings the earlier answer back.
+         */
+        replaces: z.string().min(1).optional(),
     }),
     z.object({ kind: z.literal("skip"), question: itemRef }),
     /** "Several voices": the question is cut into one question per line and voice. */
@@ -112,6 +136,29 @@ export const journalActionSchema = z.discriminatedUnion("kind", [
 ]);
 export type JournalAction = z.infer<typeof journalActionSchema>;
 
+const knownJournalKinds = new Set<string>([
+    ...journalActionSchema.options.map((option) => option.shape.kind.value),
+    "unsupported",
+]);
+const unsupportedJournalAction = z.object({ kind: z.literal("unsupported"), name: z.string().min(1) });
+/** Reading a newer action preserves its history without pretending this build can execute or undo it. */
+const savedJournalActionSchema = z.preprocess(
+    (value) => {
+        if (
+            typeof value === "object" &&
+            value !== null &&
+            "kind" in value &&
+            typeof value.kind === "string" &&
+            value.kind.length > 0 &&
+            !knownJournalKinds.has(value.kind)
+        ) {
+            return { kind: "unsupported", name: value.kind };
+        }
+        return value;
+    },
+    z.union([journalActionSchema, unsupportedJournalAction])
+);
+
 /** One item a decision changed: its state before (absent: the decision made it) and after (absent: it removed it). */
 export const itemChangeSchema = z.object({
     id: z.string(),
@@ -169,7 +216,7 @@ export const journalEntrySchema = z.object({
     /** An actor kind a newer build wrote reads as `unknown`, so its entry still reads and its token still reverts. */
     actor: savedDecisionActorSchema,
     reason: z.string().optional(),
-    action: journalActionSchema,
+    action: savedJournalActionSchema,
     /** The question it decided (an answer, a skip, a split) or gave back (the Undo of one). */
     question: z.string().optional(),
     decided: z.array(z.string()).default([]),

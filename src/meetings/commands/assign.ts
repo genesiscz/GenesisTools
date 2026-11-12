@@ -6,7 +6,7 @@ import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/reco
 import type { Command } from "commander";
 import pc from "picocolors";
 import { applyAnswer, askMeeting, assignSweep, defaultAssignDeps, viewProposals } from "../lib/assign";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { fail, TOOL } from "../lib/shared";
 import { proposalsJsonView, proposalsRead, windowJson } from "../lib/window-reads";
 
 const MEETING_REF = "meeting id, a unique prefix, last, or wisprflow:<id>";
@@ -78,7 +78,7 @@ async function proposals(ref: string, opts: { json?: boolean }): Promise<void> {
 
         ui.dim(skipped ? `not asked: ${skipped}` : `asks on the next sweep (${TOOL} assign sweep)`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -100,7 +100,7 @@ async function ask(ref: string, opts: { force?: boolean }): Promise<void> {
 
         ui.info(`Not asked: ${result.skipped}${opts.force ? "" : " (--force asks anyway)"}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -119,7 +119,7 @@ async function sweep(opts: { json?: boolean }): Promise<void> {
             ui.dim(`  ${step.meeting}: ${step.outcome}`);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -179,7 +179,7 @@ async function apply(
             ui.info("The meeting is in no source folder: move it there, and the next sweep asks to pair the folder.");
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

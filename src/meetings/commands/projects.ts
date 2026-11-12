@@ -8,7 +8,7 @@ import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail } from "../lib/shared";
+import { fail } from "../lib/shared";
 import { matchPreviewFlags, windowJson } from "../lib/window-reads";
 
 function matchSummary(config: MeetingsConfig, name: string): string {
@@ -54,7 +54,7 @@ async function listProjects(opts: { json?: boolean }): Promise<void> {
         out.println(table.toString());
         ui.dim(`config: ${store.path}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -63,7 +63,7 @@ async function addProject(name: string): Promise<void> {
         const { added } = await withMeetingsClient((client) => client.call("projects.add", { name }));
         ui.ok(added ? `Added project ${name} to the known projects.` : `Project ${name} is known already.`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -82,7 +82,7 @@ async function rename(name: string, to: string, opts: { json?: boolean }): Promi
 
         ui.ok(`Renamed the project ${name} to ${to}, with ${plural(result.meetings.length, "meeting")}.`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -102,7 +102,7 @@ async function remove(name: string, opts: { unassign?: boolean; json?: boolean }
         );
         ui.dim(`  its settings, dictionary and pairings: ${result.backup}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -117,7 +117,7 @@ async function labels(name: string, opts: { add?: string[]; remove?: string[] })
         );
         ui.ok(`${name} labels: ${known.length > 0 ? known.join(", ") : "none"}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -142,7 +142,7 @@ async function pair(name: string, opts: { person: string[]; note?: string }): Pr
         });
         ui.ok(`Paired with ${name}: ${people.map((person) => person.name).join(", ")}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -173,7 +173,7 @@ async function unpair(name: string | undefined, opts: { entry?: string; person?:
         );
         ui.ok(removed.length > 0 ? `${opts.person} left ${name}.` : `${opts.person} was not paired with ${name}.`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -207,7 +207,7 @@ async function people(name: string | undefined, opts: { json?: boolean }): Promi
 
         out.println(table.toString());
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -236,7 +236,7 @@ async function preview(opts: { draft?: string; limit?: string; json?: boolean })
 
         out.println(table.toString());
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

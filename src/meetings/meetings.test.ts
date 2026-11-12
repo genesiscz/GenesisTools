@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { beforeAll, describe, expect, spyOn, test } from "bun:test";
 import {
     chmodSync,
     existsSync,
@@ -7,6 +7,7 @@ import {
     readdirSync,
     readFileSync,
     statSync,
+    utimesSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,6 +27,7 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import * as bounded from "@genesiscz/utils/process/bounded-command";
 import { buildPidRecord, clearPidFile, serializePidRecord, writePidFile } from "@genesiscz/utils/process/pidfile";
 import type { RecordingMarker } from "@genesiscz/utils/screen-recorder/control";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
@@ -53,6 +55,7 @@ import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import { sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
+import { z } from "zod";
 import { claimWatcher, watcherPidPath } from "./commands/watch";
 import { buildQuestion } from "./lib/assign";
 import { CallTimeline } from "./lib/call-timeline";
@@ -83,8 +86,10 @@ import {
     recorderAcknowledged,
     recorderFiles,
 } from "./lib/recorder-shared";
-import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
+import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary, screenCaptureCoverage } from "./lib/screen";
 import { framesMatching, ocrRowSchema, readOcrRows, renderScreenBoxes } from "./lib/screen-boxes";
+import { InProcessMeetingsClient } from "./lib/service/client";
+import { readScreen } from "./lib/service/reads-handlers";
 import { showText } from "./lib/show-text";
 import {
     addPolish,
@@ -96,7 +101,7 @@ import {
     speakerScoresOf,
 } from "./lib/speaker-scores";
 import { printSpeakerStats } from "./lib/speakers-view";
-import { knownRoot, settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
+import { settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { transcriptDocument } from "./lib/transcript-document";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
@@ -253,6 +258,25 @@ describe("suggestItems", () => {
 });
 
 describe("suggestDictionary", () => {
+    test("an explicit teaching choice is independent of transcript scope", () => {
+        const candidate = { at: "t", meeting: "m1", kind: "term" as const, heard: "Viky", fixed: "wiki", item: "i1" };
+        const suggest = (scope: "line" | "everywhere", learn: boolean) =>
+            suggestDictionary({
+                dictionary: { abbrExpansion: "every", entries: [] },
+                sourceId: "wisprflow",
+                sourceWords: [],
+                ignore: [],
+                corrections: [
+                    { ...candidate, scope, learn },
+                    { ...candidate, meeting: "m2", scope, learn },
+                ],
+            });
+        expect(suggest("everywhere", false)).toEqual([]);
+        expect(suggest("line", true)).toEqual([
+            { entry: { type: "fix", value: "Viky", substitution: "wiki" }, from: "confirmed 2 times" },
+        ]);
+    });
+
     test("reconfirming one item is not independent dictionary evidence", () => {
         const correction = {
             at: "t",
@@ -913,7 +937,6 @@ describe("itemWhat", () => {
 
         expect(itemWhat(range(279, 279))).toBe("Speaker 1 04:39 → Alice Example");
         expect(itemWhat(range(279, 301))).toBe("Speaker 1 04:39–05:01 → Alice Example");
-        // The decision follows the printed clocks, which floor: never "04:39–04:39", never a hidden end.
         expect(itemWhat(range(279.4, 279.6))).toBe("Speaker 1 04:39 → Alice Example");
         expect(itemWhat(range(278.6, 279.2))).toBe("Speaker 1 04:38–04:39 → Alice Example");
     });
@@ -939,27 +962,27 @@ describe("itemWhat", () => {
         );
         expect(itemWhat(term({}))).toBe("category data → ?");
     });
+});
 
-    test("in a column, a long quote is shortened inside its quotes and keeps its source", () => {
-        const long = meetingItemSchema.parse({
-            id: "i1",
-            kind: "term",
-            status: "suggested",
-            suggestedAt: "2026-11-02T15:00:00.000Z",
-            atSec: 1623,
-            heard: "category data",
-            confidence: 0.9,
-            rules: [],
-            quote: { text: `categoryData: ${"string | number | ".repeat(8)}null`, source: "dto.ts:12" },
-        });
-        const what = itemWhat(long, { width: 90 });
-
-        expect(what).toHaveLength(90);
-        expect(what.startsWith('category data → "categoryData: string | number')).toBe(true);
-        expect(what.endsWith('…" (quote from dto.ts:12)')).toBe(true);
-        // Without a width, nothing is cut.
-        expect(itemWhat(long)).toContain("null");
+test("in a column, a long quote is shortened inside its quotes and keeps its source", () => {
+    const long = meetingItemSchema.parse({
+        id: "i1",
+        kind: "term",
+        status: "suggested",
+        suggestedAt: "2026-11-02T15:00:00.000Z",
+        atSec: 1623,
+        heard: "category data",
+        confidence: 0.9,
+        rules: [],
+        quote: { text: `categoryData: ${"string | number | ".repeat(8)}null`, source: "dto.ts:12" },
     });
+    const what = itemWhat(long, { width: 90 });
+
+    expect(what).toHaveLength(90);
+    expect(what.startsWith('category data → "categoryData: string | number')).toBe(true);
+    expect(what.endsWith('…" (quote from dto.ts:12)')).toBe(true);
+    // Without a width, nothing is cut.
+    expect(itemWhat(long)).toContain("null");
 });
 
 describe("appliedLine", () => {
@@ -1158,6 +1181,43 @@ describe("watchOnce", () => {
             refreshed,
         };
     }
+
+    test("a recorder that died without a stop (a reinstall, a kill) starts again at the next look; one dead too long is ended as interrupted", async () => {
+        const dead = (meetingId: string) => ({
+            running: false,
+            state: { meetingId, pid: 999_999, startedAt: "2026-11-02T15:00:00.000Z", display: 1, frames: 4, bytes: 10 },
+        });
+        const ended: string[] = [];
+        const recent = harness({
+            recorder: () => dead("m-dead-recent"),
+            recording: () => ({ status: "recording" }),
+            lastFrameAt: () => now - 30_000,
+            endInterrupted: async (meetingId) => {
+                ended.push(meetingId);
+            },
+        });
+
+        expect(await watchOnce(recent.store, { deps: recent.deps, now })).toBe("started");
+        expect(recent.runs).toEqual([["meetings", "record", "start", "--meeting", "m-dead-recent", "--yes"]]);
+        // A start that died again at once is not repeated within RESUME_GAP_MS.
+        expect(await watchOnce(recent.store, { deps: recent.deps, now: now + 10_000 })).toBe("idle");
+        expect(recent.runs).toHaveLength(1);
+        expect(ended).toEqual([]);
+
+        const old = harness({
+            recorder: () => dead("m-dead-old"),
+            recording: () => ({ status: "recording" }),
+            liveRecording: async () => null,
+            lastFrameAt: () => now - 20 * 60_000,
+            endInterrupted: async (meetingId) => {
+                ended.push(meetingId);
+            },
+        });
+
+        expect(await watchOnce(old.store, { deps: old.deps, now })).toBe("idle");
+        expect(old.runs).toEqual([]);
+        expect(ended).toEqual(["m-dead-old"]);
+    });
 
     test("a recorder whose capture failed starts again after a pause, the notice left to the recorder; a stop asked for stays", async () => {
         const failed = {
@@ -2533,7 +2593,7 @@ describe("the meetings recorder loop", () => {
     let stores = 0;
 
     /** `stream`: the capture's stream failed, but it returns the frame it kept before. */
-    type Step = "frames" | "empty" | "fail" | "hang" | "timeout" | "stream" | "removed";
+    type Step = "frames" | "empty" | "fail" | "hang" | "timeout" | "stream" | "removed" | "denied";
 
     /** A recorder that follows a script per capture; after the script it waits for the stop the test sends. */
     class ScriptedRecorder extends FrameRecorder {
@@ -2752,6 +2812,14 @@ describe("the meetings recorder loop", () => {
                 throw new CaptureError("timeout", "ax-tool capture did not end within 1 s + 30 s");
             }
 
+            if (step === "denied") {
+                this.script.onFail?.();
+                throw new CaptureError(
+                    "no-permission",
+                    "ax-tool capture: the screen recording permission was declined"
+                );
+            }
+
             if (step === "stream") {
                 const path = join(request.outDir, "keep-0001.png");
                 await Bun.write(path, "png");
@@ -2783,12 +2851,8 @@ describe("the meetings recorder loop", () => {
         displays: DisplayInfo[][];
         steps: Step[];
         failOnJpeg?: boolean;
+        prepare?: (store: MeetingStore, id: string) => Promise<void>;
         beforeJpeg?: (png: string) => Promise<void>;
-        ocrBlocks?: Array<{
-            text: string;
-            confidence: number;
-            bounds: { x: number; y: number; width: number; height: number };
-        }>;
         liveControl?: boolean;
         liveSettings?: boolean;
         liveRates?: boolean;
@@ -2833,8 +2897,10 @@ describe("the meetings recorder loop", () => {
             { title: "Recorder check", start: "2026-11-03T12:00:00.000Z", createdBy: "record" },
             { command: "record start", change: "created" }
         );
+        await options.prepare?.(store, created.id);
         const liveDir = mkdtempSync(join(tmpdir(), "live-meeting-"));
         const notes: RecorderNote[] = [];
+        const ocrStarts: string[] = [];
         const seenLive: string[] = [];
         const answers: unknown[] = [];
         let notified: unknown;
@@ -2895,10 +2961,9 @@ describe("the meetings recorder loop", () => {
 
                     await Bun.write(jpg, "jpeg");
                 },
-                ocr: async () => ({
-                    text: "Quarterly planning board with several readable lines",
-                    blocks: options.ocrBlocks ?? [],
-                }),
+                startOcr: (_store, meetingId) => {
+                    ocrStarts.push(meetingId);
+                },
                 notify: async (note) => {
                     notes.push(note);
                     notified = await options.duringNotify?.(call, liveDir);
@@ -2922,6 +2987,7 @@ describe("the meetings recorder loop", () => {
             store,
             state,
             notes,
+            ocrStarts,
             recorder,
             liveDir,
             seenLive,
@@ -2933,20 +2999,81 @@ describe("the meetings recorder loop", () => {
         };
     }
 
+    for (const keptFrame of [false, true]) {
+        test(`a restarted recording closes the dead run at its own ${keptFrame ? "last indexed frame" : "start when no frame was kept"}`, async () => {
+            const first = { from: "2026-11-03T12:00:00.000Z", to: "2026-11-03T12:30:00.000Z" };
+            const interruptedAt = "2026-11-03T13:00:00.000Z";
+            const lastAt = "2026-11-03T13:00:20.000Z";
+            const run = await recordWith({
+                displays: [[builtIn]],
+                steps: ["frames"],
+                prepare: async (store, id) => {
+                    await store.update(id, { command: "test", change: "dead run" }, (record) => {
+                        record.recording = {
+                            status: "recording",
+                            startedAt: first.from,
+                            spans: [first, { from: interruptedAt }],
+                        };
+                    });
+                    const frames = join(store.folder(id), "frames");
+                    mkdirSync(frames);
+                    const times = [first.to, ...(keptFrame ? [lastAt] : [])];
+                    const rows = times.map((at, index) => ({
+                        file: `frames/earlier-${index}-d1.jpg`,
+                        at,
+                        displayId: 1,
+                        changePercent: 100,
+                        reason: "first",
+                    }));
+                    for (const row of rows) {
+                        writeFileSync(join(store.folder(id), row.file), "jpeg");
+                    }
+                    writeFileSync(
+                        join(store.folder(id), "frames.jsonl"),
+                        `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`
+                    );
+                    utimesSync(frames, new Date(first.to), new Date(first.to));
+                },
+            });
+            const saved = new MeetingStore(run.store.storage).read(run.saved!.id)!;
+            const legacySpan = z.object({
+                from: z.string(),
+                to: z.string().optional(),
+                stopReason: z.enum(["requested", "paused", "failed", "error"]).optional(),
+            });
+            const legacyRecord = z.object({ recording: z.object({ spans: z.array(legacySpan) }) });
+            expect(
+                legacyRecord.parse(SafeJSON.parse(readFileSync(run.store.path(saved.id), "utf8"))).recording.spans[1]
+                    ?.stopReason
+            ).toBe("error");
+            expect(saved.recording?.spans?.[1]).toEqual({
+                from: interruptedAt,
+                to: keptFrame ? lastAt : interruptedAt,
+                stopReason: "error",
+                interrupted: true,
+            });
+            const coverage = screenCaptureCoverage({ record: saved, zeroMs: Date.parse(first.from) });
+            expect(coverage.recordingSpans?.[0]).toEqual({ fromSec: 0, toSec: 1800 });
+            expect(coverage.recordingSpans?.filter((span) => span.fromSec === 3600)).toEqual(
+                keptFrame ? [{ fromSec: 3600, toSec: 3620 }] : []
+            );
+        });
+    }
+
     test("every display at once, named by id; a display that leaves between pieces leaves without an error", async () => {
         const run = await recordWith({
             displays: [[builtIn, external], [builtIn]],
             steps: ["frames", "frames", "frames"],
         });
         const frames = readdirSync(join(run.folder, "frames")).sort();
-        const ocr = readFileSync(join(run.folder, "ocr.jsonl"), "utf8")
+        const index = readFileSync(join(run.folder, "frames.jsonl"), "utf8")
             .trim()
             .split("\n")
             .map((row) => SafeJSON.parse(row, { strict: true }));
 
         expect(frames.filter((name) => name.endsWith("-d1.jpg"))).toHaveLength(2);
         expect(frames.filter((name) => name.endsWith("-d4.jpg"))).toHaveLength(1);
-        expect(ocr.map((line: { displayId: number }) => line.displayId).sort()).toEqual([1, 1, 4]);
+        expect(index.map((line: { displayId: number }) => line.displayId).sort()).toEqual([1, 1, 4]);
         expect(run.recorder.requests.slice(0, 3).map((request) => request.target)).toEqual([
             { kind: "display", displayId: 1 },
             { kind: "display", displayId: 4 },
@@ -2974,25 +3101,23 @@ describe("the meetings recorder loop", () => {
         expect(recordingSummary(run.saved!).join("\n")).toContain("Built-in (1) 2, External (4) 1");
     });
 
-    test("each piece's frames land as dated UTC JPEG names with one ocr.jsonl row each before the recording stops", async () => {
-        const blocks = [{ text: "Quarterly", confidence: 0.9, bounds: { x: 0.1, y: 0.8, width: 0.3, height: 0.05 } }];
+    test("each piece's frames land as dated UTC JPEG names with one frames.jsonl line each before the recording stops, and OCR is left to the worker it starts", async () => {
         let midway: { frames: string[]; rows: number } | undefined;
         const run = await recordWith({
             displays: [[builtIn]],
             steps: ["frames", "hang"],
-            ocrBlocks: blocks,
             actions: [
                 async (send, live) => {
                     midway = {
                         frames: readdirSync(join(live.folder, "frames")),
-                        rows: readFileSync(join(live.folder, "ocr.jsonl"), "utf8").trim().split("\n").length,
+                        rows: readFileSync(join(live.folder, "frames.jsonl"), "utf8").trim().split("\n").length,
                     };
                     return send("stop");
                 },
             ],
         });
         const frames = readdirSync(join(run.folder, "frames"));
-        const rows = readFileSync(join(run.folder, "ocr.jsonl"), "utf8")
+        const rows = readFileSync(join(run.folder, "frames.jsonl"), "utf8")
             .trim()
             .split("\n")
             .map((row) => SafeJSON.parse(row, { strict: true }));
@@ -3001,16 +3126,21 @@ describe("the meetings recorder loop", () => {
         expect(frames).toHaveLength(1);
         expect(frames[0]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-d1\.jpg$/);
         expect(rows).toEqual([
-            {
+            expect.objectContaining({
                 file: `frames/${frames[0]}`,
                 at: expect.any(String),
                 displayId: 1,
                 changePercent: 10,
                 reason: "first",
-                text: "Quarterly planning board with several readable lines",
-                blocks,
-            },
+            }),
         ]);
+        expect(rows[0].text).toBeUndefined();
+        expect(existsSync(join(run.folder, "ocr.jsonl"))).toBe(false);
+        expect(run.ocrStarts).toEqual([run.saved!.id]);
+        // The worker reads the recording's OCR settings from beside the frames; a live change rewrites them.
+        expect(
+            SafeJSON.parse(readFileSync(join(run.folder, "ocr-settings.json"), "utf8"), { strict: true })
+        ).toMatchObject({ enabled: true, minChars: 0 });
         const at = new Date(rows[0].at);
         expect(frames[0]).toBe(`${at.toISOString().replace(/[:.]/g, "-")}-d1.jpg`);
         expect(run.state.frames).toBe(1);
@@ -3274,7 +3404,7 @@ describe("the meetings recorder loop", () => {
                 },
             ],
         });
-        const frame = SafeJSON.parse(readFileSync(join(run.folder, "ocr.jsonl"), "utf8").trim(), { strict: true });
+        const frame = SafeJSON.parse(readFileSync(join(run.folder, "frames.jsonl"), "utf8").trim(), { strict: true });
         const at = Date.parse(frame.at);
         expect(
             run.saved?.recording?.displaySpans?.some(
@@ -3284,21 +3414,40 @@ describe("the meetings recorder loop", () => {
         expect(Date.parse(run.saved!.recording!.displaySpans!.at(-1)!.to!)).toBeLessThanOrEqual(stopAnswerAt);
     });
 
-    test("captures that fail three times stop it as failed, with one notice and the reason in recorder-last.json", async () => {
-        const run = await recordWith({ displays: [[builtIn]], steps: ["timeout", "fail", "timeout"] });
+    test("captures refused the permission three times stop it as failed, with one notice and the reason in recorder-last.json", async () => {
+        const run = await recordWith({ displays: [[builtIn]], steps: ["denied", "denied", "denied"] });
         const last = SafeJSON.parse(readFileSync(join(run.folder, "recorder-last.json"), "utf8"), { strict: true });
 
         expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "failed" });
         expect(run.saved?.recording?.warning).toContain("capture failed 3 times in a row");
         expect(run.saved?.recording?.warning).toContain("No frame was recorded");
         expect(run.saved?.recording?.failureNotifiedAt).toEqual(expect.any(String));
-        expect(last).toMatchObject({ stopReason: "failed", warning: expect.stringContaining("did not end within") });
+        expect(last).toMatchObject({
+            stopReason: "failed",
+            warning: expect.stringContaining("permission was declined"),
+        });
         expect(run.notes.map((note) => note.title)).toEqual(["Screen recording stopped"]);
         expect(run.notes[0]?.message).toContain("record start --meeting");
     });
 
+    test("captures that fail for any other reason (a rebuilt ax-tool, a timeout) keep the recording: one 'failing' notice, then 'works again'", async () => {
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["timeout", "fail", "timeout", "fail", "frames", "hang"],
+        });
+
+        expect(run.rejected).toBeUndefined();
+        expect(run.recorder.requests).toHaveLength(6);
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "requested", frames: 1 });
+        expect(run.notes.map((note) => note.title)).toEqual([
+            "Screen capture is failing",
+            "Screen recording works again",
+        ]);
+        expect(run.notes[0]?.message).toContain("keeps trying");
+    });
+
     test("exhausted capture retries persist failure without capturing a frame, and the recorder reports the failure", async () => {
-        const run = await recordWith({ displays: [[builtIn]], steps: ["fail", "fail", "fail"] });
+        const run = await recordWith({ displays: [[builtIn]], steps: ["denied", "denied", "denied"] });
 
         expect(run.rejected).toBeInstanceOf(RecorderFailedError);
         expect(run.rejected?.message).toContain("capture failed 3 times in a row");
@@ -3312,7 +3461,7 @@ describe("the meetings recorder loop", () => {
         let liveState: string | undefined;
         const run = await recordWith({
             displays: [[builtIn]],
-            steps: ["fail", "fail", "fail"],
+            steps: ["denied", "denied", "denied"],
             duringNotify: async (call, liveDir) => {
                 liveState = listLiveRecordings(liveDir).at(0)?.state;
                 return [
@@ -3332,12 +3481,16 @@ describe("the meetings recorder loop", () => {
         expect(run.saved?.history.map((entry) => entry.change)).not.toContain("paused");
     });
 
-    test("captures whose stream failed keep their frames but count as failures, so three in a row stop it as failed", async () => {
+    test("captures whose stream failed keep their frames but count as failures, and three in a row keep the recording trying", async () => {
         const run = await recordWith({ displays: [[builtIn]], steps: ["stream", "stream", "stream"] });
 
-        expect(run.recorder.requests).toHaveLength(3);
-        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "failed", frames: 3 });
-        expect(run.rejected?.message).toContain("capture failed 3 times in a row");
+        expect(run.recorder.requests).toHaveLength(4);
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "requested", frames: 3 });
+        expect(run.rejected).toBeUndefined();
+        expect(run.notes.map((note) => note.title)).toEqual([
+            "Screen capture is failing",
+            "Screen recording works again",
+        ]);
         expect(readdirSync(join(run.folder, "frames"))).toHaveLength(3);
     });
 
@@ -4385,6 +4538,7 @@ test("a recycled pid's claim and an unreadable pid file are both taken over, as 
     expect(existsSync(files.pid)).toBe(false);
 
     writeFileSync(files.pid, "not a pid");
+    utimesSync(files.pid, new Date(0), new Date(0));
 
     // Taken over, then released when the blocked frames directory ends the start.
     await expect(runRecorder({ store, meetingId: record.id, capture })).rejects.toThrow();
@@ -5081,6 +5235,215 @@ test("audio processing kills expired children and names the affected audio", asy
     }
 });
 
+describe("bounded audio probe", () => {
+    const output = SafeJSON.stringify({
+        streams: [{ codec_type: "video" }, { codec_type: "audio", channels: 2 }],
+        format: { duration: "2.5" },
+    });
+
+    test.each([
+        ["ETIMEDOUT", "timed out"],
+        ["ENOBUFS", "output exceeded"],
+    ])("reports %s with the affected file", async (code, message) => {
+        const { probeAudio } = await import("./lib/audio");
+        const originalSpawn = Bun.spawn;
+        const which = spyOn(Bun, "which").mockReturnValue("/fixture/ffprobe");
+        const spawn = spyOn(Bun, "spawn").mockImplementation(() =>
+            originalSpawn(["/bin/echo", output], { stdout: "pipe", stderr: "pipe" })
+        );
+        const run = spyOn(bounded, "boundedCommand").mockResolvedValue({
+            status: null,
+            signal: "SIGTERM",
+            stdout: "",
+            stderr: "",
+            error: Object.assign(new Error("fixture failure"), { code }),
+        });
+        try {
+            await expect(probeAudio("fixture-tone.wav")).rejects.toThrow(message);
+            await expect(probeAudio("fixture-tone.wav")).rejects.toThrow("fixture-tone.wav");
+            expect(run.mock.calls[0]?.[0]).toMatchObject({ timeoutMs: 10_000, maxBufferBytes: 65_536 });
+        } finally {
+            run.mockRestore();
+            spawn.mockRestore();
+            which.mockRestore();
+        }
+    });
+
+    test("cancellation during a probe is propagated and passed to the bounded runner", async () => {
+        const { probeAudio } = await import("./lib/audio");
+        const originalSpawn = Bun.spawn;
+        const which = spyOn(Bun, "which").mockReturnValue("/fixture/ffprobe");
+        const spawn = spyOn(Bun, "spawn").mockImplementation(() =>
+            originalSpawn(["/bin/echo", output], { stdout: "pipe", stderr: "pipe" })
+        );
+        const controller = new AbortController();
+        const reason = new DOMException("stop probing", "AbortError");
+        const run = spyOn(bounded, "boundedCommand").mockImplementation(async () => {
+            controller.abort(reason);
+            return {
+                status: null,
+                signal: "SIGTERM",
+                stdout: "",
+                stderr: "",
+                error: Object.assign(new Error("cancelled"), { code: "ABORT_ERR" }),
+            };
+        });
+        try {
+            await expect(probeAudio("fixture-tone.wav", { signal: controller.signal })).rejects.toBe(reason);
+            expect(run.mock.calls[0]?.[0].signal).toBe(controller.signal);
+        } finally {
+            run.mockRestore();
+            spawn.mockRestore();
+            which.mockRestore();
+        }
+    });
+
+    test("a successful bounded probe retains the audio-only result shape", async () => {
+        const { probeAudio } = await import("./lib/audio");
+        const originalSpawn = Bun.spawn;
+        const spawn = spyOn(Bun, "spawn").mockImplementation(() =>
+            originalSpawn(["/bin/echo", output], { stdout: "pipe", stderr: "pipe" })
+        );
+        const which = spyOn(Bun, "which").mockReturnValue("/fixture/ffprobe");
+        const run = spyOn(bounded, "boundedCommand").mockResolvedValue({
+            status: 0,
+            signal: null,
+            stdout: output,
+            stderr: "",
+        });
+        try {
+            expect(await probeAudio("fixture-tone.wav")).toEqual({ tracks: 1, channels: 2, durationSec: 2.5 });
+        } finally {
+            run.mockRestore();
+            spawn.mockRestore();
+            which.mockRestore();
+        }
+    });
+});
+
+describe.skipIf(!Bun.which("ffmpeg"))("audio clip source clock", () => {
+    let movie: string;
+    let silence: string;
+    let folder: string;
+
+    beforeAll(async () => {
+        folder = new MeetingStore(new Storage("audio-clip-clock-fixture")).root;
+        mkdirSync(folder, { recursive: true });
+        movie = join(folder, "delayed-tracks.mkv");
+        silence = join(folder, "silence.wav");
+        const make = async (args: string[]) => {
+            const process = Bun.spawn(["ffmpeg", "-y", "-v", "error", ...args], {
+                env: globalThis.process.env,
+                stdin: "ignore",
+                stdout: "ignore",
+                stderr: "pipe",
+                timeout: 10_000,
+            });
+            const [code, stderr] = await Promise.all([process.exited, new Response(process.stderr).text()]);
+            if (code !== 0) {
+                throw new Error(`audio clock fixture failed: ${stderr}`);
+            }
+        };
+        await make([
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=16x16:r=2:d=4",
+            "-itsoffset",
+            "0.5",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=16000:duration=3",
+            "-itsoffset",
+            "1.5",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:sample_rate=16000:duration=2",
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-map",
+            "2:a",
+            "-c:v",
+            "ffv1",
+            "-c:a",
+            "pcm_s16le",
+            movie,
+        ]);
+        await make(["-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-t", "3", "-c:a", "pcm_s16le", silence]);
+    });
+
+    async function clip(
+        name: string,
+        options: {
+            fromSec: number;
+            toSec: number;
+            tracks?: number;
+            padSec?: number;
+            toneAtSec?: number;
+            silent?: boolean;
+        }
+    ) {
+        const { cutClip } = await import("./lib/audio");
+        const { toFloat32Audio } = await import("@genesiscz/utils/audio/converter");
+        const outPath = join(folder, `${name}.wav`);
+        await cutClip({ audioPath: options.silent ? silence : movie, outPath, padSec: 0, ...options });
+        return toFloat32Audio(outPath);
+    }
+
+    function frequencyOnset(samples: Float32Array, frequency: number): number {
+        const size = 320; // 20 ms at 16 kHz; enough to distinguish the two fixture tones.
+        for (let start = 0; start + size <= samples.length; start += 80) {
+            let real = 0,
+                imaginary = 0;
+            for (let index = 0; index < size; index++) {
+                const angle = (2 * Math.PI * frequency * index) / 16_000;
+                real += samples[start + index] * Math.cos(angle);
+                imaginary += samples[start + index] * Math.sin(angle);
+            }
+            if ((2 * Math.hypot(real, imaginary)) / size > 0.04) {
+                return start / 16_000;
+            }
+        }
+        return Infinity;
+    }
+
+    test("a cut before a delayed track preserves its leading silence", async () => {
+        const samples = await clip("before", { fromSec: 0.25, toSec: 2.25 });
+        expect(Math.abs(frequencyOnset(samples, 440) - 0.25)).toBeLessThan(0.03);
+        expect(Math.abs(samples.length / 16_000 - 2)).toBeLessThan(0.03);
+    });
+
+    test("a cut after onset does not add the original delay again", async () => {
+        const samples = await clip("after", { fromSec: 0.75, toSec: 2.25 });
+        expect(frequencyOnset(samples, 440)).toBeLessThan(0.03);
+        expect(Math.abs(samples.length / 16_000 - 1.5)).toBeLessThan(0.03);
+    });
+
+    test("each delayed track retains its own clock before mixing", async () => {
+        const samples = await clip("mixed", { fromSec: 0.25, toSec: 2.75, tracks: 2 });
+        expect(Math.abs(frequencyOnset(samples, 440) - 0.25)).toBeLessThan(0.03);
+        expect(Math.abs(frequencyOnset(samples, 880) - 1.25)).toBeLessThan(0.03);
+        expect(Math.abs(samples.length / 16_000 - 2.5)).toBeLessThan(0.03);
+    });
+
+    test("zero-start audio keeps the tone relative to the padded clip start", async () => {
+        const samples = await clip("tone", { fromSec: 0.5, toSec: 1.5, padSec: 0.25, toneAtSec: 0.9, silent: true });
+        let onset = Infinity;
+        for (let index = 0; index < samples.length; index++) {
+            if (Math.abs(samples[index]) > 0.01) {
+                onset = index / 16_000;
+                break;
+            }
+        }
+        expect(Math.abs(onset - 0.65)).toBeLessThan(0.03);
+        expect(Math.abs(samples.length / 16_000 - 1.5)).toBeLessThan(0.03);
+    });
+});
+
 test("uncertain attendance ends neither exclude speakers nor prove a sole attendee", () => {
     for (const sec of [10, 100]) {
         const uncertain = { name: "Alice Example", fromSec: 40, toSec: 60, joinedAtExact: false, leftAtExact: false };
@@ -5391,9 +5754,6 @@ describe("suggest: words said on purpose", () => {
         expect(wordFamily("mobilce")).toBe(wordFamily("mobilkou"));
         expect([...spokenOnPurpose(["mokovat"], (root) => root === "mock")]).toEqual(["mokovat"]);
         expect([...spokenOnPurpose(["kvapímu"], () => false)]).toEqual([]);
-        // Without a word check only English roots are known; a missing check never makes every root known.
-        expect(knownRoot()("kvapimu")).toBe(false);
-        expect(knownRoot()("mock")).toBe(true);
         expect([...spokenOnPurpose(["mobilce", "mobilkou", "kvapímu"], () => false)].sort()).toEqual([
             "mobilce",
             "mobilkou",
@@ -5447,5 +5807,207 @@ describe("suggest: words said on purpose", () => {
         });
 
         expect([...settled.keys()].sort()).toEqual(["i1", "i3"]);
+    });
+});
+
+describe("saved screen capture coverage", () => {
+    test("capture intervals outlive unchanged frames, preserve pauses and use the transcript clock", async () => {
+        const store = new MeetingStore(new Storage("screen-capture-coverage"));
+        const zero = Date.parse("2026-11-05T08:00:00.000Z");
+        const at = (second: number) => new Date(zero + second * 1000).toISOString();
+        const saved = await store.create(
+            {
+                title: "Coverage fixture",
+                start: at(0),
+                createdBy: "record",
+                recording: {
+                    status: "stopped",
+                    clock: { source: "fixture", startedAt: at(5) },
+                    spans: [
+                        { from: at(0), to: at(180) },
+                        { from: at(240), to: at(300) },
+                    ],
+                    displaySpans: [
+                        { displayId: 1, from: at(0), to: at(300) },
+                        { displayId: 2, from: at(60), to: at(280) },
+                    ],
+                },
+            },
+            { command: "test", change: "fixture" }
+        );
+        const folder = store.folder(saved.id);
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        const image = createCanvas(20, 10).toBuffer("image/png");
+        const rows = [10, 20].map((second) => ({
+            file: `frames/f${second}.png`,
+            at: at(second),
+            displayId: 1,
+            text: "",
+            blocks: [],
+        }));
+        for (const row of rows) {
+            writeFileSync(join(folder, row.file), image);
+        }
+        writeFileSync(join(folder, "ocr.jsonl"), `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`);
+        const result = await readScreen({ meeting: saved.id, fromSec: 100, toSec: 150 }, store);
+        expect(result.frames).toEqual([]);
+        const client = new InProcessMeetingsClient({ deps: { store: () => new MeetingStore(store.storage) } });
+        try {
+            const wire = await client.call("meeting.screen", { meeting: saved.id, fromSec: 100, toSec: 150 });
+            expect(wire).toEqual(result);
+            const timeline = await client.call("meeting.timeline", { meeting: saved.id });
+            expect(timeline.recordingSpans).toEqual(result.recordingSpans);
+            expect(timeline.displaySpans).toEqual(result.displaySpans);
+        } finally {
+            client.close();
+        }
+        expect(result).toMatchObject({
+            recordingSpans: [
+                { fromSec: -5, toSec: 175 },
+                { fromSec: 235, toSec: 295 },
+            ],
+            displaySpans: [
+                { displayId: 1, fromSec: -5, toSec: 175 },
+                { displayId: 1, fromSec: 235, toSec: 295 },
+                { displayId: 2, fromSec: 55, toSec: 175 },
+                { displayId: 2, fromSec: 235, toSec: 275 },
+            ],
+        });
+    });
+});
+
+describe("capture coverage evidence", () => {
+    const zeroMs = Date.parse("2026-11-05T08:00:00.000Z");
+    const at = (second: number) => new Date(zeroMs + second * 1000).toISOString();
+    const coverage = (recording?: MeetingRecord["recording"]) =>
+        screenCaptureCoverage({
+            record: meetingRecordSchema.parse({ ...record, history: [], recording }),
+            zeroMs,
+        });
+
+    test("missing metadata remains unknown while explicit empty intervals mean no capture", () => {
+        expect(coverage()).toEqual({});
+        expect(coverage({ status: "stopped", startedAt: at(0), stoppedAt: at(60), frames: 2 })).toEqual({});
+        expect(coverage({ spans: [] })).toEqual({ recordingSpans: [] });
+        expect(coverage({ spans: [], displaySpans: [] })).toEqual({ recordingSpans: [], displaySpans: [] });
+        expect(coverage({ spans: [{ from: at(0), to: at(60) }], displaySpans: [] })).toEqual({
+            recordingSpans: [{ fromSec: 0, toSec: 60 }],
+        });
+    });
+
+    test("partial display history or a gap in its evidence stays unknown", () => {
+        for (const displaySpans of [
+            [{ displayId: 1, from: at(30), to: at(60) }],
+            [
+                { displayId: 1, from: at(0), to: at(20) },
+                { displayId: 2, from: at(30), to: at(60) },
+            ],
+        ]) {
+            expect(coverage({ spans: [{ from: at(0), to: at(60) }], displaySpans })).toEqual({
+                recordingSpans: [{ fromSec: 0, toSec: 60 }],
+            });
+        }
+        expect(
+            coverage({
+                spans: [{ from: at(0), to: at(60) }],
+                displaySpans: [
+                    { displayId: 1, from: at(0), to: at(30) },
+                    { displayId: 2, from: at(30), to: at(60) },
+                ],
+            })
+        ).toEqual({
+            recordingSpans: [{ fromSec: 0, toSec: 60 }],
+            displaySpans: [
+                { displayId: 1, fromSec: 0, toSec: 30 },
+                { displayId: 2, fromSec: 30, toSec: 60 },
+            ],
+        });
+    });
+
+    test("closed legacy history is coverage, but mixed history before display tracking is not display evidence", () => {
+        const historical = meetingRecordSchema.parse({
+            ...record,
+            history: [
+                { at: at(0), command: "record start", change: "created source record" },
+                { at: at(10), command: "record start", change: "display 1" },
+                { at: at(20), command: "record stop", change: "stopped" },
+            ],
+        });
+        expect(screenCaptureCoverage({ record: historical, zeroMs })).toEqual({
+            recordingSpans: [{ fromSec: 10, toSec: 20 }],
+        });
+        expect(
+            screenCaptureCoverage({
+                record: {
+                    ...historical,
+                    recording: {
+                        spans: [{ from: at(30), to: at(60) }],
+                        displaySpans: [{ displayId: 2, from: at(30), to: at(60) }],
+                    },
+                },
+                zeroMs,
+            })
+        ).toEqual({
+            recordingSpans: [
+                { fromSec: 10, toSec: 20 },
+                { fromSec: 30, toSec: 60 },
+            ],
+        });
+    });
+
+    test("open stored intervals need live ownership, not a persisted recording status", () => {
+        const open = meetingRecordSchema.parse({
+            ...record,
+            recording: {
+                status: "recording",
+                spans: [{ from: at(12.345) }],
+                displaySpans: [{ displayId: 1, from: at(12.345) }],
+            },
+        });
+        expect(screenCaptureCoverage({ record: open, zeroMs, nowMs: zeroMs + 20_789 })).toEqual({});
+        expect(
+            screenCaptureCoverage({
+                record: open,
+                zeroMs,
+                nowMs: zeroMs + 20_789,
+                live: { startedAt: at(10), displaySpans: [{ displayId: 2, from: at(12.345) }] },
+            })
+        ).toEqual({
+            recordingSpans: [{ fromSec: 12.345, toSec: 20.789 }],
+            displaySpans: [{ displayId: 2, fromSec: 12.345, toSec: 20.789 }],
+        });
+        expect(
+            screenCaptureCoverage({
+                record: open,
+                zeroMs,
+                nowMs: zeroMs + 20_789,
+                live: { startedAt: at(15) },
+            })
+        ).toEqual({});
+        expect(coverage({ status: "stopped", spans: [{ from: at(0) }] })).toEqual({});
+        expect(coverage({ status: "paused", spans: [{ from: at(0) }] })).toEqual({});
+    });
+
+    test("invalid or unfinished metadata cannot manufacture a positive coverage range", () => {
+        expect(coverage({ spans: [{ from: at(60), to: at(0) }] })).toEqual({});
+        expect(coverage({ spans: [{ from: at(0), to: at(0) }] })).toEqual({});
+        expect(coverage({ spans: [{ from: at(0), stopReason: "interrupted" }] })).toEqual({});
+        expect(coverage({ spans: [{ from: at(0), to: at(0), stopReason: "interrupted" }] })).toEqual({
+            recordingSpans: [],
+        });
+        expect(
+            coverage({ spans: [{ from: at(0), to: at(60) }], displaySpans: [{ displayId: 1, from: at(0) }] })
+        ).toEqual({
+            recordingSpans: [{ fromSec: 0, toSec: 60 }],
+        });
+        expect(
+            coverage({
+                spans: [{ from: at(0), to: at(60) }],
+                displaySpans: [{ displayId: 1, from: at(60), to: at(0) }],
+            })
+        ).toEqual({
+            recordingSpans: [{ fromSec: 0, toSec: 60 }],
+        });
+        expect(screenCaptureCoverage({ record, zeroMs: Number.NaN })).toEqual({});
     });
 });

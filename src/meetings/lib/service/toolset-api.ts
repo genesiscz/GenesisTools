@@ -1,3 +1,4 @@
+import { meetingCommentSchema } from "@app/meetings/lib/comment-schema";
 import { FINDING_KINDS, findingSchema } from "@app/meetings/lib/findings";
 import { matchDraftSchema } from "@app/meetings/lib/match-preview";
 import { SUGGEST_RULES } from "@app/meetings/lib/suggest";
@@ -13,6 +14,7 @@ import {
 } from "@genesiscz/utils/repl/toolsets/recorder";
 import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
+import { momentSave } from "./api";
 
 /**
  * The REPL `meetings` toolset's descriptor (src/node-repl/lib/toolsets/meetings.ts reads it), beside the Meetings
@@ -102,9 +104,9 @@ export const suggest = defineMethod({
     name: "items.suggest",
     params: z.object({ rules: z.array(z.string()).optional() }).strict(),
     result: z.unknown(),
-    resultName: "{ fresh: items.list rows, retired: string[], warnings }",
+    resultName: "{ fresh: items.list rows, warnings }",
     effect: "reversible",
-    doc: `Run the rules on the transcript and add what they find as suggested items, in one save. rules: any of ${SUGGEST_RULES.join(", ")} (default all). \`retired\` names the suggested items the dictionary or the slang rule settles now (rejected in the same save). A word check that cannot run is a warning.`,
+    doc: `Run the rules on the transcript and add what they find as suggested items, in one save. rules: any of ${SUGGEST_RULES.join(", ")} (default all). A word check that cannot run is a warning.`,
 });
 export const decide = {
     result: z.unknown(),
@@ -155,9 +157,9 @@ export const rename = defineMethod({
     params: z.object({ label: z.string().min(1), name: z.string().min(1) }).strict(),
     positional: ["label", "name"],
     result: z.unknown(),
-    resultName: `${recordDoc} with token`,
+    resultName: recordDoc,
     effect: "reversible",
-    doc: 'Name a speaker label ("Speaker 2" → "Alice"): this meeting\'s transcripts use the name from now on. A label the linked transcript does not have is refused, with the labels it has. `token` undoes it with items.reopen({ token }); it is null when the label had that name already.',
+    doc: 'Name a speaker label ("Speaker 2" → "Alice"): this meeting\'s transcripts use the name from now on. A label the linked transcript does not have is refused, with the labels it has.',
 });
 export const set = defineMethod({
     name: "set",
@@ -317,10 +319,20 @@ export const screenTimelineMethod = defineMethod({
     name: "screenTimeline",
     params: z.object({ all: z.boolean().optional() }).strict(),
     result: z.unknown(),
-    resultName: "{ displays, frames: { file, path, meetingSec, displayId, changed: OcrBox[] }[] }",
+    resultName:
+        "{ displays, focusSpans?, frames: { file, path, meetingSec, displayId, focusedDisplayId?, changed: OcrBox[] }[] }",
     effect: "read",
-    doc: "Every frame of the screen recording in time order with the OCR lines that changed since the display's earlier frame (all: every line too).",
+    doc: "Every frame in time order with changed OCR lines (all: every line too), the focused display when recorded, and its focusSpans. Older recordings have no focus history.",
 });
+export const saveClip = defineMethod({
+    name: "saveClip",
+    params: momentSave.params.omit({ meeting: true }),
+    result: momentSave.result,
+    resultName: momentSave.resultName,
+    effect: "reversible",
+    doc: "Save selected audio in this meeting's clips folder and Context, without playing. By default it has no tone or padding. Repeating the same cut returns its existing Context entry.",
+});
+
 export const exportMethod = defineMethod({
     name: "export",
     params: z
@@ -408,6 +420,33 @@ export const editorProject = defineMethod({
     doc: "Makes the meeting's screen recording an editor project in its folder: recording.json, proxy.mp4 (per 10 s window the display that changed most, or one display) and proxy.transcript.json, the transcript as captions with the speakers' names. Then movies.open(folder) edits it, and its findOnScreen(text) searches the OCR.",
 });
 
+export const commentsList = defineMethod({
+    name: "comments",
+    params: z.object({}).strict(),
+    result: z.array(meetingCommentSchema),
+    resultName: "MeetingComment[]",
+    effect: "read",
+    doc: "List this meeting's staged and sent comments, with read receipts and withdrawals.",
+});
+export const commentRead = defineMethod({
+    name: "readComment",
+    params: z.object({ id: z.string().min(1) }).strict(),
+    positional: ["id"],
+    result: meetingCommentSchema,
+    resultName: "MeetingComment",
+    effect: "destructive",
+    doc: "Acknowledge a sent comment before acting on it. Refuses a comment withdrawn before acknowledgement.",
+});
+export const commentWithdraw = defineMethod({
+    name: "withdrawComment",
+    params: z.object({ id: z.string().min(1) }).strict(),
+    positional: ["id"],
+    result: meetingCommentSchema,
+    resultName: "MeetingComment",
+    effect: "destructive",
+    doc: "Withdraw an unread comment. Refuses a comment the receiver has already acknowledged.",
+});
+
 export const meetingsToolsetApi = defineApi({
     id: "meetings",
     global: "meetings",
@@ -435,6 +474,9 @@ export const meetingsToolsetApi = defineApi({
             summary: "An opened meeting; `id` and `title` name it. Every call reads the meeting as saved now.",
             methods: [
                 info,
+                commentsList,
+                commentRead,
+                commentWithdraw,
                 lines,
                 transcript,
                 evidence,
@@ -454,6 +496,7 @@ export const meetingsToolsetApi = defineApi({
                 screen,
                 editorProject,
                 screenTimelineMethod,
+                saveClip,
                 exportMethod,
                 assignProposals,
                 assignAsk,

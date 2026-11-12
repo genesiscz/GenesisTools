@@ -273,7 +273,7 @@ const PROPAGATED_MAX = 0.9;
 export function propagateAnswer(
     record: MeetingRecord,
     answered: QuestionItem,
-    options: { answer: string; listenBelow: number; now: string }
+    options: { answer: string; listenBelow: number; now: string; except?: readonly string[] }
 ): string[] {
     if (answered.about !== "speaker" || !answered.signature || options.answer.toLowerCase() === NONE_OF_THESE) {
         return [];
@@ -292,6 +292,7 @@ export function propagateAnswer(
         const otherLabels = question.evidence?.labels;
         if (
             question.id === answered.id ||
+            options.except?.includes(question.id) ||
             question.signature !== answered.signature ||
             !offers ||
             question.fromSec !== answered.fromSec ||
@@ -303,6 +304,7 @@ export function propagateAnswer(
             continue;
         }
 
+        detachTargets({ question, except: options.except });
         let lowest = 1;
 
         for (const item of record.items) {
@@ -488,6 +490,13 @@ export function splitQuestion(
     return created;
 }
 
+function detachTargets(options: { question: QuestionItem; except?: readonly string[] }): void {
+    if (options.except?.length) {
+        const excluded = new Set(options.except);
+        options.question.decides = options.question.decides.filter((id) => !excluded.has(id));
+    }
+}
+
 /**
  * Writes an answer into the record: the question is confirmed, and each item it decides is confirmed with the answer
  * (a range's speaker, a term's spelling, a join's speaker) or rejected when the answer is "none of these". Returns
@@ -496,7 +505,7 @@ export function splitQuestion(
 export function answerQuestion(
     record: MeetingRecord,
     id: string,
-    options: { answer: string; comment?: string; now: string }
+    options: { answer: string; comment?: string; now: string; except?: readonly string[] }
 ): Correction[] {
     const question = record.items.find((item): item is QuestionItem => item.id === id && item.kind === "question");
 
@@ -518,6 +527,9 @@ export function answerQuestion(
     if (options.comment?.trim()) {
         question.comment = options.comment.trim();
     }
+
+    // A target struck from the answer leaves the question: it stays as it was, for its own decision.
+    detachTargets({ question, except: options.except });
 
     const ledger: Correction[] = [];
 
@@ -752,7 +764,7 @@ function heardKey(question: QuestionItem): string | undefined {
 export function settleLookAlikes(
     record: MeetingRecord,
     answered: QuestionItem,
-    options: { answer: string; listenBelow: number; now: string }
+    options: { answer: string; listenBelow: number; now: string; except?: readonly string[] }
 ): { settled: string[]; corrections: Correction[] } {
     if (answered.about === "speaker") {
         return { settled: propagateAnswer(record, answered, options), corrections: [] };
@@ -779,6 +791,7 @@ export function settleLookAlikes(
     for (const question of openQuestions(record)) {
         if (
             question.id === answered.id ||
+            options.except?.includes(question.id) ||
             question.about === "speaker" ||
             heardKey(question) !== heard ||
             !globalTerms(question) ||
@@ -793,6 +806,7 @@ export function settleLookAlikes(
                 answer: options.answer,
                 comment: `settled by the answer to ${answered.id}`,
                 now: options.now,
+                except: options.except,
             })
         );
         settled.push(question.id);

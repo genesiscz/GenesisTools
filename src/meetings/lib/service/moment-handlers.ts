@@ -9,6 +9,7 @@ import { cutTone, probeAudio } from "../audio";
 import { clipMoment, MomentError, openMoment } from "../moment";
 import type { MomentStateCode } from "../moment-schema";
 import { OpenedMeeting } from "../opened-meeting";
+import { persistClip } from "../saved-clip";
 import { resolveToneSound } from "../tone-sound";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
 import { type MeetingsCallContext, type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
@@ -30,6 +31,7 @@ function momentOptions(params: MeetingsParsedParams<"moment.plan">, deps: Meetin
         ...(params.padSec === undefined ? {} : { padSec: params.padSec }),
         ...(params.padAfterSec === undefined ? {} : { padAfterSec: params.padAfterSec }),
         ...(params.toneSound === undefined ? {} : { toneSound: params.toneSound }),
+        ...(params.tone === undefined ? {} : { tone: params.tone }),
         ...(params.lengthSec === undefined ? {} : { lengthSec: params.lengthSec }),
         ...(params.screen === undefined ? {} : { screen: params.screen }),
         ...(deps.probe ? { probeTone: deps.probe } : {}),
@@ -122,30 +124,71 @@ export async function clipMomentCall(
         });
     } catch (error) {
         if (error instanceof MomentError) {
-            throw unplayable(error.code, error.message);
+            throw unplayable(error.code, error.message, error);
         }
 
         throw error;
     }
 }
 
-/** A refusal of a Moment, with the reason a `moment.plan` would name. */
-function unplayable(reason: string, message: string) {
-    return refusal("unplayable", message, { reason });
+export async function saveMomentCall(
+    params: MeetingsParsedParams<"moment.save">,
+    context: MeetingsCallContext,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<MeetingsResult<"moment.save">> {
+    const clip = await clipMomentCall(
+        {
+            ...params,
+            padSec: params.padSec ?? 0,
+            padAfterSec: params.padAfterSec ?? 0,
+            tone: params.tone ?? false,
+            screen: false,
+        },
+        context,
+        store,
+        deps
+    );
+    const saved = await persistClip({
+        store,
+        record: recordOf(store, params.meeting),
+        clip,
+        title: params.title,
+        quote: params.quote,
+        signal: context.signal,
+        now: deps.now?.(),
+    });
+    if (saved.created) {
+        context.emit?.("meeting.changed", { meeting: clip.meeting, parts: ["show"] });
+    }
+    return saved;
+}
+
+/** A refusal of a Moment, with the reason a `moment.plan` would name; one issue title per reason. */
+function unplayable(reason: string, message: string, cause?: unknown) {
+    return refusal(
+        "unplayable",
+        message,
+        { reason },
+        { cause, issue: { title: `A Moment does not play (${reason})` } }
+    );
 }
 
 export async function previewTone(
     params: MeetingsParsedParams<"tone.preview">,
     deps: MeetingsHandlerDeps
 ): Promise<MeetingsResult<"tone.preview">> {
-    const config = params.sound ? undefined : await (deps.config ?? (() => new MeetingsConfigStore().read()))();
-    const setting = params.sound ?? config?.global.playback.listen.tone.sound;
+    const config = await (deps.config ?? (() => new MeetingsConfigStore().read()))();
+    const setting = params.sound ?? config.global.playback.listen.tone.sound;
 
     if (!setting) {
         throw refusal("failed", "no tone sound to preview");
     }
 
-    const sound = await resolveToneSound(setting, { probe: deps.probe ?? probeAudio });
+    const sound = await resolveToneSound(setting, {
+        probe: deps.probe ?? probeAudio,
+        onMissing: config.global.playback.listen.tone.onMissing,
+    });
     // A sine keeps the key it had before sound files; a file's key holds its version, so an edited file is made again.
     const version = sound.file ? (({ mtimeMs, size }) => [mtimeMs, size])(statSync(sound.file)) : [];
     const key = Bun.hash(
@@ -186,7 +229,7 @@ export async function readMeetingAudio(
     try {
         path = await openedOf(store, record, deps).audioPath();
     } catch (error) {
-        throw unplayable("no-audio", error instanceof Error ? error.message : String(error));
+        throw unplayable("no-audio", error instanceof Error ? error.message : String(error), error);
     }
 
     const probe = await (deps.probe ?? probeAudio)(path);

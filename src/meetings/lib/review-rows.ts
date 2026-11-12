@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
@@ -8,7 +9,16 @@ import { actorText } from "./decision-journal";
 import { itemWhat } from "./item-text";
 import { momentsInText } from "./moment-schema";
 import { inputNeeded, NONE_OF_THESE, type QuestionItem, questionLabel, questionView } from "./questions";
-import type { ClockTime, ReviewRow, ReviewRows, RowChoice, RowPart, RowSource, TextPiece } from "./review-row-schema";
+import type {
+    ClockTime,
+    ReviewRow,
+    ReviewRows,
+    ReviewRowsPatch,
+    RowChoice,
+    RowPart,
+    RowSource,
+    TextPiece,
+} from "./review-row-schema";
 import { speakerChoiceScores } from "./speaker-scores";
 
 export * from "./review-row-schema";
@@ -173,12 +183,31 @@ function cut(text: string): string {
     return text.length > SAID_CHARS ? `${text.slice(0, SAID_CHARS)}…` : text;
 }
 
-/** The words said from one time to another, each line that starts in the span. */
-function saidBetween(lines: TranscriptLines, fromSec: number, toSec: number): string {
-    return lines.entries
-        .filter((entry) => entry.startSec !== undefined && entry.startSec >= fromSec - 0.5 && entry.startSec < toSec)
-        .map((entry) => entry.text)
-        .join(" ");
+/**
+ * The words said from one time to another, each line that starts in the span. With `voices`, only the lines of those
+ * voices (a speaker range quotes its own speaker, not the people talking over it); all lines when none of theirs is
+ * in the span.
+ */
+function saidBetween(lines: TranscriptLines, fromSec: number, toSec: number, voices: readonly string[] = []): string {
+    const inSpan = lines.entries.filter(
+        (entry) => entry.startSec !== undefined && entry.startSec >= fromSec - 0.5 && entry.startSec < toSec
+    );
+    const own = inSpan.filter((entry) => voices.some((voice) => sameName(voice, entry.speaker)));
+    return (own.length > 0 ? own : inSpan).map((entry) => entry.text).join(" ");
+}
+
+/**
+ * The names a speaker range's lines carry: its label, or the label's name in this meeting. Not the range's proposed
+ * speaker: that may be someone else talking in the same span.
+ */
+function voicesOf(record: MeetingRecord, item: MeetingItem): string[] {
+    if (item.kind !== "speaker-range") {
+        return [];
+    }
+
+    return [item.label, record.speakers.labels[item.label]].filter(
+        (name): name is string => typeof name === "string" && name.length > 0
+    );
 }
 
 /** The answer an earlier question about the same words got, as `listen` offers it ("as at 1:49:54"). */
@@ -200,14 +229,13 @@ function earlierAnswer(record: MeetingRecord, question: QuestionItem): { answer:
     return earlier?.answer === undefined ? undefined : { answer: earlier.answer, atSec: earlier.fromSec };
 }
 
-/** G32: the earlier answer, then the scored choices by confidence, then the unscored ones in engine order. */
+/** R49: every scored choice is highest first, regardless of its role; unscored actions keep their engine order. */
 function ordered(choices: RowChoice[]): RowChoice[] {
-    const earlier = choices.filter((choice) => choice.role === "earlier");
     const scored = choices
-        .filter((choice) => choice.role !== "earlier" && choice.confidence !== undefined)
+        .filter((choice) => choice.confidence !== undefined)
         .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
-    const unscored = choices.filter((choice) => choice.role !== "earlier" && choice.confidence === undefined);
-    return [...earlier, ...scored, ...unscored];
+    const unscored = choices.filter((choice) => choice.confidence === undefined);
+    return [...scored, ...unscored];
 }
 
 function confidenceOf(value: number | undefined): { confidence?: number } {
@@ -268,7 +296,7 @@ function scoreOf(scores: Map<string, number>, name: string): number | undefined 
 function rangeChoices(item: Extract<MeetingItem, { kind: "speaker-range" }>): RowChoice[] {
     const others = (item.candidates ?? []).filter((name) => name !== item.speaker);
     const scores = speakerChoiceScores([item]);
-    return [
+    return ordered([
         ...(item.speaker
             ? [
                   {
@@ -290,7 +318,7 @@ function rangeChoices(item: Extract<MeetingItem, { kind: "speaker-range" }>): Ro
             }))
         ),
         { value: NONE_OF_THESE, label: "None of these", role: "none" as const, action: { kind: "reject" as const } },
-    ];
+    ]);
 }
 
 function plainChoices(item: MeetingItem, label: string): RowChoice[] {
@@ -486,7 +514,7 @@ function partsOf(record: MeetingRecord, item: MeetingItem, lines: TranscriptLine
                 : item.kind === "term"
                   ? line?.entry.text
                   : lines
-                    ? saidBetween(lines, item.fromSec, item.toSec)
+                    ? saidBetween(lines, item.fromSec, item.toSec, voicesOf(record, item))
                     : undefined;
 
         if (said) {
@@ -571,12 +599,12 @@ function choicesOf(record: MeetingRecord, item: MeetingItem): RowChoice[] {
 
 /** What a decided item was decided as; nothing for an open or rejected one, and for a kind that decides no value. */
 function decidedAs(item: MeetingItem): string | undefined {
-    if (item.kind === "question") {
-        return item.answer;
-    }
-
     if (item.status !== "confirmed") {
         return undefined;
+    }
+
+    if (item.kind === "question") {
+        return item.answer;
     }
 
     if (item.kind === "term") {
@@ -666,5 +694,38 @@ export function reviewRows(
             lowPriority: options.lowPriority === "show" ? 0 : record.items.filter(low).length,
             minPriority: options.minPriority,
         },
+    };
+}
+
+/** Compare every rendered row: a decision can change another row's choices without changing that item's status. */
+export function reviewRowsPatch(options: {
+    before: MeetingRecord;
+    after: MeetingRecord;
+    transcript?: Transcript;
+    minPriority: number;
+    lowPriority?: "hide" | "show";
+}): ReviewRowsPatch {
+    const before = reviewRows(options.before, options);
+    const after = reviewRows(options.after, options);
+    const previous = new Map(before.rows.map((row) => [row.id, row]));
+    const next = new Map(after.rows.map((row) => [row.id, row]));
+    const fields = (record: MeetingRecord) => ({
+        title: record.title,
+        ...(record.project ? { project: record.project } : {}),
+        labels: record.labels,
+        speakerLabels: record.speakers.labels,
+    });
+    return {
+        meeting: after.meeting,
+        changes: [...new Set([...previous.keys(), ...next.keys()])].flatMap((id) => {
+            const was = previous.get(id),
+                now = next.get(id);
+            return isDeepStrictEqual(was, now)
+                ? []
+                : [{ id, ...(was ? { before: was } : {}), ...(now ? { after: now } : {}) }];
+        }),
+        order: after.rows.map((row) => row.id),
+        hidden: { before: before.hidden, after: after.hidden },
+        fields: { before: fields(options.before), after: fields(options.after) },
     };
 }

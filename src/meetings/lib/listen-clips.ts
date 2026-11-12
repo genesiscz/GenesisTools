@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { ui } from "@genesiscz/utils/cli/ui";
 import type { ListenPads } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import type { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
@@ -21,11 +22,13 @@ export interface ClipSettings {
 
 /** The clip settings of a run: a sound file's length is read here once, not for each question. */
 export async function clipSettings(listen: ListenSettings, pads: ListenPads): Promise<ClipSettings> {
-    return {
-        listen,
-        pads,
-        ...(listen.tone.enabled ? { toneSound: await resolveToneSound(listen.tone.sound, { probe: probeAudio }) } : {}),
-    };
+    const toneSound = listen.tone.enabled
+        ? await resolveToneSound(listen.tone.sound, { probe: probeAudio, onMissing: listen.tone.onMissing })
+        : undefined;
+    if (toneSound?.fallback) {
+        ui.warn(toneSound.fallback);
+    }
+    return { listen, pads, ...(toneSound ? { toneSound } : {}) };
 }
 
 /**

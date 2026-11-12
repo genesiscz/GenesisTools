@@ -9,6 +9,7 @@ import { DEFAULT_OCR_TILE_PX } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { z } from "zod";
 import {
     fillerListsOf,
     languageSettings,
@@ -42,6 +43,16 @@ describe("meetings config", () => {
         writeFileSync(config.path, original);
         await expect(config.read()).rejects.toThrow();
         expect(fs.readFileSync(config.path, "utf8")).toBe(original);
+    });
+
+    test("tone fallback defaults to beep and an explicit strict choice survives reopening", async () => {
+        const config = store();
+        expect((await config.read()).global.playback.listen.tone.onMissing).toBe("beep");
+        await config.update((value) => {
+            value.global = { playback: { listen: { tone: { onMissing: "error" } } } };
+        });
+        const reopened = new MeetingsConfigStore(new Storage(`meetings-test-${stores}`));
+        expect((await reopened.read()).global.playback.listen.tone.onMissing).toBe("error");
     });
 
     test("an empty file is every default, with autoRecord off", () => {
@@ -239,6 +250,57 @@ describe("meetings config", () => {
         expect(meetingsConfigSchema.parse({ version: 99, future: { key: 1 } }).version).toBe(99);
     });
 
+    test("pairing receipts and Undo preserve existing and later independent sources on disk", async () => {
+        const config = store();
+        const existing = { name: "Alice Example", email: "alice@example.com" };
+        const fresh = { name: "Bob Example", email: "bob@example.com" };
+        const first = { kind: "manual" as const, at: "2026-11-04T10:00:00.000Z", note: "first" };
+        const added = { kind: "calendar" as const, from: "calendar", entryId: "new", at: "2026-11-04T11:00:00.000Z" };
+        const later = { kind: "calendar" as const, from: "calendar", entryId: "later", at: "2026-11-04T12:00:00.000Z" };
+        await config.addProject("work");
+        await config.pairPeople({ project: "work", people: [existing], by: first });
+        const receipt = await config.pairUnpairedPeople({
+            project: "work",
+            people: [
+                { person: existing, by: added },
+                { person: fresh, by: added },
+                { person: { name: "Owner", self: true }, by: added },
+            ],
+        });
+        expect(receipt).toEqual([{ ...fresh, by: added }]);
+        await config.pairPeople({ project: "work", people: [fresh], by: later });
+        expect(await config.unpairSource("work", fresh, added)).toEqual([{ ...fresh, left: false }]);
+        expect(await config.unpairSource("work", fresh, added)).toEqual([]);
+        const reopened = new MeetingsConfigStore(config.storage);
+        expect((await reopened.read()).projects.work?.match?.people).toEqual([
+            { ...existing, pairedBy: [first] },
+            { ...fresh, pairedBy: [later] },
+        ]);
+        const changed = { ...added, title: "Changed after pairing" };
+        await config.pairPeople({ project: "work", people: [fresh], by: changed });
+        await expect(config.unpairSource("work", fresh, added)).rejects.toThrow("changed after it was added");
+        expect((await reopened.read()).projects.work?.match?.people[1]?.pairedBy).toEqual([later, changed]);
+    });
+
+    test("concurrent first-time pairings return one committed receipt", async () => {
+        const config = store();
+        await config.addProject("work");
+        const person = { name: "Alice Example" };
+        const receipts = await Promise.all(
+            ["first", "second"].map((note) =>
+                config.pairUnpairedPeople({
+                    project: "work",
+                    people: [{ person, by: { kind: "manual", note, at: "2026-11-04T10:00:00.000Z" } }],
+                })
+            )
+        );
+        expect(receipts.flat()).toHaveLength(1);
+        const reopened = new MeetingsConfigStore(config.storage);
+        const saved = (await reopened.read()).projects.work?.match?.people;
+        expect(saved).toHaveLength(1);
+        expect(saved?.[0]?.pairedBy).toEqual([receipts.flat()[0]?.by]);
+    });
+
     test("labels and people pairings: many projects per person, unpairing an entry keeps other sources", async () => {
         const config = store();
         const entry = (entryId: string) => ({
@@ -289,6 +351,56 @@ describe("meetings config", () => {
         expect(sourceFolders(await config.read(), "work")).toEqual([{ source: "wisprflow", folder: "Work" }]);
     });
 
+    test("saved repeat settings still parse in an older build after migration and edits", async () => {
+        const config = store();
+        const legacyListen = z.object({
+            repeat: z.boolean().default(true),
+            repeatGapSec: z.number().min(0).max(10).default(1),
+        });
+        const legacyConfig = z.object({ global: z.object({ playback: z.object({ listen: legacyListen }) }) });
+        await config.storage.setConfig({
+            version: 6,
+            global: { playback: { listen: { repeat: { enabled: false, gapSec: 2.5 } } } },
+            futureKey: { keep: true },
+        });
+        expect((await config.read()).global.playback.listen.repeat).toEqual({ enabled: false, gapSec: 2.5 });
+        const saved = await config.storage.getConfig();
+        expect(legacyConfig.parse(saved).global.playback.listen).toEqual({ repeat: false, repeatGapSec: 2.5 });
+        const bytes = fs.readFileSync(config.path, "utf8");
+        await new MeetingsConfigStore(config.storage).read();
+        expect(fs.readFileSync(config.path, "utf8")).toBe(bytes);
+        await config.update((raw) => {
+            raw.global = { playback: { listen: { repeat: { enabled: true, gapSec: 0.5 } } } };
+        });
+        const edited = await config.storage.getConfig();
+        expect(legacyConfig.parse(edited).global.playback.listen).toEqual({ repeat: true, repeatGapSec: 0.5 });
+        expect(edited).toHaveProperty("futureKey.keep", true);
+        expect((await new MeetingsConfigStore(config.storage).read()).global.playback.listen.repeat).toEqual({
+            enabled: true,
+            gapSec: 0.5,
+        });
+    });
+
+    test("version 7 preserves repeat and its gap in the API and the older saved shape", async () => {
+        const config = store();
+        await config.storage.setConfig({
+            version: 5,
+            global: { playback: { listen: { repeat: false, repeatGapSec: 2.5 } } },
+        });
+        const read = await config.read();
+        expect(read.global.playback.listen.repeat).toEqual({ enabled: false, gapSec: 2.5 });
+        const reopened = await config.storage.getConfig();
+        expect(reopened).toMatchObject({
+            version: MEETINGS_CONFIG_VERSION,
+            global: { playback: { listen: { repeat: false, repeatGapSec: 2.5 } } },
+        });
+        const nested = meetingsConfigSchema.parse({
+            version: 5,
+            global: { playback: { listen: { repeat: { enabled: true, gapSec: 3 }, repeatGapSec: 9 } } },
+        });
+        expect(nested.global.playback.listen.repeat).toEqual({ enabled: true, gapSec: 3 });
+    });
+
     test("a version 3 file nests the tone under listen.tone, and a key already there wins", async () => {
         const v3 = { version: 3, global: { playback: { listen: { beep: false, beepLeadSec: 0.8, repeat: false } } } };
         const raw: Record<string, unknown> = structuredClone(v3);
@@ -303,6 +415,7 @@ describe("meetings config", () => {
             enabled: false,
             leadSec: 0.8,
             sound: { hz: 880, sec: 0.15, volume: 0.6 },
+            onMissing: "beep",
         });
 
         const both = { version: 3, global: { playback: { listen: { beep: false, tone: { enabled: true } } } } };
@@ -394,6 +507,25 @@ describe("meetings config", () => {
         // The sines are the Meetings window's presets (SidePanelSections.swift TonePreset).
         expect(TONE_PRESETS.soft).toMatchObject({ volume: 0.35, sound: { hz: 523, sec: 0.3 } });
         expect(TONE_PRESETS.click).toMatchObject({ volume: 0.7, sound: { hz: 2000, sec: 0.03 } });
+    });
+
+    test("tone files accept POSIX, Windows drive and UNC absolute paths without rewriting them", () => {
+        for (const file of [
+            "/sounds/chime.wav",
+            "C:\\Sounds\\chime.wav",
+            "D:/Sounds/chime.wav",
+            "\\\\fileserver\\sounds\\chime.wav",
+        ]) {
+            const config = meetingsConfigSchema.parse({
+                global: { playback: { listen: { tone: { sound: { file } } } } },
+            });
+            expect(config.global.playback.listen.tone.sound).toEqual({ file, volume: 0.6 });
+        }
+        for (const file of ["sounds/chime.wav", "sounds\\chime.wav", "C:chime.wav", ".\\chime.wav"]) {
+            expect(() =>
+                meetingsConfigSchema.parse({ global: { playback: { listen: { tone: { sound: { file } } } } } })
+            ).toThrow("absolute path");
+        }
     });
 
     test("a meeting language needs its block in languages", () => {
@@ -548,6 +680,66 @@ describe("meeting records", () => {
         stores += 1;
         return new MeetingStore(new Storage(`meetings-test-${stores}`));
     }
+
+    test("a saved edit makes legacy interrupted spans readable by older builds", async () => {
+        const store = records();
+        const created = await store.create(
+            { title: "Recovered recorder", start: "2026-11-05T11:00:00.000Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const span = { from: created.start, to: created.start, stopReason: "interrupted" };
+        fs.writeFileSync(
+            store.path(created.id),
+            SafeJSON.stringify({
+                ...created,
+                recording: {
+                    stopReason: "interrupted",
+                    spans: [span],
+                    displaySpans: [{ ...span, displayId: 1 }],
+                },
+            })
+        );
+        await store.update(created.id, { command: "set", change: "title" }, (record) => {
+            record.title = "Recovered meeting";
+        });
+        const legacyReason = z.enum(["requested", "paused", "failed", "error"]);
+        const legacy = z.object({
+            recording: z.object({
+                stopReason: legacyReason,
+                spans: z.array(z.object({ stopReason: legacyReason })),
+                displaySpans: z.array(z.object({ stopReason: legacyReason, displayId: z.number() })),
+            }),
+        });
+        expect(legacy.parse(SafeJSON.parse(fs.readFileSync(store.path(created.id), "utf8"))).recording).toEqual({
+            stopReason: "error",
+            spans: [{ stopReason: "error" }],
+            displaySpans: [{ stopReason: "error", displayId: 1 }],
+        });
+        const saved = new MeetingStore(store.storage).read(created.id)!;
+        expect(saved.recording?.interrupted).toBe(true);
+        expect(saved.recording?.spans?.[0]).toMatchObject({ stopReason: "error", interrupted: true });
+        expect(saved.recording?.displaySpans?.[0]).toMatchObject({ stopReason: "error", interrupted: true });
+    });
+
+    test("future recording stop reasons stay readable and survive a saved edit", async () => {
+        const store = records();
+        const created = await store.create(
+            { title: "Future recorder", start: "2026-11-05T11:00:00.000Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const recording = {
+            stopReason: "future-stop",
+            spans: [
+                { from: created.start, to: created.start, stopReason: "future-span", futureDetail: { keep: true } },
+            ],
+        };
+        fs.writeFileSync(store.path(created.id), SafeJSON.stringify({ ...created, recording }));
+        expect(new MeetingStore(store.storage).read(created.id)?.recording).toMatchObject(recording);
+        await store.update(created.id, { command: "set", change: "title" }, (record) => {
+            record.title = "Edited future recorder";
+        });
+        expect(new MeetingStore(store.storage).read(created.id)?.recording).toMatchObject(recording);
+    });
 
     test("the id is the local start and a whole-word title slug; a second one gets -2", async () => {
         const store = records();

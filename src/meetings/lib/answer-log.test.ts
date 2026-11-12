@@ -13,7 +13,7 @@ import {
     runningRound,
     subscribeAnswers,
 } from "./answer-log";
-import { MeetingComments } from "./comments";
+import { commentStreamLines, MeetingComments } from "./comments";
 import { DecisionJournal } from "./decision-journal";
 import { askedSpotSec, type QuestionItem } from "./questions";
 
@@ -258,6 +258,17 @@ describe("comments for the listening agent (comments.ndjson)", () => {
             alive,
         });
 
+    test("another writer cannot allocate a comment id during a staged transaction", () => {
+        const first = commentsFile();
+        const other = new MeetingComments(first.path);
+        first.transaction(() => {
+            expect(() => other.stage({ target: selection, text: "Contending writer", actor: person })).toThrow();
+            expect(first.stage({ target: selection, text: "First writer", actor: person }).id).toBe("c1");
+        });
+        expect(other.stage({ target: selection, text: "Next writer", actor: person }).id).toBe("c2");
+        expect(new MeetingComments(first.path).list().map((comment) => comment.id)).toEqual(["c1", "c2"]);
+    });
+
     test("staged comments stay until sent or unstaged; a sent one cannot change, and a torn line is passed over", () => {
         const comments = commentsFile();
         const first = comments.stage({ target: selection, text: "This is EMP, not OMP", quote: "OMP", actor: person });
@@ -284,6 +295,27 @@ describe("comments for the listening agent (comments.ndjson)", () => {
         expect(comments.staged().map((comment) => comment.id)).toEqual(["c2"]);
         expect(() => comments.staged(["c1"])).toThrow("Comment c1 was sent at");
         expect(() => comments.unstage("c3", person)).toThrow("No staged comment c3.");
+    });
+
+    test("read receipts survive reopening and withdrawal wins until a receiver reads", () => {
+        const comments = commentsFile();
+        comments.stage({ target: selection, text: "First comment", actor: person });
+        comments.stage({ target: selection, text: "Second comment", actor: person });
+        comments.markSent(comments.staged(), { token: "t-read", at, actor: person });
+        const other = new MeetingComments(comments.path, { now: () => new Date(at) });
+        expect(other.acknowledge("c1", person)).toMatchObject({ readAt: at, readBy: person });
+        expect(() => comments.withdraw("c1", person)).toThrow("was read");
+        expect(other.withdraw("c2", person)).toMatchObject({ withdrawnAt: at });
+        expect(() => comments.acknowledge("c2", person)).toThrow("was withdrawn");
+        const reopened = new MeetingComments(comments.path);
+        expect(reopened.list()).toMatchObject([
+            { id: "c1", readAt: at },
+            { id: "c2", withdrawnAt: at },
+        ]);
+        const withdrawal = reopened.lines().find((line) => line.kind === "withdrawn");
+        expect(withdrawal && commentStreamLines(withdrawal)).toEqual([
+            { type: "comment-withdrawn", event: "comment.withdrawn", id: "c2", at },
+        ]);
     });
 
     test("a listener counts while it runs: until it leaves, or once its process is gone", () => {

@@ -42,7 +42,7 @@ export const MOMENT_ERROR_CODES = [
     "unknown-line",
     "no-speech",
     "past-the-end",
-    /** An item's or a speaker turn's stretch is longer than `playback.listen.longestClipSec`: show it, do not play it. */
+    /** Kept for older answers: since 2026-11-11 a longer item or speaker turn plays its first `longestClipSec` instead. */
     "too-long",
 ] as const;
 export type MomentErrorCode = (typeof MOMENT_ERROR_CODES)[number];
@@ -68,6 +68,7 @@ export const toneSoundSchema = z.object({
     volume: z.number(),
     file: z.string().optional(),
     preset: z.enum(TONE_PRESET_NAMES).optional(),
+    fallback: z.string().optional(),
 }) satisfies z.ZodType<ToneSound>;
 
 /** One frame of a Moment's spot (`MomentFrame`). */
@@ -118,17 +119,24 @@ const RANGE_JOIN = /^\s*(?:[-–—]|to|until|till|do|až)\s*$/iu;
 /** "and" (Czech "a") joins a range only after "between" ("mezi"): "at 10:00 and 10:30" names two times. */
 const BETWEEN_JOIN = /^\s*(?:and|a)\s*$/iu;
 const BETWEEN = /(?:between|mezi)\s*$/iu;
+/** Explicit calendar cues are wall-clock times, not positions in the recording. */
+const WALL_CLOCK_AFTER =
+    /^\s*(?:[ap]\.?m\.?(?=\W|$)|(?:UTC|GMT|CET|CEST|stand-?up|meeting|call|sync|schůzka|schůzky|porada|porady)\b)/iu;
 
 /**
  * The times a text names, in order: "from 05:09 to 05:31", "between 1:02:10 and 1:02:40" and "05:09–05:31" are ranges,
- * a lone "1:49:48" is a time, and "at 10:00 and 10:30" is two times. Every time is on the transcript clock: a time of
- * day ("the 14:30 standup") reads as a transcript time too, a known limit (WaveA-Handoff). A question's text is how it names the moments that settle it (R17: every time in it
+ * a lone "1:49:48" is a time, and "at 10:00 and 10:30" is two times. Explicit calendar cues such as "the 14:30 standup"
+ * or "2:30 pm" stay plain text. Unqualified times use the transcript clock. A question's text names the moments that settle it (R17: every recording time in it
  * plays; R38: "This answers 12:10–12:30" is a Moment the window pushes on its context stack, above the one playing).
  */
 export function momentsInText(text: string): MomentMention[] {
     const clocks = [...text.matchAll(CLOCK_IN_TEXT)].flatMap((match) => {
+        const end = match.index + match[0].length;
+        if (WALL_CLOCK_AFTER.test(text.slice(end))) {
+            return [];
+        }
         const sec = parseClock(match[0]);
-        return sec === undefined ? [] : [{ start: match.index, end: match.index + match[0].length, sec }];
+        return sec === undefined ? [] : [{ start: match.index, end, sec }];
     });
     const mentions: MomentMention[] = [];
 

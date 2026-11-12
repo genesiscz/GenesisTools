@@ -9,6 +9,7 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
 import type { cutClip } from "./audio";
 import { decideItems } from "./decide";
+import { DecisionJournal } from "./decision-journal";
 import { findingItems, findingsFileSchema } from "./findings";
 import { SPEAKER_PAD_SEC, writeQuestionClips } from "./listen-clips";
 import {
@@ -273,6 +274,47 @@ describe("listen session", () => {
         expect(fx.item("i2")).not.toHaveProperty("answer");
         expect(fx.events()).toEqual(["round-start", "answered", "reopened", "round-end"]);
         expect(fx.ledger).toEqual([]);
+    });
+
+    test("a refused Undo still counts the answer against the round budget", async () => {
+        const fx = await fixture([
+            term("i1", 50, { proposed: "ADA" }),
+            question("i2", { about: "term", heard: "Ada", fromSec: 50, toSec: 54, decides: ["i1"], priority: 3 }),
+            question("i3", { fromSec: 60, toSec: 70, priority: 2 }),
+            question("i4", { fromSec: 80, toSec: 90, priority: 1 }),
+        ]);
+        const conflict = async (): Promise<ListenOutcome> => {
+            await decideItems({
+                store: fx.store,
+                record: fx.read(),
+                status: "rejected",
+                ids: ["i1"],
+                actor: { kind: "cli" },
+            });
+            return "back";
+        };
+        const adapter = new ScriptedAdapter([{ answer: "ADO" }, conflict, { answer: "Alice Example" }, "stop"]);
+        expect(await fx.session(adapter, { budget: 2 }).run()).toBe("budget");
+        expect(adapter.asked.map((asked) => asked.question.id)).toEqual(["i2", "i3", "i3"]);
+        expect(adapter.asked.at(-1)?.position).toBe(2);
+        expect(fx.item("i4")?.status).toBe("suggested");
+    });
+
+    test("a refused split Undo keeps the remaining part's numbering", async () => {
+        const fx = await fixture([question("i1")]);
+        const conflict = async (): Promise<ListenOutcome> => {
+            await new DecisionJournal({ store: fx.store }).apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: "i2", answer: "Alice Example" },
+                actor: { kind: "cli" },
+            });
+            return "back";
+        };
+        const adapter = new ScriptedAdapter(["split", conflict, "stop"]);
+        expect(await fx.session(adapter).run()).toBe("stopped");
+        expect(adapter.asked.map((asked) => asked.question.id)).toEqual(["i1", "i2", "i3"]);
+        expect(adapter.asked.at(-1)?.part).toEqual({ n: 2, of: 2 });
+        expect(fx.item("i2")).toMatchObject({ status: "confirmed", answer: "Alice Example" });
     });
 
     test("Esc after another process decided the answered item again keeps that decision and says so", async () => {

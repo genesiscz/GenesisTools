@@ -1,6 +1,7 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
 import { Command } from "commander";
+import { errorJSON, errorText } from "./lib/shared";
 import { MEETINGS_REGISTRARS } from "./registrars";
 
 // The Meetings window starts this CLI through Foundation's Process, which hands every argument over decomposed (NFD):
@@ -20,4 +21,7 @@ await registerRequestedTrees({
     requested: requestedCommandFromArgv(process.argv),
 });
 
-await runTool(program, { tool: "meetings" });
+await runTool(program, {
+    tool: "meetings",
+    formatError: (error) => ({ message: `${errorJSON(error)}\nERROR: ${errorText(error)}` }),
+});

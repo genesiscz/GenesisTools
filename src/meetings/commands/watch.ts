@@ -7,7 +7,7 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
 import { askAtMeetingEnd, hasOpenAssignSteps } from "../lib/assign";
-import { errorText, fail, resolveEnum } from "../lib/shared";
+import { fail, resolveEnum } from "../lib/shared";
 import { watchLoop, watchOnce } from "../lib/watch";
 
 const { log } = logger.scoped("meetings-watch-cmd");
@@ -67,7 +67,10 @@ export async function askProjectAtEnd(store: MeetingStore, meetingId: string): P
     );
 }
 
-/** Claims the watcher's pidfile: a dead or foreign owner is taken over, a live one is refused. */
+/**
+ * Claims the watcher's pidfile: a dead or foreign owner is taken over, a live one is refused. An empty file follows the
+ * shared claim's one rule (`EMPTY_HOLDER_GRACE_MS` in pidfile.ts), so one a SIGKILL left behind no longer blocks.
+ */
 export async function claimWatcher(store: MeetingStore): Promise<void> {
     const file = watcherPidPath(store);
     const claim = await claimPidFile(file, {
@@ -97,7 +100,7 @@ async function watch(opts: { once?: boolean }): Promise<void> {
             clearPidFile(watcherPidPath(store));
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -134,7 +137,7 @@ async function autostart(mode: string | undefined): Promise<void> {
             `Recording starts with Wispr Flow: ${enabled ? "on" : "off"}. Watcher: ${enabled && (running || picked === "on") ? "running" : "not running"}.`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

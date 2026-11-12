@@ -7,11 +7,11 @@ import type { LazyRegistrar } from "@genesiscz/utils/cli/lazy-registrars";
  */
 export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
     {
-        names: ["new", "list", "ls", "show", "revisions", "set", "link", "merge", "context"],
+        names: ["new", "list", "ls", "show", "revisions", "set", "link", "merge", "duplicate", "context"],
         load: async () => (await import("./commands/meeting")).registerMeetingCommands,
     },
     {
-        names: ["suggest", "rows", "items", "confirm", "reject", "reopen", "speakers", "transcript"],
+        names: ["decide", "suggest", "rows", "items", "confirm", "reject", "reopen", "speakers", "transcript"],
         load: async () => (await import("./commands/items")).registerItemCommands,
     },
     { names: ["journal"], load: async () => (await import("./commands/journal")).registerJournalCommand },
@@ -19,7 +19,9 @@ export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
     { names: ["attendance"], load: async () => (await import("./commands/attendance")).registerAttendanceCommand },
     { names: ["record", "screen"], load: async () => (await import("./commands/record")).registerRecordCommands },
     { names: ["screen-note"], load: async () => (await import("./commands/screen-note")).registerScreenNoteCommand },
+    { names: ["ocr"], load: async () => (await import("./commands/ocr")).registerOcrCommand },
     { names: ["play"], load: async () => (await import("./commands/play")).registerPlayCommand },
+    { names: ["comments"], load: async () => (await import("./commands/comments")).registerCommentsCommand },
     { names: ["listen"], load: async () => (await import("./commands/listen")).registerListenCommand },
     { names: ["watch", "autostart"], load: async () => (await import("./commands/watch")).registerWatchCommands },
     { names: ["projects"], load: async () => (await import("./commands/projects")).registerProjectsCommand },
@@ -31,5 +33,6 @@ export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
         load: async () => (await import("./commands/views")).registerViewCommands,
     },
     { names: ["config"], load: async () => (await import("./commands/config")).registerConfigCommand },
+    { names: ["word-timings"], load: async () => (await import("./commands/word-timings")).registerWordTimingCommands },
     { names: ["serve"], load: async () => (await import("./commands/serve")).registerServeCommand },
 ];

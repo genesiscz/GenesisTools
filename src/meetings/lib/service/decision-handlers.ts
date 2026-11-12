@@ -1,6 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
-import { readCorrections } from "@genesiscz/utils/meetings/corrections";
+import { readCorrections, teachesDictionary } from "@genesiscz/utils/meetings/corrections";
 import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { Decided, DecisionAction, JournalEntry } from "../decision-actions";
@@ -15,6 +15,7 @@ import {
 } from "../decision-journal";
 import { CORRECTION_REPEATS } from "../dictionary-suggest";
 import { setMeetingFields } from "../meeting-fields";
+import { reviewRow, reviewRowsPatch } from "../review-rows";
 import { type AssignReachStretch, assignmentReach } from "../speaker-assign";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
 import { type MeetingsCallContext, type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
@@ -49,13 +50,30 @@ export async function applyDecision(
     context: MeetingsCallContext,
     store: MeetingStore,
     deps: MeetingsHandlerDeps
-): Promise<Decided> {
+): Promise<MeetingsResult<"decision.apply">> {
     const record = recordOf(store, params.meeting);
 
     if (params.onDecided === "refuse") {
         refuseDecided(store, record, params.action);
     }
 
+    const captured: { value?: { before: MeetingRecord; after: MeetingRecord } } = {};
+    const onApplied = (snapshot: { before: MeetingRecord; after: MeetingRecord }): void => {
+        captured.value = snapshot;
+    };
+    const { OpenedMeeting } = await import("../opened-meeting");
+    const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
+    const config = await (deps.config ? deps.config() : opened.config()).catch((error: unknown) => {
+        log.warn({ error, meeting: record.id }, "decision rows unavailable because the meetings config does not read");
+        return undefined;
+    });
+    const transcript = await opened
+        .meeting()
+        .then((meeting) => meeting.transcript)
+        .catch((error: unknown) => {
+            log.debug({ error, meeting: record.id }, "decision rows without transcript words");
+            return undefined;
+        });
     const actor = actorOfCall(context);
     const reason = params.reason ? { reason: params.reason } : {};
     const { action } = params;
@@ -74,17 +92,30 @@ export async function applyDecision(
                           ...(action.unlabel ? { unlabel: action.unlabel } : {}),
                       },
                       quiet: true,
+                      onApplied,
                       actor,
                       ...reason,
                   })
               ).decided
-            : await (await journalOf(store, deps)).apply({ meeting: record.id, action, actor, ...reason });
+            : await (await journalOf(store, deps, onApplied)).apply({ meeting: record.id, action, actor, ...reason });
 
     if (decided.entry) {
         context.emit?.("decision.applied", { meeting: record.id, entry: decided.entry });
     }
 
-    return decided;
+    return {
+        ...decided,
+        ...(captured.value && config
+            ? {
+                  rows: reviewRowsPatch({
+                      ...captured.value,
+                      ...(transcript ? { transcript } : {}),
+                      minPriority: config.global.playback.listen.minPriority,
+                      ...(params.lowPriority ? { lowPriority: params.lowPriority } : {}),
+                  }),
+              }
+            : {}),
+    };
 }
 
 export async function revertDecision(
@@ -149,7 +180,11 @@ export function actorOfCall(context: Pick<MeetingsCallContext, "caller" | "local
 }
 
 /** The journal a call decides through: the store's, with the config's look-alike bar and the inputs a split needs. */
-async function journalOf(store: MeetingStore, deps: MeetingsHandlerDeps): Promise<DecisionJournal> {
+async function journalOf(
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps,
+    onApplied?: (snapshot: { before: MeetingRecord; after: MeetingRecord }) => void
+): Promise<DecisionJournal> {
     // A config that does not read keeps the default bar: a confirm worked without the config before the service.
     const config = await (deps.config ?? (() => new MeetingsConfigStore().read()))().catch((error: unknown) => {
         log.warn({ error }, "the meetings config does not read; decisions use the default look-alike bar");
@@ -162,6 +197,7 @@ async function journalOf(store: MeetingStore, deps: MeetingsHandlerDeps): Promis
         ...(deps.now ? { now: deps.now } : {}),
         split: splitInputsOf(store, deps),
         ownRound: true,
+        ...(onApplied ? { onApplied } : {}),
     });
 }
 
@@ -195,19 +231,35 @@ async function reachOf(
         return { ...empty, stretches: await assignReachOf(store, record, planned.entry, deps) };
     }
 
-    const teaches = planned.entry.corrections.some((line) => line.kind === "term" && line.scope === "everywhere");
-    const transcript = teaches
-        ? await splitInputsOf(store, deps)
-              .transcript(record)
-              .catch((error: unknown) => {
-                  log.debug({ error, meeting: record.id }, "a plan's reach reads no transcript lines");
-                  return undefined;
-              })
-        : undefined;
+    const { entry } = planned;
+    const teaches = entry.corrections.some(teachesDictionary);
+    const spelling =
+        (action.kind === "confirm" || action.kind === "respell") &&
+        entry.changes.some((change) => change.after?.kind === "term");
+    const named = namedItems(record, action);
+    // Each reached item shows its own quote and time, so the transcript is read whenever there is one to show.
+    const reaches = [...entry.settled, ...entry.decided].some((id) => !named.includes(id) && id !== entry.question);
+    const transcript =
+        teaches || reaches || spelling
+            ? await splitInputsOf(store, deps)
+                  .transcript(record)
+                  .catch((error: unknown) => {
+                      log.debug({ error, meeting: record.id }, "a plan's reach reads no transcript lines");
+                      return undefined;
+                  })
+            : undefined;
+    const replaced =
+        action.kind === "answer" && action.replaces
+            ? new DecisionJournal({ store }).read(record.id).find((one) => one.token === action.replaces)
+            : undefined;
+    const struck = replaced?.action.kind === "answer" ? (replaced.action.except ?? []) : [];
     return decisionReach({
-        entry: planned.entry,
-        named: namedItems(record, action),
-        ...(transcript ? { transcript } : {}),
+        entry,
+        named,
+        record,
+        rowOf: (item) => reviewRow(record, item, transcript),
+        ...(struck.length > 0 ? { struck: struck.map((ref) => itemIdOf(record, ref)) } : {}),
+        ...(transcript && (teaches || spelling) ? { transcript } : {}),
         ledger: teaches ? (deps.readLedger ?? readCorrections)() : [],
         repeats: CORRECTION_REPEATS,
     });
@@ -255,6 +307,7 @@ function namedItems(record: MeetingRecord, action: DecisionAction): string[] {
         case "respell":
             return [itemIdOf(record, action.item)];
         case "answer":
+        case "rephrase":
         case "skip":
         case "split":
             return [itemIdOf(record, action.question)];
@@ -277,6 +330,9 @@ function refuseDecided(store: MeetingStore, record: MeetingRecord, action: Decis
         if (action.minConfidence !== undefined) {
             return;
         }
+    } else if (action.kind === "answer" && action.replaces) {
+        // A changed answer names the decision it replaces; the journal refuses it when that is no longer the one.
+        return;
     } else if (!["respell", "answer", "skip", "split"].includes(action.kind)) {
         return;
     }

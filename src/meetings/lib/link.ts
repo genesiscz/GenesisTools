@@ -63,10 +63,7 @@ export function assertSourceFree(options: {
     sourceId: string;
     sourceMeetingId: string;
     targetId: string;
-    /**
-     * The source ended a meeting the target is linked to already: its title and end land there even when another record
-     * holds the same source meeting too, since the refresh adds no second link (the watcher retried until its deadline).
-     */
+    /** Refreshing an existing link adds no second holder. */
     refresh?: boolean;
 }): void {
     if (

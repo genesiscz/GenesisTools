@@ -4,6 +4,7 @@ import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type DecisionActor, type MeetingStore, savedDecisionActorSchema } from "@genesiscz/utils/meetings/record";
+import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { z } from "zod";
 import { listenerAlive } from "./answer-log";
 import {
@@ -46,6 +47,8 @@ const commentLineSchema = z.discriminatedUnion("kind", [
         actor: savedDecisionActorSchema,
         comments: z.array(commentSchema),
     }),
+    z.object({ kind: z.literal("read"), at: z.string(), id: z.string(), actor: savedDecisionActorSchema }),
+    z.object({ kind: z.literal("withdrawn"), at: z.string(), id: z.string(), actor: savedDecisionActorSchema }),
     z.object({ kind: z.literal("listening"), listener: commentListenerSchema }),
     z.object({ kind: z.literal("left"), at: z.string(), pid: z.number().int() }),
 ]);
@@ -54,7 +57,7 @@ export type CommentLine = z.infer<typeof commentLineSchema>;
 /** Why a comment step was refused: the code lets the window tell a stale list from a wrong id. */
 export class CommentError extends Error {
     constructor(
-        readonly code: "unknown-comment" | "already-sent",
+        readonly code: "unknown-comment" | "already-sent" | "already-read" | "withdrawn-comment",
         message: string
     ) {
         super(message);
@@ -89,6 +92,23 @@ export interface MeetingCommentsOptions {
 
 /** One meeting's comments file: what is staged, what was sent, and who listens. */
 export class MeetingComments {
+    private writing = false;
+
+    transaction<T>(change: () => T): T {
+        if (this.writing) {
+            return change();
+        }
+
+        return withPathArbitrationSync(this.path, () => {
+            this.writing = true;
+            try {
+                return change();
+            } finally {
+                this.writing = false;
+            }
+        });
+    }
+
     constructor(
         readonly path: string,
         private readonly options: MeetingCommentsOptions = {}
@@ -120,6 +140,16 @@ export class MeetingComments {
                 for (const sent of line.comments) {
                     comments.set(sent.id, { ...sent, state: "sent", sentAt: line.at, token: line.token });
                 }
+            } else if (line.kind === "read" || line.kind === "withdrawn") {
+                const comment = comments.get(line.id);
+                if (comment) {
+                    comments.set(
+                        line.id,
+                        line.kind === "read"
+                            ? { ...comment, readAt: line.at, readBy: line.actor }
+                            : { ...comment, withdrawnAt: line.at }
+                    );
+                }
             }
         }
 
@@ -148,24 +178,28 @@ export class MeetingComments {
         quote?: string;
         actor: DecisionActor;
     }): MeetingComment {
-        const staged = this.lines().filter((line) => line.kind === "staged").length;
-        const comment: StagedComment = {
-            id: `c${staged + 1}`,
-            at: this.now(),
-            target: input.target,
-            text: input.text,
-            ...(input.quote ? { quote: input.quote } : {}),
-            actor: input.actor,
-        };
-        this.append({ kind: "staged", comment });
-        return { ...comment, state: "staged" };
+        return this.transaction(() => {
+            const staged = this.lines().filter((line) => line.kind === "staged").length;
+            const comment: StagedComment = {
+                id: `c${staged + 1}`,
+                at: this.now(),
+                target: input.target,
+                text: input.text,
+                ...(input.quote ? { quote: input.quote } : {}),
+                actor: input.actor,
+            };
+            this.append({ kind: "staged", comment });
+            return { ...comment, state: "staged" };
+        });
     }
 
     /** Takes a staged comment back; a sent one stays sent (the listening agent has it). */
     unstage(id: string, actor: DecisionActor): MeetingComment {
-        const comment = this.staged([id])[0]!;
-        this.append({ kind: "unstaged", at: this.now(), id, actor });
-        return comment;
+        return this.transaction(() => {
+            const comment = this.staged([id])[0]!;
+            this.append({ kind: "unstaged", at: this.now(), id, actor });
+            return comment;
+        });
     }
 
     /** The staged comments a send takes: `ids`, or every staged one. Refused for an unknown or a sent id. */
@@ -204,6 +238,52 @@ export class MeetingComments {
             comments: comments.map(({ state: _state, sentAt: _sentAt, token: _token, ...comment }) => comment),
         });
         return comments.map((comment) => ({ ...comment, state: "sent", sentAt: sent.at, token: sent.token }));
+    }
+
+    /** A receiver acknowledges a sent comment before acting on it. Delivery alone is not a read receipt. */
+    acknowledge(id: string, actor: DecisionActor): MeetingComment {
+        return this.transaction(() => {
+            const comment = this.list().find((entry) => entry.id === id);
+            if (comment?.state !== "sent") {
+                throw new CommentError("unknown-comment", `No sent comment ${id}.`);
+            }
+            if (comment.withdrawnAt) {
+                throw new CommentError("withdrawn-comment", `Comment ${id} was withdrawn before it was read.`);
+            }
+            if (comment.readAt) {
+                return comment;
+            }
+
+            const at = this.now();
+            this.append({ kind: "read", id, at, actor });
+            return { ...comment, readAt: at, readBy: actor };
+        });
+    }
+
+    /** A sent comment can be withdrawn until a receiver acknowledges it. Followers receive a retraction event. */
+    withdraw(id: string, actor: DecisionActor): MeetingComment {
+        return this.transaction(() => {
+            const comment = this.list().find((entry) => entry.id === id);
+            if (!comment) {
+                throw new CommentError("unknown-comment", `No comment ${id}.`);
+            }
+            if (comment.readAt) {
+                throw new CommentError(
+                    "already-read",
+                    `Comment ${id} was read at ${comment.readAt}; it cannot be withdrawn.`
+                );
+            }
+            if (comment.withdrawnAt) {
+                return comment;
+            }
+            if (comment.state === "staged") {
+                return this.unstage(id, actor);
+            }
+
+            const at = this.now();
+            this.append({ kind: "withdrawn", id, at, actor });
+            return { ...comment, withdrawnAt: at };
+        });
     }
 
     /** A listening process starts: senders count it until it leaves or its pid ends. */
@@ -254,12 +334,16 @@ export class MeetingComments {
 
     /** One line at the end; after a torn last line (a writer that died mid-line) on a line of its own. */
     private append(line: CommentLine): void {
-        appendLines(this.path, [SafeJSON.stringify(line, { jsonl: true })], { mode: 0o600 });
+        this.transaction(() => appendLines(this.path, [SafeJSON.stringify(line, { jsonl: true })], { mode: 0o600 }));
     }
 }
 
 /** The lines `--with-comments` prints for one send: one per comment, each with `type: "comment"`. */
 export function commentStreamLines(line: CommentLine): Array<Record<string, unknown>> {
+    if (line.kind === "withdrawn") {
+        return [{ type: "comment-withdrawn", event: "comment.withdrawn", id: line.id, at: line.at }];
+    }
+
     if (line.kind !== "sent") {
         return [];
     }

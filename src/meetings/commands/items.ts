@@ -30,6 +30,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
 import { decideResult, decisionOf, reopenResult } from "../lib/decide";
+import { decisionActionSchema } from "../lib/decision-actions";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
@@ -42,7 +43,7 @@ import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
 import { correctTranscript, outcomeText } from "../lib/transcript-corrections";
-import { correctedTranscriptRead, speakerStatsRead, transcriptJsonView, windowJson } from "../lib/window-reads";
+import { correctedTranscriptRead, speakerStatsRead, windowJson } from "../lib/window-reads";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
@@ -59,7 +60,7 @@ function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undef
 
         return record;
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return undefined;
     }
 }
@@ -74,8 +75,6 @@ const STATUS_COLOR: Record<MeetingItem["status"], (text: string) => string> = {
     rejected: pc.dim,
 };
 
-/** The WHAT column's width: a longer item is cut, but a quote keeps its source (`itemWhat`). */
-const WHAT_WIDTH = 90;
 function percent(confidence: number | undefined): string {
     return confidence === undefined ? "—" : `${Math.round(confidence * 100)} %`;
 }
@@ -92,7 +91,7 @@ function printItems(record: MeetingRecord, items: MeetingItem[]): void {
             item.kind,
             STATUS_COLOR[item.status](item.status),
             percent(item.confidence),
-            truncateDisplay(itemWhat(item, { width: WHAT_WIDTH }), WHAT_WIDTH),
+            truncateDisplay(item.kind === "term" ? itemWhat(item, { width: 90 }) : row.what, 90),
             item.rules.join(", "),
         ]);
     }
@@ -151,7 +150,7 @@ async function rows(ref: string, opts: { all?: boolean; json?: boolean }): Promi
     try {
         answer = await readRows(record.id, opts.all === true);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 
@@ -251,7 +250,7 @@ async function suggest(
         printItems(store.read(record.id) ?? record, fresh);
         ui.dim(`Confirm or reject: ${TOOL} confirm ${record.id} <ids> · ${TOOL} reject ${record.id} <ids>`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -374,7 +373,7 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
             ? SafeJSON.parse(readFileSync(opts.fromFile, "utf8"), { strict: true })
             : [findingFromFlags(opts)];
     } catch (err) {
-        fail(`--from-file ${opts.fromFile}: ${errorText(err)}`);
+        fail(new Error(`--from-file ${opts.fromFile}: ${errorText(err)}`, { cause: err }));
         return;
     }
 
@@ -446,7 +445,7 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
                 : `${added.length} items added to ${record.id} (${added[0]?.id} to ${added.at(-1)?.id}).`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -511,7 +510,7 @@ async function decide(
             `${status} ${result.decided.join(" ")} in ${record.id} (undo: ${TOOL} reopen ${record.id} ${result.decided.join(" ")} --token ${result.token})`
         );
     } catch (err) {
-        fail(errorText(err).replace(/^minConfidence/, "--min-confidence"));
+        fail(new Error(errorText(err).replace(/^minConfidence/, "--min-confidence"), { cause: err }));
     }
 }
 
@@ -521,10 +520,9 @@ async function reopen(
     opts: { token?: string; reason?: string; json?: boolean }
 ): Promise<void> {
     if (!opts.token && ids.length === 0) {
-        fail(`Name the items to reopen (i1 i2 …), or undo a whole decision with --token <token>.`);
+        fail(new Error("Name the items to reopen, or pass --token to undo a whole decision."));
         return;
     }
-
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
 
@@ -563,7 +561,7 @@ async function reopen(
             ui.ok(`suggested again: ${result.reopened.join(" ")} in ${record.id}`);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -597,7 +595,7 @@ async function speakersStats(ref: string, opts: { gap?: string; attendance?: str
             ...(platform ? { attendance: `${platform} attendance` } : {}),
         });
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -631,7 +629,7 @@ async function speakersRename(ref: string, label: string, name: string, opts: { 
                 : `${record.id}: ${label} → ${name.trim()} (transcripts of this meeting use it now)`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -693,7 +691,10 @@ async function transcript(
         }
 
         if (format === "json") {
-            out.result(windowJson(transcriptJsonView(record, applied)));
+            const { meetingWordTimingCache } = await import("../lib/word-timings");
+            const { timedTranscriptView } = await import("../lib/window-reads");
+            const view = timedTranscriptView(record, applied);
+            out.result(windowJson({ meeting: view.meeting, ...meetingWordTimingCache(record.id).read(view.entries) }));
             return;
         }
 
@@ -706,11 +707,40 @@ async function transcript(
             `${[record.title, localTime(record.start), "", ...transcriptTextLines(groupTurns(applied.entries), opts.timestamps === true)].join("\n").trimEnd()}\n`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
 export function registerItemCommands(program: Command): void {
+    program
+        .command("decide")
+        .argument("<meeting>", MEETING_REF)
+        .description("Plan or apply a typed decision through the same journal as the Meetings window")
+        .requiredOption("--action <json>", "a decision action, including kind and its fields")
+        .option("--reason <text>", "why this decision is made; kept in the journal")
+        .option("--plan", "show what the decision would change, without writing")
+        .option("--json", "print the typed decision result")
+        .action(
+            async (meeting: string, options: { action: string; reason?: string; plan?: boolean; json?: boolean }) => {
+                try {
+                    const action = decisionActionSchema.parse(SafeJSON.parse(options.action, { strict: true }));
+                    const params = { meeting, action, ...(options.reason ? { reason: options.reason } : {}) };
+                    const result = await withMeetingsClient(async (client) =>
+                        options.plan
+                            ? await client.call("decision.plan", params)
+                            : await client.call("decision.apply", { ...params, onDecided: "refuse" })
+                    );
+                    if (options.json) {
+                        out.result(SafeJSON.stringify(result));
+                    } else {
+                        out.print(SafeJSON.stringify(result, null, 2));
+                    }
+                } catch (error) {
+                    fail(error);
+                }
+            }
+        );
+
     program
         .command("suggest")
         .argument("<meeting>", MEETING_REF)
@@ -724,10 +754,7 @@ export function registerItemCommands(program: Command): void {
             "--word-check <provider>",
             `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default: each language's languages.<code>.wordCheck, else ${DEFAULT_WORD_CHECK})`
         )
-        .option(
-            "--json",
-            "print the new items as a JSON array (the retired ids are not in it; items --json shows them)"
-        )
+        .option("--json", "print the new items")
         .action(suggest);
 
     program
@@ -832,10 +859,7 @@ export function registerItemCommands(program: Command): void {
     program
         .command("reopen")
         .argument("<meeting>", MEETING_REF)
-        .argument(
-            "[items...]",
-            "item ids: i1 i2 …, or with --token a question's number: Q12; with --token and none, the whole entry (a speaker rename too)"
-        )
+        .argument("[items...]", "item ids: i1 i2 …; omit with --token to undo the whole decision")
         .description(
             "Put confirmed or rejected items back to suggested: the Undo of confirm and reject, and with --token of any decision journal entry"
         )

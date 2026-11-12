@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { TONE_PRESET_NAMES, toneSoundSettingSchema } from "@genesiscz/utils/meetings/config";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
+import { pairedBySchema } from "@genesiscz/utils/meetings/people";
 import {
     type KnownPeople,
     type KnownPerson,
@@ -11,7 +12,12 @@ import {
     PERSON_RANKS,
     PERSON_SOURCE_KINDS,
 } from "@genesiscz/utils/meetings/people-directory";
-import { meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
+import { meetingContextSchema, meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
+import {
+    alignedWordSchema,
+    wordTimingGenerateResultSchema,
+    wordTimingMetadataSchema,
+} from "@genesiscz/utils/meetings/word-timing-cache";
 import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import type { SpeakerHint, SpeakerLeave } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
@@ -21,10 +27,13 @@ import {
     configEditSchema,
     dictionaryShowSchema,
     matchPreviewRowSchema,
+    pairedFromMeetingsSchema,
     pairedPersonRefSchema,
     phraseTestSchema,
+    projectMeetingPersonSchema,
     projectRemovalSchema,
     projectRenameSchema,
+    projectSuggestionsSchema,
     unpairedSchema,
 } from "../library-schema";
 import { matchDraftSchema } from "../match-preview";
@@ -36,7 +45,8 @@ import {
     toneSoundSchema,
 } from "../moment-schema";
 import type { MeetingsOverview } from "../overview";
-import { reviewRowsSchema } from "../review-row-schema";
+import { reviewRowSchema, reviewRowsPatchSchema, reviewRowsSchema } from "../review-row-schema";
+import { wordTimingModelIdSchema } from "../word-timing-worker";
 
 /**
  * The Meetings service's interface: one descriptor for the window, every `tools meetings` command, the REPL and an MCP
@@ -115,6 +125,7 @@ export const meetingListRowSchema = z.object({
  * line's start, at least a moment after its own), so a player highlights the line it hears (G-TR-1).
  */
 export const transcriptLineSchema = z.object({
+    words: z.array(alignedWordSchema).optional(),
     id: z.string().optional(),
     startSec: z.number().optional(),
     endSec: z.number().optional(),
@@ -180,10 +191,37 @@ const transcript = defineMethod({
         })
         .strict(),
     positional: ["ref"],
-    result: z.object({ meeting: z.string(), entries: z.array(transcriptLineSchema) }),
+    result: z.object({
+        meeting: z.string(),
+        entries: z.array(transcriptLineSchema),
+        wordTimings: wordTimingMetadataSchema.optional(),
+    }),
     resultName: "{ meeting, entries: { id?, startSec?, speakerId?, speaker, text }[] }",
     doc: "The corrected transcript, as `transcript <meeting> --format json` prints it. A meeting without a transcript source: `no-transcript-source`.",
     effect: "read",
+});
+
+const wordTimingsGenerate = defineMethod({
+    name: "meeting.wordTimings.generate",
+    params: z
+        .object({
+            ref: meetingRef,
+            fromSec: z.number().finite().nonnegative(),
+            toSec: z.number().finite().positive(),
+            model: wordTimingModelIdSchema,
+            language: z
+                .string()
+                .regex(/^[a-z]{2,3}$/)
+                .optional(),
+        })
+        .strict()
+        .refine(
+            (value) => value.toSec > value.fromSec && value.toSec - value.fromSec <= 20,
+            "Choose a positive window of at most 20 seconds"
+        ),
+    result: wordTimingGenerateResultSchema,
+    doc: "Explicitly generate local ASR word timings for at most 20 seconds, using an already cached model. Saves only exact unambiguous matches; ordinary transcript reads and seeks never run inference.",
+    effect: "reversible",
 });
 
 const revisions = defineMethod({
@@ -216,8 +254,38 @@ const decidedSchema = z.object({
 
 /** What a planned decision reaches beyond the items it names (`DecisionReach`, decision-journal.ts). */
 export const decisionReachSchema = z.object({
-    items: z.array(z.object({ id: z.string(), match: z.literal("same") })),
+    /**
+     * `role`: `sets` (a target of the question outside the asked span), `look-alike` (settled the same way), `same`
+     * (the same question over the same span, closed with it). Each carries its own row (quote, time, play target)
+     * and its value before and after; `struck`: the answer this one replaces left it out.
+     */
+    items: z.array(
+        z.object({
+            id: z.string(),
+            match: z.literal("same"),
+            role: z.enum(["sets", "look-alike", "same"]),
+            before: z.string().optional(),
+            after: z.string().optional(),
+            row: reviewRowSchema.optional(),
+            struck: z.boolean().optional(),
+        })
+    ),
     lines: z.number().int().nonnegative().optional(),
+    spelling: z
+        .object({
+            occurrences: z.array(
+                z.object({
+                    line: z.number().int().nonnegative(),
+                    atSec: z.number().nonnegative(),
+                    speaker: z.string(),
+                    text: z.string(),
+                    selected: z.boolean(),
+                    primary: z.boolean(),
+                })
+            ),
+            dictionary: z.boolean(),
+        })
+        .optional(),
     dictionary: z.array(
         z.object({
             project: z.string().optional(),
@@ -262,10 +330,12 @@ const decisionApply = defineMethod({
          * an item is skipped with its reason.
          */
         onDecided: z.enum(["skip", "refuse"]).optional(),
+        /** Match the caller's meeting.rows visibility when returning changed rows. */
+        lowPriority: z.enum(["hide", "show"]).optional(),
     }),
-    result: decidedSchema,
-    resultName: "{ entry?, skipped, warnings? }",
-    doc: "Makes one decision through the decision journal, as the connection's hello names the actor (window, listen, an agent and its session, or a command), and tells the subscribers `decision.applied` with the entry. Refused when an item is unknown (`failed`) or, with onDecided: refuse, decided already (`already-decided`).",
+    result: decidedSchema.extend({ rows: reviewRowsPatchSchema.optional() }),
+    resultName: "{ entry?, skipped, warnings?, rows? }",
+    doc: "Makes one decision through the decision journal, as the connection's hello names the actor (window, listen, an agent and its session, or a command), and tells the subscribers `decision.applied` with the entry. Returns changed review rows from the locked before and after snapshots, including indirect choice changes; before values protect later client updates. Older services omit rows and clients reread. Refused when an item is unknown (`failed`) or, with onDecided: refuse, decided already (`already-decided`).",
     effect: "reversible",
 });
 
@@ -323,6 +393,8 @@ const momentParams = z
          * for this call even when `playback.listen.tone.enabled` is off.
          */
         toneSound: toneSoundSettingSchema.optional(),
+        /** Overrides the saved tone for this call. False suppresses even an explicitly supplied toneSound. */
+        tone: z.boolean().optional(),
         /** False skips the screen frames at the spot. */
         screen: z.boolean().optional(),
         /** At most this long from the span's start (the window's "Clip 5s" on a selection: 5); the pad stays. */
@@ -352,6 +424,19 @@ const momentClip = defineMethod({
     resultName: "Moment & { path }",
     doc: "The Moment cut to a WAV in the clip cache (a clip cut before for the same recording is used again). Reports `$/progress` while ffmpeg cuts and stops on `$/cancel`; a newer moment.clip on the same connection cancels the older cut (answered with 1013, cancelled). Refused with `unplayable` and data.reason (a moment.plan code). Writes only the cache.",
     effect: "read",
+});
+
+export const momentSave = defineMethod({
+    name: "moment.save",
+    params: momentParams.extend({ title: z.string().trim().min(1).optional(), quote: z.string().optional() }),
+    result: z.object({
+        entry: meetingContextSchema,
+        clip: momentSchema.extend({ path: z.string() }),
+        created: z.boolean(),
+    }),
+    resultName: "{ entry: MeetingContext, clip: Moment & { path }, created }",
+    doc: "Saves a clip in the meeting's clips folder and lists it in Context. No tone or padding by default. Repeated saves of the same cut reuse its file and Context entry. Never starts playback.",
+    effect: "reversible",
 });
 
 const tonePreview = defineMethod({
@@ -460,6 +545,14 @@ const meetingSpeakers = defineMethod({
     effect: "read",
 });
 
+const captureIntervalSchema = z.object({ fromSec: z.number(), toSec: z.number() });
+const screenCoverageShape = {
+    /** Omitted is unknown coverage; [] is known no captured time. Uses the transcript clock, without frame inference. */
+    recordingSpans: z.array(captureIntervalSchema).optional(),
+    /** Intersected with recordingSpans; omitted if any recording interval lacks display evidence, including legacy history. */
+    displaySpans: z.array(captureIntervalSchema.extend({ displayId: z.number() })).optional(),
+};
+
 const meetingScreen = defineMethod({
     name: "meeting.screen",
     params: z
@@ -475,6 +568,7 @@ const meetingScreen = defineMethod({
         meeting: z.string(),
         /** False without a screen recording: no pane, and the dock keeps its height (G-SCR-2). */
         recorded: z.boolean(),
+        ...screenCoverageShape,
         displays: z.array(z.object({ id: z.number().optional(), name: z.string().optional(), frames: z.number() })),
         frames: z.array(
             z.object({
@@ -482,6 +576,7 @@ const meetingScreen = defineMethod({
                 path: z.string(),
                 meetingSec: z.number(),
                 displayId: z.number().optional(),
+                focusedDisplayId: z.number().optional(),
                 width: z.number(),
                 height: z.number(),
                 lineCount: z.number(),
@@ -489,8 +584,57 @@ const meetingScreen = defineMethod({
         ),
     }),
     resultName:
-        "{ meeting, recorded, displays, frames: { file, path, meetingSec, displayId?, width, height, lineCount }[] }",
-    doc: "The screen frames by time, oldest first, between fromSec and toSec (all without them): what the timeline shows beside the sound (R41).",
+        "{ meeting, recorded, displays, frames, recordingSpans?: { fromSec, toSec }[], displaySpans?: { displayId, fromSec, toSec }[] }",
+    doc: "Screen frames by time between fromSec and toSec (all without them), plus full saved capture intervals on the same transcript clock. Intervals are independent of frame spacing and are not clipped to the frame query. Omitted coverage is unknown; an empty array is known no captured time. Display intervals are intersected with recording intervals and omitted when any captured interval lacks display evidence.",
+    effect: "read",
+});
+
+const ocrBoxSchema = z.object({
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+    text: z.string(),
+    confidence: z.number(),
+});
+
+const meetingTimeline = defineMethod({
+    name: "meeting.timeline",
+    params: z
+        .object({
+            meeting: meetingRef,
+            all: z.boolean().optional(),
+            frame: z.string().optional(),
+        })
+        .strict(),
+    result: z.object({
+        meeting: z.string(),
+        folder: z.string(),
+        ...screenCoverageShape,
+        displays: z.array(z.object({ id: z.number().optional(), name: z.string().optional(), frames: z.number() })),
+        frames: z.array(
+            z.object({
+                file: z.string(),
+                path: z.string(),
+                at: z.string(),
+                meetingSec: z.number(),
+                displayId: z.number().optional(),
+                focusedDisplayId: z.number().optional(),
+                width: z.number(),
+                height: z.number(),
+                lineCount: z.number(),
+                changed: z.array(ocrBoxSchema),
+                lines: z.array(ocrBoxSchema).optional(),
+                pending: z.literal(true).optional(),
+            })
+        ),
+        pending: z.number(),
+        focusSpans: z
+            .array(z.object({ displayId: z.number(), fromSec: z.number(), toSec: z.number().optional() }))
+            .optional(),
+    }),
+    resultName: "ScreenTimeline",
+    doc: "Screen frames with changed OCR boxes, or every OCR line with all or a selected frame. Matches screen --timeline --json.",
     effect: "read",
 });
 
@@ -628,6 +772,24 @@ const commentUnstage = defineMethod({
     effect: "reversible",
 });
 
+const commentRead = defineMethod({
+    name: "comment.read",
+    params: z.object({ meeting: meetingRef, id: z.string().min(1) }).strict(),
+    result: meetingCommentSchema,
+    resultName: "MeetingComment",
+    doc: "Acknowledge a sent comment before acting on it. A delivery is not a read. Refuses a withdrawn comment.",
+    effect: "destructive",
+});
+
+const commentWithdraw = defineMethod({
+    name: "comment.withdraw",
+    params: z.object({ meeting: meetingRef, id: z.string().min(1) }).strict(),
+    result: meetingCommentSchema,
+    resultName: "MeetingComment",
+    doc: "Withdraw a comment until a receiver acknowledges it. Live followers receive a comment-withdrawn retraction.",
+    effect: "destructive",
+});
+
 const commentSend = defineMethod({
     name: "comment.send",
     params: z
@@ -636,6 +798,8 @@ const commentSend = defineMethod({
             /** Only these staged comments; absent: every staged one. */
             ids: z.array(z.string().min(1)).min(1).optional(),
             reason: z.string().optional(),
+            /** Keep them staged when the receiver disconnected before Send. */
+            requireListener: z.boolean().optional(),
         })
         .strict(),
     result: z.object({
@@ -704,6 +868,27 @@ const peopleKnown = defineMethod({
     }) satisfies z.ZodType<KnownPeople>,
     resultName: "{ query, people: KnownPerson[], total, sources }",
     doc: "The people the directory knows from the meetings, the projects, Contacts and the people book, matching the query with case and accents folded, ranked: present at atSec in the meeting, then that meeting's people, then other meetings by count and recency, then Contacts, then own entries. Nothing is preselected. The person picker (R23, R44) and the Contacts view (R24) ask it.",
+    effect: "read",
+});
+
+const peopleMeetings = defineMethod({
+    name: "people.meetings",
+    params: z.object({ person: personRef }).strict(),
+    result: z.object({
+        person: knownPersonSchema,
+        meetings: z.array(
+            z.object({
+                meeting: z.string(),
+                title: z.string(),
+                start: z.string(),
+                as: z.array(z.enum(MEETING_ROLES)),
+                present: z.array(z.object({ fromSec: z.number(), toSec: z.number() })),
+                labels: z.array(z.string()),
+            })
+        ),
+    }),
+    resultName: "{ person, meetings: MeetingAppearance[] }",
+    doc: "Every meeting that names this person, newest first, with roles, speaker labels and attendance spans. Unlike the picker this is not limited to recent meetings.",
     effect: "read",
 });
 
@@ -878,11 +1063,16 @@ const projectsUnpair = defineMethod({
             /** With person: this person leaves this project, whatever paired them. */
             project: projectName.optional(),
             person: pairedPersonRefSchema.optional(),
+            /** With project and person: remove only this source, as returned by a pairing operation. */
+            by: pairedBySchema.optional(),
         })
-        .strict(),
+        .strict()
+        .refine((value) => !value.by || (!!value.project && !!value.person && !value.entry), {
+            message: "A source-specific unpair needs project and person, without entry.",
+        }),
     result: z.object({ removed: z.array(unpairedSchema) }),
     resultName: "{ removed: { project, name, email?, left }[] }",
-    doc: "Removes project pairings, as `projects unpair` does: the ones a calendar entry made (entry), or one person from one project (project and person). Refused without either.",
+    doc: "Removes project pairings: the ones a calendar entry made (entry), or one person from one project (project and person). Optional by removes only that recorded source and preserves other sources. Refused without a target.",
     effect: "destructive",
 });
 
@@ -900,6 +1090,41 @@ const projectsPreview = defineMethod({
     resultName: "MatchPreviewRow[]",
     doc: "Which project each recent meeting matches by the saved rules and by a draft of them, as `projects preview --json` prints it. Reads only.",
     effect: "read",
+});
+
+const projectsSuggestions = defineMethod({
+    name: "projects.suggestions",
+    params: z.object({}).strict(),
+    result: projectSuggestionsSchema,
+    resultName: "{ folders, calendars, titleWords, labels }",
+    doc: "The values the settings page offers while a project's rules are typed: each source's folders, the Calendar app's calendars, title words and labels already in use. A list that could not be read says why in its reason. Reads only.",
+    effect: "read",
+});
+
+const projectsMeetingPeople = defineMethod({
+    name: "projects.meetingPeople",
+    params: z.object({ project: projectName }).strict(),
+    result: z.array(projectMeetingPersonSchema),
+    resultName: "{ name, email?, meetings, last }[]",
+    doc: "The people of the meetings that have the project (their calendar entry, attendance and named speakers) who are not paired with it yet, most frequent first. Reads only.",
+    effect: "read",
+});
+
+const projectsPairFromMeetings = defineMethod({
+    name: "projects.pairFromMeetings",
+    params: z
+        .object({
+            project: projectName,
+            /** Only these people; absent pairs every person `projects.meetingPeople` lists. */
+            people: z.array(pairedPersonRefSchema).optional(),
+            /** Only people of this meeting, which must still have the named project. */
+            meeting: z.string().min(1).optional(),
+        })
+        .strict(),
+    result: pairedFromMeetingsSchema,
+    resultName: "{ project, paired: { name, email?, by }[] }",
+    doc: "Pairs previously unpaired people of the project's meetings in one write. Optional meeting limits the operation to that meeting. Returns only added pairings with their source; projects.unpair with project, person and by undoes just that source. Unknown projects or a meeting that changed project are refused.",
+    effect: "reversible",
 });
 
 /** A dictionary level: a project's, or the global one when absent. */
@@ -970,6 +1195,7 @@ export const meetingsApi = defineApi({
         list,
         show,
         transcript,
+        wordTimingsGenerate,
         revisions,
         decisionPlan,
         decisionApply,
@@ -977,11 +1203,13 @@ export const meetingsApi = defineApi({
         journalRead,
         momentPlan,
         momentClip,
+        momentSave,
         tonePreview,
         tonePresets,
         meetingAudio,
         meetingSpeakers,
         meetingScreen,
+        meetingTimeline,
         meetingWaveform,
         overview,
         configRead,
@@ -992,8 +1220,11 @@ export const meetingsApi = defineApi({
         commentStage,
         commentList,
         commentUnstage,
+        commentRead,
+        commentWithdraw,
         commentSend,
         peopleKnown,
+        peopleMeetings,
         peopleAdd,
         peopleHide,
         peoplePlanMerge,
@@ -1005,6 +1236,9 @@ export const meetingsApi = defineApi({
         projectsLabels,
         projectsUnpair,
         projectsPreview,
+        projectsSuggestions,
+        projectsMeetingPeople,
+        projectsPairFromMeetings,
         dictionaryShow,
         dictionaryAdd,
         dictionaryRemove,
@@ -1050,7 +1284,15 @@ export const MEETING_PARTS = ["show", "transcript", "speakers", "timeline"] as c
  * The events a subscriber can name. A decision through the service tells `decision.applied` or `decision.reverted`
  * with its journal entry; a write by anyone else (the recorder, an import, a hand edit) tells `meeting.changed`.
  */
-export const MEETINGS_EVENTS = ["meeting.changed", "decision.applied", "decision.reverted", "comment.sent"] as const;
+export const MEETINGS_EVENTS = [
+    "meeting.changed",
+    "meeting.wordTimings.changed",
+    "decision.applied",
+    "decision.reverted",
+    "comment.sent",
+    "comment.changed",
+    "people.changed",
+] as const;
 export type MeetingsEvent = (typeof MEETINGS_EVENTS)[number];
 
 export const subscribeParamsSchema = z.object({
@@ -1062,6 +1304,9 @@ export const subscribeParamsSchema = z.object({
 export const subscribeResultSchema = z.object({ events: z.array(z.string()) });
 
 export const NOTIFICATION_SCHEMAS = {
+    "meeting.wordTimings.changed": z.object({ meeting: z.string(), revision: z.string() }),
+    "people.changed": z.object({}),
+    "comment.changed": z.object({ meeting: z.string(), comment: meetingCommentSchema.optional() }),
     /** A meeting's files changed: the parts whose `meeting.revisions` token would differ now. */
     "meeting.changed": z.object({ meeting: z.string(), parts: z.array(z.enum(MEETING_PARTS)).min(1) }),
     /** A decision was made through the service: its journal entry, with its actor, reason and every item it changed. */
@@ -1108,6 +1353,8 @@ export const MEETINGS_ERROR_CODES = [
     "unknown-comment",
     /** The comment was sent: it cannot be unstaged or sent again. */
     "already-sent",
+    "already-read",
+    "withdrawn-comment",
     /** A people method's person names nobody the directory knows. */
     "unknown-person",
     /** A people method's person names several people: data `{ code, candidates }`, each a KnownPerson. */
