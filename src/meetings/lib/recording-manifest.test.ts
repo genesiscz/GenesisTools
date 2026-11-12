@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -318,6 +318,55 @@ describe("the frame index and the OCR worker (two phases)", () => {
             ["frames/f2-d1.jpg", "text of f2-d1.jpg", undefined],
             ["frames/f3-d1.jpg", "text of f3-d1.jpg", undefined],
         ]);
+    });
+
+    it("completed OCR outage waits release their abort listeners", async () => {
+        const meeting = await meetingWith([
+            { name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" },
+            { name: "f2-d1.jpg", at: "2026-11-11T14:00:02.000Z" },
+        ]);
+        const controller = new AbortController();
+        const add = spyOn(controller.signal, "addEventListener");
+        const remove = spyOn(controller.signal, "removeEventListener");
+        let down = true;
+        let waits = 0;
+        const engine = fakeEngine((name, attempt) => !(name === "f1-d1.jpg" && attempt === 1) && down);
+        const realTimeout = globalThis.setTimeout;
+        const fastTimeout = Object.assign((...timerArgs: Parameters<typeof setTimeout>) => {
+            const [callback, delay, ...args] = timerArgs;
+            if (OCR_OUTAGE_BACKOFF_MS.some((ms) => ms === delay)) {
+                waits += 1;
+                return realTimeout(() => {
+                    down = waits < 2;
+                    callback(...args);
+                }, 0);
+            }
+            return realTimeout(callback, delay, ...args);
+        }, realTimeout);
+        const timers = spyOn(globalThis, "setTimeout").mockImplementation(fastTimeout);
+        try {
+            const result = await runOcrWorker({
+                store: meeting.store,
+                meetingId: meeting.id,
+                settings,
+                engine,
+                follow: true,
+                pollMs: 100,
+                recording: () => false,
+                signal: controller.signal,
+                failureNotices: "off",
+            });
+            expect(result).toMatchObject({ read: 2, failed: 0, outages: 1 });
+            expect(waits).toBe(2);
+            const added = add.mock.calls.filter(([name]) => name === "abort").map(([, listener]) => listener);
+            const removed = remove.mock.calls.filter(([name]) => name === "abort").map(([, listener]) => listener);
+            expect(added.length).toBeGreaterThanOrEqual(2);
+            expect(new Set(removed)).toEqual(new Set(added));
+        } finally {
+            timers.mockRestore();
+            add.mockRestore();
+            remove.mockRestore();
+        }
     });
 
     it("waits out an OCR outage on the same frame, says so once and again on recovery, and writes no failed row", async () => {

@@ -1,5 +1,6 @@
 import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { abortableSleep } from "@genesiscz/utils/async";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
@@ -620,16 +621,10 @@ class OcrWorker {
             return this.options.sleep(ms, signal);
         }
 
-        return new Promise((resolve) => {
-            const timer = setTimeout(resolve, ms);
-            signal?.addEventListener(
-                "abort",
-                () => {
-                    clearTimeout(timer);
-                    resolve();
-                },
-                { once: true }
-            );
+        return abortableSleep(ms, signal).catch((error: unknown) => {
+            if (!signal?.aborted) {
+                throw error;
+            }
         });
     }
 
