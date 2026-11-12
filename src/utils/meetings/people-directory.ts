@@ -602,6 +602,15 @@ export class PeopleDirectory {
         return (await this.resolve(ref)).person;
     }
 
+    /** Every meeting that names this person, newest first, including their roles, labels and attendance. */
+    async meetings(ref: string): Promise<{ person: KnownPerson; meetings: MeetingAppearance[] }> {
+        const { person, identity } = await this.resolve(ref);
+        return {
+            person,
+            meetings: [...identity.appearances.values()].sort((a, b) => b.start.localeCompare(a.start)),
+        };
+    }
+
     /** What merging two people would do: their meetings and renamed labels; nothing is written. */
     async planMerge(a: string, b: string, name?: string): Promise<MergePlan> {
         const first = await this.resolve(a);

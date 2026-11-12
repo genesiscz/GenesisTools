@@ -873,6 +873,16 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         });
     });
 
+    test("a person's meetings are complete and available through either adapter", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const history = await client.call("people.meetings", { person: "Alex Example" });
+        expect(history.person.name).toBe("Alex Example");
+        expect(history.meetings.map((meeting) => meeting.meeting)).toEqual([REVIEW.id]);
+        expect(history.meetings[0]?.as).toContain("participant");
+        const unknown = await failure(client.call("people.meetings", { person: "Nobody Example" }));
+        expect(unknown).toMatchObject({ code: "unknown-person" });
+    });
+
     test("the timeline reads: line ends, speakers, screen, waveform; and the overview", async () => {
         const { client } = await ADAPTERS[kind]();
         const transcript = await client.call("meeting.transcript", { ref: REVIEW.id });
@@ -1625,6 +1635,7 @@ async function captureExamples(): Promise<Example[]> {
         { query: "ex", meeting: REVIEW.id, atSec: 9 },
         "The person picker's list: ranked for the meeting and the moment, with each source's state; nothing preselected."
     );
+    await ask(window, "people.meetings", { person: "Alex Example" }, "All meetings where this person appears.");
     await ask(
         window,
         "people.add",

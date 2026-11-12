@@ -56,6 +56,15 @@ export async function knownPeople(
     });
 }
 
+export async function personMeetings(
+    params: MeetingsParsedParams<"people.meetings">,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<MeetingsResult<"people.meetings">> {
+    const directory = await directoryOf(store, deps);
+    return refusing(() => directory.meetings(params.person));
+}
+
 export async function addPerson(
     params: MeetingsParsedParams<"people.add">,
     store: MeetingStore,

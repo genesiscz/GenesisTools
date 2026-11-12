@@ -53,6 +53,7 @@
             "comment.withdraw",
             "comment.send",
             "people.known",
+            "people.meetings",
             "people.add",
             "people.hide",
             "people.planMerge",
@@ -82,7 +83,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "49a8558a7fbf"
+          "version": "3742cb7182f1"
         }
       }
     },
@@ -674,6 +675,7 @@
             "comment.withdraw",
             "comment.send",
             "people.known",
+            "people.meetings",
             "people.add",
             "people.hide",
             "people.planMerge",
@@ -703,7 +705,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "49a8558a7fbf"
+          "version": "3742cb7182f1"
         }
       }
     },
@@ -3635,6 +3637,52 @@
       }
     },
     {
+      "method": "people.meetings",
+      "direction": "client→service",
+      "note": "All meetings where this person appears.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 55,
+        "method": "people.meetings",
+        "params": {
+          "person": "Alex Example"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 55,
+        "result": {
+          "person": {
+            "id": "name:alex example",
+            "name": "Alex Example",
+            "aliases": [],
+            "sources": [
+              "meetings"
+            ],
+            "rank": "meetings",
+            "meetings": 1,
+            "lastSeen": "2026-11-03T09:00:00.000Z",
+            "projects": []
+          },
+          "meetings": [
+            {
+              "meeting": "2026-11-03-1000-design-review",
+              "title": "Design review",
+              "start": "2026-11-03T09:00:00.000Z",
+              "as": [
+                "participant",
+                "speaker"
+              ],
+              "present": [],
+              "labels": [
+                "Speaker 2"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
       "method": "people.add",
       "direction": "client→service",
       "note": "The picker's Add 'Robin Example' as new speaker: a person in the people book.",
@@ -4940,6 +4988,7 @@
             "comment.withdraw",
             "comment.send",
             "people.known",
+            "people.meetings",
             "people.add",
             "people.hide",
             "people.planMerge",
@@ -4969,7 +5018,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "49a8558a7fbf"
+          "version": "3742cb7182f1"
         }
       }
     },

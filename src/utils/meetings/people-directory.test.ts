@@ -78,6 +78,18 @@ function rankedStore() {
 }
 
 describe("PeopleDirectory.known", () => {
+    test("a person's history includes every appearance in date order", async () => {
+        const { store, book } = rankedStore();
+        const directory = peopleDirectory({ store, config, book });
+        const history = await directory.meetings("Erin Example");
+        expect(history.person.name).toBe("Erin Example");
+        expect(history.meetings.map((appearance) => appearance.meeting)).toEqual(["m2", "m0"]);
+        expect(history.meetings.every((appearance) => appearance.as.includes("participant"))).toBe(true);
+        const reopened = peopleDirectory({ store: new MeetingStore(store.storage), config, book });
+        expect(await reopened.meetings(history.person.id)).toEqual(history);
+        await expect(directory.meetings("Nobody Else")).rejects.toMatchObject({ code: "unknown-person" });
+    });
+
     test("ranks the people present at the moment, then the meeting's, then other meetings, Contacts, own entries", async () => {
         const { store, book } = rankedStore();
         await book.add({ name: "Hana Example" });

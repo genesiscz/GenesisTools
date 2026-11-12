@@ -370,6 +370,28 @@ export function registerPeopleCommand(program: Command): void {
         .action(list);
 
     people
+        .command("meetings")
+        .argument("<person>", PERSON_REF)
+        .description("Every meeting that names this person, newest first")
+        .option("--json", "print the person and every meeting appearance")
+        .action(async (person: string, options: { json?: boolean }) => {
+            try {
+                const result = await withMeetingsClient((client) => client.call("people.meetings", { person }));
+                if (options.json) {
+                    printJson(result);
+                } else {
+                    const table = createBoxTable(["MEETING", "TITLE", "DATE", "ROLES"]);
+                    for (const meeting of result.meetings) {
+                        table.push([meeting.meeting, meeting.title, localTime(meeting.start), meeting.as.join(", ")]);
+                    }
+                    out.println(table.toString());
+                }
+            } catch (error) {
+                fail(error);
+            }
+        });
+
+    people
         .command("add")
         .argument("<name>", "the person's name")
         .description("Add a person to the people book (or give one it has an email or a note)")

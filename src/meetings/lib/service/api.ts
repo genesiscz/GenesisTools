@@ -793,6 +793,27 @@ const peopleKnown = defineMethod({
     effect: "read",
 });
 
+const peopleMeetings = defineMethod({
+    name: "people.meetings",
+    params: z.object({ person: personRef }).strict(),
+    result: z.object({
+        person: knownPersonSchema,
+        meetings: z.array(
+            z.object({
+                meeting: z.string(),
+                title: z.string(),
+                start: z.string(),
+                as: z.array(z.enum(MEETING_ROLES)),
+                present: z.array(z.object({ fromSec: z.number(), toSec: z.number() })),
+                labels: z.array(z.string()),
+            })
+        ),
+    }),
+    resultName: "{ person, meetings: MeetingAppearance[] }",
+    doc: "Every meeting that names this person, newest first, with roles, speaker labels and attendance spans. Unlike the picker this is not limited to recent meetings.",
+    effect: "read",
+});
+
 const ownEntryResultSchema = z.object({
     name: z.string(),
     email: z.string().optional(),
@@ -1116,6 +1137,7 @@ export const meetingsApi = defineApi({
         commentWithdraw,
         commentSend,
         peopleKnown,
+        peopleMeetings,
         peopleAdd,
         peopleHide,
         peoplePlanMerge,

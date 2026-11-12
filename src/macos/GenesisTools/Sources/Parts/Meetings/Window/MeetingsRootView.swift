@@ -184,7 +184,8 @@ private struct MeetingsContactsPane: View {
                 cancelMerge: { people.mergePlan = nil },
                 unmerge: { people.unmerge($0) },
                 setSource: { people.setSource($0, on: $1) },
-                grantContacts: { people.grantContacts() })
+                grantContacts: { people.grantContacts() },
+                showMeetings: { people.showMeetings($0) })
                 .overlay {
                     if answer == nil, people.known.failure == nil {
                         VStack(spacing: 8) {
@@ -197,6 +198,10 @@ private struct MeetingsContactsPane: View {
                 }
         }
         .onAppear { people.ensure() }
+        .sheet(item: $people.history) { history in
+            PersonMeetingsSheet(history: history, retry: { people.showMeetings(history.person) },
+                                open: { people.openHistoryMeeting($0) }, close: { people.history = nil })
+        }
     }
 }
 

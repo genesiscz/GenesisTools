@@ -262,6 +262,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             (await comments()).withdrawComment(params, context, storeOf(), deps),
         // The people directory loads Contacts (darwinkit) only when a call asks for people.
         "people.known": async (params) => (await people()).knownPeople(params, storeOf(), deps),
+        "people.meetings": async (params) => (await people()).personMeetings(params, storeOf(), deps),
         "people.add": async (params, context) =>
             changedPeople(await (await people()).addPerson(params, storeOf(), deps), context),
         "people.hide": async (params, context) =>

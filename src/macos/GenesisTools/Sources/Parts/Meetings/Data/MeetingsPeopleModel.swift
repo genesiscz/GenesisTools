@@ -34,6 +34,12 @@ final class MeetingsPeopleModel {
     private(set) var lastMerge: PeopleMergeRecord?
     /// An assignment that may reach more stretches: the reach sheet shows while it is set.
     var pendingAssign: PendingAssign?
+    struct History: Identifiable {
+        let person: KnownPerson
+        var meetings: Loadable<MeetingsAPI.PeopleMeetings.Result>
+        var id: String { person.id }
+    }
+    var history: History?
     /// The most people the Contacts view lists at once.
     static let contactsLimit = 500
     @ObservationIgnored private weak var window: MeetingsWindowModel?
@@ -82,6 +88,26 @@ final class MeetingsPeopleModel {
     func ensure() {
         if known == .idle { load() }
         window?.loadSettings(quiet: true)
+    }
+
+    func showMeetings(_ person: KnownPerson) {
+        history = History(person: person, meetings: .loading(previous: nil))
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await MeetingsRead.service(MeetingsAPI.PeopleMeetings.self, .init(person: person.id),
+                                                            orRun: ["people", "meetings", person.id, "--json"]).run(service: service)
+                if history?.id == person.id { history?.meetings = .loaded(result) }
+            } catch {
+                if history?.id == person.id { history?.meetings = .failed(asFailure(error), previous: nil) }
+            }
+        }
+    }
+
+    func openHistoryMeeting(_ meeting: String) {
+        history = nil
+        window?.go(.all)
+        window?.select(meeting)
     }
 
     // MARK: Writes

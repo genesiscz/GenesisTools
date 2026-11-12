@@ -46,6 +46,14 @@ final class MeetingsContactsTests: XCTestCase {
                     XCTAssertEqual(known.people.first?.rank, .meeting)
                     XCTAssertEqual(known.sources.map(\.kind), [.meetings, .projects, .own, .contacts])
                 }
+            case MeetingsAPI.PeopleMeetings.name:
+                try roundTrip(MeetingsAPI.PeopleMeetings.Params.self, params, label)
+                if let result {
+                    let history = try MeetingsService.decode(MeetingsAPI.PeopleMeetings.Result.self, result)
+                    XCTAssertEqual(history.person.name, "Alex Example")
+                    XCTAssertEqual(history.meetings.map(\.meeting), ["2026-11-03-1000-design-review"])
+                    XCTAssertTrue(history.meetings.first?.roles.contains(.participant) == true)
+                }
             case MeetingsAPI.PeopleAdd.name:
                 try roundTrip(MeetingsAPI.PeopleAdd.Params.self, params, label)
                 if let result {
@@ -90,7 +98,7 @@ final class MeetingsContactsTests: XCTestCase {
             }
             decoded[method, default: 0] += 1
         }
-        for method in [MeetingsAPI.PeopleKnown.name, MeetingsAPI.PeopleAdd.name, MeetingsAPI.PeopleHide.name,
+        for method in [MeetingsAPI.PeopleKnown.name, MeetingsAPI.PeopleMeetings.name, MeetingsAPI.PeopleAdd.name, MeetingsAPI.PeopleHide.name,
                        MeetingsAPI.PeoplePlanMerge.name, MeetingsAPI.PeopleMerge.name, MeetingsAPI.PeopleUnmerge.name] {
             XCTAssertGreaterThan(decoded[method] ?? 0, 0, "the fixture has an example of \(method)")
         }
