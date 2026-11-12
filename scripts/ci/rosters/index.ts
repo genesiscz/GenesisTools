@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import adoFetchOutsideApi from "./ado-fetch-outside-api.definition";
+import cdpConnOutsideConnect from "./cdp-conn-outside-connect.definition";
 import cdpSocketOutsideConnect from "./cdp-socket-outside-connect.definition";
 import cmuxSendOutsideSurfaceInput from "./cmux-send-outside-surface-input.definition";
 import cmuxTreeOutsideReader from "./cmux-tree-outside-reader.definition";
@@ -15,6 +16,7 @@ import providerFetchOutsideExchange from "./provider-fetch-outside-exchange.defi
 /** Every roster. A new one is a `<name>.definition.ts` file in this folder plus one line here. */
 export const ROSTER_DEFINITIONS: readonly RosterDefinition[] = [
     adoFetchOutsideApi,
+    cdpConnOutsideConnect,
     cdpSocketOutsideConnect,
     cmuxSendOutsideSurfaceInput,
     cmuxTreeOutsideReader,

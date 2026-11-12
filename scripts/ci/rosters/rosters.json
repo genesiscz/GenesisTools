@@ -4,6 +4,7 @@
         "src/azure-devops/lib/ancestors.ts": 1,
         "src/azure-devops/timelog-api.ts": 1
     },
+    "roster-cdp-conn-outside-connect": {},
     "roster-cdp-socket-outside-connect": {},
     "roster-cmux-send-outside-surface-input": {
         "src/claude/commands/cmux/find.ts": 1,

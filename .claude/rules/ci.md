@@ -56,3 +56,9 @@ once, a listed file fails when its count grows, and a count that fell must be lo
 only shrinks: the generator never writes growth, `--check` exits 1 on it, and lint-rules refuses a `rosters.json` edited
 up against the base. A new definition is seeded by the generator with what the tree holds that day. A real exception is
 `// lint-rules-ignore: <why>` on the line, never a manifest edit.
+
+To find new rosters, run `bun scripts/ci/rosters/propose.ts --range <base>...<head>`. It ranks the call, import,
+constructor and argv shapes that the range removed from several files and added back in one module at most, and the
+exported helpers that tools still redefine privately (`tools ts refactors --include shadowed`). `--scaffold '<key>'
+--name <slug> --candidate C<n>` writes a NEW definition with the matcher and the owner as `allowedIn`. It refuses an
+existing file and writes nothing else. The ranking is a heuristic, so read each candidate before you make it a rule.
