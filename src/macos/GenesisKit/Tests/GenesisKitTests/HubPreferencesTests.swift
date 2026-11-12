@@ -75,6 +75,14 @@ final class HubPreferencesTests: XCTestCase {
         let reader = HubLayoutState(defaults: defaults, namespace: name, broadcasts: false)
         scripted.set(.compact, for: .lists)
         XCTAssertEqual(scripted.choice(.lists), .compact)
+        let changed = expectation(description: "scripted changes do not reach an open reader")
+        changed.isInverted = true
+        withObservationTracking {
+            _ = reader.choice(.lists)
+        } onChange: {
+            changed.fulfill()
+        }
+        await fulfillment(of: [changed], timeout: 0.25)
         XCTAssertEqual(reader.choice(.lists), .classic)
         reader.reload()
         XCTAssertEqual(reader.choice(.lists), .compact)

@@ -39,8 +39,16 @@ public enum HubLayout {
     }
 
     private static let options = parse(ProcessInfo.processInfo.arguments)
+    @MainActor private static var scriptedDefaults: UserDefaults?
     @MainActor static let state = HubLayoutState(
-        broadcasts: !isScripted, observeChanges: !isScripted)
+        defaults: scriptedDefaults ?? .standard, broadcasts: !isScripted, observeChanges: !isScripted)
+
+    /// The host supplies its existing scratch store before resolving any layouts. Live faces keep the standard domain.
+    public static func useScriptedDefaults(_ defaults: UserDefaults) {
+        guard isScripted else { return }
+        // App entry points configure the scratch domain on the main thread before starting AppKit.
+        MainActor.assumeIsolated { scriptedDefaults = defaults }
+    }
     private static let isScripted = ProcessInfo.processInfo.arguments.contains("--snapshot")
         || ProcessInfo.processInfo.arguments.contains("--bench")
 
