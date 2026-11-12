@@ -6,7 +6,7 @@ import cdpSocketOutsideConnect from "./cdp-socket-outside-connect.definition";
 import cmuxSendOutsideSurfaceInput from "./cmux-send-outside-surface-input.definition";
 import cmuxTreeOutsideReader from "./cmux-tree-outside-reader.definition";
 import type { RosterDefinition } from "./define";
-import { importFrom, literal } from "./define";
+import { callTo, importFrom, literal } from "./define";
 import doctorDirectDelete from "./doctor-direct-delete.definition";
 import { planRosters } from "./generate";
 import { ROSTER_DEFINITIONS, rosterGrowth } from "./index";
@@ -301,5 +301,26 @@ describe("swift rosters", () => {
         expect(kept.split("\n")[0]).toBe(`let a = "x // not a comment" ${" ".repeat("// a comment".length)}`);
         expect(kept.split("\n")[2]?.endsWith("let b = 1")).toBe(true);
         expect(kept).not.toContain("still");
+    });
+});
+
+describe("callTo: a rename at the import does not evade a roster", () => {
+    test("an aliased import, a rebinding and a destructured rename are findings; a plain import and a lookalike are not", () => {
+        const root = parse(
+            Lang.TypeScript,
+            [
+                'import { acquireProvider as take, other } from "./pool";',
+                'import { acquireProvider } from "./pool";',
+                "const grab = pool.acquireProvider;",
+                "const { acquireProvider: viaPattern } = pool;",
+                "const result = acquireProviderFor(1);",
+                "const text = pool.acquireProvider.name.length;",
+                "acquireProvider(1);",
+            ].join("\n")
+        ).root();
+
+        expect(root.findAll(callTo(["acquireProvider"])).map((node) => node.range().start.line + 1)).toEqual([
+            1, 3, 4, 7,
+        ]);
     });
 });

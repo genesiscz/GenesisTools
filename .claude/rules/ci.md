@@ -60,7 +60,8 @@ up against the base. A new definition is seeded by the generator with what the t
 **A roster is any lint baseline that keeps one architecture problem from coming back**: a pattern, its owner, and a
 generated list of the places that still hold it, which only shrinks. Two kinds:
 
-- A **pattern roster** (a `.definition.ts`) looks at one file. Matcher helpers in `define.ts`: `callTo(names)`,
+- A **pattern roster** (a `.definition.ts`) looks at one file. Matcher helpers in `define.ts`: `callTo(names)` (also an aliased import, `const x = api.name` and
+  `const { name: x } = api`, each counted at the binding),
   `literal(/^state-file\.jsonl$/)` (a string's text, in quotes or a template), `importFrom(/^axios$/)`.
 - A **tree roster** (`rosters/tree.ts`) needs every file at once, so it is not in lint-rules. It runs in
   `bun scripts/ci/rosters/generate.ts --check --tree` (about 4 s; the pre-push hook and CI's "Tree roster guard"):

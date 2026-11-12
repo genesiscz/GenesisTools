@@ -28,12 +28,33 @@ export function defineRoster(definition: RosterDefinition): RosterDefinition {
     return definition;
 }
 
-/** A call whose callee is exactly one of `names`, as `fetch(…)` or `fs.unlinkSync(…)` (the last member name). */
+/**
+ * A call whose callee is exactly one of `names`, as `fetch(…)` or `fs.unlinkSync(…)` (the last member name), and
+ * every place that binds one of them to another local name: `import { fetch as get }`, `const get = api.fetch`,
+ * `const { fetch: get } = api`. The binding is the finding, so a rename at the import does not evade the roster and
+ * no call has to be traced back to it (that per-call trace made a whole-tree scan take minutes).
+ */
 export function callTo(names: readonly string[]): NapiConfig {
+    const exact = `^(?:${names.join("|")})$`;
+    const member = `^[\\w$.]*\\b(?:${names.join("|")})$`;
+
     return {
         rule: {
-            kind: "call_expression",
-            has: { field: "function", regex: `(?:^|\\.)(?:${names.join("|")})$` },
+            any: [
+                { kind: "call_expression", has: { field: "function", regex: `(?:^|\\.)(?:${names.join("|")})$` } },
+                {
+                    kind: "import_specifier",
+                    all: [{ has: { field: "name", regex: exact } }, { has: { field: "alias", kind: "identifier" } }],
+                },
+                {
+                    kind: "variable_declarator",
+                    all: [{ has: { field: "name", kind: "identifier" } }, { has: { field: "value", regex: member } }],
+                },
+                {
+                    kind: "pair_pattern",
+                    all: [{ has: { field: "key", regex: exact } }, { has: { field: "value", kind: "identifier" } }],
+                },
+            ],
         },
     };
 }
