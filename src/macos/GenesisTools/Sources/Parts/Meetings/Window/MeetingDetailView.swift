@@ -452,7 +452,12 @@ private struct MeetingHeaderTitle: View {
                     editing = true
                     return .handled
                 }
+                .onKeyPress(.space) {
+                    editing = true
+                    return .handled
+                }
                 .accessibilityAddTraits(.isButton)
+                .accessibilityAction { editing = true }
                 .accessibilityAction(named: "Rename") { editing = true }
                 .accessibilityFocused($titleAccessibilityFocused)
                 .accessibilityIdentifier("meetings.detail.title")
