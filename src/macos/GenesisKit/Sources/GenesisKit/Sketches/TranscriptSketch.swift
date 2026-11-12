@@ -6,15 +6,15 @@ import SwiftUI
 /// in `TranscriptSketchB.swift`; this file only routes to them.
 public enum TranscriptSketch {
     /// "a", "b", or nil for the current views.
-    public static var option: String? { HubLayout.option("transcript") }
+    @MainActor public static var option: String? { HubLayout.option("transcript") }
 
     /// Option A folds every run of tool calls between two messages into one line, at every verbosity (today only
     /// Minimal folds them).
-    static var foldsToolRuns: Bool { option == "a" }
+    @MainActor static var foldsToolRuns: Bool { option == "a" }
 
     /// Option B draws every tool call closed, as one line with its result, at every verbosity; a click opens it.
     /// Option A's calls sit inside folded runs, which start closed anyway.
-    static var opensToolsByDefault: Bool { option != "b" }
+    @MainActor static var opensToolsByDefault: Bool { option != "b" }
 
     /// The row an option draws instead of the current one, or nil to keep the current row.
     @MainActor

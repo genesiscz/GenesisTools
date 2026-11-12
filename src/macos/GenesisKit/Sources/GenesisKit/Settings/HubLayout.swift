@@ -1,9 +1,10 @@
 import Foundation
+import Observation
 import SwiftUI
 
-/// Saved layout choices are sampled when a face opens. Snapshot overrides stay in memory and never write defaults.
+/// Live layout choices shared by Settings and the Hub. Snapshot overrides never write defaults.
 public enum HubLayout {
-    public enum Area: String, CaseIterable, Identifiable {
+    public enum Area: String, CaseIterable, Identifiable, Sendable {
         case prDetail, transcript, lists, usageSettings
         public var id: String { rawValue }
         public var key: String { "hub.layout." + rawValue }
@@ -33,16 +34,20 @@ public enum HubLayout {
         }
     }
 
-    public enum Choice: String, CaseIterable {
+    public enum Choice: String, CaseIterable, Sendable {
         case focused = "a", compact = "b", classic
     }
 
     private static let options = parse(ProcessInfo.processInfo.arguments)
-    private static let saved = Dictionary(uniqueKeysWithValues: Area.allCases.map { ($0.rawValue, choice($0, defaults: .standard)) })
+    @MainActor static let state = HubLayoutState(
+        broadcasts: !isScripted, observeChanges: !isScripted)
+    private static let isScripted = ProcessInfo.processInfo.arguments.contains("--snapshot")
+        || ProcessInfo.processInfo.arguments.contains("--bench")
 
-    public static func option(_ area: String) -> String? {
-        let picked = options[area].flatMap(Choice.init(rawValue:)) ?? saved[area]
-        return picked == .classic ? nil : picked?.rawValue
+    @MainActor public static func option(_ area: String) -> String? {
+        guard let area = Area(rawValue: area) else { return nil }
+        let picked = options[area.rawValue].flatMap(Choice.init(rawValue:)) ?? state.choice(area)
+        return picked == .classic ? nil : picked.rawValue
     }
 
     /// Unknown stored values fall back without overwriting the user's data.
@@ -63,10 +68,82 @@ public enum HubLayout {
     }
 }
 
-/// Layout changes take effect on the next opening so a preference never tears down an active review or transcript.
+/// The observable read happens inside a View body, including pages whose factory is cached by Settings.
+public struct HubLayoutView<Focused: View, Compact: View, Classic: View>: View {
+    private let area: HubLayout.Area
+    private let focused: () -> Focused
+    private let compact: () -> Compact
+    private let classic: () -> Classic
+
+    public init(_ area: HubLayout.Area, @ViewBuilder focused: @escaping () -> Focused,
+                @ViewBuilder compact: @escaping () -> Compact, @ViewBuilder classic: @escaping () -> Classic) {
+        self.area = area
+        self.focused = focused
+        self.compact = compact
+        self.classic = classic
+    }
+
+    public var body: some View {
+        switch HubLayout.option(area.rawValue) {
+        case "a": focused()
+        case "b": compact()
+        default: classic()
+        }
+    }
+}
+
+@MainActor @Observable
+final class HubLayoutState {
+    private var choices: [HubLayout.Area: HubLayout.Choice]
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let namespace: String
+    @ObservationIgnored private let broadcasts: Bool
+    @ObservationIgnored private var observer: NSObjectProtocol?
+
+    init(defaults: UserDefaults = .standard,
+         namespace: String = Bundle.main.bundleIdentifier ?? "dev.genesis.native",
+         broadcasts: Bool = true, observeChanges: Bool = true) {
+        self.defaults = defaults
+        self.namespace = namespace
+        self.broadcasts = broadcasts
+        choices = Dictionary(uniqueKeysWithValues: HubLayout.Area.allCases.map { ($0, HubLayout.choice($0, defaults: defaults)) })
+        if observeChanges {
+            observer = DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("\(namespace).hub.layoutsChanged"), object: namespace, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.reload() }
+            }
+        }
+    }
+
+    deinit {
+        if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
+    }
+
+    func choice(_ area: HubLayout.Area) -> HubLayout.Choice { choices[area] ?? .classic }
+
+    func set(_ choice: HubLayout.Choice, for area: HubLayout.Area) {
+        guard choices[area] != choice else { return }
+        choices[area] = choice
+        defaults.set(choice.rawValue, forKey: area.key)
+        guard broadcasts else { return }
+        defaults.synchronize()
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name("\(namespace).hub.layoutsChanged"), object: namespace,
+            userInfo: nil, deliverImmediately: true)
+    }
+
+    func reload() {
+        defaults.synchronize()
+        let next = Dictionary(uniqueKeysWithValues: HubLayout.Area.allCases.map { ($0, HubLayout.choice($0, defaults: defaults)) })
+        if choices != next { choices = next }
+    }
+}
+
+/// Layout changes apply immediately, without replacing the Hub's model or active session.
 struct HubLayoutSettings: View {
     var body: some View {
-        NativeSettingsCard("Layouts", subtitle: "Choose each area's layout. Close and reopen the Hub and Settings windows to apply changes.") {
+        NativeSettingsCard("Layouts", subtitle: "Choose each area's layout. Changes apply immediately to open windows.") {
             ForEach(HubLayout.Area.allCases) { area in
                 HubLayoutSetting(area: area)
                 if area != HubLayout.Area.allCases.last { Divider() }
@@ -77,12 +154,6 @@ struct HubLayoutSettings: View {
 
 private struct HubLayoutSetting: View {
     let area: HubLayout.Area
-    @AppStorage private var stored: String
-
-    init(area: HubLayout.Area) {
-        self.area = area
-        _stored = AppStorage(wrappedValue: HubLayout.Choice.classic.rawValue, area.key)
-    }
 
     var body: some View {
         NativeSettingsSegmented(
@@ -92,7 +163,7 @@ private struct HubLayoutSetting: View {
                 NativeSettingsOption(HubLayout.Choice.compact, area.compactTitle),
                 NativeSettingsOption(HubLayout.Choice.classic, "Classic"),
             ],
-            selection: Binding(get: { HubLayout.Choice(rawValue: stored) ?? .classic }, set: { stored = $0.rawValue }),
+            selection: Binding(get: { HubLayout.state.choice(area) }, set: { HubLayout.state.set($0, for: area) }),
             minSegmentWidth: 80)
     }
 }

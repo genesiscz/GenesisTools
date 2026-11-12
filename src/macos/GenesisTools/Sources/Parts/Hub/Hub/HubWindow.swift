@@ -353,7 +353,9 @@ package func runHub(_ args: [String]) -> Never {
     // Hub UX wave 2 (`--sketch transcript=a`): the window's centred title pushes every title bar row into the right
     // half of the window; the option's subject header needs the row from the sidebar's edge
     // (Sketches/TranscriptSketchHubA.swift), so the title is not drawn. The window keeps its name for the system.
-    if HubLayout.option("transcript") == "a" { window.titleVisibility = .hidden }
+    MainActor.assumeIsolated {
+        if HubLayout.option("transcript") == "a" { window.titleVisibility = .hidden }
+    }
     window.titlebarAppearsTransparent = true
     window.appearance = NSAppearance(named: .darkAqua)
     window.backgroundColor = ReviewPalette.background
@@ -2407,6 +2409,7 @@ struct HubRootView: View {
 
     var body: some View {
         let _ = RenderProbe.hit("hub.root.body")
+        let hidesWindowTitle = HubLayout.option("transcript") == "a"
         // The session list gets what the panes leave; with no room left it folds to a rail you can
         // still see (and open as a drawer), instead of pushing the panes out of the window.
         let sidebarRoom = width - mainMinWidth - 1
@@ -2490,6 +2493,8 @@ struct HubRootView: View {
         .measuredWidth("hub.root", $width)
         .onGeometryChange(for: Int.self, of: { $0.frame(in: .global).minX < -0.5 ? 1 : 0 }) { HubBench.note("hub.root.clipped", $0) }
         .background(HubWindowReader { window in
+            let visibility: NSWindow.TitleVisibility = hidesWindowTitle ? .hidden : .visible
+            if window.titleVisibility != visibility { window.titleVisibility = visibility }
             // The root hosting view no longer derives the window's minimum from SwiftUI (that cost a
             // full layout per pass); the minimum is this, stated once per change.
             if window.contentMinSize.width != windowMinWidth {

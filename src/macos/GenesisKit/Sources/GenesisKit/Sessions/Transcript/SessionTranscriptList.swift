@@ -264,6 +264,9 @@ public struct SessionTranscriptList: View {
                 reveal(pending)
             }
         }
+        .onChange(of: HubLayout.option("transcript")) {
+            recompute(.preserve)
+        }
         .onChange(of: chips) { if !revealing { recompute(.firstHit) } }
         .onChange(of: toolFilter) { if !revealing { recompute(.firstHit) } }
         .onReceive(NotificationCenter.default.publisher(for: TranscriptBus.list)) { note in
