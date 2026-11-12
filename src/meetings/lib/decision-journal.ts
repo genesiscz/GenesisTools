@@ -602,6 +602,59 @@ function revertScope(
     return { scope: whole ? entry.changes : entry.changes.filter((change) => ids.includes(change.id)), skipped };
 }
 
+function replacementScope(options: {
+    record: MeetingRecord;
+    earlier: JournalEntry;
+    question: string;
+    except: string[];
+}): { entry: JournalEntry; except: string[]; skipped: DecisionSkip[] } {
+    const { record, earlier, question } = options;
+    const except = new Set(options.except.filter((id) => id !== question));
+    const current = new Map(record.items.map((item) => [item.id, item]));
+    const changes = new Map(earlier.changes.map((change) => [change.id, change]));
+    const skipped: DecisionSkip[] = [];
+
+    for (const change of earlier.changes) {
+        if (
+            change.id !== question &&
+            !except.has(change.id) &&
+            current.get(change.id)?.decision?.token !== change.after?.decision?.token
+        ) {
+            except.add(change.id);
+            skipped.push({ id: change.id, reason: "its decision changed since the earlier answer", needs: "nothing" });
+        }
+    }
+
+    const restoredTargets = earlier.changes.flatMap((change) =>
+        change.before?.kind === "question" ? change.before.decides : []
+    );
+    for (const id of restoredTargets) {
+        const item = current.get(id);
+        if (id !== question && !changes.has(id) && item && item.status !== "suggested" && !except.has(id)) {
+            except.add(id);
+            skipped.push({ id, reason: "its decision changed since the earlier answer", needs: "nothing" });
+        }
+    }
+
+    // Keeping a look-alike question also keeps the targets its answer set.
+    for (const id of except) {
+        const item = changes.get(id)?.after;
+        if (item?.kind === "question") {
+            for (const target of item.decides) {
+                if (target !== question) {
+                    except.add(target);
+                }
+            }
+        }
+    }
+
+    return {
+        entry: { ...earlier, changes: earlier.changes.filter((change) => !except.has(change.id)) },
+        except: [...except],
+        skipped,
+    };
+}
+
 const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
     confirm: { mutate: (record, action, { now }) => decideItems(record, "confirmed", action, now) },
     reject: { mutate: (record, action, { now }) => decideItems(record, "rejected", action, now) },
@@ -658,25 +711,59 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
     answer: {
         mutate: (record, action, context) => {
             const { now, listenBelow } = context;
+            let except = (action.except ?? []).map((ref) => itemIdOf(record, ref));
+            let undone: Correction[] = [];
+            const skipped: DecisionSkip[] = [];
+
             if (action.replaces) {
                 const id = itemIdOf(record, action.question);
                 const earlier = context.entryOf(action.replaces);
                 if (earlier?.action.kind !== "answer" || (earlier.question !== id && !earlier.settled.includes(id))) {
                     throw new Error("The replacement token must name an earlier answer to this question");
                 }
+
+                if (action.lookAlikes === "leave") {
+                    const otherQuestions = [earlier.question, ...earlier.settled].filter(
+                        (other): other is string => other !== undefined && other !== id
+                    );
+                    except.push(...otherQuestions);
+                }
+
+                const scope = replacementScope({ record, earlier, question: id, except });
+                except = scope.except;
+                skipped.push(...scope.skipped);
+                undone =
+                    ACTIONS.revert.mutate(
+                        record,
+                        { kind: "revert", token: earlier.token },
+                        {
+                            ...context,
+                            entryOf: (token) => (token === earlier.token ? scope.entry : context.entryOf(token)),
+                        }
+                    ).corrections ?? [];
+
+                // Undoing a replacement can restore a confirmed older answer. Only the questions in this
+                // replacement's scope reopen so the new answer can update them and their look-alikes.
+                const questions = new Set(
+                    scope.entry.changes.filter((change) => change.after?.kind === "question").map((change) => change.id)
+                );
+                for (const item of record.items) {
+                    if (item.kind === "question" && questions.has(item.id)) {
+                        item.status = "suggested";
+                    }
+                }
             }
 
-            // A changed answer: the earlier one is undone first, in this same entry, so its Undo brings it back.
-            const undone = action.replaces
-                ? ACTIONS.revert.mutate(record, { kind: "revert", token: action.replaces }, context).corrections
-                : [];
             const { question, skip } = openQuestion(record, action.question);
-
             if (!question) {
-                return { history: { command: "listen", change: "" }, skipped: skip ? [skip] : [], stamps: true };
+                return {
+                    history: { command: "listen", change: "" },
+                    skipped: [...skipped, ...(skip ? [skip] : [])],
+                    stamps: true,
+                };
             }
 
-            const except = (action.except ?? []).map((ref) => itemIdOf(record, ref));
+            const propagationSource = structuredClone(question);
             const corrections = answerQuestion(record, question.id, {
                 answer: action.answer,
                 ...(action.comment ? { comment: action.comment } : {}),
@@ -686,11 +773,12 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             const alike =
                 action.lookAlikes === "leave"
                     ? { settled: [], corrections: [] }
-                    : settleLookAlikes(record, question, { answer: action.answer, listenBelow, now, except });
+                    : settleLookAlikes(record, propagationSource, { answer: action.answer, listenBelow, now, except });
             return {
                 history: { command: "listen", change: `${question.id} → ${action.answer}` },
                 settled: alike.settled,
-                corrections: [...(undone ?? []), ...corrections, ...alike.corrections],
+                corrections: [...undone, ...corrections, ...alike.corrections],
+                skipped,
                 question: question.id,
                 stamps: true,
             };
@@ -1445,7 +1533,11 @@ export class DecisionJournal {
                 byToken.has(entry.action.replaces) &&
                 !revertedBy.has(entry.token)
             ) {
-                revertedBy.set(entry.action.replaces, entry.token);
+                const target = byToken.get(entry.action.replaces)!;
+                const changed = new Set(entry.changes.map((change) => change.id));
+                if (target.changes.every((change) => changed.has(change.id))) {
+                    revertedBy.set(entry.action.replaces, entry.token);
+                }
             }
         }
 

@@ -1114,6 +1114,290 @@ describe("a decision and what it carries are one transaction", () => {
         });
     });
 
+    for (const { except, preserved } of [
+        { except: "i1", preserved: ["i1"] },
+        { except: "i4", preserved: ["i4", "i2"] },
+    ]) {
+        test(`changing an answer leaves the struck ${except} and its effects as they were`, async () => {
+            const fx = await fixture(lookAlikes());
+            const first = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: "i3", answer: "ADO" },
+                actor: person,
+            });
+            const before = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+            const second = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: {
+                    kind: "answer",
+                    question: "i3",
+                    answer: "ADA",
+                    replaces: first.entry!.token,
+                    except: [except],
+                },
+                actor: person,
+            });
+            const store = new MeetingStore(fx.store.storage);
+            const after = store.read(fx.meeting.id)!;
+            expect(after.items.find((item) => item.id === "i3")).toMatchObject({ answer: "ADA", status: "confirmed" });
+            for (const id of preserved) {
+                expect(after.items.find((item) => item.id === id)).toEqual(before.items.find((item) => item.id === id));
+                expect(second.entry?.changes.some((change) => change.id === id)).toBe(false);
+            }
+            const reopened = new DecisionJournal({ store, ledger: () => {} });
+            expect(
+                reopened.read(fx.meeting.id).find((entry) => entry.token === first.entry!.token)?.revertedBy
+            ).toBeUndefined();
+            await reopened.revert({ meeting: fx.meeting.id, token: second.entry!.token, actor: person });
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
+        });
+    }
+
+    for (const changed of ["i1", "i2"]) {
+        test(`changing an answer preserves ${changed} decided again and can itself be undone after reopening the store`, async () => {
+            const fx = await fixture(lookAlikes());
+            const first = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: "i3", answer: "ADO" },
+                actor: person,
+            });
+            await fx.journal.revert({
+                meeting: fx.meeting.id,
+                token: first.entry!.token,
+                items: [changed],
+                actor: person,
+            });
+            await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "respell", item: changed, text: "Ado" },
+                actor: person,
+            });
+            const before = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+            const action = { kind: "answer", question: "i3", answer: "ADA", replaces: first.entry!.token } as const;
+            const planned = await fx.journal.plan({ meeting: fx.meeting.id, action, actor: person });
+            expect(planned.entry?.skipped).toContainEqual(expect.objectContaining({ id: changed }));
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)).toEqual(before);
+            const second = await fx.journal.apply({ meeting: fx.meeting.id, action, actor: person });
+            const store = new MeetingStore(fx.store.storage);
+            const after = store.read(fx.meeting.id)!;
+            expect(after.items.find((item) => item.id === changed)).toEqual(
+                before.items.find((item) => item.id === changed)
+            );
+            expect(after.items.find((item) => item.id === "i3")).toMatchObject({ answer: "ADA", status: "confirmed" });
+            await new DecisionJournal({ store, ledger: () => {} }).revert({
+                meeting: fx.meeting.id,
+                token: second.entry!.token,
+                actor: person,
+            });
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
+        });
+    }
+
+    for (const { selected, preserved } of [
+        { selected: "i3", preserved: ["i4", "i2"] },
+        { selected: "i4", preserved: ["i3", "i1"] },
+    ]) {
+        test(`changing only ${selected} keeps the other earlier answer and its target`, async () => {
+            const fx = await fixture(lookAlikes());
+            const first = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: "i3", answer: "ADO" },
+                actor: person,
+            });
+            const before = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+            const second = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: {
+                    kind: "answer",
+                    question: selected,
+                    answer: "ADA",
+                    replaces: first.entry!.token,
+                    lookAlikes: "leave",
+                },
+                actor: person,
+            });
+            const after = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+            expect(after.items.find((item) => item.id === selected)).toMatchObject({
+                answer: "ADA",
+                status: "confirmed",
+            });
+            for (const id of preserved) {
+                expect(after.items.find((item) => item.id === id)).toEqual(before.items.find((item) => item.id === id));
+                expect(second.entry?.changes.some((change) => change.id === id)).toBe(false);
+                expect(second.entry?.corrections.some((line) => line.item === id)).toBe(false);
+            }
+            await new DecisionJournal({ store: new MeetingStore(fx.store.storage), ledger: () => {} }).revert({
+                meeting: fx.meeting.id,
+                token: second.entry!.token,
+                actor: person,
+            });
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
+        });
+    }
+
+    for (const initiallyStruck of [false, true]) {
+        test(`another replacement preserves an independently decided target (initially struck: ${initiallyStruck})`, async () => {
+            const fx = await fixture(lookAlikes());
+            const first = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: {
+                    kind: "answer",
+                    question: "i3",
+                    answer: "ADO",
+                    ...(initiallyStruck ? { except: ["i1"] } : {}),
+                },
+                actor: person,
+            });
+            if (!initiallyStruck) {
+                await fx.journal.revert({
+                    meeting: fx.meeting.id,
+                    token: first.entry!.token,
+                    items: ["i1"],
+                    actor: person,
+                });
+            }
+            await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "respell", item: "i1", text: "Ado" },
+                actor: person,
+            });
+            const preceding = initiallyStruck
+                ? first
+                : await fx.journal.apply({
+                      meeting: fx.meeting.id,
+                      action: { kind: "answer", question: "i3", answer: "ADA", replaces: first.entry!.token },
+                      actor: person,
+                  });
+            const store = new MeetingStore(fx.store.storage);
+            const reopened = new DecisionJournal({ store, ledger: (lines) => fx.ledger.push(...lines) });
+            const before = store.read(fx.meeting.id)!;
+            const history = readFileSync(reopened.path(fx.meeting.id), "utf8");
+            const contribution = fx.ledger.filter((line) => line.item === "i1");
+            const action = { kind: "answer", question: "i3", answer: "ADP", replaces: preceding.entry!.token } as const;
+            const plan = await reopened.plan({ meeting: fx.meeting.id, action, actor: person });
+            expect(plan.entry?.skipped).toContainEqual(expect.objectContaining({ id: "i1" }));
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)).toEqual(before);
+            expect(readFileSync(reopened.path(fx.meeting.id), "utf8")).toBe(history);
+            const next = await reopened.apply({ meeting: fx.meeting.id, action, actor: person });
+            expect(
+                new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items.find((item) => item.id === "i3")
+            ).toMatchObject({
+                answer: "ADP",
+                status: "confirmed",
+            });
+            expect(
+                new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items.find((item) => item.id === "i1")
+            ).toEqual(before.items.find((item) => item.id === "i1"));
+            expect(next.entry?.changes.some((change) => change.id === "i1")).toBe(false);
+            expect(next.entry?.corrections.some((line) => line.item === "i1")).toBe(false);
+            expect(fx.ledger.filter((line) => line.item === "i1")).toEqual(contribution);
+            await new DecisionJournal({ store: new MeetingStore(fx.store.storage), ledger: () => {} }).revert({
+                meeting: fx.meeting.id,
+                token: next.entry!.token,
+                actor: person,
+            });
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
+        });
+    }
+
+    test("a replacement can reattach an untouched suggested target", async () => {
+        const fx = await fixture(lookAlikes());
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO", except: ["i1"] },
+            actor: person,
+        });
+        await new DecisionJournal({ store: new MeetingStore(fx.store.storage), ledger: () => {} }).apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADA", replaces: first.entry!.token },
+            actor: person,
+        });
+        expect(
+            new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items.find((item) => item.id === "i1")
+        ).toMatchObject({
+            status: "confirmed",
+            proposed: "ADA",
+        });
+    });
+
+    test("a stale replacement refuses the primary question without undoing any of its current targets", async () => {
+        const fx = await fixture(lookAlikes());
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO" },
+            actor: person,
+        });
+        await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADA", replaces: first.entry!.token },
+            actor: person,
+        });
+        const before = new MeetingStore(fx.store.storage).read(fx.meeting.id);
+        const journal = readFileSync(fx.journal.path(fx.meeting.id), "utf8");
+        for (const method of ["plan", "apply"] as const) {
+            await expect(
+                fx.journal[method]({
+                    meeting: fx.meeting.id,
+                    action: { kind: "answer", question: "i3", answer: "ADO", replaces: first.entry!.token },
+                    actor: person,
+                })
+            ).rejects.toThrow("decided again");
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)).toEqual(before);
+            expect(readFileSync(fx.journal.path(fx.meeting.id), "utf8")).toBe(journal);
+        }
+    });
+
+    test("a changed speaker answer does not propagate over an independently decided range", async () => {
+        const range = (id: string) => ({
+            id,
+            kind: "speaker-range",
+            status: "suggested",
+            fromSec: 50,
+            toSec: 54,
+            label: "voice",
+            speaker: "Unclear",
+            confidence: 0.7,
+            rules: [],
+            suggestedAt: now,
+        });
+        const speakerQuestion = (id: string, target: string) =>
+            question(id, {
+                about: "speaker",
+                signature: "same-voice",
+                evidence: { labels: ["voice"] },
+                choices: ["Alice", "Bob", "Casey"],
+                decides: [target],
+            });
+        const fx = await fixture([range("i1"), range("i2"), speakerQuestion("i3", "i1"), speakerQuestion("i4", "i2")]);
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "Alice" },
+            actor: person,
+        });
+        expect(first.entry?.settled).toContain("i4");
+        await fx.journal.revert({ meeting: fx.meeting.id, token: first.entry!.token, items: ["i2"], actor: person });
+        await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "respell", item: "i2", text: "Bob" },
+            actor: person,
+        });
+        const before = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        const second = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "Casey", replaces: first.entry!.token },
+            actor: person,
+        });
+        const after = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(after.items.find((item) => item.id === "i2")).toEqual(before.items.find((item) => item.id === "i2"));
+        expect(after.items.find((item) => item.id === "i1")).toMatchObject({ speaker: "Casey" });
+        await new DecisionJournal({ store: new MeetingStore(fx.store.storage), ledger: () => {} }).revert({
+            meeting: fx.meeting.id,
+            token: second.entry!.token,
+            actor: person,
+        });
+        expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
+    });
+
     test("a replacement token must name an answer that decided this question", async () => {
         const fx = await fixture([...lookAlikes(), question("i5", { heard: "Different", choices: ["One", "Two"] })], {
             voice: "Earlier label",

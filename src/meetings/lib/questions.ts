@@ -304,6 +304,7 @@ export function propagateAnswer(
             continue;
         }
 
+        detachTargets({ question, except: options.except });
         let lowest = 1;
 
         for (const item of record.items) {
@@ -489,6 +490,13 @@ export function splitQuestion(
     return created;
 }
 
+function detachTargets(options: { question: QuestionItem; except?: readonly string[] }): void {
+    if (options.except?.length) {
+        const excluded = new Set(options.except);
+        options.question.decides = options.question.decides.filter((id) => !excluded.has(id));
+    }
+}
+
 /**
  * Writes an answer into the record: the question is confirmed, and each item it decides is confirmed with the answer
  * (a range's speaker, a term's spelling, a join's speaker) or rejected when the answer is "none of these". Returns
@@ -521,11 +529,7 @@ export function answerQuestion(
     }
 
     // A target struck from the answer leaves the question: it stays as it was, for its own decision.
-    const except = new Set(options.except ?? []);
-
-    if (question.decides.some((target) => except.has(target))) {
-        question.decides = question.decides.filter((target) => !except.has(target));
-    }
+    detachTargets({ question, except: options.except });
 
     const ledger: Correction[] = [];
 
@@ -802,6 +806,7 @@ export function settleLookAlikes(
                 answer: options.answer,
                 comment: `settled by the answer to ${answered.id}`,
                 now: options.now,
+                except: options.except,
             })
         );
         settled.push(question.id);

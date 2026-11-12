@@ -57,7 +57,7 @@ export const DECISION_ACTION_OPTIONS = [
         /**
          * Items this answer must not change: targets of the question or look-alike questions struck in the window's
          * "This also affects" sheet. A struck target leaves the question (it no longer decides it) and stays as it
-         * was; a struck look-alike question stays open. Either leaves the transaction, so an Undo never touches it.
+         * was, as does a struck look-alike question. Either leaves the transaction, so an Undo never touches it.
          */
         except: z.array(itemRef).optional(),
         /**
