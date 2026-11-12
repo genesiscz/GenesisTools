@@ -592,6 +592,8 @@ final class ReviewModel: ObservableObject {
     @Published private(set) var focusedCard: String?
     /// Bumped by s and f: the PR bar opens Submit review / Fix threads (each still asks first).
     @Published var submitRequests = 0
+    /// Intentional file, thread or scope navigation; background reloads never request a tab change.
+    @Published private(set) var navigationRequests = 0
     @Published var fixRequests = 0
     /// A `--snapshot --fix-form` run shows the Fix form under the PR bar instead of in a popover.
     @Published var showsFixFormInline = false
@@ -1520,6 +1522,7 @@ final class ReviewModel: ObservableObject {
     /// Opens a file now or once the next load has it: an absolute path inside any root, or a path
     /// relative to this repository.
     func reveal(path: String) {
+        navigationRequests += 1
         if let file = file(atPath: path) {
             select(file.id)
         } else {
@@ -1712,6 +1715,7 @@ final class ReviewModel: ObservableObject {
     }
 
     func select(_ id: String) {
+        navigationRequests += 1
         selectedID = id
         if showsOneFile {
             pushToRenderer()
@@ -1876,6 +1880,7 @@ final class ReviewModel: ObservableObject {
     }
 
     func setScope(_ next: DiffScope) {
+        navigationRequests += 1
         guard next != scope else { return }
         scope = next
         // A PR push on screen (Reload, a version, a compare) moves the commits list and the agent note with it.
