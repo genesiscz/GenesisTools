@@ -128,7 +128,11 @@ struct ItemsTab: View {
                                       draft: meanwhile == nil ? nil : detail.drafts[row.id],
                                       changingAnswer: detail.changingRows.contains(row.id),
                                       foldedFit: ReviewRowView.foldedFit(row, busy: busy, room: listWidth.map { $0 - Self.rowInset }),
-                                      held: detail.heldFolds.contains(row.id))
+                                      held: detail.heldFolds.contains(row.id),
+                                      selectRow: {
+                                          detail.selectedRow = row.id
+                                          focused = true
+                                      })
                             .equatable()
                             // G33: a row this window just answered keeps its open height until the reader scrolls, so
                             // the next row does not move up under the eye.

@@ -259,6 +259,41 @@ final class MeetingsReviewFixTests: XCTestCase {
 
     private func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.4)) }
 
+    func testSingleClickOnTitleSelectsWithoutWaitingForDoubleClick() throws {
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        let model = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: model)
+        detail.rows = .loaded(try termRows())
+        let host = hostedItems(detail, height: 500)
+        defer { host.orderOut(nil); host.close() }
+        settle()
+        let title = try XCTUnwrap(FrameProbe.frames["meetings.row.r1.title"])
+        let point = NSPoint(x: title.midX, y: host.frame.height - title.midY)
+        func click(_ count: Int) throws {
+            for type in [NSEvent.EventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+                let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                                                           timestamp: ProcessInfo.processInfo.systemUptime,
+                                                           windowNumber: host.windowNumber, context: nil,
+                                                           eventNumber: 0, clickCount: count, pressure: 1))
+                host.sendEvent(event)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            }
+        }
+        try click(1)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        let selectedImmediately = detail.selectedRow
+        RunLoop.main.run(until: Date().addingTimeInterval(0.75))
+        XCTAssertEqual(detail.selectedRow, "r1", "the event reached the row")
+        XCTAssertEqual(selectedImmediately, "r1", "a title click must not wait for the double-click interval")
+        XCTAssertNil(detail.editingRow, "one click selects without opening the editor")
+        try click(1)
+        try click(2)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(detail.editingRow, "r1", "a double click still opens the editor")
+    }
+
     func testAnOversizedSelectedRowShowsItsHeadingAtTheTop() throws {
         FrameProbe.enabled = true
         FrameProbe.reset()

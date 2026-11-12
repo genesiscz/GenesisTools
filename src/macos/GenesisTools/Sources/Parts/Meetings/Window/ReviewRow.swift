@@ -34,6 +34,8 @@ struct ReviewRowView: View, Equatable {
     /// This window just decided the row and it still keeps its place (G33): its choices stay in the same slot until
     /// the reader scrolls, so another choice can change the answer without opening a separate editor.
     var held = false
+    /// The list selects and focuses itself immediately, while the title still listens for a second click.
+    var selectRow: (() -> Void)? = nil
     @Environment(\.kitLook) private var look
     @AppStorage(MeetingsPreferences.Playback.animateActivity.key) private var animateActivity =
         MeetingsPreferences.Playback.animateActivity.defaultValue
@@ -191,8 +193,14 @@ struct ReviewRowView: View, Equatable {
         if !row.isQuestion {
             Text(verbatim: row.what).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
                 .onTapGesture(count: 2) { if row.edit != "none" { detail.edit(row) } }
+                .simultaneousGesture(TapGesture().onEnded { selectTitle() })
                 .instantTooltip(row.edit == "none" ? "" : "Double-click to edit")
+                .frameProbe("meetings.row.\(row.id).title")
         }
+    }
+
+    private func selectTitle() {
+        if let selectRow { selectRow() } else { detail.selectedRow = row.id }
     }
 
     @ViewBuilder
@@ -211,6 +219,7 @@ struct ReviewRowView: View, Equatable {
             pieceLine(pieces, symbol: "questionmark.bubble", size: 13, weight: row.isQuestion ? .medium : .regular,
                       glyph: asks ? KitHue.ask.ink : nil)
                 .onTapGesture(count: 2) { if row.isQuestion { detail.editQuestion(row) } }
+                .simultaneousGesture(TapGesture().onEnded { selectTitle() })
                 .instantTooltip(row.isQuestion ? "Double-click to edit the question wording" : "")
         case .settles(let text, let items):
             settlesLine(text, items: items)
