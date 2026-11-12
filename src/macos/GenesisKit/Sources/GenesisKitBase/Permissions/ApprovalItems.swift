@@ -226,7 +226,7 @@ struct ApprovalItemList: View {
     /// only what the list shows; the ticks, the hover and Quick Look still go by each row's id.
     private var rows: some View {
         let groups = ApprovalItemGroup.groups(items)
-        return VStack(alignment: .leading, spacing: 0) {
+        return LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(Array(groups.enumerated()), id: \.element.id) { groupIndex, group in
                 if let title = group.title {
                     Text(verbatim: title)

@@ -96,23 +96,85 @@ private struct RmApproveLine: Decodable {
     var params: RmApproveItemUpdate?
 }
 
+private struct RmApproveRowIdentity: Hashable {
+    let path: String
+    let storedAt: String?
+}
+
+/// Coalesces stdin events on the main queue. A burst rebuilds the window once, and EOF flushes its final facts.
+@MainActor final class RmApproveUpdateBuffer {
+    private var pending: [RmApproveItemUpdate] = []
+    private var scheduled = false
+    private var ended = false
+    private var deliveredEnd = false
+    private let deliver: @MainActor ([RmApproveItemUpdate], Bool) -> Void
+    private let schedule: (@escaping @MainActor () -> Void) -> Void
+
+    init(deliver: @escaping @MainActor ([RmApproveItemUpdate], Bool) -> Void,
+         schedule: @escaping (@escaping @MainActor () -> Void) -> Void = { action in
+             DispatchQueue.main.async { action() }
+         }) {
+        self.deliver = deliver
+        self.schedule = schedule
+    }
+
+    func receive(_ update: RmApproveItemUpdate) {
+        guard !ended else { return }
+        pending.append(update)
+        enqueueFlush()
+    }
+
+    func finish() {
+        guard !ended else { return }
+        ended = true
+        enqueueFlush()
+    }
+
+    private func enqueueFlush() {
+        guard !scheduled else { return }
+        scheduled = true
+        schedule { self.flush() }
+    }
+
+    private func flush() {
+        scheduled = false
+        guard !pending.isEmpty || (ended && !deliveredEnd) else { return }
+        let updates = pending
+        pending.removeAll(keepingCapacity: true)
+        if ended { deliveredEnd = true }
+        deliver(updates, ended)
+    }
+}
+
 extension RmApproveParams {
     /// The params with one row changed; a path the request does not name changes nothing. The update names its row by
     /// path and `storedAt`, so a copy and another row of its path keep their own sizes; an older CLI names the path
     /// only, and its window has one row per path.
     func applying(_ update: RmApproveItemUpdate) -> RmApproveParams {
-        let exact = { (item: RmApproveItem) in item.path == update.path && item.storedAt == update.storedAt }
-        let byPath = { (item: RmApproveItem) in update.storedAt == nil && item.path == update.path }
-        guard var request, let index = request.items.firstIndex(where: exact) ?? request.items.firstIndex(where: byPath) else {
-            return self
+        applying([update])
+    }
+
+    /// One pass over the rows for a burst of measurements, including separate copies of the same path.
+    func applying(_ updates: [RmApproveItemUpdate]) -> RmApproveParams {
+        guard var request, !updates.isEmpty else { return self }
+        var byIdentity: [RmApproveRowIdentity: Int] = [:]
+        var byPath: [String: Int] = [:]
+        for (index, item) in request.items.enumerated() {
+            let key = RmApproveRowIdentity(path: item.path, storedAt: item.storedAt)
+            if byIdentity[key] == nil { byIdentity[key] = index }
+            if byPath[item.path] == nil { byPath[item.path] = index }
         }
-        var item = request.items[index]
-        if let bytes = update.bytes { item.bytes = bytes }
-        if let empty = update.empty { item.empty = empty }
-        if let stats = update.folderStats { item.folderStats = stats }
-        if let git = update.git { item.git = git }
-        if let measuring = update.measuring { item.measuring = measuring }
-        request.items[index] = item
+        for update in updates {
+            let key = RmApproveRowIdentity(path: update.path, storedAt: update.storedAt)
+            guard let index = byIdentity[key] ?? (update.storedAt == nil ? byPath[update.path] : nil) else { continue }
+            var item = request.items[index]
+            if let bytes = update.bytes { item.bytes = bytes }
+            if let empty = update.empty { item.empty = empty }
+            if let stats = update.folderStats { item.folderStats = stats }
+            if let git = update.git { item.git = git }
+            if let measuring = update.measuring { item.measuring = measuring }
+            request.items[index] = item
+        }
         var next = self
         next.request = request
         return next
@@ -599,7 +661,8 @@ private func rmLinks(_ request: RmApproveRequest?) -> [ApprovalLink] {
 }
 
 /// Reads the CLI's `rm.item` lines from stdin on a thread of its own until EOF; both callbacks run on the main queue.
-private func rmFollowUpdates(onUpdate: @escaping @MainActor (RmApproveItemUpdate) -> Void, onEnd: @escaping @MainActor () -> Void) {
+@MainActor private func rmFollowUpdates(onBatch: @escaping @MainActor ([RmApproveItemUpdate], Bool) -> Void) {
+    let buffer = RmApproveUpdateBuffer(deliver: onBatch)
     Thread.detachNewThread {
         let input = FileHandle.standardInput
         var pending = Data()
@@ -611,11 +674,11 @@ private func rmFollowUpdates(onUpdate: @escaping @MainActor (RmApproveItemUpdate
                 let line = pending.subdata(in: pending.startIndex..<newline)
                 pending = pending.subdata(in: pending.index(after: newline)..<pending.endIndex)
                 if let update = RmApproveParams.update(fromLine: line) {
-                    DispatchQueue.main.async { MainActor.assumeIsolated { onUpdate(update) } }
+                    DispatchQueue.main.async { MainActor.assumeIsolated { buffer.receive(update) } }
                 }
             }
         }
-        DispatchQueue.main.async { MainActor.assumeIsolated { onEnd() } }
+        DispatchQueue.main.async { MainActor.assumeIsolated { buffer.finish() } }
     }
 }
 
@@ -690,11 +753,10 @@ func approveRm(_ params: RmApproveParams) {
             let rebuilt = RmWindowContent.build(next, iconCache: iconCache)
             model.refresh(items: rebuilt.items, summary: rebuilt.summary)
         }
-        rmFollowUpdates(
-            onUpdate: { update in
-                logClick("rm.approve update path=\(update.path) bytes=\(update.bytes.map(String.init) ?? "-")")
-                show(current.applying(update))
-            },
-            onEnd: { show(current.endingUpdates()) })
+        rmFollowUpdates { updates, ended in
+            let next = current.applying(updates)
+            logClick("rm.approve update batch=\(updates.count) ended=\(ended)")
+            show(ended ? next.endingUpdates() : next)
+        }
     }
 }
