@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
@@ -38,6 +38,7 @@ import {
     openMeetingsClient,
     SocketMeetingsClient,
 } from "./client";
+import { MeetingsFolderWatch } from "./folder-watch";
 import { type MeetingsHandlerDeps, MeetingsServiceError } from "./handlers";
 import { type MeetingsServiceOptions, startMeetingsService } from "./service";
 
@@ -1416,6 +1417,34 @@ describe("the Meetings service's connections", () => {
         await client.subscribe({ meeting: REVIEW.id, events: ["people.changed"] }, heard.push);
         folder.raise(join(store.root, "people.json"));
         expect(await heard.next()).toEqual({ method: "people.changed", params: {} });
+    });
+
+    test("folder watch accepts canonical and aliased paths beneath the hidden data root", async () => {
+        const scratch = realpathSync(mkdtempSync(join(tmpdir(), "mtg-watch-")));
+        const actualRoot = join(scratch, ".genesis-tools", "meetings");
+        mkdirSync(join(actualRoot, "fixture"), { recursive: true });
+        const root = join(scratch, "linked-meetings");
+        symlinkSync(actualRoot, root, "dir");
+        const source = fakeFolderEvents();
+        const heard = eventQueue();
+        const watcher = new MeetingsFolderWatch({
+            root,
+            emit: () => {},
+            commentsChanged: (meeting) => heard.push({ method: "comment.changed", params: { meeting } }),
+            subscribe: source.subscribe,
+            coalesceMs: 0,
+        });
+        await watcher.start();
+        try {
+            for (const eventRoot of [actualRoot, root]) {
+                source.raise(join(eventRoot, "fixture", "comments.ndjson"));
+                expect(await heard.next()).toEqual({ method: "comment.changed", params: { meeting: "fixture" } });
+            }
+            source.raise(join(scratch, "outside", "comments.ndjson"));
+            expect(heard.left()).toEqual([]);
+        } finally {
+            await watcher.stop();
+        }
     });
 
     test("listener journal changes refresh the meeting's comment receiver state", async () => {

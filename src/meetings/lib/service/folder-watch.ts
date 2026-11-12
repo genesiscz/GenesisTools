@@ -1,4 +1,5 @@
-import { join, relative } from "node:path";
+import { realpathSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { type FileIdentity, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { createWatcher, type WatcherOptions, type WatcherSubscription } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
@@ -70,16 +71,24 @@ export interface FolderWatchOptions {
 export class MeetingsFolderWatch {
     private readonly own = new Map<string, FileIdentity>();
     private subscription?: WatcherSubscription;
+    private watchedRoot: string;
 
-    constructor(private readonly options: FolderWatchOptions) {}
+    constructor(private readonly options: FolderWatchOptions) {
+        this.watchedRoot = options.root;
+    }
 
     async start(): Promise<void> {
-        this.subscription = await createWatcher(this.options.root, (events) => this.heard(events), {
+        // Native watchers report the real path (for example /private/tmp), even when the store was opened by an alias.
+        this.watchedRoot = realpathSync(this.options.root);
+        this.subscription = await createWatcher(this.watchedRoot, (events) => this.heard(events), {
             debounceMs: this.options.coalesceMs ?? FOLDER_WATCH_COALESCE_MS,
             ignorePatterns: [`**/${MOMENTS_FOLDER}/**`, "**/evidence/**", "**/.*"],
             filter: (event) => {
-                const path = relative(this.options.root, event.path);
-                return path === PEOPLE_FILE || commentMeeting(path) !== undefined || partsOfPath(path) !== undefined;
+                const path = this.relativePath(event.path);
+                return (
+                    path !== undefined &&
+                    (path === PEOPLE_FILE || commentMeeting(path) !== undefined || partsOfPath(path) !== undefined)
+                );
             },
             ...(this.options.subscribe ? { subscribe: this.options.subscribe } : {}),
         });
@@ -99,13 +108,26 @@ export class MeetingsFolderWatch {
         await this.subscription?.unsubscribe();
     }
 
+    private relativePath(path: string): string | undefined {
+        for (const root of [this.watchedRoot, this.options.root]) {
+            const candidate = relative(root, path);
+            if (!isAbsolute(candidate) && candidate !== ".." && !candidate.startsWith(`..${sep}`)) {
+                return candidate;
+            }
+        }
+        return undefined;
+    }
+
     private heard(events: Array<{ path: string }>): void {
         const changed = new Map<string, Set<MeetingPart>>();
         let peopleChanged = false;
         const commentMeetings = new Set<string>();
 
         for (const event of events) {
-            const relativePath = relative(this.options.root, event.path);
+            const relativePath = this.relativePath(event.path);
+            if (relativePath === undefined) {
+                continue;
+            }
             if (relativePath === PEOPLE_FILE) {
                 peopleChanged = true;
                 continue;
