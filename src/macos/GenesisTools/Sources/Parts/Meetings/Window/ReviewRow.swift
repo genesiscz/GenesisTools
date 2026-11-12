@@ -787,6 +787,8 @@ private struct RowEditor: View {
             TextField("Reason (optional): kept with the decision", text: Binding(get: { detail.reasons[row.id] ?? "" },
                                                                                  set: { detail.reasons[row.id] = $0 }))
                 .textFieldStyle(.roundedBorder).frame(maxWidth: 420)
+                .accessibilityLabel("Reason for \(row.label)")
+                .accessibilityIdentifier("meetings.row.\(row.id).reason")
                 .onSubmit { detail.submitDraft(on: row) }
         }
         .onAppear {
