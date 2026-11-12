@@ -5,7 +5,7 @@ import { fileHash, runAudio } from "./process";
 import type { AudioMeasurement } from "./types";
 
 const probeSchema = z.object({
-    streams: z.array(z.object({ codec_type: z.string().optional() })).default([]),
+    streams: z.array(z.object({ codec_type: z.string().optional(), duration: z.unknown().optional() })).default([]),
     format: z.object({ duration: z.coerce.number().finite().positive() }),
 });
 
@@ -15,14 +15,18 @@ export async function probeMedia(file: string): Promise<{ seconds: number; audio
         "-v",
         "error",
         "-show_entries",
-        "format=duration:stream=codec_type",
+        "format=duration:stream=codec_type,duration",
         "-of",
         "json",
         resolve(file),
     ]);
     const data = probeSchema.parse(SafeJSON.parse(stdout, { strict: true }));
+    const selected =
+        data.streams.find((stream) => stream.codec_type === "video") ??
+        data.streams.find((stream) => stream.codec_type === "audio");
+    const duration = Number(selected?.duration);
     return {
-        seconds: data.format.duration,
+        seconds: Number.isFinite(duration) && duration > 0 ? duration : data.format.duration,
         audio: data.streams.some((stream) => stream.codec_type === "audio"),
         video: data.streams.some((stream) => stream.codec_type === "video"),
     };
