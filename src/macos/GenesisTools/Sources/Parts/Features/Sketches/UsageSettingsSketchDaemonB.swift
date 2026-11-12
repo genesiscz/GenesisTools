@@ -93,6 +93,17 @@ struct UsageSettingsSketchDaemonB: View {
                 row(task, selected: task.name == current)
             }
         }
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.upArrow) { step(tasks, by: -1) }
+        .onKeyPress(.downArrow) { step(tasks, by: 1) }
+    }
+
+    private func step(_ tasks: [DaemonTaskConfig], by offset: Int) -> KeyPress.Result {
+        guard !tasks.isEmpty else { return .ignored }
+        let index = tasks.firstIndex { $0.name == selected(tasks)?.name } ?? 0
+        selectedName = tasks[min(max(index + offset, 0), tasks.count - 1)].name
+        return .handled
     }
 
     private func row(_ task: DaemonTaskConfig, selected: Bool) -> some View {
@@ -179,33 +190,12 @@ struct UsageSettingsSketchDaemonB: View {
                 UsageSettingsSketchRuleB()
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Recent runs").font(.system(size: 12, weight: .medium))
-                    ForEach(stats.recentRuns.prefix(8)) { run in
-                        HStack(spacing: 10) {
-                            Circle().fill(DaemonFormat.status(run.status).color).frame(width: 6, height: 6)
-                            Text(SessionFormat.parseISO(run.startedAt).map { $0.formatted(date: .abbreviated, time: .shortened) } ?? run.startedAt)
-                                .font(.system(size: 11)).monospacedDigit()
-                                .frame(width: 140, alignment: .leading)
-                            Text(DaemonFormat.status(run.status).label).font(.system(size: 11))
-                                .frame(width: 80, alignment: .leading)
-                            Text(DaemonFormat.duration(run.durationMs)).font(.system(size: 11)).monospacedDigit()
-                                .foregroundStyle(.secondary)
-                                .frame(width: 70, alignment: .leading)
-                            Text(run.reason ?? "").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                            Spacer(minLength: 0)
-                        }
-                        .frame(height: 20)
-                        .accessibilityElement(children: .combine)
-                    }
-                    if stats.recentRuns.isEmpty {
-                        Text("No run in the last 24 hours.").font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
+                    DaemonRunList(runs: Array(stats.recentRuns.prefix(8)), store: store)
                 }
                 .usageSketchRowB()
             }
             UsageSettingsSketchRuleB()
-            NativeSettingsRow("Schedule and limits", detail: "The editor of the current page goes here: run time, missed runs, timeout, priority, retries, notify.") {
-                EmptyView()
-            }
+            DaemonTaskEditor(task: task, store: store)
             .usageSketchRowB()
         }
     }
