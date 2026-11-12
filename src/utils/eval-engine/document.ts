@@ -224,6 +224,7 @@ export function toJson(value: unknown): Json {
     return JsonSchema.parse(parsed);
 }
 
+// lint-rules-ignore: this separately vendored Node/Zod-only core owns its object guard; importing a GenesisTools helper breaks its approved portable boundary.
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
