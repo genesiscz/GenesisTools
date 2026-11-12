@@ -1,34 +1,46 @@
 #!/usr/bin/env bun
 /**
- * Proposes roster candidates from two sources (`--source diff|shadowed|all`, default all):
+ * Proposes roster candidates from four sources (`--source diff|pairs|census|shadowed|all`, default all):
  *
- * - `diff`: the call, import, constructor and argv shapes that a git range removed from several files and did not add
- *   back elsewhere. Such a shape is usually a pattern that a refactor moved into one module.
+ * - `pairs` (needs `--range`): substitutions. In each hunk, a shape only on the removed side and a shape only on the
+ *   added side form an (X -> Y) pair; a pair seen in many files means "X was replaced by Y": keep X out, and the
+ *   module that declares Y owns it. See `propose-pairs.ts`.
+ * - `census` (today's tree, no range): argv heads of spawned CLIs, third-party imports, constructors of imported
+ *   classes and state file names (`cmux-refs.jsonl`) that one module already holds almost alone. A fully owned shape
+ *   (nothing outside its module) gets a roster with an empty baseline. See `propose-census.ts`.
+ * - `diff` (needs `--range`): the call, import, constructor and argv shapes that the range removed from several files
+ *   and did not add back elsewhere. Noisier than `pairs`: a shape that vanished is not always a shape that moved.
  * - `shadowed`: a helper that a shared module exports and that tools still redefine privately (`tools ts refactors
  *   --include shadowed`). A roster on its private declarations stops the next copy.
  *
- *   bun scripts/ci/rosters/propose.ts                                   # origin/master...HEAD
+ *   bun scripts/ci/rosters/propose.ts                                   # census + shadowed
  *   bun scripts/ci/rosters/propose.ts --range origin/master...feat/x --min-files 3 --limit 30
- *   bun scripts/ci/rosters/propose.ts --json
- *   bun scripts/ci/rosters/propose.ts --scaffold 'call:runCmux' --name cmux-run-outside-reader --candidate C13
+ *   bun scripts/ci/rosters/propose.ts --source census --json
+ *   bun scripts/ci/rosters/propose.ts --scaffold 'literal:cmux-refs.jsonl' --name cmux-refs-outside-store --candidate C13
  *
- * For each shape it prints: how many files the range removed it from, how many lines it added back and where (the
- * module it probably moved into, the `allowedIn` guess), and how many matches are still in the tree (the roster's
- * starting size). `--scaffold` writes a NEW `<name>.definition.ts` to fill in and list in `index.ts` (it refuses an
- * existing file and writes nothing else); then `generate.ts` seeds its roster. The ranking is a heuristic: read each
- * candidate before you make it a rule.
+ * `--scaffold` writes a NEW `<name>.definition.ts` to fill in and list in `index.ts` (it refuses an existing file and
+ * writes nothing else); with `--range` its `allowedIn` is where the range added the shape back, without it the module
+ * the census names as owner. Then `generate.ts` seeds its roster. The ranking is a heuristic: read each candidate
+ * before you make it a rule.
  */
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { census } from "./propose-census";
+import { collectPairs, ownerOfShape, rankPairs } from "./propose-pairs";
+import {
+    allowedInSource,
+    countInTree,
+    isTestPath,
+    parseShape,
+    type Shape,
+    type ShapeKind,
+    shapeKey,
+    shapesOf,
+    treeUsage,
+} from "./propose-shapes";
 
-export type ShapeKind = "call" | "import" | "new" | "argv" | "declare";
-
-export interface Shape {
-    kind: ShapeKind;
-    /** The callee (`fetch`, `fs.unlinkSync`), module specifier, constructor or argv head (`launchctl`). */
-    value: string;
-}
+export type { Shape, ShapeKind } from "./propose-shapes";
 
 export interface ShapeStats {
     shape: Shape;
@@ -52,109 +64,7 @@ export interface Candidate {
     remaining: number;
     score: number;
 }
-
-/** Callees too common to mean anything as a roster. */
-const NOISE = new Set([
-    "if",
-    "for",
-    "while",
-    "switch",
-    "return",
-    "function",
-    "catch",
-    "typeof",
-    "expect",
-    "describe",
-    "test",
-    "it",
-    "push",
-    "map",
-    "filter",
-    "join",
-    "split",
-    "slice",
-    "includes",
-    "has",
-    "get",
-    "set",
-    "add",
-    "String",
-    "Number",
-    "Boolean",
-    "Array.isArray",
-    "Object.keys",
-    "Object.entries",
-    "Object.values",
-    "console.log",
-    "console.error",
-    "JSON.stringify",
-    "JSON.parse",
-    "SafeJSON.parse",
-    "SafeJSON.stringify",
-    "Math.max",
-    "Math.min",
-    "Math.round",
-    "Date.now",
-    "Promise.all",
-    "log.debug",
-    "log.info",
-    "log.warn",
-    "log.error",
-    "out.log.info",
-    "out.log.warn",
-    "out.log.error",
-    "trim",
-    "replace",
-    "toString",
-    "then",
-    "resolve",
-    "require",
-]);
-
-/** A call, not a constructor: `new X(` is the `new` shape. */
-const CALL = /(?<![\w$.])(?<!new\s)((?:[A-Za-z_$][\w$]*\.){0,2}[A-Za-z_$][\w$]*)\s*\(/g;
-const IMPORT = /\bfrom\s+["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/g;
-const NEW = /\bnew\s+([A-Z][\w$]*)\s*\(/g;
-const ARGV = /\[\s*["']([a-z][a-z0-9-]{2,})["']\s*,/g;
-
-/** The shapes one source line holds. Pure. */
-export function shapesOf(line: string): Shape[] {
-    const shapes: Shape[] = [];
-    const code = line.replace(/\/\/.*$/, "");
-
-    for (const match of code.matchAll(CALL)) {
-        const value = match[1];
-        const last = value.split(".").at(-1) ?? value;
-
-        if (!NOISE.has(value) && !NOISE.has(last) && !/^[A-Z][A-Z0-9_]*$/.test(value) && last.length > 2) {
-            shapes.push({ kind: "call", value });
-        }
-    }
-
-    for (const match of code.matchAll(IMPORT)) {
-        const value = match[1] ?? match[2];
-
-        if (value && !value.startsWith(".")) {
-            shapes.push({ kind: "import", value });
-        }
-    }
-
-    for (const match of code.matchAll(NEW)) {
-        if (!["Error", "Map", "Set", "Date", "URL", "RegExp", "Promise", "Array"].includes(match[1])) {
-            shapes.push({ kind: "new", value: match[1] });
-        }
-    }
-
-    for (const match of code.matchAll(ARGV)) {
-        shapes.push({ kind: "argv", value: match[1] });
-    }
-
-    return shapes;
-}
-
-export function shapeKey(shape: Shape): string {
-    return `${shape.kind}:${shape.value}`;
-}
+export { grepNeedle, shapeKey, shapesOf } from "./propose-shapes";
 
 /** Reads a unified diff with zero context and counts every shape on its removed and added lines. Pure. */
 export function collectShapes(diff: string, skip: (file: string) => boolean): Map<string, ShapeStats> {
@@ -245,22 +155,6 @@ export function rankCandidates(
     return candidates.sort((a, b) => b.score - a.score);
 }
 
-/** The text a fixed-string grep looks for, for one shape. */
-export function grepNeedle(shape: Shape): string {
-    switch (shape.kind) {
-        case "call":
-            return `${shape.value}(`;
-        case "import":
-            return `"${shape.value}"`;
-        case "new":
-            return `new ${shape.value}(`;
-        case "argv":
-            return `"${shape.value}"`;
-        case "declare":
-            return `function ${shape.value}(`;
-    }
-}
-
 interface ShadowedSite {
     file: string;
     name: string;
@@ -312,24 +206,6 @@ function readShadowed(): ShadowedReport {
     return typeof value === "object" && value !== null ? (value as ShadowedReport) : {};
 }
 
-function countInTree(shape: Shape): number {
-    const grep = Bun.spawnSync(["git", "grep", "-c", "-F", "-e", grepNeedle(shape), "--", "src/*.ts", "src/*.tsx"]);
-
-    if (grep.exitCode === 1) {
-        return 0;
-    }
-
-    if (grep.exitCode !== 0) {
-        throw new Error(`git grep failed: ${grep.stderr.toString()}`);
-    }
-
-    return grep.stdout
-        .toString()
-        .split("\n")
-        .filter((line) => line && !/\.test\.tsx?:/.test(line))
-        .reduce((sum, line) => sum + Number(line.slice(line.lastIndexOf(":") + 1)), 0);
-}
-
 /** The matcher source of a scaffolded definition, for one shape. Pure. */
 export function matcherSource(shape: Shape): string {
     const escaped = shape.value.replace(/[.*+?^${}()|[\]\\]/g, "\\\\$&");
@@ -345,16 +221,30 @@ export function matcherSource(shape: Shape): string {
             return `{ rule: { kind: "array", has: { kind: "string", regex: "^[\\"'\`]${escaped}[\\"'\`]$" } } }`;
         case "declare":
             return `{ rule: { kind: "function_declaration", has: { field: "name", regex: "^${escaped}$" } } }`;
+        case "literal":
+            return `literal(/^${shape.value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}$/)`;
     }
 }
 
+const SCAFFOLD_IMPORTS: Record<ShapeKind, string> = {
+    call: "callTo, defineRoster",
+    import: "defineRoster",
+    new: "defineRoster",
+    argv: "defineRoster",
+    declare: "defineRoster",
+    literal: "defineRoster, literal",
+};
+
+/**
+ * A new definition. `allowedIn` is a module: a folder ending with `/` becomes a prefix regex, a file an exact one.
+ * Pure.
+ */
 export function scaffold(input: { shape: Shape; name: string; candidate: string; allowedIn: string | null }): string {
-    const imports = input.shape.kind === "call" ? "callTo, defineRoster" : "defineRoster";
     const allowed = input.allowedIn
-        ? `    allowedIn: /^${input.allowedIn.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}$/,\n`
+        ? `    allowedIn: /${allowedInSource(input.allowedIn)}/,\n`
         : "    // allowedIn: the module that owns the pattern,\n";
 
-    return `import { ${imports} } from "./define";
+    return `import { ${SCAFFOLD_IMPORTS[input.shape.kind]} } from "./define";
 
 /** ${input.candidate}: TODO say what went wrong when this pattern lived in many files. */
 export default defineRoster({
@@ -372,95 +262,240 @@ function argValue(flag: string): string | undefined {
     return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-function parseShape(text: string): Shape {
-    const [kind, ...rest] = text.split(":");
+const SOURCES = ["diff", "pairs", "census", "shadowed", "all"] as const;
+type Source = (typeof SOURCES)[number];
 
-    if (!["call", "import", "new", "argv", "declare"].includes(kind) || rest.length === 0) {
-        throw new Error(`--scaffold takes <call|import|new|argv|declare>:<value>, got ${text}`);
-    }
-
-    return { kind: kind as ShapeKind, value: rest.join(":") };
+function fail(message: string): never {
+    console.error(`rosters propose: ${message}`);
+    process.exit(2);
 }
 
-if (import.meta.main) {
-    const range = argValue("--range") ?? "origin/master...HEAD";
-    const minFiles = Number(argValue("--min-files") ?? 3);
-    const limit = Number(argValue("--limit") ?? 25);
+function readDiff(range: string): string {
     const diff = Bun.spawnSync(["git", "diff", "-U0", "--no-color", "--no-ext-diff", range, "--", "*.ts", "*.tsx"]);
 
     if (diff.exitCode !== 0) {
-        console.error(`rosters propose: git diff ${range} failed: ${diff.stderr.toString()}`);
-        process.exit(2);
+        fail(`git diff ${range} failed: ${diff.stderr.toString()}`);
     }
 
-    const stats = collectShapes(
-        diff.stdout.toString(),
-        (file) => !file.startsWith("src/") || /\.test\.tsx?$/.test(file)
-    );
-    const source = argValue("--source") ?? "all";
+    return diff.stdout.toString();
+}
+
+/** Tracked non-test TypeScript under src/, each file read once. */
+function readSourceTree(): Map<string, string> {
+    const list = Bun.spawnSync(["git", "ls-files", "-z", "--", "src/*.ts", "src/*.tsx"]);
+
+    if (list.exitCode !== 0) {
+        fail(`git ls-files failed: ${list.stderr.toString()}`);
+    }
+
+    const files = new Map<string, string>();
+
+    for (const file of list.stdout.toString().split("\0")) {
+        if (!file || isTestPath(file) || file.endsWith(".d.ts") || !existsSync(file)) {
+            continue;
+        }
+
+        files.set(file, readFileSync(file, "utf8"));
+    }
+
+    return files;
+}
+
+/** The root package.json dependencies: the third-party packages the census counts. */
+function rootPackages(): Set<string> {
+    const parsed: unknown = SafeJSON.parse(readFileSync("package.json", "utf8"), { strict: true });
+    const names = new Set<string>();
+
+    if (typeof parsed !== "object" || parsed === null) {
+        return names;
+    }
+
+    for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+        const deps: unknown = Reflect.get(parsed, field);
+
+        if (typeof deps === "object" && deps !== null) {
+            for (const name of Object.keys(deps)) {
+                names.add(name);
+            }
+        }
+    }
+
+    return names;
+}
+
+const commandCache = new Map<string, boolean>();
+
+/** Whether a name is an executable on PATH (`launchctl`, `osascript`), cached. */
+function isCommand(name: string): boolean {
+    let found = commandCache.get(name);
+
+    if (found === undefined) {
+        found = Bun.which(name) !== null;
+        commandCache.set(name, found);
+    }
+
+    return found;
+}
+
+/** Skips files outside src/ and tests: the diff and pairs sources only count product code. */
+const skipFile = (file: string): boolean => !file.startsWith("src/") || isTestPath(file);
+
+function runScaffold(scaffoldArg: string, range: string | undefined): never {
+    const shape = parseShape(scaffoldArg);
+    const name = argValue("--name");
+
+    if (!name || !/^[a-z0-9-]+$/.test(name)) {
+        fail("--scaffold needs --name <kebab-case>");
+    }
+
+    const path = join(import.meta.dir, `${name}.definition.ts`);
+
+    if (existsSync(path)) {
+        fail(`${path} exists`);
+    }
+
+    let allowedIn: string | null = null;
+
+    if (shape.kind === "declare") {
+        allowedIn = shadowedCandidates(readShadowed()).find((c) => c.value === shape.value)?.addedIn[0] ?? null;
+    } else if (range) {
+        const added = collectShapes(readDiff(range), skipFile).get(shapeKey(shape));
+        allowedIn = added ? ([...added.addedFiles.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null) : null;
+    } else {
+        // No range: the module that owns the shape in today's tree, when the census sees it at all.
+        const owned = census(readSourceTree(), {
+            packages: rootPackages(),
+            minShare: 0,
+            maxOutliers: Number.POSITIVE_INFINITY,
+        }).find((c) => c.key === shapeKey(shape));
+        allowedIn = owned?.owner ?? null;
+    }
+
+    // "wx": create only, so a race with another writer can never overwrite a definition.
+    writeFileSync(path, scaffold({ shape, name, candidate: argValue("--candidate") ?? "C00", allowedIn }), {
+        flag: "wx",
+    });
+    console.log(`wrote ${path}: fill the TODOs, add it to index.ts, then run bun scripts/ci/rosters/generate.ts`);
+    process.exit(0);
+}
+
+if (import.meta.main) {
+    const range = argValue("--range");
+    const minFiles = Number(argValue("--min-files") ?? 3);
+    const limit = Number(argValue("--limit") ?? 25);
+    const sourceArg = argValue("--source") ?? "all";
+    const source = SOURCES.find((s) => s === sourceArg) ?? fail(`--source takes ${SOURCES.join("|")}`);
     const scaffoldArg = argValue("--scaffold");
 
     if (scaffoldArg) {
-        const shape = parseShape(scaffoldArg);
-        const name = argValue("--name");
-
-        if (!name || !/^[a-z0-9-]+$/.test(name)) {
-            console.error("rosters propose: --scaffold needs --name <kebab-case>");
-            process.exit(2);
-        }
-
-        const path = join(import.meta.dir, `${name}.definition.ts`);
-
-        if (existsSync(path)) {
-            console.error(`rosters propose: ${path} exists`);
-            process.exit(2);
-        }
-
-        const added = stats.get(shapeKey(shape));
-        const owner =
-            shape.kind === "declare"
-                ? (shadowedCandidates(readShadowed()).find((c) => c.value === shape.value)?.addedIn[0] ?? null)
-                : null;
-        const allowedIn =
-            owner ?? (added ? ([...added.addedFiles.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null) : null);
-        // "wx": create only, so a race with another writer can never overwrite a definition.
-        writeFileSync(path, scaffold({ shape, name, candidate: argValue("--candidate") ?? "C00", allowedIn }), {
-            flag: "wx",
-        });
-        console.log(`wrote ${path}: fill the TODOs, add it to index.ts, then run bun scripts/ci/rosters/generate.ts`);
-        process.exit(0);
+        runScaffold(scaffoldArg, range);
     }
 
-    const candidates = [
-        ...(source === "shadowed" ? [] : rankCandidates(stats, { minFiles, remaining: countInTree }).slice(0, limit)),
-        ...(source === "diff" ? [] : shadowedCandidates(readShadowed()).slice(0, limit)),
-    ];
+    const wants = (s: Source) => source === s || source === "all";
+
+    if (!range && (source === "diff" || source === "pairs")) {
+        fail(`--source ${source} needs --range <base>...<head>`);
+    }
+
+    const diff = range && (wants("diff") || wants("pairs")) ? readDiff(range) : "";
+    const timings: string[] = [];
+    const timed = <T>(label: string, work: () => T): T => {
+        const started = performance.now();
+        const result = work();
+        timings.push(`${label} ${((performance.now() - started) / 1000).toFixed(1)} s`);
+        return result;
+    };
+
+    const diffRows =
+        range && wants("diff")
+            ? timed("diff", () =>
+                  rankCandidates(collectShapes(diff, skipFile), { minFiles, remaining: countInTree }).slice(0, limit)
+              )
+            : [];
+    const pairRows =
+        range && wants("pairs")
+            ? timed("pairs", () =>
+                  rankPairs(collectPairs(diff, skipFile), {
+                      minFiles,
+                      remaining: treeUsage,
+                      owner: ownerOfShape,
+                      limit,
+                  })
+              )
+            : [];
+    const censusRows = wants("census")
+        ? timed("census", () =>
+              census(readSourceTree(), { minFiles, packages: rootPackages(), isCommand }).slice(0, limit)
+          )
+        : [];
+    const shadowedRows = wants("shadowed")
+        ? timed("shadowed", () => shadowedCandidates(readShadowed()).slice(0, limit))
+        : [];
 
     if (process.argv.includes("--json")) {
-        console.log(SafeJSON.stringify(candidates, null, 2));
+        console.log(SafeJSON.stringify([...diffRows, ...pairRows, ...censusRows, ...shadowedRows], null, 2));
         process.exit(0);
     }
 
-    console.log(`Roster candidates in ${range} (removed from >= ${minFiles} files, not added back as widely):\n`);
-
-    for (const c of candidates.filter((candidate) => candidate.source === "diff")) {
-        console.log(
-            `${c.score.toString().padStart(6)}  ${c.key}  removed ${c.removedLines} lines in ${c.removedFiles} files, ` +
-                `added ${c.addedLines}${c.addedIn.length ? ` (${c.addedIn.join(", ")})` : ""}, ${c.remaining} left in src`
-        );
+    if (!range && source === "all") {
+        console.log("(diff and pairs skipped: they need --range <base>...<head>)\n");
     }
 
-    const shadowed = candidates.filter((candidate) => candidate.source === "shadowed");
+    if (diffRows.length > 0) {
+        console.log(`Shapes ${range} removed from >= ${minFiles} files and did not add back as widely:\n`);
 
-    if (shadowed.length > 0) {
-        console.log("\nExported helpers that tools still redefine privately:\n");
+        for (const c of diffRows) {
+            console.log(
+                `${c.score.toString().padStart(6)}  ${c.key}  removed ${c.removedLines} lines in ${c.removedFiles} files, ` +
+                    `added ${c.addedLines}${c.addedIn.length ? ` (${c.addedIn.join(", ")})` : ""}, ${c.remaining} left in src`
+            );
+        }
 
-        for (const c of shadowed) {
+        console.log("");
+    }
+
+    if (pairRows.length > 0) {
+        console.log(`Substitutions ${range} made in >= ${minFiles} files (X -> Y: keep X out, Y's module owns it):\n`);
+
+        for (const p of pairRows) {
+            console.log(
+                `${p.files.toString().padStart(4)} files  ${shapeKey(p.from)} -> ${[p.to, ...p.alsoTo].map(shapeKey).join(" | ")}  ` +
+                    `conf ${p.confidence}, ${p.remainingFiles} files still hold X, owner ${p.owner ?? "?"}  (e.g. ${p.examples.join(", ")})`
+            );
+        }
+
+        console.log("");
+    }
+
+    if (censusRows.length > 0) {
+        console.log("Shapes one module of today's tree owns (fully owned first):\n");
+
+        for (const c of censusRows) {
+            const outliers =
+                c.outliers.length === 0
+                    ? "fully owned"
+                    : `${c.outliers.length} outside: ${c.outliers.slice(0, 5).join(", ")}${c.outliers.length > 5 ? ", …" : ""}`;
+            console.log(
+                `${c.key}  owner ${c.owner} (${c.ownerFiles}/${c.totalFiles} files, share ${c.share})  ${outliers}  ` +
+                    `allowedIn /${c.allowedIn}/`
+            );
+        }
+
+        console.log("");
+    }
+
+    if (shadowedRows.length > 0) {
+        console.log("Exported helpers that tools still redefine privately:\n");
+
+        for (const c of shadowedRows) {
             console.log(`${c.remaining.toString().padStart(6)}  ${c.key}  owner ${c.addedIn[0]}`);
         }
+
+        console.log("");
     }
 
+    console.log(`(${timings.join(", ")})`);
     console.log(
-        `\nScaffold one: bun scripts/ci/rosters/propose.ts --range ${range} --scaffold '<key>' --name <slug> --candidate C<n>`
+        `Scaffold one: bun scripts/ci/rosters/propose.ts [--range ${range ?? "<base>...<head>"}] --scaffold '<key>' --name <slug> --candidate C<n>`
     );
 }

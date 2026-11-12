@@ -37,8 +37,16 @@ only shrinks: the generator never writes growth, `--check` exits 1 on it, and li
 up against the base. A new definition is seeded by the generator with what the tree holds that day. A real exception is
 `// lint-rules-ignore: <why>` on the line, never a manifest edit.
 
-To find new rosters, run `bun scripts/ci/rosters/propose.ts --range <base>...<head>`. It ranks the call, import,
-constructor and argv shapes that the range removed from several files and added back in one module at most, and the
-exported helpers that tools still redefine privately (`tools ts refactors --include shadowed`). `--scaffold '<key>'
---name <slug> --candidate C<n>` writes a NEW definition with the matcher and the owner as `allowedIn`. It refuses an
-existing file and writes nothing else. The ranking is a heuristic, so read each candidate before you make it a rule.
+To find new rosters, run `bun scripts/ci/rosters/propose.ts`. It has four sources (`--source diff|pairs|census|shadowed|all`):
+
+- `diff` (needs `--range <base>...<head>`): the call, import, constructor and argv shapes that the range removed from
+  several files and added back in one module at most.
+- `pairs` (needs `--range`): shape X was replaced by shape Y in N files of the range, so Y's module is the owner of X.
+  It cannot see a pattern that is scoped to one folder.
+- `census` (no range): shapes that one module of today's tree already holds almost alone (a package import, a state
+  file's name, a program's argv). "Fully owned" comes first: a roster with an empty baseline stops the first leak.
+- `shadowed`: the exported helpers that tools still redefine privately (`tools ts refactors --include shadowed`).
+
+`--scaffold '<key>' --name <slug> --candidate C<n>` writes a NEW definition with the matcher and the owner as
+`allowedIn` (`literal:<name>` gives `literal(/^name$/)`, `import:<pkg>` an import matcher). It refuses an existing
+file and writes nothing else. The ranking is a heuristic, so read each candidate before you make it a rule.
