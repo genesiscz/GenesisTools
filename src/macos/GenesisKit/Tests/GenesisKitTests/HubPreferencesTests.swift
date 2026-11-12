@@ -18,6 +18,34 @@ final class HubPreferencesTests: XCTestCase {
                        observeExternalChanges: observe)
     }
 
+    func testLayoutDefaultsAndSavedChoicesSurviveReopeningTheDomain() {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        for area in HubLayout.Area.allCases {
+            XCTAssertEqual(HubLayout.choice(area, defaults: defaults), .focused)
+            defaults.set(HubLayout.Choice.compact.rawValue, forKey: area.key)
+        }
+        defaults.synchronize()
+        let reopened = UserDefaults(suiteName: name)!
+        for area in HubLayout.Area.allCases {
+            XCTAssertEqual(HubLayout.choice(area, defaults: reopened), .compact)
+            reopened.set("unknown", forKey: area.key)
+            XCTAssertEqual(HubLayout.choice(area, defaults: reopened), .focused)
+            reopened.set("classic", forKey: area.key)
+            XCTAssertEqual(HubLayout.choice(area, defaults: reopened), .classic)
+        }
+    }
+
+    func testLayoutOverridesAreValidatedAndDoNotWritePreferences() {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set("b", forKey: HubLayout.Area.prDetail.key)
+        let parsed = HubLayout.parse(["app", "--sketch", "prDetail=a", "--sketch", "prDetail=classic",
+                                      "--sketch", "lists=unknown", "--sketch", "unknown=a", "--sketch"])
+        XCTAssertEqual(parsed, ["prDetail": "classic"])
+        XCTAssertEqual(defaults.string(forKey: HubLayout.Area.prDetail.key), "b")
+    }
+
     func testAFreshDomainReadsTheHubLookWithoutGlassEnergyOrAnIdleRule() {
         let (defaults, name) = suite()
         defer { defaults.removePersistentDomain(forName: name) }

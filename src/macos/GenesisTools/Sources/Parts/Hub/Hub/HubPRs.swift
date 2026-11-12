@@ -2621,7 +2621,7 @@ struct PRsMain: View {
     private var content: some View {
         if let pr = prs.selected {
             // Hub UX wave 2 design sketches (`--sketch prDetail=a|b`, Parts/Hub/Sketches/); nil is the current view.
-            switch DesignSketch.option("prDetail") {
+            switch HubLayout.option("prDetail") {
             case "a": PRDetailSketchA(model: model, prs: prs, pr: pr).id(pr.id)
             case "b": PRDetailSketchB(model: model, prs: prs, pr: pr).id(pr.id)
             default:

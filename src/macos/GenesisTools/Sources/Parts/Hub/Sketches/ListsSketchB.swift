@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 // Hub UX wave 2, area "lists" (Worktrees, Inbox, Activity), option B: "the sidebar sorts, the page summarizes".
-// Drawn only with `--sketch lists=b` (GenesisKit `DesignSketch`); the hooks are in Hub/HubWindow.swift. Nothing here is
+// Drawn only with `--sketch lists=b` (GenesisKit `HubLayout`); the hooks are in Hub/HubWindow.swift. Nothing here is
 // stored and nothing fetches new data: every value comes from the models the current views read.
 //
 // - Worktrees (C30, C31): the sidebar groups worktrees by when a session last worked in them (last hour, today, this

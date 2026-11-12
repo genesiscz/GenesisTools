@@ -398,7 +398,7 @@ enum DaemonSettingsPages {
                     subtitle: "The tasks the GenesisTools daemon runs: their schedule, limits, runs and output."
                 ) {
                     // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current page.
-                    switch DesignSketch.option("usageSettings") {
+                    switch HubLayout.option("usageSettings") {
                     case "a": UsageSettingsSketchDaemonA(store: store)
                     case "b": UsageSettingsSketchDaemonB(store: store)
                     default: DaemonSettingsView(store: store)

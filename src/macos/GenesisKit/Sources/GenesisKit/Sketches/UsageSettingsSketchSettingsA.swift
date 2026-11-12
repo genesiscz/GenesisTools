@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Hub UX wave 2, area "usageSettings", option A for the settings pages: grouped rows like System Settings. Drawn only
-// in a run started with `--sketch usageSettings=a` (`DesignSketch`); without the flag every page draws its current
+// in a run started with `--sketch usageSettings=a` (`HubLayout`); without the flag every page draws its current
 // cards.
 //
 // - One quiet group per topic: a heading outside, one fill, hairlines between rows. No card inside a card, and a

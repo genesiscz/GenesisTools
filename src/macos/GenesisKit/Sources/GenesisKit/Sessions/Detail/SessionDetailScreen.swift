@@ -293,7 +293,7 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
     public var body: some View {
         VStack(spacing: 0) {
             // Hub UX wave 2 (`--sketch transcript=a|b`, GenesisKit Sketches/TranscriptSketch*.swift).
-            switch DesignSketch.option("transcript") {
+            switch HubLayout.option("transcript") {
             case "a": TranscriptSketchAPaneBar(info: info, actions: actions, leadingInset: leadingInset, showSidebar: $showSidebar)
             case "b": TranscriptSketchBTitle(info: info, actions: actions, leadingInset: leadingInset, showSidebar: $showSidebar)
             default: SessionDetailHeader(info: info, actions: actions, leadingInset: leadingInset, showSidebar: $showSidebar)

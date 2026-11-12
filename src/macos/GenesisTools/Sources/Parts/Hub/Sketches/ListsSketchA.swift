@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 // Hub UX wave 2, area "lists" (Worktrees, Inbox, Activity), option A: "one thing at a time, its facts in the row".
-// Drawn only with `--sketch lists=a` (GenesisKit `DesignSketch`); the hooks are in Hub/HubWindow.swift. Nothing here is
+// Drawn only with `--sketch lists=a` (GenesisKit `HubLayout`); the hooks are in Hub/HubWindow.swift. Nothing here is
 // stored and nothing fetches new data: every value comes from the models the current views read.
 //
 // - Worktrees (C30, C31): the rows keep their repository groups and get one fact line (PR state from the cached repo
