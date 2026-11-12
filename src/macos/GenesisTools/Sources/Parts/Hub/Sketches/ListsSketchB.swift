@@ -475,6 +475,17 @@ extension ListsSketchB {
         static let shared = InboxPick()
         @Published var bucket: Bucket? = .needsAnswer
         @Published var project: String?
+        @Published var railSelection = RailRow.bucket(.needsAnswer).id
+
+        func select(_ row: RailRow) {
+            railSelection = row.id
+            switch row {
+            case .bucket(let value): bucket = value
+            case .project(let value): project = value
+            }
+            open = nil
+        }
+
         /// The open line of the table; nil opens the first one.
         @Published var open: String?
     }
@@ -507,6 +518,18 @@ extension ListsSketchB {
         }
     }
 
+    enum RailRow: Equatable, Identifiable {
+        case bucket(Bucket?)
+        case project(String?)
+
+        var id: String {
+            switch self {
+            case .bucket(let value): return "bucket:\(value.map { String($0.rawValue) } ?? "all")"
+            case .project(let value): return value.map { "project:\($0)" } ?? "projects:all"
+            }
+        }
+    }
+
     /// The sidebar: triage sections and projects, each with its count, in the Activity rail's rows.
     struct InboxTriage: View {
         var model: HubModel
@@ -518,6 +541,11 @@ extension ListsSketchB {
             let grouped: [String: [Entry]] = Dictionary(grouping: open, by: { $0.session.projectName })
             let rows: [(name: String, count: Int)] = grouped.map { (name: $0.key, count: $0.value.count) }
             return rows.sorted { a, b in a.count == b.count ? a.name < b.name : a.count > b.count }
+        }
+
+        static func keyRows(_ all: [Entry]) -> [RailRow] {
+            Bucket.allCases.map { .bucket($0) } + [.bucket(nil), .project(nil)]
+                + projects(all).map { .project($0.name) }
         }
 
         var body: some View {
@@ -552,9 +580,10 @@ extension ListsSketchB {
                 count: "\(count)",
                 selected: pick.bucket == bucket,
                 tooltip: bucket.tooltip,
-                select: { pick.bucket = bucket; pick.open = nil }
+                select: { pick.select(.bucket(bucket)) }
             )
             .equatable()
+            .id(RailRow.bucket(bucket).id)
         }
 
         private func everythingRow(count: Int) -> some View {
@@ -566,9 +595,10 @@ extension ListsSketchB {
                 count: "\(count)",
                 selected: pick.bucket == nil,
                 tooltip: "Every question in triage order",
-                select: { pick.bucket = nil; pick.open = nil }
+                select: { pick.select(.bucket(nil)) }
             )
             .equatable()
+            .id(RailRow.bucket(nil).id)
         }
 
         private func projectRow(_ name: String?, count: Int) -> some View {
@@ -580,9 +610,10 @@ extension ListsSketchB {
                 count: "\(count)",
                 selected: pick.project == name,
                 tooltip: name.map { "Only \($0); the count is its questions that need an answer" } ?? "Questions of every project",
-                select: { pick.project = name; pick.open = nil }
+                select: { pick.select(.project(name)) }
             )
             .equatable()
+            .id(RailRow.project(name).id)
         }
 
         private func title(_ text: String) -> some View {

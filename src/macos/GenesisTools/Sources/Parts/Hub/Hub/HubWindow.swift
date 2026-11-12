@@ -2899,17 +2899,26 @@ private struct SessionListView: View {
                         }
                     }
                         .modifier(SidebarArrowKeys(
-                            ids: { Self.inboxKeyOrder(model.inbox, sort: sort, filter: model.filter) },
-                            selection: { model.inbox.selectedID },
+                            ids: {
+                                if HubLayout.option("lists") == "b" {
+                                    return ListsSketchB.InboxTriage.keyRows(ListsSketchB.entries(model.inbox, filter: model.filter)).map(\.id)
+                                }
+                                return Self.inboxKeyOrder(model.inbox, sort: sort, filter: model.filter)
+                            },
+                            selection: {
+                                HubLayout.option("lists") == "b" ? ListsSketchB.InboxPick.shared.railSelection : model.inbox.selectedID
+                            },
                             select: { id in
+                                if HubLayout.option("lists") == "b" {
+                                    let rows = ListsSketchB.InboxTriage.keyRows(ListsSketchB.entries(model.inbox, filter: model.filter))
+                                    if let row = rows.first(where: { $0.id == id }) { ListsSketchB.InboxPick.shared.select(row) }
+                                    return
+                                }
                                 model.inbox.selectedID = id
-                                if HubLayout.option("lists") != nil,
+                                if HubLayout.option("lists") == "a",
                                    let session = model.inbox.sessions.first(where: { $0.id == id }),
                                    let item = session.items.first(where: { $0.isOpen }) ?? session.items.first {
                                     model.inbox.keyCardID = item.id
-                                    ListsSketchB.InboxPick.shared.bucket = nil
-                                    ListsSketchB.InboxPick.shared.project = nil
-                                    ListsSketchB.InboxPick.shared.open = item.id
                                 }
                             },
                             proxy: proxy, focused: $listFocused, focusOnClick: true))
