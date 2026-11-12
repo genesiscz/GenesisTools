@@ -53,6 +53,7 @@ import {
     listDayLogs,
     parseDayLogName,
 } from "@genesiscz/utils/logger/day-logs";
+import { getCloneId } from "@genesiscz/utils/macos/apfs";
 import { isObject } from "@genesiscz/utils/object";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
@@ -78,6 +79,23 @@ import {
     unpackArchive,
     verifyArchiveAgainstFolder,
 } from "./tar";
+import {
+    AFSCTOOL_MAX_BYTES,
+    afsctoolWriter,
+    clonePartner,
+    compressedSince,
+    DITTO_WRITER,
+    type NativeCompressionEntry,
+    openInodes,
+    plan as planTransparent,
+    resolveStale,
+    sampleRatio,
+    settle as settleTransparent,
+    compressOne as swapTransparent,
+    type Candidate as TransparentCandidate,
+} from "./transparent";
+import { migrateTransparentConfig } from "./transparent-config";
+import { applyTransparent } from "./transparent-run";
 import { compressStream, createVerifiedZstdBatch, createVerifiedZstdWriter, ZstdVerificationError } from "./verified";
 import { readSeekTable, readZstdFrames, readZstdFramesSync, SeekableZstdWriter, walkFrames, zstdFrames } from "./zstd";
 
@@ -2359,4 +2377,360 @@ describe("day logs", () => {
             expect(isObject(saved) && isObject(saved.entries) ? Object.keys(saved.entries) : saved).toEqual([]);
         }
     );
+});
+
+// Adapted from GenesisClaude/user/skills/disk-reclaim/scripts/lib/cold.test.ts,
+// commit 582381578ceacde82fac48a58594d9d5374df663. Fixtures belong to this suite.
+describe.skipIf(process.platform !== "darwin")("transparent APFS compression", () => {
+    function fixture(label: string): TransparentCandidate {
+        const path = join(scratch(`transparent-${label}`), "session.jsonl");
+        writeFileSync(path, logText(8000));
+        const then = (Date.now() - 10 * 86_400_000) / 1000;
+        utimesSync(path, then, then);
+        const stat = statSync(path);
+        return { path, size: stat.size, alloc: stat.blocks * 512, ino: stat.ino, mtimeMs: stat.mtimeMs };
+    }
+    function entry(c: TransparentCandidate): NativeCompressionEntry {
+        return { path: c.path, size: c.size, allocated: c.alloc, flags: 0, ino: c.ino, mtimeMs: c.mtimeMs, nlink: 1 };
+    }
+    const opts = {
+        olderThanMs: 3 * 86_400_000,
+        minBytes: 64 * 1024,
+        exts: new Set(["jsonl"]),
+        open: new Set<string>(),
+        now: Date.now(),
+    };
+
+    it("filters young, small, open, linked, compressed and oversized files before a writer runs", () => {
+        const base = entry(fixture("filters"));
+        const entries = [
+            base,
+            { ...base, path: `${base.path}-young.jsonl`, mtimeMs: Date.now() },
+            { ...base, path: `${base.path}-small.jsonl`, size: 10 },
+            { ...base, path: `${base.path}-open.jsonl` },
+            { ...base, path: `${base.path}-linked.jsonl`, nlink: 2 },
+            { ...base, path: `${base.path}-compressed.jsonl`, flags: 0x20 },
+            { ...base, path: `${base.path}-big.jsonl`, size: AFSCTOOL_MAX_BYTES + 1 },
+        ];
+        const result = planTransparent(entries, {
+            ...opts,
+            open: new Set([`${base.path}-open.jsonl`]),
+            maxBytes: AFSCTOOL_MAX_BYTES,
+        });
+        expect(result.candidates.map((c) => c.path)).toEqual([base.path]);
+        expect(result.skips).toMatchObject({ young: 1, small: 1, open: 1, linked: 1, compact: 1, "too-big": 1 });
+        expect(result.tooBigBytes).toBe(AFSCTOOL_MAX_BYTES + 1);
+    });
+    it("preserves bytes, size, nanosecond mtime and compressed flag with the chosen writer", async () => {
+        const c = fixture("roundtrip");
+        const bytes = readFileSync(c.path);
+        const before = statSync(c.path, { bigint: true });
+        const binary = Bun.which("afsctool");
+        const result = settleTransparent(
+            await swapTransparent(c, binary ? afsctoolWriter("lzfse", binary) : DITTO_WRITER),
+            new Set()
+        );
+        expect(result.status).toBe("compressed");
+        expect(readFileSync(c.path)).toEqual(bytes);
+        const after = statSync(c.path, { bigint: true });
+        expect(after.size).toBe(before.size);
+        expect(after.mtimeNs).toBe(before.mtimeNs);
+        expect(result.after).toBeLessThan(c.alloc / 2);
+        expect(fileFlags(c.path)! & 0x20).toBe(0x20);
+        expect(planTransparent([{ ...entry(c), flags: fileFlags(c.path)! }], opts).skips.compact).toBe(1);
+    });
+    it("first append reads back all bytes and returns the file to plain storage", async () => {
+        const c = fixture("append");
+        const bytes = readFileSync(c.path);
+        expect(settleTransparent(await swapTransparent(c), new Set()).status).toBe("compressed");
+        appendFileSync(c.path, "\nlate");
+        expect(readFileSync(c.path)).toEqual(Buffer.concat([bytes, Buffer.from("\nlate")]));
+        expect(fileFlags(c.path)! & 0x20).toBe(0);
+    });
+    it("leaves a file changed after the plan and incompressible bytes untouched", async () => {
+        const c = fixture("changed");
+        appendFileSync(c.path, "\nlate");
+        const before = readFileSync(c.path);
+        expect((await swapTransparent(c)).status).toBe("changed");
+        expect(readFileSync(c.path)).toEqual(before);
+        const noise = fixture("noise");
+        const random = new Uint8Array(256 * 1024);
+        for (let at = 0; at < random.length; at += 65536) {
+            crypto.getRandomValues(random.subarray(at, at + 65536));
+        }
+        writeFileSync(noise.path, random);
+        const stat = statSync(noise.path);
+        const result = await swapTransparent({
+            ...noise,
+            size: stat.size,
+            alloc: stat.blocks * 512,
+            mtimeMs: stat.mtimeMs,
+        });
+        expect(result.status).toBe("no gain");
+        expect(readFileSync(noise.path)).toEqual(Buffer.from(random));
+    });
+    it("samples selected codecs and refuses an oversized file without invoking the writer", async () => {
+        const c = fixture("limit");
+        for (const algorithm of ["zlib", "lzvn", "lzfse"] as const) {
+            expect(sampleRatio(c.path, c.size, algorithm)).toBeLessThan(0.5);
+        }
+        const outcome = await swapTransparent(
+            { ...c, size: AFSCTOOL_MAX_BYTES + 1 },
+            {
+                name: "must-not-run",
+                algorithm: "lzfse",
+                maxBytes: AFSCTOOL_MAX_BYTES,
+                write: async () => {
+                    throw new Error("oversize writer invoked");
+                },
+            }
+        );
+        expect(outcome.note).toContain("too-big");
+        expect(statSync(c.path).ino).toBe(c.ino);
+    });
+    it("refreshes two clone partners to shared compressed blocks and preserves divergent bytes", async () => {
+        const c = fixture("partners");
+        const one = `${c.path}.one`;
+        const two = `${c.path}.two`;
+        expect(Bun.spawnSync(["/bin/cp", "-c", "-p", c.path, one], { env: process.env }).exitCode).toBe(0);
+        expect(Bun.spawnSync(["/bin/cp", "-c", "-p", c.path, two], { env: process.env }).exitCode).toBe(0);
+        const mtime = statSync(one, { bigint: true }).mtimeNs;
+        const first = await swapTransparent(c);
+        expect(first.status).toBe("compressed");
+        expect(compressedSince(c.path, one)).toBe(true);
+        const outcomes = [first];
+        for (const path of [one, two]) {
+            const st = statSync(path);
+            outcomes.push(
+                await clonePartner(
+                    c.path,
+                    { path, size: st.size, alloc: st.blocks * 512, ino: st.ino, mtimeMs: st.mtimeMs },
+                    "lzvn"
+                )
+            );
+        }
+        for (const outcome of outcomes) {
+            expect(settleTransparent(outcome, new Set()).status).toBe("compressed");
+        }
+        expect(getCloneId(c.path)).toBe(getCloneId(one));
+        expect(getCloneId(c.path)).toBe(getCloneId(two));
+        expect(statSync(one, { bigint: true }).mtimeNs).toBe(mtime);
+        expect(readFileSync(one)).toEqual(readFileSync(c.path));
+        appendFileSync(two, "different");
+        const st = statSync(two);
+        const bytes = readFileSync(two);
+        expect(
+            (
+                await clonePartner(
+                    c.path,
+                    { path: two, size: st.size, alloc: st.blocks * 512, ino: st.ino, mtimeMs: st.mtimeMs },
+                    "lzvn"
+                )
+            ).status
+        ).toBe("changed");
+        expect(readFileSync(two)).toEqual(bytes);
+    });
+    it("restores descriptor appends across a swap and preserves both independently changed versions", async () => {
+        const c = fixture("descriptor");
+        const before = readFileSync(c.path);
+        const fd = openSync(c.path, "a");
+        try {
+            const swapped = await swapTransparent(c);
+            expect(swapped.status).toBe("compressed");
+            writeSync(fd, "\nthrough-old-descriptor");
+            const held = await openInodes();
+            expect(held.has(c.ino)).toBe(true);
+            expect(settleTransparent(swapped, held).status).toBe("restored");
+        } finally {
+            closeSync(fd);
+        }
+        expect(readFileSync(c.path)).toEqual(Buffer.concat([before, Buffer.from("\nthrough-old-descriptor")]));
+        const other = fixture("conflict");
+        const swapped = await swapTransparent(other);
+        appendFileSync(swapped.old!.path, "\nold-writer");
+        appendFileSync(other.path, "\nnew-writer");
+        writeFileSync(`${other.path}.cold-conflict`, "earlier conflict");
+        expect(settleTransparent(swapped, new Set()).status).toBe("conflict");
+        expect(readFileSync(`${other.path}.cold-conflict`, "utf8")).toBe("earlier conflict");
+        expect(readFileSync(other.path, "utf8").endsWith("\nnew-writer")).toBe(true);
+        const kept = readdirSync(join(other.path, "..")).find((name) =>
+            name.startsWith("session.jsonl.cold-conflict-")
+        );
+        expect(readFileSync(join(other.path, "..", kept!), "utf8").endsWith("\nold-writer")).toBe(true);
+    });
+    it("recovers a killed child after swap and an interruption between link and rename", async () => {
+        const c = fixture("killed");
+        const script = join(scratch("transparent-child"), "run.ts");
+        writeFileSync(
+            script,
+            `import { lstatSync } from 'node:fs';\nimport { compressOne } from ${SafeJSON.stringify(join(import.meta.dir, "transparent.ts"))};\nconst path=${SafeJSON.stringify(c.path)};\nconst st=lstatSync(path);\nconst result=await compressOne({path,size:st.size,alloc:st.blocks*512,ino:st.ino,mtimeMs:st.mtimeMs});\nif(result.status!=='compressed')throw new Error(result.status);\nprocess.kill(process.pid,'SIGKILL');\n`
+        );
+        const child = Bun.spawn([process.execPath, script], { env: process.env, stdout: "pipe", stderr: "pipe" });
+        await child.exited;
+        expect(await new Response(child.stderr).text()).toBe("");
+        const aside = join(c.path, "..", `.cold-old-${child.pid}-session.jsonl`);
+        expect(existsSync(aside)).toBe(true);
+        const bytes = readFileSync(c.path);
+        expect(await resolveStale(aside, () => false, new Set())).toBe("dropped");
+        expect(readFileSync(c.path)).toEqual(bytes);
+        const linked = join(c.path, "..", ".cold-old-99999-session.jsonl");
+        linkSync(c.path, linked);
+        expect(await resolveStale(linked, () => false, new Set())).toBe("dropped");
+        expect(statSync(c.path).nlink).toBe(1);
+    });
+    it("restores stale asides held by a descriptor instead of dropping later writes", async () => {
+        const c = fixture("stale-held");
+        const swapped = await swapTransparent(c);
+        const stale = join(c.path, "..", ".cold-old-99999-session.jsonl");
+        renameSync(swapped.old!.path, stale);
+        const fd = openSync(stale, "a");
+        try {
+            expect(await resolveStale(stale, () => false, new Set([c.ino]))).toBe("restored");
+            writeSync(fd, "\nfuture");
+        } finally {
+            closeSync(fd);
+        }
+        expect(readFileSync(c.path, "utf8").endsWith("\nfuture")).toBe(true);
+    });
+    it("persists actual algorithm and reports zero saving when a partner holds other bytes", async () => {
+        const c = fixture("ledger");
+        const partner = `${c.path}.partner`;
+        writeFileSync(partner, "different");
+        const result = await applyTransparent({
+            candidates: [{ ...c, partners: [partner] }],
+            stale: [],
+            writer: DITTO_WRITER,
+            onBattery: true,
+        });
+        expect(result.savedBytes).toBe(0);
+        expect(searchLedger({ path: c.path }).at(-1)).toMatchObject({
+            format: "apfs-decmpfs-1",
+            algorithm: "lzvn",
+            writer: "ditto",
+            files: 2,
+        });
+    });
+    it("does not credit a known partner when an unindexed plain clone still owns the old blocks", async () => {
+        const c = fixture("unindexed-holder");
+        const known = `${c.path}.known`;
+        const unknown = `${c.path}.unindexed`;
+        expect(Bun.spawnSync(["/bin/cp", "-c", "-p", c.path, known], { env: process.env }).exitCode).toBe(0);
+        expect(Bun.spawnSync(["/bin/cp", "-c", "-p", c.path, unknown], { env: process.env }).exitCode).toBe(0);
+        const before = readFileSync(unknown);
+        const result = await applyTransparent({
+            candidates: [{ ...c, partners: [known], privateBytes: 0 }],
+            stale: [],
+            writer: DITTO_WRITER,
+            onBattery: true,
+        });
+        expect(result.files).toBe(1);
+        expect(result.savedBytes).toBe(0);
+        expect(result.outcomes.reduce((sum, item) => sum + (item.releasedBytes ?? 0), 0)).toBe(0);
+        expect(readFileSync(unknown)).toEqual(before);
+        expect(fileFlags(unknown)! & 0x20).toBe(0);
+    });
+    it("credits kernel private bytes released by the last old clone and uses precise plan timestamps", async () => {
+        const c = fixture("complete-family");
+        const known = `${c.path}.known`;
+        expect(Bun.spawnSync(["/bin/cp", "-c", "-p", c.path, known], { env: process.env }).exitCode).toBe(0);
+        const precise = statSync(c.path, { bigint: true }).mtimeNs.toString();
+        const result = await applyTransparent({
+            candidates: [{ ...c, mtimeMs: c.mtimeMs + 0.000244, mtimeNs: precise, partners: [known] }],
+            stale: [],
+            writer: DITTO_WRITER,
+            onBattery: true,
+        });
+        expect(result.files).toBe(1);
+        expect(result.savedBytes).toBeGreaterThan(c.alloc / 2);
+        expect(result.outcomes.reduce((sum, item) => sum + (item.releasedBytes ?? 0), 0)).toBe(c.alloc);
+    });
+    it("fails closed on a nonzero lsof pass and skips mutation on battery at the shared apply boundary", async () => {
+        const c = fixture("battery-guard");
+        const originalSpawn = Bun.spawn.bind(Bun);
+        const failed = spyOn(Bun, "spawn").mockImplementationOnce(() =>
+            originalSpawn(["/usr/bin/false"], { env: process.env, stdout: "pipe", stderr: "pipe" })
+        );
+        try {
+            const { openPaths } = await import("./transparent");
+            await expect(openPaths()).rejects.toThrow("lsof failed");
+        } finally {
+            failed.mockRestore();
+        }
+        const power = spyOn(Bun, "spawn").mockImplementationOnce(() =>
+            originalSpawn(["/usr/bin/printf", "Now drawing from 'Battery Power'\\n"], {
+                env: process.env,
+                stdout: "pipe",
+                stderr: "pipe",
+            })
+        );
+        try {
+            const result = await applyTransparent({ candidates: [c], stale: [], writer: DITTO_WRITER });
+            expect(result.skippedBattery).toBe(true);
+            expect(result.files).toBe(0);
+            expect(statSync(c.path).ino).toBe(c.ino);
+        } finally {
+            power.mockRestore();
+        }
+    });
+
+    it("preserves both open inodes even before the new descriptor has appended", async () => {
+        const c = fixture("two-open-inodes");
+        const original = openSync(c.path, "a");
+        let current: number | undefined;
+        try {
+            const swap = await swapTransparent(c);
+            current = openSync(c.path, "a");
+            const newInode = statSync(c.path).ino;
+            const result = settleTransparent(swap, new Set([c.ino, newInode]));
+            expect(result.status).toBe("conflict");
+            writeSync(original, "\nold-after-settlement");
+            writeSync(current, "\nnew-after-settlement");
+            const kept = readdirSync(join(c.path, "..")).find((name) =>
+                name.startsWith("session.jsonl.cold-conflict-")
+            );
+            expect(readFileSync(join(c.path, "..", kept!), "utf8").endsWith("\nold-after-settlement")).toBe(true);
+            expect(readFileSync(c.path, "utf8").endsWith("\nnew-after-settlement")).toBe(true);
+        } finally {
+            closeSync(original);
+            if (current !== undefined) {
+                closeSync(current);
+            }
+        }
+    });
+
+    it("never rewrites SQLite, even when an extension override or misleading name allows it", async () => {
+        const c = fixture("sqlite");
+        const known = { ...entry(c), path: `${c.path}.db` };
+        expect(planTransparent([known], { ...opts, exts: new Set(["db"]) }).candidates).toEqual([]);
+        writeFileSync(c.path, Buffer.concat([Buffer.from("SQLite format 3\0"), readFileSync(c.path)]));
+        const stat = statSync(c.path);
+        const before = readFileSync(c.path);
+        const result = await swapTransparent({
+            ...c,
+            size: stat.size,
+            alloc: stat.blocks * 512,
+            mtimeMs: stat.mtimeMs,
+        });
+        expect(result.note).toContain("SQLite");
+        expect(readFileSync(c.path)).toEqual(before);
+        expect(statSync(c.path).ino).toBe(c.ino);
+    });
+
+    it("loads old config as nested defaults and preserves current config idempotently", () => {
+        expect(migrateTransparentConfig(null, "/fixture").harnesses.claude.roots).toEqual([
+            "/fixture/.claude/projects",
+        ]);
+        const input = {
+            du: {
+                compress: {
+                    defaults: { olderThan: "7d", minKb: 128, exts: ["txt"] },
+                    harnesses: { grok: { roots: ["/fixture/grok"] } },
+                },
+            },
+        };
+        const config = migrateTransparentConfig(input, "/fixture");
+        expect(config.defaults).toEqual(input.du.compress.defaults);
+        expect(config.harnesses.grok.roots).toEqual(["/fixture/grok"]);
+        expect(migrateTransparentConfig({ du: { compress: config } }, "/fixture")).toEqual(config);
+    });
 });

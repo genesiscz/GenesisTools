@@ -103,6 +103,36 @@ tools du clonesize ~ --depth 2 --diff mon.json           # per folder: grown, sh
 - Repeat scans are served from the extent cache (see [How it works](#how-it-works)). On this repo that is about 3x
   faster. `--no-cache` makes a cold-start measurement a one-run cost.
 
+## Transparent compression: detect and suggest
+
+```bash
+tools du clonesize ./archive --json
+tools du clonesize ./archive --compressed --json
+tools du compressed ./archive --json
+tools du compressible ./archive --json
+tools du compression-schedule
+```
+
+The C scan and `volume`'s `scan` include `compressed: { files, logical_bytes, allocated_bytes }`.
+These are per-file sums before clone deduplication. `logical_bytes - allocated_bytes` is the compression saving
+before deduplication; `unique_allocated_bytes` counts physical resource-fork blocks once across compressed clones.
+Compressed files are distinct from sparse files. Inline compressed metadata with no resource fork contributes
+its reported allocation conservatively. `--compressed` lists files carrying `UF_COMPRESSED`, independent of ratio.
+
+`compressible` only reads. It uses the shared transparent plan filters and configured age, minimum size and
+extensions. It skips media, archives, SQLite, compressed, sparse, hard-linked and open files. Shared or unknown
+allocation is excluded because a local scan cannot prove that every partner elsewhere will be replaced.
+Each eligible file's first and middle 1 MiB are compressed in memory with LZFSE when afsctool is available,
+otherwise the ditto writer's algorithm. Folders are ranked by estimated
+saving and each row prints `tools compress transparent apply '<folder>'`. Estimates require at least 30% saving.
+Sampling is an estimate, not a guaranteed result of apply. Compression writes belong to `tools compress`.
+
+The directory index stores compression totals on builds and updates. Queries expose the same `compressed` object
+on nodes and children. Older scans without these measurements omit the field until rebuilt or updated.
+`compression-schedule` explicitly registers `du-cold-compress` daily at 05:00, low priority, disabled. It preserves
+an existing registration. Only the user may decide to enable recurring history rewriting. The task delegates
+battery checks, configured age limits, byte verification, recovery and the journal to `compress transparent`.
+
 ## Reconcile a volume: `volume [mount]`
 
 ```bash
@@ -557,7 +587,8 @@ enter it. `size` hands a tree with a skipped cloud folder to `du -sk`.
 
 ## Configuration
 
-There is no config file: every choice is a flag. Two environment variables matter:
+The compression estimator reads `du.compress.defaults` from the shared GenesisTools config, with age `3d`,
+minimum `64` KiB and text extensions when absent. Other scan choices are flags. Two environment variables matter:
 
 - `GENESIS_TOOLS_HOME` replaces the home folder for GenesisTools data: the caches and the index go to
   `$GENESIS_TOOLS_HOME/.genesis-tools/du/`. With `GENESIS_TOOLS_HOME=~/alt`, the index is
