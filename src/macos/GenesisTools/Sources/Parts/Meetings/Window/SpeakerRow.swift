@@ -33,9 +33,9 @@ struct SpeakerRow<Chips: View>: View {
             if stacked {
                 labels(fieldUnderNumbers: true).frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                labels(fieldUnderNumbers: false)
-                Spacer()
+                labels(fieldUnderNumbers: false).frame(maxWidth: 420, alignment: .leading)
                 field.frame(width: 220).frame(height: Self.nameBlockHeight)
+                Spacer(minLength: 0)
             }
         }
         .padding(.vertical, 3)

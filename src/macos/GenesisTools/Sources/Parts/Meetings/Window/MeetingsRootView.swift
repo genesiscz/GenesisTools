@@ -85,7 +85,7 @@ struct MeetingsRootView: View {
                 .safeAreaPadding(.bottom, dockHeight)
                 .heightFromWindow()
                 .noticeStack(model.notices, alignment: model.noticePlace.alignment)
-                .navigationTitle("Contacts")
+                .navigationTitle("People")
         }
     }
 
@@ -248,7 +248,7 @@ private struct MeetingsSidebar: View {
                     tooltip: "Every meeting of the last \(Plural.count(model.days, "day")) (⌘2)")
             }
             Section("People") {
-                row("Contacts", symbol: "person.crop.circle", count: nil, place: .contacts,
+                row("All people", symbol: "person.crop.circle", count: nil, place: .contacts,
                     tooltip: "Everyone from your meetings, calendars, Contacts and the people you added: search, add, hide and merge")
             }
             Section("Projects") {
@@ -335,7 +335,7 @@ private struct MeetingsListPane: View {
         switch model.place {
         case .needs: return "Needs you"
         case .all: return "All meetings"
-        case .contacts: return "Contacts"
+        case .contacts: return "People"
         case .project(let name): return name
         }
     }

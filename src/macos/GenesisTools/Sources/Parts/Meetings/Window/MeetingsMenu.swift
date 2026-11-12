@@ -38,7 +38,7 @@ enum MeetingsMenu {
         needs.target = target
         let all = view.addItem(withTitle: "All Meetings", action: #selector(MeetingsMenuTarget.showAll(_:)), keyEquivalent: "2")
         all.target = target
-        let contacts = view.addItem(withTitle: "Contacts", action: #selector(MeetingsMenuTarget.showContacts(_:)), keyEquivalent: "3")
+        let contacts = view.addItem(withTitle: "People", action: #selector(MeetingsMenuTarget.showContacts(_:)), keyEquivalent: "3")
         contacts.target = target
         view.addItem(.separator())
         // The toolbar's toggle answers ⌥⌘I too; the item names what a press does (validateMenuItem).

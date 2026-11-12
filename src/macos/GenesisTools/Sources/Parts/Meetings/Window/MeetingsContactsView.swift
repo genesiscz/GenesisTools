@@ -138,7 +138,7 @@ struct MeetingsContactsView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Contacts")
+        .accessibilityLabel("People")
     }
 
     // MARK: Header

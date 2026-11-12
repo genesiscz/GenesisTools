@@ -74,7 +74,7 @@ final class MeetingsUXTests: XCTestCase {
                 $0.keyEquivalent == key && $0.keyEquivalentModifierMask == mask
             }
         }
-        XCTAssertEqual(item("3")?.title, "Contacts")
+        XCTAssertEqual(item("3")?.title, "People")
         XCTAssertEqual(item("+")?.title, "Zoom In on the Timeline")
         XCTAssertEqual(item("-")?.title, "Zoom Out on the Timeline")
         XCTAssertEqual(item("0")?.title, "Fit the Clip")
