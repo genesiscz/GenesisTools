@@ -267,13 +267,20 @@ describe("singleFlight: the answer's age (ttlMs)", () => {
 
     it("the shared answer expires on its own clock: a later call after the age runs again", async () => {
         const { counter, run } = counted("tick");
-        await singleFlight({ key: "tick", run, dir, ttlMs: 40 });
-        await singleFlight({ key: "tick", run, dir, ttlMs: 40 });
-        expect(counter.runs).toBe(1);
+        const realNow = Date.now;
+        let now = realNow();
+        Date.now = () => now;
+        try {
+            await singleFlight({ key: "tick", run, dir, ttlMs: 40 });
+            await singleFlight({ key: "tick", run, dir, ttlMs: 40 });
+            expect(counter.runs).toBe(1);
 
-        await Bun.sleep(60);
-        await singleFlight({ key: "tick", run, dir, ttlMs: 40 });
-        expect(counter.runs).toBe(2);
+            now += 60;
+            await singleFlight({ key: "tick", run, dir, ttlMs: 40 });
+            expect(counter.runs).toBe(2);
+        } finally {
+            Date.now = realNow;
+        }
     });
 
     it("a caller with a shorter ttlMs runs although a longer-lived caller would read the same file", async () => {

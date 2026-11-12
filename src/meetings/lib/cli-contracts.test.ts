@@ -1043,6 +1043,8 @@ describe("comment commands without a service", () => {
         );
         const printed: string[] = [];
         const output = spyOn(out, "result").mockImplementation((value) => printed.push(String(value)));
+        const errors: string[] = [];
+        const failure = spyOn(ui, "err").mockImplementation((value) => errors.push(String(value)));
         const run = async (...args: string[]) => {
             const program = new Command().exitOverride();
             await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "comments" });
@@ -1052,15 +1054,31 @@ describe("comment commands without a service", () => {
             await run("stage", meeting.id, "--target", '{"kind":"time","atSec":3}', "--text", "Check this word");
             await run("send", meeting.id);
             await run("read", meeting.id, "c1");
+            expect(process.exitCode).toBe(1);
+            expect(errors).toContain("[wrong-actor] A comment's author cannot acknowledge its own comment.");
+            expect(printed).toHaveLength(2);
+            process.exitCode = 0;
+            const comments = MeetingComments.of(store, meeting.id);
+            const foreign = comments.stage({
+                target: { kind: "time", atSec: 4 },
+                text: "The other caller's comment",
+                actor: { kind: "agent", harness: "codex", session: "fixture-author" },
+            });
+            comments.markSent([foreign], { token: "fixture-foreign", at: foreign.at, actor: foreign.actor });
+            await run("read", meeting.id, foreign.id);
+            expect(process.exitCode).toBe(0);
             expect(printed).toHaveLength(3);
             expect(MeetingComments.of(new MeetingStore(), meeting.id).list()[0]).toMatchObject({
                 id: "c1",
                 state: "sent",
                 text: "Check this word",
-                readAt: expect.any(String),
             });
+            const reopened = MeetingComments.of(new MeetingStore(), meeting.id).list();
+            expect(reopened[0]?.readAt).toBeUndefined();
+            expect(reopened[1]).toMatchObject({ id: foreign.id, readAt: expect.any(String) });
         } finally {
             output.mockRestore();
+            failure.mockRestore();
             process.exitCode = 0;
         }
     });
