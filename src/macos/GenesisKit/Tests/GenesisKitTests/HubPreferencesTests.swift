@@ -54,6 +54,7 @@ final class HubPreferencesTests: XCTestCase {
         let reader = HubLayoutState(defaults: UserDefaults(suiteName: name)!, namespace: name, broadcasts: false)
         for choice in [HubLayout.Choice.focused, .compact, .classic] {
             let changed = expectation(description: "open view observes \(choice.rawValue)")
+            // lint-rules-ignore: one shot on purpose, each loop iteration arms a new expectation before its change.
             withObservationTracking {
                 XCTAssertNotEqual(reader.choice(.prDetail), choice)
             } onChange: {
