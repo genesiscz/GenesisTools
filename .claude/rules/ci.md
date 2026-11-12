@@ -57,6 +57,23 @@ only shrinks: the generator never writes growth, `--check` exits 1 on it, and li
 up against the base. A new definition is seeded by the generator with what the tree holds that day. A real exception is
 `// lint-rules-ignore: <why>` on the line, never a manifest edit.
 
+**A roster is any lint baseline that keeps one architecture problem from coming back**: a pattern, its owner, and a
+generated list of the places that still hold it, which only shrinks. Two kinds:
+
+- A **pattern roster** (a `.definition.ts`) looks at one file. Matcher helpers in `define.ts`: `callTo(names)`,
+  `literal(/^state-file\.jsonl$/)` (a string's text, in quotes or a template), `importFrom(/^axios$/)`.
+- A **tree roster** (`rosters/tree.ts`) needs every file at once, so it is not in lint-rules. It runs in
+  `bun scripts/ci/rosters/generate.ts --check --tree` (about 4 s; the pre-push hook and CI's "Tree roster guard"):
+  - `roster-shared-export-redeclared`: a function named like a two-word export of `src/utils/**`, also with a copy
+    affix (`myFoo`, `fooLocal`, `foo2`, `_foo`), declared outside its owner.
+  - `roster-function-body-copied`: a function whose body is the body of a `src/utils/**` export, under any name, with
+    its parameters named anything (comments and spacing ignored).
+  - `roster-tool-dependency-added`: a tool imports a tool it did not import before, or `src/utils` imports a tool.
+    The manifest key is `from → to`, not a file.
+  `plugins/` is left out: a plugin file cannot import `src/utils`. A wanted exception is `// lint-rules-ignore: <why>`
+  on the line or the line above. Proven by plants on 2026-11-12: one file with all four violations failed the check
+  with its file, line and the owner it copies; the same file with the ignore comments passed.
+
 To find new rosters, run `bun scripts/ci/rosters/propose.ts`. It has four sources (`--source diff|pairs|census|shadowed|all`):
 
 - `diff` (needs `--range <base>...<head>`): the call, import, constructor and argv shapes that the range removed from
