@@ -690,6 +690,52 @@ describe("export", () => {
 });
 
 describe("capture cost", () => {
+    for (const indexed of [false, true]) {
+        test(`missing legacy change values are not measured as zero (indexed frames: ${indexed})`, async () => {
+            const { meetings } = stores();
+            const created = await meetings.create(
+                {
+                    title: "Planning",
+                    start: "2026-11-05T08:00:00.000Z",
+                    createdBy: "record",
+                    recording: {
+                        frames: 2,
+                        spans: [{ from: "2026-11-05T08:00:00.000Z", to: "2026-11-05T08:01:00.000Z" }],
+                    },
+                },
+                { command: "test", change: "mixed recording" }
+            );
+            const folder = meetings.folder(created.id);
+            writeFileSync(
+                join(folder, "ocr.jsonl"),
+                `${SafeJSON.stringify({ file: "frames/old.jpg", at: created.start, text: "Planning" })}\n`
+            );
+            writeFileSync(join(folder, "frames.jsonl"), "");
+            if (indexed) {
+                appendFrameIndex(folder, {
+                    file: "frames/new.jpg",
+                    at: new Date("2026-11-05T08:00:30.000Z"),
+                    displayId: 1,
+                    changePercent: 20,
+                    reason: "change",
+                });
+            }
+            const reopened = new MeetingStore(meetings.storage);
+            const cost = captureCost({
+                store: reopened,
+                records: reopened.list(),
+                config: meetingsConfigSchema.parse({}),
+            });
+            if (indexed) {
+                expect(cost.threshold.every((choice) => choice.keptShare === 1)).toBe(true);
+                expect(cost.thresholdNote).toBeUndefined();
+            } else {
+                expect(cost.threshold.every((choice) => choice.keptShare === undefined)).toBe(true);
+                expect(cost.thresholdNote).toContain("not measured");
+            }
+        });
+    }
+
     test("the maximum scales with fps and displays; the observed rate comes from the newest real recording", () => {
         const { meetings } = stores();
         const config = meetingsConfigSchema.parse({});

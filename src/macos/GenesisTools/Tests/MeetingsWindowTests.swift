@@ -133,15 +133,16 @@ final class MeetingsWindowTests: XCTestCase {
     func testTheCaptureCostDecodesFrameRatesAndDisplayPolicies() throws {
         // The shape of `tools meetings record cost --json` with no recording yet: no `observed`, no kept shares.
         let json = Data("""
-        {"keptFrameCpuMs":268.6,"source":"bench","displays":[{"value":"all","maxCpuSecPerMin":16.1},{"value":2,"maxCpuSecPerMin":8}],
-         "activeFps":[{"value":0.5,"maxCpuSecPerMin":8.1},{"value":1,"maxCpuSecPerMin":16.1}],
-         "idleFps":[{"value":0.05,"maxCpuSecPerMin":0.8}],"threshold":[{"value":0.01}],"thresholdNote":"no shares stored"}
+        {"keptFrameCpuMs":368.6,"source":"bench","displays":[{"value":"all","maxCpuSecPerMin":22.1},{"value":2,"maxCpuSecPerMin":44.2}],
+         "activeFps":[{"value":0.5,"maxCpuSecPerMin":11.1},{"value":1,"maxCpuSecPerMin":22.1}],
+         "idleFps":[{"value":0.05,"maxCpuSecPerMin":1.1}],"threshold":[{"value":0.01}],"thresholdNote":"no shares stored"}
         """.utf8)
         let cost = try JSONDecoder().decode(CaptureCost.self, from: json)
         XCTAssertNil(cost.observed)
         XCTAssertEqual(cost.activeFps.first?.value, 0.5, "a frame rate below one decodes")
-        XCTAssertEqual(cost.displayCost("all"), 16.1)
-        XCTAssertEqual(cost.displayCost("2"), 8, "a screen index reads as its number")
+        XCTAssertEqual(cost.keptFrameCpuMs, 368.6)
+        XCTAssertEqual(cost.displayCost("all"), 22.1)
+        XCTAssertEqual(cost.displayCost("2"), 44.2, "a screen index reads as its number")
     }
 
     func testTheCLIsErrorLineBecomesTheSentence() {

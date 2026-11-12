@@ -663,6 +663,37 @@ describe("a GENESIS_TOOLS_HOME one level too deep", () => {
 });
 
 describe("meeting records", () => {
+    test("creation publishes its record only after companion files are prepared", async () => {
+        const meetings = records();
+        const order: string[] = [];
+        let folder = "";
+        const created = await meetings.createWithFiles({
+            fields: { title: "Planning", start: "2026-11-05T11:00:00.000Z", createdBy: "new" },
+            change: { command: "test", change: "prepared creation" },
+            beside: {
+                write(record) {
+                    folder = meetings.folder(record.id);
+                    expect(new MeetingStore(meetings.storage).read(record.id)).toBeUndefined();
+                    expect(new MeetingStore(meetings.storage).list()).toEqual([]);
+                    writeFileSync(join(folder, "capture.txt"), "prepared bytes");
+                    order.push("files");
+                },
+                undo() {
+                    throw new Error("A successful create must not roll back");
+                },
+                saved(record) {
+                    expect(new MeetingStore(meetings.storage).read(record.id)?.title).toBe("Planning");
+                    order.push("published");
+                },
+            },
+        });
+        expect(order).toEqual(["files", "published"]);
+        expect(fs.readFileSync(join(folder, "capture.txt"), "utf8")).toBe("prepared bytes");
+        expect(new MeetingStore(meetings.storage).read(created.id)?.history).toEqual(created.history);
+        expect(created.history).toHaveLength(1);
+        expect(created.history[0]?.change).toBe("prepared creation");
+    });
+
     test("a speaker renamed back to its own label loses the rename", async () => {
         const meetings = new MeetingStore(new Storage(`meetings-rename-${process.pid}`));
         const created = await meetings.create(

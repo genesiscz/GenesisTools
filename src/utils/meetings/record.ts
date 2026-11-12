@@ -29,9 +29,10 @@ export const MEETING_UNCHANGED: unique symbol = Symbol("meetings.unchanged");
 /**
  * Files a record keeps beside it that must agree with it (the decision journal, the answer log), written by
  * `MeetingStore.update` under the record's lock. `write` runs once the changed record validates and before it is
- * saved; it throws only after it took back what it wrote. `undo` takes that write back when the record is not saved,
- * so no file holds a change the record lacks. Both only shorten files, which needs no free disk space. `saved` runs
- * once the record is saved; its failure leaves the record and the files as written.
+ * saved; it takes back any partial write before throwing. `undo` takes that write back when the record is not saved.
+ * Journal companions undo by truncation, which needs no free disk space. Creation companions own their new files
+ * and retain a recovery claim if cleanup fails. `saved` runs once the record is saved; its failure leaves the record
+ * and the files as written.
  */
 export interface CompanionWrite {
     write(record: MeetingRecord): void;
@@ -697,6 +698,21 @@ export class MeetingStore {
         fields: Pick<MeetingRecord, "title" | "start" | "createdBy"> & Partial<MeetingRecord>,
         change: MeetingChange
     ): Promise<MeetingRecord> {
+        return this.createWithFiles({ fields, change });
+    }
+
+    /** Reserves a private folder, writes its companion files, then publishes the record. A failed companion write
+     * takes back its own files; a failed record write calls undo, as update does. Until publication list/read cannot
+     * see the new record. Existing create callers use the same path with no companion work. */
+    async createWithFiles({
+        fields,
+        change,
+        beside,
+    }: {
+        fields: Pick<MeetingRecord, "title" | "start" | "createdBy"> & Partial<MeetingRecord>;
+        change: MeetingChange;
+        beside?: CompanionWrite;
+    }): Promise<MeetingRecord> {
         const base = meetingId(fields.start, fields.title);
         let id = base;
         const now = new Date().toISOString();
@@ -726,7 +742,7 @@ export class MeetingStore {
         }
 
         record.id = id;
-        await this.storage.withFileLock({ file: this.path(id), fn: async () => this.write(record) });
+        await this.storage.withFileLock({ file: this.path(id), fn: async () => this.save(record, beside) });
         log.debug({ id, createdBy: record.createdBy }, "meeting created");
         return record;
     }
@@ -790,6 +806,12 @@ export class MeetingStore {
     private commit(current: MeetingRecord, change: MeetingChange, beside?: CompanionWrite): MeetingRecord {
         current.history.push({ at: new Date().toISOString(), command: change.command, change: change.change });
         const record = meetingRecordSchema.parse(current);
+        this.save(record, beside);
+        log.debug({ id: record.id, command: change.command }, "meeting updated");
+        return record;
+    }
+
+    private save(record: MeetingRecord, beside?: CompanionWrite): void {
         beside?.write(record);
 
         try {
@@ -804,9 +826,7 @@ export class MeetingStore {
             throw error;
         }
 
-        log.debug({ id: record.id, command: change.command }, "meeting updated");
         beside?.saved?.(record);
-        return record;
     }
 
     /**
