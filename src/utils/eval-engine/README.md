@@ -366,3 +366,11 @@ Conversation cleanup has a one-second deadline and ends promptly on cancellation
 An offline matrix `check` requires the matrix's explicit `variants` list. The default first variant belongs to the live system's `describe()` response, so the offline checker rejects an omitted list instead of publishing a placeholder plan hash. A normal `run` still selects the live system's first variant when the matrix omits it.
 
 Final-record publication failures stop the invocation and propagate the storage error. They never replay the completed conversation. Reopen the run to determine which immutable records were published before resuming it.
+
+Setup schemas must produce JSON and be idempotent when applied to their own output. The current loader parses
+stored setup values again when loading scenarios and resolving plans. Non-idempotent or type-changing Zod
+transforms are unsupported. Choose raw versus normalized setup storage before extending this contract; that
+change must account for saved scenario hashes and resume compatibility.
+
+Judge prompt version 2 records the tool-observability clarification. Judge expectations are excluded from
+comparisons across the prompt-version boundary.

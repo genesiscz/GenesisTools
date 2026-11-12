@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
     buildJudgeRequest,
     buildSimulatorRequest,
+    JudgePromptVersion,
     parseJudgeAnswer,
     readSimulatorText,
     SimulatorStopWord,
@@ -96,4 +97,5 @@ it("tells the judge when tool evidence is unavailable", () => {
         "judge"
     );
     assert.match(request.system, /Missing tool calls do not prove/);
+    assert.equal(JudgePromptVersion, 2);
 });

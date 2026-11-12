@@ -9,7 +9,7 @@ import type { JudgeRequest, Result, TranscriptLine } from "./evaluate";
 import type { CompletionRequest } from "./system";
 
 /** Bumped when the judge prompt or its answer format changes. `compare` leaves out judge expectations across a change. */
-export const JudgePromptVersion = 1;
+export const JudgePromptVersion = 2;
 /** Bumped when the simulated user's prompt or its stop rule changes. Stored in the manifest. */
 export const SimulatorPromptVersion = 1;
 export const SimulatorStopWord = "###STOP###";
