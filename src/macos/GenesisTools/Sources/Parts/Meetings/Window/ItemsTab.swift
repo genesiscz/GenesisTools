@@ -133,7 +133,13 @@ struct ItemsTab: View {
                             // G33: a row this window just answered keeps its open height until the reader scrolls, so
                             // the next row does not move up under the eye.
                             .frame(minHeight: detail.heldFolds.contains(row.id) ? layout.heights[row.id] : nil, alignment: .top)
-                            .onGeometryChange(for: CGFloat.self, of: \.size.height) { layout.heights[row.id] = $0 }
+                            .onGeometryChange(for: CGFloat.self, of: \.size.height) { height in
+                                guard layout.heights[row.id] != height else { return }
+                                layout.heights[row.id] = height
+                                if detail.selectedRow == row.id, layout.anchor(for: row.id) != nil {
+                                    keepInView(row.id, proxy: proxy)
+                                }
+                            }
                             .padding(.horizontal, 10)
                             .background(RoundedRectangle(cornerRadius: 6)
                                 .fill(detail.selectedRow == row.id ? Color.accentColor.opacity(focused ? 0.22 : 0.12) : .clear))
@@ -169,6 +175,12 @@ struct ItemsTab: View {
                 .padding(.vertical, 6)
                 .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.scrollSpace)).minY }) { scrolled(to: $0) }
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.width.rounded(.down) }) { listWidth = $0 }
+            }
+            .onGeometryChange(for: CGFloat.self, of: \.size.height) { height in
+                layout.viewportHeight = height
+                if let id = detail.selectedRow, layout.anchor(for: id) != nil {
+                    keepInView(id, proxy: proxy)
+                }
             }
             .coordinateSpace(.named(Self.scrollSpace))
             .focusable()
@@ -268,10 +280,10 @@ struct ItemsTab: View {
     /// the fold.
     private func keepInView(_ id: String, proxy: ScrollViewProxy) {
         layout.expectScroll()
-        proxy.scrollTo(id)
+        proxy.scrollTo(id, anchor: layout.anchor(for: id))
         DispatchQueue.main.async {
             layout.expectScroll()
-            proxy.scrollTo(id)
+            proxy.scrollTo(id, anchor: layout.anchor(for: id))
         }
     }
 
@@ -469,7 +481,14 @@ private struct BulkConfirmBar: View {
 /// list's top in its scroll view, whose change tells a reader's scroll. A plain class, so a write redraws nothing.
 final class RowLayout {
     var heights: [String: CGFloat] = [:]
+    var viewportHeight: CGFloat = 0
     private var top: CGFloat?
+
+    /// A row taller than the viewport cannot fit. Start at its heading instead of revealing its bottom.
+    func anchor(for id: String) -> UnitPoint? {
+        guard viewportHeight > 0, let height = heights[id], height > viewportHeight else { return nil }
+        return .top
+    }
     private var windowScrolls = false
 
     /// The window is about to keep a row in view: the move that follows, in this pass, is not the reader's.

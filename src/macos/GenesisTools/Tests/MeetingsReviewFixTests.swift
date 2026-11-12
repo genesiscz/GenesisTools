@@ -259,6 +259,40 @@ final class MeetingsReviewFixTests: XCTestCase {
 
     private func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.4)) }
 
+    func testAnOversizedSelectedRowShowsItsHeadingAtTheTop() throws {
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        let data = try JSONSerialization.data(withJSONObject: [
+            "id": "long", "label": "L1", "kind": "term", "status": "suggested",
+            "what": String(repeating: "The heading and every answer must remain reachable in a long selected row. ", count: 120),
+            "edit": "spelling", "sources": [], "parts": [], "choices": [],
+            "target": ["kind": "item", "id": "long"]
+        ])
+        let row = try JSONDecoder().decode(ReviewRow.self, from: data)
+        let ordinary = try termRows()
+        detail.rows = .loaded(ReviewRows(meeting: "m", rows: Array(ordinary.rows.prefix(2)) + [row] + ordinary.rows.dropFirst(2), hidden: ordinary.hidden))
+        detail.selectedRow = "long"
+        let host = hostedItems(detail, height: 300)
+        defer { host.orderOut(nil); host.close() }
+        settle()
+        let initialFrame = try XCTUnwrap(FrameProbe.frames["meetings.row.long"])
+        XCTAssertGreaterThanOrEqual(initialFrame.minY, -1, "a row selected before layout must show its heading")
+        detail.selectedRow = "r2"
+        settle()
+        detail.selectedRow = "long"
+        settle()
+        let frame = try XCTUnwrap(FrameProbe.frames["meetings.row.long"])
+        let scroll = try XCTUnwrap(Self.scrollView(in: host.contentView))
+        let viewport = scroll.contentView.convert(scroll.contentView.bounds, to: nil)
+        let top = try XCTUnwrap(host.contentView).bounds.height - viewport.maxY
+        XCTAssertGreaterThan(frame.height, viewport.height, "the regression needs an oversized row")
+        XCTAssertGreaterThanOrEqual(frame.minY, top - 1, "the selected row's heading must not scroll above the viewport")
+        XCTAssertLessThanOrEqual(frame.minY, top + 16, "the selected row starts at the viewport's top")
+    }
+
     func testAnAnswerKeepsTheNextRowWhereItWasUntilTheReaderScrolls() throws {
         FrameProbe.enabled = true
         FrameProbe.reset()
