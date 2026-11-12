@@ -25,6 +25,21 @@ func cmdHotkey(keys: String) {
     let holdMs = Double(argValue("--hold") ?? "50") ?? 50
 
     let src = CGEventSource(stateID: .hidSystemState)
+    if argValue("--to-pid") == nil {
+        let heldFlags = CGEventSource.flagsState(.hidSystemState)
+        gatedOrExit {
+            try foregroundInputGate.dispatch(background: false) {
+                try chord.performGlobal(source: src, initiallyHeld: heldFlags, hold: holdMs / 1000,
+                                        gate: inputGate, verify: {
+                    guard targetPid.map({ frontmostPid() == $0 }) ?? true else {
+                        throw WorkflowArgumentError.invalid("\(frontmostDescription()) took the front while sending the combo")
+                    }
+                }, post: { $0.deliverRouted() })
+            }
+        }
+        jsonOutput(["ok": true, "action": "hotkey", "keys": keys])
+        return
+    }
     guard let down = CGEvent(keyboardEventSource: src, virtualKey: chord.code, keyDown: true),
           let up = CGEvent(keyboardEventSource: src, virtualKey: chord.code, keyDown: false) else {
         errorExit("failed to create CGEvent")

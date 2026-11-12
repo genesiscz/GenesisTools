@@ -108,3 +108,87 @@ final class UserTakeoverTests: XCTestCase {
         XCTAssertEqual(posted.map(\.type), [.leftMouseDown, .leftMouseDragged, .leftMouseUp])
     }
 }
+
+extension UserTakeoverTests {
+    func testGlobalShortcutPostsModifierTransitionsInOrder() throws {
+        var events: [CGEvent] = []
+        let gate = SyntheticInputGate(tookOver: { false }, sleeper: { _ in })
+        try NativeKeyChord("ctrl,alt,right").performGlobal(source: nil, initiallyHeld: [], hold: 0,
+                                                         gate: gate, post: { events.append($0.copy()!) })
+        XCTAssertEqual(events.map(\.type), [.flagsChanged, .flagsChanged, .keyDown, .keyUp, .flagsChanged, .flagsChanged])
+        XCTAssertEqual(events.map { $0.getIntegerValueField(.keyboardEventKeycode) }, [59, 58, 124, 124, 58, 59])
+        XCTAssertEqual(events.map(\.flags), [.maskControl, [.maskControl, .maskAlternate], [.maskControl, .maskAlternate],
+                                             [.maskControl, .maskAlternate], .maskControl, []])
+        XCTAssertEqual(gate.posted, 6)
+    }
+
+    func testGlobalShortcutBorrowsPhysicalModifiersAndPreservesLockFlags() throws {
+        var events: [CGEvent] = []
+        let physical: CGEventFlags = [.maskControl, .maskShift, .maskAlphaShift]
+        try NativeKeyChord("ctrl,alt,shift,down").performGlobal(source: nil, initiallyHeld: physical, hold: 0,
+            gate: SyntheticInputGate(tookOver: { false }), post: { events.append($0.copy()!) })
+        XCTAssertEqual(events.map { $0.getIntegerValueField(.keyboardEventKeycode) }, [58, 125, 125, 58])
+        XCTAssertEqual(events.map(\.flags), [physical.union(.maskAlternate), physical.union(.maskAlternate),
+                                             physical.union(.maskAlternate), physical])
+    }
+
+    func testGlobalShortcutTakeoverReleasesOnlyPressedModifiers() {
+        var events: [CGEvent] = []
+        let gate = SyntheticInputGate(tookOver: { !events.isEmpty })
+        XCTAssertThrowsError(try NativeKeyChord("ctrl,alt,right").performGlobal(source: nil, initiallyHeld: [], hold: 0,
+            gate: gate, post: { events.append($0.copy()!) })) { error in
+                XCTAssertTrue(error is UserTakeoverError)
+            }
+        XCTAssertEqual(events.map { $0.getIntegerValueField(.keyboardEventKeycode) }, [59, 59])
+        XCTAssertEqual(events.map(\.type), [.flagsChanged, .flagsChanged])
+        XCTAssertEqual(events.last?.flags, [])
+        XCTAssertEqual(gate.posted, 2, "deferred cleanup cannot release the modifier a second time")
+    }
+
+    func testGlobalShortcutCancellationDuringHoldReleasesKeyThenModifiers() {
+        var events: [CGEvent] = []
+        var slept = false
+        let gate = SyntheticInputGate(tookOver: { false }, sleeper: { _ in slept = true })
+        XCTAssertThrowsError(try NativeKeyChord("ctrl,alt,shift,down").performGlobal(source: nil, initiallyHeld: [], hold: 1,
+            gate: gate, verify: { if slept { throw CancellationError() } }, post: { events.append($0.copy()!) })) { error in
+                XCTAssertTrue(error is CancellationError)
+            }
+        XCTAssertEqual(events.map(\.type), [.flagsChanged, .flagsChanged, .flagsChanged, .keyDown,
+                                             .keyUp, .flagsChanged, .flagsChanged, .flagsChanged])
+        XCTAssertEqual(events.map { $0.getIntegerValueField(.keyboardEventKeycode) }, [59, 58, 56, 125, 125, 56, 58, 59])
+        XCTAssertEqual(events.last?.flags, [])
+        XCTAssertEqual(gate.posted, 8)
+    }
+
+    func testGlobalShortcutRefusalBeforeDownPostsNothing() {
+        var posted = 0
+        let gate = SyntheticInputGate(tookOver: { true })
+        XCTAssertThrowsError(try NativeKeyChord("ctrl,alt,right").performGlobal(source: nil, initiallyHeld: [], hold: 0,
+            gate: gate, post: { _ in posted += 1 }))
+        XCTAssertEqual(posted, 0)
+        XCTAssertThrowsError(try NativeKeyChord("ctrl,alt,right").performGlobal(source: nil, initiallyHeld: [], hold: .infinity,
+            gate: gate, post: { _ in posted += 1 }))
+        XCTAssertEqual(posted, 0)
+    }
+}
+
+extension UserTakeoverTests {
+    func testGlobalShortcutTakeoverDuringHoldPreservesPhysicalModifiers() {
+        var events: [CGEvent] = []
+        var taken = false
+        let physical: CGEventFlags = [.maskShift, .maskAlphaShift]
+        let gate = SyntheticInputGate(tookOver: { taken }, sleeper: { _ in taken = true })
+        XCTAssertThrowsError(try NativeKeyChord("ctrl,alt,shift,down").performGlobal(source: nil, initiallyHeld: physical, hold: 1,
+            gate: gate, post: { events.append($0.copy()!) })) { error in
+                XCTAssertEqual((error as? UserTakeoverError)?.dispatched, true)
+            }
+        XCTAssertEqual(events.map(\.type), [.flagsChanged, .flagsChanged, .keyDown, .keyUp, .flagsChanged, .flagsChanged])
+        XCTAssertEqual(events.map { $0.getIntegerValueField(.keyboardEventKeycode) }, [59, 58, 125, 125, 58, 59])
+        let chordFlags = physical.union([.maskControl, .maskAlternate])
+        XCTAssertEqual(events.map(\.flags), [physical.union(.maskControl), chordFlags, chordFlags, chordFlags,
+                                             physical.union(.maskControl), physical])
+        XCTAssertEqual(gate.posted, 6, "automatic takeover cleanup and deferred cleanup release each owned input once")
+        XCTAssertFalse(events.contains { $0.getIntegerValueField(.keyboardEventKeycode) == 56 },
+                       "a physically held Shift is never synthetically released")
+    }
+}

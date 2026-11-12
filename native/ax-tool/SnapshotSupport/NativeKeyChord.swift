@@ -71,6 +71,66 @@ public struct NativeKeyChord {
         }
     }
 
+    /// A global shortcut is a stream of modifier transitions, not just flags on its final key.
+    /// Modifiers already held by the user are borrowed, never pressed or released here.
+    /// All releases pass through the gate, including cancellation and a lost foreground target.
+    public func performGlobal(source: CGEventSource?, initiallyHeld: CGEventFlags, hold: TimeInterval,
+                              gate: SyntheticInputGate, verify: () throws -> Void = {},
+                              post: @escaping (CGEvent) -> Void) throws {
+        guard hold.isFinite, hold >= 0 else {
+            throw WorkflowArgumentError.invalid("hotkey hold must be a finite, nonnegative duration")
+        }
+        let modifiers: [(CGEventFlags, CGKeyCode)] = [
+            (.maskControl, 59), (.maskAlternate, 58), (.maskShift, 56), (.maskCommand, 55), (.maskSecondaryFn, 63),
+        ]
+        var active = initiallyHeld
+        var held: [SyntheticInputGate.Held] = []
+        defer { for input in held.reversed() { gate.release(input) } }
+
+        func check() throws {
+            try Task.checkCancellation()
+            try verify()
+        }
+        for (flag, key) in modifiers where flags.contains(flag) && !initiallyHeld.contains(flag) {
+            try check()
+            guard let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false) else {
+                throw WorkflowArgumentError.invalid("failed to create modifier CGEvent")
+            }
+            down.type = .flagsChanged
+            up.type = .flagsChanged
+            held.append(try gate.press({
+                active.insert(flag)
+                down.flags = active
+                post(down)
+            }, release: {
+                active.remove(flag)
+                up.flags = active
+                post(up)
+            }))
+        }
+        try check()
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else {
+            throw WorkflowArgumentError.invalid("failed to create key CGEvent")
+        }
+        held.append(try gate.press({
+            down.flags = active
+            post(down)
+        }, release: {
+            up.flags = active
+            post(up)
+        }))
+        var remaining = hold
+        while remaining > 0 {
+            try check()
+            let slice = min(remaining, 0.1)
+            try gate.sleepWatching(slice)
+            remaining -= slice
+        }
+        try check()
+    }
+
     private static func printableCharacter(_ key: String) -> String? {
         if key.count == 1, codes[key] != nil { return key }
         return ["space": " ", "minus": "-", "dash": "-", "equal": "=", "equals": "=",
