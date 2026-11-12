@@ -483,9 +483,12 @@ function scenariosFromManifest(manifest: RunManifest, vocabulary: Vocabulary): S
 function checkResumable(
     manifest: RunManifest,
     scenarios: readonly Scenario[],
-    project: { system: { signalsVersion: number }; harness?: { judge?: string; simulator?: string } }
+    project: { system: { name: string; signalsVersion: number }; harness?: { judge?: string; simulator?: string } }
 ): void {
     const problems: string[] = [];
+    if (manifest.project !== project.system.name) {
+        problems.push(`project ${manifest.project} → ${project.system.name}`);
+    }
     if (manifest.rubricVersion !== RubricVersion) {
         problems.push(`rubric version ${manifest.rubricVersion} → ${RubricVersion}`);
     }

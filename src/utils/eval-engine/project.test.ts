@@ -123,6 +123,45 @@ describe("runEval", () => {
         );
     });
 
+    it("refuses cross-project resume before setup resolution, connection or persistent writes", async () => {
+        const runsDir = await tempDir();
+        const first = system({ failKey: "s~fake~current~r2" });
+        const scenario = evalKit(first).defineEvalScenario({ id: "s", steps: [{ user: "hi" }] });
+        const summary = await runEval(
+            defineEvalProject({ system: first, scenarios: [scenario], matrices: [], runsDir }),
+            { scenarios: [scenario], models: ["fake"], repeats: 2 },
+            { clock: fakeClock({ auto: true }) }
+        );
+        assert.equal(summary.exitCode, 4);
+        const before = await loadRun(summary.run, runsDir);
+        const other = system();
+        let resolutions = 0;
+        let connections = 0;
+        const foreign = {
+            ...other,
+            name: "another-project",
+            resolveSetup: (...args: Parameters<typeof other.resolveSetup>) => {
+                resolutions += 1;
+                return other.resolveSetup(...args);
+            },
+            connect: (...args: Parameters<typeof other.connect>) => {
+                connections += 1;
+                return other.connect(...args);
+            },
+        };
+        await assert.rejects(
+            runEval(defineEvalProject({ system: foreign, scenarios: [scenario], matrices: [], runsDir }), {
+                resume: summary.run,
+            }),
+            (error: unknown) =>
+                error instanceof EvalConfigError && error.code === "plan-changed" && /project/.test(error.message)
+        );
+        assert.equal(resolutions, 0);
+        assert.equal(connections, 0);
+        assert.equal(other.log.opened.length, 0);
+        assert.deepEqual(await loadRun(summary.run, runsDir), before);
+    });
+
     it("refuses a resume when the signals version changed", async () => {
         const runsDir = await tempDir();
         const kit = evalKit(system());
