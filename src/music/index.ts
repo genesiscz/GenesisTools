@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { readFile, writeFile } from "node:fs/promises";
+import { extname } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -180,6 +181,10 @@ program
     .option("--overwrite", "Replace output after synthesis")
     .description("Generate a seeded UI tap, or the original ten-variant audition reel")
     .action(async (key: string, options: TapOptions) => {
+        if (extname(options.out).toLowerCase() !== ".wav") {
+            throw new InvalidArgumentError("Tap output must use a .wav extension");
+        }
+
         const audio = options.all ? tapAudition() : tapAudio(key);
         await publishAudio({
             output: options.out,

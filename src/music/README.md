@@ -19,8 +19,13 @@ The pinned asset is S. Christian Collins's GeneralUser GS 2.0.3 at source commit
 - SF2: 9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe
 - Full license: 7b32efefdf95ce38a043799f0659853ddc00fbaa14d8c50f0aca16b9b8b405be
 
-Both live under the music tool's data folder, outside the repository. Rendering never downloads an asset. The
-installer makes a network request only when explicitly invoked. show and measure only read.
+Both live outside the repository at `~/.genesis-tools/music/soundfonts/GeneralUser-GS-2.0.3/`, named
+`GeneralUser-GS.sf2` and `LICENSE.txt`. `GENESIS_TOOLS_HOME` replaces the home directory, so that override stores
+them under `<GENESIS_TOOLS_HOME>/.genesis-tools/music/soundfonts/GeneralUser-GS-2.0.3/`. `soundfont show` prints the
+resolved paths. `render --soundfont <file>` selects an explicit sample bank instead of the cache.
+Rendering never downloads an asset. The installer makes a network request only when explicitly invoked.
+Reinstallation stages both verified files and replaces each by rename, so readers never see a partial SoundFont.
+show and measure only read.
 
 The [author's license](https://github.com/mrbumpy409/GeneralUser-GS/blob/684543d5e5efaef08d02be50dcda8d552478fa60/documentation/LICENSE.txt)
 permits private and commercial music creation and software use. It also records incomplete historical provenance
@@ -92,6 +97,8 @@ sound; use measure on the resulting movie. A silent source video gets a finite s
 All mix choices are options: --volume, --fade-in, --fade-out, --no-duck, --threshold, --ratio, --attack-ms and
 --release-ms. Setting both fades to zero is supported. Only the first source audio stream is mixed. The output is
 MP4 with AAC audio. Recorder editor music, transcript ducking and voiceover ducking remain available independently.
+The selected video stream must report a positive duration. A container duration alone may include a longer audio
+tail, so inputs without a measured picture duration are refused before mixing. Remux such inputs first.
 
 Outputs refuse replacement by default. --overwrite publishes only a fully rendered and checked replacement. Input
 videos/music cannot be the mix output. Failed rendering leaves any previous output intact.

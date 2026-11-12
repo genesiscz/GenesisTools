@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { musicSoundfontInstallCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import { fileHash, musicSignal } from "./process";
+import { fileHash, musicSignal, publishAudio } from "./process";
 
 export const PINNED_SOUNDFONT = {
     name: "GeneralUser GS",
@@ -47,9 +47,21 @@ export async function installSoundfont(): Promise<{ file: string; license: strin
         verifiedDownload(`${base}documentation/LICENSE.txt`, PINNED_SOUNDFONT.licenseSha256),
     ]);
     musicSignal()?.throwIfAborted();
-    await mkdir(join(locations.file, ".."), { recursive: true });
-    await writeFile(locations.license, license);
-    await writeFile(locations.file, font);
+    await publishAudio({
+        output: locations.file,
+        overwrite: true,
+        prepare: async (temporaryFont) => {
+            await writeFile(temporaryFont, font);
+            // Both files are fully staged before either replaces the pinned cache entry.
+            await publishAudio({
+                output: locations.license,
+                overwrite: true,
+                prepare: async (temporaryLicense) => {
+                    await writeFile(temporaryLicense, license);
+                },
+            });
+        },
+    });
     return { ...locations, sha256: await fileHash(locations.file) };
 }
 
