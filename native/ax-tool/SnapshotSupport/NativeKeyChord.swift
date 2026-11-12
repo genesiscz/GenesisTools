@@ -1,3 +1,4 @@
+import Carbon
 import CoreGraphics
 import Foundation
 
@@ -28,6 +29,58 @@ public struct NativeKeyChord {
         self.code = code
         self.flags = flags
     }
+
+    /// Resolve printable names against a layout while retaining the pure parser as the fallback.
+    /// Shift, Option and Control modify the chosen logical key; Command also selects the layout's
+    /// shortcut layer (for layouts that deliberately use different positions with Command held).
+    public init(_ raw: String, characterForKey: (CGKeyCode, CGEventFlags) -> String?) throws {
+        let parsed = try Self(raw)
+        self.flags = parsed.flags
+        guard let character = Self.parts(raw).compactMap(Self.printableCharacter).first else {
+            self.code = parsed.code
+            return
+        }
+        let layoutFlags = parsed.flags.intersection(.maskCommand)
+        let candidates = [parsed.code] + Self.printableCodes.filter { $0 != parsed.code }
+        self.code = candidates.first {
+            characterForKey($0, layoutFlags)?.lowercased() == character
+        } ?? parsed.code
+    }
+
+    public static func forCurrentKeyboardLayout(_ raw: String) throws -> Self {
+        let source = TISCopyCurrentKeyboardLayoutInputSource().takeRetainedValue()
+        guard let property = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
+            return try Self(raw)
+        }
+        let data = Unmanaged<CFData>.fromOpaque(property).takeUnretainedValue()
+        guard let bytes = CFDataGetBytePtr(data) else { return try Self(raw) }
+        let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
+        let keyboardType = UInt32(LMGetKbdType())
+        return try withExtendedLifetime(data) {
+            try Self(raw, characterForKey: { code, flags in
+                var deadKeyState: UInt32 = 0
+                var length = 0
+                var characters = [UniChar](repeating: 0, count: 8)
+                let modifiers = flags.contains(.maskCommand) ? UInt32(cmdKey) >> 8 : 0
+                let status = UCKeyTranslate(layout, code, UInt16(kUCKeyActionDown), modifiers,
+                                            keyboardType, OptionBits(kUCKeyTranslateNoDeadKeysMask),
+                                            &deadKeyState, characters.count, &length, &characters)
+                guard status == noErr, deadKeyState == 0, length > 0 else { return nil }
+                return String(utf16CodeUnits: characters, count: length)
+            })
+        }
+    }
+
+    private static func printableCharacter(_ key: String) -> String? {
+        if key.count == 1, codes[key] != nil { return key }
+        return ["space": " ", "minus": "-", "equal": "=", "bracketleft": "[", "bracketright": "]",
+                "backslash": "\\", "semicolon": ";", "apostrophe": "'", "comma": ",", "period": ".",
+                "slash": "/", "grave": "`"] [key]
+    }
+
+    private static let printableCodes = Set(codes.compactMap { name, code in
+        printableCharacter(name) == nil ? nil : code
+    }).sorted()
 
     /// Modifiers alone, for a click: `cmd,alt` or `shift+ctrl`. A key name is refused, so a typo
     /// cannot turn a click into a keystroke.

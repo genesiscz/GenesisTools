@@ -2147,7 +2147,7 @@ func cmdAct(appName _: String) {
         workflowFrontWindow(window, pid: pid, element: CFEqual(element, window.ax) ? nil : element)
         guard let keys = workflowArgument("--keys") else { workflowFailure("key requires --keys") }
         let chord: NativeKeyChord
-        do { chord = try NativeKeyChord(keys) } catch { workflowFailure(error) }
+        do { chord = try NativeKeyChord.forCurrentKeyboardLayout(keys) } catch { workflowFailure(error) }
         let source = CGEventSource(stateID: .hidSystemState)
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: chord.code, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: chord.code, keyDown: false) else {
