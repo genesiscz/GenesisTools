@@ -3688,7 +3688,7 @@
       "note": "The picker's Add 'Robin Example' as new speaker: a person in the people book.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 55,
+        "id": 56,
         "method": "people.add",
         "params": {
           "name": "Robin Example",
@@ -3698,7 +3698,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 55,
+        "id": 56,
         "result": {
           "entry": {
             "name": "Robin Example",
@@ -3730,7 +3730,7 @@
       "note": "Left out of every list; hidden: false shows them.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 56,
+        "id": 57,
         "method": "people.hide",
         "params": {
           "person": "robin@example.com"
@@ -3738,7 +3738,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 56,
+        "id": 57,
         "result": {
           "person": {
             "id": "email:robin@example.com",
@@ -3764,7 +3764,7 @@
       "note": "Nobody known by that name: unknown-person.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 57,
+        "id": 58,
         "method": "people.hide",
         "params": {
           "person": "Nobody Example"
@@ -3772,7 +3772,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 57,
+        "id": 58,
         "error": {
           "code": 1100,
           "message": "Nobody known is \"Nobody Example\". Search: tools meetings people <text>",
@@ -3792,7 +3792,7 @@
       "note": "What a merge links (meetings, renamed labels); nothing is written and no meeting record changes on a merge.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 58,
+        "id": 59,
         "method": "people.planMerge",
         "params": {
           "a": "Alex Example",
@@ -3801,7 +3801,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 58,
+        "id": 59,
         "result": {
           "people": [
             {
@@ -3862,7 +3862,7 @@
       "note": "An alias in the people book; its token splits it again.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 59,
+        "id": 60,
         "method": "people.merge",
         "params": {
           "a": "Alex Example",
@@ -3871,7 +3871,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 59,
+        "id": 60,
         "result": {
           "merge": {
             "token": "4e0c03e5-4986-419c-b9ef-98301bcd7565",
@@ -3948,7 +3948,7 @@
       "note": "The merge split again.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 60,
+        "id": 61,
         "method": "people.unmerge",
         "params": {
           "token": "4e0c03e5-4986-419c-b9ef-98301bcd7565"
@@ -3956,7 +3956,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 60,
+        "id": 61,
         "result": {
           "merge": {
             "token": "4e0c03e5-4986-419c-b9ef-98301bcd7565",
@@ -3981,7 +3981,7 @@
       "note": "No merge has that token: unknown-merge.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 61,
+        "id": 62,
         "method": "people.unmerge",
         "params": {
           "token": "nope"
@@ -3989,7 +3989,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 61,
+        "id": 62,
         "error": {
           "code": 1100,
           "message": "No merge has the token nope. See them: tools meetings people --json",
@@ -4009,7 +4009,7 @@
       "note": "A second Robin.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 62,
+        "id": 63,
         "method": "people.add",
         "params": {
           "name": "Robin Example",
@@ -4018,7 +4018,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 62,
+        "id": 63,
         "result": {
           "entry": {
             "name": "Robin Example",
@@ -4048,7 +4048,7 @@
       "note": "A name two people share: ambiguous-person, with the candidates to pick from.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 63,
+        "id": 64,
         "method": "people.hide",
         "params": {
           "person": "Robin Example"
@@ -4056,7 +4056,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 63,
+        "id": 64,
         "error": {
           "code": 1100,
           "message": "\"Robin Example\" names 2 people: Robin Example <robin@example.com>, Robin Example <robin.two@example.com>. Name one by email or id.",
@@ -4104,7 +4104,7 @@
       "note": "One line given to a person: the assignment, and the stretches of the same label it may also reach.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 64,
+        "id": 65,
         "method": "decision.plan",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -4122,7 +4122,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 64,
+        "id": 65,
         "result": {
           "entry": {
             "token": "415d8ed4-2310-4090-bf99-f1ef04017989",
@@ -4176,7 +4176,7 @@
       "note": "The settings page's Add project; added: false when it was known.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 65,
+        "id": 66,
         "method": "projects.add",
         "params": {
           "name": "Atlas"
@@ -4184,7 +4184,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 65,
+        "id": 66,
         "result": {
           "name": "Atlas",
           "added": true
@@ -4197,7 +4197,7 @@
       "note": "remove takes labels away the same way.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 66,
+        "id": 67,
         "method": "projects.labels",
         "params": {
           "project": "Atlas",
@@ -4208,7 +4208,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 66,
+        "id": 67,
         "result": {
           "project": "Atlas",
           "labels": [
@@ -4223,7 +4223,7 @@
       "note": "The page's Save rules: a project's source folders and title words in one write; expect names the value read.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 67,
+        "id": 68,
         "method": "config.edit",
         "params": {
           "edits": [
@@ -4245,7 +4245,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 67,
+        "id": 68,
         "result": [
           {
             "path": [
@@ -4280,7 +4280,7 @@
       "note": "Each recent meeting against the saved rules (now) and the draft being edited.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 68,
+        "id": 69,
         "method": "projects.preview",
         "params": {
           "draft": {
@@ -4295,7 +4295,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 68,
+        "id": 69,
         "result": [
           {
             "id": "2026-11-03-1400-retro",
@@ -4327,7 +4327,7 @@
       "note": "An entry in the project's dictionary.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 69,
+        "id": 70,
         "method": "dictionary.add",
         "params": {
           "entry": {
@@ -4340,7 +4340,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 69,
+        "id": 70,
         "result": {
           "entry": {
             "type": "fix",
@@ -4358,7 +4358,7 @@
       "note": "An Undo's add of an entry made again since: dictionary-exists, and it is left as it is.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 70,
+        "id": 71,
         "method": "dictionary.add",
         "params": {
           "entry": {
@@ -4372,7 +4372,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 70,
+        "id": 71,
         "error": {
           "code": 1100,
           "message": "Atlass is in the project Atlas dictionary already; it was left as it is",
@@ -4392,7 +4392,7 @@
       "note": "The global entries, then the project's, each with its level.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 71,
+        "id": 72,
         "method": "dictionary.show",
         "params": {
           "project": "Atlas"
@@ -4400,7 +4400,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 71,
+        "id": 72,
         "result": {
           "project": "Atlas",
           "abbrExpansion": "every",
@@ -4420,7 +4420,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 72,
+        "id": 73,
         "method": "dictionary.test",
         "params": {
           "phrase": "The Atlass page",
@@ -4429,7 +4429,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 72,
+        "id": 73,
         "result": {
           "phrase": "The Atlass page",
           "text": "The Atlas page",
@@ -4457,7 +4457,7 @@
       "note": "removed: false when it was not there.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 73,
+        "id": 74,
         "method": "dictionary.remove",
         "params": {
           "value": "Atlass",
@@ -4466,7 +4466,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 73,
+        "id": 74,
         "result": {
           "value": "Atlass",
           "level": "project Atlas",
@@ -4480,7 +4480,7 @@
       "note": "The pairings one calendar entry made; left: the person is no longer paired with the project.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 74,
+        "id": 75,
         "method": "projects.unpair",
         "params": {
           "entry": "cal-2041"
@@ -4488,7 +4488,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 74,
+        "id": 75,
         "result": {
           "removed": [
             {
@@ -4507,7 +4507,7 @@
       "note": "One person from one project: nothing when they were not paired.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 75,
+        "id": 76,
         "method": "projects.unpair",
         "params": {
           "project": "Atlas",
@@ -4519,7 +4519,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 75,
+        "id": 76,
         "result": {
           "removed": []
         }
@@ -4531,13 +4531,13 @@
       "note": "The values the rule fields offer: each source's folders, the Calendar app's calendars, words and labels in use.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 76,
+        "id": 77,
         "method": "projects.suggestions",
         "params": {}
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 76,
+        "id": 77,
         "result": {
           "folders": {
             "wisprflow": {
@@ -4571,7 +4571,7 @@
       "note": "The people of the project's meetings not paired with it yet.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 77,
+        "id": 78,
         "method": "projects.meetingPeople",
         "params": {
           "project": "Atlas"
@@ -4579,7 +4579,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 77,
+        "id": 78,
         "result": [
           {
             "name": "Alex Example",
@@ -4599,7 +4599,7 @@
       "note": "Pair one of them; a person not on a calendar entry is paired by hand, with the meeting in the note.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 78,
+        "id": 79,
         "method": "projects.pairFromMeetings",
         "params": {
           "project": "Atlas",
@@ -4612,7 +4612,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 78,
+        "id": 79,
         "result": {
           "project": "Atlas",
           "paired": [
@@ -4634,7 +4634,7 @@
       "note": "Its settings, pairings and meetings.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 79,
+        "id": 80,
         "method": "projects.rename",
         "params": {
           "from": "Atlas",
@@ -4643,7 +4643,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 79,
+        "id": 80,
         "result": {
           "from": "Atlas",
           "to": "Harbor",
@@ -4659,7 +4659,7 @@
       "note": "Refused while a meeting has it; unassign leaves the meeting without a project.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 80,
+        "id": 81,
         "method": "projects.remove",
         "params": {
           "name": "Harbor"
@@ -4667,7 +4667,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 80,
+        "id": 81,
         "error": {
           "code": 1100,
           "message": "1 meeting has the project Harbor: 2026-11-03-1000-design-review. Rename it instead, or remove it with --unassign to leave them without a project.",
@@ -4687,7 +4687,7 @@
       "note": "The backup keeps the removed settings.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 81,
+        "id": 82,
         "method": "projects.remove",
         "params": {
           "name": "Harbor",
@@ -4696,7 +4696,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 81,
+        "id": 82,
         "result": {
           "name": "Harbor",
           "unassigned": [
