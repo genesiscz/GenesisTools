@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+import { jsonSha256 as hash } from "@genesiscz/utils/hash";
 import { composeImageGrid, type ImageGridResult } from "@genesiscz/utils/image/grid";
 import { decodeImageRgba } from "@genesiscz/utils/image/raster";
 import {
@@ -13,7 +13,7 @@ import {
     type StepContext,
     type StepReport,
 } from "@genesiscz/utils/jobs";
-import { SafeJSON } from "@genesiscz/utils/json";
+
 import { logger } from "@genesiscz/utils/logger";
 import { RECORDING_MANIFEST } from "@genesiscz/utils/screen-recorder/library";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -153,10 +153,6 @@ function toResult(options: { state: EditState; steps: StepReport[]; jobId: strin
         exports: state.exports,
         steps: options.steps,
     };
-}
-
-function hash(value: unknown): string {
-    return createHash("sha256").update(SafeJSON.stringify(value)).digest("hex");
 }
 
 /** `<genesis-tools root>/recordings/edits/<source hash>/`: one workspace per source, shared by its plans. */

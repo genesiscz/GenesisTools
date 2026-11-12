@@ -1,3 +1,10 @@
+import { SafeJSON } from "@genesiscz/utils/json";
+
+/** SHA-256 of the default SafeJSON representation, preserving insertion order for existing persisted keys. */
+export function jsonSha256(value: unknown): string {
+    return new Bun.CryptoHasher("sha256").update(SafeJSON.stringify(value)).digest("hex");
+}
+
 /**
  * Fast non-cryptographic hash using Bun's built-in xxHash64.
  * Returns a hex string.
