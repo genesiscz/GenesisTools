@@ -29,9 +29,10 @@ export const MEETING_UNCHANGED: unique symbol = Symbol("meetings.unchanged");
 /**
  * Files a record keeps beside it that must agree with it (the decision journal, the answer log), written by
  * `MeetingStore.update` under the record's lock. `write` runs once the changed record validates and before it is
- * saved; it throws only after it took back what it wrote. `undo` takes that write back when the record is not saved,
- * so no file holds a change the record lacks. Both only shorten files, which needs no free disk space. `saved` runs
- * once the record is saved; its failure leaves the record and the files as written.
+ * saved; it takes back any partial write before throwing. `undo` takes that write back when the record is not saved.
+ * Journal companions undo by truncation, which needs no free disk space. Creation companions own their new files
+ * and retain a recovery claim if cleanup fails. `saved` runs once the record is saved; its failure leaves the record
+ * and the files as written.
  */
 export interface CompanionWrite {
     write(record: MeetingRecord): void;
