@@ -91,7 +91,7 @@ final class AutocompleteFloatingInteractionTests: XCTestCase {
         let list = try XCTUnwrap(panel(of: window), "the list shows in a child window")
         XCTAssertFalse(list.canBecomeKey)
 
-        // The first row: under the top edge of the panel, right of the room it leaves for its shadow.
+        // The first row, inside the visible list's own frame.
         let point = CGPoint(x: 60, y: list.frame.height - 16)
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             list.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(

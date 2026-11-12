@@ -93,9 +93,8 @@ final class AutocompleteListPanel: NSPanel {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         isOpaque = false
         backgroundColor = .clear
-        // The list draws its own shadow in the room the panel leaves around it (`shadowRoom`): the same drawing as a
-        // picture of the list, and one a window-server capture shows.
-        hasShadow = false
+        // The window server draws outside the interactive frame. A padded clear panel swallowed clicks on the page.
+        hasShadow = true
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         worksWhenModal = true
@@ -196,37 +195,22 @@ final class AutocompleteFloatingList {
         let visible = (parent.screen ?? NSScreen.main)?.visibleFrame ?? onScreen.insetBy(dx: -2000, dy: -2000)
         let width = AutocompletePlacement.width(field: onScreen, visible: visible)
         let host = host ?? makePanel()
-        host.rootView = framed(width: width, below: true)
+        host.rootView = framed(width: width)
         host.layoutSubtreeIfNeeded()
-        let size = CGSize(width: width, height: ceil(host.fittingSize.height) - Self.shadowRoom.far)
-        let list = AutocompletePlacement.frame(field: onScreen, visible: visible, size: size)
-        let below = list.maxY <= onScreen.minY
-        if !below { host.rootView = framed(width: width, below: false) }
-        listFrame = list
-        let frame = Self.panelFrame(list: list, below: below)
+        let size = CGSize(width: width, height: ceil(host.fittingSize.height))
+        let frame = AutocompletePlacement.frame(field: onScreen, visible: visible, size: size)
+        listFrame = frame
         if let panel, panel.frame != frame {
             panel.setFrame(frame, display: true)
         }
         return true
     }
 
-    /// Room around the list for its drawn shadow: on both sides and on the side away from the field, never on the side
-    /// toward it, so no part of the panel covers the field and takes its clicks.
-    static let shadowRoom = (side: CGFloat(14), far: CGFloat(18))
-
-    /// The list's frame on screen, inside the panel; `.zero` before the first open.
+    /// The visible list and its interactive panel share one frame; `.zero` before the first open.
     private(set) var listFrame: CGRect = .zero
 
-    static func panelFrame(list: CGRect, below: Bool) -> CGRect {
-        CGRect(x: list.minX - shadowRoom.side, y: below ? list.minY - shadowRoom.far : list.minY,
-               width: list.width + 2 * shadowRoom.side, height: list.height + shadowRoom.far)
-    }
-
-    private func framed(width: CGFloat, below: Bool) -> AnyView {
-        AnyView((content ?? AnyView(EmptyView()))
-            .frame(width: width)
-            .padding(.horizontal, Self.shadowRoom.side)
-            .padding(below ? .bottom : .top, Self.shadowRoom.far))
+    private func framed(width: CGFloat) -> AnyView {
+        AnyView((content ?? AnyView(EmptyView())).frame(width: width))
     }
 
     private func makePanel() -> AutocompleteListHost {

@@ -86,9 +86,6 @@ final class AutocompleteFieldTests: XCTestCase {
         XCTAssertEqual(frame.minX, 100)
         let fits = AutocompletePlacement.frame(field: field, visible: screen, size: CGSize(width: 300, height: 90))
         XCTAssertEqual(fits.maxY, 100 - 4, "a list that fits below stays below")
-        let panel = AutocompleteFloatingList.panelFrame(list: frame, below: false)
-        XCTAssertEqual(panel.minY, frame.minY, "above the field, the shadow's room is above the list, never over the field")
-        XCTAssertGreaterThan(panel.maxY, frame.maxY)
     }
 
     func testTheFloatingListIsNeverNarrowerThan220AndStaysOnTheScreen() {
@@ -178,7 +175,8 @@ final class AutocompleteFieldTests: XCTestCase {
         XCTAssertEqual(list.listFrame.maxY, fieldOnScreen.minY - AutocompletePlacement.gap, accuracy: 0.5, "under the field")
         XCTAssertEqual(list.listFrame.width, 220, "never narrower than 220 pt")
         XCTAssertEqual(list.listFrame.height, 60, accuracy: 0.5, "as tall as its content")
-        XCTAssertTrue(panel.frame.contains(list.listFrame), "the shadow's room is around the list")
+        XCTAssertEqual(panel.frame, list.listFrame, "the shadow must not add an invisible window that intercepts page clicks")
+        XCTAssertTrue(panel.hasShadow, "the window server draws outside the interactive panel bounds")
         XCTAssertEqual(panel.frame.maxY, list.listFrame.maxY, accuracy: 0.5, "no room toward the field: it never covers it")
         XCTAssertEqual(panel.alphaValue, 0, "a child shares its window's alpha: this window is off screen")
         XCTAssertFalse(panel.canBecomeKey)

@@ -538,8 +538,6 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
             .overlay {
                 shape.strokeBorder(Color.primary.opacity(floats ? 0.14 : 0.08))
             }
-            // Over the page it casts a soft shadow (the panel leaves room for it).
-            .shadow(color: .black.opacity(floats ? 0.32 : 0), radius: 10, y: 4)
             .accessibilityElement(children: .contain)
     }
 
