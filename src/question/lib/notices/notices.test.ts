@@ -145,100 +145,133 @@ describe("notices", () => {
 });
 
 describe("decision notices", () => {
-    test("one answerable decision: a banner with letter buttons, and a phone push with sealed-to-be tokens", async () => {
+    test.if(process.platform !== "darwin")("phone answers work without a Mac banner", async () => {
         const { deps, posted, store } = fakeDeps();
         const tokens = memoryActTokenStore();
         const row = decision();
-
         expect(await postDecisionNotices([row], { notices: deps, tokens, bundle: tmpdir(), phoneEnabled: true })).toBe(
             true
         );
-
-        const [banner, push] = posted;
-        expect(banner.id).toBe(NOTICE_IDS.post(row.id));
-        expect(banner.only).not.toContain("phone");
-        expect(banner.actions?.map((action) => action.title)).toEqual(["Open in hub", "a", "b ★"]);
-        expect(banner.actions?.[1].execute).toContain(`banner:${NOTICE_IDS.post(row.id)}:a`);
-
-        expect(push.id).toBe(NOTICE_IDS.decision(row.id));
+        expect(posted.map((event) => event.id)).toEqual([NOTICE_IDS.decision(row.id)]);
+        const push = posted[0]!;
         expect(push.only).toEqual(["phone"]);
         expect(push.phone?.answers?.letters).toEqual(["a", "b"]);
-        expect(push.phone?.answers?.recommended).toBe("b");
-        expect(push.message).toContain("a) memory");
-        const issued = Object.values(tokens.tokens);
-        expect(
-            issued
-                .filter((token) => token.surface === "phone" && !token.reply)
-                .map((token) => token.option)
-                .sort()
-        ).toEqual(["a", "b"]);
         expect(push.phone?.answers?.tokens.a).toBeDefined();
-        // The lock screen's Reply field answers with text through its own token.
+        expect(push.phone?.answers?.tokens.b).toBeDefined();
         expect(tokens.tokens[push.phone?.answers?.tokens.reply ?? ""]).toMatchObject({ reply: true, surface: "phone" });
-
-        expect(Object.keys(store.notices).sort()).toEqual(
-            [NOTICE_IDS.decision(row.id), NOTICE_IDS.post(row.id)].sort()
-        );
+        expect(Object.values(tokens.tokens).some((token) => token.surface === "banner")).toBe(false);
+        expect(Object.keys(store.notices)).toEqual([NOTICE_IDS.decision(row.id)]);
     });
 
-    test("two decisions: one grouped banner without letters, one push each", async () => {
-        const { deps, posted } = fakeDeps();
-        const rows = [decision(), decision({ id: "d_2_s-one", number: 2 })];
+    test.if(process.platform === "darwin")(
+        "one answerable decision: a banner with letter buttons, and a phone push with sealed-to-be tokens",
+        async () => {
+            const { deps, posted, store } = fakeDeps();
+            const tokens = memoryActTokenStore();
+            const row = decision();
 
-        await postDecisionNotices(rows, {
-            notices: deps,
-            tokens: memoryActTokenStore(),
-            bundle: tmpdir(),
-            phoneEnabled: true,
-        });
+            expect(
+                await postDecisionNotices([row], { notices: deps, tokens, bundle: tmpdir(), phoneEnabled: true })
+            ).toBe(true);
 
-        expect(posted.map((event) => event.id)).toEqual([
-            NOTICE_IDS.post("d_1_s-one"),
-            NOTICE_IDS.decision("d_1_s-one"),
-            NOTICE_IDS.decision("d_2_s-one"),
-        ]);
-        expect(posted[0].actions?.map((action) => action.id)).toEqual(["open-hub"]);
-    });
+            const [banner, push] = posted;
+            expect(banner.id).toBe(NOTICE_IDS.post(row.id));
+            expect(banner.only).not.toContain("phone");
+            expect(banner.actions?.map((action) => action.title)).toEqual(["Open in hub", "a", "b ★"]);
+            expect(banner.actions?.[1].execute).toContain(`banner:${NOTICE_IDS.post(row.id)}:a`);
 
-    test("a decision that takes several letters: the banner sends the recommended set, no letters anywhere", async () => {
-        const { deps, posted } = fakeDeps();
-        const tokens = memoryActTokenStore();
-        const row = decision({ options: ["memory", "disk", "network"], recommended: "abc" });
+            expect(push.id).toBe(NOTICE_IDS.decision(row.id));
+            expect(push.only).toEqual(["phone"]);
+            expect(push.phone?.answers?.letters).toEqual(["a", "b"]);
+            expect(push.phone?.answers?.recommended).toBe("b");
+            expect(push.message).toContain("a) memory");
+            const issued = Object.values(tokens.tokens);
+            expect(
+                issued
+                    .filter((token) => token.surface === "phone" && !token.reply)
+                    .map((token) => token.option)
+                    .sort()
+            ).toEqual(["a", "b"]);
+            expect(push.phone?.answers?.tokens.a).toBeDefined();
+            // The lock screen's Reply field answers with text through its own token.
+            expect(tokens.tokens[push.phone?.answers?.tokens.reply ?? ""]).toMatchObject({
+                reply: true,
+                surface: "phone",
+            });
 
-        await postDecisionNotices([row], { notices: deps, tokens, bundle: tmpdir(), phoneEnabled: true });
+            expect(Object.keys(store.notices).sort()).toEqual(
+                [NOTICE_IDS.decision(row.id), NOTICE_IDS.post(row.id)].sort()
+            );
+        }
+    );
 
-        // The banner and the push go out side by side; the push, with no token to issue, may go first.
-        const banner = posted.find((event) => event.id === NOTICE_IDS.post(row.id));
-        const push = posted.find((event) => event.id === NOTICE_IDS.decision(row.id));
-        expect(banner?.actions?.map((action) => action.title)).toEqual(["Open in hub", "Send a + b + c ★"]);
-        expect(banner?.actions?.[1].execute).toContain(`banner:${NOTICE_IDS.post(row.id)}:abc`);
-        expect(Object.values(tokens.tokens).filter((token) => token.surface === "banner")).toMatchObject([
-            { option: "abc", decisionId: row.id },
-        ]);
+    test.if(process.platform === "darwin")(
+        "two decisions: one grouped banner without letters, one push each",
+        async () => {
+            const { deps, posted } = fakeDeps();
+            const rows = [decision(), decision({ id: "d_2_s-one", number: 2 })];
 
-        // A lock-screen button answers one letter, and no category carries a Reply field alone.
-        expect(push?.phone?.thread).toBe("s-one");
-        expect(push?.phone?.answers).toBeUndefined();
-        expect(push?.message).toContain("c) network");
-        expect(Object.values(tokens.tokens).some((token) => token.surface === "phone")).toBe(false);
-    });
+            await postDecisionNotices(rows, {
+                notices: deps,
+                tokens: memoryActTokenStore(),
+                bundle: tmpdir(),
+                phoneEnabled: true,
+            });
 
-    test("a decision that takes several letters and recommends none: the banner opens the hub only", async () => {
-        const { deps, posted } = fakeDeps();
-        const tokens = memoryActTokenStore();
+            expect(posted.map((event) => event.id)).toEqual([
+                NOTICE_IDS.post("d_1_s-one"),
+                NOTICE_IDS.decision("d_1_s-one"),
+                NOTICE_IDS.decision("d_2_s-one"),
+            ]);
+            expect(posted[0].actions?.map((action) => action.id)).toEqual(["open-hub"]);
+        }
+    );
 
-        await postDecisionNotices([decision({ multiple: true, recommended: undefined })], {
-            notices: deps,
-            tokens,
-            bundle: tmpdir(),
-            phoneEnabled: false,
-        });
+    test.if(process.platform === "darwin")(
+        "a decision that takes several letters: the banner sends the recommended set, no letters anywhere",
+        async () => {
+            const { deps, posted } = fakeDeps();
+            const tokens = memoryActTokenStore();
+            const row = decision({ options: ["memory", "disk", "network"], recommended: "abc" });
 
-        expect(posted[0].actions?.map((action) => action.id)).toEqual(["open-hub"]);
-        expect(tokens.tokens).toEqual({});
-    });
+            await postDecisionNotices([row], { notices: deps, tokens, bundle: tmpdir(), phoneEnabled: true });
 
-    test("the phone channel off: no push and no phone tokens", async () => {
+            // The banner and the push go out side by side; the push, with no token to issue, may go first.
+            const banner = posted.find((event) => event.id === NOTICE_IDS.post(row.id));
+            const push = posted.find((event) => event.id === NOTICE_IDS.decision(row.id));
+            expect(banner?.actions?.map((action) => action.title)).toEqual(["Open in hub", "Send a + b + c ★"]);
+            expect(banner?.actions?.[1].execute).toContain(`banner:${NOTICE_IDS.post(row.id)}:abc`);
+            expect(Object.values(tokens.tokens).filter((token) => token.surface === "banner")).toMatchObject([
+                { option: "abc", decisionId: row.id },
+            ]);
+
+            // A lock-screen button answers one letter, and no category carries a Reply field alone.
+            expect(push?.phone?.thread).toBe("s-one");
+            expect(push?.phone?.answers).toBeUndefined();
+            expect(push?.message).toContain("c) network");
+            expect(Object.values(tokens.tokens).some((token) => token.surface === "phone")).toBe(false);
+        }
+    );
+
+    test.if(process.platform === "darwin")(
+        "a decision that takes several letters and recommends none: the banner opens the hub only",
+        async () => {
+            const { deps, posted } = fakeDeps();
+            const tokens = memoryActTokenStore();
+
+            await postDecisionNotices([decision({ multiple: true, recommended: undefined })], {
+                notices: deps,
+                tokens,
+                bundle: tmpdir(),
+                phoneEnabled: false,
+            });
+
+            expect(posted[0].actions?.map((action) => action.id)).toEqual(["open-hub"]);
+            expect(tokens.tokens).toEqual({});
+        }
+    );
+
+    test.if(process.platform === "darwin")("the phone channel off: no push and no phone tokens", async () => {
         const { deps, posted } = fakeDeps();
         const tokens = memoryActTokenStore();
 

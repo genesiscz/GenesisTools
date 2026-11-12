@@ -53,6 +53,7 @@ import { findReadAloud } from "@genesiscz/utils/transcribe/doc-match";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import { sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import * as transcribeTerms from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
 import { z } from "zod";
@@ -325,38 +326,43 @@ describe("suggestDictionary", () => {
     });
 
     test("source rows become fix or term, twice-confirmed corrections become fix, known and ignored values are left out", () => {
-        const correction = {
-            at: "t",
-            meeting: "m",
-            kind: "term" as const,
-            scope: "everywhere" as const,
-            heard: "Zushtent",
-            fixed: "Zustand",
-            item: "i1",
-        };
-        const suggestions = suggestDictionary({
-            dictionary: { abbrExpansion: "every", entries: [{ type: "term", value: "GenesisKit" }] },
-            sourceId: "wisprflow",
-            sourceWords: [
-                { value: "Tanstack", replacement: "TanStack" },
-                { value: "GenesisKit" },
-                { value: "MVNO" },
-                { value: "Ignored" },
-                { value: "transcript" },
-            ],
-            ignore: ["ignored"],
-            corrections: [
-                correction,
-                { ...correction, meeting: "m2", at: "t2" },
-                { ...correction, heard: "redakt", fixed: "Redux" },
-            ],
-        });
+        const english = spyOn(transcribeTerms, "isEnglishWord").mockImplementation((word) => word === "transcript");
+        try {
+            const correction = {
+                at: "t",
+                meeting: "m",
+                kind: "term" as const,
+                scope: "everywhere" as const,
+                heard: "Zushtent",
+                fixed: "Zustand",
+                item: "i1",
+            };
+            const suggestions = suggestDictionary({
+                dictionary: { abbrExpansion: "every", entries: [{ type: "term", value: "GenesisKit" }] },
+                sourceId: "wisprflow",
+                sourceWords: [
+                    { value: "Tanstack", replacement: "TanStack" },
+                    { value: "GenesisKit" },
+                    { value: "MVNO" },
+                    { value: "Ignored" },
+                    { value: "transcript" },
+                ],
+                ignore: ["ignored"],
+                corrections: [
+                    correction,
+                    { ...correction, meeting: "m2", at: "t2" },
+                    { ...correction, heard: "redakt", fixed: "Redux" },
+                ],
+            });
 
-        expect(suggestions).toEqual([
-            { entry: { type: "fix", value: "Zushtent", substitution: "Zustand" }, from: "confirmed 2 times" },
-            { entry: { type: "fix", value: "Tanstack", substitution: "TanStack" }, from: "wisprflow" },
-            { entry: { type: "term", value: "MVNO" }, from: "wisprflow" },
-        ]);
+            expect(suggestions).toEqual([
+                { entry: { type: "fix", value: "Zushtent", substitution: "Zustand" }, from: "confirmed 2 times" },
+                { entry: { type: "fix", value: "Tanstack", substitution: "TanStack" }, from: "wisprflow" },
+                { entry: { type: "term", value: "MVNO" }, from: "wisprflow" },
+            ]);
+        } finally {
+            english.mockRestore();
+        }
     });
 });
 
