@@ -16,6 +16,7 @@ import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
 import { MeetingComments } from "./comments";
 import { journalEntrySchema } from "./decision-actions";
+import { DecisionJournal } from "./decision-journal";
 import { meetingListRow, selectMeetings } from "./list-rows";
 import { planMoment } from "./moment";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
@@ -202,6 +203,53 @@ test("screen --timeline --frame and --all print unchanged OCR lines as requested
         output.mockRestore();
         process.exitCode = 0;
     }
+});
+
+test("reopen --token with no items undoes a speaker rename; without a token it still needs the items", async () => {
+    // The command reads the default store, which the test preload keeps in a sandbox.
+    const store = new MeetingStore();
+    const created = await store.create(
+        { title: "Harbor sync", start: "2026-11-05T10:00:00.000Z", createdBy: "new", speakers: { labels: {} } },
+        { command: "test", change: "fixture" }
+    );
+    const renamed = await new DecisionJournal({ store }).apply({
+        meeting: created.id,
+        action: { kind: "rename", label: "S1", name: "Dana Example" },
+        actor: { kind: "cli" },
+    });
+    expect(store.read(created.id)?.speakers.labels).toEqual({ S1: "Dana Example" });
+
+    const printed: string[] = [];
+    const errors: string[] = [];
+    const result = spyOn(out, "result").mockImplementation((text: string) => {
+        printed.push(text);
+    });
+    const err = spyOn(ui, "err").mockImplementation((line: string) => {
+        errors.push(line);
+    });
+
+    try {
+        const run = async (...args: string[]) => {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "reopen" });
+            await program.parseAsync(args, { from: "user" });
+        };
+
+        await run("reopen", created.id);
+        expect(errors).toEqual(["Name the items to reopen, or pass --token to undo a whole decision."]);
+
+        await run("reopen", created.id, "--token", renamed.entry!.token, "--json");
+    } finally {
+        result.mockRestore();
+        err.mockRestore();
+        process.exitCode = 0;
+    }
+
+    expect(errors).toHaveLength(1);
+    expect(store.read(created.id)?.speakers.labels).toEqual({});
+    expect(SafeJSON.parse(printed[0]!)).toMatchObject({
+        entry: { action: { kind: "revert", token: renamed.entry!.token }, labels: [{ label: "S1" }] },
+    });
 });
 
 const failureRecordSchema = z.object({

@@ -11,6 +11,7 @@ import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/util
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { WordTimingCache, wordTimingFile } from "@genesiscz/utils/meetings/word-timing-cache";
 import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
+import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
 import { MeetingComments } from "../comments";
@@ -1354,6 +1355,51 @@ test("an unreadable config omits the row patch without blocking a decision", asy
     } finally {
         client.close();
     }
+});
+
+test("the last listener's stop leaves the connection subscribed to nothing, not to every event", async () => {
+    const { service } = await startService();
+    const sent = spyOn(RpcSocketClient.prototype, "call");
+    let unsubscribe: unknown;
+
+    try {
+        const client = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => client.close());
+        const stop = await client.subscribe({ meeting: REVIEW.id, events: ["meeting.changed"] }, () => {});
+        stop();
+        // The socket answers in order: the stop's unsubscribe went out before this call.
+        await client.call("meetings.list", { limit: 1 });
+        unsubscribe = sent.mock.calls.filter(([method]) => method === UNSUBSCRIBE).at(-1)?.[1];
+    } finally {
+        sent.mockRestore();
+    }
+
+    expect(unsubscribe).toEqual({});
+
+    // What unsubscribe hears on the wire, beside what the old empty subscription heard.
+    const heard = async (stop: boolean): Promise<number> => {
+        const raw = await RpcSocketClient.connect({
+            socket: service.entry.socket,
+            logScope: "test",
+            label: "test",
+        });
+        closing.push(() => raw.close());
+        let count = 0;
+        raw.onNotification(() => {
+            count += 1;
+        });
+        await raw.call("hello", hello);
+        await raw.call("subscribe", { events: [] });
+        if (stop) {
+            await raw.call(UNSUBSCRIBE, {});
+        }
+        service.emit("meeting.changed", { meeting: RETRO.id, parts: ["show"] });
+        await raw.call("meetings.list", { limit: 1 });
+        return count;
+    };
+
+    expect(await heard(false)).toBe(1);
+    expect(await heard(true)).toBe(0);
 });
 
 describe("the Meetings service's connections", () => {
