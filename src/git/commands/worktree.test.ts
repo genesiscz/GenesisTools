@@ -23,7 +23,7 @@ setPromptBackend({
     confirm: async () => answer("confirm") as never,
 });
 
-const { runConfig } = await import("./worktree");
+const { backupExitCode, parseMaxCopyMb, preWriteReasons, runConfig } = await import("./worktree");
 
 describe("tools git worktree config, the guided edit", () => {
     let repo: TestRepo;
@@ -157,5 +157,32 @@ describe("tools git worktree config, the guided edit", () => {
 
         expect(readFileSync(localPath, "utf8")).toBe(before);
         expect(asked).toEqual([]);
+    });
+});
+
+describe("tools git worktree backup, the CLI values", () => {
+    test("--max-copy-mb takes a plain decimal number of MiB only", () => {
+        expect(parseMaxCopyMb(undefined)).toBe(512 * 1024 * 1024);
+        expect(parseMaxCopyMb("0")).toBe(0);
+        expect(parseMaxCopyMb("1.5")).toBe(1.5 * 1024 * 1024);
+
+        // Digits only, yet too large: "9".repeat(400) reads as Infinity, which would switch the ceiling off.
+        for (const bad of ["", " ", "0x10", "1e3", "-1", "12 ", "Infinity", "9".repeat(400), "9".repeat(20)]) {
+            expect(parseMaxCopyMb(bad)).toBeNull();
+        }
+    });
+
+    test("a refusal before writing names its reason, also when no plan blocker holds it", () => {
+        const inside = "The backup folder /w/backups lies inside the worktree";
+
+        expect(preWriteReasons({ plan: { blockers: [] }, refusal: inside })).toEqual([inside]);
+        expect(preWriteReasons({ plan: { blockers: ["locked"] }, refusal: "locked" })).toEqual(["locked"]);
+        expect(preWriteReasons({ plan: { blockers: [] }, refusal: null })).toEqual([]);
+    });
+
+    test("a proven backup whose removal was refused exits 2, a failed one 1", () => {
+        expect(backupExitCode({ refusal: null, proven: true })).toBe(0);
+        expect(backupExitCode({ refusal: "changed during the backup", proven: true })).toBe(2);
+        expect(backupExitCode({ refusal: "The proof failed", proven: false })).toBe(1);
     });
 });

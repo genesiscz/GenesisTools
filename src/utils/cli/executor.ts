@@ -602,6 +602,8 @@ export interface ExecutorOptions {
 }
 
 export interface ExecCallOptions {
+    /** Trim stdout and stderr by default; false preserves exact bytes, including NUL-delimited Git paths. */
+    trim?: boolean;
     /** Cancel the owned process group and wait for it to stop. */
     signal?: AbortSignal;
     /** Override working directory for this call */
@@ -750,10 +752,11 @@ export class Executor {
 
         const exitCode = bounded.status ?? 1;
         stopTimer(`exit=${exitCode}`);
+        const trim = options?.trim !== false;
         const result: ExecResult = {
             success: exitCode === 0,
-            stdout: bounded.stdout.trim(),
-            stderr: bounded.stderr.trim(),
+            stdout: trim ? bounded.stdout.trim() : bounded.stdout,
+            stderr: trim ? bounded.stderr.trim() : bounded.stderr,
             exitCode,
         };
 
