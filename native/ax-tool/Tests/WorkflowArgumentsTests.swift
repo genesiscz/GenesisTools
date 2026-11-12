@@ -113,6 +113,14 @@ final class WorkflowArgumentsTests: XCTestCase {
         XCTAssertThrowsError(try WorkflowArguments(base, command: "act"), "An unpinned index cannot bypass full-window validation")
     }
 
+    func testPreparedDragUsesWindowRelativeCoordinatesAndRemainsForeground() {
+        let base = ["--app", "Fixture", "--snapshot", "token", "--action", "drag", "--coords", "100,200",
+                    "--to", "100,300", "--prepare", "--target-key", String(repeating: "a", count: 64)]
+        XCTAssertNoThrow(try WorkflowArguments(base + ["--frame", "window"], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(base, command: "act"), "screen coordinates cannot follow a window moved during focus")
+        XCTAssertThrowsError(try WorkflowArguments(base + ["--frame", "window", "--background"], command: "act"))
+    }
+
     func testOnlyADragMayLeaveTheWindow() throws {
         // The parser keeps a list of flags per command; a flag missing from it is refused as an unknown
         // option before anything runs, which is how the first --allow-outside build failed live.

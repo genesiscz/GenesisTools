@@ -1838,7 +1838,12 @@ func cmdAct(appName _: String) {
                                      try admitVisualAction()
                                  }, post: { event in
                                      ActionCursor.emit("drag", point: event.location, background: background, target: rawCoords == nil ? "ax" : "pixel", waitForPresentation: false)
-                                     inputGate.deliver { event.postToPid(pid) }
+                                     inputGate.deliver {
+                                         // AppKit's system drag session reads the pointer's event stream, not only
+                                         // events addressed to the source window. Background drags stay process-local.
+                                         if background { event.postToPid(pid) }
+                                         else { event.post(tap: .cghidEventTap) }
+                                     }
                                  })
                 Thread.sleep(forTimeInterval: 0.05)
                 if allowOutside {
