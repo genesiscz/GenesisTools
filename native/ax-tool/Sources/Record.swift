@@ -175,7 +175,7 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
         windowIndex: argValue("--window-index").flatMap { Int($0) },
         windowID: windowID,
         region: region,
-        duration: number("--duration", default: 3, min: 0.1, max: 180),
+        duration: number("--duration", default: 3, min: 0.1, max: videoOut == nil ? 180 : 14_400),
         activeFps: activeFps,
         idleFps: idleFps,
         threshold: number("--threshold", default: 2.5, min: 0, max: 100),
@@ -640,6 +640,12 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             throw NSError(domain: "ax-tool", code: 1, userInfo: [NSLocalizedDescriptionKey: "video already exists; choose a new output path"])
         }
         let writer = try AVAssetWriter(outputURL: url, fileType: options.selection.codec == "prores4444" ? .mov : .mp4)
+        // Retain completed fragments if the process dies before finishWriting. This keeps long recordings
+        // recoverable without stopping the stream, audio receiver or cursor monitor every three minutes.
+        writer.movieFragmentInterval = CMTime(seconds: 10, preferredTimescale: 600)
+        if #available(macOS 14.0, *) {
+            writer.initialMovieFragmentInterval = CMTime(seconds: 1, preferredTimescale: 600)
+        }
         var settings: [String: Any] = [
             AVVideoCodecKey: options.selection.codec == "prores4444" ? AVVideoCodecType.proRes4444 : AVVideoCodecType.h264,
             AVVideoWidthKey: width,
@@ -674,6 +680,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             AVVideoAverageBitRateKey: screenMovieBitRate(width: width, height: height, fps: fps),
             AVVideoExpectedSourceFrameRateKey: Int(fps.rounded()),
             AVVideoMaxKeyFrameIntervalKey: max(1, Int((fps * 2).rounded())),
+            AVVideoAllowFrameReorderingKey: false,
+            // Varying ScreenCaptureKit cadence with reordered H.264 frames made fragment closure fail (-16341).
             AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
         ]
     }
@@ -715,7 +723,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             // the rest of the recording would repeat it on every frame.
             if !adaptor.append(pixelBuffer, withPresentationTime: timestamp), !videoAppendFailed {
                 videoAppendFailed = true
-                warnings.append("the video writer refused a frame: \(writer?.error?.localizedDescription ?? "no writer error reported")")
+                warnings.append("the video writer refused a frame: \(writer?.error.map { String(describing: $0) } ?? "no writer error reported")")
             }
         }
         // A focus transition needs the current image even when the desktop is still and heartbeats are off.
@@ -830,7 +838,15 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
-    var failure: Error? { queue.sync { streamError } }
+    var failure: Error? {
+        queue.sync {
+            streamError ?? (writer?.status == .failed
+                ? writer?.error ?? NSError(domain: "ax-tool", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "the movie writer stopped accepting frames"])
+                : nil)
+        }
+    }
+    var streamHasFailed: Bool { queue.sync { streamError != nil } }
 
     /// The first frame's host time: the origin of every timestamp in the result, audio included.
     var origin: CMTime? { queue.sync { firstTimestamp } }
@@ -915,7 +931,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             warnings.append("video writer did not finish within 10s; the file may be truncated")
         }
         if writer.status != .completed {
-            warnings.append("video writer ended with status \(writer.status.rawValue): \(writer.error?.localizedDescription ?? "unknown")")
+            warnings.append("video writer ended with status \(writer.status.rawValue): \(writer.error.map { String(describing: $0) } ?? "unknown")")
         }
     }
 }
@@ -1208,7 +1224,8 @@ func cmdCaptureScreen() {
     cursorTrack?.stop()
     recorder.stopHeartbeat()
     let streamFailure = recorder.failure
-    if streamFailure == nil {
+    // A writer failure still leaves a live ScreenCaptureKit stream to stop.
+    if !recorder.streamHasFailed {
         do {
             try awaitResult(timeoutSeconds: host.displayRemoved ? 5 : 30) { try await host.stream.stopCapture() }
         } catch {

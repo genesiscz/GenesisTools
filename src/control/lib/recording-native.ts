@@ -3,11 +3,17 @@ import { readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { audioStreamCount, type MediaFacts, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
+import {
+    audioStreamCount,
+    type MediaFacts,
+    NotMediaError,
+    primaryVideo,
+    readMediaFacts,
+} from "@genesiscz/utils/video/media-facts";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
-import type { CaptureSpec } from "./capture-plan";
+import { type CaptureSpec, NATIVE_MOVIE_MAX_SECONDS } from "./capture-plan";
 import { CaptureRunError, runCapturePlanWithSignal } from "./capture-runner";
 import { captureFromFlags, validateCaptureOptions } from "./native-record";
 import {
@@ -84,7 +90,7 @@ export function segmentCaptureSpec({
         );
     }
 
-    const duration = String(Math.max(0.1, Math.min(180, maxSeconds)));
+    const duration = String(Math.max(0.1, Math.min(NATIVE_MOVIE_MAX_SECONDS, maxSeconds)));
     const common = {
         codec: "h264",
         videoOut: output,
@@ -223,25 +229,44 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 sessionDir = result.sessionDir;
                 const envelope = result.capture as {
                     error?: unknown;
-                    data?: { stats?: { durationMs?: unknown; capturedFrames?: unknown; movieMs?: unknown } };
+                    data?: {
+                        stats?: { durationMs?: unknown; capturedFrames?: unknown; movieMs?: unknown };
+                        warnings?: unknown;
+                    };
                 } | null;
                 const reported = envelope?.data?.stats?.durationMs;
                 const durationMs = typeof reported === "number" && reported > 0 ? reported : undefined;
                 // The movie's own length (first frame to its end); stats.durationMs is the run's wall time.
                 const movie = envelope?.data?.stats?.movieMs;
-                const movieMs = typeof movie === "number" && movie > 0 ? { movieMs: movie } : {};
+                let movieMs = typeof movie === "number" && movie > 0 ? { movieMs: movie } : {};
                 // A movie holds every frame ax-tool captured (capturedFrames: 152 frames in a 5 s movie, checked with
                 // ffprobe); its keptFrames and droppedFrames are the stills of a frames recording, not the movie's.
                 const captured = envelope?.data?.stats?.capturedFrames;
                 const frameStats = typeof captured === "number" ? { frames: captured } : {};
                 const endedBy = signal.aborted ? "stop" : result.captureFailed ? "failure" : "deadline";
+                const nativeWarnings = Array.isArray(envelope?.data?.warnings)
+                    ? envelope.data.warnings.filter((warning): warning is string => typeof warning === "string")
+                    : [];
                 const error =
-                    typeof envelope?.error === "string" ? envelope.error : result.warnings.at(-1) || undefined;
+                    typeof envelope?.error === "string"
+                        ? envelope.error
+                        : nativeWarnings.join("; ") || result.warnings.at(-1) || undefined;
                 // A stop can land on a recorder that already failed, or kill one that did not finish its movie in
                 // time, so a failed run's movie is probed whatever ended it: an unfinished one would break every save.
                 const ok = existsSync(output) && (!result.captureFailed || (await playable(output)));
+                if (ok) {
+                    try {
+                        // The next segment's marks, camera spans and cursor rows must start at the same file boundary.
+                        movieMs = { movieMs: await movieLengthMs(output) };
+                    } catch (measureError) {
+                        log.warn(
+                            { error: measureError, output, reportedMovieMs: movie },
+                            "using the recorder's movie length because the file could not be measured"
+                        );
+                    }
+                }
                 if (!result.captureFailed) {
-                    return { ok, endedBy, durationMs, ...movieMs, ...frameStats };
+                    return { ok, endedBy, durationMs, ...movieMs, ...frameStats, ...(error ? { error } : {}) };
                 }
 
                 const code = error ? refusalCode(error) : undefined;
@@ -250,9 +275,14 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 const message =
                     error instanceof CaptureRunError || error instanceof Error ? error.message : String(error);
                 const code = refusalCode(message);
+                // A crashed writer can leave completed fragments. Keep readable media; an unreadable partial
+                // must not reach RecordingSession, which deliberately retains any segment file it receives.
+                const ok = existsSync(output) && (await playable(output));
+                const movieMs = ok ? await movieLengthMs(output).catch(() => undefined) : undefined;
                 return {
-                    ok: false,
+                    ok,
                     endedBy: signal.aborted ? "stop" : "failure",
+                    ...(movieMs === undefined ? {} : { movieMs }),
                     error: code ? `[${code}] ${message}` : message,
                     code,
                 };
@@ -267,21 +297,27 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
     };
 }
 
-/** A movie a failed run left behind is kept only when ffprobe can read it. */
+/** Inspect recorded media without the short evidence-upload limits. A probe failure is not proof of corruption. */
 async function playable(path: string): Promise<boolean> {
     try {
-        await probeVideo({ input: path });
-        return true;
-    } catch (error) {
-        log.warn({ error, path }, "a failed recording left an unreadable movie; dropping it");
-        try {
-            await unlink(path);
-        } catch (cleanupError) {
-            log.debug({ error: cleanupError, path }, "unreadable movie already gone");
+        const facts = await readMediaFacts({ input: path });
+        if (primaryVideo(facts) && facts.durationSec !== null && facts.durationSec > 0) {
+            return true;
         }
-
-        return false;
+        log.warn({ path }, "a failed recording left no playable video track");
+    } catch (error) {
+        if (!(error instanceof NotMediaError)) {
+            log.warn({ error, path }, "could not inspect the partial movie; keeping it for recovery");
+            return false;
+        }
+        log.warn({ error, path }, "a failed recording left an unreadable movie; dropping it");
     }
+    try {
+        await unlink(path);
+    } catch (cleanupError) {
+        log.debug({ error: cleanupError, path }, "unreadable movie already gone");
+    }
+    return false;
 }
 
 /**
@@ -388,7 +424,19 @@ const joinSegments = async ({
             await rm(list, { force: true });
         }
     } else {
-        const probes = await Promise.all(segments.map((segment) => probeVideo({ input: segment.path })));
+        // These are local recorder outputs, not bounded evidence uploads. This read obtains geometry only.
+        const probes = await Promise.all(
+            segments.map((segment) =>
+                probeVideo({
+                    input: segment.path,
+                    limits: {
+                        maxBytes: Number.MAX_SAFE_INTEGER,
+                        maxDurationUs: Number.MAX_SAFE_INTEGER,
+                        maxPixels: Number.MAX_SAFE_INTEGER,
+                    },
+                })
+            )
+        );
         const inputs = segments.map((segment, index) => ({
             path: segment.path,
             width: probes[index].displayWidth,
@@ -425,8 +473,11 @@ const joinSegments = async ({
  * and the stop and differed from the file by up to 100 ms.
  */
 export async function movieLengthMs(path: string): Promise<number> {
-    const probe = await probeVideo({ input: path });
-    return Math.round(probe.durationUs / 1000);
+    const facts = await readMediaFacts({ input: path });
+    if (!primaryVideo(facts) || facts.durationSec === null || facts.durationSec <= 0) {
+        throw new Error(`The recorded movie has no video duration: ${path}`);
+    }
+    return Math.round(facts.durationSec * 1000);
 }
 
 /**
@@ -436,7 +487,7 @@ export async function movieLengthMs(path: string): Promise<number> {
  */
 function joinedLengthMs(segment: FinishedSegment, facts: MediaFacts): number {
     if (facts.durationSec !== null && facts.durationSec > 0) {
-        return facts.durationSec * 1000;
+        return Math.round(facts.durationSec * 1000);
     }
 
     return segment.movieMs ?? segment.durationMs;

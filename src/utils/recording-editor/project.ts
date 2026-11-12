@@ -1943,33 +1943,37 @@ export function readCursorTrack(path: string | undefined): CursorSample[] {
         return [];
     }
 
-    return readFileSync(path, "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .flatMap((line) => {
-            let raw: unknown;
+    return (
+        readFileSync(path, "utf8")
+            .split("\n")
+            .filter(Boolean)
+            .flatMap((line) => {
+                let raw: unknown;
 
-            try {
-                raw = SafeJSON.parse(line, { strict: true });
-            } catch {
-                // A line torn by a crash or a write still in progress is skipped, as CursorTrack.load skips it.
-                log.debug({ path }, "cursor track: skipped a line that is not JSON");
-                return [];
-            }
+                try {
+                    raw = SafeJSON.parse(line, { strict: true });
+                } catch {
+                    // A line torn by a crash or a write still in progress is skipped, as CursorTrack.load skips it.
+                    log.debug({ path }, "cursor track: skipped a line that is not JSON");
+                    return [];
+                }
 
-            const row = cursorRowSchema.safeParse(raw);
-            return row.success
-                ? [
-                      {
-                          ms: row.data.t,
-                          x: row.data.x,
-                          y: row.data.y,
-                          ...(row.data.click ? { click: row.data.click } : {}),
-                          ...(row.data.key ? { key: row.data.key } : {}),
-                      },
-                  ]
-                : [];
-        });
+                const row = cursorRowSchema.safeParse(raw);
+                return row.success
+                    ? [
+                          {
+                              ms: row.data.t,
+                              x: row.data.x,
+                              y: row.data.y,
+                              ...(row.data.click ? { click: row.data.click } : {}),
+                              ...(row.data.key ? { key: row.data.key } : {}),
+                          },
+                      ]
+                    : [];
+            })
+            // Mouse callbacks can arrive after a newer poll; preserve their original clock in the file.
+            .sort((a, b) => a.ms - b.ms)
+    );
 }
 
 /** Clicks closer than this are one group: one auto zoom, one row of a movie's clickGroups(). */

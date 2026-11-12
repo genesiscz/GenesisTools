@@ -8,6 +8,7 @@ import { logger } from "@genesiscz/utils/logger";
 import type { RecordingSpan } from "@genesiscz/utils/screen-recorder/library";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
+import { NATIVE_FRAMES_MAX_SECONDS, NATIVE_MOVIE_MAX_SECONDS } from "./capture-plan";
 import { type RecordingTarget, recordingTargetSchema } from "./recording-targets";
 
 const { log } = logger.scoped("control-recording-session");
@@ -18,8 +19,8 @@ const { log } = logger.scoped("control-recording-session");
  */
 export const RECORDING_SESSION_MAX_SECONDS = 600;
 
-/** The recorder stops a run after 180 s (`validateCaptureOptions`), so a longer recording is a chain of runs. */
-export const RECORDING_SEGMENT_MAX_SECONDS = 180;
+/** Short default for widget sessions; the movie recorder explicitly requests one continuous run. */
+export const RECORDING_SEGMENT_MAX_SECONDS = NATIVE_FRAMES_MAX_SECONDS;
 
 export const PREPARING_MESSAGE =
     "Building the recorder after an update. This happens once and can take up to a minute. Discard cancels it.";
@@ -226,7 +227,7 @@ export function recordingsDir(...segments: string[]): string {
 /**
  * A recording made of segments, one recorder run each. Pause ends the current segment and resume starts a new one
  * with the same target; switch ends it and starts one with the new target; restart drops every segment and starts
- * again; stop joins the segments into one movie; discard deletes them. A run that ends by itself at its 180 s
+ * again; stop joins the segments into one movie; discard deletes them. A run that ends by itself at its configured
  * deadline is followed by the next one at once. Commands run one at a time, in arrival order.
  */
 export class RecordingSession {
@@ -275,7 +276,10 @@ export class RecordingSession {
         this.target = options.target;
         this.rates = options.rates;
         this.limitMs = Math.round((options.maxSeconds ?? RECORDING_SESSION_MAX_SECONDS) * 1000);
-        this.segmentSeconds = Math.min(options.segmentSeconds ?? RECORDING_SEGMENT_MAX_SECONDS, 180);
+        this.segmentSeconds = Math.min(
+            options.segmentSeconds ?? RECORDING_SEGMENT_MAX_SECONDS,
+            NATIVE_MOVIE_MAX_SECONDS
+        );
         this.now = options.now ?? Date.now;
         this.finished = new Promise((resolve) => {
             this.settle = resolve;
@@ -616,6 +620,10 @@ export class RecordingSession {
             movieMs: result.movieMs ?? durationMs,
         };
         this.segments.push(segment);
+        if (run.stopping && result.error) {
+            // Explicit Stop must not turn a salvaged partial movie into an unexplained success.
+            this.options.emit({ event: "error", message: result.error, code: result.code, fatal: false });
+        }
         // The longer of the movie and the wall time this session saw: the recorder's deadline runs from its own launch,
         // so its movie can be longer, and the limit must count what the movie holds.
         this.recordedMs += Math.max(wallMs, segment.durationMs);
@@ -668,6 +676,9 @@ export class RecordingSession {
             if (ordered.length === 1) {
                 await this.moveMovie(ordered[0].path);
                 durationMs = await this.savedLengthMs(ordered[0]);
+                // Camera spans and marks after stopping use the length of the saved file, like cursor joins do.
+                ordered[0].movieMs = durationMs;
+                this.movieMs = durationMs;
             } else {
                 durationMs = await this.joinMovie(ordered);
             }

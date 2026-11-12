@@ -36,6 +36,7 @@ final class CursorTrackWriter {
     private var leftDown = false
     private var rightDown = false
     private var buffer = Data()
+    private var lastFlush = ProcessInfo.processInfo.systemUptime
     private(set) var samples = 0
     private(set) var clicks = 0
     let path: String
@@ -124,17 +125,21 @@ final class CursorTrackWriter {
         self.movieStart = movieStart
         // Polling button state misses short presses, including synthetic HID clicks. Keep their own events.
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-            guard let point = event.cgEvent?.location else { return }
+            guard let self, let point = event.cgEvent?.location else { return }
+            let geometry = self.geometry()
             let button = event.type == .leftMouseDown ? "left" : "right"
             let time = event.timestamp > 0
                 ? CMTime(seconds: event.timestamp, preferredTimescale: 1_000_000_000)
                 : CMClockGetTime(CMClockGetHostTimeClock())
-            self?.queue.async { [weak self] in self?.sample(click: button, point: point, time: time) }
+            self.queue.async { [weak self] in self?.sample(click: button, point: point, time: time, eventGeometry: geometry) }
         }
         capturesMouseEvents = mouseMonitor != nil
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .nanoseconds(16_666_667), leeway: .milliseconds(2))
-        timer.setEventHandler { [weak self] in self?.sample() }
+        timer.setEventHandler { [weak self] in
+            self?.sample()
+            self?.flushIfDue()
+        }
         timer.resume()
         self.timer = timer
     }
@@ -153,16 +158,27 @@ final class CursorTrackWriter {
         try? handle.close()
     }
 
-    private func sample(click eventClick: String? = nil, point eventPoint: CGPoint? = nil, time eventTime: CMTime? = nil) {
+    private func sample(click eventClick: String? = nil, point eventPoint: CGPoint? = nil, time eventTime: CMTime? = nil,
+                        eventGeometry: CursorTrackGeometry? = nil) {
         guard !paused, !stopped, let origin = movieStart(), let point = eventPoint ?? CGEvent(source: nil)?.location else { return }
         let now = eventTime ?? CMClockGetTime(CMClockGetHostTimeClock())
-        let geometry = geometry()
+        let geometry = eventGeometry ?? geometry()
         let frame = geometry.rect
         guard let normalized = geometry.normalized(point) else { return }
-        // The main-thread event callback can arrive after a position sample; keep the JSONL clock ordered.
-        let ms = max(last?.ms ?? 0, movieTimeMs(of: now, movieStart: origin))
+        let ms = movieTimeMs(of: now, movieStart: origin)
+        guard ms.isFinite, ms >= 0 else { return }
         let x = Double(normalized.x)
         let y = Double(normalized.y)
+        // Keep a delayed event's clock and geometry without consuming later metadata or polling state.
+        if let eventClick, let last, ms < last.ms {
+            guard geometry.acceptsClick(at: point) else { return }
+            let line = String(format: "{\"t\":%.1f,\"x\":%.5f,\"y\":%.5f,\"click\":\"%@\"}\n", ms, x, y, eventClick)
+            buffer.append(Data(line.utf8))
+            samples += 1
+            clicks += 1
+            flush()
+            return
+        }
         var click = eventClick
         if !capturesMouseEvents {
             let left = CGEventSource.buttonState(.combinedSessionState, button: .left)
@@ -204,7 +220,7 @@ final class CursorTrackWriter {
         line += "}\n"
         buffer.append(Data(line.utf8))
         samples += 1
-        if buffer.count > 16_384 { flush() }
+        if buffer.count > 16_384 || click != nil { flush() }
     }
 
     /// The cursor's image now; a new one is saved once and named on the next row.
@@ -233,10 +249,15 @@ final class CursorTrackWriter {
         try? Data(meta.utf8).write(to: URL(fileURLWithPath: base + ".json"))
     }
 
+    private func flushIfDue() {
+        if ProcessInfo.processInfo.systemUptime - lastFlush >= 1 { flush() }
+    }
+
     private func flush() {
         guard !buffer.isEmpty else { return }
         handle.write(buffer)
         buffer.removeAll(keepingCapacity: true)
+        lastFlush = ProcessInfo.processInfo.systemUptime
     }
 }
 

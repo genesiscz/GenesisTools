@@ -478,6 +478,8 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         measure: movieLengthMs,
         emit,
         maxSeconds: options.maxSeconds ?? VIDEO_RECORDING_MAX_SECONDS,
+        // Keep the stream and cursor monitor alive; the writer checkpoints movie fragments on disk.
+        segmentSeconds: options.maxSeconds ?? VIDEO_RECORDING_MAX_SECONDS,
         // The rates `settings.set` changes while it records; a movie without an idle rate keeps its fps when still.
         rates: {
             activeFps: fps,
@@ -550,16 +552,27 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     }
 
     const spans = session.movieSpans();
-    const cameraProblem = cameraStarted
-        ? await endRecordingCamera({ folder, outcome, spans, host: options.cameraHost })
-        : undefined;
-
     // One segment is moved, not joined, so its tracks still read "Core Media Audio": title them by one stream copy.
     if (outcome === "done" && segments === 1 && options.audio?.length && existsSync(movie)) {
         await titleAudioTracks(movie, audioTrackTitles(options.audio)).catch((error: unknown) => {
             log.warn({ error, movie }, "the audio tracks keep their untitled names");
         });
+        // Stream-copying track metadata can change the final container's rounded end by one audio packet.
+        try {
+            durationMs = await movieLengthMs(movie);
+            if (spans.length === 1) {
+                spans[0].lengthMs = durationMs;
+            }
+            if (frameStats.frames !== undefined) {
+                frameStats.averageFps = durationMs > 0 ? Math.round((frameStats.frames * 10_000) / durationMs) / 10 : 0;
+            }
+        } catch (error) {
+            log.warn({ error, movie }, "the titled movie keeps its previously measured duration");
+        }
     }
+    const cameraProblem = cameraStarted
+        ? await endRecordingCamera({ folder, outcome, spans, host: options.cameraHost })
+        : undefined;
 
     if (cameraRefused) {
         outcome = "failed";

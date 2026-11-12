@@ -8,6 +8,10 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type Annotation, type PresetName, parseRect } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 
+/** Movie data streams to disk; frame-only captures retain a short bounded collection. */
+export const NATIVE_MOVIE_MAX_SECONDS = 4 * 60 * 60;
+export const NATIVE_FRAMES_MAX_SECONDS = 180;
+
 export const CAPTURE_HELP = `control capture — native recording + timed UI actions
 
 NATIVE DEFAULT
@@ -376,8 +380,8 @@ NOTES
   - You CANNOT request "exactly N frames": duration/fps/threshold set a budget and
     peekaboo keeps K frames where motion crossed threshold. Need fewer tiles?
     Raise threshold, lower fps, shorten the crop window — or recrop.
-  - Plans are validated on load; suspicious values (duration > 180 — seconds, not
-    ms!; threshold > 100; zero-size regions) produce warnings in the result JSON.
+  - Duration is seconds: frame-only captures allow 180; streamed movies allow
+    14400 (four hours). Invalid durations, thresholds and regions produce warnings.
   - The run result carries a warnings[] array — READ IT. "actions fired but only
     1 frame kept" means your motion never made it to pixels (wrong screen, wrong
     focus, scroll over dead UI).
@@ -642,7 +646,7 @@ export function validatePlan(plan: Plan): string[] {
     const warnings: string[] = [];
     const cap = plan.capture;
 
-    if (cap?.duration > 180) {
+    if (cap?.duration > (cap?.videoOut ? NATIVE_MOVIE_MAX_SECONDS : NATIVE_FRAMES_MAX_SECONDS)) {
         warnings.push(`capture.duration=${cap.duration} — unit is SECONDS; did you mean ms?`);
     }
 

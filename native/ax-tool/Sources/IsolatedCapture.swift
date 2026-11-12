@@ -572,7 +572,7 @@ func captureIsolatedWindows(_ options: RecordOptions) {
         }
         indicator.update(bounds)
         compositor.refresh(rows)
-        return compositor.queue.sync { compositor.error == nil }
+        return compositor.queue.sync { compositor.error == nil } && recorder.failure == nil
     }
     indicator.close()
     for source in compositor.sources {

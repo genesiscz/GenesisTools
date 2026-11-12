@@ -8,9 +8,14 @@ import type { ScreenInfo } from "@app/control/lib/native-record";
 import { segmentCaptureSpec } from "@app/control/lib/recording-native";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { closeStartGate, startGatePath } from "@genesiscz/utils/process/start-gate";
 import { RpcError } from "@genesiscz/utils/screen-recorder/control";
+import { readRecordingManifestSafe } from "@genesiscz/utils/screen-recorder/library";
 import { listLiveRecordings, liveRecordingsDir, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
+import { skip } from "@genesiscz/utils/test/skip";
+import { readMediaFacts } from "@genesiscz/utils/video/media-facts";
+import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
 import { framesDoneLine } from "./frames-recording";
 import { alreadyInState, liveRecordingRef, markerLabelProblem } from "./library";
@@ -232,6 +237,71 @@ describe("a countdown that ends when the movie records", () => {
         expect(held).toBe("settled");
         expect(recorderCalls).toBe(0);
     });
+});
+
+it.skipIf(skip.integration)("persists the final audio-titled movie clock in its manifest", async () => {
+    let folder: string | undefined;
+    const spy = spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async ({ plan, onRecording }) => {
+        const output = plan.capture.videoOut;
+        if (!output) {
+            throw new Error("Expected a movie output");
+        }
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=s=32x32:r=10:d=1.1",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000:duration=1.1",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                output,
+            ],
+        });
+        const sessionDir = await mkdtemp(join(tmpdir(), "titled-movie-clock-"));
+        await writeFile(join(sessionDir, "movie-start.json"), SafeJSON.stringify({ firstFrameEpochMs: Date.now() }));
+        onRecording?.({ sessionDir });
+        return {
+            ok: true,
+            sessionDir,
+            exitCode: 0,
+            warnings: [],
+            actions: [],
+            crops: [],
+            strip: null,
+            stripReview: null,
+            captureFailed: false,
+            capture: { data: { stats: { durationMs: 1100, movieMs: 1100, capturedFrames: 11 } } },
+        };
+    });
+    try {
+        const result = await recordVideo({
+            target: { kind: "region", x: 0, y: 0, width: 32, height: 32 },
+            audio: ["system"],
+            maxSeconds: 1,
+            recorderFace: () => "held",
+        });
+        folder = result.folder;
+        expect(result.outcome).toBe("done");
+        const facts = await readMediaFacts({ input: join(folder, "screen.mp4") });
+        const measured = Math.round((facts.durationSec ?? 0) * 1000);
+        const manifest = readRecordingManifestSafe(folder)?.manifest;
+        expect(manifest?.settings.video).toMatchObject({ durationMs: measured, spans: [{ lengthMs: measured }] });
+        expect(result.durationMs).toBe(measured);
+    } finally {
+        spy.mockRestore();
+        if (folder) {
+            await rm(folder, { recursive: true, force: true });
+        }
+    }
 });
 
 /** A recorder that records nothing: it notes its start and the windows its movie leaves out. */

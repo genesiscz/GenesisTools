@@ -124,6 +124,16 @@ describe("nativeCaptureArgv", () => {
         expect(() => validateCaptureOptions({ mode: "screen", duration: 1, maxFrames: 0 })).toThrow(/maxFrames/);
     });
 
+    it("allows bounded long movies while frame-only captures keep the short safety limit", () => {
+        for (const duration of [181, 195, 14_400]) {
+            expect(() => validateCaptureOptions({ mode: "screen", duration, videoOut: "/movie.mp4" })).not.toThrow();
+            expect(() => validateCaptureOptions({ mode: "screen", duration })).toThrow(/duration/);
+        }
+        expect(() => validateCaptureOptions({ mode: "screen", duration: 14_401, videoOut: "/movie.mp4" })).toThrow(
+            /duration/
+        );
+    });
+
     it("records a display by id or follows focus, and passes the frame tuning flags", () => {
         expect(
             nativeCaptureArgv(
