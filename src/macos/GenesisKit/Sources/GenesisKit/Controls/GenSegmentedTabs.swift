@@ -50,6 +50,8 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     @GenReduceMotion private var reduceMotion
     /// The width a filling strip is offered, in whole points; nil until its first layout.
     @State private var offered: CGFloat?
+    @FocusState private var focusedSegment: ID?
+    @Environment(\.layoutDirection) private var layoutDirection
 
     /// `identifier` names the group for UI automation; each segment is then `<identifier>.<id>`, the id as
     /// `GenAccessibilityID.suffix` spells it (an enum case's name, a string as it is).
@@ -211,11 +213,33 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
                 .contentShape(RoundedRectangle(cornerRadius: thumbRadius, style: look.corners))
         }
         .buttonStyle(GenSegmentStyle(selected: selected, radius: thumbRadius))
+        .focusable()
+        .focused($focusedSegment, equals: item.id)
+        .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
+            guard press.modifiers.intersection([.command, .control, .option]).isEmpty else { return .ignored }
+            let direction = (press.key == .rightArrow ? 1 : -1) * (layoutDirection == .rightToLeft ? -1 : 1)
+            if let next = Self.adjacentItem(in: items, from: item.id, direction: direction) {
+                selection = next
+                focusedSegment = next
+            }
+            return .handled
+        }
         .disabled(!item.isEnabled)
         .anchorPreference(key: GenSegmentFrames.self, value: .bounds) { [AnyHashable(item.id): $0] }
         .accessibilityLabel(item.count.map { "\(item.title), \($0)" } ?? item.title)
         .chartAccessibilityIdentifier(identifier.map { "\($0).\(GenAccessibilityID.suffix(item.id))" })
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// Arrow navigation skips unavailable choices and stays at either end, like a native segmented picker.
+    static func adjacentItem(in items: [Item], from id: ID, direction: Int) -> ID? {
+        guard direction == -1 || direction == 1, let start = items.firstIndex(where: { $0.id == id }) else { return nil }
+        var index = start + direction
+        while items.indices.contains(index) {
+            if items[index].isEnabled { return items[index].id }
+            index += direction
+        }
+        return nil
     }
 
     /// Every title in one layer's colours, laid out exactly as the buttons are.

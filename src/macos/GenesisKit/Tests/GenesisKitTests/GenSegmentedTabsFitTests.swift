@@ -174,6 +174,16 @@ final class GenSegmentedTabsFitTests: XCTestCase {
         return host.fittingSize.width
     }
 
+    func testArrowNavigationSkipsDisabledSegmentsAndDoesNotWrap() {
+        let items: [Tabs.Item] = [.init("a", "A"), .init("b", "B", isEnabled: false), .init("c", "C")]
+        XCTAssertEqual(Tabs.adjacentItem(in: items, from: "a", direction: 1), "c")
+        XCTAssertEqual(Tabs.adjacentItem(in: items, from: "c", direction: -1), "a")
+        XCTAssertNil(Tabs.adjacentItem(in: items, from: "a", direction: -1))
+        XCTAssertNil(Tabs.adjacentItem(in: items, from: "c", direction: 1))
+        XCTAssertNil(Tabs.adjacentItem(in: items, from: "missing", direction: 1))
+        XCTAssertNil(Tabs.adjacentItem(in: items, from: "a", direction: 0))
+    }
+
     func testTheNaturalWidthIsTheWidthTheStripTakes() {
         for (name, items) in Self.sets {
             for size in [KitControlSize.small, .regular, .large] {
