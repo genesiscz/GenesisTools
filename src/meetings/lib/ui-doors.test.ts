@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { LinkGate } from "@genesiscz/utils/browser-router/link-gate";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { readCorrections } from "@genesiscz/utils/meetings/corrections";
@@ -468,6 +469,24 @@ describe("window revisions", () => {
     });
 });
 
+/** Router facts are part of the export fixture, never this Mac's app, browser profiles or link host. */
+function exportFixture(options: Parameters<typeof exportMeeting>[0]) {
+    const linkGate: LinkGate = {
+        version: 2,
+        at: Date.now(),
+        configMtimeMs: 0,
+        installed: true,
+        defaultHandler: true,
+        httpsHandler: "com.example.router",
+        configured: true,
+        linkHost: "links.example",
+        presets: {
+            "meetings-play": { available: true, enabled: true, routed: true, missing: [] },
+        },
+    };
+    return exportMeeting({ ...options, linkGate });
+}
+
 describe("export", () => {
     test("writes the polished transcript to the project's folder and replaces it on the next export", async () => {
         const { meetings } = stores();
@@ -480,18 +499,21 @@ describe("export", () => {
         const transcript = [{ startSec: 5, speaker: "Alice", text: "We ship on Friday." }];
 
         await expect(
-            exportMeeting({ store: meetings, record: { ...created, project: undefined }, config, transcript })
+            exportFixture({ store: meetings, record: { ...created, project: undefined }, config, transcript })
         ).rejects.toThrow("has no project");
 
-        const dry = await exportMeeting({ store: meetings, record: created, config, transcript, dryRun: true });
+        const dry = await exportFixture({ store: meetings, record: created, config, transcript, dryRun: true });
         expect(dry).toMatchObject({ written: false, replaced: false });
         expect(existsSync(dry.path)).toBe(false);
 
-        const first = await exportMeeting({ store: meetings, record: created, config, transcript });
+        const first = await exportFixture({ store: meetings, record: created, config, transcript });
         expect(first.path).toBe(join(target, `${created.id}.md`));
         expect(readFileSync(first.path, "utf8")).toContain("We ship on Friday.");
+        expect(readFileSync(first.path, "utf8")).toContain(
+            `https://links.example/meetings/play?meeting=${created.id}&at=00%3A05`
+        );
 
-        const second = await exportMeeting({ store: meetings, record: created, config, transcript });
+        const second = await exportFixture({ store: meetings, record: created, config, transcript });
         expect(second).toMatchObject({ written: true, replaced: true, action: "replace" });
     });
 
@@ -517,7 +539,7 @@ describe("export", () => {
         mkdirSync(target, { recursive: true });
         symlinkSync(outside, join(target, `${created.id}.md`));
 
-        await expect(exportMeeting({ store: meetings, record: created, config, transcript })).rejects.toMatchObject({
+        await expect(exportFixture({ store: meetings, record: created, config, transcript })).rejects.toMatchObject({
             code: "export-unsafe-path",
         });
         expect(readFileSync(outside, "utf8")).toBe("OUTSIDE NOTE");
@@ -526,21 +548,21 @@ describe("export", () => {
 
     test("an edited note survives the next export: the new one goes beside it, or the export refuses", async () => {
         const { meetings, created, config, transcript } = await exported("work");
-        const first = await exportMeeting({ store: meetings, record: created, config, transcript });
+        const first = await exportFixture({ store: meetings, record: created, config, transcript });
         writeFileSync(first.path, `${readFileSync(first.path, "utf8")}\nMANUAL EDIT MUST SURVIVE\n`);
 
-        const second = await exportMeeting({ store: meetings, record: created, config, transcript });
+        const second = await exportFixture({ store: meetings, record: created, config, transcript });
         expect(readFileSync(first.path, "utf8")).toContain("MANUAL EDIT MUST SURVIVE");
         expect(second).toMatchObject({ written: true, replaced: false, action: "beside", kept: first.path });
         expect(second.path).not.toBe(first.path);
         expect(readFileSync(second.path, "utf8")).toContain("Northwind signs on Monday.");
 
         await expect(
-            exportMeeting({ store: meetings, record: created, config, transcript, ifEdited: "refuse" })
+            exportFixture({ store: meetings, record: created, config, transcript, ifEdited: "refuse" })
         ).rejects.toMatchObject({ code: "export-edited" });
         expect(readFileSync(first.path, "utf8")).toContain("MANUAL EDIT MUST SURVIVE");
 
-        const forced = await exportMeeting({
+        const forced = await exportFixture({
             store: meetings,
             record: created,
             config,
@@ -551,18 +573,18 @@ describe("export", () => {
         expect(readFileSync(first.path, "utf8")).not.toContain("MANUAL EDIT MUST SURVIVE");
 
         // The replaced note is the export's own again, so the next export replaces it without asking.
-        const again = await exportMeeting({ store: meetings, record: created, config, transcript, ifEdited: "refuse" });
+        const again = await exportFixture({ store: meetings, record: created, config, transcript, ifEdited: "refuse" });
         expect(again).toMatchObject({ path: first.path, action: "replace" });
     });
 
     test("the config decides what an export does with an edited note", async () => {
         const { meetings, created, config, transcript } = await exported("work", "refuse");
-        const first = await exportMeeting({ store: meetings, record: created, config, transcript });
+        const first = await exportFixture({ store: meetings, record: created, config, transcript });
         writeFileSync(first.path, "MANUAL EDIT");
 
-        const dry = await exportMeeting({ store: meetings, record: created, config, transcript, dryRun: true });
+        const dry = await exportFixture({ store: meetings, record: created, config, transcript, dryRun: true });
         expect(dry).toMatchObject({ written: false, action: "refuse" });
-        await expect(exportMeeting({ store: meetings, record: created, config, transcript })).rejects.toMatchObject({
+        await expect(exportFixture({ store: meetings, record: created, config, transcript })).rejects.toMatchObject({
             code: "export-edited",
         });
         expect(readFileSync(first.path, "utf8")).toBe("MANUAL EDIT");
