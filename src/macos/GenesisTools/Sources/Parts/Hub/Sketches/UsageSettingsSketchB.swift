@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Hub UX wave 2, area "usageSettings", option B: the accounts are the navigation. Drawn only in a run started with
-// `--sketch usageSettings=b` (GenesisKit `DesignSketch`); without the flag the hub draws its current Usage views.
+// `--sketch usageSettings=b` (GenesisKit `HubLayout`); without the flag the hub draws its current Usage views.
 //
 // - The sidebar is the account source list: "All accounts", then each provider's accounts with the room left in
 //   their tightest window. The Limits pane no longer repeats them as a table (C45).

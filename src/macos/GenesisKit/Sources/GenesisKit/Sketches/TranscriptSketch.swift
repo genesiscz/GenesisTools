@@ -1,12 +1,12 @@
 import SwiftUI
 
 /// Hub UX wave 2, area "transcript" (C17, C18, C19, C1-later): what the two redesign options change in the shared
-/// session screen. Every question here goes through `DesignSketch.option("transcript")`, so a run without
+/// session screen. Every question here goes through `HubLayout.option("transcript")`, so a run without
 /// `--sketch transcript=a|b` draws every current view unchanged. Option A lives in `TranscriptSketchA.swift`, option B
 /// in `TranscriptSketchB.swift`; this file only routes to them.
 public enum TranscriptSketch {
     /// "a", "b", or nil for the current views.
-    public static var option: String? { DesignSketch.option("transcript") }
+    public static var option: String? { HubLayout.option("transcript") }
 
     /// Option A folds every run of tool calls between two messages into one line, at every verbosity (today only
     /// Minimal folds them).

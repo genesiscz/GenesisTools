@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Hub UX wave 2, area "usageSettings", option A: decide first, details on demand. Drawn only in a run started with
-// `--sketch usageSettings=a` (GenesisKit `DesignSketch`); without the flag the hub draws its current Usage views.
+// `--sketch usageSettings=a` (GenesisKit `HubLayout`); without the flag the hub draws its current Usage views.
 //
 // - The sidebar holds the Usage sections only. The accounts live once, in the Limits table (C45).
 // - The Limits table answers "which account next" in four columns: account, room left now, reset, run-out. "All
