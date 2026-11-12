@@ -350,6 +350,26 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     // MARK: Talk-time lanes
 
+    func testLaneClickNeedsNoHoverAndMovingAwayDoesNotPlay() throws {
+        let view = SpeakerLaneInteraction.InputView(frame: NSRect(x: 0, y: 0, width: 100, height: 30))
+        let block = TalkTimeBlock(fromSec: 10, toSec: 20, x: 20, width: 30, spans: 1, ticks: [])
+        view.blocks = [block]
+        var played: [TalkTimeBlock] = []
+        view.click = { played.append($0) }
+        func event(_ type: NSEvent.EventType, x: CGFloat) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 15), modifierFlags: [],
+                timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0))
+        }
+        view.mouseDown(with: try event(.leftMouseDown, x: 25))
+        view.mouseUp(with: try event(.leftMouseUp, x: 25))
+        XCTAssertEqual(played, [block])
+        view.mouseDown(with: try event(.leftMouseDown, x: 25))
+        view.mouseUp(with: try event(.leftMouseUp, x: 80))
+        view.mouseDown(with: try event(.leftMouseDown, x: 80))
+        view.mouseUp(with: try event(.leftMouseUp, x: 80))
+        XCTAssertEqual(played, [block], "moving away or clicking a gap must not play a stretch")
+    }
+
     func testSpeakerDragRoundTripsAndRejectsForeignOrStaleStretches() throws {
         let speakers = Self.speakers()
         let source = speakers[0], target = speakers[1]

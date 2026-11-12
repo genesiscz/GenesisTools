@@ -152,9 +152,8 @@ struct SpeakerTalkTimeLanes: View {
 
     @State private var compact = false
     @State private var dragOwner = UUID()
-    @State private var hovered: SpeakerLaneDrag?
     @State private var dropTarget: String?
-    private static let dragType = UTType(exportedAs: "tools.genesis.meetings.speaker-stretch")
+    private static let dragType = SpeakerLaneDrag.type
 
     var body: some View {
         if !timed {
@@ -276,42 +275,26 @@ struct SpeakerTalkTimeLanes: View {
                 }
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture(coordinateSpace: .local) { location in
-            guard let block = TalkTimeLayout.block(at: location.x, in: blocks) else { return }
-            if block.isJoined { zoom(block.fromSec, block.toSec) } else { playSpan(block.fromSec, block.toSec) }
-        }
-        .onContinuousHover { phase in
-            switch phase {
-            case .active(let location):
-                let block = TalkTimeLayout.block(at: location.x, in: blocks)
-                let next = block.map { SpeakerLaneDrag(owner: dragOwner, label: speaker.label, fromSec: $0.fromSec, toSec: $0.toSec) }
-                if hovered != next { hovered = next }
-            case .ended:
-                if hovered?.label == speaker.label { hovered = nil }
-            }
-        }
-        .onDrag {
-            let provider = NSItemProvider()
-            guard assign != nil, let hovered, hovered.label == speaker.label,
-                  let data = try? JSONEncoder().encode(hovered) else { return provider }
-            provider.registerDataRepresentation(forTypeIdentifier: Self.dragType.identifier, visibility: .ownProcess) { completion in
-                completion(data, nil)
-                return nil
-            }
-            return provider
-        } preview: {
-            if let hovered, hovered.label == speaker.label {
-                Label("\(displayName(speaker)) · \(MeetingsFormat.clock(hovered.fromSec))–\(MeetingsFormat.clock(hovered.toSec))",
-                      systemImage: "waveform").padding(8)
-            }
+        .overlay {
+            SpeakerLaneInteraction(blocks: blocks, owner: dragOwner, label: speaker.label,
+                                   name: displayName(speaker), canAssign: assign != nil,
+                                   click: { block in
+                                       if block.isJoined { zoom(block.fromSec, block.toSec) }
+                                       else { playSpan(block.fromSec, block.toSec) }
+                                   },
+                                   canDrop: { validDrop($0, on: speaker) != nil },
+                                   drop: { accept($0, on: speaker) },
+                                   targeting: { active in
+                                       if active { dropTarget = speaker.label }
+                                       else if dropTarget == speaker.label { dropTarget = nil }
+                                   })
         }
         .instantTooltip(assign == nil ? "A click plays one stretch; a joined block (with ticks) zooms the timeline to it"
                            : "Click to play or zoom. Drag a stretch to another speaker's lane to assign it.")
     }
 
     private func receive(_ providers: [NSItemProvider], on target: MeetingsAPI.MeetingSpeakers.Speaker) -> Bool {
-        guard let assign, let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(Self.dragType.identifier) }) else { return false }
+        guard assign != nil, let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(Self.dragType.identifier) }) else { return false }
         Task { @MainActor in
             defer { dropTarget = nil }
             let data: Data? = await withCheckedContinuation { continuation in
@@ -319,12 +302,21 @@ struct SpeakerTalkTimeLanes: View {
                     continuation.resume(returning: data)
                 }
             }
-            guard let data, let drag = try? JSONDecoder().decode(SpeakerLaneDrag.self, from: data),
-                  let stretch = drag.stretch(owner: dragOwner, target: target.label, speakers: speakers) else { return }
-            let person = displayName(target)
-            guard let source = speakers.first(where: { $0.label == drag.label }), displayName(source) != person else { return }
-            assign(stretch, person)
+            guard let data, let drag = try? JSONDecoder().decode(SpeakerLaneDrag.self, from: data) else { return }
+            _ = accept(drag, on: target)
         }
+        return true
+    }
+
+    private func validDrop(_ drag: SpeakerLaneDrag, on target: MeetingsAPI.MeetingSpeakers.Speaker) -> DecisionAction.Stretch? {
+        guard assign != nil, let source = speakers.first(where: { $0.label == drag.label }),
+              displayName(source) != displayName(target) else { return nil }
+        return drag.stretch(owner: dragOwner, target: target.label, speakers: speakers)
+    }
+
+    private func accept(_ drag: SpeakerLaneDrag, on target: MeetingsAPI.MeetingSpeakers.Speaker) -> Bool {
+        guard let assign, let stretch = validDrop(drag, on: target) else { return false }
+        assign(stretch, displayName(target))
         return true
     }
 
