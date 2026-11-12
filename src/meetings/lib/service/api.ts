@@ -1355,6 +1355,8 @@ export const MEETINGS_ERROR_CODES = [
     "already-sent",
     "already-read",
     "withdrawn-comment",
+    /** A sender cannot acknowledge itself, and a receiving agent cannot retract another actor's comment. */
+    "wrong-actor",
     /** A people method's person names nobody the directory knows. */
     "unknown-person",
     /** A people method's person names several people: data `{ code, candidates }`, each a KnownPerson. */

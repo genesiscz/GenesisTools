@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -297,13 +297,40 @@ describe("comments for the listening agent (comments.ndjson)", () => {
         expect(() => comments.unstage("c3", person)).toThrow("No staged comment c3.");
     });
 
+    test("receipts come from another actor and only the author or the person can retract a comment", () => {
+        const comments = commentsFile();
+        const receiver = { kind: "agent", harness: "fixture", session: "receiver" } as const;
+        const otherAgent = { ...receiver, session: "other" };
+        comments.stage({ target: selection, text: "Person's comment", actor: person });
+        comments.stage({ target: selection, text: "Agent's comment", actor: receiver });
+        comments.markSent(comments.staged(), { token: "t-roles", at, actor: person });
+        comments.stage({ target: selection, text: "Still staged", actor: person });
+        const before = readFileSync(comments.path, "utf8");
+        expect(() => comments.acknowledge("c1", person)).toThrow("author cannot acknowledge");
+        expect(() => comments.acknowledge("c1", { kind: "cli" })).toThrow("author cannot acknowledge");
+        expect(() => comments.acknowledge("c2", receiver)).toThrow("author cannot acknowledge");
+        expect(() => comments.withdraw("c1", receiver)).toThrow("Only the author or the person");
+        expect(() => comments.withdraw("c2", otherAgent)).toThrow("Only the author or the person");
+        expect(() => comments.unstage("c3", receiver)).toThrow("Only the author or the person");
+        expect(readFileSync(comments.path, "utf8")).toBe(before);
+        expect(comments.acknowledge("c1", receiver).readBy).toEqual(receiver);
+        expect(comments.withdraw("c2", receiver).withdrawnAt).toBe(at);
+        expect(comments.unstage("c3", { kind: "cli" }).id).toBe("c3");
+        const reopened = new MeetingComments(comments.path);
+        expect(reopened.list()).toMatchObject([
+            { id: "c1", readBy: receiver },
+            { id: "c2", withdrawnAt: at },
+        ]);
+    });
+
     test("read receipts survive reopening and withdrawal wins until a receiver reads", () => {
         const comments = commentsFile();
         comments.stage({ target: selection, text: "First comment", actor: person });
         comments.stage({ target: selection, text: "Second comment", actor: person });
         comments.markSent(comments.staged(), { token: "t-read", at, actor: person });
         const other = new MeetingComments(comments.path, { now: () => new Date(at) });
-        expect(other.acknowledge("c1", person)).toMatchObject({ readAt: at, readBy: person });
+        const receiver = { kind: "agent", harness: "fixture", session: "receiver" } as const;
+        expect(other.acknowledge("c1", receiver)).toMatchObject({ readAt: at, readBy: receiver });
         expect(() => comments.withdraw("c1", person)).toThrow("was read");
         expect(other.withdraw("c2", person)).toMatchObject({ withdrawnAt: at });
         expect(() => comments.acknowledge("c2", person)).toThrow("was withdrawn");

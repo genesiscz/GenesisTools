@@ -57,7 +57,7 @@ export type CommentLine = z.infer<typeof commentLineSchema>;
 /** Why a comment step was refused: the code lets the window tell a stale list from a wrong id. */
 export class CommentError extends Error {
     constructor(
-        readonly code: "unknown-comment" | "already-sent" | "already-read" | "withdrawn-comment",
+        readonly code: "unknown-comment" | "already-sent" | "already-read" | "withdrawn-comment" | "wrong-actor",
         message: string
     ) {
         super(message);
@@ -197,6 +197,7 @@ export class MeetingComments {
     unstage(id: string, actor: DecisionActor): MeetingComment {
         return this.transaction(() => {
             const comment = this.staged([id])[0]!;
+            this.requireCommentAuthor(comment, actor);
             this.append({ kind: "unstaged", at: this.now(), id, actor });
             return comment;
         });
@@ -250,6 +251,10 @@ export class MeetingComments {
             if (comment.withdrawnAt) {
                 throw new CommentError("withdrawn-comment", `Comment ${id} was withdrawn before it was read.`);
             }
+            if (sameCommentAuthor(comment.actor, actor)) {
+                throw new CommentError("wrong-actor", "A comment's author cannot acknowledge its own comment.");
+            }
+
             if (comment.readAt) {
                 return comment;
             }
@@ -267,6 +272,7 @@ export class MeetingComments {
             if (!comment) {
                 throw new CommentError("unknown-comment", `No comment ${id}.`);
             }
+            this.requireCommentAuthor(comment, actor);
             if (comment.readAt) {
                 throw new CommentError(
                     "already-read",
@@ -328,6 +334,14 @@ export class MeetingComments {
         };
     }
 
+    private requireCommentAuthor(comment: MeetingComment, actor: DecisionActor): void {
+        if (actor.kind === "window" || actor.kind === "cli" || sameCommentAuthor(comment.actor, actor)) {
+            return;
+        }
+
+        throw new CommentError("wrong-actor", "Only the author or the person can retract a comment.");
+    }
+
     private now(): string {
         return (this.options.now?.() ?? new Date()).toISOString();
     }
@@ -336,6 +350,22 @@ export class MeetingComments {
     private append(line: CommentLine): void {
         this.transaction(() => appendLines(this.path, [SafeJSON.stringify(line, { jsonl: true })], { mode: 0o600 }));
     }
+}
+
+function sameCommentAuthor(left: DecisionActor, right: DecisionActor): boolean {
+    if (left.kind !== right.kind) {
+        return [left.kind, right.kind].every((kind) => kind === "window" || kind === "cli");
+    }
+
+    if (left.kind === "agent" && right.kind === "agent") {
+        return left.harness === right.harness && left.session === right.session;
+    }
+
+    if (left.kind === "rule" && right.kind === "rule") {
+        return left.rule === right.rule;
+    }
+
+    return true;
 }
 
 /** The lines `--with-comments` prints for one send: one per comment, each with `type: "comment"`. */
