@@ -257,8 +257,9 @@ Codex the stdio entry back.
 - The server runs in a child process of the gateway (`src/genesis-tools-mcp/hosted-child.ts`). The child exits once
   its source changes, and the next call starts the new code; the gateway needs no restart.
 - It is stateless: every request gets a fresh server from the same registry. The caller is the harness process that
-  owns the connection. A request whose caller the gateway cannot name is recorded as `unknown`, never as the gateway's
-  own session.
+  owns the connection. When the one owner is a command that an agent started (`tools scripts call`, a persisted
+  script), that command's own environment names the session, as it does for a local run of a tool. A request whose
+  caller the gateway cannot name is recorded as `unknown`, never as the gateway's own session.
 - The stored `GENESIS_TOOLS_MCP_CAPABILITIES` value becomes the `X-Genesis-Mcp-Capabilities` header. A request without
   the header gets the default set; the gateway's own environment never narrows it.
 - A session that started before `gateway host` keeps its stdio server until it restarts.
