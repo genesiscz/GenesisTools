@@ -256,7 +256,8 @@ host and presets live in `tools browser-router`.
     milliseconds, `tools: { path }`, `app: { installed, path }`,
     `router: { httpsHandler, defaultHandler, configured, linkHost }`, `markdown: { path }` and `cmux: { path }`; each entry of `links` is
     `{ opens, problem, reason, action }`, with `problem` one of `not-darwin`, `app-missing`, `not-https-handler`,
-    `no-link-host`, `no-route`, `target-missing`. `probe --url` prints that one link state.
+    `no-link-host`, `no-route`, `target-missing`, `path-missing`. `probe --url` prints that one link state; for a
+    note or Finder link it also checks that the file or folder exists (`path-missing` when it does not).
 - Exit codes: 0 on success. A `logs` command exits 1 with `ERROR: <message>` on stderr for an unknown `--kind`, `--by` or `--level`, a
   `--since` or `--until` it cannot read, an inverted window, or an id it cannot find. The number flags (`--limit`,
   `--top`, `--min-ms`, `--pid`, `--exit`) are not checked: a value that is not a number drops the limit or matches

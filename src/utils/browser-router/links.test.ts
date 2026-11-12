@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, s
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { type ProbeFacts, probeGenesisTools } from "@genesiscz/utils/genesis-tools/probe";
+import { linkedFile, linkState, type ProbeFacts, probeGenesisTools } from "@genesiscz/utils/genesis-tools/probe";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type LinkGate, linkGate, linkGatePath } from "./link-gate";
 import { linkFor, mintLink, planMintedLink, presetEnabled } from "./links";
@@ -521,6 +521,26 @@ describe("probeGenesisTools", () => {
             probeGenesisTools({ facts: facts({ config: { ...config, linkHost: undefined } }) }).links.md.problem
         ).toBe("no-link-host");
         expect(probeGenesisTools({ facts: facts({ platform: "linux" }) }).links.md.problem).toBe("not-darwin");
+    });
+
+    test("a single link fails when the file or folder it names is not there", () => {
+        const real = "/notes/2026-11-12-Workshop-pro-Nabídky-2-0-part-2";
+        const exists = (path: string) => path === real;
+        // One hand-typed letter swap in the percent codes: "Nabd%C3%ADky" for "Nab%C3%ADdky".
+        const typo = `https://${linkHost}/finder/reveal?target=/notes/2026-11-12-Workshop-pro-Nabd%C3%ADky-2-0-part-2`;
+        const good = `https://${linkHost}/finder/reveal?target=${encodeURI(real)}`;
+
+        expect(linkState(typo, facts(), { checkFile: true, exists })).toMatchObject({
+            opens: false,
+            problem: "path-missing",
+        });
+        expect(linkState(good, facts(), { checkFile: true, exists }).opens).toBe(true);
+        expect(
+            linkState(`https://${linkHost}/md/open?path=/notes/gone.md`, facts(), { checkFile: true, exists }).problem
+        ).toBe("path-missing");
+        // Without checkFile the route alone decides, as the whole-Mac probe needs for its sample links.
+        expect(linkState(typo, facts(), { exists }).opens).toBe(true);
+        expect(linkedFile(`https://${linkHost}/hub?pr=acme/app%231`)).toBeNull();
     });
 
     test("the finder preset reveals the target it is given", () => {
