@@ -55,6 +55,8 @@ struct MarkdownPageNotice: Equatable {
     var more: String?
     var kind: Kind
     var action: Action?
+    /// Identifies this removal in the page; an older Undo must never target a newer removal.
+    var undoToken: Int?
 
     var tone: NoticePill.Tone {
         switch kind {
@@ -111,23 +113,15 @@ struct MarkdownPageNotice: Equatable {
     }
 }
 
-/// The pill, on a backing that reads over the page's text.
+/// The page's independent notices, on a backing that reads over the text.
 struct MarkdownPageNoticeView: View {
-    let notice: MarkdownPageNotice
-    /// The widest the pill may grow; it hugs shorter text and sits centred.
+    let model: NoticeStackModel
     let width: CGFloat
-    let perform: @MainActor () -> Void
-    let dismiss: () -> Void
-    /// Where the pill is, so a click beside it reaches the page.
     let onFrame: (CGRect) -> Void
     private static let space = "markdown-page-notice"
 
     var body: some View {
-        NoticePill(text: notice.text, detail: notice.detail, more: notice.more, tone: notice.tone,
-                   fixes: notice.action.map { [NoticeFix.button($0.label, symbol: $0.symbol, perform: perform)] } ?? [],
-                   dismiss: dismiss)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
+        NoticeStackView(model, maxWidth: width)
             .background(GeometryReader { geo in
                 Color.clear
                     .onAppear { onFrame(geo.frame(in: .named(Self.space))) }
@@ -136,12 +130,11 @@ struct MarkdownPageNoticeView: View {
             .frame(width: width)
             .fixedSize(horizontal: false, vertical: true)
             .coordinateSpace(name: Self.space)
-            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("markdown-page-notice")
     }
 }
 
-/// The notice's host. A click outside the pill falls through to the page, and a size change (Details opened)
+/// The notice's host. A click outside the stack falls through to the page, and a size change (Details opened)
 /// places it again.
 final class MarkdownPageNoticeHost: NSHostingView<MarkdownPageNoticeView> {
     var pill: CGRect = .zero
@@ -161,24 +154,25 @@ final class MarkdownPageNoticeHost: NSHostingView<MarkdownPageNoticeView> {
 }
 
 extension MarkdownWebView.Coordinator {
-    /// Shows `notice` over the page, in place of the one before.
+    /// Adds a result without replacing another result's action.
     @MainActor
     func show(_ notice: MarkdownPageNotice) {
         guard let web else { return }
-        noticeToken += 1
-        let token = noticeToken
-        currentNotice = notice
-        let width = Self.noticeWidth(in: web)
-        let view = MarkdownPageNoticeView(
-            notice: notice, width: width,
-            perform: { [weak self] in self?.perform(notice.action) },
-            dismiss: { [weak self] in self?.hideNotice() },
-            onFrame: { [weak self] frame in self?.noticeHost?.pill = frame })
-        if let host = noticeHost, host.superview === web {
-            host.rootView = view
-        } else {
+        pageNoticeValues = pageNoticeValues.filter { pageNotices.contains($0.key) }
+        let actions: [StackedNotice.Action] = notice.action.map { action in
+            [.init(action.label, symbol: action.symbol, afterPress: action == .undoProperties ? .wait("Undoing…") : .keep) { [weak self] id in
+                self?.perform(notice, id: id)
+            }]
+        } ?? []
+        let id = pageNotices.push(StackedNotice(text: notice.text, detail: notice.detail, more: notice.more,
+                                              tone: notice.tone, actions: actions,
+                                              lasting: notice.lasts.map { .seconds($0) } ?? .untilDismissed))
+        pageNoticeValues[id] = notice
+        if noticeHost?.superview !== web {
             noticeHost?.removeFromSuperview()
-            let host = MarkdownPageNoticeHost(rootView: view)
+            let host = MarkdownPageNoticeHost(rootView: MarkdownPageNoticeView(
+                model: pageNotices, width: Self.noticeWidth(in: web),
+                onFrame: { [weak self] frame in self?.noticeHost?.pill = frame }))
             host.onResize = { [weak self] in
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.layoutNotice() } }
             }
@@ -190,22 +184,22 @@ extension MarkdownWebView.Coordinator {
             noticeHost = host
         }
         layoutNotice()
-        GenAnnounce.post(notice.text, priority: notice.kind == .failure ? .high : .medium)
-        if let lasts = notice.lasts {
-            DispatchQueue.main.asyncAfter(deadline: .now() + lasts) { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self, self.noticeToken == token else { return }
-                    self.hideNotice()
-                }
-            }
+    }
+
+    /// Clears failures after a successful render, preserving unrelated results.
+    @MainActor
+    func hideFailures() {
+        for (id, notice) in pageNoticeValues where notice.kind == .failure {
+            pageNotices.dismiss(id)
+            pageNoticeValues[id] = nil
         }
     }
 
-    /// Takes the notice away (its close button, its time, a page that drew after a failure, the page leaving).
+    /// Clears results when leaving the page.
     @MainActor
     func hideNotice() {
-        noticeToken += 1
-        currentNotice = nil
+        for notice in pageNotices.notices { pageNotices.dismiss(notice.id) }
+        pageNoticeValues.removeAll()
         noticeHost?.removeFromSuperview()
         noticeHost = nil
         if let noticeFrameWatch {
@@ -221,12 +215,11 @@ extension MarkdownWebView.Coordinator {
     /// Bottom centre of the page, 16 pt up.
     @MainActor
     func layoutNotice() {
-        guard let web, let host = noticeHost, host.superview === web, let notice = currentNotice else { return }
+        guard let web, let host = noticeHost, host.superview === web else { return }
         let width = Self.noticeWidth(in: web)
         if host.rootView.width != width {
             let old = host.rootView
-            host.rootView = MarkdownPageNoticeView(notice: notice, width: width, perform: old.perform,
-                                                   dismiss: old.dismiss, onFrame: old.onFrame)
+            host.rootView = MarkdownPageNoticeView(model: pageNotices, width: width, onFrame: old.onFrame)
         }
         let height = host.fittingSize.height
         let x = (web.bounds.width - width) / 2
@@ -236,15 +229,29 @@ extension MarkdownWebView.Coordinator {
     }
 
     @MainActor
-    private func perform(_ action: MarkdownPageNotice.Action?) {
-        switch action {
+    private func perform(_ notice: MarkdownPageNotice, id: StackedNotice.ID) {
+        switch notice.action {
         case .retry?:
             retryPage()
         case .undoProperties?:
-            hideNotice()
-            eval("window.gnPropsUndo&&window.gnPropsUndo()")
+            guard let token = notice.undoToken else {
+                pageNotices.push(StackedNotice(text: "This removal no longer has an Undo action.", tone: .warning), replacing: id)
+                return
+            }
+            web?.evaluateJavaScript("window.gnPropsUndo&&window.gnPropsUndo(\(token))") { [weak self] result, error in
+                MainActor.assumeIsolated {
+                    guard let self, self.pageNotices.contains(id) else { return }
+                    if error == nil, result as? Bool == true {
+                        self.pageNotices.push(StackedNotice(text: "Removal undone.", tone: .success), replacing: id)
+                    } else {
+                        self.pageNotices.release(id)
+                        self.pageNotices.push(StackedNotice(text: "The properties have changed since this removal.",
+                            detail: "Undo later removals first, or restore the property by hand. Current values were kept.", tone: .warning))
+                    }
+                }
+            }
         case .open(let url)?:
-            hideNotice()
+            pageNotices.dismiss(id)
             if let allowed = MarkdownWebView.externalURL(url.absoluteString) { NSWorkspace.shared.open(allowed) }
         case nil:
             break

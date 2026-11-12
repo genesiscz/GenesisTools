@@ -44,7 +44,7 @@ final class MarkdownWindowUxTests: XCTestCase {
         XCTAssertEqual(MarkdownNotice("x", tone: .warning).tone.pill, .warning)
     }
 
-    func testANewNoteReplacesTheOldAndAStaleDismissLeavesTheNewOne() {
+    func testDismissingAnEarlierNoticeLeavesTheNewOne() {
         model.post(MarkdownNotice("first", tone: .success))
         let first = try? XCTUnwrap(model.notice?.id)
         model.post(MarkdownNotice("second", tone: .error))
@@ -53,6 +53,19 @@ final class MarkdownWindowUxTests: XCTestCase {
         XCTAssertEqual(model.exportError, "second")
         model.exportError = nil
         XCTAssertNil(model.notice)
+    }
+
+    func testNewResultsKeepEarlierActionsAndDismissOnlyTheirOwnNotice() throws {
+        var firstRuns = 0
+        model.post(MarkdownNotice("First change", tone: .success, actions: [.button("Undo first") { firstRuns += 1 }]))
+        let first = try XCTUnwrap(model.notices.notices.first)
+        model.post(MarkdownNotice("Second change", tone: .success))
+        XCTAssertEqual(model.notices.notices.map(\.text), ["First change", "Second change"])
+        let undo = try XCTUnwrap(first.actions.first)
+        model.notices.press(undo, of: first.id)
+        XCTAssertEqual(firstRuns, 1)
+        XCTAssertEqual(model.notices.notices.map(\.text), ["Second change"])
+        XCTAssertEqual(model.notice?.text, "Second change")
     }
 
     func testReplaceAllPostsASuccessNotAnError() throws {

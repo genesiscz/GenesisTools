@@ -140,6 +140,7 @@ public struct StackedNotice: Identifiable {
         public let afterPress: AfterPress
         /// Gets the notice's id, so the result can replace it in place.
         public let perform: @MainActor (StackedNotice.ID) -> Void
+        fileprivate var sourceFix: NoticeFix?
 
         public init(_ label: String, symbol: String? = nil, confirm: NoticeFix.Confirmation? = nil,
                     afterPress: AfterPress = .dismiss, perform: @escaping @MainActor (StackedNotice.ID) -> Void) {
@@ -148,6 +149,21 @@ public struct StackedNotice: Identifiable {
             self.confirm = confirm
             self.afterPress = afterPress
             self.perform = perform
+        }
+
+        /// Adapts an existing notice action without losing its confirmation, command layout or failure preparation.
+        @MainActor
+        public init(fix: NoticeFix, afterPress: AfterPress = .keep) {
+            switch fix.kind {
+            case .action(let confirm, let perform):
+                self.init(fix.label, symbol: fix.symbol, confirm: confirm, afterPress: afterPress) { _ in perform() }
+            case .command(let command):
+                self.init(fix.label, symbol: fix.symbol, afterPress: .keep) { _ in Clipboard.copy(command, what: "command") }
+            }
+            var prepared = fix
+            prepared.preparation?()
+            prepared.preparation = nil
+            sourceFix = prepared
         }
 
         /// Takes back what the notice reports. The notice waits in its place until the result replaces it.
@@ -394,6 +410,7 @@ public struct NoticeStackView: View {
     var maxWidth: CGFloat
     var maxHeight: CGFloat
     var edge: VerticalEdge
+    var heightChanged: ((CGFloat) -> Void)?
     @GenReduceMotion private var reduceMotion
     @State private var contentHeight: CGFloat = 0
     /// "+N more" was pressed: every notice shows until none is folded again.
@@ -430,7 +447,10 @@ public struct NoticeStackView: View {
                     if edge == .bottom { moreChip(split.folded.count) }
                 }
                 .padding(8)
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { contentHeight = $0 }
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) {
+                    contentHeight = $0
+                    heightChanged?(min($0, maxHeight))
+                }
             }
 
             .frame(maxWidth: maxWidth)
@@ -479,12 +499,20 @@ public struct NoticeStackView: View {
         }
     }
 
+    private func fix(_ action: StackedNotice.Action, for id: StackedNotice.ID) -> NoticeFix {
+        if let source = action.sourceFix, case .command = source.kind { return source }
+        var fix = NoticeFix.button(action.label, symbol: action.symbol, confirm: action.confirm) { model.press(action, of: id) }
+        fix.preparationID = action.sourceFix?.preparationID
+        fix.preparation = action.sourceFix?.preparation
+        return fix
+    }
+
     private func pill(_ notice: StackedNotice) -> some View {
         let waiting = model.waiting[notice.id]
         return NoticePill(
             text: notice.text, detail: waiting ?? notice.detail, more: notice.more, tone: notice.tone,
             fixes: waiting != nil ? [] : notice.actions.map { action in
-                NoticeFix.button(action.label, symbol: action.symbol, confirm: action.confirm) { model.press(action, of: notice.id) }
+                fix(action, for: notice.id)
             },
             dismiss: { model.dismiss(notice.id) })
             .environment(\.noticePillPlacement, .stacked)
@@ -533,7 +561,7 @@ private struct NoticeStackModifier: ViewModifier {
             content.preference(key: NoticeStackHostKey.self, value: [.init(model: model)])
         } else {
             content.overlay(alignment: alignment) {
-                NoticeStackView(model, pinnedTo: alignment.noticeStackEdge).padding(8)
+                NoticeStackSurface(model: model, edge: alignment.noticeStackEdge).padding(8)
             }
         }
     }
@@ -558,7 +586,7 @@ public extension View {
             .overlayPreferenceValue(NoticeStackHostKey.self, alignment: alignment) { entries in
                 VStack(spacing: 0) {
                     ForEach(entries.indices, id: \.self) { index in
-                        NoticeStackView(entries[index].model, pinnedTo: alignment.noticeStackEdge)
+                        NoticeStackSurface(model: entries[index].model, edge: alignment.noticeStackEdge)
                     }
                 }
                 .padding(8)

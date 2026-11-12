@@ -13,6 +13,70 @@ final class NoticeStackTests: XCTestCase {
 
     private func texts(_ model: NoticeStackModel) -> [String] { model.notices.map(\.text) }
 
+    func testAdaptingAFixRetainsItsConfirmationAndFailurePreparation() async throws {
+        let model = stack(ManualNoticeClock())
+        var prepared = 0
+        var performed = 0
+        var fix = NoticeFix.button("Retry", symbol: "arrow.clockwise",
+                                   confirm: .init("Retry this operation?", confirmLabel: "Retry")) { performed += 1 }
+        fix.preparationID = "retained-failure"
+        fix.preparation = { prepared += 1 }
+        let action = StackedNotice.Action(fix: fix)
+        XCTAssertEqual(prepared, 1, "failure preparation starts when posted, including folded or hidden notices")
+        XCTAssertEqual(action.confirm?.question, "Retry this operation?")
+        let id = model.push(StackedNotice(text: "Failed", tone: .error, actions: [action]))
+        let host = NSHostingView(rootView: NoticeStackView(model, maxWidth: 400))
+        _ = try await settledHeight(host)
+        XCTAssertEqual(prepared, 1, "the adapted failure is prepared as soon as it appears")
+        model.press(action, of: id)
+        XCTAssertEqual(performed, 1)
+        XCTAssertTrue(model.contains(id), "a Details or Retry adapter keeps its default lifetime")
+    }
+
+    func testFloatingNoticesStayAboveNativeContentAttachedLater() async throws {
+        let model = stack(ManualNoticeClock())
+        model.push(StackedNotice(text: "A retained result", lasting: .untilDismissed))
+        let second = stack(ManualNoticeClock())
+        second.push(StackedNotice(text: "A different pane's result", lasting: .untilDismissed))
+        let root = GenRootHostingView(rootView: HStack {
+            Color.clear.noticeStack(model)
+            Color.clear.noticeStack(second)
+        }.frame(width: 600, height: 400).noticeStackViewport())
+        root.sizingOptions = []
+        let content = GenOverlayContentView(root: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = content
+        window.orderInForSnapshot()
+        defer { window.close() }
+        for _ in 0..<12 {
+            content.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        func slots(_ view: NSView) -> [GenOverlaySlot] {
+            (view as? GenOverlaySlot).map { [$0] } ?? view.subviews.flatMap(slots)
+        }
+        let floating = slots(root).filter { $0.elevation == .floating }
+        XCTAssertEqual(floating.count, 2)
+        let first = try XCTUnwrap(floating.first)
+        let last = try XCTUnwrap(floating.last)
+        XCTAssertFalse(first.overlay.frame.intersects(last.overlay.frame), "different panes share the stack area without overlapping")
+        let native = GenOverlaySlot(overlay: NSView(frame: root.bounds))
+        native.frame = root.bounds
+        content.addSubview(native)
+        content.layoutSubtreeIfNeeded()
+        let nativeIndex = try XCTUnwrap(content.subviews.firstIndex { $0 === native.overlay })
+        for notice in floating {
+            XCTAssertTrue(notice.overlay.superview === content)
+            XCTAssertGreaterThan(notice.overlay.frame.height, 30)
+            XCTAssertLessThanOrEqual(notice.overlay.frame.width, 520)
+            XCTAssertGreaterThan(try XCTUnwrap(content.subviews.firstIndex { $0 === notice.overlay }), nativeIndex,
+                                 "a native table attached later must not cover a notice")
+            XCTAssertTrue(notice.overlay.frame.intersects(native.overlay.frame), "the layering assertion covers overlapping content")
+        }
+    }
+
     func testThreePushesGiveThreeNoticesThatLeaveEachAfterItsOwnTime() {
         let clock = ManualNoticeClock()
         let model = stack(clock)

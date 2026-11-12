@@ -1448,8 +1448,9 @@
     }
     // Undo is valid only while the rows still match the state just after removal.
     // Normalize like the host's render, so a round trip does not invalidate Undo.
-    var gnPropsBefore = null,
-        gnPropsAfter = null;
+    var gnPropsUndos = new Map(),
+        gnPropsUndoSequence = 0,
+        gnPropsPendingUndo = null;
     function gnPropsItems() {
         return gnProps.map((p) => ({
             key: p.key,
@@ -1460,24 +1461,33 @@
         }));
     }
     function gnPropsKeep() {
-        gnPropsBefore = JSON.parse(JSON.stringify(gnPropsItems()));
-        gnPropsAfter = null;
-    }
-    window.gnPropsUndo = () => {
-        var before = gnPropsBefore,
-            after = gnPropsAfter;
-        gnPropsBefore = null;
-        gnPropsAfter = null;
-        if (!before || JSON.stringify(gnPropsItems()) !== after) {
-            return;
+        var token = ++gnPropsUndoSequence;
+        gnPropsUndos.set(token, { before: JSON.parse(JSON.stringify(gnPropsItems())), after: null });
+        // Bound snapshots when a page stays open for a long editing session.
+        if (gnPropsUndos.size > 100) {
+            gnPropsUndos.delete(gnPropsUndos.keys().next().value);
         }
-        gnProps = before;
+        gnPropsPendingUndo = token;
+        return token;
+    }
+    window.gnPropsUndo = (token) => {
+        if (token == null) {
+            token = Array.from(gnPropsUndos.keys()).pop();
+        }
+        var entry = gnPropsUndos.get(token);
+        if (!entry || JSON.stringify(gnPropsItems()) !== entry.after) {
+            return false;
+        }
+        gnPropsUndos.delete(token);
+        gnProps = entry.before;
         gnPropsPost();
+        return true;
     };
     function gnPropsPost() {
         var items = gnPropsItems();
-        if (gnPropsBefore && gnPropsAfter === null) {
-            gnPropsAfter = JSON.stringify(items);
+        if (gnPropsPendingUndo !== null) {
+            gnPropsUndos.get(gnPropsPendingUndo).after = JSON.stringify(items);
+            gnPropsPendingUndo = null;
         }
         gnPost({ type: "properties", items: items });
     }
@@ -1628,10 +1638,10 @@
             rm.textContent = "×";
             rm.setAttribute("aria-label", "Remove property " + (p.key || "(unnamed)"));
             rm.addEventListener("click", () => {
-                gnPropsKeep();
+                var undoToken = gnPropsKeep();
                 gnProps.splice(gnProps.indexOf(p), 1);
                 gnPropsPost();
-                gnPost({ type: "propsRemoved", key: p.key || "" });
+                gnPost({ type: "propsRemoved", key: p.key || "", undoToken: undoToken });
             });
             row.appendChild(rm);
         }
@@ -1723,11 +1733,11 @@
                 var x = c.querySelector(".gn-chip-x");
                 x.setAttribute("aria-label", "Remove " + (p.kind === "tags" ? "tag " : "") + it);
                 x.addEventListener("click", () => {
-                    gnPropsKeep();
+                    var undoToken = gnPropsKeep();
                     p.items.splice(j, 1);
                     gnPropsFocus = { key: p.key, what: ".gn-chip-in" };
                     commit();
-                    gnPost({ type: "propsRemoved", key: p.key || "", item: String(it) });
+                    gnPost({ type: "propsRemoved", key: p.key || "", item: String(it), undoToken: undoToken });
                 });
                 val.appendChild(c);
             });
@@ -1786,11 +1796,11 @@
                         e.preventDefault();
                         addItem(typed(), true);
                     } else if (e.key === "Backspace" && !inp.value && p.items && p.items.length) {
-                        gnPropsKeep();
+                        var undoToken = gnPropsKeep();
                         var gone = p.items.pop();
                         gnPropsFocus = { key: p.key, what: ".gn-chip-in" };
                         commit();
-                        gnPost({ type: "propsRemoved", key: p.key || "", item: String(gone) });
+                        gnPost({ type: "propsRemoved", key: p.key || "", item: String(gone), undoToken: undoToken });
                     }
                 });
                 inp.addEventListener("blur", () => {
@@ -2210,6 +2220,10 @@
     // `tag` is Swift's render tag; `same` is false when this render shows another document than the last one (a page
     // taken over by another tab), which has no place of its own to keep yet.
     function gnRenderNow(markdown, props, editable, vocabulary, media, lines, tag, same) {
+        if (same === false) {
+            gnPropsUndos.clear();
+            gnPropsPendingUndo = null;
+        }
         window.gnLastRender = [markdown, props, editable, vocabulary, media, lines];
         if (vocabulary) {
             gnVocab = vocabulary;

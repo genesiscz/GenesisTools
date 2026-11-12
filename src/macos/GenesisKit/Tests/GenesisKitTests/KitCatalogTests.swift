@@ -18,6 +18,7 @@ final class KitCatalogTests: XCTestCase {
         "LatestScrollAnchor.swift": "scroll behaviour",
         "MouseClick.swift": "reads the click count of an event",
         "NoticeStackInteraction.swift": "tracks input for NoticeStack without drawing a separate control",
+        "NoticeStackLayer.swift": "hosts the catalogued NoticeStack above native content",
         "OverlayScrollViewport.swift": "a container",
         "ScrollViewPositioning.swift": "scroll behaviour",
         "WindowMoveGesture.swift": "a gesture",
