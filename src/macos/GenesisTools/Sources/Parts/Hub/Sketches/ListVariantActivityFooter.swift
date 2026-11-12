@@ -12,7 +12,7 @@ struct ListVariantActivityFooter: View {
                     .buttonStyle(.genHoverPlain())
             }
             if let failure = timeline.olderError {
-                FailureInline(failure, form: .compact) { timeline.loadOlder() }
+                ListVariantLoadFailure(failure) { timeline.loadOlder() }
             }
             if !timeline.warnings.isEmpty {
                 Image(systemName: "exclamationmark.triangle")
@@ -24,5 +24,32 @@ struct ListVariantActivityFooter: View {
         .font(.system(size: 12))
         .padding(10)
         .hubSurface(.bar)
+    }
+}
+
+/// The existing stack uses error strings; unified carries structured reports. Both retain retry here.
+struct ListVariantLoadFailure: View {
+    let message: String
+    let retry: () -> Void
+
+    init(_ message: String, retry: @escaping () -> Void) {
+        self.message = message
+        self.retry = retry
+    }
+
+    init(_ report: FailureReport, retry: @escaping () -> Void) {
+        self.message = report.headline
+        self.retry = retry
+    }
+
+    var body: some View {
+        HStack {
+            Text(message).foregroundStyle(.secondary).textSelection(.enabled)
+            Button("Try again", action: retry)
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip("Repeat the failed activity load")
+        }
+        .font(.system(size: 12))
+        .padding(8)
     }
 }
