@@ -1866,6 +1866,28 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(Object.keys(answer as object).sort()).toEqual(["added", "warnings"]);
     });
 
+    test("meetings: items.suggest names the items it retired beside the fresh ones", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Suggest", start: "2026-11-02T17:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const runner = await import("@app/meetings/lib/suggest-run");
+        const run = spyOn(runner, "runSuggest").mockResolvedValue({ fresh: [], retired: ["i7"], warnings: [] });
+
+        try {
+            const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+                meetings: { open(ref: string): { items: { suggest(input?: unknown): Promise<unknown> } } };
+            };
+            expect(await meetings.open(record.id).items.suggest()).toEqual({
+                fresh: [],
+                retired: ["i7"],
+                warnings: [],
+            });
+        } finally {
+            run.mockRestore();
+        }
+    });
+
     // NR20: the handle had no id, a confirm's token had no door back, and an unknown config path printed nothing.
     // NR33: meetings.list() gave the start only, so an agent that wanted a short meeting opened each one.
     test("meetings: list gives each meeting's length in seconds, null while it has no end", async () => {
@@ -1939,9 +1961,15 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { command: "new", change: "test" }
         );
         const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: { open(ref: string): { speakers: { rename(label: string, name: string): Promise<unknown> } } };
+            meetings: {
+                open(ref: string): {
+                    speakers: { rename(label: string, name: string): Promise<{ token: string | null }> };
+                    items: { reopen(input: unknown): Promise<{ reopened: string[]; skipped: unknown[] }> };
+                };
+            };
         };
-        await meetings.open(record.id).speakers.rename("Speaker 2", "Alex Example");
+        const meeting = meetings.open(record.id);
+        const renamed = await meeting.speakers.rename("Speaker 2", "Alex Example");
 
         const journal = new DecisionJournal({ store });
         const [entry] = journal.read(record.id);
@@ -1949,9 +1977,12 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             action: { kind: "rename", label: "Speaker 2", name: "Alex Example" },
             labels: [{ label: "Speaker 2", after: "Alex Example" }],
         });
+        expect(renamed.token).toBe(entry!.token);
         expect(store.read(record.id)?.speakers.labels).toEqual({ "Speaker 2": "Alex Example" });
 
-        await journal.revert({ meeting: record.id, token: entry!.token, actor: { kind: "cli" } });
+        // eve PR #754 r2: the toolset gave no token back, and items.reopen refused a call with no ids.
+        await expect(meeting.items.reopen({})).rejects.toThrow("items.reopen needs ids, or the token");
+        expect(await meeting.items.reopen({ token: renamed.token })).toEqual({ reopened: [], skipped: [] });
         expect(store.read(record.id)?.speakers.labels).toEqual({});
     });
 

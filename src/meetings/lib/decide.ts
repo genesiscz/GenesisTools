@@ -125,6 +125,6 @@ export async function reopenEntry(options: ReopenOptions): Promise<Decided> {
     const actor = options.actor ?? callerActor();
     const reason = options.reason ? { reason: options.reason } : {};
     return token
-        ? journal.revert({ meeting: record.id, token, items: ids, actor, ...reason })
+        ? journal.revert({ meeting: record.id, token, ...(ids.length > 0 ? { items: ids } : {}), actor, ...reason })
         : journal.apply({ meeting: record.id, action: { kind: "reopen", items: ids }, actor, ...reason });
 }
