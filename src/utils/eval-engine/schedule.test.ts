@@ -220,3 +220,72 @@ describe("runPlan", () => {
         assert.ok(view.missing.every((m) => m.kind === "cost-limit"));
     });
 });
+
+describe("hardening regressions", () => {
+    it("never replays behavior when final publication fails", async () => {
+        const { system, input, options, store, base } = await setup(() => ({ reply: "ok" }));
+        const only = { ...input, plan: { ...input.plan, conversations: input.plan.conversations.slice(0, 1) } };
+        const publish = store.writeFinal;
+        store.writeFinal = async (record) => {
+            await publish(record);
+            throw new Error("EIO after publication");
+        };
+        await assert.rejects(runPlan(only, options()), /EIO/);
+        assert.equal(system.log.opened.length, 1);
+        assert.equal(system.log.sent.length, 1);
+        const saved = await loadRun(store.dir, base);
+        assert.equal(saved.records.length, 1);
+        assert.equal(saved.records[0].attempt, 1);
+    });
+
+    it("cancels backoff without advancing the controlled clock", async () => {
+        const { system, input, options } = await setup(() => ({ error: new EvalSystemError("transient", "502") }));
+        input.plan = { ...input.plan, conversations: input.plan.conversations.slice(0, 1) };
+        const clock = fakeClock();
+        const controller = new AbortController();
+        const running = runPlan(
+            input,
+            options({
+                clock,
+                signal: controller.signal,
+                concurrency: 1,
+                onProgress: (e) => {
+                    if (e.type === "retry") {
+                        setImmediate(() => controller.abort());
+                    }
+                },
+            })
+        );
+        const result = await Promise.race([
+            running,
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error("abort stalled")), 100)),
+        ]);
+        assert.equal(result.stopped?.reason, "aborted");
+        assert.equal(system.log.opened.length, 1);
+    });
+});
+
+it("cancels limiter queues and rate-limit pauses without starting tasks", async () => {
+    const controller = new AbortController();
+    const limiter = createLimiter({ max: 1, clock: fakeClock(), signal: controller.signal });
+    limiter.penalize("p", 600000);
+    let calls = 0;
+    const running = limiter.run("p", async () => {
+        calls++;
+    });
+    controller.abort();
+    await assert.rejects(running, /aborted/);
+    assert.equal(calls, 0);
+});
+
+it("fails a pre-publication disk error without another open or send", async () => {
+    const { system, input, options, store, base } = await setup(() => ({ reply: "ok" }));
+    input.plan = { ...input.plan, conversations: input.plan.conversations.slice(0, 1) };
+    store.writeFinal = async () => {
+        throw new Error("ENOSPC before publication");
+    };
+    await assert.rejects(runPlan(input, options()), /ENOSPC/);
+    assert.equal(system.log.opened.length, 1);
+    assert.equal(system.log.sent.length, 1);
+    assert.equal((await loadRun(store.dir, base)).records.length, 0);
+});

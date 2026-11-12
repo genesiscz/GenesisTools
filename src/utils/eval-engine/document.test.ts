@@ -462,3 +462,15 @@ describe("matrices", () => {
         );
     });
 });
+
+it("appends always without running setup transforms twice", () => {
+    const vocabulary = { ...System, setup: z.object({ n: z.number().transform((n) => n + 1) }) };
+    const parsed = parseScenarios({ id: "transformed", setup: { n: 0 }, steps: [{ user: "hi" }] }, vocabulary, "stdin");
+    assert.ok(parsed.ok);
+    const merged = withAlways(
+        parsed.scenarios[0],
+        [{ id: "ok", severity: "gate", check: { text: { contains: "hi" } } }],
+        vocabulary
+    );
+    assert.deepEqual(merged.doc.setup, { n: 1 });
+});

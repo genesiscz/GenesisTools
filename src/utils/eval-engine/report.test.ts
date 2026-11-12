@@ -400,3 +400,9 @@ describe("compareRuns", () => {
         assert.deepEqual(compareRuns(a, b).prompt[0].files, ["/runs/a/prompts/p1.txt", "/runs/b/prompts/p2.txt"]);
     });
 });
+
+it("does not pass comparison when a previously passed cell loses its verdict", () => {
+    const a = view([book], [{ key: key("book"), outcome: "passed" }]);
+    const b = view([book], [], { run: "b" });
+    assert.equal(compareRuns(a, b).exitCode, ExitCode.NoVerdict);
+});

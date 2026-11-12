@@ -543,5 +543,9 @@ export function createEvalCommand<TSetup, TSignals, TTool extends string, THandl
             })
         );
 
+    for (const child of [command, ...command.commands]) {
+        child.configureOutput({ writeOut: io.stdout, writeErr: io.stderr });
+        child.exitOverride((error) => io.exit(error.exitCode));
+    }
     return command;
 }

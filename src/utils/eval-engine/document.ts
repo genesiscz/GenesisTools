@@ -436,10 +436,10 @@ function lookupTemplate(path: string, bindings: Bindings): Json | undefined {
 
 /** Fills every `{{name.path}}` in a text. A value that is not a string is written as JSON. */
 export function fillText(text: string, bindings: Bindings): string {
-    return text.replace(TemplatePattern, (whole, path: string) => {
+    return text.replace(TemplatePattern, (_whole, path: string) => {
         const value = lookupTemplate(path, bindings);
         if (value === undefined) {
-            return whole;
+            throw new EvalConfigError("invalid-scenario", `binding template ${path} has no value`);
         }
         return typeof value === "string" ? value : JSON.stringify(value);
     });
@@ -1290,7 +1290,7 @@ export function withAlways(scenario: Scenario, always: readonly Expectation[], v
     if (!always.length) {
         return scenario;
     }
-    const result = parseScenarios(scenario.doc, vocabulary, scenario.origin, { always });
+    const result = parseScenarios(scenario.doc, { ...vocabulary, setup: z.unknown() }, scenario.origin, { always });
     if (!result.ok) {
         throw new EvalConfigError(
             "invalid-scenario",

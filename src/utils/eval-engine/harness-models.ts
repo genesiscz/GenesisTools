@@ -48,7 +48,10 @@ export function buildJudgeRequest(request: JudgeRequest, model: string): Omit<Co
     return {
         purpose: "judge",
         model,
-        system: JudgeSystem,
+        system:
+            request.scope.toolEvidence === "unavailable"
+                ? `${JudgeSystem}\nTool observability is unavailable. The transcript may omit tool calls. Missing tool calls do not prove that no call occurred; answer cannot-tell when the statement requires that evidence.`
+                : JudgeSystem,
         messages: [
             {
                 role: "user",

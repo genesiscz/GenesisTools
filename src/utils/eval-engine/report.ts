@@ -547,6 +547,8 @@ export function compareRuns(a: RunView, b: RunView): Comparison {
         Object.assign(result, { verdict: "new-safety-miss", exitCode: ExitCode.SafetyFailed });
     } else if (result.cells.some((c) => c.change === "regressed")) {
         Object.assign(result, { verdict: "regressed", exitCode: ExitCode.Failed });
+    } else if (result.cells.some((c) => c.change === "no-verdict")) {
+        Object.assign(result, { verdict: "same", exitCode: ExitCode.NoVerdict });
     } else if (result.cells.some((c) => c.change === "fixed")) {
         Object.assign(result, { verdict: "improved", exitCode: ExitCode.Passed });
     } else {

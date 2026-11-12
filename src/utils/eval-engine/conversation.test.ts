@@ -313,3 +313,157 @@ describe("runConversation", () => {
         assert.equal(record.closeError, "delete failed");
     });
 });
+
+describe("hardening regressions", () => {
+    it("restores bindings after a choose branch shadows them", async () => {
+        const fake = system(() => ({ signals: { offered: Offered } }));
+        const result = await play(
+            scenario({
+                id: "shadow",
+                steps: [
+                    { user: "first" },
+                    { user: "outer", bind: { pick: "offered[0]" } },
+                    { choose: [{ otherwise: true, bind: { pick: "offered[1]" }, user: "{{pick.label}}" }] },
+                    { user: "{{pick.label}}" },
+                ],
+            }),
+            fake
+        );
+        assert.equal(result.turns[2].user.text, Offered[1].label);
+        assert.equal(result.turns[3].user.text, Offered[0].label);
+    });
+
+    it("returns a gate failure for dependent steps after immediate simulator stop", async () => {
+        for (const dependent of [
+            { bind: { pick: "offered[0]" }, user: "{{pick.label}}" },
+            { choose: [{ otherwise: true, user: "next" }] },
+        ]) {
+            const fake = system(() => ({}), {
+                complete: () => ({ text: "###STOP###", usage: { inputTokens: 0, outputTokens: 0 } }),
+            });
+            const result = await play(
+                scenario({
+                    id: "stop",
+                    steps: [{ simulate: { persona: "user", goal: "done", maxTurns: 1 } }, dependent],
+                }),
+                fake,
+                { harness: { judge: null, simulator: Model } }
+            );
+            assert.equal(result.outcome, "failed");
+            assert.equal(result.turns.length, 0);
+        }
+    });
+
+    it("retains proven safety failure when a later send is aborted", async () => {
+        const controller = new AbortController();
+        const fake = system((turn) => {
+            if (turn === 2) {
+                controller.abort();
+                return { error: new Error("aborted") };
+            }
+            return { signals: { emergency: false } };
+        });
+        const result = await play(
+            scenario({
+                id: "sticky",
+                steps: [
+                    { user: "one", expect: [{ severity: "safety", check: { signal: "emergency", is: true } }] },
+                    { user: "two" },
+                ],
+            }),
+            fake,
+            { keepGoing: true, signal: controller.signal }
+        );
+        assert.equal(result.safetyMiss, true);
+        assert.equal(result.outcome, "failed");
+        assert.ok(result.brokenBy);
+    });
+});
+
+it("bounds never-settling cleanup and keeps the behavior verdict", async () => {
+    const fake = system(() => ({}));
+    const connection = fake.connect(undefined);
+    const result = await play(scenario({ id: "close", steps: [{ user: "hi" }] }), fake, {
+        connection: { ...connection, close: () => new Promise(() => {}) },
+    });
+    assert.equal(result.outcome, "passed");
+    assert.match(result.closeError ?? "", /cleanup exceeded/);
+});
+
+it("cancels never-settling cleanup promptly", async () => {
+    const controller = new AbortController();
+    const fake = system(() => ({}));
+    const connection = fake.connect(undefined);
+    const result = await play(scenario({ id: "close", steps: [{ user: "hi" }] }), fake, {
+        signal: controller.signal,
+        connection: {
+            ...connection,
+            close: () => {
+                controller.abort();
+                return new Promise(() => {});
+            },
+        },
+    });
+    assert.equal(result.outcome, "passed");
+    assert.match(result.closeError ?? "", /aborted/);
+});
+
+it("stops unresolved nested templates before another send", async () => {
+    const fake = system(() => ({ signals: { offered: [] } }));
+    const result = await play(
+        scenario({
+            id: "missing",
+            steps: [{ user: "hi" }, { bind: { picks: "offered" }, user: "{{picks[0].label}}" }],
+        }),
+        fake
+    );
+    assert.equal(result.outcome, "failed");
+    assert.equal(fake.log.sent.length, 1);
+});
+
+it("returns a deterministic failure for an invalid expanded regex", async () => {
+    const fake = system(() => ({ reply: "hello", signals: { offered: [{ label: "(", startsAt: "today" }] } }));
+    const result = await play(
+        scenario({
+            id: "regex",
+            steps: [
+                { user: "hi" },
+                {
+                    bind: { pick: "offered[0]" },
+                    user: "next",
+                    expect: [{ check: { not: { text: { matches: "{{pick.label}}" } } } }],
+                },
+            ],
+        }),
+        fake
+    );
+    assert.equal(result.outcome, "failed");
+    assert.equal(result.brokenBy, null);
+    assert.equal(fake.log.sent.length, 2);
+});
+
+it("restores branch bindings when a branch stops on a gating failure", async () => {
+    const fake = system(() => ({ signals: { offered: Offered, emergency: false } }));
+    const result = await play(
+        scenario({
+            id: "branch-stop",
+            steps: [
+                { user: "first" },
+                { user: "outer", bind: { pick: "offered[0]" } },
+                {
+                    choose: [
+                        {
+                            otherwise: true,
+                            bind: { pick: "offered[1]" },
+                            user: "branch",
+                            expect: [{ check: { signal: "emergency", is: true } }],
+                        },
+                    ],
+                },
+            ],
+        }),
+        fake
+    );
+    assert.equal(result.outcome, "failed");
+    assert.deepEqual(result.bindings.pick, Offered[0]);
+});

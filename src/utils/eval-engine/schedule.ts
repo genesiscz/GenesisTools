@@ -22,12 +22,24 @@ import {
 /** Time for the limiter and the backoff. `testing.ts` has a controllable one. */
 export interface Clock {
     now(): number;
-    sleep(ms: number): Promise<void>;
+    sleep(ms: number, signal?: AbortSignal): Promise<void>;
 }
 
 export const SystemClock: Clock = {
     now: () => Date.now(),
-    sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+    sleep: (ms, signal) =>
+        new Promise((done) => {
+            const finish = () => {
+                clearTimeout(timer);
+                signal?.removeEventListener("abort", finish);
+                done();
+            };
+            const timer = setTimeout(finish, ms);
+            signal?.addEventListener("abort", finish, { once: true });
+            if (signal?.aborted) {
+                finish();
+            }
+        }),
 };
 
 export interface Limiter {
@@ -60,6 +72,7 @@ export function createLimiter(options: {
     max: number;
     clock: Clock;
     onChange?: (limitKey: string, limit: number) => void;
+    signal?: AbortSignal;
 }): Limiter {
     const max = Math.max(1, Math.floor(options.max));
     const states = new Map<string, KeyState>();
@@ -78,7 +91,7 @@ export function createLimiter(options: {
             if (wait > 0) {
                 if (!s.waking) {
                     s.waking = true;
-                    void options.clock.sleep(wait).then(() => {
+                    void abortableSleep(options.clock, wait, options.signal).then(() => {
                         s.waking = false;
                         pump(key);
                     });
@@ -103,11 +116,29 @@ export function createLimiter(options: {
         limits: () => Object.fromEntries([...states].map(([key, s]) => [key, s.limit])),
         async run(key, task) {
             const s = state(key);
-            await new Promise<void>((acquired) => {
-                s.queue.push(acquired);
+            if (options.signal?.aborted) {
+                throw new EvalSystemError("blocked", "run aborted");
+            }
+            await new Promise<void>((acquired, reject) => {
+                const onAbort = () => {
+                    const index = s.queue.indexOf(ready);
+                    if (index >= 0) {
+                        s.queue.splice(index, 1);
+                    }
+                    reject(new EvalSystemError("blocked", "run aborted"));
+                };
+                const ready = () => {
+                    options.signal?.removeEventListener("abort", onAbort);
+                    acquired();
+                };
+                options.signal?.addEventListener("abort", onAbort, { once: true });
+                s.queue.push(ready);
                 pump(key);
             });
             try {
+                if (options.signal?.aborted) {
+                    throw new EvalSystemError("blocked", "run aborted");
+                }
                 const result = await task();
                 if (++s.streak >= GrowAfter) {
                     s.streak = 0;
@@ -133,18 +164,52 @@ export function createLimiter(options: {
     };
 }
 
+async function abortableSleep(clock: Clock, ms: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+        return;
+    }
+    await new Promise<void>((resolve, reject) => {
+        const finish = () => {
+            signal?.removeEventListener("abort", finish);
+            resolve();
+        };
+        signal?.addEventListener("abort", finish, { once: true });
+        void clock.sleep(ms, signal).then(finish, (error) => {
+            signal?.removeEventListener("abort", finish);
+            reject(error);
+        });
+    });
+}
+
 /** A counting semaphore for open conversations. */
-function semaphore(size: number) {
+export function semaphore(size: number) {
     let free = size;
     const waiting: (() => void)[] = [];
     return {
-        acquire: () =>
-            new Promise<void>((done) => {
+        acquire: (signal?: AbortSignal) =>
+            new Promise<boolean>((done) => {
+                if (signal?.aborted) {
+                    done(false);
+                    return;
+                }
+                const ready = () => {
+                    signal?.removeEventListener("abort", abort);
+                    done(true);
+                };
+                const abort = () => {
+                    const index = waiting.indexOf(ready);
+                    if (index >= 0) {
+                        waiting.splice(index, 1);
+                    }
+                    signal?.removeEventListener("abort", abort);
+                    done(false);
+                };
                 if (free > 0) {
                     free--;
-                    done();
+                    ready();
                 } else {
-                    waiting.push(done);
+                    signal?.addEventListener("abort", abort, { once: true });
+                    waiting.push(ready);
                 }
             }),
         release: () => {
@@ -218,6 +283,7 @@ export async function runPlan<TResolved, TSignals, THandle>(
     const limiter = createLimiter({
         max: options.concurrency,
         clock: options.clock,
+        signal: options.signal,
         onChange: (limitKey, limit) => options.onProgress?.({ type: "limit", limitKey, limit }),
     });
     const open = semaphore(Math.max(1, Math.floor(options.concurrency)));
@@ -232,7 +298,11 @@ export async function runPlan<TResolved, TSignals, THandle>(
         if (!scenario || !model || setup === undefined) {
             throw new Error(`the plan names ${conversation.key}, which the run does not hold`);
         }
-        await open.acquire();
+        if (!(await open.acquire(options.signal))) {
+            stopped = { reason: "aborted" };
+            return;
+        }
+        let held = true;
         try {
             for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
                 if (options.signal.aborted) {
@@ -257,8 +327,9 @@ export async function runPlan<TResolved, TSignals, THandle>(
                     );
                     return;
                 }
+                let record: ConversationRecord;
                 try {
-                    const record = await runConversation(
+                    record = await runConversation(
                         {
                             key: conversation.key,
                             repeat: conversation.repeat,
@@ -280,10 +351,6 @@ export async function runPlan<TResolved, TSignals, THandle>(
                             now: () => new Date(options.clock.now()),
                         }
                     );
-                    spentUsd += recordCost(record);
-                    await store.writeFinal(record);
-                    options.onProgress?.({ type: "finished", key: conversation.key, outcome: record.outcome });
-                    return;
                 } catch (thrown) {
                     const error = asSystemError(thrown);
                     if (options.signal.aborted) {
@@ -315,15 +382,29 @@ export async function runPlan<TResolved, TSignals, THandle>(
                     // A rate limit already paused the model's key in the limiter; other errors wait here, without a slot.
                     if (error.kind !== "rate-limit") {
                         open.release();
-                        await options.clock.sleep(
-                            error.detail.retryAfterMs ?? Math.min(MaxPauseMs, 1000 * 2 ** (attempt - 1))
+                        held = false;
+                        await abortableSleep(
+                            options.clock,
+                            error.detail.retryAfterMs ?? Math.min(MaxPauseMs, 1000 * 2 ** (attempt - 1)),
+                            options.signal
                         );
-                        await open.acquire();
+                        if (options.signal.aborted || !(await open.acquire(options.signal))) {
+                            stopped = { reason: "aborted" };
+                            return;
+                        }
+                        held = true;
                     }
+                    continue;
                 }
+                spentUsd += recordCost(record);
+                await store.writeFinal(record);
+                options.onProgress?.({ type: "finished", key: conversation.key, outcome: record.outcome });
+                return;
             }
         } finally {
-            open.release();
+            if (held) {
+                open.release();
+            }
         }
     };
 

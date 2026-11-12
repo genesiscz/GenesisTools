@@ -77,3 +77,23 @@ describe("the simulated user", () => {
         assert.deepEqual(readSimulatorText(" Monday? "), { stop: false, text: "Monday?" });
     });
 });
+
+it("tells the judge when tool evidence is unavailable", () => {
+    const request = buildJudgeRequest(
+        {
+            key: "k",
+            question: "Did a tool run?",
+            scope: {
+                kind: "turn",
+                turn: 1,
+                toolCalls: [],
+                toolEvidence: "unavailable",
+                replies: [],
+                signals: {},
+                transcript: [],
+            },
+        },
+        "judge"
+    );
+    assert.match(request.system, /Missing tool calls do not prove/);
+});

@@ -1,6 +1,6 @@
 // Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/store.test.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -138,4 +138,14 @@ describe("the run folder", () => {
             (e: unknown) => e instanceof EvalConfigError && e.code === "unknown-run"
         );
     });
+});
+
+it("reopens a run with a truncated diagnostic error tail", async () => {
+    const base = await runsDir();
+    const store = await createRun(base, { now: new Date(), label: "tail" }, manifest);
+    const key = plan.conversations[0].key;
+    await store.writeError(key, 1, "transient", "502");
+    await appendFile(join(store.dir, "errors", `${key}.jsonl`), '{"schema":');
+    const reopened = await loadRun(store.dir, base);
+    assert.equal(reopened.records.length, 0);
 });
