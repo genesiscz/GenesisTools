@@ -2,7 +2,13 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { convertFileToMonoMp3, convertToWhisperWav, monoMp3Args, toFloat32Audio } from "./converter";
+import {
+    convertFileToMonoMp3,
+    convertToWhisperWav,
+    monoMp3Args,
+    toFloat32Audio,
+    toFloat32AudioWindow,
+} from "./converter";
 import { splitAudioFile } from "./split";
 
 describe("audio converter", () => {
@@ -225,6 +231,27 @@ describe("the transcription input keeps the movie clock and hears the asked trac
         test("convertToWhisperWav keeps it", async () => {
             const samples = await toFloat32Audio(await convertToWhisperWav(movie));
             expect(Math.abs(onsetSeconds(samples) - 0.5)).toBeLessThan(0.03);
+        });
+
+        test("a bounded in-memory window preserves the source clock before and after onset", async () => {
+            const before = await toFloat32AudioWindow(movie, { fromSec: 0.25, toSec: 1.25 });
+            expect(before.length).toBe(16_000);
+            expect(Math.abs(onsetSeconds(before) + 0.25 - 0.5)).toBeLessThan(0.03);
+            const after = await toFloat32AudioWindow(movie, { fromSec: 0.75, toSec: 1.25 });
+            expect(after.length).toBe(8_000);
+            expect(onsetSeconds(after)).toBeLessThan(0.01);
+        });
+
+        test("a cancelled decode refuses before starting a process", async () => {
+            const controller = new AbortController();
+            controller.abort(new Error("cancel audio decode"));
+            await expect(
+                toFloat32AudioWindow(movie, {
+                    fromSec: 0,
+                    toSec: 1,
+                    signal: controller.signal,
+                })
+            ).rejects.toThrow("cancel audio decode");
         });
 
         test("splitAudioFile keeps it in the first chunk", async () => {

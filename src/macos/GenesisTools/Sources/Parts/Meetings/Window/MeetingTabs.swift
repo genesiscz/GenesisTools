@@ -13,6 +13,7 @@ struct FilterField: View {
             Image(systemName: "line.3.horizontal.decrease").foregroundStyle(.secondary).font(.system(size: 11))
             TextField(prompt, text: $text)
                 .textFieldStyle(.plain)
+                .accessibilityLabel(prompt)
                 .focused(focused)
                 .onExitCommand { text = "" }
             if !text.isEmpty {

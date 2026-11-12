@@ -43,7 +43,7 @@ import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
 import { correctTranscript, outcomeText } from "../lib/transcript-corrections";
-import { correctedTranscriptRead, speakerStatsRead, transcriptJsonView, windowJson } from "../lib/window-reads";
+import { correctedTranscriptRead, speakerStatsRead, windowJson } from "../lib/window-reads";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
@@ -691,7 +691,10 @@ async function transcript(
         }
 
         if (format === "json") {
-            out.result(windowJson(transcriptJsonView(record, applied)));
+            const { meetingWordTimingCache } = await import("../lib/word-timings");
+            const { timedTranscriptView } = await import("../lib/window-reads");
+            const view = timedTranscriptView(record, applied);
+            out.result(windowJson({ meeting: view.meeting, ...meetingWordTimingCache(record.id).read(view.entries) }));
             return;
         }
 

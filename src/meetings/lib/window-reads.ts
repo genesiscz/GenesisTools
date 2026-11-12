@@ -12,6 +12,7 @@ import {
     MOMENTS_FOLDER,
     type SpeakerAssignment,
 } from "@genesiscz/utils/meetings/record";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptFormat } from "@genesiscz/utils/transcribe/render";
 import { type SpeakerStats, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { type AssignDeps, type AssignView, skipReason, viewProposals } from "./assign";
@@ -24,6 +25,7 @@ import { type MeetingsOverview, meetingsOverview } from "./overview";
 import type { ReviewRows } from "./review-row-schema";
 import { type LinkedSource, meetingSource, sourceRefOf } from "./sources";
 import { type CorrectedTranscript, correctTranscript } from "./transcript-corrections";
+import { meetingWordTimingCache } from "./word-timings";
 
 const { log } = logger.scoped("meetings-window-reads");
 
@@ -75,6 +77,7 @@ export interface RevisionFacts {
     config: unknown;
     source: string | null;
     screen: unknown[];
+    transcriptEvidence?: string | null;
 }
 
 /**
@@ -87,7 +90,10 @@ export function revisionTokens(facts: RevisionFacts): WindowRevisions {
     return {
         meeting,
         show: stamp(recordFile),
-        transcript: source === null ? null : stamp(recordFile, config, source),
+        transcript:
+            source === null || facts.transcriptEvidence === null
+                ? null
+                : stamp(recordFile, config, source, facts.transcriptEvidence),
         speakers: source === null ? null : stamp(recordFile, source),
         timeline: source === null ? null : stamp(recordFile, screen, source),
     };
@@ -132,7 +138,14 @@ export async function revisionsRead(options: {
             .filter((entry) => entry.isDirectory() && entry.name !== MOMENTS_FOLDER)
             .map((entry) => [entry.name, fileIdentity(join(folder, entry.name))]),
     ];
-    return revisionTokens({ meeting: record.id, recordFile, config, source, screen });
+    return revisionTokens({
+        meeting: record.id,
+        recordFile,
+        config,
+        source,
+        screen,
+        transcriptEvidence: meetingWordTimingCache(record.id).inputRevision(),
+    });
 }
 
 /** `meetings record cost`: what a kept frame and each capture choice cost, from the recordings so far. */
@@ -293,6 +306,19 @@ export function transcriptJsonView(
     applied: CorrectedTranscript
 ): { meeting: string; entries: CorrectedTranscript["entries"] } {
     return { meeting: record.id, entries: applied.entries };
+}
+
+/** The same corrected entries with their source-clock ends, shared by service and JSON CLI reads. */
+export function timedTranscriptView(record: MeetingRecord, applied: CorrectedTranscript) {
+    const view = transcriptJsonView(record, applied);
+    const lines = new TranscriptLines(view.entries);
+    return {
+        ...view,
+        entries: view.entries.map((entry, index) => {
+            const endSec = lines.end(index);
+            return endSec === undefined ? entry : { ...entry, endSec };
+        }),
+    };
 }
 
 /** `meetings assign proposals <id>`: the ranked projects with their facts, and why the sweep would not ask. */

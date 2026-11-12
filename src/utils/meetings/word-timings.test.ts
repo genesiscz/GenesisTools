@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { makeWordTimingArtifact, WordTimingCache, wordTimingFile, wordTimingHash } from "./word-timing-cache";
 import { type AsrWordTiming, alignWordTimings, WORD_TIMING_ALIGNMENT_LIMITS } from "./word-timings";
 
 function timed(texts: string[]): AsrWordTiming[] {
@@ -307,4 +312,226 @@ test("matches all-optimal-alignment intersection oracle for every binary sequenc
             expect(pairs).toEqual(oracle(left, right));
         }
     }
+});
+
+describe("derived word timing cache", () => {
+    function fixture() {
+        const root = mkdtempSync(join(tmpdir(), "meeting-word-cache-"));
+        const audio = join(root, "audio.wav"),
+            model = join(root, "weights.onnx");
+        writeFileSync(audio, "audio-version-one");
+        writeFileSync(model, "model-version-one");
+        const lines = Array.from({ length: 751 }, (_, i) => ({
+            id: `line-${i}`,
+            speaker: "Example",
+            text: "alpha beta",
+            startSec: i * 3,
+            endSec: i * 3 + 2,
+        }));
+        const input = {
+            window: { fromSec: 300, toSec: 302 },
+            audio: wordTimingFile(audio),
+            modelFiles: [wordTimingFile(model)],
+            modelId: "test/word-model",
+            pcmSha256: "test-pcm",
+            words: [{ text: "alpha", startSec: 0.2, endSec: 0.5 }],
+            lines,
+        };
+        return { root, audio, model, lines, input, cache: new WordTimingCache(join(root, "derived")) };
+    }
+
+    test("missing cache reads leave the filesystem and transcript untouched", () => {
+        const { cache, lines } = fixture();
+        const result = cache.read(lines);
+        expect(result.entries).toEqual(lines);
+        expect(result.wordTimings.state).toBe("missing");
+        expect(existsSync(cache.folder)).toBe(false);
+    });
+
+    test("return-to-window revision changes on publication and audio or model replacement", async () => {
+        const { cache, input, audio, model } = fixture();
+        const absent = cache.inputRevision();
+        expect(absent).not.toBeNull();
+        await cache.publish(makeWordTimingArtifact(input));
+        const ready = cache.inputRevision();
+        expect(ready).not.toBe(absent);
+        expect(new WordTimingCache(cache.folder).inputRevision()).toBe(ready);
+        writeFileSync(audio, "replaced audio");
+        expect(cache.inputRevision()).not.toBe(ready);
+        const refreshed = { ...input, audio: wordTimingFile(audio) };
+        await cache.publish(makeWordTimingArtifact(refreshed));
+        const next = cache.inputRevision();
+        writeFileSync(model, "replaced model");
+        expect(cache.inputRevision()).not.toBe(next);
+    });
+
+    test("old decoder evidence is stale and cannot be reused", async () => {
+        const { cache, input, lines } = fixture();
+        const artifact = makeWordTimingArtifact(input);
+        await cache.publish(artifact);
+        writeFileSync(
+            join(cache.folder, `${wordTimingHash(input.window)}.json`),
+            SafeJSON.stringify({ ...artifact, version: 1 })
+        );
+        expect(cache.read(lines).wordTimings.state).toBe("stale");
+        expect(cache.reusable(input.window, input.audio, input.modelFiles, input.modelId)).toBeUndefined();
+        expect(cache.inputRevision()).toBeNull();
+    });
+
+    test("reopening published evidence enriches only exact lines in a long transcript", async () => {
+        const { cache, lines, input } = fixture();
+        const artifact = makeWordTimingArtifact(input);
+        await cache.publish(artifact);
+        const reopened = new WordTimingCache(cache.folder).read(lines);
+        expect(reopened.wordTimings.state).toBe("ready");
+        expect(reopened.entries[100].words).toEqual([
+            { range: { location: 0, length: 5 }, startSec: 300.2, endSec: 300.5, sourceId: artifact.source.id },
+        ]);
+        expect(reopened.entries[99]).toEqual(lines[99]);
+        expect(reopened.entries[100].text).toBe(lines[100].text);
+        expect(reopened.wordTimings.windows[0].coverage.matchedWords).toBe(1);
+        expect(cache.reusable(input.window, input.audio, input.modelFiles, input.modelId)?.rawWords).toEqual(
+            input.words
+        );
+        const file = join(cache.folder, `${wordTimingHash(input.window)}.json`);
+        const written = readFileSync(file, "utf8");
+        cache.read(lines);
+        expect(readFileSync(file, "utf8")).toBe(written);
+    });
+
+    test("text changes invalidate display while retaining reusable acoustic evidence", async () => {
+        const { cache, lines, input } = fixture();
+        await cache.publish(makeWordTimingArtifact(input));
+        const changed = lines.map((line, i) => (i === 100 ? { ...line, text: "corrected beta" } : line));
+        expect(cache.read(changed).wordTimings.state).toBe("stale");
+        expect(cache.read(changed).entries.every((line) => line.words === undefined)).toBe(true);
+        expect(cache.reusable(input.window, input.audio, input.modelFiles, input.modelId)).toBeDefined();
+    });
+
+    test.each(["audio", "model"] as const)("changed %s invalidates evidence without rewriting it", async (part) => {
+        const data = fixture();
+        await data.cache.publish(makeWordTimingArtifact(data.input));
+        writeFileSync(data[part], "replaced-with-another-version");
+        expect(data.cache.read(data.lines).wordTimings.state).toBe("stale");
+        expect(
+            data.cache.reusable(data.input.window, data.input.audio, data.input.modelFiles, data.input.modelId)
+        ).toBeUndefined();
+    });
+
+    test("cancellation or changed inputs cannot publish", async () => {
+        const { cache, input, model } = fixture();
+        const artifact = makeWordTimingArtifact(input);
+        await expect(cache.publish(artifact, AbortSignal.abort())).rejects.toThrow();
+        expect(existsSync(cache.folder)).toBe(false);
+        writeFileSync(model, "changed-before-publication");
+        await expect(cache.publish(artifact)).rejects.toThrow("changed before publication");
+        expect(existsSync(cache.folder)).toBe(false);
+    });
+
+    test("concurrent windows retain both manifest entries", async () => {
+        const { cache, input, lines } = fixture();
+        await Promise.all([
+            cache.publish(makeWordTimingArtifact(input)),
+            cache.publish(makeWordTimingArtifact({ ...input, window: { fromSec: 303, toSec: 305 } })),
+        ]);
+        const reopened = new WordTimingCache(cache.folder).read(lines);
+        expect(reopened.wordTimings.windows).toHaveLength(2);
+        expect(reopened.entries[100].words).toHaveLength(1);
+        expect(reopened.entries[101].words).toHaveLength(1);
+    });
+
+    test("newer overlapping evidence replaces the whole covered line, not only matching words", async () => {
+        const { cache, input, lines } = fixture();
+        await cache.publish(
+            makeWordTimingArtifact({
+                ...input,
+                now: "2026-01-01T00:00:00Z",
+                words: [
+                    { text: "alpha", startSec: 0.1, endSec: 0.3 },
+                    { text: "beta", startSec: 0.4, endSec: 0.6 },
+                ],
+            })
+        );
+        await cache.publish(
+            makeWordTimingArtifact({
+                ...input,
+                window: { fromSec: 299, toSec: 302 },
+                now: "2026-01-01T00:00:01Z",
+                words: [{ text: "alpha", startSec: 2.2, endSec: 2.4 }],
+            })
+        );
+        expect(cache.read(lines).entries[100].words?.map((word) => word.startSec)).toEqual([301.2]);
+    });
+
+    test("different raw timing evidence changes the revision even at the same generation time", async () => {
+        const { cache, input, lines } = fixture();
+        const first = makeWordTimingArtifact({ ...input, now: "2026-01-01T00:00:00Z" });
+        await cache.publish(first);
+        const revision = cache.read(lines).wordTimings.revision;
+        const second = makeWordTimingArtifact({
+            ...input,
+            now: first.source.generatedAt,
+            words: [{ text: "alpha", startSec: 0.6, endSec: 0.9 }],
+        });
+        await cache.publish(second);
+        expect(cache.read(lines).wordTimings.revision).not.toBe(revision);
+    });
+
+    test("stale reads remove words even when the caller passes a previously enriched result", async () => {
+        const { cache, input, lines, audio } = fixture();
+        await cache.publish(makeWordTimingArtifact(input));
+        const before = cache.read(lines).entries;
+        expect(before[100].words).toHaveLength(1);
+        writeFileSync(audio, "replaced-audio");
+        const after = cache.read(before);
+        expect(after.wordTimings.state).toBe("stale");
+        expect(after.entries.every((line) => line.words === undefined)).toBe(true);
+    });
+
+    test("duplicate manifest entries do not repeat work or change the revision", async () => {
+        const { cache, input, lines } = fixture();
+        await cache.publish(makeWordTimingArtifact(input));
+        const first = cache.read(lines);
+        const key = wordTimingHash(input.window);
+        writeFileSync(join(cache.folder, "index.json"), SafeJSON.stringify({ version: 1, windows: [key, key, key] }));
+        const second = cache.read(lines);
+        expect(second.wordTimings.windows).toHaveLength(1);
+        expect(second.wordTimings.revision).toBe(first.wordTimings.revision);
+        expect(second.entries).toEqual(first.entries);
+    });
+
+    test("the aggregate read budget refuses a bloated cache without partial word results", async () => {
+        const { cache, input, lines } = fixture();
+        await cache.publish(makeWordTimingArtifact(input));
+        const keys: string[] = [];
+        for (let index = 0; index < 9; index++) {
+            const window = { fromSec: index * 3, toSec: index * 3 + 2 };
+            const artifact = makeWordTimingArtifact({ ...input, window });
+            const key = wordTimingHash(window);
+            keys.push(key);
+            writeFileSync(
+                join(cache.folder, `${key}.json`),
+                SafeJSON.stringify({ ...artifact, padding: "x".repeat(1024 * 1024) })
+            );
+        }
+        writeFileSync(join(cache.folder, "index.json"), SafeJSON.stringify({ version: 1, windows: keys }));
+        const read = cache.read(lines);
+        expect(read.wordTimings.state).toBe("stale");
+        expect(read.entries.every((line) => line.words === undefined)).toBe(true);
+    });
+
+    test("malformed cached bounds are ignored rather than breaking ordinary transcript reads", async () => {
+        const { cache, input, lines } = fixture();
+        const badWindow = { fromSec: 300, toSec: 330 },
+            key = wordTimingHash(badWindow);
+        await cache.publish(makeWordTimingArtifact(input));
+        writeFileSync(
+            join(cache.folder, `${key}.json`),
+            SafeJSON.stringify({ ...makeWordTimingArtifact(input), window: badWindow })
+        );
+        writeFileSync(join(cache.folder, "index.json"), SafeJSON.stringify({ version: 1, windows: [key] }));
+        expect(() => cache.read(lines)).not.toThrow();
+        expect(cache.read(lines).wordTimings.state).toBe("stale");
+        expect(cache.read(lines).entries.every((line) => line.words === undefined)).toBe(true);
+    });
 });

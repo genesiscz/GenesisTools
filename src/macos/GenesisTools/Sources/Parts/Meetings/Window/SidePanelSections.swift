@@ -391,6 +391,7 @@ enum SidePanelCatalog {
                          defaultValue: .text(MeetingsPreferences.defaultLook.rawValue)),
         ])
         let transcript = SidePanelSection(id: "transcript", title: "Transcript and Speakers", rows: [
+            row(Transcript.wordHighlights, value: Transcript.wordHighlights.value(defaults)),
             row(Transcript.dimPast, value: Transcript.dimPast.value(defaults)),
             row(Transcript.avatars, value: Transcript.avatars.value(defaults)),
             row(Transcript.blockBreakSec, value: Transcript.blockBreakSec.value(defaults)),

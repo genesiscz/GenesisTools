@@ -6,6 +6,7 @@ struct TranscriptWordText: NSViewRepresentable {
     let text: String
     let color: NSColor
     let corrected: Bool
+    var heardRange: NSRange? = nil
     let click: () -> Void
     let selected: (NSRange) -> Void
 
@@ -36,6 +37,7 @@ struct TranscriptWordText: NSViewRepresentable {
         if corrected { attributes[.underlineStyle] = NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.single.rawValue }
         view.textStorage?.addAttributes(attributes, range: range)
         if !corrected { view.textStorage?.removeAttribute(.underlineStyle, range: range) }
+        view.highlightHeardRange(heardRange)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: TextView, context: Context) -> CGSize? {
@@ -49,6 +51,17 @@ struct TranscriptWordText: NSViewRepresentable {
         var click: (() -> Void)?
         var selected: ((NSRange) -> Void)?
         private var reportedRange: NSRange?
+
+        func highlightHeardRange(_ heardRange: NSRange?) {
+            let count = (string as NSString).length
+            textStorage?.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: count))
+            setAccessibilityHelp(nil)
+            guard let heardRange, heardRange.location >= 0, heardRange.length > 0,
+                  heardRange.length <= count, heardRange.location <= count - heardRange.length else { return }
+            textStorage?.addAttribute(.backgroundColor, value: NSColor.controlAccentColor.withAlphaComponent(0.3),
+                                      range: heardRange)
+            setAccessibilityHelp("Timed word: \((string as NSString).substring(with: heardRange))")
+        }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             if NSEvent.pressedMouseButtons == 0 { reportSelection() }

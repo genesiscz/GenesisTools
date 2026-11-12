@@ -13,6 +13,11 @@ import {
     PERSON_SOURCE_KINDS,
 } from "@genesiscz/utils/meetings/people-directory";
 import { meetingContextSchema, meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
+import {
+    alignedWordSchema,
+    wordTimingGenerateResultSchema,
+    wordTimingMetadataSchema,
+} from "@genesiscz/utils/meetings/word-timing-cache";
 import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import type { SpeakerHint, SpeakerLeave } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
@@ -41,6 +46,7 @@ import {
 } from "../moment-schema";
 import type { MeetingsOverview } from "../overview";
 import { reviewRowSchema, reviewRowsPatchSchema, reviewRowsSchema } from "../review-row-schema";
+import { wordTimingModelIdSchema } from "../word-timing-worker";
 
 /**
  * The Meetings service's interface: one descriptor for the window, every `tools meetings` command, the REPL and an MCP
@@ -119,6 +125,7 @@ export const meetingListRowSchema = z.object({
  * line's start, at least a moment after its own), so a player highlights the line it hears (G-TR-1).
  */
 export const transcriptLineSchema = z.object({
+    words: z.array(alignedWordSchema).optional(),
     id: z.string().optional(),
     startSec: z.number().optional(),
     endSec: z.number().optional(),
@@ -184,10 +191,37 @@ const transcript = defineMethod({
         })
         .strict(),
     positional: ["ref"],
-    result: z.object({ meeting: z.string(), entries: z.array(transcriptLineSchema) }),
+    result: z.object({
+        meeting: z.string(),
+        entries: z.array(transcriptLineSchema),
+        wordTimings: wordTimingMetadataSchema.optional(),
+    }),
     resultName: "{ meeting, entries: { id?, startSec?, speakerId?, speaker, text }[] }",
     doc: "The corrected transcript, as `transcript <meeting> --format json` prints it. A meeting without a transcript source: `no-transcript-source`.",
     effect: "read",
+});
+
+const wordTimingsGenerate = defineMethod({
+    name: "meeting.wordTimings.generate",
+    params: z
+        .object({
+            ref: meetingRef,
+            fromSec: z.number().finite().nonnegative(),
+            toSec: z.number().finite().positive(),
+            model: wordTimingModelIdSchema,
+            language: z
+                .string()
+                .regex(/^[a-z]{2,3}$/)
+                .optional(),
+        })
+        .strict()
+        .refine(
+            (value) => value.toSec > value.fromSec && value.toSec - value.fromSec <= 20,
+            "Choose a positive window of at most 20 seconds"
+        ),
+    result: wordTimingGenerateResultSchema,
+    doc: "Explicitly generate local ASR word timings for at most 20 seconds, using an already cached model. Saves only exact unambiguous matches; ordinary transcript reads and seeks never run inference.",
+    effect: "reversible",
 });
 
 const revisions = defineMethod({
@@ -1151,6 +1185,7 @@ export const meetingsApi = defineApi({
         list,
         show,
         transcript,
+        wordTimingsGenerate,
         revisions,
         decisionPlan,
         decisionApply,
@@ -1241,6 +1276,7 @@ export const MEETING_PARTS = ["show", "transcript", "speakers", "timeline"] as c
  */
 export const MEETINGS_EVENTS = [
     "meeting.changed",
+    "meeting.wordTimings.changed",
     "decision.applied",
     "decision.reverted",
     "comment.sent",
@@ -1258,6 +1294,7 @@ export const subscribeParamsSchema = z.object({
 export const subscribeResultSchema = z.object({ events: z.array(z.string()) });
 
 export const NOTIFICATION_SCHEMAS = {
+    "meeting.wordTimings.changed": z.object({ meeting: z.string(), revision: z.string() }),
     "people.changed": z.object({}),
     "comment.changed": z.object({ meeting: z.string(), comment: meetingCommentSchema.optional() }),
     /** A meeting's files changed: the parts whose `meeting.revisions` token would differ now. */

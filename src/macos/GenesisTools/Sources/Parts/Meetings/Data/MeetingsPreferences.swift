@@ -300,6 +300,9 @@ extension MeetingsPreferences {
 
     /// The transcript blocks and a selection's clip (F9).
     enum Transcript {
+        static let wordHighlights = MeetingsWindowSetting(
+            key: "meetings.transcript.wordHighlights", defaultValue: true, choices: [true, false],
+            title: "Highlight the spoken word", detail: "Use saved ASR timing evidence for exact matched words; untimed words keep the line highlight.")
         static let dimPast = MeetingsWindowSetting(
             key: "meetings.transcript.dimPast", defaultValue: true, choices: [true, false],
             title: "Dim what was heard", detail: "Blocks the playback has passed turn fainter.")

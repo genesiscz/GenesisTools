@@ -574,7 +574,7 @@ final class MeetingsWindowModel {
         switch event {
         case .meetingChanged(let changed): changed.parts.contains("show")
         case .decisionApplied, .decisionReverted, .commentSent: true
-        case .peopleChanged, .commentChanged: false
+        case .peopleChanged, .commentChanged, .wordTimingsChanged: false
         }
     }
 

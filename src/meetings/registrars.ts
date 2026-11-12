@@ -33,5 +33,6 @@ export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
         load: async () => (await import("./commands/views")).registerViewCommands,
     },
     { names: ["config"], load: async () => (await import("./commands/config")).registerConfigCommand },
+    { names: ["word-timings"], load: async () => (await import("./commands/word-timings")).registerWordTimingCommands },
     { names: ["serve"], load: async () => (await import("./commands/serve")).registerServeCommand },
 ];

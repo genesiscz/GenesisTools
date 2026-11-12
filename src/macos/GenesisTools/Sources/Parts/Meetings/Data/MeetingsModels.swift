@@ -146,6 +146,29 @@ struct MeetingRecordView: Decodable, Equatable {
 
 // MARK: - Transcript (`tools meetings transcript <id> --format json`)
 
+struct TranscriptWord: Decodable, Equatable, Hashable {
+    struct Range: Decodable, Equatable, Hashable { let location: Int; let length: Int }
+    let range: Range
+    let startSec: Double
+    let endSec: Double
+    let sourceId: String
+
+    func heardRange(at position: Double, in text: String) -> NSRange? {
+        let count = (text as NSString).length
+        guard startSec.isFinite, endSec.isFinite, startSec >= 0, endSec > startSec,
+              position >= startSec, position < endSec, range.location >= 0, range.length > 0,
+              range.length <= count, range.location <= count - range.length else { return nil }
+        return NSRange(location: range.location, length: range.length)
+    }
+}
+
+struct TranscriptWordTimingStatus: Decodable, Equatable {
+    struct Source: Decodable, Equatable { let modelId: String; let kind: String }
+    let state: String
+    let revision: String
+    let sources: [Source]
+}
+
 struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
     let id: String?
     let startSec: Double?
@@ -154,12 +177,14 @@ struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
     /// When the line stops being heard: the next timed line's start (G-TR-1). `meeting.transcript` sends it; the
     /// command `transcript --format json` leaves it out, and the transcript blocks compute it then.
     var endSec: Double? = nil
+    var words: [TranscriptWord]? = nil
     var rowID: String { id ?? "\(startSec ?? -1)-\(speaker)-\(text.prefix(24))" }
 }
 
 struct MeetingTranscript: Decodable, Equatable {
     let meeting: String
     let entries: [TranscriptLine]
+    var wordTimings: TranscriptWordTimingStatus? = nil
 }
 
 // MARK: - Speakers (`tools meetings speakers stats <id> --json`)

@@ -53,6 +53,7 @@ final class MeetingDetailModel {
     /// The record and rows read together after a decision (`readRecordAndRows`). Kept apart from `inFlight`: a later
     /// read of one part must not cancel the other part's half.
     @ObservationIgnored private var pairRead: Task<Void, Never>?
+    @ObservationIgnored private var wordTimingTask: Task<Void, Never>?
     /// The window let this meeting go (another one opened): no read starts, and one that still lands is ignored.
     @ObservationIgnored private(set) var isDropped = false
     /// Opened before the list showed the meeting: whether proposals read waits for its record.
@@ -206,6 +207,31 @@ final class MeetingDetailModel {
     func loadSpeakers() { readSpeakers(quiet: false) }
     func loadProposals() { readProposals(quiet: false) }
 
+    func generateWordTimings(from: Double, to: Double, model: String, language: String?) {
+        guard !isDropped, !busy.contains("word-timings") else { return }
+        busy.insert("word-timings")
+        wordTimingTask = Task { [weak self] in
+            guard let self else { return }
+            defer { busy.remove("word-timings"); wordTimingTask = nil }
+            do {
+                let params = MeetingsAPI.WordTimings.Params(ref: id, fromSec: from, toSec: to, model: model, language: language)
+                let args = ["word-timings", "generate", id, "--from", String(from), "--to", String(to), "--model", model, "--json"]
+                    + (language.map { ["--language", $0] } ?? [])
+                let result = try await MeetingsRead<MeetingsAPI.WordTimings.Result>
+                    .service(MeetingsAPI.WordTimings.self, params, orRun: args, timeoutSeconds: 125).run()
+                guard !Task.isCancelled, !isDropped else { return }
+                readTranscript(quiet: true)
+                notices.push(StackedNotice(text: "Timed \(result.coverage.matchedWords) of \(result.coverage.eligibleWords) words",
+                    detail: "Only exact matches are highlighted. Other words keep the line highlight."))
+            } catch {
+                guard !Task.isCancelled, !isDropped else { return }
+                notices.push(.meetingsFailure(error))
+            }
+        }
+    }
+
+    func cancelWordTimings() { wordTimingTask?.cancel() }
+
     /// The record: the Meetings service's `meeting.show`, or `show <id> --json` when no service answers.
     static func recordRead(_ id: String) -> MeetingsRead<MeetingRecordView> {
         .service(MeetingsAPI.Show.self, .init(ref: id), orRun: ["show", id, "--json"])
@@ -358,6 +384,7 @@ final class MeetingDetailModel {
         for task in inFlight.values { task.cancel() }
         inFlight.removeAll()
         pairRead?.cancel()
+        wordTimingTask?.cancel()
     }
 
     // MARK: - Actions

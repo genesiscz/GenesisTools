@@ -9,6 +9,51 @@ import XCTest
 @MainActor
 final class MeetingsTranscriptViewsTests: XCTestCase {
 
+    func testWordTimingFormValidatesItsInitialRangeAndEveryEdit() {
+        XCTAssertEqual(WordTimingOptions.range(from: "64.0", to: "84.0")?.0, 64)
+        XCTAssertEqual(WordTimingOptions.range(from: " 1796 ", to: "1816")?.1, 1816)
+        XCTAssertNil(WordTimingOptions.range(from: "64", to: "85"))
+        XCTAssertNil(WordTimingOptions.range(from: "-1", to: "10"))
+        XCTAssertNil(WordTimingOptions.range(from: "nan", to: "10"))
+        XCTAssertNil(WordTimingOptions.range(from: "1", to: "inf"))
+        XCTAssertNil(WordTimingOptions.range(from: "1", to: "1"))
+    }
+
+    func testWordTimingHighlightsUseExactUTF16RangesAndKeepUntimedLineFallback() {
+        let first = TranscriptWord(range: .init(location: 3, length: 5), startSec: 10.1, endSec: 10.5, sourceId: "asr-a")
+        let second = TranscriptWord(range: .init(location: 9, length: 4), startSec: 10.8, endSec: 11.2, sourceId: "asr-a")
+        let entry = TranscriptLine(id: "l1", startSec: 10, speaker: "Example", text: "😀 alpha beta", endSec: 12,
+                                   words: [first, second])
+        let blocks = TranscriptBlock.build(from: [entry])
+        let heard = TranscriptBlock.heard(in: blocks, at: 10.2)
+        XCTAssertEqual(heard?.wordRange, NSRange(location: 3, length: 5))
+        XCTAssertEqual(heard, TranscriptBlock.heard(in: blocks, at: 10.3), "Ticks inside one word do not redraw the list")
+        XCTAssertNil(TranscriptBlock.heard(in: blocks, at: 10.6)?.wordRange, "An untimed gap keeps the line highlight")
+        XCTAssertEqual(TranscriptBlock.heard(in: blocks, at: 10.9)?.wordRange, NSRange(location: 9, length: 4))
+        XCTAssertNil(TranscriptBlock.heard(in: blocks, at: 10.2, wordHighlights: false)?.wordRange)
+        XCTAssertNotNil(TranscriptBlock.heard(in: blocks, at: 10.2, wordHighlights: false)?.lineID)
+        XCTAssertNil(TranscriptBlock.heard(in: blocks, at: 12))
+        let invalid = TranscriptWord(range: .init(location: Int.max, length: 4), startSec: 10, endSec: 11, sourceId: "bad")
+        XCTAssertNil(invalid.heardRange(at: 10.5, in: entry.text))
+    }
+
+    func testWordHighlightDoesNotReplaceNativeTextSelection() {
+        let view = TranscriptWordText.TextView()
+        view.string = "alpha beta"
+        view.setSelectedRange(NSRange(location: 6, length: 4))
+        view.highlightHeardRange(NSRange(location: 0, length: 5))
+        XCTAssertEqual(view.accessibilityHelp(), "Timed word: alpha")
+        XCTAssertNotNil(view.textStorage?.attribute(.backgroundColor, at: 0, effectiveRange: nil))
+        XCTAssertNil(view.textStorage?.attribute(.backgroundColor, at: 6, effectiveRange: nil))
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 6, length: 4))
+        view.highlightHeardRange(nil)
+        XCTAssertNil(view.accessibilityHelp())
+        XCTAssertNil(view.textStorage?.attribute(.backgroundColor, at: 0, effectiveRange: nil))
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 6, length: 4))
+        view.highlightHeardRange(NSRange(location: Int.max, length: 2))
+        XCTAssertNil(view.textStorage?.attribute(.backgroundColor, at: 0, effectiveRange: nil))
+    }
+
     func testFrameReviewSearchAndTimeNavigation() async throws {
         func frame(_ file: String, _ time: Double, _ text: String, display: Int = 1) -> TimelineFrame {
             let box = OcrBox(x: 10, y: 20, width: 100, height: 30, text: text, confidence: 1)

@@ -51,6 +51,11 @@ struct TranscriptBlocksPane: View {
     @State private var popoverLine: String?
     @State private var jump = 0
     @State private var sentExpanded = false
+    @State private var timingOptionsOpen = false
+    @State private var timingFrom = ""
+    @State private var timingTo = ""
+    @State private var timingModel = "onnx-community/whisper-large-v3-turbo_timestamped"
+    @State private var timingLanguage = "cs"
 
     var body: some View {
         let blocks = TranscriptBlock.filter(built, query: filter)
@@ -104,6 +109,27 @@ struct TranscriptBlocksPane: View {
             } else {
                 Spacer(minLength: 6)
             }
+            if detail.busy.contains("word-timings") {
+                ProgressView().controlSize(.small)
+                Button("Cancel timings", action: detail.cancelWordTimings)
+                    .accessibilityIdentifier("meetings.transcript.timings.cancel")
+            } else {
+                GhostButton("Word timings", symbol: "waveform.path", tooltip: "Generate local word timings for a short range",
+                            identifier: "meetings.transcript.timings") {
+                    let position = detail.window?.player.position ?? 0
+                    let eligible = entries.filter { line in
+                        guard let start = line.startSec, let end = line.endSec else { return false }
+                        return end > start && end - start <= 20
+                    }
+                    let chosen = eligible.first { ($0.endSec ?? 0) > position } ?? eligible.first
+                    let from = chosen?.startSec ?? position
+                    timingFrom = String(format: "%.1f", from)
+                    timingTo = String(format: "%.1f", from + 20)
+                    timingOptionsOpen = true
+                }
+                .accessibilityLabel("Word timings, \(entries.reduce(0) { $0 + ($1.words?.count ?? 0) }) words with saved timing")
+                .popover(isPresented: $timingOptionsOpen, arrowEdge: .bottom) { timingOptions }
+            }
             KitToggleChip("Follows playback", isOn: Binding(get: { isFollowing }, set: { following = $0; if $0 { jump += 1 } }),
                           hue: .play, size: .small,
                           tooltip: "The heard line stays in view while a Moment plays; scrolling away stops it",
@@ -117,6 +143,14 @@ struct TranscriptBlocksPane: View {
             }
         }
         .padding(.horizontal, 14).padding(.vertical, showsHeader || headerField != nil ? 8 : 5)
+    }
+
+    private var timingOptions: some View {
+        WordTimingOptions(from: $timingFrom, to: $timingTo, model: $timingModel, language: $timingLanguage,
+                          cancel: { timingOptionsOpen = false }) { from, to, model, language in
+            detail.generateWordTimings(from: from, to: to, model: model, language: language)
+            timingOptionsOpen = false
+        }
     }
 
     // MARK: Selection (R43)
@@ -231,6 +265,7 @@ struct TranscriptBlocksPane: View {
 /// the position re-ran the lazy stack ten times a second, and each re-run laid out the whole meeting column: a main
 /// thread at 97 % of a core for the length of every clip (2026-11-11).
 private struct FollowingBlocks: View {
+    @AppStorage(MeetingsPreferences.Transcript.wordHighlights.key) private var wordHighlights = MeetingsPreferences.Transcript.wordHighlights.defaultValue
     let blocks: [TranscriptBlock]
     let player: MomentPlayer?
     let meeting: String
@@ -249,7 +284,7 @@ private struct FollowingBlocks: View {
 
     var body: some View {
         let position = player?.top?.meeting == meeting ? player?.position : nil
-        FollowingList(blocks: blocks, heard: TranscriptBlock.heard(in: blocks, at: position),
+        FollowingList(blocks: blocks, heard: TranscriptBlock.heard(in: blocks, at: position, wordHighlights: wordHighlights),
                       passedEnd: dimsPast ? TranscriptBlock.passedEnd(in: blocks, at: position) : nil,
                       follows: follows, jump: jump, selection: selection, popoverLine: popoverLine, dimsPast: dimsPast,
                       showsAvatar: showsAvatar, play: play, select: select, selectWords: selectWords, scrolledAway: scrolledAway, popover: popover,
@@ -356,5 +391,67 @@ private struct UserScrollProbe: NSViewRepresentable {
         deinit {
             if let observer { NotificationCenter.default.removeObserver(observer) }
         }
+    }
+}
+
+/// The explicit generation form owns its validation, so its initial bound values and later edits use the same rule.
+struct WordTimingOptions: View {
+    @Binding var from: String
+    @Binding var to: String
+    @Binding var model: String
+    @Binding var language: String
+    let cancel: () -> Void
+    let generate: (Double, Double, String, String?) -> Void
+
+    static func range(from: String, to: String) -> (Double, Double)? {
+        guard let start = Double(from.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let end = Double(to.trimmingCharacters(in: .whitespacesAndNewlines)),
+              start.isFinite, end.isFinite, start >= 0, end > start, end - start <= 20 else { return nil }
+        return (start, end)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Generate word timings").font(.headline)
+            Text("Choose up to 20 seconds. A cached model estimates timings; only exact, unambiguous words are highlighted.")
+                .font(.caption).foregroundStyle(.secondary)
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+                GridRow {
+                    Text("From (seconds)")
+                    TextField("From seconds", text: $from)
+                        .accessibilityLabel("From seconds").accessibilityIdentifier("meetings.transcript.timings.from")
+                }
+                GridRow {
+                    Text("To (seconds)")
+                    TextField("To seconds", text: $to)
+                        .accessibilityLabel("To seconds").accessibilityIdentifier("meetings.transcript.timings.to")
+                }
+                GridRow {
+                    Text("Cached model")
+                    TextField("Cached model ID", text: $model)
+                        .accessibilityLabel("Cached model ID").accessibilityIdentifier("meetings.transcript.timings.model")
+                }
+                GridRow {
+                    Text("Language")
+                    TextField("Blank for auto", text: $language)
+                        .accessibilityLabel("Language code, blank for auto").accessibilityIdentifier("meetings.transcript.timings.language")
+                }
+            }
+            Text("No model download. Lines crossing the range boundary stay line-highlighted.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
+                Button("Generate") {
+                    guard let range = Self.range(from: from, to: to) else { return }
+                    let code = language.trimmingCharacters(in: .whitespacesAndNewlines)
+                    generate(range.0, range.1, model.trimmingCharacters(in: .whitespacesAndNewlines), code.isEmpty ? nil : code)
+                }
+                .disabled(Self.range(from: from, to: to) == nil || model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("meetings.transcript.timings.generate")
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+        .padding(16).frame(width: 450)
     }
 }

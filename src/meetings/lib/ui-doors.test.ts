@@ -458,6 +458,17 @@ describe("window revisions", () => {
         expect(await revisionsRead({ store: meetings, record: created })).toEqual(before);
     });
 
+    test("word evidence invalidates only the transcript and unknown evidence forces a read", () => {
+        const facts = { meeting: "m1", recordFile: 1, config: 2, source: "r1", screen: [3], transcriptEvidence: "w1" };
+        const first = revisionTokens(facts);
+        const changed = revisionTokens({ ...facts, transcriptEvidence: "w2" });
+        expect(changed.transcript).not.toBe(first.transcript);
+        expect(changed.speakers).toBe(first.speakers);
+        expect(changed.timeline).toBe(first.timeline);
+        expect(changed.show).toBe(first.show);
+        expect(revisionTokens({ ...facts, transcriptEvidence: null }).transcript).toBeNull();
+    });
+
     test("the timeline token holds the source's revision, which sets the timeline's clock", () => {
         const facts = { meeting: "m1", recordFile: { ino: 1 }, config: { ino: 2 }, source: "r1", screen: [{ ino: 3 }] };
         const first = revisionTokens(facts);

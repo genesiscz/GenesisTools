@@ -101,6 +101,33 @@ enum MeetingsAPI {
         typealias Result = MeetingTranscript
     }
 
+    enum WordTimings: MeetingsServiceMethod {
+        static let name = "meeting.wordTimings.generate"
+        struct Params: Codable, Equatable {
+            let ref: String
+            let fromSec: Double
+            let toSec: Double
+            let model: String
+            var language: String?
+        }
+        struct Result: Decodable, Equatable {
+            struct Coverage: Decodable, Equatable {
+                let eligibleWords: Int
+                let matchedWords: Int
+            }
+            let meeting: String
+            let cacheRevision: String
+            let reused: Bool
+            let coverage: Coverage
+        }
+    }
+
+    struct WordTimingsChanged: Decodable, Equatable {
+        static let name = "meeting.wordTimings.changed"
+        let meeting: String
+        let revision: String
+    }
+
     /// `meeting.revisions`: one token per window part, as `revisions <meeting> --json` prints it.
     enum Revisions: MeetingsServiceMethod {
         static let name = "meeting.revisions"
@@ -207,6 +234,7 @@ enum MeetingsAPI {
         CommentSent.name: { .commentSent(try MeetingsService.decode(CommentSent.self, $0)) },
         CommentChanged.name: { .commentChanged(try MeetingsService.decode(CommentChanged.self, $0)) },
         PeopleChanged.name: { .peopleChanged(try MeetingsService.decode(PeopleChanged.self, $0)) },
+        WordTimingsChanged.name: { .wordTimingsChanged(try MeetingsService.decode(WordTimingsChanged.self, $0)) },
     ]
 
     /// The events the window subscribes to.
@@ -214,7 +242,7 @@ enum MeetingsAPI {
         static let name = "people.changed"
     }
 
-    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, CommentChanged.name, PeopleChanged.name]
+    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, CommentChanged.name, PeopleChanged.name, WordTimingsChanged.name]
 }
 
 /// One event of the Meetings service, as the window hears it.
@@ -225,11 +253,13 @@ enum MeetingsEvent: Equatable {
     case commentSent(MeetingsAPI.CommentSent)
     case commentChanged(MeetingsAPI.CommentChanged)
     case peopleChanged(MeetingsAPI.PeopleChanged)
+    case wordTimingsChanged(MeetingsAPI.WordTimingsChanged)
 
     /// The meeting the event is about.
     var meeting: String? {
         switch self {
         case .meetingChanged(let event): return event.meeting
+        case .wordTimingsChanged(let event): return event.meeting
         case .decisionApplied(let event): return event.meeting
         case .decisionReverted(let event): return event.meeting
         case .commentSent(let event): return event.meeting
@@ -243,7 +273,7 @@ enum MeetingsEvent: Equatable {
         switch self {
         case .decisionApplied(let event): return event.entry
         case .decisionReverted(let event): return event.entry
-        case .meetingChanged, .commentSent, .commentChanged, .peopleChanged: return nil
+        case .meetingChanged, .commentSent, .commentChanged, .peopleChanged, .wordTimingsChanged: return nil
         }
     }
 }

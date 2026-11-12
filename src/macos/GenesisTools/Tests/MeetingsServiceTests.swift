@@ -241,6 +241,18 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.Transcript.name:
                 try roundTrip(MeetingsAPI.Transcript.Params.self, params, label)
                 if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.Transcript.Result.self, result).entries.isEmpty) }
+            case MeetingsAPI.WordTimings.name:
+                try roundTrip(MeetingsAPI.WordTimings.Params.self, params, label)
+                if let result {
+                    let generated = try MeetingsService.decode(MeetingsAPI.WordTimings.Result.self, result)
+                    XCTAssertEqual(generated.meeting, Self.design)
+                    XCTAssertEqual(generated.coverage.matchedWords, 1)
+                }
+            case MeetingsAPI.WordTimingsChanged.name:
+                let notification = try XCTUnwrap((example["notification"] as? [String: Any])?["params"])
+                let event = try XCTUnwrap(MeetingsAPI.eventDecoders[method])(notification)
+                XCTAssertEqual(event.meeting, Self.design)
+                XCTAssertFalse(MeetingsWindowModel.changesOverview(event))
             case MeetingsAPI.Revisions.name:
                 try roundTrip(MeetingsAPI.Revisions.Params.self, params, label)
                 if let result { XCTAssertNotNil(try MeetingsService.decode(MeetingsAPI.Revisions.Result.self, result).show) }

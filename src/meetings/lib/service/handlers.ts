@@ -11,13 +11,14 @@ import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
 import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
-import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+
 import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import type { SuggestionReads } from "../project-suggestions";
 import { TOOL } from "../shared";
-import type { LinkedSource } from "../sources";
-import { correctedTranscriptRead, revisionsRead, transcriptJsonView } from "../window-reads";
+import { type LinkedSource, linkedSource } from "../sources";
+import { correctedTranscriptRead, revisionsRead, timedTranscriptView } from "../window-reads";
+import { generateWordTimings, meetingWordTimingCache, type WordTimingGenerateDeps } from "../word-timings";
 import {
     MEETINGS_REFUSED,
     type MeetingsErrorCode,
@@ -54,6 +55,8 @@ export interface MeetingsCallContext {
 }
 
 export interface MeetingsHandlerDeps {
+    /** Optional isolated cache/inference dependencies for word-timing generation tests. */
+    wordTimings?: Pick<WordTimingGenerateDeps, "cache" | "modelFiles" | "infer">;
     /** The meetings store (a test passes a scratch one). */
     store?: () => MeetingStore;
     /** The transcript source of a record; tests pass a fake one, production asks the record's linked source. */
@@ -221,7 +224,50 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 },
                 linked: deps.linkedSource?.(record),
             });
-            return withLineEnds(transcriptJsonView(record, applied));
+            const view = timedTranscriptView(record, applied);
+            return {
+                meeting: view.meeting,
+                ...(deps.wordTimings?.cache ?? meetingWordTimingCache(record.id)).read(view.entries),
+            };
+        },
+        "meeting.wordTimings.generate": async (params, context) => {
+            const store = storeOf();
+            const record = recordOf(store, params.ref);
+            const result = await generateWordTimings(
+                {
+                    meeting: record.id,
+                    window: { fromSec: params.fromSec, toSec: params.toSec },
+                    model: params.model,
+                    language: params.language,
+                    signal: context.signal,
+                    progress: context.progress,
+                },
+                {
+                    ...deps.wordTimings,
+                    read: async () => {
+                        const current = recordOf(store, record.id);
+                        const linked = deps.linkedSource?.(current) ?? (await linkedSource(current));
+                        const { applied } = await correctedTranscriptRead({
+                            store,
+                            record: current,
+                            format: "json",
+                            flags: { dictionary: true },
+                            linked,
+                        });
+                        const evidence = await linked.source.evidence(linked.sourceMeetingId);
+                        if (!evidence?.audioPath) {
+                            throw new Error("This meeting has no source audio for word timing generation");
+                        }
+                        return {
+                            lines: timedTranscriptView(current, applied).entries,
+                            audioPath: evidence.audioPath,
+                            live: current.recording?.status === "recording" || current.recording?.status === "paused",
+                        };
+                    },
+                }
+            );
+            context.emit?.("meeting.wordTimings.changed", { meeting: record.id, revision: result.cacheRevision });
+            return result;
         },
         "meeting.revisions": (params) => {
             const store = storeOf();
@@ -287,18 +333,6 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "dictionary.add": async (params) => (await library()).addDictionaryEntry(params, deps),
         "dictionary.remove": async (params) => (await library()).removeDictionaryEntry(params, deps),
         "dictionary.test": async (params) => (await library()).testDictionaryPhrase(params, deps),
-    };
-}
-
-/** The corrected lines, each with its end (the next timed line's start), which `transcript --format json` leaves out. */
-function withLineEnds(view: ReturnType<typeof transcriptJsonView>) {
-    const lines = new TranscriptLines(view.entries);
-    return {
-        ...view,
-        entries: view.entries.map((entry, index) => {
-            const endSec = lines.end(index);
-            return endSec === undefined ? entry : { ...entry, endSec };
-        }),
     };
 }
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,6 +9,7 @@ import { MeetingsConflictError, MeetingsStateError } from "@genesiscz/utils/meet
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import { WordTimingCache, wordTimingFile } from "@genesiscz/utils/meetings/word-timing-cache";
 import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
@@ -16,6 +17,8 @@ import { MeetingComments } from "../comments";
 import { persistClip } from "../saved-clip";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
+import { wordTimingModelFiles } from "../word-timing-worker";
+import { generateWordTimings, type WordTimingGenerateDeps, type WordTimingInput } from "../word-timings";
 import fixture from "./__fixtures__/meetings-protocol.json";
 import {
     MEETINGS_EVENTS,
@@ -273,7 +276,9 @@ const quietDeps: MeetingsHandlerDeps = {
     }),
 };
 
-async function startService(options: { dir?: string; watch?: MeetingsServiceOptions["watch"] } = {}) {
+async function startService(
+    options: { dir?: string; watch?: MeetingsServiceOptions["watch"]; deps?: Partial<MeetingsHandlerDeps> } = {}
+) {
     const { store, config, linkedSource } = scratchStore();
     const dir = options.dir ?? serviceDir();
     const start = await startMeetingsService({
@@ -285,6 +290,7 @@ async function startService(options: { dir?: string; watch?: MeetingsServiceOpti
         code: CODE,
         watch: options.watch ?? false,
         ...quietDeps,
+        ...options.deps,
     });
 
     if (start.status !== "started") {
@@ -1662,7 +1668,23 @@ interface Example {
 
 /** Every example of the fixture, from a live service on a scratch store over raw sockets. */
 async function captureExamples(): Promise<Example[]> {
-    const { service, store, config } = await startService();
+    const timingRoot = mkdtempSync(join(tmpdir(), "mtg-protocol-words-"));
+    const model = join(timingRoot, "model.onnx");
+    writeFileSync(model, "fixture-model");
+    const modelFiles = [wordTimingFile(model)];
+    const { service, store, config } = await startService({
+        deps: {
+            wordTimings: {
+                cache: new WordTimingCache(join(timingRoot, "cache")),
+                modelFiles: async () => modelFiles,
+                infer: async () => ({
+                    words: [{ text: "Let", startSec: 2.1, endSec: 2.4 }],
+                    pcmSha256: "fixture-pcm",
+                    modelFiles,
+                }),
+            },
+        },
+    });
     const examples: Example[] = [];
     const ask = async (
         connection: Awaited<ReturnType<typeof rawConnection>>,
@@ -1688,19 +1710,34 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meeting.show", { ref: "nope" }, "No meeting: meeting-not-found.");
     await ask(window, "meeting.show", { ref: "2026-11-03" }, "A prefix of two meetings: meeting-ref.");
     await ask(window, "meeting.transcript", { ref: REVIEW.id });
+    await ask(window, "meeting.wordTimings.generate", {
+        ref: REVIEW.id,
+        fromSec: 0,
+        toSec: 12,
+        model: "fixture/words",
+    });
     await ask(window, "meeting.transcript", { ref: RETRO.id }, "No transcript source: a meeting state.");
     await ask(window, "meeting.revisions", { ref: REVIEW.id });
     await ask(window, "meetings.list", { limit: 0 }, "A bad param: -32602 before any handler.");
     await ask(window, SUBSCRIBE, { meeting: REVIEW.id, events: ["meeting.changed"] });
-    await ask(window, SUBSCRIBE, { meeting: REVIEW.id, events: ["meeting.changed", "people.changed"] });
+    await ask(window, SUBSCRIBE, {
+        meeting: REVIEW.id,
+        events: ["meeting.changed", "people.changed", "meeting.wordTimings.changed"],
+    });
     service.emit("meeting.changed", { meeting: REVIEW.id, parts: ["show", "transcript"] });
     service.emit("people.changed", {});
+    service.emit("meeting.wordTimings.changed", { meeting: REVIEW.id, revision: "fixture-revision" });
     await ask(window, "meetings.list", { limit: 1 }, "Sent after the event, so the event is in before its reply.");
 
     examples.push({
         method: "people.changed",
         direction: "service→client",
         notification: window.lines.find((line) => line.method === "people.changed"),
+    });
+    examples.push({
+        method: "meeting.wordTimings.changed",
+        direction: "service→client",
+        notification: window.lines.find((line) => line.method === "meeting.wordTimings.changed"),
     });
     const notification = window.lines.find((line) => line.method === "meeting.changed");
     examples.push({
@@ -2097,6 +2134,10 @@ function normalized(examples: Example[]): unknown {
             // A removed project's backup: under the sandbox home, named by the local time of the removal.
             .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
             .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"')
+            .replace(
+                /"(cacheRevision|revision|audioFingerprint|modelFingerprint|id)":"[a-f0-9]{64}"/g,
+                '"$1":"<timing-hash>"'
+            )
             // An error's stack names this checkout's paths and line numbers.
             .replace(
                 /"(path|folder)":"[^"\n]*\/(2026-11-03-1400-retro(?:\/frames\/screen\.png)?)"/g,
@@ -2214,5 +2255,309 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
         const entry = SafeJSON.parse(await Bun.file(serviceEntryPath(dir)).text(), { strict: true });
 
         expect(entry).toMatchObject({ version: 1, protocol: MEETINGS_PROTOCOL, code: CODE });
+    });
+});
+
+describe("explicit word timing generation", () => {
+    function setup() {
+        const root = mkdtempSync(join(tmpdir(), "mtg-words-"));
+        const audioPath = join(root, "audio.wav"),
+            model = join(root, "model.onnx");
+        writeFileSync(audioPath, "audio");
+        writeFileSync(model, "model");
+        const input: WordTimingInput = {
+            audioPath,
+            live: false,
+            lines: [{ id: "l1", text: "alpha beta", startSec: 0, endSec: 2 }],
+        };
+        const cache = new WordTimingCache(join(root, "cache"));
+        const modelFiles = [wordTimingFile(model)];
+        let calls = 0;
+        const deps: WordTimingGenerateDeps = {
+            read: async () => input,
+            cache,
+            modelFiles: async () => modelFiles,
+            infer: async () => {
+                calls++;
+                return { words: [{ text: "alpha", startSec: 0.1, endSec: 0.4 }], pcmSha256: "fake-pcm", modelFiles };
+            },
+        };
+        const options = { meeting: "test-meeting", window: { fromSec: 0, toSec: 2 }, model: "test/words" };
+        return {
+            input,
+            cache,
+            deps,
+            options,
+            modelFiles,
+            get calls() {
+                return calls;
+            },
+        };
+    }
+
+    test("model provenance follows the runtime cache even when a separate hub copy exists", async () => {
+        const root = mkdtempSync(join(tmpdir(), "mtg-model-caches-"));
+        const runtime = join(root, "runtime");
+        const hub = join(root, "hub", "models--test--words");
+        const model = join(runtime, "test", "words");
+        mkdirSync(model, { recursive: true });
+        mkdirSync(hub, { recursive: true });
+        writeFileSync(join(model, "weights.onnx"), "actual");
+        writeFileSync(join(hub, "weights.onnx"), "unrelated");
+        const files = wordTimingModelFiles(runtime, "test/words");
+        expect(files.map((file) => file.path)).toEqual([join(model, "weights.onnx")]);
+        expect(() => wordTimingModelFiles(join(root, "missing"), "test/words")).toThrow("not cached");
+        const f = setup();
+        f.deps.modelFiles = async () => files;
+        f.deps.infer = async () => ({ words: [], pcmSha256: "fake-pcm", modelFiles: files });
+        await generateWordTimings(f.options, f.deps);
+        writeFileSync(join(model, "weights.onnx"), "changed actual");
+        expect(f.cache.read(f.input.lines).wordTimings.state).toBe("stale");
+    });
+
+    test("generates, reopens and reuses the completed result without more inference", async () => {
+        const f = setup();
+        const first = await generateWordTimings(f.options, f.deps);
+        expect(first.reused).toBe(false);
+        expect(first.coverage.matchedWords).toBe(1);
+        const reopened = new WordTimingCache(f.cache.folder).read(f.input.lines);
+        expect(reopened.entries[0].words?.[0].startSec).toBe(0.1);
+        const second = await generateWordTimings(f.options, f.deps);
+        expect(second.reused).toBe(true);
+        expect(second.cacheRevision).toBe(first.cacheRevision);
+        expect(f.calls).toBe(1);
+    });
+
+    test("a correction reuses raw evidence but publishes only matches to current text", async () => {
+        const f = setup();
+        await generateWordTimings(f.options, f.deps);
+        f.input.lines[0].text = "different beta";
+        const next = await generateWordTimings(f.options, f.deps);
+        expect(next.reused).toBe(true);
+        expect(next.coverage.matchedWords).toBe(0);
+        expect(f.calls).toBe(1);
+        expect(f.cache.read(f.input.lines).entries[0].words).toBeUndefined();
+    });
+
+    test("one cancelled waiter does not cancel another equal request", async () => {
+        const f = setup();
+        let started!: () => void, finish!: () => void;
+        const entered = new Promise<void>((resolve) => {
+            started = resolve;
+        });
+        const gate = new Promise<void>((resolve) => {
+            finish = resolve;
+        });
+        let calls = 0;
+        f.deps.infer = async (_input, signal) => {
+            calls++;
+            started();
+            await gate;
+            signal.throwIfAborted();
+            return {
+                words: [{ text: "alpha", startSec: 0.1, endSec: 0.4 }],
+                pcmSha256: "fake-pcm",
+                modelFiles: f.modelFiles,
+            };
+        };
+        const abort = new AbortController();
+        const first = generateWordTimings({ ...f.options, signal: abort.signal }, f.deps);
+        const firstRejected = first.then(
+            () => false,
+            () => true
+        );
+        const second = generateWordTimings(f.options, f.deps);
+        await entered;
+        abort.abort(new Error("cancel first waiter"));
+        expect(await firstRejected).toBe(true);
+        finish();
+        expect((await second).coverage.matchedWords).toBe(1);
+        expect(calls).toBe(1);
+    });
+
+    test("last waiter cancellation reaches inference and publishes no cache", async () => {
+        const f = setup();
+        let started!: () => void, killed!: () => void;
+        const entered = new Promise<void>((resolve) => {
+            started = resolve;
+        });
+        const stopped = new Promise<void>((resolve) => {
+            killed = resolve;
+        });
+        f.deps.infer = async (_input, signal) => {
+            started();
+            return new Promise((_resolve, reject) =>
+                signal.addEventListener(
+                    "abort",
+                    () => {
+                        killed();
+                        reject(signal.reason);
+                    },
+                    { once: true }
+                )
+            );
+        };
+        const abort = new AbortController();
+        const task = generateWordTimings({ ...f.options, signal: abort.signal }, f.deps);
+        const rejected = task.then(
+            () => false,
+            () => true
+        );
+        await entered;
+        abort.abort(new Error("stop generation"));
+        expect(await rejected).toBe(true);
+        await stopped;
+        expect(f.cache.read(f.input.lines).wordTimings.state).toBe("missing");
+    });
+
+    test("an immediate retry gets a fresh job while the cancelled worker is still settling", async () => {
+        const f = setup();
+        let entered!: () => void, release!: () => void;
+        const started = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        const hold = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+
+        let calls = 0;
+        f.deps.infer = async (_input, signal) => {
+            calls++;
+            if (calls === 1) {
+                entered();
+                await hold;
+                signal.throwIfAborted();
+            }
+            return {
+                words: [{ text: "alpha", startSec: 0.1, endSec: 0.4 }],
+                pcmSha256: "fake-pcm",
+                modelFiles: f.modelFiles,
+            };
+        };
+        const abort = new AbortController();
+        const first = generateWordTimings({ ...f.options, signal: abort.signal }, f.deps).catch(() => undefined);
+        await started;
+        abort.abort();
+        await first;
+        const retry = generateWordTimings(f.options, f.deps);
+        const outcome = retry.then(
+            (value) => ({ value }),
+            (error: unknown) => ({ error })
+        );
+        // Flush the retry's resolved read/model awaits before releasing the old worker.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        release();
+        const result = await outcome;
+        expect(result).toHaveProperty("value.coverage.matchedWords", 1);
+        expect(calls).toBe(2);
+    });
+
+    test("an immediate retry retires a deadline-expired worker before it settles", async () => {
+        const f = setup();
+        const deadline = new AbortController();
+        const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+        const clock = spyOn(AbortSignal, "timeout").mockImplementation((ms) =>
+            ms === 120_000 ? deadline.signal : originalTimeout(ms)
+        );
+        let entered!: () => void, release!: () => void;
+        const started = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        const hold = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let calls = 0;
+        f.deps.infer = async (_input, signal) => {
+            calls++;
+            if (calls === 1) {
+                entered();
+                await hold;
+                signal.throwIfAborted();
+            }
+            return {
+                words: [{ text: "alpha", startSec: 0.1, endSec: 0.4 }],
+                pcmSha256: "fake-pcm",
+                modelFiles: f.modelFiles,
+            };
+        };
+        try {
+            const first = generateWordTimings(f.options, f.deps).catch(() => undefined);
+            await started;
+            deadline.abort(new Error("deadline expired"));
+            clock.mockRestore();
+            const retry = generateWordTimings(f.options, f.deps);
+            const outcome = retry.then(
+                (value) => ({ value }),
+                (error: unknown) => ({ error })
+            );
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            release();
+            await first;
+            expect(await outcome).toHaveProperty("value.coverage.matchedWords", 1);
+            expect(calls).toBe(2);
+        } finally {
+            release?.();
+            clock.mockRestore();
+        }
+    });
+
+    test("a changed transcript during inference cannot publish stale timing ranges", async () => {
+        const f = setup();
+        f.deps.infer = async () => {
+            f.input.lines[0].text = "changed";
+            return { words: [], pcmSha256: "fake-pcm", modelFiles: f.modelFiles };
+        };
+        await expect(generateWordTimings(f.options, f.deps)).rejects.toThrow("changed during");
+        expect(f.cache.read(f.input.lines).wordTimings.state).toBe("missing");
+    });
+
+    test("live recordings refuse generation before loading a model", async () => {
+        const f = setup();
+        f.input.live = true;
+        f.deps.modelFiles = async () => {
+            throw new Error("must not load model");
+        };
+        await expect(generateWordTimings(f.options, f.deps)).rejects.toThrow("Stop the recording");
+    });
+
+    test("socket and in-process clients expose the same saved words and emit their own event", async () => {
+        const f = setup();
+        const wordTimings = {
+            cache: f.cache,
+            modelFiles: f.deps.modelFiles,
+            infer: async () => ({
+                words: [{ text: "Let", startSec: 2.1, endSec: 2.4 }],
+                pcmSha256: "fake-pcm",
+                modelFiles: f.modelFiles,
+            }),
+        };
+        const { service, store } = await startService({ deps: { wordTimings } });
+        const socket = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => socket.close());
+        const linked = fakeSource();
+        const direct = new InProcessMeetingsClient({
+            hello,
+            deps: {
+                store: () => store,
+                linkedSource: () => ({ source: linked, sourceMeetingId: "wf-2041" }),
+                ...quietDeps,
+                wordTimings,
+            },
+        });
+        closing.push(() => direct.close());
+        const events = eventQueue();
+        await socket.subscribe({ meeting: REVIEW.id, events: ["meeting.wordTimings.changed"] }, events.push);
+        const generated = await socket.call("meeting.wordTimings.generate", {
+            ref: REVIEW.id,
+            fromSec: 0,
+            toSec: 12,
+            model: "test/words",
+        });
+        expect(generated.coverage.matchedWords).toBe(1);
+        expect((await events.next()).method).toBe("meeting.wordTimings.changed");
+        const fromSocket = await socket.call("meeting.transcript", { ref: REVIEW.id });
+        const fromDirect = await direct.call("meeting.transcript", { ref: REVIEW.id });
+        expect(fromSocket).toEqual(fromDirect);
+        expect(fromSocket.entries[0].words?.[0].range).toEqual({ location: 0, length: 3 });
     });
 });

@@ -535,6 +535,8 @@ extension MeetingDetailModel {
             if changed.parts.contains("transcript") { transcriptChanged() }
             if changed.parts.contains("speakers"), speakers != .idle { readSpeakers(quiet: true) }
             if changed.parts.contains("timeline"), timeline != .idle { readTimeline(quiet: true) }
+        case .wordTimingsChanged:
+            transcriptChanged()
         case .commentSent, .commentChanged, .peopleChanged:
             break
         }
