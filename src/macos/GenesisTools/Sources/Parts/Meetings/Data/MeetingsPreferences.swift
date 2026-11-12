@@ -325,6 +325,13 @@ extension MeetingsPreferences {
             key: "meetings.screen.height", defaultValue: 150, choices: [100, 150, 200],
             title: "Screen height in the dock", detail: "Points the frame beside the sound takes.")
 
+        static let frameBoxes = MeetingsWindowSetting(
+            key: "meetings.screen.viewer.boxes", defaultValue: true, choices: [true, false],
+            title: "Boxes in the frame viewer", detail: "Outline the text recognized in a recording frame.")
+        static let frameSeek = MeetingsWindowSetting(
+            key: "meetings.screen.viewer.seekPlayback", defaultValue: true, choices: [true, false],
+            title: "Frame time seeks playback", detail: "Moving the frame viewer's time also seeks active playback; paused audio stays paused.")
+
         enum Waveform: String, CaseIterable { case speakers, plain }
 
         /// Two rows: with one, two items a second apart were a count that no zoom took apart.

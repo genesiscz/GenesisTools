@@ -268,6 +268,21 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertEqual(player.stack.map(\.target), [.item("i2")], "a row starts over")
     }
 
+    func testFrameReviewSeekingKeepsAPausedRecordingPaused() async throws {
+        engine.audio = .init(path: engine.folder.appendingPathComponent("upload.ogg").path, tracks: 1, channels: 2, durationSec: 3600)
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("first moment plays") { player.phase == .playing }
+        player.pause()
+        let review = FrameReviewModel(meeting: "m", file: "a.png", at: 600, player: player, defaults: defaults)
+        review.sourceDuration = 3600
+        review.selectTime(600)
+        review.seekPlayback()
+        try await until("recording is positioned and paused") { player.phase == .paused && player.top?.kind == .file }
+        XCTAssertEqual(player.position, 600)
+        XCTAssertEqual(playingCount, 0)
+    }
+
     func testRoutedMomentPushesAndKeepsItsPlaybackOptions() async throws {
         let player = makePlayer()
         player.play(.item("i1"), in: "m", from: .row)

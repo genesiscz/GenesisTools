@@ -100,7 +100,15 @@ struct ScreenBesidePlayback: View {
         if recorded {
             VStack(alignment: .leading, spacing: 6) {
                 header
-                frame
+                if let openFrame {
+                    Button(action: openFrame) { frame }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(spoken)
+                        .accessibilityHint("Open this frame in the recording viewer")
+                        .accessibilityIdentifier("meetings.screen.open")
+                } else {
+                    frame
+                }
             }
             .frame(height: height + 50, alignment: .top)
         }
@@ -133,7 +141,7 @@ struct ScreenBesidePlayback: View {
                               tooltip: "Follow playback, or hold the current frame",
                               identifier: "meetings.screen.follows")
                 if let openFrame {
-                    GhostButton("Open frame", symbol: "arrow.up.forward.square", tooltip: "Open this frame in the image viewer", action: openFrame)
+                    GhostButton("Open frame", symbol: "arrow.up.forward.square", tooltip: "Open this frame in the recording viewer", action: openFrame)
                 }
                 if let showText {
                     GhostButton("OCR text", symbol: "text.viewfinder", tooltip: "Read and copy all recognized text in this frame", action: showText)

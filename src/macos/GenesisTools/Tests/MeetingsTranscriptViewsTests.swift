@@ -9,6 +9,31 @@ import XCTest
 @MainActor
 final class MeetingsTranscriptViewsTests: XCTestCase {
 
+    func testFrameReviewSearchAndTimeNavigation() throws {
+        func frame(_ file: String, _ time: Double, _ text: String, display: Int = 1) -> TimelineFrame {
+            let box = OcrBox(x: 10, y: 20, width: 100, height: 30, text: text, confidence: 1)
+            return TimelineFrame(file: file, path: "/fixture/\(file)", at: "2026-11-01T10:00:00Z", meetingSec: time,
+                                 displayId: display, width: 800, height: 600, lineCount: 1, changed: [box], lines: [box])
+        }
+        let first = frame("a.png", 10, "Café launch")
+        let second = frame("b.png", 20, "Review")
+        let other = frame("c.png", 30, "Cafe notes", display: 2)
+        let timeline = ScreenTimeline(meeting: "m1", folder: "/fixture", displays: [], frames: [first, second, other])
+        let model = FrameReviewModel(meeting: "m1", file: first.file, at: 10, player: nil, defaults: .standard, timeline: timeline)
+        model.query = "cafe"
+        XCTAssertEqual(model.matches.map(\.frame.file), ["a.png", "c.png"])
+        model.nextMatch(1)
+        XCTAssertEqual(model.frame?.file, "c.png")
+        XCTAssertEqual(model.display, 2)
+        model.query = ""
+        model.display = 1
+        model.selectTime(25)
+        XCTAssertEqual(model.frame?.file, "b.png")
+        model.step(-1, seek: false)
+        XCTAssertEqual(model.time, 10)
+        XCTAssertEqual(FrameReviewModel.nearest(in: [first, second], at: 0)?.file, "a.png")
+    }
+
     // MARK: Fixtures (invented people)
 
     private static let entries: [TranscriptLine] = [

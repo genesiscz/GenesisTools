@@ -8,7 +8,6 @@ import SwiftUI
 struct ScreenTab: View {
     @Bindable var detail: MeetingDetailModel
     @State private var display: Int = -1
-    @State private var opened: TimelineFrame?
     @State private var hideQuiet = true
     /// Below this width a frame's text goes under its thumbnail: beside a 220 pt thumbnail at the window's smallest
     /// size the time, the display and the lines had about 60 pt and wrapped one or two letters per line.
@@ -44,16 +43,17 @@ struct ScreenTab: View {
                         LazyVStack(alignment: .leading, spacing: 10) {
                             ForEach(frames(timeline)) { frame in
                                 FrameRow(frame: frame, displayName: name(of: frame, in: timeline),
-                                         showAll: MeetingsPreferences.timelineLines() == .all, stacked: stacked) { opened = frame }
+                                         showAll: MeetingsPreferences.timelineLines() == .all, stacked: stacked) {
+                                    FrameReviewWindow.show(meeting: detail.id, file: frame.file, at: frame.meetingSec,
+                                                           player: detail.window?.player, defaults: detail.defaults, timeline: timeline,
+                                                           duration: detail.window?.meeting(detail.id)?.durationSec)
+                                }
                                     .equatable()
                             }
                         }
                         .padding(14)
                     }
                     .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.stackWidth }) { stacked = $0 }
-                }
-                .sheet(item: $opened) { frame in
-                    FrameViewer(frame: frame, detail: detail) { opened = nil }
                 }
             }
         }
@@ -130,89 +130,6 @@ struct FrameRow: View, Equatable {
         .contentShape(Rectangle())
         .liveRow()
         .accessibilityAction(named: "Show large", open)
-    }
-}
-
-/// A frame drawn at its full width in a sheet, with the changed lines boxed in the frame's own pixels, or every line
-/// the OCR read (the changed ones still in the accent colour). It opens on the Screen tab's own line choice.
-private struct FrameViewer: View {
-    let frame: TimelineFrame
-    let detail: MeetingDetailModel
-    let close: () -> Void
-    @State private var shown = MeetingsPreferences.timelineLines()
-    @State private var lines: Loadable<[OcrBox]> = .idle
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Text(verbatim: "Frame at \(MeetingsFormat.clock(frame.meetingSec))").font(.system(size: 14, weight: .semibold))
-                Text(verbatim: "\(Plural.count(frame.changed.count, "changed line")) of \(frame.lineCount) read")
-                    .foregroundStyle(.secondary).font(.system(size: 12).monospacedDigit())
-                Picker("Boxes", selection: $shown) {
-                    Text("Changed lines").tag(MeetingsPreferences.TimelineLines.changed)
-                    Text("All text").tag(MeetingsPreferences.TimelineLines.all)
-                }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
-                .instantTooltip("Box only the lines that changed since this display's earlier frame, or every line the OCR read")
-                if shown == .all, case .loading = lines { ProgressView().controlSize(.small) }
-                if shown == .all, case .failed(let failure, _) = lines {
-                    Text(verbatim: failure.sentence).font(.system(size: 11)).foregroundStyle(KitHue.danger.ink).lineLimit(1)
-                        .help(failure.sentence)
-                    IconButton(systemName: "doc.text.magnifyingglass", tooltip: "Details of this failure", size: 10) {
-                        FailureReporter.shared.showDetails(failure.report(outcome: "The frame's text did not load",
-                                                                          action: "Box every line the OCR read"))
-                    }
-                }
-                Spacer()
-                Button("Show in Finder") { PathOpener.reveal(frame.path) }.buttonStyle(.genHoverPlain())
-                Button("Close", action: close).keyboardShortcut(.cancelAction)
-            }
-            GeometryReader { proxy in
-                let scale = min(proxy.size.width / max(frame.width, 1), proxy.size.height / max(frame.height, 1))
-                ZStack(alignment: .topLeading) {
-                    FrameThumbnail(path: frame.path, width: frame.width * scale)
-                    if shown == .all {
-                        ForEach(Array(unchanged.enumerated()), id: \.offset) { _, box in
-                            Rectangle().strokeBorder(Color.secondary.opacity(0.8), lineWidth: 1)
-                                .frame(width: box.width * scale, height: box.height * scale)
-                                .offset(x: box.x * scale, y: box.y * scale)
-                                .accessibilityLabel(box.text)
-                        }
-                    }
-                    ForEach(Array(frame.changed.enumerated()), id: \.offset) { _, box in
-                        Rectangle().strokeBorder(Color.accentColor, lineWidth: 1.5)
-                            .frame(width: box.width * scale, height: box.height * scale)
-                            .offset(x: box.x * scale, y: box.y * scale)
-                            .accessibilityLabel(box.text)
-                    }
-                }
-                .frame(width: frame.width * scale, height: frame.height * scale)
-            }
-        }
-        .padding(16)
-        // Smaller than the window's own minimum, so the sheet never hangs past a small window.
-        .frame(minWidth: 640, minHeight: 420)
-        .task(id: shown) { await loadLines() }
-    }
-
-    /// The lines the changed boxes do not already cover.
-    private var unchanged: [OcrBox] {
-        let changed = Set(frame.changed)
-        return (lines.value ?? []).filter { !changed.contains($0) }
-    }
-
-    private func loadLines() async {
-        guard shown == .all, lines.value == nil else { return }
-        if let known = frame.lines {
-            lines = .loaded(known)
-            return
-        }
-        lines = .loading(previous: nil)
-        do {
-            lines = .loaded(try await detail.frameLines(file: frame.file))
-        } catch {
-            if !Task.isCancelled { lines = .failed(asFailure(error), previous: nil) }
-        }
     }
 }
 
