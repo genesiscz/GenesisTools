@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 
 /**
  * A layered architecture diagram drawn as SVG in the page, with no library
@@ -24,6 +24,8 @@ export interface DiagramNode {
     weight?: number;
     /** Columns this box covers when the layer has `columns`. Default 1. */
     colSpan?: number;
+    /** 1-based starting column. Leaves leading and middle cells empty. */
+    col?: number;
     /** Rows this box covers when the layer has `rows`. Default 1. */
     rowSpan?: number;
 }
@@ -62,6 +64,8 @@ export interface DiagramEdge {
     label?: string;
     /** Horizontal position in viewBox units; default the source's centre (or the target's without a source). */
     x?: number;
+    /** Gap after this 1-based column, or the left/right band side. Overrides automatic routing. */
+    lane?: number | "left" | "right";
 }
 
 export interface LayerDiagramProps {
@@ -77,6 +81,8 @@ export interface LayerDiagramProps {
     gap?: number;
     /** Narrowest CSS width before the frame scrolls. Default 980. */
     minWidth?: number;
+    /** Automatic collision avoidance, or the original direct paths for comparison. Default auto. */
+    routing?: "auto" | "direct";
 }
 
 export interface PlacedNode {
@@ -102,7 +108,11 @@ export interface PlacedEdge {
     source?: PlacedNode;
     target: PlacedNode;
     d: string;
-    label?: { text: string; x: number; y: number };
+    /** Box ids still intersected by the final route. Such edges are rendered above boxes with a halo. */
+    crosses: string[];
+    /** Selected horizontal detour coordinate, in viewBox units. */
+    lane?: number;
+    label?: { text: string; x: number; y: number; anchor?: "start" | "end" };
 }
 
 export interface LayerDiagramLayout {
@@ -121,6 +131,73 @@ const BAND_INSET = 10;
 const COLUMN_GAP = 15;
 const DEFAULT_COLOR = "var(--dim)";
 
+interface RoutePoint {
+    x: number;
+    y: number;
+}
+
+function routeCrosses(points: RoutePoint[], obstacles: PlacedNode[]): string[] {
+    return obstacles
+        .filter((box) =>
+            points.some((end, i) => {
+                if (i === 0) {
+                    return false;
+                }
+
+                const start = points[i - 1];
+                let lo = 0;
+                let hi = 1;
+
+                for (const [a, b, min, max] of [
+                    [start.x, end.x, box.x - 2, box.x + box.w + 2],
+                    [start.y, end.y, box.y - 2, box.y + box.h + 2],
+                ]) {
+                    const delta = b - a;
+                    if (delta === 0) {
+                        if (a < min || a > max) {
+                            return false;
+                        }
+                    } else {
+                        lo = Math.max(lo, Math.min((min - a) / delta, (max - a) / delta));
+                        hi = Math.min(hi, Math.max((min - a) / delta, (max - a) / delta));
+                    }
+                }
+
+                return lo <= hi;
+            })
+        )
+        .map((box) => box.node.id);
+}
+
+function roundedRoute(points: RoutePoint[]): string {
+    let d = `M${points[0].x} ${points[0].y}`;
+
+    for (let i = 1; i < points.length - 1; i += 1) {
+        const before = points[i - 1];
+        const corner = points[i];
+        const after = points[i + 1];
+        const incoming = Math.hypot(corner.x - before.x, corner.y - before.y);
+        const outgoing = Math.hypot(after.x - corner.x, after.y - corner.y);
+        const radius = Math.min(6, incoming / 2, outgoing / 2);
+        if (incoming === 0 || outgoing === 0) {
+            continue;
+        }
+
+        const entry = {
+            x: corner.x + ((before.x - corner.x) * radius) / incoming,
+            y: corner.y + ((before.y - corner.y) * radius) / incoming,
+        };
+        const exit = {
+            x: corner.x + ((after.x - corner.x) * radius) / outgoing,
+            y: corner.y + ((after.y - corner.y) * radius) / outgoing,
+        };
+        d += ` L${entry.x} ${entry.y} Q${corner.x} ${corner.y} ${exit.x} ${exit.y}`;
+    }
+
+    const end = points[points.length - 1];
+    return `${d} L${end.x} ${end.y}`;
+}
+
 /** Place every band, box, arrow and bus. Pure, so the geometry is tested without a DOM. */
 export function layoutLayerDiagram({
     layers,
@@ -128,12 +205,14 @@ export function layoutLayerDiagram({
     width = 1200,
     labelWidth = 180,
     gap = 30,
+    routing = "auto",
 }: Omit<LayerDiagramProps, "title" | "minWidth">): LayerDiagramLayout {
     const left = BAND_INSET + labelWidth;
     const right = width - 2 * BAND_INSET;
     const bands: PlacedBand[] = [];
     const nodes: PlacedNode[] = [];
     const buses: LayerDiagramLayout["buses"] = [];
+    const layerLanes: number[][] = [];
     let y = MARGIN_TOP;
 
     layers.forEach((layer, li) => {
@@ -161,6 +240,7 @@ export function layoutLayerDiagram({
             cx += w + COLUMN_GAP;
         }
 
+        layerLanes.push(colX.map((x, i) => x + colW[i] + COLUMN_GAP / 2));
         // Row-major auto-placement over an occupancy grid, the way CSS grid fills.
         const taken: boolean[][] = Array.from({ length: rows }, () => weights.map(() => false));
         const fits = (r: number, c: number, rs: number, cs: number) => {
@@ -182,7 +262,7 @@ export function layoutLayerDiagram({
 
             for (let r = 0; r < rows && !slot; r += 1) {
                 for (let c = 0; c < weights.length && !slot; c += 1) {
-                    if (fits(r, c, rs, cs)) {
+                    if ((node.col === undefined || c === node.col - 1) && fits(r, c, rs, cs)) {
                         slot = [r, c];
                     }
                 }
@@ -243,14 +323,84 @@ export function layoutLayerDiagram({
         const inside = x0 >= target.x + 12 && x0 <= target.x + target.w - 12;
         const x1 = inside ? x0 : target.x + target.w / 2;
         const mid = (y0 + y1) / 2;
-        const d = inside ? `M${x0} ${y0} V ${y1}` : `M${x0} ${y0} C ${x0} ${mid}, ${x1} ${mid}, ${x1} ${y1}`;
+        let d = inside ? `M${x0} ${y0} V ${y1}` : `M${x0} ${y0} C ${x0} ${mid}, ${x1} ${mid}, ${x1} ${y1}`;
+        const lowLayer = Math.min(source?.layer ?? target.layer - 1, target.layer);
+        const highLayer = Math.max(source?.layer ?? target.layer - 1, target.layer);
+        const obstacles = nodes.filter((node) => node.layer > lowLayer && node.layer < highLayer);
+        // Sample the legacy cubic only for collision detection; unobstructed paths retain their exact shape.
+        const direct = Array.from({ length: 33 }, (_, i) => {
+            const t = i / 32;
+            const u = 1 - t;
+            return {
+                x: inside ? x0 : u * u * u * x0 + 3 * u * u * t * x0 + 3 * u * t * t * x1 + t * t * t * x1,
+                y: inside
+                    ? y0 + t * (y1 - y0)
+                    : u * u * u * y0 + 3 * u * u * t * mid + 3 * u * t * t * mid + t * t * t * y1,
+            };
+        });
+        let crosses = routeCrosses(direct, obstacles);
+        let lane: number | undefined;
+
+        if (routing === "auto" && (crosses.length || edge.lane !== undefined)) {
+            const a = source ? bands[source.layer].y + bands[source.layer].h + gap / 3 : y0 + gap / 3;
+            const b = bands[target.layer].y - gap / 3;
+            const detour = (x: number): RoutePoint[] => [
+                { x: x0, y: y0 },
+                { x: x0, y: a },
+                { x, y: a },
+                { x, y: b },
+                { x: x1, y: b },
+                { x: x1, y: y1 },
+            ];
+            const explicit =
+                edge.lane === "left"
+                    ? left - COLUMN_GAP / 2
+                    : edge.lane === "right"
+                      ? right + COLUMN_GAP / 2
+                      : typeof edge.lane === "number"
+                        ? layerLanes[source?.layer ?? target.layer][edge.lane - 1]
+                        : undefined;
+            const candidates =
+                explicit === undefined
+                    ? [
+                          ...new Set([
+                              left - COLUMN_GAP / 2,
+                              right + COLUMN_GAP / 2,
+                              ...layerLanes.flat(),
+                              ...obstacles.flatMap((node) => [
+                                  node.x - COLUMN_GAP / 2,
+                                  node.x + node.w + COLUMN_GAP / 2,
+                              ]),
+                          ]),
+                      ].sort((a, b) => Math.abs(a - x0) - Math.abs(b - x0))
+                    : [explicit];
+            lane = candidates.find((x) => routeCrosses(detour(x), obstacles).length === 0);
+
+            if (lane !== undefined) {
+                d = roundedRoute(detour(lane));
+                crosses = [];
+            } else if (explicit !== undefined) {
+                lane = explicit;
+                d = roundedRoute(detour(explicit));
+                crosses = routeCrosses(detour(explicit), obstacles);
+            }
+        }
 
         placedEdges.push({
             edge,
             source,
             target,
             d,
-            label: edge.label ? { text: edge.label, x: x0 + 15, y: mid + 5 } : undefined,
+            crosses,
+            lane,
+            label: edge.label
+                ? {
+                      text: edge.label,
+                      x: (lane ?? x0) + ((lane ?? x0) > width - 140 ? -15 : 15),
+                      y: mid + 5,
+                      anchor: (lane ?? x0) > width - 140 ? "end" : "start",
+                  }
+                : undefined,
         });
     }
 
@@ -277,7 +427,14 @@ function NodeBox({ placed }: { placed: PlacedNode }) {
                 strokeDasharray={node.dashed ? "6 4" : undefined}
                 fill={node.tint ? `color-mix(in srgb, ${color} 10%, var(--panel-2))` : "var(--panel-2)"}
             />
-            <text x={x + 14} y={titleY} fill={titleColor} fontSize={15} fontWeight={600} style={TEXT_FONT}>
+            <text
+                x={x + 14}
+                y={titleY}
+                fill={titleColor}
+                fontSize={15}
+                fontWeight={600}
+                style={{ fontFamily: "var(--font-heading)" }}
+            >
                 {node.title}
             </text>
             {lines.map((line, i) => (
@@ -366,10 +523,24 @@ export function LayerDiagram({
     labelWidth = 180,
     gap = 30,
     minWidth = 980,
+    routing = "auto",
 }: LayerDiagramProps) {
     const uid = useId().replace(/:/g, "");
-    const layout = layoutLayerDiagram({ layers, edges, width, labelWidth, gap });
+    const layout = layoutLayerDiagram({ layers, edges, width, labelWidth, gap, routing });
     const arrow = `akit-arrow-${uid}`;
+    const warned = useRef(false);
+    useEffect(() => {
+        if (
+            !warned.current &&
+            document.querySelector('script[src*="/@vite/client"]') &&
+            layout.edges.some((edge) => edge.crosses.length && edge.edge.lane === undefined)
+        ) {
+            warned.current = true;
+            console.warn(
+                `LayerDiagram "${title}": an edge crosses a box; choose a lane or leave room beside the band.`
+            );
+        }
+    }, [layout, title]);
 
     return (
         <div
@@ -408,7 +579,7 @@ export function LayerDiagram({
                         width={layout.width - 2 * BAND_INSET}
                         height={band.h}
                         rx={12}
-                        fill="color-mix(in srgb, var(--text) 3%, transparent)"
+                        fill="color-mix(in srgb, var(--text) 6%, var(--panel))"
                     />
                 ))}
                 {layout.bands.map((band) => (
@@ -426,31 +597,65 @@ export function LayerDiagram({
                         strokeLinecap="round"
                     />
                 ))}
-                {layout.edges.map((edge, i) => (
-                    <g key={i}>
-                        <path
-                            d={edge.d}
-                            stroke="var(--dim)"
-                            strokeWidth={1.6}
-                            fill="none"
-                            markerEnd={`url(#${arrow})`}
-                        />
-                        {edge.label ? (
-                            <text
-                                x={edge.label.x}
-                                y={edge.label.y}
-                                fill="var(--text-2)"
-                                fontSize={14}
-                                style={TEXT_FONT}
-                            >
-                                {edge.label.text}
-                            </text>
-                        ) : null}
-                    </g>
-                ))}
+                {layout.edges
+                    .filter((edge) => !edge.crosses.length || routing === "direct")
+                    .map((edge, i) => (
+                        <g key={i}>
+                            <path
+                                d={edge.d}
+                                stroke="var(--dim)"
+                                strokeWidth={1.6}
+                                fill="none"
+                                markerEnd={`url(#${arrow})`}
+                            />
+                            {edge.label ? (
+                                <text
+                                    x={edge.label.x}
+                                    y={edge.label.y}
+                                    textAnchor={edge.label.anchor}
+                                    fill="var(--text-2)"
+                                    fontSize={14}
+                                    style={TEXT_FONT}
+                                >
+                                    {edge.label.text}
+                                </text>
+                            ) : null}
+                        </g>
+                    ))}
                 {layout.nodes.map((placed) => (
                     <NodeBox key={placed.node.id} placed={placed} />
                 ))}
+                {layout.edges
+                    .filter((edge) => edge.crosses.length && routing === "auto")
+                    .map((edge, i) => (
+                        <g key={`over-${i}`}>
+                            <path
+                                d={edge.d}
+                                stroke="color-mix(in srgb, var(--text) 6%, var(--panel))"
+                                strokeWidth={7.6}
+                                fill="none"
+                            />
+                            <path
+                                d={edge.d}
+                                stroke="var(--dim)"
+                                strokeWidth={1.6}
+                                fill="none"
+                                markerEnd={`url(#${arrow})`}
+                            />
+                            {edge.label ? (
+                                <text
+                                    x={edge.label.x}
+                                    y={edge.label.y}
+                                    textAnchor={edge.label.anchor}
+                                    fill="var(--text-2)"
+                                    fontSize={14}
+                                    style={TEXT_FONT}
+                                >
+                                    {edge.label.text}
+                                </text>
+                            ) : null}
+                        </g>
+                    ))}
             </svg>
         </div>
     );

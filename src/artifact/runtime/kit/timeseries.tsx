@@ -2703,7 +2703,7 @@ export function TimeSeries({
                             title="Click toggles, Alt-click shows only this series"
                             onClick={(e) => toggleSeries(s, e.altKey)}
                             className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
-                                on ? "border-line bg-panel text-ink" : "border-dashed border-line text-dim opacity-60"
+                                on ? "border-line bg-panel text-ink" : "border-dashed border-line text-dim line-through"
                             }`}
                         >
                             <Swatch color={color} dashed={s.dashed} />
@@ -2731,7 +2731,7 @@ export function TimeSeries({
                             onClick={() => toggleMarkerKind(kind)}
                             title={`${on ? "Hide" : "Show"} ${kind} markers`}
                         >
-                            <span className={`inline-flex items-center gap-1.5 ${on ? "" : "line-through opacity-50"}`}>
+                            <span className={`inline-flex items-center gap-1.5 ${on ? "" : "line-through"}`}>
                                 <Swatch color={markerKindColor.get(kind) ?? "var(--dim)"} glyph={markerGlyph(kind)} />
                                 {kind} <span className="text-dim">{count}</span>
                             </span>
@@ -2762,7 +2762,7 @@ export function TimeSeries({
                                   }
                                   title={`${on ? "Hide" : "Show"} the ${l.name} lane`}
                               >
-                                  <span className={on ? "" : "line-through opacity-50"}>
+                                  <span className={on ? "" : "line-through"}>
                                       {l.name} <span className="text-dim">{l.items.length}</span>
                                   </span>
                               </Button>

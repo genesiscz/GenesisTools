@@ -48,7 +48,15 @@ function controlClass(invalid: boolean | undefined, extra = ""): string {
 /** Handlers a wrapper such as Tooltip may attach; Button passes them to its element. */
 export type ButtonPassThrough = Pick<
     ButtonHTMLAttributes<HTMLButtonElement>,
-    "onPointerMove" | "onPointerLeave" | "onPointerDown" | "onFocus" | "onBlur" | "onKeyDown" | "aria-describedby"
+    | "onPointerMove"
+    | "onPointerLeave"
+    | "onPointerDown"
+    | "onFocus"
+    | "onBlur"
+    | "onKeyDown"
+    | "aria-describedby"
+    | "aria-expanded"
+    | "aria-controls"
 >;
 
 export interface ButtonProps extends ButtonPassThrough {
