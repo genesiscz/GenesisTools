@@ -51,7 +51,7 @@ final class FrameReviewWindow: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         loadTask?.cancel()
-        model.cancelPendingSeek()
+        model.cancelWork()
         Self.open.removeValue(forKey: model.meeting)
     }
 }

@@ -376,6 +376,7 @@ enum SidePanelCatalog {
                 .requiring(Panes.screenBesidePlayback.key, [.flag(true)], "Off while the screen is not beside the sound."),
             row(Panes.transcriptPane, value: Panes.transcriptPane.value(defaults)),
             row(Panes.frameBoxes, value: Panes.frameBoxes.value(defaults)),
+            row(Panes.frameFocusSingle, value: Panes.frameFocusSingle.value(defaults)),
             row(Panes.frameSeek, value: Panes.frameSeek.value(defaults)),
             SidePanelRow(store: .window(key: MeetingsPreferences.lookKey), title: "Look of tabs and buttons",
                          detail: "Aurora: raised dark surfaces and a colour per meaning. Candy: capsules and gradients. Glass: hairlines, colour on state only. Classic: the grey tabs and buttons.",

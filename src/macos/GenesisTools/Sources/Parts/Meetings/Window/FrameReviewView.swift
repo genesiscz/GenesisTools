@@ -9,12 +9,15 @@ struct FrameReviewView: View {
     @FocusState private var searchFocused: Bool
     @AppStorage(MeetingsPreferences.Panes.frameBoxes.key) private var boxes = true
     @AppStorage(MeetingsPreferences.Panes.frameSeek.key) private var seek = true
+    @AppStorage(MeetingsPreferences.Panes.frameFocusSingle.key) private var focusSingle = true
 
     init(model: FrameReviewModel, close: @escaping () -> Void) {
         self.model = model
         self.close = close
         _boxes = AppStorage(wrappedValue: MeetingsPreferences.Panes.frameBoxes.defaultValue,
                             MeetingsPreferences.Panes.frameBoxes.key, store: model.defaults)
+        _focusSingle = AppStorage(wrappedValue: MeetingsPreferences.Panes.frameFocusSingle.defaultValue,
+                                  MeetingsPreferences.Panes.frameFocusSingle.key, store: model.defaults)
         _seek = AppStorage(wrappedValue: MeetingsPreferences.Panes.frameSeek.defaultValue,
                            MeetingsPreferences.Panes.frameSeek.key, store: model.defaults)
     }
@@ -25,10 +28,11 @@ struct FrameReviewView: View {
             Divider()
             FrameReviewCoverage(model: model)
             HStack(spacing: 0) {
-                if let frame = model.frame {
-                    FrameReviewImage(frame: frame, neighbors: model.frames, zoom: zoom, scrubbing: model.isScrubbing,
+                if let frame = model.previewFrame {
+                    FrameReviewImage(frame: frame, neighbors: model.frames(on: frame.displayId), zoom: zoom, scrubbing: model.isScrubbing,
                                      boxes: boxes ? (scope == .all ? frame.lines ?? frame.changed : frame.changed) : [],
-                                     query: model.query)
+                                     query: model.query, highlightedText: model.previewText,
+                                     autoFocus: focusSingle && model.matches.count == 1 && model.hoveredMatch == nil)
                 } else {
                     LoadablePane(state: model.timeline, reading: "Reading screen recording…", retry: { Task { await model.load() } }) { _ in
                         Text("This recording has no available frame.").foregroundStyle(.secondary)
@@ -54,7 +58,7 @@ struct FrameReviewView: View {
     private var toolbar: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                Text(model.frame.map { "Frame at \(MeetingsFormat.clock($0.meetingSec))" } ?? "Screen recording").font(.headline)
+                Text(model.previewFrame.map { "\(model.hoveredMatch == nil ? "Frame" : "Preview") at \(MeetingsFormat.clock($0.meetingSec))" } ?? "Screen recording").font(.headline)
                 if let displays = model.timeline.value?.displays, displays.count > 1 {
                     Picker("Display", selection: Binding(get: { model.display ?? -1 }, set: { model.display = $0 == -1 ? nil : $0; model.selectTime(model.time) })) {
                         Text("All displays").tag(-1)
@@ -83,8 +87,11 @@ struct FrameReviewView: View {
                 Picker("Search in", selection: $model.searchSource) {
                     ForEach(FrameReviewModel.SearchSource.allCases, id: \.self) { source in Text(source.title).tag(source) }
                 }.labelsHidden().frame(width: 130).accessibilityIdentifier("meetings.frame-review.source")
+                Toggle("Auto-zoom", isOn: $focusSingle).toggleStyle(.checkbox)
+                    .help("Zoom to the screen text when a search has one result")
+                if model.indexing { ProgressView().controlSize(.small).help("Indexing saved screen text") }
                 if !model.query.isEmpty {
-                    Text(model.matches.isEmpty ? "No matches" : "\(model.matchIndex + 1) / \(model.matches.count)")
+                    Text(model.matches.isEmpty ? (model.indexing ? "Indexing…" : "No matches") : "\(model.matchIndex + 1) / \(model.matches.count)")
                         .monospacedDigit().font(.caption).fixedSize()
                     Button { model.nextMatch(-1) } label: { Image(systemName: "chevron.up") }
                         .disabled(model.matches.isEmpty).help("Previous match")
@@ -156,6 +163,11 @@ private struct FrameReviewDetails: View {
                                                     in: RoundedRectangle(cornerRadius: 5))
                                         .contentShape(Rectangle())
                                 }.buttonStyle(.plain).id(match.id)
+                                    .onHover { inside in
+                                        if inside { model.hoveredMatch = match }
+                                        else if model.hoveredMatch?.id == match.id { model.hoveredMatch = nil }
+                                    }
+                                    .onDisappear { if model.hoveredMatch?.id == match.id { model.hoveredMatch = nil } }
                             }
                         }
                     }.padding(12)
@@ -260,85 +272,5 @@ private struct FrameReviewPlaybackFollower: View {
                 guard enabled, !model.isScrubbing, model.query.isEmpty, model.isPlaying, let second else { return }
                 model.selectTime(Double(second))
             }.accessibilityHidden(true)
-    }
-}
-
-/// This cache belongs to the viewer. Scrub previews cannot queue behind full-size pictures in other windows.
-private enum FrameReviewImages {
-    static let cache = MediaThumbnailCache(byteLimit: 128 << 20, concurrency: 2, deadline: .seconds(5))
-}
-
-private struct FrameReviewImage: View {
-    let frame: TimelineFrame
-    let neighbors: [TimelineFrame]
-    let zoom: Double
-    let scrubbing: Bool
-    let boxes: [OcrBox]
-    let query: String
-    private struct Shown { let frame: TimelineFrame; let image: CGImage }
-    private struct Request: Hashable { let path: String; let pixels: Int }
-    @State private var shown: Shown?
-    @State private var failure: String?
-    private var pixels: Int { scrubbing ? 1024 : 4096 }
-
-    var body: some View {
-        GeometryReader { proxy in
-            let visible = shown?.frame ?? frame
-            let fit = min(proxy.size.width / max(1, visible.width), proxy.size.height / max(1, visible.height))
-            let scale = fit * zoom
-            ScrollView([.horizontal, .vertical]) {
-                ZStack(alignment: .topLeading) {
-                    if let shown {
-                        Image(decorative: shown.image, scale: 1).resizable()
-                            .frame(width: visible.width * scale, height: visible.height * scale)
-                    } else {
-                        Text(failure ?? "Reading frame…").foregroundStyle(.secondary)
-                            .frame(width: visible.width * scale, height: visible.height * scale)
-                    }
-                    Canvas { context, _ in
-                        // Keep each picture's overlays together while a newer picture is decoding.
-                        if visible.file == frame.file {
-                            for box in boxes { outline(box, context: &context, scale: scale, color: .accentColor, width: 1) }
-                            let wanted = query.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !wanted.isEmpty {
-                                for box in visible.lines ?? visible.changed where !FrameReviewModel.highlightRanges(in: box.text, query: wanted).isEmpty {
-                                    outline(box, context: &context, scale: scale, color: .orange, width: 3)
-                                }
-                            }
-                        }
-                    }.frame(width: visible.width * scale, height: visible.height * scale).allowsHitTesting(false)
-                }
-                .frame(width: visible.width * scale, height: visible.height * scale)
-                .frame(minWidth: proxy.size.width, minHeight: proxy.size.height)
-            }
-        }
-        .background(.black.opacity(0.9))
-        .task(id: Request(path: frame.path, pixels: pixels)) {
-            failure = nil
-            let started = ContinuousClock.now
-            let result = await FrameReviewImages.cache.thumbnail(path: frame.path, maxPixels: CGFloat(pixels), kind: .image)
-            guard !Task.isCancelled else { return }
-            switch result {
-            case .ready(let thumbnail): shown = Shown(frame: frame, image: thumbnail.image)
-            case .failed(let message): failure = message
-            }
-            let elapsed = ContinuousClock.now - started
-            if elapsed > .milliseconds(100) { PerfLog.mark("meetings.frame-preview \(pixels)px \(elapsed)") }
-            if let index = neighbors.firstIndex(where: { $0.file == frame.file }) {
-                let paths = [index - 1, index + 1].filter { neighbors.indices.contains($0) }.map { neighbors[$0].path }
-                await withTaskGroup(of: Void.self) { group in
-                    for path in paths {
-                        group.addTask {
-                            if !Task.isCancelled { _ = await FrameReviewImages.cache.thumbnail(path: path, maxPixels: 1024, kind: .image) }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func outline(_ box: OcrBox, context: inout GraphicsContext, scale: Double, color: Color, width: CGFloat) {
-        let rect = CGRect(x: box.x * scale, y: box.y * scale, width: max(1, box.width * scale), height: max(1, box.height * scale))
-        context.stroke(Path(rect), with: .color(color), lineWidth: width)
     }
 }

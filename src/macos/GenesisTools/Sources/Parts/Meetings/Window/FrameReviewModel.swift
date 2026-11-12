@@ -8,9 +8,9 @@ final class FrameReviewModel {
     enum SearchSource: String, CaseIterable { case both, transcript, ocr
         var title: String { switch self { case .both: "Both"; case .transcript: "Transcript"; case .ocr: "Screen text" } }
     }
-    struct Match: Identifiable {
-        enum Source { case ocr, transcript }
-        enum Content { case ocr(TimelineFrame), transcript(speaker: String) }
+    struct Match: Identifiable, Sendable {
+        enum Source: Sendable { case ocr, transcript }
+        enum Content: Sendable { case ocr(TimelineFrame), transcript(speaker: String) }
         let id: String
         let content: Content
         let text: String
@@ -22,7 +22,7 @@ final class FrameReviewModel {
         var frame: TimelineFrame? { if case .ocr(let frame) = content { frame } else { nil } }
         var speaker: String? { if case .transcript(let speaker) = content { speaker } else { nil } }
     }
-    private struct Indexed {
+    private struct Indexed: Sendable {
         var match: Match
         let folded: String
     }
@@ -40,10 +40,13 @@ final class FrameReviewModel {
     var query = "" { didSet { if oldValue != query { search() } } }
     var searchSource = SearchSource.both { didSet { if oldValue != searchSource { search() } } }
     private(set) var matches: [Match] = []
+    var hoveredMatch: Match?
     private(set) var matchIndex = 0
     private(set) var appearanceIndex = 0
     private(set) var context: [TranscriptLine] = []
     private(set) var isScrubbing = false
+    private(set) var indexing = false
+    @ObservationIgnored private var indexTask: Task<Void, Never>?
     @ObservationIgnored private var requestedFile: String
     @ObservationIgnored private var seekTask: Task<Void, Never>?
     @ObservationIgnored private var allFrames: [TimelineFrame] = []
@@ -66,7 +69,13 @@ final class FrameReviewModel {
         if let transcript { accept(transcript) }
     }
 
-    var frames: [TimelineFrame] { display.map { displayFrames[$0] ?? [] } ?? allFrames }
+    var frames: [TimelineFrame] { frames(on: display) }
+    func frames(on display: Int?) -> [TimelineFrame] { display.map { displayFrames[$0] ?? [] } ?? allFrames }
+    var previewFrame: TimelineFrame? {
+        guard let hoveredMatch else { return frame }
+        return hoveredMatch.frame ?? Self.nearest(in: frames, at: hoveredMatch.fromSec)
+    }
+    var previewText: String? { (hoveredMatch ?? selectedMatch)?.text }
     var duration: Double { max(1, sourceDuration, lastFrameTime, transcriptEnd) }
     var selectedMatch: Match? { matches.indices.contains(matchIndex) ? matches[matchIndex] : nil }
     var isPlaying: Bool { player?.meeting == meeting && player?.phase == .playing }
@@ -82,6 +91,10 @@ final class FrameReviewModel {
     }
 
     func load() async {
+        if let ready = timeline.value, ready.frames.allSatisfy({ $0.lines != nil }) {
+            await loadTranscript()
+            return
+        }
         async let screenRead: Void = loadScreen()
         async let transcriptRead: Void = loadTranscript()
         _ = await (screenRead, transcriptRead)
@@ -113,32 +126,55 @@ final class FrameReviewModel {
         allFrames = value.frames.sorted { $0.meetingSec < $1.meetingSec }
         displayFrames = Dictionary(grouping: allFrames, by: { $0.displayId ?? -1 })
         lastFrameTime = allFrames.last?.meetingSec ?? 0
-        ocrIndex = []
+        indexTask?.cancel()
+        indexing = true
+        let capturedFrames = displayFrames
+        let work = Task.detached(priority: .userInitiated) { Self.makeOCRIndex(capturedFrames) }
+        indexTask = Task { [weak self] in
+            let index = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+            guard let self, !Task.isCancelled else { return }
+            self.ocrIndex = index
+            self.indexing = false
+            self.search()
+        }
+        open(file: requestedFile, at: time)
+        if frame == nil { frame = Self.nearest(in: frames, at: time) }
+        search()
+    }
+
+    private nonisolated static func makeOCRIndex(_ displayFrames: [Int: [TimelineFrame]]) -> [Indexed] {
+        var result: [Indexed] = []
         for key in displayFrames.keys.sorted() {
             let frames = displayFrames[key] ?? []
             var groups: [String: Int] = [:]
             for (offset, frame) in frames.enumerated() {
+                guard !Task.isCancelled else { return [] }
                 var seen = Set<String>()
                 let until = frames.indices.contains(offset + 1) ? frames[offset + 1].meetingSec : frame.meetingSec
                 for (lineIndex, line) in (frame.lines ?? frame.changed).enumerated() {
                     let folded = Self.fold(line.text.split(whereSeparator: \.isWhitespace).joined(separator: " "))
                     guard !folded.isEmpty, seen.insert(folded).inserted else { continue }
                     if let index = groups[folded] {
-                        ocrIndex[index].match.toSec = until
-                        ocrIndex[index].match.occurrences += 1
-                        ocrIndex[index].match.seenAt.append(frame.meetingSec)
+                        result[index].match.toSec = until
+                        result[index].match.occurrences += 1
+                        result[index].match.seenAt.append(frame.meetingSec)
                     } else {
-                        groups[folded] = ocrIndex.count
-                        ocrIndex.append(Indexed(match: Match(id: "ocr:\(key):\(frame.file):\(lineIndex)", content: .ocr(frame),
+                        groups[folded] = result.count
+                        result.append(Indexed(match: Match(id: "ocr:\(key):\(frame.file):\(lineIndex)", content: .ocr(frame),
                             text: line.text, fromSec: frame.meetingSec, toSec: until,
                             seenAt: [frame.meetingSec]), folded: folded))
                     }
                 }
             }
         }
-        open(file: requestedFile, at: time)
-        if frame == nil { frame = Self.nearest(in: frames, at: time) }
-        search()
+        return result
+    }
+
+    func waitForIndex() async { await indexTask?.value }
+
+    func cancelWork() {
+        cancelPendingSeek()
+        indexTask?.cancel()
     }
 
     private func accept(_ value: MeetingTranscript) {
@@ -164,7 +200,7 @@ final class FrameReviewModel {
         return frames[max(0, lower - 1)]
     }
 
-    static func fold(_ value: String) -> String {
+    nonisolated static func fold(_ value: String) -> String {
         value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
     }
 
@@ -185,6 +221,7 @@ final class FrameReviewModel {
     }
 
     private func search() {
+        hoveredMatch = nil
         cancelPendingSeek()
         let wanted = Self.fold(query.trimmingCharacters(in: .whitespacesAndNewlines))
         let index = (searchSource == .transcript ? [] : ocrIndex) + (searchSource == .ocr ? [] : transcriptIndex)
@@ -203,6 +240,7 @@ final class FrameReviewModel {
     }
 
     func chooseMatch(_ match: Match) {
+        hoveredMatch = nil
         matchIndex = matches.firstIndex(where: { $0.id == match.id }) ?? 0
         show(match)
     }

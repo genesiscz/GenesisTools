@@ -227,7 +227,7 @@ struct SpeakerHint: Decodable, Equatable, Hashable {
 
 // MARK: - Screen timeline (`tools meetings screen <id> --timeline --json`)
 
-struct OcrBox: Decodable, Equatable, Hashable {
+struct OcrBox: Decodable, Equatable, Hashable, Sendable {
     let x: Double
     let y: Double
     let width: Double
@@ -236,7 +236,7 @@ struct OcrBox: Decodable, Equatable, Hashable {
     let confidence: Double
 }
 
-struct TimelineFrame: Decodable, Equatable, Hashable, Identifiable {
+struct TimelineFrame: Decodable, Equatable, Hashable, Identifiable, Sendable {
     let file: String
     let path: String
     let at: String

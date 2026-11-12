@@ -9,7 +9,7 @@ import XCTest
 @MainActor
 final class MeetingsTranscriptViewsTests: XCTestCase {
 
-    func testFrameReviewSearchAndTimeNavigation() throws {
+    func testFrameReviewSearchAndTimeNavigation() async throws {
         func frame(_ file: String, _ time: Double, _ text: String, display: Int = 1) -> TimelineFrame {
             let box = OcrBox(x: 10, y: 20, width: 100, height: 30, text: text, confidence: 1)
             return TimelineFrame(file: file, path: "/fixture/\(file)", at: "2026-11-01T10:00:00Z", meetingSec: time,
@@ -20,6 +20,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         let other = frame("c.png", 30, "Cafe notes", display: 2)
         let timeline = ScreenTimeline(meeting: "m1", folder: "/fixture", displays: [], frames: [first, second, other])
         let model = FrameReviewModel(meeting: "m1", file: first.file, at: 10, player: nil, defaults: .standard, timeline: timeline)
+        await model.waitForIndex()
         model.query = "cafe"
         XCTAssertEqual(model.matches.compactMap { $0.frame?.file }, ["a.png", "c.png"])
         model.nextMatch(1)
@@ -34,7 +35,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(FrameReviewModel.nearest(in: [first, second], at: 0)?.file, "a.png")
     }
 
-    func testFrameReviewGroupsRepeatedOCRAndSearchesBothSources() throws {
+    func testFrameReviewGroupsRepeatedOCRAndSearchesBothSources() async throws {
         func frame(_ file: String, _ time: Double, _ text: String, _ display: Int = 1) -> TimelineFrame {
             let box = OcrBox(x: 10, y: 20, width: 120, height: 30, text: text, confidence: 1)
             return TimelineFrame(file: file, path: "/fixture/\(file)", at: "2026-11-01T10:00:00Z", meetingSec: time,
@@ -48,6 +49,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
             TranscriptLine(id: "l3", startSec: 25, speaker: "Alex", text: "After this")])
         let model = FrameReviewModel(meeting: "m", file: "a", at: 10, player: nil, defaults: .standard,
             timeline: ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: frames), transcript: transcript)
+        await model.waitForIndex()
         model.query = "api"
         XCTAssertEqual(model.matches.count, 3)
         let grouped = model.matches.first { $0.frame?.file == "a" }
@@ -66,6 +68,30 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         model.searchSource = .ocr
         XCTAssertEqual(model.matches.count, 2)
         XCTAssertTrue(model.matches.allSatisfy { $0.source == .ocr })
+    }
+
+    func testFrameReviewHoverDoesNotMoveSelectionAndFocusCentersTheBox() async throws {
+        let box = OcrBox(x: 100, y: 100, width: 200, height: 40, text: "Matching text", confidence: 1)
+        func frame(_ name: String, _ time: Double) -> TimelineFrame {
+            TimelineFrame(file: name, path: "/fixture/\(name)", at: "2026-11-01T10:00:00Z", meetingSec: time,
+                          displayId: 1, width: 1600, height: 900, lineCount: 1, changed: [box], lines: [box])
+        }
+        let first = frame("a", 10), second = frame("b", 20)
+        let model = FrameReviewModel(meeting: "m", file: "a", at: 10, player: nil, defaults: .standard,
+            timeline: ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: [first, second]))
+        await model.waitForIndex()
+        model.query = "Matching"
+        let hover = FrameReviewModel.Match(id: "hover", content: .ocr(second), text: box.text, fromSec: 20, toSec: 20)
+        model.hoveredMatch = hover
+        XCTAssertEqual(model.previewFrame?.file, "b")
+        XCTAssertEqual(model.frame?.file, "a")
+        XCTAssertEqual(model.time, 10)
+        model.hoveredMatch = nil
+        XCTAssertEqual(model.previewFrame?.file, "a")
+        let focused = FrameReviewFocus.layout(box: box, image: CGSize(width: 1600, height: 900), viewport: CGSize(width: 800, height: 600))
+        XCTAssertGreaterThan(focused.scale, 0.5)
+        XCTAssertEqual((box.x + box.width / 2) * focused.scale + focused.offset.width, 400, accuracy: 0.001)
+        XCTAssertEqual((box.y + box.height / 2) * focused.scale + focused.offset.height, 300, accuracy: 0.001)
     }
 
     func testFrameReviewHighlightsEveryExactMatchIncludingAccents() {

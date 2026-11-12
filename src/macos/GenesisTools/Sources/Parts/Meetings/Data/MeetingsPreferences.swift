@@ -328,6 +328,9 @@ extension MeetingsPreferences {
         static let frameBoxes = MeetingsWindowSetting(
             key: "meetings.screen.viewer.boxes", defaultValue: true, choices: [true, false],
             title: "Boxes in the frame viewer", detail: "Outline the text recognized in a recording frame.")
+        static let frameFocusSingle = MeetingsWindowSetting(
+            key: "meetings.screen.viewer.focusSingle", defaultValue: true, choices: [true, false],
+            title: "Zoom to a single search result", detail: "Focus the matched screen text when a search has one result. Click the box again to fit the frame.")
         static let frameSeek = MeetingsWindowSetting(
             key: "meetings.screen.viewer.seekPlayback", defaultValue: true, choices: [true, false],
             title: "Frame time seeks playback", detail: "Moving the frame viewer's time also seeks active playback; paused audio stays paused.")
