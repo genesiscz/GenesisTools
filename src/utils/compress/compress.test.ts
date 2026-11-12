@@ -28,7 +28,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import * as zlib from "node:zlib";
 import { createZstdCompress, constants as zlibConstants } from "node:zlib";
+
 import { env } from "@genesiscz/utils/env";
+
 import { fileFlags, SF_DATALESS } from "@genesiscz/utils/fs/cloud-placeholder";
 import * as hash from "@genesiscz/utils/fs/hash";
 import {
@@ -2530,6 +2532,121 @@ describe.skipIf(process.platform !== "darwin")("transparent APFS compression", (
         ).toBe("changed");
         expect(readFileSync(two)).toEqual(bytes);
     });
+    it.each(["mode", "xattr", "acl"])(
+        "preserves partner %s metadata when source metadata differs",
+        async (difference) => {
+            const c = fixture(`metadata-${difference}`);
+            const partner = `${c.path}.partner`;
+            expect(Bun.spawnSync(["/bin/cp", "-c", "-p", c.path, partner], { env: process.env }).exitCode).toBe(0);
+            if (difference === "mode") {
+                chmodSync(partner, 0o600);
+            } else if (difference === "xattr") {
+                expect(
+                    Bun.spawnSync(["/usr/bin/xattr", "-w", "com.example.fixture", "partner-only", partner], {
+                        env: process.env,
+                    }).exitCode
+                ).toBe(0);
+            } else {
+                expect(
+                    Bun.spawnSync(["/bin/chmod", "+a", "everyone allow read", partner], { env: process.env }).exitCode
+                ).toBe(0);
+            }
+            const before = statSync(partner);
+            const attributes = Bun.spawnSync(["/usr/bin/xattr", "-lx", partner], {
+                env: process.env,
+            }).stdout.toString();
+            const acl = Bun.spawnSync(["/bin/ls", "-lde", partner], { env: process.env })
+                .stdout.toString()
+                .split("\n")
+                .slice(1);
+            const first = await swapTransparent(c);
+            const result = await clonePartner(
+                c.path,
+                {
+                    path: partner,
+                    size: before.size,
+                    alloc: before.blocks * 512,
+                    ino: before.ino,
+                    mtimeMs: before.mtimeMs,
+                },
+                "lzvn"
+            );
+            settleTransparent(result, new Set());
+            settleTransparent(first, new Set());
+            expect(statSync(partner).mode).toBe(before.mode);
+            expect(Bun.spawnSync(["/usr/bin/xattr", "-lx", partner], { env: process.env }).stdout.toString()).toBe(
+                attributes
+            );
+            expect(
+                Bun.spawnSync(["/bin/ls", "-lde", partner], { env: process.env }).stdout.toString().split("\n").slice(1)
+            ).toEqual(acl);
+            expect(readFileSync(partner)).toEqual(readFileSync(c.path));
+        }
+    );
+
+    it("restores timestamp-preserving writes through a closed old descriptor", async () => {
+        const c = fixture("preserved-mtime");
+        const descriptor = openSync(c.path, "r+");
+        const swapped = await swapTransparent(c);
+        expect(swapped.status).toBe("compressed");
+        try {
+            writeSync(descriptor, Buffer.from("NEW-DATA"), 0, 8, 0);
+            fs.futimesSync(descriptor, c.mtimeMs / 1000, c.mtimeMs / 1000);
+        } finally {
+            closeSync(descriptor);
+        }
+        expect(settleTransparent(swapped, new Set()).status).toBe("restored");
+        expect(readFileSync(c.path).subarray(0, 8).toString()).toBe("NEW-DATA");
+    });
+
+    it("settlement compares bytes even when a write predates the post-rename ctime snapshot", async () => {
+        const c = fixture("swap-window");
+        const swapped = await swapTransparent(c);
+        const descriptor = openSync(swapped.old!.path, "r+");
+        try {
+            writeSync(descriptor, Buffer.from("OLD-DATA"), 0, 8, 0);
+            fs.futimesSync(descriptor, c.mtimeMs / 1000, c.mtimeMs / 1000);
+        } finally {
+            closeSync(descriptor);
+        }
+        // Model a writer finishing between rename and the transaction's ctime snapshot.
+        swapped.old!.ctimeNs = statSync(swapped.old!.path, { bigint: true }).ctimeNs.toString();
+        swapped.old!.mtimeNs = statSync(swapped.old!.path, { bigint: true }).mtimeNs.toString();
+        expect(settleTransparent(swapped, new Set()).status).toBe("conflict");
+        const kept = readdirSync(join(c.path, "..")).find((name) => name.startsWith("session.jsonl.cold-conflict-"));
+        expect(
+            readFileSync(join(c.path, "..", kept!))
+                .subarray(0, 8)
+                .toString()
+        ).toBe("OLD-DATA");
+    });
+
+    it("keeps both timestamp-preserving versions when old and current inodes changed", async () => {
+        const c = fixture("both-preserved-mtime");
+        const swapped = await swapTransparent(c);
+        for (const [file, content] of [
+            [swapped.old!.path, "OLD-DATA"],
+            [c.path, "NEW-DATA"],
+        ]) {
+            const descriptor = openSync(file, "r+");
+            try {
+                writeSync(descriptor, Buffer.from(content), 0, 8, 0);
+                fs.futimesSync(descriptor, c.mtimeMs / 1000, c.mtimeMs / 1000);
+            } finally {
+                closeSync(descriptor);
+            }
+        }
+        expect(settleTransparent(swapped, new Set()).status).toBe("conflict");
+        expect(readFileSync(c.path).subarray(0, 8).toString()).toBe("NEW-DATA");
+        const kept = readdirSync(join(c.path, "..")).find((name) => name.startsWith("session.jsonl.cold-conflict-"));
+        expect(kept).toBeDefined();
+        expect(
+            readFileSync(join(c.path, "..", kept!))
+                .subarray(0, 8)
+                .toString()
+        ).toBe("OLD-DATA");
+    });
+
     it("restores descriptor appends across a swap and preserves both independently changed versions", async () => {
         const c = fixture("descriptor");
         const before = readFileSync(c.path);
