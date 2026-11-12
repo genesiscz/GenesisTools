@@ -2,7 +2,7 @@ import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { getDarwinKit } from "./darwinkit";
+import { createIdleCloser, DarwinKit, getDarwinKit, type IdleCloser, leaseDarwinKit } from "./darwinkit";
 import type { OcrBlock, OcrLevel, OcrResult } from "./types";
 
 export const OCR_READS = ["frame", "tiles"] as const;
@@ -22,7 +22,7 @@ export interface OcrOptions {
      * which may hold no text turns it off, so an empty crop costs one read, not two.
      */
     fastFallback?: boolean;
-    /** How long one Vision request may take (darwinkit's own deadline, 60 s, when absent); a frame read, not tiles. */
+    /** How long each Vision request may take, including each tile (darwinkit's 60 s deadline when absent). */
     timeoutMs?: number;
 }
 
@@ -47,6 +47,42 @@ interface TilePart {
     tileHeight: number;
 }
 
+interface OcrClient {
+    client: DarwinKit;
+    lease: () => () => void;
+    closer?: IdleCloser;
+}
+
+let recoveredClient: OcrClient | undefined;
+
+function imageReaderFailed(error: unknown): boolean {
+    return error instanceof Error && /TextRecognition\.CRImageReaderError error 1\b/.test(error.message);
+}
+
+function retireOcrClient(failed: OcrClient): void {
+    if (recoveredClient === failed) {
+        recoveredClient = undefined;
+    }
+
+    failed.closer?.closeWhenIdle();
+}
+
+function recoveryClient(failed: OcrClient): OcrClient {
+    if (recoveredClient === failed) {
+        retireOcrClient(failed);
+    }
+
+    if (!recoveredClient) {
+        const client = new DarwinKit({ timeout: 60_000, logger, logLevel: "warn" });
+        const closer = createIdleCloser(() => {
+            void client.close();
+        });
+        recoveredClient = { client, lease: () => closer.lease(), closer };
+    }
+
+    return recoveredClient;
+}
+
 function isEmptyOcrResult(result: OcrResult): boolean {
     if (result.text.trim().length > 0) {
         return false;
@@ -55,13 +91,20 @@ function isEmptyOcrResult(result: OcrResult): boolean {
     return result.blocks.length === 0;
 }
 
-async function callVisionOcr(
-    imagePath: string,
-    languages: string[],
-    level: OcrLevel,
-    timeoutMs?: number
-): Promise<OcrResult> {
-    return getDarwinKit().vision.ocr(
+async function callVisionOcr({
+    imagePath,
+    languages,
+    level,
+    timeoutMs,
+    client,
+}: {
+    imagePath: string;
+    languages: string[];
+    level: OcrLevel;
+    timeoutMs?: number;
+    client: DarwinKit;
+}): Promise<OcrResult> {
+    return client.vision.ocr(
         {
             path: imagePath,
             languages,
@@ -245,12 +288,21 @@ function needsAccurateTiling(dims: ImageDimensions): boolean {
     return dims.height > MAX_ACCURATE_DIMENSION || dims.width > MAX_ACCURATE_DIMENSION;
 }
 
-async function recognizeTextTiled(
-    imagePath: string,
-    dims: ImageDimensions,
-    languages: string[],
-    level: OcrLevel
-): Promise<OcrResult> {
+async function recognizeTextTiled({
+    imagePath,
+    dims,
+    languages,
+    level,
+    client,
+    timeoutMs,
+}: {
+    imagePath: string;
+    dims: ImageDimensions;
+    languages: string[];
+    level: OcrLevel;
+    client: DarwinKit;
+    timeoutMs?: number;
+}): Promise<OcrResult> {
     const parts: TilePart[] = [];
     const tempPaths: string[] = [];
 
@@ -271,7 +323,7 @@ async function recognizeTextTiled(
                 continue;
             }
 
-            const result = await callVisionOcr(tempPath, languages, level);
+            const result = await callVisionOcr({ imagePath: tempPath, languages, level, client, timeoutMs });
             parts.push({ result, top, tileHeight });
         }
     } finally {
@@ -305,6 +357,43 @@ async function recognizeTextTiled(
  * @param imagePath - Absolute path to the image file (JPEG, PNG, TIFF, HEIC, PDF)
  */
 export async function recognizeText(imagePath: string, options: OcrOptions = {}): Promise<OcrResult> {
+    const initial = recoveredClient ?? { client: getDarwinKit(), lease: leaseDarwinKit };
+    const attempt = async (reader: OcrClient) => {
+        const release = reader.lease();
+        try {
+            return await recognizeTextAttempt(imagePath, { ...options, client: reader.client });
+        } finally {
+            release();
+        }
+    };
+
+    try {
+        return await attempt(initial);
+    } catch (error) {
+        if (!imageReaderFailed(error)) {
+            throw error;
+        }
+
+        // A poisoned Vision helper rejects valid frames too. Keep unrelated shared DarwinKit calls alive.
+        const retry = recoveryClient(initial);
+        logger.warn({ imagePath, error }, "darwin-ocr: image reader failed; retrying once in an OCR-only helper");
+        try {
+            return await attempt(retry);
+        } catch (retryError) {
+            if (imageReaderFailed(retryError)) {
+                retireOcrClient(retry);
+            }
+
+            throw retryError;
+        }
+    }
+}
+
+async function recognizeTextAttempt(
+    imagePath: string,
+    options: OcrOptions & { client: DarwinKit }
+): Promise<OcrResult> {
+    const { client, timeoutMs } = options;
     const level = options.level ?? "accurate";
     const languages = options.languages ?? ["en-US"];
 
@@ -314,7 +403,7 @@ export async function recognizeText(imagePath: string, options: OcrOptions = {})
         const dims = dimensions;
 
         if (dims && needsAccurateTiling(dims)) {
-            const tiled = await recognizeTextTiled(imagePath, dims, languages, level);
+            const tiled = await recognizeTextTiled({ imagePath, dims, languages, level, client, timeoutMs });
 
             if (!isEmptyOcrResult(tiled)) {
                 return tiled;
@@ -332,13 +421,16 @@ export async function recognizeText(imagePath: string, options: OcrOptions = {})
 
             for (const region of planOcrTiles(dims, options.tilePx)) {
                 parts.push(
-                    await getDarwinKit().vision.ocr({
-                        path: imagePath,
-                        languages,
-                        level,
-                        region,
-                        language_correction: false,
-                    })
+                    await client.vision.ocr(
+                        {
+                            path: imagePath,
+                            languages,
+                            level,
+                            region,
+                            language_correction: false,
+                        },
+                        timeoutMs ? { timeout: timeoutMs } : undefined
+                    )
                 );
             }
 
@@ -346,11 +438,11 @@ export async function recognizeText(imagePath: string, options: OcrOptions = {})
         }
     }
 
-    const result = await callVisionOcr(imagePath, languages, level, options.timeoutMs);
+    const result = await callVisionOcr({ imagePath, languages, level, client, timeoutMs });
 
     if (level === "accurate" && options.fastFallback !== false && isEmptyOcrResult(result)) {
         logger.debug({ imagePath }, "darwin-ocr: accurate empty, falling back to fast");
-        return callVisionOcr(imagePath, languages, "fast", options.timeoutMs);
+        return callVisionOcr({ imagePath, languages, level: "fast", client, timeoutMs });
     }
 
     return result;
