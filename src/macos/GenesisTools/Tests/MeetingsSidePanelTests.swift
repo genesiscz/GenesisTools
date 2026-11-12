@@ -70,6 +70,19 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertEqual(sections.first { $0.id == "panes" }?.isDefault, true)
     }
 
+    func testPausedSeekResumePolicyHasBothChoicesAndPersists() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = MeetingsPreferences.Playback.resumeAfterSeek.key
+        let rows = SidePanelCatalog.windowSections(defaults).flatMap(\.rows)
+        let row = try XCTUnwrap(rows.first { $0.id == key })
+        XCTAssertEqual(row.value, .text("selectedTime"))
+        XCTAssertEqual(row.choices.map(\.value), [.text("selectedTime"), .text("rewind")])
+        SidePanelCatalog.write(.text("rewind"), key: key, to: defaults)
+        let reopened = try XCTUnwrap(UserDefaults(suiteName: suite))
+        XCTAssertEqual(MeetingsPreferences.Playback.resumeAfterSeek.value(reopened), .rewind)
+    }
+
     func testMissingTonePolicyHasBothChoicesAndKeepsStrictSelection() throws {
         let key = "global.playback.listen.tone.onMissing"
         let (_, fresh) = engine([:])

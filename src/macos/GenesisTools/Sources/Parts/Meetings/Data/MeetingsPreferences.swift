@@ -236,6 +236,7 @@ extension MeetingsPreferences {
         enum AfterClip: String, CaseIterable { case stop, offerMore, `continue` }
         enum ClickInQuestion: String, CaseIterable { case push, replace }
         enum OnTopEnd: String, CaseIterable { case `return`, stop }
+        enum ResumeAfterSeek: String, CaseIterable { case selectedTime, rewind }
 
         static let view = MeetingsWindowSetting(
             key: "meetings.playback.view", defaultValue: View.moment, choices: View.allCases,
@@ -258,6 +259,9 @@ extension MeetingsPreferences {
         static let rewindSec = MeetingsWindowSetting(
             key: "meetings.playback.rewindSec", defaultValue: 1.0, choices: [0.5, 1, 2, 5],
             title: "Rewind on play again", detail: "Seconds a paused Moment goes back when it plays again, without the tone.")
+        static let resumeAfterSeek = MeetingsWindowSetting(
+            key: "meetings.playback.resumeAfterSeek", defaultValue: ResumeAfterSeek.selectedTime, choices: ResumeAfterSeek.allCases,
+            title: "After seeking while paused", detail: "Resume at the selected time, or apply the usual rewind first.")
         static let clickInQuestion = MeetingsWindowSetting(
             key: "meetings.playback.stack.clickInQuestion", defaultValue: ClickInQuestion.push, choices: ClickInQuestion.allCases,
             title: "A time in a question", detail: "Push plays it over the Moment and comes back; Replace plays it instead.")

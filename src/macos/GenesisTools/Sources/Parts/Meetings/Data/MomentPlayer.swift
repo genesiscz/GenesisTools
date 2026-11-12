@@ -155,6 +155,8 @@ struct MomentLayer: Identifiable, Equatable {
     var toneEndSec: Double?
     /// Where a layer under the top stopped: it plays from here, less the rewind, when it is the top again.
     var pausedAt: Double?
+    /// A deliberate seek while paused takes precedence over the automatic resume rewind.
+    var hasPausedSeek = false
     /// What the bar names: the Moment's label ("i1", "00:09", "05:09–05:31"), or the meeting from a time.
     var label: String
 
@@ -391,15 +393,13 @@ final class MomentPlayer {
         GenAnnounce.post("Paused")
     }
 
-    /// Plays the paused top again, `rewindSec` earlier and never into its tone; an ended top plays from its start.
+    /// Resumes at an explicit paused seek, or with the configured rewind; an ended top plays from its start.
     func resume() {
         guard let top, let sound = sounds[top.id] else { return }
         switch phase {
         case .paused:
             let paused = top.pausedAt ?? (top.startSec + sound.currentTime)
-            sound.currentTime = Self.resumeOffset(pausedAt: paused, startSec: top.startSec,
-                                                  rewindSec: MeetingsPreferences.Playback.rewindSec.value(defaults),
-                                                  toneEndSec: top.toneEndSec)
+            sound.currentTime = resumeOffset(for: top, pausedAt: paused)
             run(sound, for: top.id)
             GenAnnounce.post("Playing")
         case .ended:
@@ -407,6 +407,12 @@ final class MomentPlayer {
         default:
             break
         }
+    }
+
+    private func resumeOffset(for layer: MomentLayer, pausedAt: Double) -> Double {
+        let keepSelected = layer.hasPausedSeek && MeetingsPreferences.Playback.resumeAfterSeek.value(defaults) == .selectedTime
+        let rewind = keepSelected ? 0 : MeetingsPreferences.Playback.rewindSec.value(defaults)
+        return Self.resumeOffset(pausedAt: pausedAt, startSec: layer.startSec, rewindSec: rewind, toneEndSec: layer.toneEndSec)
     }
 
     func togglePause() {
@@ -429,7 +435,8 @@ final class MomentPlayer {
     func seek(to second: Double) {
         guard let top, let sound = sounds[top.id], top.contains(second) else { return }
         sound.currentTime = second - top.startSec
-        update(top.id) { $0.pausedAt = second }
+        let paused = phase == .paused
+        update(top.id) { $0.pausedAt = second; $0.hasPausedSeek = paused }
         position = second
         if case .ended = phase { run(sound, for: top.id) }
     }
@@ -468,9 +475,7 @@ final class MomentPlayer {
         GenAnnounce.post("Back to \(below.label)")
         if let sound = sounds[below.id] {
             let paused = below.pausedAt ?? below.startSec
-            sound.currentTime = Self.resumeOffset(pausedAt: paused, startSec: below.startSec,
-                                                  rewindSec: MeetingsPreferences.Playback.rewindSec.value(defaults),
-                                                  toneEndSec: below.toneEndSec)
+            sound.currentTime = resumeOffset(for: below, pausedAt: paused)
             run(sound, for: below.id)
         } else {
             cut(below.id, MeetingsAPI.MomentParams(meeting: below.meeting, target: below.target))
@@ -658,7 +663,7 @@ final class MomentPlayer {
         sound.currentTime = max(0, second - layer.startSec)
         if paused {
             let held = max(second, layer.startSec)
-            update(id) { $0.pausedAt = held }
+            update(id) { $0.pausedAt = held; $0.hasPausedSeek = true }
             position = held
             phase = .paused
             return
@@ -668,6 +673,7 @@ final class MomentPlayer {
     }
 
     private func run(_ sound: MomentSound, for id: UUID) {
+        update(id) { $0.hasPausedSeek = false }
         for (other, playing) in sounds where other != id && playing.isPlaying { playing.pause() }
         sound.rate = Float(MeetingsPreferences.Playback.speed.value(defaults))
         sound.play()

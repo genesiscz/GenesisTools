@@ -315,6 +315,49 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertEqual(playingCount, 1)
     }
 
+    func testResumeKeepsExplicitPausedSeekButNormalPauseStillRewinds() async throws {
+        defaults.set("selectedTime", forKey: "meetings.playback.resumeAfterSeek")
+        defaults.set(1.0, forKey: MeetingsPreferences.Playback.rewindSec.key)
+        let player = makePlayer()
+        player.play(.item("i3"), in: "m", from: .row)
+        try await until("it plays") { player.phase == .playing }
+        player.pause()
+        player.seek(to: 108)
+        XCTAssertEqual(player.phase, .paused)
+        XCTAssertEqual(sounds[0].currentTime, 13, accuracy: 0.0001)
+        player.resume()
+        XCTAssertEqual(sounds[0].currentTime, 13, accuracy: 0.0001, "Play must keep the explicitly chosen time")
+        sounds[0].currentTime = 14
+        player.pause()
+        player.resume()
+        XCTAssertEqual(sounds[0].currentTime, 13, accuracy: 0.0001, "an ordinary pause still uses the one-second rewind")
+    }
+
+    func testReturningToAPausedSeekKeepsItsChosenTime() async throws {
+        let player = makePlayer()
+        player.play(.item("i3"), in: "m", from: .row)
+        try await until("the first clip plays") { player.phase == .playing }
+        player.pause()
+        player.seek(to: 108)
+        player.play(.time(40), in: "m", from: .questionTime)
+        try await until("the pushed clip plays") { self.sounds.count == 2 && player.phase == .playing }
+        player.pop()
+        XCTAssertEqual(sounds[0].currentTime, 13, accuracy: 0.0001)
+        XCTAssertEqual(player.phase, .playing)
+    }
+
+    func testLegacyResumeRewindCanApplyAfterAPausedSeek() async throws {
+        defaults.set("rewind", forKey: "meetings.playback.resumeAfterSeek")
+        defaults.set(1.0, forKey: MeetingsPreferences.Playback.rewindSec.key)
+        let player = makePlayer()
+        player.play(.item("i3"), in: "m", from: .row)
+        try await until("it plays") { player.phase == .playing }
+        player.pause()
+        player.seek(to: 108)
+        player.resume()
+        XCTAssertEqual(sounds[0].currentTime, 12, accuracy: 0.0001)
+    }
+
     func testATranscriptTimeSeeksInsideTheClipAndReplacesTheTopOutsideIt() async throws {
         let player = makePlayer()
         player.play(.item("i3"), in: "m", from: .row)
