@@ -2694,6 +2694,23 @@ describe.skipIf(process.platform !== "darwin")("transparent APFS compression", (
         linkSync(c.path, linked);
         expect(await resolveStale(linked, () => false, new Set())).toBe("dropped");
         expect(statSync(c.path).nlink).toBe(1);
+
+        const owned = join(c.path, "..", `.cold-old-${process.pid}-session.jsonl`);
+        linkSync(c.path, owned);
+        linkSync(c.path, aside);
+        const recovered = await applyTransparent({
+            candidates: [],
+            stale: [owned, aside],
+            writer: DITTO_WRITER,
+            onBattery: true,
+        });
+        expect(recovered.recovery).toEqual([
+            { path: owned, status: "in use" },
+            { path: aside, status: "dropped" },
+        ]);
+        expect(existsSync(owned)).toBe(true);
+        expect(existsSync(aside)).toBe(false);
+        expect(readFileSync(c.path)).toEqual(bytes);
     });
     it("restores stale asides held by a descriptor instead of dropping later writes", async () => {
         const c = fixture("stale-held");

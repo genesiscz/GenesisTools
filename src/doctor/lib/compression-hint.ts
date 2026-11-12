@@ -2,6 +2,7 @@ import { lstatSync, opendirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { formatBytes } from "@app/doctor/lib/size";
 import type { Finding } from "@app/doctor/lib/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type NativeCompressionEntry, openPaths, plan, sampleRatio } from "@genesiscz/utils/compress/transparent";
 import { loadTransparentConfig } from "@genesiscz/utils/compress/transparent-config";
 import { fileFlags, SF_DATALESS, underCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
@@ -21,7 +22,7 @@ export function compressionHintFinding(roots: Array<{ path: string; savingBytes:
         return null;
     }
 
-    const command = `tools compress transparent plan ${escapeShellArg(best.path)}`;
+    const command = `${toolCommand("compress transparent plan")} ${escapeShellArg(best.path)}`;
     return {
         id: "dev-transparent-compression",
         analyzerId: "dev-caches",

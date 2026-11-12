@@ -29,9 +29,12 @@ export function registerTransparentCommands(program: Command): void {
     const transparent = program
         .command("transparent")
         .description("APFS compression at the same path; plan is read-only, apply preserves and verifies every file");
-    for (const mode of ["plan", "apply"] as const) {
-        transparent
-            .command(mode)
+    const modes = [
+        ["plan", transparent.command("plan")],
+        ["apply", transparent.command("apply")],
+    ] as const;
+    for (const [mode, command] of modes) {
+        command
             .argument("[paths...]", "folders to scan; default agent preset")
             .option(
                 "--root <dir>",
