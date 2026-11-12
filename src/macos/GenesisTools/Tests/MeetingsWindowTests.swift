@@ -7,6 +7,20 @@ import XCTest
 /// times it shows, and which meetings each sidebar place lists.
 @MainActor
 final class MeetingsWindowTests: XCTestCase {
+    func testNoServiceShowsStaleDataAndFailedReadsKeepLastSuccessfulAge() throws {
+        let model = MeetingsWindowModel(loadDetail: { _ in })
+        model.startLiveUpdates()
+        XCTAssertTrue(model.liveUpdatesOff, "CLI fallback still needs an explicit stale-data notice")
+        XCTAssertFalse(model.liveUpdates)
+        let detail = MeetingDetailModel(id: "m", window: model)
+        XCTAssertNil(detail.lastSuccessfulRead)
+        let rows = ReviewRows(meeting: "m", rows: [], hidden: .init(lowPriority: 0, minPriority: 0.5))
+        detail.settle(\.rows, .loaded(rows))
+        let lastRead = try XCTUnwrap(detail.lastSuccessfulRead)
+        detail.settle(\.rows, .failed(.init(sentence: "Offline", detail: "Offline"), previous: rows))
+        XCTAssertEqual(detail.lastSuccessfulRead, lastRead, "an unsuccessful read cannot make stale data look fresh")
+    }
+
     func testRoutedMomentRequestKeepsPlaybackOptions() throws {
         let json = #"{"meeting":"m1","target":{"kind":"time","atSec":12},"tone":false,"padSec":1,"padAfterSec":3,"lengthSec":5,"screen":false}"#
         let request = MeetingsRequest.parse(["--meeting", "m1", "--play-request", json])

@@ -126,12 +126,13 @@ struct MeetingDetailView: View {
             }
             if window.liveUpdatesOff {
                 // R36, G46: without events a row decided elsewhere would not change; say so, with the way back.
-                HStack(spacing: 8) {
+                WrapLayout(spacing: 8, lineSpacing: 4) {
                     Label("Live updates off: changes made elsewhere show after a reload", systemImage: "antenna.radiowaves.left.and.right.slash")
                         .font(.system(size: 12)).foregroundStyle(KitPalette.modified)
                     if let lastRead = detail.lastSuccessfulRead {
                         (Text("Last read ") + Text(lastRead, style: .relative) + Text(" ago"))
                             .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("meetings.detail.lastRead")
                     }
                     Button("Reload") { window.reloadAll() }.buttonStyle(.link).font(.system(size: 12))
                         .accessibilityIdentifier("meetings.detail.reload")

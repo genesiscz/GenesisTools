@@ -454,7 +454,12 @@ final class MeetingsWindowModel {
     /// a meeting changed outside the service reads its changed parts, and the sidebar's counts follow (G50). Subscribing
     /// to all meetings, not only the open one, is what lets the counts and a notice of another meeting follow too.
     func startLiveUpdates() {
-        guard let service, listening == nil else { return }
+        guard let service else {
+            // The CLI fallback can read, but nothing will deliver changes from another window.
+            liveUpdatesOff = true
+            return
+        }
+        guard listening == nil else { return }
         listening = service.listen { [weak self] signal in self?.receive(signal) }
         Task { [weak self] in
             guard let self else { return }
