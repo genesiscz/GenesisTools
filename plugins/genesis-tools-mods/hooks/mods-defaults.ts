@@ -21,6 +21,7 @@ export const MODS_DEFAULTS: ModsSettings = {
         earlier: "show",
     },
     askRow: { enabled: false },
+    toolTime: { enabled: false, ago: true },
     spinner: { enabled: false },
     cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
     tmpUsage: { enabled: false, minutes: 5 },

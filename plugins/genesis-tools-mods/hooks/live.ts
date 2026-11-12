@@ -40,6 +40,22 @@ export function liveAgo(at: number, options: { unit?: "second" | "minute"; now?:
     return `${liveSince(at, now)} ago`;
 }
 
+/**
+ * Whole wall-clock minutes from `at` to now: `just now`, `4m ago`, `2h ago`. Every such text changes at the same
+ * minute boundary, so a hundred rows drawn with it cost one redraw a minute, not one each at its own second.
+ */
+export function liveWallAgo(at: number, now = Date.now()): string {
+    const minute = Math.floor(now / 60_000);
+    const minutes = Math.max(0, minute - Math.floor(at / 60_000));
+    changesAt((minute + 1) * 60_000);
+
+    if (minutes < 1) {
+        return "just now";
+    }
+
+    return minutes < 60 ? `${minutes}m ago` : `${Math.floor(minutes / 60)}h ago`;
+}
+
 /** What is left until `until`: `4m 05s`; `unit: "minute"` gives whole minutes rounded up, `5m`. */
 export function liveLeft(until: number, options: { unit?: "second" | "minute"; now?: number } = {}): string {
     const now = options.now ?? Date.now();

@@ -94,7 +94,7 @@ import {
     takeLinkedPullRequestNote,
     targetFor,
 } from "../hooks/links";
-import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live";
+import { forgetLive, liveAgo, liveDue, liveLeft, liveSince, liveWallAgo } from "../hooks/live";
 import { bareDescription } from "../hooks/model-label";
 import {
     checkoutOf,
@@ -136,6 +136,7 @@ import {
     worktreeMaxAgeS,
     worktreeSize,
 } from "../hooks/tmp-usage";
+import { callTimeText, clockOf } from "../hooks/tool-time";
 
 /** A Mac where every GenesisTools link opens, on an invented link host. */
 const ALL_LINKS: GenesisProbe = {
@@ -1288,6 +1289,79 @@ test("live times: the text, and when it next changes", async () => {
     expect(liveAgo(now - 3 * 60_000 - 1_000, { now, unit: "minute" })).toBe("3m ago");
     expect(liveDue()).toBe(now + 59_000);
 });
+
+test("tool time: wall-clock minutes, so every row changes at the same minute", async () => {
+    const minute = 60_000;
+    const now = 1_000 * minute + 42_000;
+
+    forgetLive();
+    expect(liveWallAgo(now - 30_000, now)).toBe("just now");
+    // 41 s past the minute before still counts as one minute: the minute boundary, not the call's own second.
+    expect(liveWallAgo(now - 43_000, now)).toBe("1m ago");
+    expect(liveWallAgo(now - 5 * minute, now)).toBe("5m ago");
+    expect(liveWallAgo(now - 125 * minute, now)).toBe("2h ago");
+    // Each call noted the same due time: the next whole minute.
+    expect(liveDue()).toBe(1_001 * minute);
+
+    const at = new Date(2026, 10, 13, 9, 5, 7).getTime();
+    expect(clockOf(at)).toBe("09:05:07");
+    expect(callTimeText(at, { ago: false })).toBe("09:05:07");
+    expect(callTimeText(at, { ago: true, now: at + 3 * minute })).toBe("09:05:07 (3m ago)");
+    forgetLive();
+});
+
+for (const askRow of [false, true]) {
+    test(`tool time: the row shows its call's start${askRow ? " under [ask]" : " in place of [ask]"}`, async ($, on) => {
+        forgetSettings();
+        mock.env(on, { HOME: "/home/test" });
+        on("fs.read", async (_$, e) => {
+            if (e.path === "/home/test/.genesis-tools/agents/hooks.json") {
+                return {
+                    value: JSON.stringify({ mods: { toolTime: { enabled: true }, askRow: { enabled: askRow } } }),
+                };
+            }
+
+            throw new Error("no file");
+        });
+        let id = "";
+        on("tool.call", async (_$, e) => {
+            id = e.tool_use_id ?? "";
+
+            return { result: { stdout: "", stderr: "", interrupted: false, isImage: false } };
+        });
+        on("ui.render", { component: "ToolUse" }, async (_$, e) => {
+            const { Text } = _$.ui.resolve(e);
+
+            return <Text>Bash(ls)</Text>;
+        });
+
+        await $.tool.call({ tool: "Bash", command: "ls" });
+        expect(id).not.toBe("");
+
+        const ui = await $.ui.mount({
+            plugin: "genesis-tools-mods",
+            surface: "terminal",
+            component: "ToolUse",
+            props: {
+                tool_use_id: id,
+                tool: "Bash",
+                input: { command: "ls" },
+                isRunning: false,
+                isErrored: false,
+                isInterrupted: false,
+            },
+            requestId: id,
+            viewport: { columns: 120, rows: 10 },
+        });
+
+        const texts = (await ui.findAll({ type: "Text" })).map((text) => text.text ?? "");
+
+        expect(texts.filter((text) => /^\d\d:\d\d:\d\d \(just now\)$/.test(text))).toHaveLength(1);
+        expect((await ui.find({ key: `ask-${id}` })) !== undefined).toBe(askRow);
+        await ui.unmount();
+        forgetSettings();
+    });
+}
 
 test("ask quote and spinner label", async () => {
     expect(quoteOf([{ tool: "Bash", input: { command: "ls  -la" }, output: { stdout: "a\nb" } }])).toBe(

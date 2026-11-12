@@ -156,12 +156,16 @@ export interface HookLedger {
     dropped: HookCount;
 }
 
+/** When each tool call started (epoch ms), by its `tool_use_id`: one member per drawn row. */
+export type CallStartedAt = number;
+
 declare module "claude-code" {
     interface PluginState {
         "genesis-tools-mods": {
             flipped: FlippedFiles;
             foldAll: FoldAll;
             shown: ShownCalls;
+            callAt: import("claude-code").StateFamily<CallStartedAt>;
         };
     }
 }

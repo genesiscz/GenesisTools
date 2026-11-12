@@ -213,7 +213,7 @@ tools agents hooks config rules --disable zsh-word-split --write
 | `hooks mods watch [--off] --write` | Load the mods from this checkout in every new session, reload on each save. |
 
 `hooks mods` alone runs `mods status`. `mods install --scope` is `user` (default), `project` or `local`. The mod
-names are `diff`, `idleCompact`, `agentModel`, `agentRow`, `decisions`, `inbox`, `links`, `git`, `askRow`, `spinner`,
+names are `diff`, `idleCompact`, `agentModel`, `agentRow`, `decisions`, `inbox`, `links`, `git`, `askRow`, `toolTime`, `spinner`,
 `cacheBand`, `tmpUsage`, `agentsBand`, `hooks`, `hooksDedupe`, `stall` and `resumeGuard`. `enable` and `disable` take
 `--replace-subagent-line` for `agentRow`. `mods watch` writes the folder into `CLAUDE_CODE_PLUGIN_DIRS` in the `env`
 block of the Claude settings; `--off` takes it out.
@@ -967,6 +967,8 @@ timer until the next turn ends.
   Times in the sidebars and the band are live (`hooks/live.ts`): a time with seconds redraws each second while it is
   on screen, one in minutes each minute, and nothing redraws while no live time shows.
 - `mods.askRow`: `[ask]` beside a finished tool row puts the row, quoted, into the prompt.
+- `mods.toolTime` (`ago` on): the local time each tool call started (`14:03:27 (5m ago)`), under `[ask]` on its row
+  or in its place while `[ask]` is off. `ago` counts wall-clock minutes, so all rows redraw together once a minute.
 - `mods.spinner`: the spinner line names the running tool, its time and the working subagents.
 - `mods.cacheBand` (`cautionMinutes` 20, `warnMinutes` 10, `others` on): the prompt cache countdown, yellow under
   `cautionMinutes` and red under `warnMinutes`, and the other sessions whose cache runs out within the yellow window. A

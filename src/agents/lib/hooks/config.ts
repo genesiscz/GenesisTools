@@ -384,6 +384,11 @@ export interface ModsConfig {
     };
     /** `[ask]` beside a finished tool row: quotes the row into the prompt. */
     askRow: { enabled: boolean };
+    /**
+     * The local time each tool call started (`14:03:27`), under `[ask]` on its row or in its place; `ago` adds the
+     * whole minutes or hours since (`(5m ago)`), which changes once a minute for every row together.
+     */
+    toolTime: { enabled: boolean; ago: boolean };
     /** The running tool, its time and the working subagents on the spinner line. */
     spinner: { enabled: boolean };
     /**
