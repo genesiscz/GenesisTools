@@ -8,7 +8,7 @@ import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/pro
 import type { Command } from "commander";
 import { askAtMeetingEnd, hasOpenAssignSteps } from "../lib/assign";
 import { fail, resolveEnum } from "../lib/shared";
-import { watchLoop, watchOnce } from "../lib/watch";
+import { hasRecordingToWatch, watchedSourceId, watchLoop, watchOnce } from "../lib/watch";
 
 const { log } = logger.scoped("meetings-watch-cmd");
 /** How long `ensureWatcher` waits for the spawned watcher to own its pidfile. */
@@ -25,7 +25,12 @@ export function watcherPidPath(store: MeetingStore): string {
 export async function ensureWatcher(): Promise<"started" | "running" | "disabled"> {
     const config = await new MeetingsConfigStore().read();
 
-    if (!config.sources.wisprflow.autoRecord.enabled && !hasOpenAssignSteps(new MeetingStore())) {
+    const store = new MeetingStore();
+    if (
+        !config.sources[watchedSourceId(config)].autoRecord.enabled &&
+        !hasOpenAssignSteps(store) &&
+        !hasRecordingToWatch(store)
+    ) {
         return "disabled";
     }
 

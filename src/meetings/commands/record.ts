@@ -43,7 +43,7 @@ import { screenTimeline } from "../lib/screen-timeline";
 import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-flags";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { captureCostRead, windowJson } from "../lib/window-reads";
-import { askProjectAtEnd } from "./watch";
+import { askProjectAtEnd, ensureWatcher } from "./watch";
 
 const { log } = logger.scoped("meetings-record-cmd");
 
@@ -203,6 +203,9 @@ async function start(opts: {
             return;
         }
 
+        await ensureWatcher().catch((err: unknown) =>
+            log.warn({ err, meeting: record.id }, "recording started, but its recovery watcher did not start")
+        );
         ui.ok(
             `Recording the screen for ${record.id}${record.project ? ` (project ${record.project})` : ""}, as ${grant.identity}.`
         );

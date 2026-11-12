@@ -5,13 +5,13 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { type NotificationAction, sendNotification } from "@genesiscz/utils/macos/notifications";
 import { type MeetingsConfig, MeetingsConfigStore, type SourceSettings } from "@genesiscz/utils/meetings/config";
-import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore, RecordingBlock, RecordingSpan } from "@genesiscz/utils/meetings/record";
 import { type LiveRecording, MEETING_SOURCE_IDS, type MeetingSourceId } from "@genesiscz/utils/meetings/sources";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { assignSweep, hasOpenAssignSteps } from "./assign";
 import { linkSource } from "./link";
 import { ensureOcrWorkers } from "./ocr-worker";
-import { readRecorderState } from "./recorder-shared";
+import { readRecorderState, recorderFiles } from "./recorder-shared";
 import { pruneCapturesDaily } from "./retention";
 import { meetingSource } from "./sources";
 import {
@@ -63,8 +63,8 @@ export interface WatchDeps {
     /** Links the source's meeting again, so its final title, end and people reach the record. */
     refresh: (meetingId: string, sourceRef: string) => Promise<MeetingRecord>;
     run: (args: string[]) => Promise<{ success: boolean; exitCode: number | null; stderr: string }>;
-    /** When the meeting's last frame landed (its frames folder's mtime), or undefined when it has none. */
-    lastFrameAt: (meetingId: string) => number | undefined;
+    /** Last frame or recorder state write; capture pieces update the state even on a static screen. */
+    lastActivityAt: (meetingId: string) => number | undefined;
     /** Ends a recording whose recorder died and that is not started again: status stopped, its span `interrupted`. */
     endInterrupted: (meetingId: string, at: string) => Promise<void>;
     notify: (note: WatchNote) => Promise<void>;
@@ -102,9 +102,12 @@ function defaultDeps(store: MeetingStore): WatchDeps {
                 })
             ).record,
         run: (args) => execTool(args, { timeout: TOOL_TIMEOUT_MS }),
-        lastFrameAt: (meetingId) => {
+        lastActivityAt: (meetingId) => {
             const frames = join(store.folder(meetingId), "frames");
-            return existsSync(frames) ? statSync(frames).mtimeMs : undefined;
+            // The state is saved after each capture piece even when its still image has not changed.
+            const state = recorderFiles(store).state;
+            const activity = [frames, state].filter(existsSync).map((file) => statSync(file).mtimeMs);
+            return activity.length > 0 ? Math.max(...activity) : undefined;
         },
         endInterrupted: async (meetingId, at) => {
             await store.update(meetingId, { command: "watch", change: "recorder died; recording ended" }, (current) => {
@@ -112,15 +115,25 @@ function defaultDeps(store: MeetingStore): WatchDeps {
                     return;
                 }
 
-                const spans = (current.recording.spans ?? []).map((span) =>
-                    span.to ? span : { ...span, to: at, stopReason: "interrupted" as const }
-                );
+                const close = <T extends RecordingSpan>(span: T) =>
+                    span.to
+                        ? span
+                        : {
+                              ...span,
+                              to: Date.parse(at) < Date.parse(span.from) ? span.from : at,
+                              stopReason: "error",
+                              interrupted: true as const,
+                          };
+                const spans = current.recording.spans?.map(close);
+                const displaySpans = current.recording.displaySpans?.map(close);
                 current.recording = {
                     ...current.recording,
                     status: "stopped",
-                    stopReason: "interrupted",
+                    stopReason: "error",
+                    interrupted: true,
                     stoppedAt: at,
                     spans,
+                    displaySpans,
                 };
             });
         },
@@ -133,13 +146,24 @@ function defaultDeps(store: MeetingStore): WatchDeps {
     };
 }
 
+/** A running recorder needs monitoring; an unclosed orphan needs one recovery or expiry look. */
+export function hasRecordingToWatch(store: MeetingStore): boolean {
+    const { running, state } = readRecorderState(store);
+    if (running) {
+        return true;
+    }
+
+    const recording = state ? store.read(state.meetingId)?.recording : undefined;
+    return recording?.status === "recording" && recording.stopReason === undefined;
+}
+
 export type WatchResult = "disabled" | "idle" | "started" | "stopped" | "recording" | "busy" | "failed";
 
 function isFresh(live: LiveRecording, withinSec: number, now: number): boolean {
     return now - Date.parse(live.liveChangedAt) <= withinSec * 1000;
 }
 
-/** A dead recorder's recording starts again only while its last frame is this recent: a reboot hours later is not resumed. */
+/** Resume only a recently active recorder; a reboot hours later must not restart an old recording. */
 export const RESUME_WITHIN_MS = 10 * 60_000;
 /** The least time between two starts of one interrupted recording, so a start that dies at once does not loop. */
 export const RESUME_GAP_MS = 60_000;
@@ -147,7 +171,7 @@ const resumeTries = new Map<string, number>();
 
 /**
  * A recorder that died without a stop (a reinstall, a crash, a kill) left its state file, and its record still says
- * recording. While its last frame is recent, the same meeting's recording starts again (the start closes the dead span
+ * recording. While its last activity is recent, the same meeting's recording starts again (the start closes the dead span
  * as `interrupted`); an older one, or one whose autostarted meeting already ended, is ended as `interrupted`.
  * Manual recordings resume too: nothing but the death of the process stopped them.
  */
@@ -155,9 +179,10 @@ async function resumeInterrupted(options: {
     store: MeetingStore;
     deps: WatchDeps;
     live: LiveRecording | null;
+    autoRecordEnabled: boolean;
     now: number;
 }): Promise<WatchResult | undefined> {
-    const { store, deps, live, now } = options;
+    const { store, deps, live, autoRecordEnabled, now } = options;
     const { running, state } = deps.recorder();
 
     if (running || !state) {
@@ -171,12 +196,12 @@ async function resumeInterrupted(options: {
     }
 
     const auto = readAuto(store);
-    const ownAuto = auto?.meetingId === state.meetingId;
-    const lastFrame = deps.lastFrameAt(state.meetingId) ?? Date.parse(state.startedAt);
-    const endedMeeting = ownAuto && live?.sourceMeetingId !== auto.sourceMeetingId;
+    const ownAuto = auto?.meetingId === state.meetingId && auto.recorderStartedAt === state.startedAt;
+    const lastActivity = deps.lastActivityAt(state.meetingId) ?? Date.parse(state.startedAt);
+    const endedMeeting = ownAuto && (!autoRecordEnabled || live?.sourceMeetingId !== auto.sourceMeetingId);
 
-    if (endedMeeting || now - lastFrame > RESUME_WITHIN_MS) {
-        await deps.endInterrupted(state.meetingId, new Date(lastFrame).toISOString());
+    if (endedMeeting || now - lastActivity > RESUME_WITHIN_MS) {
+        await deps.endInterrupted(state.meetingId, new Date(lastActivity).toISOString());
         log.info({ meeting: state.meetingId, endedMeeting }, "a dead recorder's recording ended as interrupted");
         return undefined;
     }
@@ -315,7 +340,8 @@ export async function watchOnce(
             clearAuto(store);
         }
 
-        return "disabled";
+        const resumed = await resumeInterrupted({ store, deps, live: null, autoRecordEnabled: false, now });
+        return resumed ?? "disabled";
     }
 
     const source = await deps.source();
@@ -340,7 +366,7 @@ export async function watchOnce(
     log.debug({ live, running: recorder.running, auto }, "watch tick");
 
     if (!recorder.running) {
-        const resumed = await resumeInterrupted({ store, deps, live, now });
+        const resumed = await resumeInterrupted({ store, deps, live, autoRecordEnabled: true, now });
 
         if (resumed) {
             return resumed;
@@ -543,8 +569,8 @@ export async function watchLoop(store: MeetingStore): Promise<void> {
         // After the look, so a meeting the look just refreshed from its source is asked about at once.
         await assignSweep(store).catch((err: unknown) => log.warn({ err }, "assign sweep failed"));
 
-        if (result === "disabled" && !hasOpenAssignSteps(store)) {
-            log.info("autoRecord is off and no project question waits; the watcher ends");
+        if (result === "disabled" && !hasOpenAssignSteps(store) && !hasRecordingToWatch(store)) {
+            log.info("no automatic capture, active recording or project question needs the watcher; it ends");
             break;
         }
 
