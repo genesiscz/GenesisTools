@@ -73,9 +73,10 @@ public struct NativeKeyChord {
 
     private static func printableCharacter(_ key: String) -> String? {
         if key.count == 1, codes[key] != nil { return key }
-        return ["space": " ", "minus": "-", "equal": "=", "bracketleft": "[", "bracketright": "]",
-                "backslash": "\\", "semicolon": ";", "apostrophe": "'", "comma": ",", "period": ".",
-                "slash": "/", "grave": "`"] [key]
+        return ["space": " ", "minus": "-", "dash": "-", "equal": "=", "equals": "=",
+                "bracketleft": "[", "leftbracket": "[", "bracketright": "]", "rightbracket": "]",
+                "backslash": "\\", "semicolon": ";", "apostrophe": "'", "quote": "'", "comma": ",",
+                "period": ".", "dot": ".", "slash": "/", "grave": "`", "backtick": "`"] [key]
     }
 
     private static let printableCodes = Set(codes.compactMap { name, code in
@@ -138,6 +139,7 @@ public struct NativeKeyChord {
         "minus":27, "-":27, "equal":24, "=":24, "bracketleft":33, "[":33, "bracketright":30, "]":30,
         "backslash":42, "\\":42, "semicolon":41, ";":41, "apostrophe":39, "'":39,
         "comma":43, "period":47, ".":47, "slash":44, "/":44, "grave":50, "`":50,
+        "dot":47, "quote":39, "dash":27, "equals":24, "leftbracket":33, "rightbracket":30, "backtick":50,
         "kp_0":82, "kp_1":83, "kp_2":84, "kp_3":85, "kp_4":86, "kp_5":87, "kp_6":88,
         "kp_7":89, "kp_8":91, "kp_9":92, "kp_decimal":65, "kp_multiply":67, "kp_add":69,
         "kp_clear":71, "clear":71, "kp_divide":75, "kp_enter":76, "kp_subtract":78, "kp_equal":81,

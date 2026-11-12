@@ -361,6 +361,20 @@ extension WorkflowArgumentsTests {
         XCTAssertThrowsError(try NativeKeyChord("cmd,not-a-key", characterForKey: { _, _ in "z" }))
     }
 
+    func testLegacyHotkeyPunctuationAliasesUseTheSharedLayoutResolver() throws {
+        let aliases: [String: UInt16] = ["dot": 47, "quote": 39, "dash": 27, "equals": 24,
+                                        "leftbracket": 33, "rightbracket": 30, "backtick": 50]
+        for (alias, code) in aliases {
+            XCTAssertEqual(try NativeKeyChord("cmd," + alias).code, code)
+            let resolved = try NativeKeyChord("cmd," + alias, characterForKey: { candidate, flags in
+                XCTAssertEqual(flags, .maskCommand)
+                return candidate == 0 ? ["dot": ".", "quote": "'", "dash": "-", "equals": "=",
+                                         "leftbracket": "[", "rightbracket": "]", "backtick": "`"][alias] : nil
+            })
+            XCTAssertEqual(resolved.code, 0, "The alias must resolve by its logical character too")
+        }
+    }
+
     func testLayoutResolutionUsesNamedPunctuationAndPrefersTheExistingPosition() throws {
         let punctuation = try NativeKeyChord("cmd+slash", characterForKey: { code, _ in code == 27 ? "/" : nil })
         XCTAssertEqual(punctuation.code, 27)
