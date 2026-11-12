@@ -77,6 +77,7 @@ describe.skipIf(process.platform !== "darwin")("tools compress transparent", () 
         const printed = spyOn(out, "result").mockImplementation(() => {});
         const program = new Command("compress");
         registerTransparentCommands(program);
+        expect(program.commands[0]?.commands.map((command) => command.name())).toEqual(["plan", "apply"]);
         const folder = join(root, "algorithm-picker");
         mkdirSync(folder);
         Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true, writable: true });

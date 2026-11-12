@@ -1,5 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { ensureColdCompressTask } from "@app/macos/lib/clones/daemon-tasks";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
     availableTransparentWriter,
     openPaths,
@@ -69,7 +70,7 @@ export function rankCompressible(options: {
             allocated_bytes: 0,
             estimated_bytes_after: 0,
             estimated_saving_bytes: 0,
-            command: `tools compress transparent apply ${escapeShellArg(folder)}`,
+            command: `${toolCommand("compress transparent apply")} ${escapeShellArg(folder)}`,
         };
         row.files++;
         row.allocated_bytes += candidate.alloc;

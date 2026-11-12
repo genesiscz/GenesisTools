@@ -1,5 +1,6 @@
 import { existsSync, lstatSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 import { recordCompression } from "./ledger";
 import {
     type Candidate,
@@ -55,17 +56,8 @@ export async function batteryPower(): Promise<boolean> {
 }
 
 function alive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ESRCH") {
-            return false;
-        }
-
-        logger.debug({ error, pid }, "could not establish transaction owner exit; preserving scratch");
-        return true;
-    }
+    // Legacy aside names record only a PID, so an unverified live owner still preserves its scratch.
+    return classifyPid(pid).status !== "dead";
 }
 
 function partnerCandidate(path: string): Candidate {
