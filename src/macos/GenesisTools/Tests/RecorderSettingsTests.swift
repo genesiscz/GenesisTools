@@ -120,8 +120,20 @@ final class RecorderSettingsTests: XCTestCase {
 
         defaults.set("alert", forKey: RecorderFailureStyle.key)
         RecorderNotice.failure("The recording did not start.", more: "exit 2", defaults: defaults)
-        XCTAssertEqual(calls.last, "alert: The recording did not start. | exit 2")
+        XCTAssertTrue(calls.last?.hasPrefix("alert: The recording did not start. | ") == true)
+        XCTAssertTrue(calls.last?.contains("exit 2") == true)
         XCTAssertEqual(calls.count, 2)
+    }
+
+    func testAnAlertKeepsTheRemoteStackEvenWhenNoLogWasPrinted() {
+        defaults.set("alert", forKey: RecorderFailureStyle.key)
+        var detail: String?
+        var outlets = recordingOutlets { _ in }
+        outlets.alert = { _, more in detail = more }
+        RecorderNotice.outlets = outlets
+        RecorderNotice.failure(FailureReport(title: "Recorder", headline: "The request failed.",
+                                            log: "", stack: "Error: failed\n    at originalThrow (recorder.ts:4:2)"), defaults: defaults)
+        XCTAssertTrue(detail?.contains("at originalThrow") == true)
     }
 
     func testAShortcutWithNothingToActOnFollowsItsSetting() {
