@@ -221,6 +221,7 @@ const TILE_OVERLAP = 0.03;
 
 /** The regions of a `tiles` read: a grid whose tiles are at most `tilePx` on their longest side, with overlap. */
 export function planOcrTiles({ width, height }: ImageDimensions, tilePx = DEFAULT_OCR_TILE_PX) {
+    tilePx = Number.isFinite(tilePx) && tilePx >= 1 ? tilePx : DEFAULT_OCR_TILE_PX;
     const cols = Math.max(1, Math.ceil(width / tilePx));
     const rows = Math.max(1, Math.ceil(height / tilePx));
     const span = (index: number, count: number) => {
