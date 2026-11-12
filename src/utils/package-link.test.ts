@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -582,6 +583,18 @@ describe("shadowing", () => {
 });
 
 describe("the package exports map", () => {
+    for (const subpath of ["eval-engine", "music"]) {
+        test(`an external consumer resolves ${subpath} without repository path aliases`, () => {
+            const root = scratch();
+            const scope = join(root, "node_modules", "@genesiscz");
+            mkdirSync(scope, { recursive: true });
+            symlinkSync(utilsPackageDir(), join(scope, "utils"), "dir");
+            const consumer = createRequire(join(root, "consumer.cjs"));
+            expect(consumer.resolve(`${PACKAGE_NAME}/json`)).toBe(join(utilsPackageDir(), "json.ts"));
+            expect(consumer.resolve(`${PACKAGE_NAME}/${subpath}`)).toBe(join(utilsPackageDir(), subpath, "index.ts"));
+        });
+    }
+
     /** The file a relative or `@genesiscz/utils/` specifier names, as Bun resolves an extensionless one. */
     function moduleFile(base: string): string | null {
         return (

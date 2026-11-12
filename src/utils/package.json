@@ -198,6 +198,11 @@
             "types": "./env.client.ts",
             "default": "./env.client.ts"
         },
+        "./eval-engine": {
+            "bun": "./eval-engine/index.ts",
+            "types": "./eval-engine/index.ts",
+            "default": "./eval-engine/index.ts"
+        },
         "./format": {
             "bun": "./format.ts",
             "types": "./format.ts",
@@ -372,6 +377,11 @@
             "bun": "./math.ts",
             "types": "./math.ts",
             "default": "./math.ts"
+        },
+        "./music": {
+            "bun": "./music/index.ts",
+            "types": "./music/index.ts",
+            "default": "./music/index.ts"
         },
         "./network": {
             "bun": "./network.ts",
