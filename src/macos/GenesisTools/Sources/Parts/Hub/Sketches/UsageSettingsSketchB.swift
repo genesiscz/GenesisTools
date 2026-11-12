@@ -355,11 +355,15 @@ struct UsageSettingsSketchLimitsB: View {
             windows(row)
             if !spikes.isEmpty {
                 UsageSectionTitle(text: "Spikes", detail: Plural.count(spikes.count, "spike") + " on this account")
-                ForEach(spikes.prefix(6)) { spike in
+                let selected = spikes.dropFirst(6).first { $0.id == usage.selectedSpike?.id }
+                ForEach(Array(spikes.prefix(6)) + (selected.map { [$0] } ?? [])) { spike in
                     UsageSpikeRow(spike: spike, selected: usage.selectedSpike?.id == spike.id) {
                         usage.selectedSpike = usage.selectedSpike?.id == spike.id ? nil : UsageLaneBuilder.spike(spike)
                     }
                     .equatable()
+                    if usage.selectedSpike?.id == spike.id {
+                        UsageSpikeSessions(spike: spike) { id, harness in usage.openSession(id, harness: harness) }
+                    }
                 }
             }
             Divider().padding(.top, 6)

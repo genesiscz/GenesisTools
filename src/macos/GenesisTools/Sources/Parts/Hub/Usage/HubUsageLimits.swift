@@ -112,23 +112,7 @@ struct UsageLimitsSection: View {
                 }
                 .equatable()
                 if usage.selectedSpike?.id == spike.id {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(spike.sessions.prefix(8)) { session in
-                            UsageSessionLine(
-                                sessionId: session.sessionId, harness: session.agent, project: session.project,
-                                costUsd: session.costUsd, share: session.share,
-                                detail: session.approximate == true ? "by \(session.basis ?? "pin")" : nil
-                            ) { id, harness in usage.openSession(id, harness: harness) }
-                            .equatable()
-                        }
-                        if let unattributed = spike.unattributed, unattributed.costUsd > 0 {
-                            Text(verbatim: "Unattributed (another host or a missing pin): \(UsageFormat.usd(unattributed.costUsd))")
-                                .font(.system(size: 11))
-                                .foregroundColor(UsageTone.severity("critical"))
-                        }
-                    }
-                    .padding(.leading, 22)
-                    .transition(.genReveal)
+                    UsageSpikeSessions(spike: spike) { id, harness in usage.openSession(id, harness: harness) }
                 }
             }
         }
@@ -330,5 +314,30 @@ struct UsageAlertsStrip: View {
     static func lead(_ alert: UsageAlert) -> String {
         guard let name = alert.accountName, !name.isEmpty, !alert.message.hasPrefix(name) else { return alert.message }
         return "\(name): \(alert.message)"
+    }
+}
+/// Sessions attributed to a selected spike, shared by the Classic and compact account pages.
+struct UsageSpikeSessions: View {
+    let spike: UsageSpike
+    let openSession: (String, String?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(spike.sessions.prefix(8)) { session in
+                UsageSessionLine(
+                    sessionId: session.sessionId, harness: session.agent, project: session.project,
+                    costUsd: session.costUsd, share: session.share,
+                    detail: session.approximate == true ? "by \(session.basis ?? "pin")" : nil
+                ) { id, harness in openSession(id, harness) }
+                .equatable()
+            }
+            if let unattributed = spike.unattributed, unattributed.costUsd > 0 {
+                Text(verbatim: "Unattributed (another host or a missing pin): \(UsageFormat.usd(unattributed.costUsd))")
+                    .font(.system(size: 11))
+                    .foregroundColor(UsageTone.severity("critical"))
+            }
+        }
+        .padding(.leading, 22)
+        .transition(.genReveal)
     }
 }
