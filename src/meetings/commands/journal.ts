@@ -50,6 +50,8 @@ function whatText(record: MeetingRecord, entry: JournalReadEntry): string {
             return `${action.kind} ${named(record, entry.decided)}`;
         case "respell":
             return `respell ${action.item} → ${action.text.trim()}`;
+        case "rephrase":
+            return `rephrase ${named(record, [action.question])} → ${action.text}`;
         case "answer": {
             const settled = entry.settled.length > 0 ? ` (settled ${named(record, entry.settled)})` : "";
             return `answer ${named(record, entry.question ? [entry.question] : [])} → ${action.answer.trim()}${settled}`;

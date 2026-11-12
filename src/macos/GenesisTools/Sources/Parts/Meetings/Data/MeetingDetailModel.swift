@@ -80,6 +80,10 @@ final class MeetingDetailModel {
     /// What was typed in a row's editor, by row id (R10, R11, G4): it survives a re-read, a fold and a decision made
     /// elsewhere meanwhile.
     var drafts: [String: String] = [:]
+    /// A question's wording is edited independently of its answer.
+    var editingQuestion: String?
+    struct QuestionWordingDraft { var text: String; let original: String }
+    var questionDrafts: [String: QuestionWordingDraft] = [:]
     /// The reason typed for a row's next decision, by row id (G5: one word for a comment and a reason).
     var reasons: [String: String] = [:]
     /// Rows decided elsewhere while their editor held a draft, with the entry that decided them (G47, G48).

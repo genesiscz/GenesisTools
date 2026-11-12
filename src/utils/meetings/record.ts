@@ -91,6 +91,7 @@ export const DECISION_ACTIONS = [
     "confirm",
     "reject",
     "respell",
+    "rephrase",
     "answer",
     "skip",
     "split",

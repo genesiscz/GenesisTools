@@ -637,6 +637,23 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             };
         },
     },
+    rephrase: {
+        mutate: (record, action) => {
+            const id = itemIdOf(record, action.question);
+            const item = pickItems(record, [id])[0]!;
+            if (item.kind !== "question") {
+                throw new Error(`${action.question} is not a question`);
+            }
+            if (action.expectedText !== undefined && item.question !== action.expectedText) {
+                throw new MeetingsConflictError(
+                    "item-changed",
+                    "The question wording changed since this draft opened; reload it before saving"
+                );
+            }
+            item.question = action.text.trim();
+            return { history: { command: "rephrase", change: `${id}: ${item.question}` }, stamps: false };
+        },
+    },
     answer: {
         mutate: (record, action, context) => {
             const { now, listenBelow } = context;
@@ -867,7 +884,11 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             });
             const changedSince = pending.filter((change) => {
                 const item = current.get(change.id);
-                return item !== undefined && item.decision?.token !== change.after?.decision?.token;
+                return (
+                    item !== undefined &&
+                    (item.decision?.token !== change.after?.decision?.token ||
+                        (target.action.kind === "rephrase" && !same(item, change.after)))
+                );
             });
 
             if (changedSince.length > 0) {

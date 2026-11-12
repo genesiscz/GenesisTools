@@ -41,6 +41,8 @@ struct DecisionAction: Codable, Equatable, Hashable {
     /// respell: the item and its new text.
     var item: String?
     var text: String?
+    /// rephrase: the wording seen when this draft opened.
+    var expectedText: String?
     /// A term's chosen source lines and independent dictionary teaching choice.
     var reach: SpellingReach?
     struct SpellingReach: Codable, Equatable, Hashable {
@@ -117,6 +119,14 @@ struct DecisionAction: Codable, Equatable, Hashable {
         var action = DecisionAction(kind: "respell")
         action.item = item
         action.text = text
+        return action
+    }
+
+    static func rephrase(_ question: String, text: String, was expectedText: String?) -> DecisionAction {
+        var action = DecisionAction(kind: "rephrase")
+        action.question = question
+        action.text = text
+        action.expectedText = expectedText
         return action
     }
 

@@ -112,6 +112,7 @@ extension MeetingDetailModel {
     /// Opens a row's editor, its field holding the draft kept for it, else the suggested value (R11).
     func edit(_ row: ReviewRow) {
         guard row.edit != "none" else { return }
+        editingQuestion = nil
         if drafts[row.id] == nil {
             drafts[row.id] = row.choices.first { $0.role == "suggested" }?.value ?? row.choices.first?.value ?? ""
         }
@@ -119,8 +120,31 @@ extension MeetingDetailModel {
         selectedRow = row.id
     }
 
+    func editQuestion(_ row: ReviewRow) {
+        guard row.isQuestion else { return }
+        if questionDrafts[row.id] == nil {
+            let original = ReviewRowView.asked(row) ?? row.what
+            questionDrafts[row.id] = QuestionWordingDraft(text: original, original: original)
+        }
+        editingQuestion = row.id
+        editingRow = row.id
+        selectedRow = row.id
+    }
+
+    func resetQuestionWording(on row: ReviewRow) {
+        guard row.isQuestion else { return }
+        let original = ReviewRowView.asked(row) ?? row.what
+        questionDrafts[row.id] = QuestionWordingDraft(text: original, original: original)
+    }
+
+    func submitQuestionWording(on row: ReviewRow) {
+        guard let draft = questionDrafts[row.id], let text = MeetingsWords.typedAnswer(draft.text) else { return }
+        decide(row, .rephrase(row.id, text: text, was: draft.original), askReach: false)
+    }
+
     func closeEditor() {
         editingRow = nil
+        editingQuestion = nil
     }
 
     /// "Keep" on a question whose answer was about to change: it folds back with its answer.
@@ -245,6 +269,9 @@ extension MeetingDetailModel {
                     detail: refused?.entry.map { MeetingsWords.entryAction($0, label: rowName) }, tone: .warning,
                     actions: [.init("Use mine instead", symbol: "arrow.uturn.forward") { [weak self] _ in self?.useMine(action, on: row) }]))
                 refreshAfterDecision()
+            } catch let failure as MeetingsCLI.Failure where action.kind == "rephrase" && failure.code == "item-changed" {
+                notices.push(.meetingsFailure(failure))
+                refreshAfterDecision()
             } catch {
                 notices.push(.meetingsFailure(error) { [weak self] in self?.apply(row, action, reason: reason) })
             }
@@ -255,6 +282,11 @@ extension MeetingDetailModel {
     /// (`meetings.rows.autoplayNext`).
     private func decided(_ row: ReviewRow, action: DecisionAction, result: DecisionResult) {
         guard let entry = result.entry else {
+            if action.kind == "rephrase" {
+                questionDrafts[row.id] = nil
+                closeEditor()
+                return
+            }
             let reason = result.skipped.first { $0.id == row.id }?.reason ?? "nothing changed"
             notices.push(StackedNotice(text: "\(Self.sentenceStart(rowName(row.id))) was not decided: \(reason)", tone: .warning))
             refreshAfterDecision()
@@ -262,6 +294,14 @@ extension MeetingDetailModel {
         }
         ownTokens.insert(entry.token)
         refreshedTokens.insert(entry.token)
+        if action.kind == "rephrase" {
+            questionDrafts[row.id] = nil
+            if editingQuestion == row.id { editingQuestion = nil }
+            if editingRow == row.id { editingRow = nil }
+            if !patchDecision(result) { refreshAfterDecision() }
+            showDecided(entry, row: row)
+            return
+        }
         // What this answer left out stays out when it is changed after a "Revert and edit".
         if entry.action.kind == "answer" { carriedStruck[row.id] = entry.action.except }
         changingRows.remove(row.id)
@@ -727,6 +767,7 @@ extension MeetingsWords {
         case "confirm": return "confirmed \(items)"
         case "reject": return "rejected \(items)"
         case "respell": return "respelled \(action.item.map(label) ?? items) to “\(action.text ?? "")”"
+        case "rephrase": return "changed the wording of \(asked)"
         case "answer": return "answered \(asked): \(action.answer ?? "")"
         case "skip": return "skipped \(asked)"
         case "split": return "split \(asked) by voice"

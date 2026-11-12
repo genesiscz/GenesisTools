@@ -376,6 +376,48 @@ describe("decision journal", () => {
         });
     });
 
+    test("rephrasing a question preserves its answer and targets, survives reopen, and undoes without deciding it", async () => {
+        const fx = await fixture(lookAlikes());
+        const before = fx.item("i3")!;
+        if (before.kind !== "question") {
+            throw new Error("fixture must hold a question");
+        }
+        const action = decisionActionSchema.parse({
+            kind: "rephrase",
+            question: "Q1",
+            text: "Which API was named?",
+            expectedText: "Which word (i3)?",
+        });
+        const edited = await fx.journal.apply({ meeting: fx.meeting.id, action, actor: person });
+        expect(edited.entry?.decided).toEqual([]);
+        expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)?.items.find((item) => item.id === "i3")).toEqual({
+            ...before,
+            question: "Which API was named?",
+        });
+        expect(fx.item("i1")?.status).toBe("suggested");
+        await fx.journal.revert({ meeting: fx.meeting.id, token: edited.entry!.token, actor: person });
+        expect(fx.item("i3")).toEqual(before);
+        expect(fx.events()).toEqual([]);
+        expect(fx.ledger).toEqual([]);
+    });
+
+    test("rephrasing refuses an outdated draft and undo refuses to overwrite a later wording", async () => {
+        const fx = await fixture([question("i1", { status: "confirmed", answer: "ADA" })]);
+        const apply = (text: string, expectedText: string) =>
+            fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: decisionActionSchema.parse({ kind: "rephrase", question: "i1", text, expectedText }),
+                actor: person,
+            });
+        const first = await apply("First wording?", "Which word (i1)?");
+        await expect(apply("Stale wording?", "Which word (i1)?")).rejects.toMatchObject({ code: "item-changed" });
+        await apply("Second wording?", "First wording?");
+        await expect(
+            fx.journal.revert({ meeting: fx.meeting.id, token: first.entry!.token, actor: person })
+        ).rejects.toMatchObject({ code: "item-changed" });
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", answer: "ADA", question: "Second wording?" });
+    });
+
     test("a speaker rename is an entry with the label before and after, and its revert takes the name away", async () => {
         const fx = await fixture([], { S2: "Bob Example" });
         const { entry } = await fx.journal.apply({

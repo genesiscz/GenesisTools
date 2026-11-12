@@ -307,6 +307,7 @@ function namedItems(record: MeetingRecord, action: DecisionAction): string[] {
         case "respell":
             return [itemIdOf(record, action.item)];
         case "answer":
+        case "rephrase":
         case "skip":
         case "split":
             return [itemIdOf(record, action.question)];

@@ -468,6 +468,58 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(heard[1]?.params).toEqual({ meeting: REVIEW.id, token: applied.entry!.token, entry: reverted.entry });
     });
 
+    test("question wording edits reach both adapters and undo without changing the answer", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        await store.update(REVIEW.id, { command: "test", change: "question wording" }, (record) => {
+            record.items.push(
+                ...meetingRecordSchema.parse({
+                    ...record,
+                    items: [
+                        {
+                            id: "i2",
+                            kind: "question",
+                            about: "term",
+                            status: "confirmed",
+                            answer: "API",
+                            heard: "Ada",
+                            question: "Which word?",
+                            choices: ["API", "ADA"],
+                            decides: ["i1"],
+                            fromSec: 2,
+                            toSec: 6,
+                            rules: [],
+                            suggestedAt: NOW.toISOString(),
+                        },
+                    ],
+                }).items
+            );
+        });
+        const before = store.read(REVIEW.id)!.items.find((item) => item.id === "i2");
+        if (before?.kind !== "question") {
+            throw new Error("fixture must hold a question");
+        }
+        const action = {
+            kind: "rephrase",
+            question: "i2",
+            text: "Which interface did they name?",
+            expectedText: "Which word?",
+        } as const;
+        const plan = await client.call("decision.plan", { meeting: REVIEW.id, action });
+        expect(plan.entry?.decided).toEqual([]);
+        const applied = await client.call("decision.apply", { meeting: REVIEW.id, action, onDecided: "refuse" });
+        expect(new MeetingStore(store.storage).read(REVIEW.id)!.items.find((item) => item.id === "i2")).toEqual({
+            ...before,
+            question: action.text,
+        });
+        expect(
+            (await client.call("meeting.rows", { meeting: REVIEW.id })).rows.find((row) => row.id === "i2")?.parts
+        ).toContainEqual({ kind: "asks", pieces: [{ text: action.text }] });
+        const conflict = await failure(client.call("decision.apply", { meeting: REVIEW.id, action }));
+        expect(conflict.message).toContain("wording changed");
+        await client.call("decision.revert", { meeting: REVIEW.id, token: applied.entry!.token });
+        expect(new MeetingStore(store.storage).read(REVIEW.id)!.items.find((item) => item.id === "i2")).toEqual(before);
+    });
+
     test("a spelling plan lists source occurrences and its selected reach survives both adapters", async () => {
         const { client, store } = await ADAPTERS[kind]();
         await store.update(REVIEW.id, { command: "test", change: "selective spelling" }, (record) => {

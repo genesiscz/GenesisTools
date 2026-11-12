@@ -489,6 +489,26 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertFalse(MeetingDetailModel.mayReach(.reject(["i2"])))
     }
 
+    func testQuestionWordingAndAnswerDraftsStaySeparate() throws {
+        let row = try rows().rows[0]
+        let detail = MeetingDetailModel(id: "m", window: nil, service: nil)
+        detail.drafts[row.id] = "An answer draft"
+        detail.editQuestion(row)
+        XCTAssertEqual(detail.questionDrafts[row.id]?.original, ReviewRowView.asked(row))
+        detail.questionDrafts[row.id]?.text = "A clearer question?"
+        detail.closeEditor()
+        detail.editQuestion(row)
+        XCTAssertEqual(detail.questionDrafts[row.id]?.text, "A clearer question?")
+        XCTAssertEqual(detail.drafts[row.id], "An answer draft")
+        detail.edit(row)
+        XCTAssertNil(detail.editingQuestion)
+        XCTAssertEqual(detail.questionDrafts[row.id]?.text, "A clearer question?")
+        let action = DecisionAction.rephrase(row.id, text: "A clearer question?", was: "Old wording?")
+        let encoded = try JSONEncoder().encode(action)
+        XCTAssertEqual(try JSONDecoder().decode(DecisionAction.self, from: encoded), action)
+        XCTAssertFalse(MeetingDetailModel.mayReach(action))
+    }
+
     func testWithoutAServiceTheCommandMakesTheDecisionsItHas() {
         XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: .confirm(["i2"], speaker: "Dana Example"), reason: "heard it"),
                        ["confirm", "m", "i2", "--speaker", "Dana Example", "--reason", "heard it", "--json"])

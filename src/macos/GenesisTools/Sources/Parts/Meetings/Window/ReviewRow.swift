@@ -105,7 +105,11 @@ struct ReviewRowView: View, Equatable {
                 }
             }
             if editing {
-                RowEditor(row: row, detail: detail)
+                if detail.editingQuestion == row.id {
+                    QuestionWordingEditor(row: row, detail: detail)
+                } else {
+                    RowEditor(row: row, detail: detail)
+                }
             } else if row.isOpen || held {
                 choices
             } else if changing {
@@ -193,8 +197,8 @@ struct ReviewRowView: View, Equatable {
         case .asks(let pieces):
             pieceLine(pieces, symbol: "questionmark.bubble", size: 13, weight: row.isQuestion ? .medium : .regular,
                       glyph: asks ? KitHue.ask.ink : nil)
-                .onTapGesture(count: 2) { if row.edit != "none" { detail.edit(row) } }
-                .instantTooltip(row.edit == "none" ? "" : "Double-click to edit the answer")
+                .onTapGesture(count: 2) { if row.isQuestion { detail.editQuestion(row) } }
+                .instantTooltip(row.isQuestion ? "Double-click to edit the question wording" : "")
         case .settles(let text, let items):
             settlesLine(text, items: items)
         case .reason(let pieces):
@@ -629,6 +633,7 @@ struct ReviewRowView: View, Equatable {
         } else {
             Button("Revert and edit") { detail.revertAndEdit(row) }
         }
+        if row.isQuestion { Button("Edit question wording") { detail.editQuestion(row) } }
         if let player { Button("Play") { player.play(row.target, in: detail.id, from: .row) } }
         Button("History") { detail.openHistory(item: row.id) }
     }

@@ -37,6 +37,13 @@ export const DECISION_ACTION_OPTIONS = [
     z.object({ kind: z.literal("reject"), items: z.array(itemRef), minConfidence: z.number().optional() }),
     /** The item's value edited in place (a term's spelling, a range's speaker, a join's word): it is confirmed so. */
     z.object({ kind: z.literal("respell"), item: itemRef, text: z.string(), reach: spellingReachSchema.optional() }),
+    /** Changes a question's wording without answering it or changing its targets. */
+    z.object({
+        kind: z.literal("rephrase"),
+        question: itemRef,
+        text: z.string().trim().min(1),
+        expectedText: z.string().optional(),
+    }),
     z.object({
         kind: z.literal("answer"),
         question: itemRef,
