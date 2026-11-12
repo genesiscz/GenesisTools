@@ -588,7 +588,8 @@ describe.skipIf(skip.integration)("the editor on a video, and the frame review o
         expect(direct.frames.map((frame) => sha(frame.path))).toEqual(evidence.frames.map((frame) => sha(frame.path)));
         expect(direct.sheets.map((sheet) => sha(sheet.path))).toEqual(evidence.sheets.map((sheet) => sha(sheet.path)));
 
-        // Frozen from the pre-adapter implementation at 13733a8342 using the same generated video.
+        // Frames remain frozen at 13733a8342. Sheets include the explicit mono font introduced by fc8c27a698;
+        // each regenerated sheet tile was decoded and checked against these unchanged frame pixels.
         expect(evidence.frames.map((frame) => sha(frame.path))).toEqual(legacyEvidence[0].frames);
         expect(evidence.sheets.map((sheet) => sha(sheet.path))).toEqual(legacyEvidence[0].sheets);
         const ranged = await prepareVideoEvidence({
