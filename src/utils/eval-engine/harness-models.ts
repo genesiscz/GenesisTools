@@ -17,7 +17,7 @@ export const SimulatorStopWord = "###STOP###";
 const JudgeMaxOutputTokens = 400;
 const SimulatorMaxOutputTokens = 300;
 
-function renderTranscript(lines: readonly TranscriptLine[]): string {
+function renderJudgeTranscript(lines: readonly TranscriptLine[]): string {
     return lines
         .map((line) => {
             const head = `${line.role === "user" ? "USER" : "ASSISTANT"}: ${line.text}`;
@@ -52,7 +52,7 @@ export function buildJudgeRequest(request: JudgeRequest, model: string): Omit<Co
         messages: [
             {
                 role: "user",
-                content: `<conversation>\n${renderTranscript(request.scope.transcript)}\n</conversation>\n\n${where}\n\nStatement: ${request.question}\n\nIs the statement true?`,
+                content: `<conversation>\n${renderJudgeTranscript(request.scope.transcript)}\n</conversation>\n\n${where}\n\nStatement: ${request.question}\n\nIs the statement true?`,
             },
         ],
         maxOutputTokens: JudgeMaxOutputTokens,
