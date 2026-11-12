@@ -127,7 +127,12 @@ export const env = {
     },
 
     aiProxy: {
-        /** Save the last failing WHAM request/response (redacted, no tokens) under ~/.genesis-tools/ai-proxy/debug/. */
+        /**
+         * Save the last failing ChatGPT subscription exchange under ~/.genesis-tools/ai-proxy/debug/: the request body
+         * and the upstream error text, NOT redacted. The request headers (the Authorization token, the proxy key) stay
+         * out, but a secret inside the body or repeated by the error is written as is, so the file is 0600 in a 0700
+         * folder and is never safe to share without a search for secrets.
+         */
         getDebugCapture: () => isFlag("AI_PROXY_DEBUG_CAPTURE"),
         /**
          * Save every exchange's full prompt + response under
@@ -135,7 +140,7 @@ export const env = {
          * proxy and the transcripts are the only post-hoc debugging evidence);
          * set AI_PROXY_TRANSCRIPTS=0 to turn it off.
          *
-         * Unlike the debug capture above, transcripts are NOT redacted: whatever
+         * Like the debug capture above, transcripts are NOT redacted: whatever
          * a prompt carried (file contents, keys pasted into a message, tool
          * arguments) lands on disk verbatim. The directory is created 0700 and
          * the files 0600, so this stays readable only by the running user.

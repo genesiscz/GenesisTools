@@ -628,7 +628,13 @@ Everything lives under `~/.genesis-tools/ai-proxy/`:
 - Transcripts are on by default, because they are the only evidence after the fact. Whatever a prompt carried (file
   contents, keys pasted into a message, tool arguments) lands on disk verbatim; the folder is 0700 and the files 0600.
   `AI_PROXY_TRANSCRIPTS=0` turns them off.
-- The debug capture holds the request body and the response text only, never headers, tokens or the proxy key.
+- ⚠️ The debug capture can hold a credential. Only the ChatGPT subscription provider writes it, and only with
+  `AI_PROXY_DEBUG_CAPTURE=1`. It stores the account name, the model, the status, the full request body sent upstream
+  and the upstream error text, with no redaction. It leaves out the request headers, so the account's
+  `Authorization` token and the proxy key are not in it. Anything inside the body is: a key pasted into a prompt, a
+  secret in a file or a tool result, or one that the upstream error repeats. The file is `0600` in a `0700` folder,
+  so other users of this Mac cannot read it. Delete it when you are done. Before you share any part of it, the error
+  text included, search that part for secrets and redact them: an upstream error can repeat a secret from the request.
 - The data stays on this Mac. To reset the request history, truncate or delete `usage/requests.jsonl` (and
   optionally `usage/daily.json`). `tools ai-proxy usage --paths` prints the paths.
 - Every booking is also mirrored into the shared GenesisTools usage layer, which never throws, so a failure there
