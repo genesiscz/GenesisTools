@@ -37,3 +37,22 @@ export function callTo(names: readonly string[]): NapiConfig {
         },
     };
 }
+
+/**
+ * A string literal whose text matches `content`, in quotes or in a template: a state file's name (`/^cmux-refs\.jsonl$/`),
+ * an environment variable's name, a URL path. The pattern is read by ast-grep's regex engine: keep it to plain
+ * classes, anchors and alternation.
+ */
+export function literal(content: RegExp): NapiConfig {
+    return { rule: { kind: "string_fragment", regex: content.source } };
+}
+
+/** An `import … from "<specifier>"` or `export … from "<specifier>"` whose specifier matches: a package only one module may load. */
+export function importFrom(specifier: RegExp): NapiConfig {
+    return {
+        rule: {
+            any: [{ kind: "import_statement" }, { kind: "export_statement" }],
+            has: { field: "source", has: { kind: "string_fragment", regex: specifier.source } },
+        },
+    };
+}
