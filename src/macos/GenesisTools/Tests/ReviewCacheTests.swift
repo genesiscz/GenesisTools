@@ -1,5 +1,5 @@
 import XCTest
-import GenesisKitDisk
+import GenesisKit
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
 

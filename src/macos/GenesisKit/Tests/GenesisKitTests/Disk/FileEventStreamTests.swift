@@ -1,7 +1,8 @@
 import Foundation
 import XCTest
+import GenesisKitDisk
 @testable import GenesisKit
-@testable import GenesisKitDisk
+
 
 /// Collects batches from the stream's queue.
 private final class BatchLog: @unchecked Sendable {
@@ -42,6 +43,16 @@ private final class MemoryCursorStore: FileEventCursorStore, @unchecked Sendable
 }
 
 final class FileEventStreamTests: XCTestCase {
+    func testTheDiskModulePreservesItsPublicFileEventNames() {
+        let old: [Any.Type] = [GenesisKitDisk.FileEventFlags.self, GenesisKitDisk.FileEvent.self,
+                              GenesisKitDisk.FileEventBatch.self, GenesisKitDisk.FileEventCursor.self,
+                              (any GenesisKitDisk.FileEventCursorStore).self,
+                              GenesisKitDisk.FileEventCursorFileStore.self, GenesisKitDisk.FileEventStream.self]
+        let shared: [Any.Type] = [FileEventFlags.self, FileEvent.self, FileEventBatch.self, FileEventCursor.self,
+                                 (any FileEventCursorStore).self, FileEventCursorFileStore.self, FileEventStream.self]
+        XCTAssertEqual(old.map(ObjectIdentifier.init), shared.map(ObjectIdentifier.init))
+    }
+
     /// The real folder (`/private/var/...`); the stream reports paths in the `/var/...` spelling.
     private var directory: URL!
     private var root: String { directory.path }
