@@ -73,7 +73,8 @@ export function createEvalHost(io: EvalIo): Command {
         .argument("[eval-args...]", "run, check, list, show, compare, runs, say or cleanup and their options")
         .enablePositionalOptions()
         .passThroughOptions()
-        .configureOutput({ writeOut: io.stdout, writeErr: io.stderr });
+        .configureOutput({ writeOut: io.stdout, writeErr: io.stderr })
+        .exitOverride((error) => io.exit(error.exitCode));
 
     program.action(async (args: string[], options: { project?: string }) => {
         let project: EvalProject;

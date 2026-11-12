@@ -232,3 +232,8 @@ describe("conversationOutcome", () => {
         });
     });
 });
+
+it("handles invalid expanded regexes deterministically", () => {
+    assert.throws(() => result({ text: { matches: "(" } }), /invalid expanded regex/);
+    assert.throws(() => matchValue("text", { matches: "(" }), /invalid expanded regex/);
+});

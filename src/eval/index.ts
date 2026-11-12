@@ -3,6 +3,7 @@ import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import type { EvalIo } from "@genesiscz/utils/eval-engine";
 import { SystemClock } from "@genesiscz/utils/eval-engine/schedule";
 import { out } from "@genesiscz/utils/logger";
+import { CommanderError } from "commander";
 import { createEvalHost } from "./lib/host";
 
 if (import.meta.main) {
@@ -21,11 +22,21 @@ if (import.meta.main) {
             setExitCode: (code) => {
                 process.exitCode = code;
             },
-            exit: (code) => process.exit(code),
+            exit: (code) => {
+                throw new CommanderError(code, "eval.exit", "evaluation command exited");
+            },
             clock: SystemClock,
             signal,
         };
-        await runTool(createEvalHost(io), { tool: "eval" });
-        await out.flush();
+        try {
+            await runTool(createEvalHost(io), { tool: "eval" });
+        } catch (error) {
+            if (!(error instanceof CommanderError)) {
+                throw error;
+            }
+            process.exitCode = error.exitCode;
+        } finally {
+            await out.flush();
+        }
     });
 }

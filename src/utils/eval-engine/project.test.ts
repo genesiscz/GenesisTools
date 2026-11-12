@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { z } from "zod";
 import { EvalConfigError, evalKit } from "./document";
-import { defineEvalProject, loadScenarios, runEval } from "./project";
+import { checkEval, defineEvalProject, loadScenarios, runEval, sayEval } from "./project";
 import { loadRun } from "./store";
 import { EvalSystemError } from "./system";
 import { fakeClock, fakeSystem } from "./testing";
@@ -203,4 +203,43 @@ describe("runEval", () => {
         );
         await assert.rejects(runEval(project, { scenarios: [scenario], models: ["fake"] }), /simulated step/);
     });
+});
+
+it("say bounds simultaneous open handles", async () => {
+    const fake = system();
+    const connect = fake.connect;
+    let live = 0;
+    let peak = 0;
+    fake.connect = (target) => {
+        const connection = connect(target);
+        const open = connection.open;
+        const close = connection.close;
+        return {
+            ...connection,
+            open: async (request) => {
+                peak = Math.max(peak, ++live);
+                return open(request);
+            },
+            close: async (handle, outcome) => {
+                await close(handle, outcome);
+                live--;
+            },
+        };
+    };
+    const result = await sayEval(
+        defineEvalProject({ system: fake, scenarios: [], matrices: [] }),
+        { texts: ["hi"], model: "fake", repeats: 10 },
+        { concurrency: 2 }
+    );
+    assert.equal(result.conversations.length, 10);
+    assert.equal(peak, 2);
+    assert.equal(live, 0);
+});
+
+it("refuses to invent the unknown default variant during offline matrix check", () => {
+    const project = defineEvalProject({ system: system(), scenarios: [], matrices: [] });
+    assert.throws(
+        () => checkEval(project, [], { matrix: { id: "m", scenarios: "all", models: ["fake"], repeats: 1 } }),
+        /explicit variants/
+    );
 });

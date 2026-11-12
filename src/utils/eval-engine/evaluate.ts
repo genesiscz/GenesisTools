@@ -8,6 +8,7 @@ import {
     type ArgsMatch,
     type Bindings,
     type Check,
+    EvalConfigError,
     type Expectation,
     fillCheck,
     isJsonObject,
@@ -144,10 +145,14 @@ export function matchValue(value: Json | undefined, match: ValueMatch): { ok: bo
         if (typeof value !== "string") {
             return { ok: false, reason: `is ${show(value)}, not a string` };
         }
-        return {
-            ok: new RegExp(match.matches, match.flags).test(value),
-            reason: `is ${show(value)}, expected to match /${match.matches}/`,
-        };
+        try {
+            return {
+                ok: new RegExp(match.matches, match.flags).test(value),
+                reason: `is ${show(value)}, expected to match /${match.matches}/`,
+            };
+        } catch (error) {
+            throw new EvalConfigError("invalid-scenario", `invalid expanded regex: ${String(error)}`);
+        }
     }
     if ("size" in match) {
         if (typeof value !== "string" && !Array.isArray(value)) {
@@ -222,9 +227,16 @@ function matchText(replies: string[], match: TextMatch): { ok: boolean; reason: 
             reason: hit ? `the reply contains ${show(needles)}` : `no reply contains any of ${show(needles)}`,
         };
     }
-    const pattern = new RegExp(match.matches, match.flags);
-    const hit = replies.some((reply) => pattern.test(reply));
-    return { ok: hit, reason: hit ? `the reply matches /${match.matches}/` : `no reply matches /${match.matches}/` };
+    try {
+        const pattern = new RegExp(match.matches, match.flags);
+        const hit = replies.some((reply) => pattern.test(reply));
+        return {
+            ok: hit,
+            reason: hit ? `the reply matches /${match.matches}/` : `no reply matches /${match.matches}/`,
+        };
+    } catch (error) {
+        throw new EvalConfigError("invalid-scenario", `invalid expanded regex: ${String(error)}`);
+    }
 }
 
 // ── evaluateCheck ────────────────────────────────────────────────────────────

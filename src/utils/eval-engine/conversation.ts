@@ -5,6 +5,7 @@
  */
 import type { z } from "zod";
 import {
+    EvalConfigError,
     type Expectation,
     fillCheck,
     fillText,
@@ -250,7 +251,10 @@ export async function runConversation<TResolved, TSignals, THandle>(
     };
 
     const record = (verdict: ExpectationVerdict) => {
-        turns[turns.length - 1].verdicts.push(verdict);
+        turns[turns.length - 1]?.verdicts.push(verdict);
+        if (!turns.length) {
+            final.push(verdict);
+        }
         verdicts.push(verdict);
     };
 
@@ -306,6 +310,17 @@ export async function runConversation<TResolved, TSignals, THandle>(
             return;
         }
         const previous = turns[turns.length - 1];
+        if (!previous) {
+            record(
+                engineVerdict(
+                    "binding:previous",
+                    "binding",
+                    0,
+                    "binding needs a previous turn; simulator produced none"
+                )
+            );
+            throw new StopConversation();
+        }
         const resolved = resolveBindings(map, previous.signals);
         if (!resolved.ok) {
             record(engineVerdict(`binding:${resolved.name}`, "binding", previous.turn, resolved.reason));
@@ -362,6 +377,17 @@ export async function runConversation<TResolved, TSignals, THandle>(
                 await playSimulated(step, index);
             } else if ("choose" in step) {
                 const previous = turns[turns.length - 1];
+                if (!previous) {
+                    record(
+                        engineVerdict(
+                            `choose:s${index + 1}`,
+                            "choose",
+                            0,
+                            "choose needs a previous turn; simulator produced none"
+                        )
+                    );
+                    throw new StopConversation();
+                }
                 const scope = turnScope(previous, turns);
                 const branch = step.choose.find(
                     (b) =>
@@ -379,7 +405,12 @@ export async function runConversation<TResolved, TSignals, THandle>(
                     );
                     throw new StopConversation();
                 }
-                await playScripted(branch, index, branch.name ?? null);
+                const outer = bindings;
+                try {
+                    await playScripted(branch, index, branch.name ?? null);
+                } finally {
+                    bindings = outer;
+                }
             } else {
                 await playScripted(step, index, null);
             }
@@ -394,10 +425,12 @@ export async function runConversation<TResolved, TSignals, THandle>(
             final = evaluated.verdicts;
         }
     } catch (error) {
-        if (!(error instanceof StopConversation)) {
+        if (error instanceof EvalConfigError) {
+            record(engineVerdict("binding:template", "binding", turns.length, error.message));
+        } else if (!(error instanceof StopConversation)) {
             const systemError = asSystemError(error);
-            if (deps.signal.aborted || !conversationOutcome(verdicts, false)) {
-                await closeQuietly(connection, handle, "discarded");
+            if (!conversationOutcome(verdicts, false)) {
+                await closeQuietly(connection, handle, "discarded", deps.signal);
                 throw systemError;
             }
             brokenBy = systemError;
@@ -407,7 +440,7 @@ export async function runConversation<TResolved, TSignals, THandle>(
     const fold = conversationOutcome([...verdicts, ...final], completed);
     // A stop without a proven failure cannot happen: every stop follows a gating failure.
     const outcome = fold ?? { outcome: "inconclusive", safetyMiss: false, safetyUnverified: false };
-    const closeError = await closeQuietly(connection, handle, outcome.outcome);
+    const closeError = await closeQuietly(connection, handle, outcome.outcome, deps.signal);
     return {
         schema: "eval-conversation/1",
         run: deps.runId,
@@ -436,10 +469,30 @@ export async function runConversation<TResolved, TSignals, THandle>(
 async function closeQuietly<THandle>(
     connection: { close(handle: THandle, outcome: CloseOutcome): Promise<void> },
     handle: THandle,
-    outcome: CloseOutcome
+    outcome: CloseOutcome,
+    signal: AbortSignal
 ): Promise<string | null> {
     try {
-        await connection.close(handle, outcome);
+        await new Promise<void>((resolve, reject) => {
+            const finish = (error?: unknown) => {
+                clearTimeout(timer);
+                signal.removeEventListener("abort", onAbort);
+                if (error) {
+                    reject(error);
+                } else {
+                    resolve();
+                }
+            };
+            const onAbort = () => finish(new Error("conversation cleanup aborted"));
+            const timer = setTimeout(() => finish(new Error("conversation cleanup exceeded 1000 ms")), 1000);
+            signal.addEventListener("abort", onAbort, { once: true });
+            void Promise.resolve()
+                .then(() => connection.close(handle, outcome))
+                .then(() => finish(), finish);
+            if (signal.aborted) {
+                onAbort();
+            }
+        });
         return null;
     } catch (error) {
         return error instanceof Error ? error.message : String(error);

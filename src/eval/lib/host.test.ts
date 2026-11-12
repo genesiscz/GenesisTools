@@ -211,3 +211,30 @@ await createEvalCommand(project).parseAsync(["run", "--matrix", "offline"], { fr
         expect(selected.system.name).toBe("mini-agent-offline");
     });
 });
+
+test("help at host and nested commands goes through injected output and exit", async () => {
+    const { module } = await fixture();
+    for (const args of [["--help"], ["--project", module, "run", "--help"]]) {
+        let output = "";
+        let code = -1;
+        const io: EvalIo = {
+            stdout: (text) => {
+                output += text;
+            },
+            stderr: () => {},
+            readStdin: async () => "",
+            setExitCode: (value) => {
+                code = value;
+            },
+            exit: (value) => {
+                code = value;
+                throw new Exit();
+            },
+            clock: fakeClock({ auto: true }),
+            signal: new AbortController().signal,
+        };
+        await expect(createEvalHost(io).parseAsync(args, { from: "user" })).rejects.toBeInstanceOf(Exit);
+        expect(code).toBe(0);
+        expect(output).toContain("Usage:");
+    }
+});

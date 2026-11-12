@@ -410,8 +410,15 @@ async function lastErrorLine(dir: string, key: string): Promise<z.infer<typeof E
         throw error;
     }
     const lines = text.trim().split("\n").filter(Boolean);
-    const parsed = lines.length ? ErrorLineSchema.safeParse(JSON.parse(lines[lines.length - 1])) : null;
-    return parsed?.success ? parsed.data : null;
+    try {
+        const parsed = lines.length ? ErrorLineSchema.safeParse(JSON.parse(lines[lines.length - 1])) : null;
+        return parsed?.success ? parsed.data : null;
+    } catch (error) {
+        if (error instanceof SyntaxError) {
+            return null;
+        }
+        throw error;
+    }
 }
 
 /** Reads a run by folder or by id. Always folds the records; `summary.json` is never an input. */

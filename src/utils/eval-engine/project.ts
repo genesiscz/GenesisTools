@@ -27,12 +27,13 @@ import { RubricVersion } from "./evaluate";
 import { JudgePromptVersion, SimulatorPromptVersion } from "./harness-models";
 import { DefaultMaxErrorRate, DefaultPassRate, planRun, type RunPlan, selectByIds, selectScenarios } from "./plan";
 import { type RunStopped, type RunSummary, summarizeRun } from "./report";
-import { type Clock, createLimiter, type ProgressEvent, runPlan, SystemClock } from "./schedule";
+import { type Clock, createLimiter, type ProgressEvent, runPlan, SystemClock, semaphore } from "./schedule";
 import { createRun, type HarnessSettings, loadRun, makeRunId, openRun, type RunManifest, type RunStore } from "./store";
 import {
     asSystemError,
     type CleanupItem,
     type EvalSystem,
+    EvalSystemError,
     type Json,
     type ModelRef,
     type SystemConnection,
@@ -548,12 +549,20 @@ export async function sayEval<TSetup, TSignals, TTool extends string, THandle, T
     if (setup === undefined) {
         throw new EvalConfigError("invalid-scenario", "the setup did not resolve");
     }
-    const limiter = createLimiter({ max: options.concurrency ?? project.concurrency ?? DefaultConcurrency, clock });
+    const concurrency = Math.max(1, Math.floor(options.concurrency ?? project.concurrency ?? DefaultConcurrency));
+    const limiter = createLimiter({ max: concurrency, clock, signal });
+    const open = semaphore(concurrency);
     const runId = `say-${makeRunId(new Date(clock.now()), "say")}`;
     const repeats = Array.from({ length: Math.max(1, request.repeats ?? 1) }, (_, i) => i + 1);
     const conversations = await Promise.all(
         repeats.map(async (repeat): Promise<SayResult["conversations"][number]> => {
+            if (!(await open.acquire(signal))) {
+                return { repeat, error: { kind: "blocked", message: "run aborted" }, turns: [] };
+            }
             try {
+                if (signal.aborted) {
+                    throw new EvalSystemError("blocked", "run aborted");
+                }
                 const record = await runConversation(
                     {
                         key: `say~r${repeat}`,
@@ -590,6 +599,8 @@ export async function sayEval<TSetup, TSignals, TTool extends string, THandle, T
             } catch (thrown) {
                 const error = asSystemError(thrown);
                 return { repeat, error: { kind: error.kind, message: error.message }, turns: [] };
+            } finally {
+                open.release();
             }
         })
     );
@@ -628,10 +639,16 @@ export function checkEval<TSetup, TSignals, TTool extends string, THandle, TReso
     const setups = resolveSetups(project.system, scenarios, options.now ?? new Date());
     let plan: RunPlan | null = null;
     if (options.matrix) {
+        if (!options.matrix.variants) {
+            throw new EvalConfigError(
+                "bad-option",
+                "offline matrix check requires explicit variants; the default first variant is known only after the system is described"
+            );
+        }
         plan = planRun({
             scenarios,
             models: options.matrix.models,
-            variants: options.matrix.variants ?? ["(first variant)"],
+            variants: options.matrix.variants,
             repeats: options.matrix.repeats,
             passRate: options.matrix.passRate ?? DefaultPassRate,
             maxErrorRate: options.matrix.maxErrorRate ?? DefaultMaxErrorRate,

@@ -358,3 +358,11 @@ GenesisTools owns this folder. It remains portable: runtime imports are limited 
 This folder has an explicit, user-approved exception to GenesisTools' SafeJSON convention. Native JSON parsing is intentional for scenario input, canonical hashes and durable run records. Comments and trailing commas remain invalid. The Biome exception is scoped to `src/utils/eval-engine/**` and changes only the restriction on bare JSON. Every other lint rule remains active. Host integration lives outside this folder and uses normal GenesisTools utilities.
 
 The GenesisTools host and its offline task-agent project are documented in `src/eval/README.md`. A selected project module is trusted executable code. Its own imports and transports remain the project's responsibility.
+
+### Cleanup and offline planning limits
+
+Conversation cleanup has a one-second deadline and ends promptly on cancellation. A cleanup failure or expiry is recorded in `closeError` without replacing the behavioral verdict. The engine cannot force a project-owned handle to close after that deadline.
+
+An offline matrix `check` requires the matrix's explicit `variants` list. The default first variant belongs to the live system's `describe()` response, so the offline checker rejects an omitted list instead of publishing a placeholder plan hash. A normal `run` still selects the live system's first variant when the matrix omits it.
+
+Final-record publication failures stop the invocation and propagate the storage error. They never replay the completed conversation. Reopen the run to determine which immutable records were published before resuming it.
