@@ -1,5 +1,8 @@
+import AppKit
 import GenesisKit
 import LocalAuthentication
+import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsHost
 
@@ -8,6 +11,51 @@ import XCTest
 /// footnote. Without rows (a settings change, an older CLI): who asked, the first lines, and the rest folded into
 /// Details, so a long request never grows the window past the screen.
 final class RmApproveTests: XCTestCase {
+    @MainActor
+    func testALargeRequestRendersItsHeadingAndDecisionControls() async throws {
+        let items = (0..<1_000).map { RmApproveItem(path: "/samples/frame-\($0).png", kind: "file", bytes: 4_096,
+                                                  empty: false, storedAt: nil, reason: "Sample capture") }
+        let content = RmWindowContent.build(request(items, asker: nil), icons: false, markdownApp: false)
+        let model = ApprovalDialogModel(title: "Approval layout check", purpose: "Preview of 1000 sample files. No deletion is connected.",
+                                        symbol: "trash.fill", facts: [], details: [], warning: nil, footnote: "Preview only",
+                                        rememberChoices: [], rememberNote: nil, allowTitle: "Approve", deadline: nil,
+                                        identifier: "approval-render-test", items: content.items, summary: content.summary,
+                                        selectable: true, touchIDWaitsForClick: true)
+        let host = NSHostingView(rootView: ApprovalDialogView(model: model).padding(20).frame(width: 760)
+            .environment(\.colorScheme, .light).background(Color.white))
+        let size = host.fittingSize
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .aqua)
+        window.contentView = host
+        host.frame = NSRect(origin: .zero, size: size)
+        window.orderInForSnapshot()
+        defer { window.orderOut(nil); window.close() }
+        await Task.yield()
+        host.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        let captured = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: captured)
+        let image = try XCTUnwrap(captured.cgImage)
+        let recognize = VNRecognizeTextRequest()
+        recognize.recognitionLevel = .accurate
+        recognize.recognitionLanguages = ["en-US"]
+        recognize.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([recognize])
+        let words = (recognize.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        XCTAssertTrue(words.contains("Approval layout check"), words)
+        XCTAssertTrue(words.contains("Preview only"), words)
+        XCTAssertTrue(words.contains("Deny"), words)
+        XCTAssertTrue(words.contains("Approve"), words)
+        XCTAssertTrue(words.contains("Sample capture"), words)
+        if let output = ProcessInfo.processInfo.environment["GENESIS_RM_APPROVAL_RENDER_PATH"] {
+            let bitmap = NSBitmapImageRep(cgImage: image)
+            let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try data.write(to: URL(fileURLWithPath: output), options: .atomic)
+        }
+    }
+
     @MainActor
     func testMeasurementBurstRebuildsOnceAndEOFFlushesTheLastFacts() {
         let items = (0..<1_000).map { RmApproveItem(path: "/w/frame-\($0).png", kind: "file", bytes: nil,
