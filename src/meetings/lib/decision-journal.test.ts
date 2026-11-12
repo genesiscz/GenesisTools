@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import * as fileLines from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -11,6 +11,7 @@ import {
     MeetingStore,
     meetingRecordSchema,
 } from "@genesiscz/utils/meetings/record";
+import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { SpeakerHint } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -552,6 +553,79 @@ describe("decision journal", () => {
         await fx.journal.revert({ meeting: fx.meeting.id, token: first.entry!.token, actor: person });
         expect(fx.item("i1")).toMatchObject({ status: "suggested" });
         expect(fx.item("i2")).toMatchObject({ status: "confirmed" });
+    });
+
+    // A decision is saved only with its journal line: a line that cannot be written leaves the record as it was, so a
+    // retry decides it again (and journals it), and its Undo works. Before, the record kept the decision and the retry
+    // skipped the item as decided, with no entry to undo.
+    test("a journal line that cannot be written leaves the record undecided, so a retry journals it and its Undo works", async () => {
+        const fx = await fixture(lookAlikes());
+        const answer = { kind: "answer", question: "Q1", answer: "ADO" } as const;
+        // A folder where the journal file goes: the append fails as a full disk or a missing permission would.
+        mkdirSync(fx.journal.path(fx.meeting.id));
+
+        await expect(fx.journal.apply({ meeting: fx.meeting.id, action: answer, actor: person })).rejects.toThrow();
+        for (const id of ["i1", "i2", "i3", "i4"]) {
+            expect(fx.item(id)).toMatchObject({ status: "suggested" });
+            expect(fx.item(id)).not.toHaveProperty("decision");
+        }
+        expect(fx.events()).toEqual([]);
+        expect(fx.ledger).toEqual([]);
+
+        rmdirSync(fx.journal.path(fx.meeting.id));
+        const { entry } = await fx.journal.apply({ meeting: fx.meeting.id, action: answer, actor: person });
+        expect(entry?.decided).toEqual(["i1", "i2", "i3", "i4"]);
+
+        await fx.journal.revert({ meeting: fx.meeting.id, token: entry!.token, actor: person });
+        expect(fx.item("i3")).toMatchObject({ status: "suggested" });
+        expect(fx.events().map((event) => event.event)).toEqual(["answered", "reopened"]);
+    });
+
+    test("an answer log line that cannot be written takes the journal line back and saves nothing", async () => {
+        const fx = await fixture(lookAlikes());
+        mkdirSync(join(fx.store.folder(fx.meeting.id), ANSWER_LOG_FILE));
+
+        await expect(
+            fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: "Q1", answer: "ADO" },
+                actor: person,
+            })
+        ).rejects.toThrow();
+        expect(readFileSync(fx.journal.path(fx.meeting.id), "utf8")).toBe("");
+        expect(fx.journal.read(fx.meeting.id)).toEqual([]);
+        expect(fx.item("i3")).toMatchObject({ status: "suggested" });
+        expect(fx.ledger).toEqual([]);
+    });
+
+    test("a record that cannot be saved takes its journal and answer log lines back", async () => {
+        const fx = await fixture(lookAlikes());
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "Q1", answer: "ADO" },
+            actor: person,
+        });
+        const journalBefore = readFileSync(fx.journal.path(fx.meeting.id), "utf8");
+        const write = spyOn(atomicFile, "atomicWriteFileSync").mockImplementationOnce(() => {
+            throw new Error("ENOSPC: no space left on device");
+        });
+
+        try {
+            await expect(
+                fx.journal.revert({ meeting: fx.meeting.id, token: first.entry!.token, actor: person })
+            ).rejects.toThrow("ENOSPC");
+        } finally {
+            write.mockRestore();
+        }
+
+        expect(readFileSync(fx.journal.path(fx.meeting.id), "utf8")).toBe(journalBefore);
+        expect(fx.events().map((event) => event.event)).toEqual(["answered"]);
+        expect(fx.item("i3")).toMatchObject({ status: "confirmed", decision: { token: first.entry!.token } });
+        expect(fx.ledger.every((line) => line.retracted !== true)).toBe(true);
+
+        await fx.journal.revert({ meeting: fx.meeting.id, token: first.entry!.token, actor: person });
+        expect(fx.item("i3")).toMatchObject({ status: "suggested" });
+        expect(fx.events().map((event) => event.event)).toEqual(["answered", "reopened"]);
     });
 
     // A real tear has no line end: the next entry must start on a line of its own, or it is glued onto the torn bytes

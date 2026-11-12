@@ -353,7 +353,11 @@ describe("duplicate: a second record of one meeting", () => {
             { command: "test", change: "created" }
         );
 
-        expect((await duplicateMeeting({ store, ref: original.id, title: "Planning B" })).title).toBe("Planning B");
+        const result = await duplicateMeeting({ store, ref: original.id, title: "Planning B" });
+        expect(result.title).toBe("Planning B");
+        const reopened = new MeetingStore(store.storage).read(result.id)!;
+        expect(reopened.history).toHaveLength(1);
+        expect(reopened.history[0]?.change).toBe(`duplicated from ${original.id}`);
         expect(copyTitle("  ")).toBe("Untitled meeting (copy)");
     });
 });

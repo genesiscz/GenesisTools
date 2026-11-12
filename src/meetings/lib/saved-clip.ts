@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { copyFile, mkdir, stat, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { type MeetingRecord, type MeetingStore, nextId } from "@genesiscz/utils/meetings/record";
+import { MEETING_UNCHANGED, type MeetingRecord, type MeetingStore, nextId } from "@genesiscz/utils/meetings/record";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Moment } from "./moment";
 
@@ -49,7 +49,7 @@ export async function persistClip(options: {
                     (current) => {
                         signal?.throwIfAborted();
                         if (current.context.some((entry) => entry.kind === "file" && entry.ref === path)) {
-                            return false;
+                            return MEETING_UNCHANGED;
                         }
                         current.context.push({
                             id: nextId("c", current.context),

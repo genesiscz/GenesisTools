@@ -20,6 +20,25 @@ export const MEETING_FILE = "meeting.json";
  * from the recording, never screen data, so the window's revision tokens do not count it.
  */
 export const MOMENTS_FOLDER = "moments";
+/**
+ * What a `MeetingStore.update` mutate returns when it found nothing to change: the record stays as it was, with no
+ * history line. A symbol, so no value a mutate returns by accident (an assignment's `false`) skips a change.
+ */
+export const MEETING_UNCHANGED: unique symbol = Symbol("meetings.unchanged");
+
+/**
+ * Files a record keeps beside it that must agree with it (the decision journal, the answer log), written by
+ * `MeetingStore.update` under the record's lock. `write` runs once the changed record validates and before it is
+ * saved; it throws only after it took back what it wrote. `undo` takes that write back when the record is not saved,
+ * so no file holds a change the record lacks. Both only shorten files, which needs no free disk space. `saved` runs
+ * once the record is saved; its failure leaves the record and the files as written.
+ */
+export interface CompanionWrite {
+    write(record: MeetingRecord): void;
+    undo(): void;
+    saved?(record: MeetingRecord): void;
+}
+
 /** A meeting folder name: no separator and no leading dot, so it names a folder of the store and nothing else. */
 const FOLDER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
@@ -519,7 +538,15 @@ export class MeetingStore {
     /** Folder dates bound discovery before JSON hydration. A record whose start is edited after creation keeps
      * its folder date for this bound. One day of margin covers local/UTC time-zone differences. Undated folders
      * are treated as today and read. `olderMeetings` counts excluded record folders without parsing their JSON. */
-    listBounded({ since, limit }: { since?: Date; limit?: number }): {
+    listBounded({
+        since,
+        limit,
+        where,
+    }: {
+        since?: Date;
+        limit?: number;
+        where?: (record: MeetingRecord) => boolean;
+    }): {
         records: MeetingRecord[];
         olderMeetings: number;
     } {
@@ -545,7 +572,7 @@ export class MeetingStore {
                 continue;
             }
             const record = this.read(folder.id);
-            if (record) {
+            if (record && (!where || where(record))) {
                 records.push(record);
             }
         }
@@ -700,17 +727,43 @@ export class MeetingStore {
     }
 
     /**
-     * Changes one record under its lock. The result must validate, or nothing is written. `mutate` returns false when
-     * it found nothing to change: the record stays as it was, with no history line. `change` is read after `mutate`, so
-     * `mutate` may fill in its words. `afterWrite` runs under the same lock once the record is written, so a file kept
-     * beside it (the decision journal, the answer log) follows the order of the record's writes.
+     * Changes one record under its lock. The result must validate, or nothing is written. `mutate` returns
+     * `MEETING_UNCHANGED` when it found nothing to change: the record stays as it was, with no history line. Any other
+     * return value (an assignment's value, a count) is no answer, so the change is saved. `change` is read after
+     * `mutate`, so `mutate` may fill in its words. `beside` writes the files kept beside the record (the decision
+     * journal, the answer log) under the same lock, so they follow the order of the record's writes, and keeps them
+     * in agreement with the record (`CompanionWrite`).
      */
     async update(
         id: string,
         change: MeetingChange,
         mutate: (record: MeetingRecord) => unknown,
-        afterWrite?: (record: MeetingRecord) => void
+        beside?: CompanionWrite
     ): Promise<MeetingRecord> {
+        return this.locked(id, (current) => {
+            if (mutate(current) === MEETING_UNCHANGED) {
+                return current;
+            }
+
+            return this.commit(current, change, beside);
+        });
+    }
+
+    /**
+     * Like `update`, but writes only when `mutate` answers true; false leaves the record and its history as they were
+     * and answers undefined. A command that picked records from an earlier `list()` rechecks each one here, under its
+     * lock, so a change another process made meanwhile is never overwritten.
+     */
+    async updateIf(
+        id: string,
+        change: MeetingChange,
+        mutate: (record: MeetingRecord) => boolean
+    ): Promise<MeetingRecord | undefined> {
+        return this.locked(id, (current) => (mutate(current) ? this.commit(current, change) : undefined));
+    }
+
+    /** Runs `fn` on the record as it is on disk, under its lock. */
+    private locked<T>(id: string, fn: (current: MeetingRecord) => T): Promise<T> {
         return this.storage.withFileLock({
             file: this.path(id),
             fn: async () => {
@@ -720,18 +773,35 @@ export class MeetingStore {
                     throw new Error(`No meeting ${id} (or its ${MEETING_FILE} does not validate): ${this.path(id)}`);
                 }
 
-                if (mutate(current) === false) {
-                    return current;
-                }
-
-                current.history.push({ at: new Date().toISOString(), command: change.command, change: change.change });
-                const record = meetingRecordSchema.parse(current);
-                this.write(record);
-                log.debug({ id, command: change.command }, "meeting updated");
-                afterWrite?.(record);
-                return record;
+                return fn(current);
             },
         });
+    }
+
+    /**
+     * Writes a changed record with its history line. The result must validate, or nothing is written. `beside`
+     * writes its files before the record and takes them back when the record is not saved (`CompanionWrite`).
+     */
+    private commit(current: MeetingRecord, change: MeetingChange, beside?: CompanionWrite): MeetingRecord {
+        current.history.push({ at: new Date().toISOString(), command: change.command, change: change.change });
+        const record = meetingRecordSchema.parse(current);
+        beside?.write(record);
+
+        try {
+            this.write(record);
+        } catch (error) {
+            try {
+                beside?.undo();
+            } catch (undoError) {
+                log.error({ id: record.id, error: undoError }, "the files beside the record could not be put back");
+            }
+
+            throw error;
+        }
+
+        log.debug({ id: record.id, command: change.command }, "meeting updated");
+        beside?.saved?.(record);
+        return record;
     }
 
     /**

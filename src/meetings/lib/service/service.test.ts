@@ -810,7 +810,9 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         });
         expect(saved[0]!.clip.path).toStartWith(`${store.folder(REVIEW.id)}/clips/`);
         expect(await Bun.file(saved[0]!.clip.path).arrayBuffer()).toEqual(bytes);
-        expect(new MeetingStore(store.storage).read(REVIEW.id)!.context).toEqual([saved[0]!.entry]);
+        const reopened = new MeetingStore(store.storage).read(REVIEW.id)!;
+        expect(reopened.context).toEqual([saved[0]!.entry]);
+        expect(reopened.history.filter((entry) => entry.command === "clip save")).toHaveLength(1);
         const { unlink } = await import("node:fs/promises");
         await unlink(cached.path);
         expect(await Bun.file(saved[0]!.clip.path).arrayBuffer()).toEqual(bytes);

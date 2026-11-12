@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
     MEETING_FILE,
+    MEETING_UNCHANGED,
     type MeetingRecord,
     type MeetingStore,
     meetingRecordSchema,
@@ -79,7 +80,7 @@ export async function duplicateMeeting(request: DuplicateRequest): Promise<Dupli
     }
 
     await store.update(copy.id, { command: "duplicate", change: "paths point into the copy's folder" }, (current) =>
-        repointPaths(current, from, to)
+        repointPaths(current, from, to) ? undefined : MEETING_UNCHANGED
     );
     log.debug({ from: original.id, to: copy.id }, "meeting duplicated");
     return { from: original.id, id: copy.id, title };

@@ -7,6 +7,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { DEFAULT_OCR_TILE_PX } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
+import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
     fillerListsOf,
@@ -23,7 +24,7 @@ import {
     TONE_PRESETS,
 } from "./config";
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
-import { MeetingStore, nextId, titleSlug } from "./record";
+import { MEETING_UNCHANGED, MeetingStore, nextId, titleSlug } from "./record";
 
 let stores = 0;
 
@@ -733,6 +734,77 @@ describe("meeting records", () => {
         expect(read.context.map((entry) => entry.id)).toEqual(["c1"]);
         expect(read.project).toBeUndefined();
         expect(read.history.map((entry) => entry.command)).toEqual(["new", "context add"]);
+    });
+
+    test("only MEETING_UNCHANGED skips a change: a mutate whose expression is false still saves", async () => {
+        const store = records();
+        const record = await store.create(
+            {
+                title: "Review",
+                start: "2026-11-02T09:00:00.000Z",
+                createdBy: "new",
+                participants: [{ name: "Dana Example", self: true, from: ["user"] }],
+            },
+            { command: "new", change: "created" }
+        );
+
+        // An arrow body that is an assignment returns the assigned value: `false` here, which is no answer.
+        await store.update(
+            record.id,
+            { command: "set", change: "not me" },
+            (current) => (current.participants[0]!.self = false)
+        );
+        expect(store.read(record.id)?.participants[0]?.self).toBe(false);
+
+        const unchanged = await store.update(record.id, { command: "set", change: "nothing" }, () => MEETING_UNCHANGED);
+        expect(unchanged.history.map((entry) => entry.command)).toEqual(["new", "set"]);
+        expect(store.read(record.id)?.history.map((entry) => entry.command)).toEqual(["new", "set"]);
+    });
+
+    test("files beside a record are taken back when the record is not saved, and written after it when it is", async () => {
+        const store = records();
+        const record = await store.create(
+            { title: "Review", start: "2026-11-02T09:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "created" }
+        );
+        const calls: string[] = [];
+        const beside = {
+            write: () => calls.push("write"),
+            undo: () => calls.push("undo"),
+            saved: () => calls.push("saved"),
+        };
+        const write = spyOn(atomicFile, "atomicWriteFileSync").mockImplementationOnce(() => {
+            throw new Error("ENOSPC: no space left on device");
+        });
+
+        try {
+            await expect(
+                store.update(
+                    record.id,
+                    { command: "set", change: "labels" },
+                    (current) => {
+                        current.labels = ["demo"];
+                    },
+                    beside
+                )
+            ).rejects.toThrow("ENOSPC");
+            expect(calls).toEqual(["write", "undo"]);
+            expect(store.read(record.id)?.labels).toEqual([]);
+
+            calls.length = 0;
+            await store.update(
+                record.id,
+                { command: "set", change: "labels" },
+                (current) => {
+                    current.labels = ["demo"];
+                },
+                beside
+            );
+            expect(calls).toEqual(["write", "saved"]);
+            expect(store.read(record.id)?.labels).toEqual(["demo"]);
+        } finally {
+            write.mockRestore();
+        }
     });
 
     test("a decision a newer build wrote, with an actor kind and an action this build does not know, still loads", async () => {
