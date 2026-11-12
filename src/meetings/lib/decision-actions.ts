@@ -1,5 +1,10 @@
 import { correctionSchema } from "@genesiscz/utils/meetings/corrections";
-import { meetingItemSchema, savedDecisionActorSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
+import {
+    meetingItemSchema,
+    savedDecisionActorSchema,
+    speakerAssignmentSchema,
+    spellingReachSchema,
+} from "@genesiscz/utils/meetings/record";
 import { z } from "zod";
 import { sentCommentSchema } from "./comment-schema";
 import { findingSchema } from "./findings";
@@ -27,10 +32,11 @@ export const DECISION_ACTION_OPTIONS = [
         speaker: z.string().optional(),
         /** A term's right spelling, when the proposal is wrong. */
         proposed: z.string().optional(),
+        reach: spellingReachSchema.optional(),
     }),
     z.object({ kind: z.literal("reject"), items: z.array(itemRef), minConfidence: z.number().optional() }),
     /** The item's value edited in place (a term's spelling, a range's speaker, a join's word): it is confirmed so. */
-    z.object({ kind: z.literal("respell"), item: itemRef, text: z.string() }),
+    z.object({ kind: z.literal("respell"), item: itemRef, text: z.string(), reach: spellingReachSchema.optional() }),
     z.object({
         kind: z.literal("answer"),
         question: itemRef,

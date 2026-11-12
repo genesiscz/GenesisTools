@@ -236,6 +236,21 @@ export const decisionReachSchema = z.object({
         })
     ),
     lines: z.number().int().nonnegative().optional(),
+    spelling: z
+        .object({
+            occurrences: z.array(
+                z.object({
+                    line: z.number().int().nonnegative(),
+                    atSec: z.number().nonnegative(),
+                    speaker: z.string(),
+                    text: z.string(),
+                    selected: z.boolean(),
+                    primary: z.boolean(),
+                })
+            ),
+            dictionary: z.boolean(),
+        })
+        .optional(),
     dictionary: z.array(
         z.object({
             project: z.string().optional(),

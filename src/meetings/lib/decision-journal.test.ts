@@ -13,7 +13,15 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import type { SpeakerHint } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
-import { actorOf, actorText, callerActor, DecisionJournal, decisionReach, JOURNAL_FILE } from "./decision-journal";
+import {
+    actorOf,
+    actorText,
+    callerActor,
+    DecisionJournal,
+    decisionActionSchema,
+    decisionReach,
+    JOURNAL_FILE,
+} from "./decision-journal";
 import { reviewRow } from "./review-rows";
 import { assignmentReach } from "./speaker-assign";
 import { correctTranscript } from "./transcript-corrections";
@@ -277,6 +285,95 @@ describe("decision journal", () => {
 
         await fx.journal.revert({ meeting: fx.meeting.id, token: entry!.token, actor: { kind: "window" } });
         expect(fx.item("i1")).toMatchObject({ status: "suggested", proposed: "OMP" });
+    });
+
+    test("spelling reach survives reopen, changes only selected lines and can decline dictionary teaching", async () => {
+        const fx = await fixture([term("i1", 5, { proposed: "ADA" })]);
+        const reach = {
+            lines: [
+                { atSec: 5, line: 0 },
+                { atSec: 15, line: 2 },
+            ],
+            dictionary: false,
+        };
+        const action = decisionActionSchema.parse({ kind: "confirm", items: ["i1"], reach });
+        const decided = await fx.journal.apply({ meeting: fx.meeting.id, action, actor: person });
+        const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        const transcript = [5, 10, 15].map((startSec) => ({ startSec, speaker: "Speaker 1", text: "Ada is here" }));
+        const corrected = correctTranscript({
+            record: reopened,
+            transcript,
+            config: meetingsConfigSchema.parse({}),
+            format: "json",
+            dictionary: false,
+        });
+        expect(corrected.entries.map((line) => line.text)).toEqual(["ADA is here", "Ada is here", "ADA is here"]);
+        expect(corrected.outcomes.filter((outcome) => outcome.item === "i1")).toHaveLength(1);
+        expect(corrected.outcomes.find((outcome) => outcome.item === "i1")).toMatchObject({
+            status: "applied",
+            lines: [{ index: 0 }, { index: 2 }],
+        });
+        expect(reopened.items[0]).toMatchObject({ reach });
+        expect(fx.ledger[0]).toMatchObject({ learn: false });
+        await fx.journal.revert({ meeting: fx.meeting.id, token: decided.entry!.token, actor: person });
+        expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)?.items[0]).not.toHaveProperty("reach");
+    });
+
+    test("spelling preview resolves moved line addresses and omits untimed lines", async () => {
+        const fx = await fixture([term("i1", 5, { proposed: "ADA" })]);
+        const planned = await fx.journal.plan({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i1"], reach: { lines: [{ atSec: 10, line: 1 }] } },
+            actor: person,
+        });
+        const reach = decisionReach({
+            entry: planned.entry!,
+            named: ["i1"],
+            transcript: [
+                { speaker: "Speaker 1", text: "Ada has no timestamp" },
+                { startSec: 5, speaker: "Speaker 1", text: "Ada is here" },
+                { startSec: 10, speaker: "Speaker 1", text: "Ada is there" },
+            ],
+            ledger: [],
+            repeats: 2,
+        });
+        expect(reach.spelling?.occurrences.map(({ line, selected }) => ({ line, selected }))).toEqual([
+            { line: 1, selected: false },
+            { line: 2, selected: true },
+        ]);
+    });
+
+    test("changing only spelling reach stamps a new decision and permits explicit dictionary teaching", async () => {
+        const fx = await fixture([term("i1", 5, { proposed: "ADA" })]);
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: decisionActionSchema.parse({
+                kind: "confirm",
+                items: ["i1"],
+                reach: { lines: [{ atSec: 5, line: 0 }], dictionary: false },
+            }),
+            actor: person,
+        });
+        const nextReach = {
+            lines: [
+                { atSec: 5, line: 0 },
+                { atSec: 10, line: 1 },
+            ],
+            dictionary: true,
+        };
+        const second = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: decisionActionSchema.parse({ kind: "respell", item: "i1", text: "ADA", reach: nextReach }),
+            actor: person,
+        });
+        const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(reopened.items[0]).toMatchObject({ reach: nextReach, decision: { token: second.entry!.token } });
+        expect(second.entry!.token).not.toBe(first.entry!.token);
+        expect(fx.ledger.at(-1)).toMatchObject({ scope: "line", learn: true });
+        await fx.journal.revert({ meeting: fx.meeting.id, token: second.entry!.token, actor: person });
+        expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)?.items[0]).toMatchObject({
+            reach: { lines: [{ atSec: 5, line: 0 }], dictionary: false },
+        });
     });
 
     test("a speaker rename is an entry with the label before and after, and its revert takes the name away", async () => {

@@ -378,6 +378,18 @@ final class MeetingsReviewRowTests: XCTestCase {
      "dictionary":[]}
     """.utf8)
 
+    func testSpellingReachDecodesAndTheActionKeepsSelectedLines() throws {
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Data(#"{"items":[],"dictionary":[],"spelling":{"occurrences":[{"line":2,"atSec":15,"speaker":"Alex","text":"Ada is here","selected":true,"primary":true},{"line":3,"atSec":20,"speaker":"Jordan","text":"Ada again","selected":false,"primary":false}],"dictionary":false}}"#.utf8))
+        XCTAssertEqual(reach.spelling?.occurrences.map(\.line), [2, 3])
+        XCTAssertEqual(reach.spelling?.dictionary, false)
+        XCTAssertFalse(reach.isEmpty)
+        var action = DecisionAction.respell("i1", to: "ADA")
+        action.reach = .init(lines: [.init(atSec: 15, line: 2)], dictionary: false)
+        let decoded = try JSONDecoder().decode(DecisionAction.self, from: JSONEncoder().encode(action))
+        XCTAssertEqual(decoded, action)
+        XCTAssertEqual(decoded.reach?.lines?.first?.line, 2)
+    }
+
     func testTheReachSortsTargetsFromLookAlikesAndNeverAsksTheSameQuestionTwice() throws {
         let reach = try JSONDecoder().decode(DecisionReach.self, from: Self.reachJSON)
         XCTAssertEqual(reach.items.map(\.role), [.sets, .lookAlike, .same])

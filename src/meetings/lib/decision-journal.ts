@@ -10,7 +10,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { mergeLabels } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
-import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
+import { appendCorrections, type Correction, teachesDictionary } from "@genesiscz/utils/meetings/corrections";
 import {
     type DecisionActor,
     type MeetingChange,
@@ -18,7 +18,10 @@ import {
     type MeetingRecord,
     type MeetingStore,
     meetingItemSchema,
+    type SpellingReach,
 } from "@genesiscz/utils/meetings/record";
+import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
+import { heardIn, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { prepareFindings } from "./add-findings";
 import { ANSWER_LOG_FILE, type AnswerEvent, appendAnswerEvent, appendAnswerEvents, roundRunning } from "./answer-log";
@@ -62,7 +65,7 @@ import {
     renameJoinsWarning,
     revertAssignments,
 } from "./speaker-assign";
-import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
+import { decisionLedger, ledgerEntryFor, lineOf } from "./transcript-corrections";
 
 const { log } = logger.scoped("meetings-journal");
 
@@ -332,10 +335,10 @@ function openQuestion(record: MeetingRecord, ref: string): { question?: Question
 function decideItems(
     record: MeetingRecord,
     status: "confirmed" | "rejected",
-    action: { items: string[]; minConfidence?: number; speaker?: string; proposed?: string },
+    action: { items: string[]; minConfidence?: number; speaker?: string; proposed?: string; reach?: SpellingReach },
     now: string
 ): ActionOutcome {
-    const { minConfidence, speaker, proposed } = action;
+    const { minConfidence, speaker, proposed, reach } = action;
 
     if (minConfidence !== undefined && !(minConfidence >= 0 && minConfidence <= 1)) {
         throw new Error(`minConfidence ${minConfidence} must be between 0 and 1 (0.8 = 80 %)`);
@@ -351,13 +354,18 @@ function decideItems(
         minConfidence
     );
     const skipped: DecisionSkip[] = [];
+    if (reach && (picked.length !== 1 || picked[0]?.kind !== "term")) {
+        throw new Error("Spelling reach needs exactly one term item");
+    }
 
     // Deciding an item the same way again changes nothing, so it mints no token that would void the first Undo (MC16).
     for (const item of picked) {
         const changes =
             status === "confirmed" &&
             ((item.kind === "speaker-range" && speaker !== undefined && speaker !== item.speaker) ||
-                (item.kind === "term" && proposed !== undefined && proposed !== item.proposed));
+                (item.kind === "term" &&
+                    ((proposed !== undefined && proposed !== item.proposed) ||
+                        (reach !== undefined && !same(reach, item.reach)))));
 
         if (item.status === status && !changes) {
             skipped.push({ id: item.id, reason: `it is ${status} already`, needs: "nothing" });
@@ -394,8 +402,13 @@ function decideItems(
             item.speaker = speaker;
         }
 
-        if (status === "confirmed" && item.kind === "term" && proposed) {
-            item.proposed = proposed;
+        if (status === "confirmed" && item.kind === "term") {
+            if (proposed) {
+                item.proposed = proposed;
+            }
+            if (reach !== undefined) {
+                item.reach = structuredClone(reach);
+            }
         }
 
         corrections.push(...decisionLedger(prior, ledgerEntryFor(record, item, now)));
@@ -479,6 +492,11 @@ function restorePrevious(item: MeetingItem): void {
             item.proposed = previous.proposed;
         } else {
             delete item.proposed;
+        }
+        if (previous.reach) {
+            item.reach = structuredClone(previous.reach);
+        } else {
+            delete item.reach;
         }
     }
 
@@ -596,13 +614,20 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 throw new Error(`A respelling of ${action.item} needs the new text`);
             }
 
+            if (action.reach && item.kind !== "term") {
+                throw new Error("Spelling reach needs a term item");
+            }
             const prior = ledgerEntryFor(record, item, now);
+            const reachChanged = item.kind === "term" && action.reach !== undefined && !same(action.reach, item.reach);
             const skip = respellItem(record, item, text);
 
-            if (skip) {
+            if (skip && !reachChanged) {
                 return { history: { command: "respell", change: "" }, skipped: [skip], stamps: true };
             }
 
+            if (item.kind === "term" && action.reach !== undefined) {
+                item.reach = structuredClone(action.reach);
+            }
             item.status = "confirmed";
             item.decidedAt = now;
             return {
@@ -1052,6 +1077,17 @@ export interface DecisionReach {
      * over the same span (closed with it). A look-alike question's own targets go with it and are not listed apart.
      */
     items: ReachItem[];
+    spelling?: {
+        occurrences: Array<{
+            line: number;
+            atSec: number;
+            speaker: string;
+            text: string;
+            selected: boolean;
+            primary: boolean;
+        }>;
+        dictionary: boolean;
+    };
     /** Transcript lines whose heard words a confirmed spelling fixes (a term fixed everywhere); absent without a transcript. */
     lines?: number;
     /**
@@ -1163,9 +1199,7 @@ export function decisionReach(options: {
                 ...(struck.has(id) ? { struck: true } : {}),
             };
         });
-    const taught = entry.corrections.filter(
-        (correction) => correction.kind === "term" && correction.scope === "everywhere" && !correction.retracted
-    );
+    const taught = entry.corrections.filter((correction) => teachesDictionary(correction) && !correction.retracted);
     const lines = options.transcript
         ? options.transcript.filter((line) => {
               const text = line.text.toLowerCase();
@@ -1178,8 +1212,7 @@ export function decisionReach(options: {
 
         for (const line of options.ledger) {
             if (
-                line.kind === "term" &&
-                line.scope === "everywhere" &&
+                teachesDictionary(line) &&
                 line.project === correction.project &&
                 line.heard === correction.heard &&
                 line.fixed === correction.fixed &&
@@ -1198,7 +1231,58 @@ export function decisionReach(options: {
             teaches: seenBefore + 1 >= options.repeats,
         };
     });
-    return { items, ...(taught.length > 0 && lines !== undefined ? { lines } : {}), dictionary };
+    const changedTerms = entry.changes.flatMap((change) => (change.after?.kind === "term" ? [change.after] : []));
+    const term =
+        (entry.action.kind === "confirm" || entry.action.kind === "respell") && changedTerms.length === 1
+            ? changedTerms[0]
+            : undefined;
+    let spelling: DecisionReach["spelling"];
+    if (term) {
+        const transcript = options.transcript ?? [];
+        const source = new TranscriptLines(transcript);
+        const at = term.atSec;
+        const anchor =
+            at === undefined ? undefined : heardLineAt(source, { atSec: at, line: lineOf(term) }, term.heard);
+        const primary = anchor?.kind === "found" ? anchor.index : undefined;
+        const selectedLines = term.reach?.lines
+            ? new Set(
+                  term.reach.lines.flatMap((point) => {
+                      const found = heardLineAt(source, point, term.heard);
+                      return found.kind === "found" ? [found.index] : [];
+                  })
+              )
+            : undefined;
+        const occurrences = transcript.flatMap((line, index) => {
+            if (line.startSec === undefined || heardIn(line.text, term.heard).length === 0) {
+                return [];
+            }
+            const selected = selectedLines
+                ? selectedLines.has(index)
+                : term.scope === "line"
+                  ? index === primary
+                  : true;
+            return [
+                {
+                    line: index,
+                    atSec: line.startSec,
+                    speaker: options.record?.speakers.labels[line.speaker] ?? line.speaker,
+                    text: line.text,
+                    selected,
+                    primary: index === primary,
+                },
+            ];
+        });
+        spelling = {
+            occurrences,
+            dictionary: term.reach?.dictionary ?? (term.reach?.lines === undefined && term.scope !== "line"),
+        };
+    }
+    return {
+        items,
+        ...(taught.length > 0 && lines !== undefined ? { lines } : {}),
+        dictionary,
+        ...(spelling ? { spelling } : {}),
+    };
 }
 
 /** An agent's harness by the name a person knows it by (its driver's label); an agent no driver claims shows its id. */
@@ -1444,7 +1528,10 @@ export class DecisionJournal {
                         (change.before.status !== change.after.status ||
                             change.before.decidedAt !== change.after.decidedAt ||
                             // A changed answer took the earlier decision off it and made this one.
-                            change.before.decision?.token !== change.after.decision?.token)
+                            change.before.decision?.token !== change.after.decision?.token ||
+                            (change.before.kind === "term" &&
+                                change.after.kind === "term" &&
+                                !same(change.before.reach, change.after.reach)))
                 )
                 .map((change) => change.id);
 
@@ -1530,6 +1617,7 @@ export class DecisionJournal {
                     ...(old.decidedAt ? { decidedAt: old.decidedAt } : {}),
                     ...(old.kind === "speaker-range" && old.speaker ? { speaker: old.speaker } : {}),
                     ...(old.kind === "term" && old.proposed ? { proposed: old.proposed } : {}),
+                    ...(old.kind === "term" && old.reach ? { reach: structuredClone(old.reach) } : {}),
                 },
                 actor: stamp.request.actor,
                 entry: {

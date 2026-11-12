@@ -218,9 +218,11 @@ export function correctionsOf(
                           heard: item.heard,
                           replacement: item.proposed,
                           item: item.id,
-                          ...(item.scope === "line" && item.atSec !== undefined
-                              ? { atSec: item.atSec, ...address(item) }
-                              : {}),
+                          ...(item.reach?.lines
+                              ? { lines: item.reach.lines }
+                              : item.scope === "line" && item.atSec !== undefined
+                                ? { atSec: item.atSec, ...address(item) }
+                                : {}),
                       },
                   ]
                 : []
@@ -428,7 +430,14 @@ export function ledgerEntryFor(record: MeetingRecord, item: MeetingItem, now: st
     const base = { at: now, meeting: record.id, project: record.project, item: item.id };
 
     if (item.kind === "term" && item.proposed) {
-        return { ...base, kind: "term", scope: item.scope ?? "everywhere", heard: item.heard, fixed: item.proposed };
+        return {
+            ...base,
+            kind: "term",
+            scope: item.reach?.lines ? "line" : (item.scope ?? "everywhere"),
+            heard: item.heard,
+            fixed: item.proposed,
+            ...(item.reach?.dictionary !== undefined ? { learn: item.reach.dictionary } : {}),
+        };
     }
 
     if (item.kind === "join" && item.joined) {

@@ -15,7 +15,7 @@ export interface TranscriptCorrections {
      * line before; `speaker` says the voice of that line.
      */
     joins?: Array<{ atSec: number; line?: number; speaker?: string; joined?: string; item?: string }>;
-    terms?: Array<TermFix & { line?: number; item?: string }>;
+    terms?: Array<TermFix & { line?: number; lines?: Array<{ atSec: number; line?: number }>; item?: string }>;
     /** Marks on one passage of one line: a meaning after it, or the document text it reads aloud. */
     marks?: TranscriptMark[];
     dictionary?: ResolvedDictionary;
@@ -418,22 +418,31 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     for (const fix of corrections.terms ?? []) {
         let targets: TranscriptEntry[] = lines;
 
-        if (fix.atSec !== undefined) {
-            const found = heardLineAt(source, { atSec: fix.atSec, line: fix.line }, fix.heard);
-
-            if (found.kind !== "found") {
-                if (fix.item) {
-                    outcomes.push(
-                        found.kind === "ambiguous"
-                            ? ambiguous(fix.item, found, ` with "${fix.heard}"`, fix.atSec)
-                            : { item: fix.item, status: "not-found", reason: `no line at ${at(fix.atSec)}` }
-                    );
+        const addresses = fix.lines ?? (fix.atSec !== undefined ? [{ atSec: fix.atSec, line: fix.line }] : undefined);
+        if (addresses !== undefined) {
+            targets = [];
+            let failed = false;
+            for (const address of addresses) {
+                const found = heardLineAt(source, address, fix.heard);
+                if (found.kind !== "found") {
+                    if (fix.item) {
+                        outcomes.push(
+                            found.kind === "ambiguous"
+                                ? ambiguous(fix.item, found, ` with "${fix.heard}"`, address.atSec)
+                                : { item: fix.item, status: "not-found", reason: `no line at ${at(address.atSec)}` }
+                        );
+                    }
+                    failed = true;
+                    break;
                 }
-
+                const line = all[found.index]!;
+                if (!targets.includes(line)) {
+                    targets.push(line);
+                }
+            }
+            if (failed) {
                 continue;
             }
-
-            targets = [all[found.index]!];
         }
 
         const re = heardPattern(fix.heard);

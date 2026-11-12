@@ -9,6 +9,23 @@ struct ReachSheet: View {
     let pending: MeetingDetailModel.PendingReach
     let detail: MeetingDetailModel
     @State private var askAgain = true
+    @State private var spellingLines: Set<Int>
+    @State private var teachDictionary: Bool
+
+    init(pending: MeetingDetailModel.PendingReach, detail: MeetingDetailModel) {
+        self.pending = pending
+        self.detail = detail
+        _spellingLines = State(initialValue: Set(pending.reach.spelling?.occurrences.filter { $0.selected || $0.primary }.map(\.line) ?? []))
+        _teachDictionary = State(initialValue: pending.reach.spelling?.dictionary ?? true)
+    }
+
+    private var spellingAction: DecisionAction.SpellingReach? {
+        guard let spelling = pending.reach.spelling else { return nil }
+        let selected = spelling.occurrences.filter { spellingLines.contains($0.line) }
+        let lines: [DecisionAction.SpellingReach.Line]? = selected.isEmpty ? nil
+            : selected.map { .init(atSec: $0.atSec, line: $0.line) }
+        return .init(lines: lines, dictionary: teachDictionary)
+    }
 
     var body: some View {
         let struck = detail.pendingStruck.intersection(pending.reach.judged.map(\.id))
@@ -19,7 +36,12 @@ struct ReachSheet: View {
             // As tall as the list, up to 360 pt: on the card over the column a greedy scroll area stood 360 pt high
             // under a one-item list.
             FittedScroll(maxHeight: 360) {
-                ReachList(pending: pending, detail: detail)
+                VStack(alignment: .leading, spacing: 12) {
+                    ReachList(pending: pending, detail: detail)
+                    if let spelling = pending.reach.spelling {
+                        SpellingReachChoices(spelling: spelling, selected: $spellingLines, teachDictionary: $teachDictionary, detail: detail)
+                    }
+                }
             }
             if !struck.isEmpty {
                 Text(verbatim: "\(Plural.count(struck.count, "struck item")) \(struck.count == 1 ? "stays" : "stay") as \(struck.count == 1 ? "it is" : "they are") and \(struck.count == 1 ? "is" : "are") not part of this decision.")
@@ -34,7 +56,8 @@ struct ReachSheet: View {
                     Button("Only this question") { detail.applyOnlyThis(pending) }
                         .instantTooltip("Answer \(pending.row.label) and what it decides. The questions that look alike stay open.")
                 }
-                Button(struck.isEmpty ? "Save" : "Save the rest") { detail.applyReach(pending, askAgain: askAgain) }
+                Button(struck.isEmpty ? "Save" : "Save the rest") { detail.applyReach(pending, askAgain: askAgain, spelling: spellingAction) }
+                    .disabled(pending.reach.spelling?.occurrences.isEmpty == false && spellingLines.isEmpty)
                     .keyboardShortcut(.defaultAction)
                     .instantTooltip(struck.isEmpty ? "Save the answer and everything listed" : "Save the answer and every item that is not struck")
             }
@@ -68,6 +91,7 @@ struct ReachOverlay: View {
                     .accessibilityHidden(true)
                     .transition(.opacity)
                 ReachCard(pending: pending, detail: detail)
+                    .id(pending.id)
                     .padding(20)
                     .transition(.opacity)
             }
@@ -120,10 +144,10 @@ struct ReachList: View {
                 Text(verbatim: Self.sameLine(same, detail: detail))
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            if let lines = pending.reach.lines, lines > 1 {
+            if pending.reach.spelling == nil, let lines = pending.reach.lines, lines > 1 {
                 Label("\(Plural.count(lines, "line")) of the transcript", systemImage: "text.alignleft").font(.system(size: 12.5))
             }
-            ForEach(pending.reach.dictionary.filter(\.teaches), id: \.self) { entry in
+            ForEach(pending.reach.spelling == nil ? pending.reach.dictionary.filter(\.teaches) : [], id: \.self) { entry in
                 Label("The \(entry.project ?? "meeting") dictionary learns “\(entry.heard)” → “\(entry.fixed)”"
                       + (entry.seenBefore > 0 ? ", seen \(Plural.count(entry.seenBefore, "time")) before" : ""),
                       systemImage: "character.book.closed")
@@ -146,6 +170,50 @@ struct ReachList: View {
             ForEach(items) { item in
                 ReachItemRow(item: item, struck: detail.pendingStruck.contains(item.id), detail: detail)
             }
+        }
+    }
+}
+
+/// A spelling can apply to selected source lines and independently contribute to dictionary suggestions.
+private struct SpellingReachChoices: View {
+    let spelling: DecisionReach.Spelling
+    @Binding var selected: Set<Int>
+    @Binding var teachDictionary: Bool
+    let detail: MeetingDetailModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !spelling.occurrences.isEmpty {
+                HStack {
+                    Text("Apply spelling to \(selected.count) of \(spelling.occurrences.count) lines").font(.headline)
+                    Spacer()
+                    Button("All") { selected = Set(spelling.occurrences.map(\.line)) }
+                    Button("Only this line") { selected = Set(spelling.occurrences.filter(\.primary).map(\.line)) }
+                        .disabled(!spelling.occurrences.contains(where: \.primary))
+                }
+                ForEach(spelling.occurrences) { line in
+                    HStack(alignment: .top, spacing: 8) {
+                        Toggle("Include line at \(MeetingsFormat.clock(line.atSec))", isOn: Binding(
+                            get: { selected.contains(line.line) },
+                            set: { if $0 { selected.insert(line.line) } else if !line.primary { selected.remove(line.line) } }))
+                            .labelsHidden().toggleStyle(.checkbox).disabled(line.primary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                if let player = detail.window?.player {
+                                    MomentButton(player: player, meeting: detail.id, target: .time(line.atSec),
+                                                 label: MeetingsFormat.clock(line.atSec), source: .selection)
+                                } else { Text(MeetingsFormat.clock(line.atSec)).monospacedDigit() }
+                                Text(line.speaker).fontWeight(.medium)
+                                if line.primary { Text("This line").foregroundStyle(.secondary) }
+                            }.font(.caption)
+                            Text(line.text).font(.callout).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            Divider()
+            Toggle("Use this correction for dictionary suggestions", isOn: $teachDictionary).toggleStyle(.checkbox)
+                .help("Keep this off when the spelling is specific to these lines")
         }
     }
 }

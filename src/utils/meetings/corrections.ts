@@ -22,10 +22,17 @@ export const correctionSchema = z.object({
     item: z.string(),
     /** A term's reach: `line` fixed one line only, so it does not teach the dictionary. Absent on older lines. */
     scope: z.enum(["line", "everywhere"]).optional(),
+    /** Explicit dictionary choice; absent keeps the historical scope rule. */
+    learn: z.boolean().optional(),
     /** An Undo withdrew the confirmation of this meeting's item with this heard and fixed text; a later line may confirm it again. */
     retracted: z.literal(true).optional(),
 });
 export type Correction = z.infer<typeof correctionSchema>;
+
+/** Whether a confirmed correction is evidence for a future dictionary suggestion. */
+export function teachesDictionary(correction: Correction): boolean {
+    return correction.kind === "term" && (correction.learn ?? correction.scope === "everywhere");
+}
 
 export function correctionsPath(): string {
     return join(toolDataDir("meetings"), "corrections.jsonl");

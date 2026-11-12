@@ -41,6 +41,13 @@ struct DecisionAction: Codable, Equatable, Hashable {
     /// respell: the item and its new text.
     var item: String?
     var text: String?
+    /// A term's chosen source lines and independent dictionary teaching choice.
+    var reach: SpellingReach?
+    struct SpellingReach: Codable, Equatable, Hashable {
+        struct Line: Codable, Equatable, Hashable { let atSec: Double; let line: Int? }
+        var lines: [Line]?
+        var dictionary: Bool?
+    }
     /// answer, skip, split: the question; answer: the answer and its comment.
     var question: String?
     var answer: String?
@@ -288,12 +295,26 @@ struct DecisionReach: Decodable, Equatable {
     let items: [Item]
     let lines: Int?
     let dictionary: [Dictionary]
+    var spelling: Spelling? = nil
+    struct Spelling: Decodable, Equatable {
+        struct Occurrence: Decodable, Equatable, Identifiable {
+            let line: Int
+            let atSec: Double
+            let speaker: String
+            let text: String
+            let selected: Bool
+            let primary: Bool
+            var id: Int { line }
+        }
+        let occurrences: [Occurrence]
+        let dictionary: Bool
+    }
 
     /// The items a person judges in the sheet; `same` ones are the asked question itself and are never asked again.
     var judged: [Item] { items.filter { $0.role != .same } }
 
     /// Nothing beyond the named items: no sheet to show. The same question over the same span is not a reach.
-    var isEmpty: Bool { judged.isEmpty && (lines ?? 0) <= 1 && dictionary.allSatisfy { !$0.teaches } }
+    var isEmpty: Bool { judged.isEmpty && (lines ?? 0) <= 1 && dictionary.allSatisfy { !$0.teaches } && spelling == nil }
 }
 
 /// A refusal's `data` for `already-decided`: the items and the entry that decided them since the caller saw them.

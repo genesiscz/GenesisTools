@@ -187,12 +187,14 @@ extension MeetingDetailModel {
 
     /// The sheet's Save: only the items that are not struck (`pendingStruck`) go with the decision. `askAgain` false is
     /// its "Do not ask again", which turns `meetings.rows.askReach` to never.
-    func applyReach(_ pending: PendingReach, askAgain: Bool = true) {
+    func applyReach(_ pending: PendingReach, askAgain: Bool = true, spelling: DecisionAction.SpellingReach? = nil) {
         let struck = pendingStruck
         pendingReach = nil
         pendingStruck = []
         if !askAgain { defaults.set(MeetingsPreferences.Rows.AskReach.never.rawValue, forKey: MeetingsPreferences.Rows.askReach.key) }
-        apply(pending.row, Self.striking(pending.action, struck), reason: pending.reason)
+        var action = Self.striking(pending.action, struck)
+        if let spelling, action.kind == "confirm" || action.kind == "respell" { action.reach = spelling }
+        apply(pending.row, action, reason: pending.reason)
     }
 
     /// Strikes one item of the sheet out of the decision, or puts a struck one back (genesiscz.md 6).

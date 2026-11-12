@@ -468,6 +468,60 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(heard[1]?.params).toEqual({ meeting: REVIEW.id, token: applied.entry!.token, entry: reverted.entry });
     });
 
+    test("a spelling plan lists source occurrences and its selected reach survives both adapters", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        await store.update(REVIEW.id, { command: "test", change: "selective spelling" }, (record) => {
+            record.items.push({
+                id: "i2",
+                kind: "term",
+                status: "suggested",
+                heard: "the",
+                proposed: "THIS",
+                atSec: 2,
+                evidence: { transcriptLine: 0 },
+                rules: [],
+                suggestedAt: "2026-11-03T09:47:00.000Z",
+            });
+        });
+        const planned = await client.call("decision.plan", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i2"] },
+        });
+        expect(planned.reach.spelling).toMatchObject({
+            dictionary: true,
+            occurrences: [
+                { line: 0, selected: true, primary: true },
+                { line: 1, selected: true, primary: false },
+            ],
+        });
+        const reach = { lines: [{ atSec: 9, line: 1 }], dictionary: false };
+        const applied = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i2"], reach },
+        });
+        expect(new MeetingStore(store.storage).read(REVIEW.id)?.items.find((item) => item.id === "i2")).toMatchObject({
+            reach,
+        });
+        const transcript = await client.call("meeting.transcript", { ref: REVIEW.id, dictionary: false });
+        expect(transcript.entries.map((line) => line.text)).toEqual([
+            "Let us start with the checkout.",
+            "THIS button moved to THIS right.",
+        ]);
+        const restricted = await client.call("decision.plan", {
+            meeting: REVIEW.id,
+            action: {
+                kind: "confirm",
+                items: ["i2"],
+                reach: { lines: [{ atSec: 2, line: 0 }], dictionary: false },
+            },
+        });
+        expect(restricted.reach.spelling?.occurrences).toHaveLength(2);
+        await client.call("decision.revert", { meeting: REVIEW.id, token: applied.entry!.token });
+        expect(
+            new MeetingStore(store.storage).read(REVIEW.id)?.items.find((item) => item.id === "i2")
+        ).not.toHaveProperty("reach");
+    });
+
     test("decision.apply returns every changed row, including settled and excluded look-alike choices", async () => {
         const { client, store } = await ADAPTERS[kind]();
         const at = "2026-11-03T09:47:00.000Z";

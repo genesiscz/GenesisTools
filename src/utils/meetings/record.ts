@@ -112,6 +112,16 @@ export const savedDecisionActorSchema = decisionActorSchema.catch({ kind: "unkno
 /** A decision's action as a saved record reads it: an action a newer build added reads as `unknown`. */
 export const savedDecisionActionSchema = z.enum([...DECISION_ACTIONS, "unknown"]).catch("unknown");
 
+/** A spelling's selected source lines and independent contribution to dictionary suggestions. */
+export const spellingReachSchema = z.object({
+    lines: z
+        .array(z.object({ atSec: z.number().nonnegative(), line: z.number().int().nonnegative().optional() }))
+        .min(1)
+        .optional(),
+    dictionary: z.boolean().optional(),
+});
+export type SpellingReach = z.infer<typeof spellingReachSchema>;
+
 const itemBase = {
     id: itemIdSchema,
     status: z.enum(ITEM_STATUSES),
@@ -136,6 +146,7 @@ const itemBase = {
                 decidedAt: isoTime.optional(),
                 speaker: z.string().optional(),
                 proposed: z.string().optional(),
+                reach: spellingReachSchema.optional(),
             }),
             actor: savedDecisionActorSchema.optional(),
             entry: z
@@ -210,6 +221,7 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         proposed: z.string().optional(),
         /** `line`: the spelling fixes only the line at `atSec`. Absent, it fixes the words wherever they are heard. */
         scope: z.enum(["everywhere", "line"]).optional(),
+        reach: spellingReachSchema.optional(),
         /** Shown after the heard words, which stay as said: `lomeno type` means `/{type}`. */
         meaning: z.string().min(1).optional(),
         /** The heard words read a document line aloud: its exact text replaces them, with the source. */

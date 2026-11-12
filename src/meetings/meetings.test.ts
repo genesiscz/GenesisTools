@@ -260,6 +260,25 @@ describe("suggestItems", () => {
 });
 
 describe("suggestDictionary", () => {
+    test("an explicit teaching choice is independent of transcript scope", () => {
+        const candidate = { at: "t", meeting: "m1", kind: "term" as const, heard: "Viky", fixed: "wiki", item: "i1" };
+        const suggest = (scope: "line" | "everywhere", learn: boolean) =>
+            suggestDictionary({
+                dictionary: { abbrExpansion: "every", entries: [] },
+                sourceId: "wisprflow",
+                sourceWords: [],
+                ignore: [],
+                corrections: [
+                    { ...candidate, scope, learn },
+                    { ...candidate, meeting: "m2", scope, learn },
+                ],
+            });
+        expect(suggest("everywhere", false)).toEqual([]);
+        expect(suggest("line", true)).toEqual([
+            { entry: { type: "fix", value: "Viky", substitution: "wiki" }, from: "confirmed 2 times" },
+        ]);
+    });
+
     test("reconfirming one item is not independent dictionary evidence", () => {
         const correction = {
             at: "t",

@@ -1,6 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
-import { readCorrections } from "@genesiscz/utils/meetings/corrections";
+import { readCorrections, teachesDictionary } from "@genesiscz/utils/meetings/corrections";
 import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { Decided, DecisionAction, JournalEntry } from "../decision-actions";
@@ -232,12 +232,15 @@ async function reachOf(
     }
 
     const { entry } = planned;
-    const teaches = entry.corrections.some((line) => line.kind === "term" && line.scope === "everywhere");
+    const teaches = entry.corrections.some(teachesDictionary);
+    const spelling =
+        (action.kind === "confirm" || action.kind === "respell") &&
+        entry.changes.some((change) => change.after?.kind === "term");
     const named = namedItems(record, action);
     // Each reached item shows its own quote and time, so the transcript is read whenever there is one to show.
     const reaches = [...entry.settled, ...entry.decided].some((id) => !named.includes(id) && id !== entry.question);
     const transcript =
-        teaches || reaches
+        teaches || reaches || spelling
             ? await splitInputsOf(store, deps)
                   .transcript(record)
                   .catch((error: unknown) => {
@@ -256,7 +259,7 @@ async function reachOf(
         record,
         rowOf: (item) => reviewRow(record, item, transcript),
         ...(struck.length > 0 ? { struck: struck.map((ref) => itemIdOf(record, ref)) } : {}),
-        ...(transcript && teaches ? { transcript } : {}),
+        ...(transcript && (teaches || spelling) ? { transcript } : {}),
         ledger: teaches ? (deps.readLedger ?? readCorrections)() : [],
         repeats: CORRECTION_REPEATS,
     });
