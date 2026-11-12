@@ -3,9 +3,10 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type DirectRunDeps, pumpLines, relayBytes } from "@app/ai/lib/embed/direct-run";
+import { type DirectRunDeps, pumpLines, relayBytes, relayLines } from "@app/ai/lib/embed/direct-run";
 import type { ScoredAccount } from "@app/claude/lib/usage/account-picker";
-import { rewriteSteerLine, runClaudeBinaryDirect } from "../lib/direct-run";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { annotateLimitLine, rewriteSteerLine, runClaudeBinaryDirect } from "../lib/direct-run";
 import { claudeEmbedAccountName } from "../lib/embed";
 import { isHostProbe, readEmbedLastPick, writeEmbedLastPick } from "../lib/embed-pick";
 import {
@@ -447,5 +448,144 @@ describe("host probe launches", () => {
 
         expect(readEmbedLastPick(["work"], path)).toBe("work");
         expect(readdirSync(folder)).toEqual(["last.json"]);
+    });
+});
+
+describe("limit note on Claude Code's own limit frames", () => {
+    const limitText = "You've hit your weekly limit · resets Nov 14 at 2am (Europe/Prague)";
+    const note = "GenesisTools: accounts with headroom (% used, read 4m ago): side (5h 0%, week 13%).";
+    // Shapes copied from a rate-limited Claude Code 2026-11-10 (usage and ids trimmed).
+    const assistant = SafeJSON.stringify(
+        {
+            type: "assistant",
+            message: {
+                id: "8bc947f9-6ce6-4276-863a-0d537b8d9793",
+                model: "<synthetic>",
+                role: "assistant",
+                stop_reason: "stop_sequence",
+                type: "message",
+                content: [{ type: "text", text: limitText }],
+            },
+            parent_tool_use_id: null,
+            session_id: "c4a4488d-7942-4307-a00b-f8397b7c85f8",
+            uuid: "cb81b6ac-4cb8-4126-98e1-e65be915a2c1",
+            error: "rate_limit",
+            is_api_error_message: true,
+            api_error_status: 429,
+            api_error: "usage_limit_reached",
+            api_error_params: {
+                rate_limit_info: { status: "rejected", resetsAt: 1794528000, rateLimitType: "seven_day" },
+            },
+        },
+        { strict: true }
+    );
+    const result = SafeJSON.stringify(
+        {
+            type: "result",
+            subtype: "success",
+            is_error: true,
+            num_turns: 1,
+            terminal_reason: "api_error",
+            api_error_status: 429,
+            api_error: "usage_limit_reached",
+            result: limitText,
+            session_id: "c4a4488d-7942-4307-a00b-f8397b7c85f8",
+            user_message_uuids: ["80731dcd-6566-44b8-b50c-54f4271d5fa5"],
+        },
+        { strict: true }
+    );
+
+    test("appends the note to the synthetic assistant text and to the result, and keeps every other field", () => {
+        const rewritten: unknown = SafeJSON.parse(annotateLimitLine(`${assistant}\n`, note), { strict: true });
+        const expected: unknown = SafeJSON.parse(assistant, { strict: true });
+
+        expect(annotateLimitLine(`${assistant}\n`, note).endsWith("}\n")).toBe(true);
+        expect(rewritten).toEqual(
+            SafeJSON.parse(assistant.replace(limitText, `${limitText}\\n\\n${note}`), { strict: true })
+        );
+        expect(rewritten).not.toEqual(expected);
+        expect(SafeJSON.parse(annotateLimitLine(result, note), { strict: true })).toEqual(
+            SafeJSON.parse(result.replace(`"result":"${limitText}"`, `"result":"${limitText}\\n\\n${note}"`), {
+                strict: true,
+            })
+        );
+    });
+
+    test("NEGATIVE CONTROL: every other line passes byte for byte", () => {
+        const others = [
+            '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1794528000,"rateLimitType":"seven_day"}}\n',
+            '{"type":"assistant","message":{"model":"claude-haiku-5-5","content":[{"type":"text","text":"rate_limit is fine"}]},"parent_tool_use_id":null}\n',
+            '{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"x"}]},"parent_tool_use_id":null,"error":"authentication_failed","api_error_status":401}\n',
+            '{"type":"result","subtype":"success","is_error":false,"result":"done","api_error_status":null}\n',
+            '{"type":"result","subtype":"success","is_error":true,"result":"overloaded","api_error_status":529}\n',
+            'not json "rate_limit"\n',
+        ];
+
+        for (const line of others) {
+            expect(annotateLimitLine(line, note)).toBe(line);
+        }
+    });
+
+    test("the stdout relay rewrites lines split across chunks and keeps a last line with no newline", async () => {
+        const encoder = new TextEncoder();
+        const text = `{"type":"system","subtype":"init"}\n${assistant}\n${result}`;
+        const source = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode(text.slice(0, 50)));
+                controller.enqueue(encoder.encode(text.slice(50, 400)));
+                controller.enqueue(encoder.encode(text.slice(400)));
+                controller.close();
+            },
+        });
+        const written: Uint8Array[] = [];
+        await relayLines({
+            source,
+            sink: { write: (chunk) => written.push(chunk), flush: () => undefined },
+            rewrite: (line) => annotateLimitLine(line, note),
+        });
+        const lines = new TextDecoder().decode(Buffer.concat(written)).split("\n");
+
+        expect(lines[0]).toBe('{"type":"system","subtype":"init"}');
+        expect(lines[1]).toBe(annotateLimitLine(assistant, note));
+        expect(lines[2]).toBe(annotateLimitLine(result, note));
+        expect(lines).toHaveLength(3);
+    });
+
+    test("a direct launch with stdoutLines pipes the child's stdout through the rewrite", async () => {
+        const encoder = new TextEncoder();
+        const signals = new EventEmitter();
+        const written: Uint8Array[] = [];
+        let stdio: unknown;
+        const deps: DirectRunDeps = {
+            spawn: (options) => {
+                stdio = options.stdio;
+                return {
+                    exitCode: null,
+                    exited: Promise.resolve(0),
+                    kill: () => undefined,
+                    stdout: new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            controller.enqueue(encoder.encode(`${assistant}\n`));
+                            controller.close();
+                        },
+                    }),
+                };
+            },
+            signals: {
+                on: (name: string, listener: (...args: unknown[]) => void) => signals.on(name, listener),
+                off: (name: string, listener: (...args: unknown[]) => void) => signals.off(name, listener),
+            } as DirectRunDeps["signals"],
+            stdin: () => new ReadableStream(),
+            stdout: () => ({ write: (chunk) => written.push(chunk), flush: () => undefined }),
+        };
+
+        const code = await runClaudeBinaryDirect(
+            { argv: ["fixture"], env: {}, stdoutLines: (line) => annotateLimitLine(line, note) },
+            deps
+        );
+
+        expect(code).toBe(0);
+        expect(stdio).toEqual(["inherit", "pipe", "inherit"]);
+        expect(new TextDecoder().decode(Buffer.concat(written))).toBe(`${annotateLimitLine(assistant, note)}\n`);
     });
 });

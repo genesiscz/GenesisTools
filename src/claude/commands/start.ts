@@ -16,12 +16,8 @@ import {
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
 import { fmtHours, type ScoredAccount, scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
-import {
-    deadBucketForAccount,
-    fableCapableAccounts,
-    fableStatusForAccount,
-    weeklyStatusForAccount,
-} from "@app/claude/lib/usage/fable-guard";
+import { deadBucketForAccount, fableCapableAccounts, fableStatusForAccount } from "@app/claude/lib/usage/fable-guard";
+import { headroomNote, weeklyLimitHit } from "@app/claude/lib/usage/limit-headroom";
 import { getSharedAccountsUsage, peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { isAutoAccount, pickSmart, type SmartAlias, smartAliasOf } from "@app/claude/lib/usage/smart-alias";
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
@@ -42,7 +38,7 @@ import { resolveSecret } from "@genesiscz/utils/security";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { runClaudeBinaryDirect, steerModeFromEnv } from "../lib/direct-run";
+import { annotateLimitLine, runClaudeBinaryDirect, steerModeFromEnv } from "../lib/direct-run";
 import { isHostProbe, readEmbedLastPick, writeEmbedLastPick } from "../lib/embed-pick";
 import { finishKeychainSession, injectSecondaryLogin, inspectKeychainBeforeInject } from "../lib/keychain-session";
 import {
@@ -493,28 +489,40 @@ function resetPhrase(resetsAt: string | null): string {
 }
 
 /**
- * A weekly-dead account cannot serve ANY model: every turn 429s and Claude
- * Code silently falls back to the keychain account. This runs before the
- * interactive and --model checks on purpose. Both are escapes from a Fable
- * question, and neither is an escape from an empty weekly bucket.
+ * A weekly-dead account cannot serve ANY model: every turn 429s. This runs before the interactive and --model checks
+ * on purpose. Both are escapes from a Fable question, and neither is an escape from an empty weekly bucket.
+ *
+ * A terminal launch is refused here. An embedding app (`--sdk`) is not: a refusal is only an early exit, which T3 Code
+ * reports as "The provider could not start this turn" and drops stderr. Claude Code itself then gets the 429 and sends
+ * its own rate-limit frames, which the app classes as a usage limit with a reset time; the returned note is added to
+ * the text of those frames (`annotateLimitLine`).
  */
-async function refuseIfWeeklyDead(accountName: string): Promise<void> {
+async function weeklyGate(accountName: string, sdk: boolean): Promise<string | null> {
     const cached = await peekSharedUsage().catch((error) => {
         logger.debug({ error }, "weekly gate: cache peek failed, skipping the check");
         return null;
     });
 
     if (!cached) {
-        return;
+        return null;
     }
 
-    const weekly = weeklyStatusForAccount(cached.accounts, accountName);
+    const hit = weeklyLimitHit(cached.accounts, accountName);
 
-    if (weekly.available) {
-        return;
+    if (!hit) {
+        return null;
     }
 
-    out.error(pc.red(`⚠ "${accountName}" has no weekly quota left (${resetPhrase(weekly.resetsAt)}).`));
+    if (sdk) {
+        const note = headroomNote({ headroom: hit.headroom, fetchedAt: cached.fetchedAt });
+        logger.info(
+            { account: accountName, resetsAt: hit.resetsAt, headroom: hit.headroom.map((row) => row.account) },
+            "[start] weekly-dead account on an --sdk launch: claude reports the limit, the headroom note rides on it"
+        );
+        return note;
+    }
+
+    out.error(pc.red(`⚠ "${accountName}" has no weekly quota left (${resetPhrase(hit.resetsAt)}).`));
     out.printlnErr(pc.dim("  Every model 429s until it refills, so switching model would not help."));
 
     const withRoom = fableCapableAccounts(cached.accounts).filter((name) => name !== accountName);
@@ -1063,7 +1071,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         process.exit(1);
     }
 
-    await refuseIfWeeklyDead(accountName);
+    const limitNote = await weeklyGate(accountName, opts.sdk === true);
 
     if (!opts.keychain) {
         await warnKeychainLimits(accountName, store, modelId);
@@ -1239,6 +1247,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
                 argv: [cmd, ...extraArgs],
                 env: launchEnv,
                 steer: steerModeFromEnv(),
+                ...(limitNote ? { stdoutLines: (line: string) => annotateLimitLine(line, limitNote) } : {}),
             });
         } else if (opts.tmux) {
             const {

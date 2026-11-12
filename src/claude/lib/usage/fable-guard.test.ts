@@ -7,6 +7,7 @@ import {
     fableStatusForAccount,
     weeklyStatusForAccount,
 } from "./fable-guard";
+import { headroomNote, weeklyLimitHit } from "./limit-headroom";
 
 const NOW = new Date("2026-07-24T20:00:00.000Z");
 
@@ -198,5 +199,82 @@ describe("deadBucketForAccount", () => {
     test("a healthy account returns null", () => {
         const acc: AccountUsage = { accountName: "a", usage: usageWith(10, 10) };
         expect(deadBucketForAccount([acc], "a", true, NOW)).toBeNull();
+    });
+});
+
+function windowsAccount(
+    name: string,
+    weeklyUsed: number,
+    fiveHourUsed: number | null,
+    extra: Partial<AccountUsage> = {}
+): AccountUsage {
+    return {
+        accountName: name,
+        usage: {
+            five_hour: fiveHourUsed === null ? null : { utilization: fiveHourUsed, resets_at: hoursFromNow(3) },
+            seven_day: { utilization: weeklyUsed, resets_at: hoursFromNow(31) },
+        },
+        ...extra,
+    };
+}
+
+describe("weeklyLimitHit", () => {
+    const accounts = [
+        windowsAccount("work", 100, null),
+        windowsAccount("personal", 40, 12),
+        windowsAccount("side", 13, 0),
+        windowsAccount("shop", 55, null),
+        windowsAccount("spent5h", 20, 100),
+        windowsAccount("broken", 5, 5, { error: "401" }),
+        windowsAccount("blocked", 5, 5, { orgBlocked: true }),
+        { accountName: "never" },
+    ];
+
+    test("a weekly-dead account reports its reset and the accounts with room, least weekly used first", () => {
+        expect(weeklyLimitHit(accounts, "work", NOW)).toEqual({
+            account: "work",
+            resetsAt: hoursFromNow(31),
+            headroom: [
+                { account: "side", fiveHourUsedPct: 0, weeklyUsedPct: 13 },
+                { account: "personal", fiveHourUsedPct: 12, weeklyUsedPct: 40 },
+                { account: "shop", fiveHourUsedPct: null, weeklyUsedPct: 55 },
+            ],
+        });
+    });
+
+    test("an account with weekly room, or one never polled, is no hit", () => {
+        expect(weeklyLimitHit(accounts, "personal", NOW)).toBeNull();
+        expect(weeklyLimitHit(accounts, "never", NOW)).toBeNull();
+        expect(weeklyLimitHit(accounts, "unknown", NOW)).toBeNull();
+    });
+
+    test("a weekly window whose reset has passed is room again", () => {
+        const rolled = windowsAccount("work", 100, null);
+        rolled.usage = { ...rolled.usage!, seven_day: { utilization: 100, resets_at: hoursFromNow(-1) } };
+
+        expect(weeklyLimitHit([rolled], "work", NOW)).toBeNull();
+    });
+});
+
+describe("headroomNote", () => {
+    test("names every figure as used, 5h and week per account, and how old the reading is", () => {
+        const note = headroomNote({
+            headroom: [
+                { account: "side", fiveHourUsedPct: 0, weeklyUsedPct: 13.4 },
+                { account: "shop", fiveHourUsedPct: null, weeklyUsedPct: 55.6 },
+            ],
+            fetchedAt: NOW.getTime() - 4 * 60_000,
+            now: NOW,
+        });
+
+        expect(note).toBe(
+            "GenesisTools: accounts with headroom (% used, read 4m ago): side (5h 0%, week 13%), shop (no 5h limit, week 56%)."
+        );
+    });
+
+    test("says so when no other account has room", () => {
+        expect(headroomNote({ headroom: [], fetchedAt: NOW.getTime() - 2 * 3_600_000, now: NOW })).toBe(
+            "GenesisTools: no other account has headroom (read 2h ago)."
+        );
     });
 });
