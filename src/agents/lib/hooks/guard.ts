@@ -17,7 +17,10 @@ export interface GuardVerdict {
     violations: GuardViolation[];
     /** Text for the model: the deny reason (block) or the additional context. */
     message: string;
-    /** Text for the user's `systemMessage`: every rule in full and the whole corrected command, as before 2026-11-11. */
+    /**
+     * Text for the user's `systemMessage`: every rule in full (never the compact form), and of a long command only the
+     * corrected part (`guard.corrected`).
+     */
     userMessage: string;
     /** Rules this message explained in full; the caller records them for the loop, so the next firing is compact. */
     explainedRules: string[];
@@ -124,7 +127,9 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
         const renderOptions: RenderOptions = { command, explained, denied, corrected: config.guard.corrected };
         return {
             message: renderViolations(shown, heading, renderOptions),
-            userMessage: renderViolations(shown, heading),
+            // Every rule in full, but the corrected command by the same limits as the model's text: the whole of a
+            // long command is no correction to read (2026-11-12: a 244-line heredoc printed again for one changed line).
+            userMessage: renderViolations(shown, heading, { command, corrected: config.guard.corrected }),
             explainedRules: [
                 ...new Set(shown.map((violation) => violation.ruleId).filter((ruleId) => !explained.has(ruleId))),
             ],
