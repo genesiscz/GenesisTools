@@ -409,9 +409,12 @@ into `camera.mov` beside `screen.mp4`. The camera movie runs on the wall clock, 
 writes `camera.json` (`version`, `file`, `startedAt`, `screenStartedAt`, `clock: "wall"`,
 `placement: { x, y, size, shape }`), and the recording lines the camera up with the screen: it writes each kept
 segment's first frame and length into `recording.json` (`settings.video.spans`), cuts `camera.mov` to those spans
-when there are two or more (a pause, a 180 s rollover, a rate change or a switch leaves a gap the screen movie does
-not have), and sets `camera.json` to count from the screen's first frame (`clock: "screen"`, offset 0 after a cut).
-A cut that fails keeps the movie, still counts from the first frame, and adds a warning (`camera-unaligned`). A new
+(a pause, a 180 s rollover, a rate change or a switch leaves a gap the screen movie does not have; one span is cut
+too, because the camera kept filming through a pause before the stop), and sets `camera.json` to count from the
+screen's first frame (`clock: "screen"`, offset 0 after a cut). A cut that fails keeps the movie, still counts from
+the first frame, and adds a warning (`camera-unaligned`). A cut whose uncut original (`.camera-original-*.mov`)
+cannot be removed adds a warning that names that file (`camera-leftover`): it still holds the cut footage, so delete
+it before you share the folder. A new
 edit takes it as `camera` in `edit.json`:
 
 ```json
