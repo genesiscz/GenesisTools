@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { musicSoundfontInstallCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { fileHash, musicSignal } from "./process";
 
@@ -57,13 +58,13 @@ export async function verifySoundfont(file: string): Promise<string> {
 
     if (file === soundfontPaths().file) {
         if (hash !== PINNED_SOUNDFONT.sha256) {
-            throw new Error("Pinned SoundFont checksum mismatch; run tools music soundfont install");
+            throw new Error(`Pinned SoundFont checksum mismatch; run ${musicSoundfontInstallCommand()}`);
         }
 
         const license = await readFile(soundfontPaths().license);
 
         if (createHash("sha256").update(license).digest("hex") !== PINNED_SOUNDFONT.licenseSha256) {
-            throw new Error("Pinned SoundFont license missing or changed; run tools music soundfont install");
+            throw new Error(`Pinned SoundFont license missing or changed; run ${musicSoundfontInstallCommand()}`);
         }
     }
 
