@@ -469,7 +469,11 @@ describe("duplicate: a second record of one meeting", () => {
             });
             await duplicateMeeting({ store, ref: ${SafeJSON.stringify(original.id)} });
         `;
-        const child = Bun.spawn([process.execPath, "--eval", code], { stdout: "pipe", stderr: "pipe" });
+        const child = Bun.spawn([process.execPath, "--eval", code], {
+            env: process.env,
+            stdout: "pipe",
+            stderr: "pipe",
+        });
         const deadline = setTimeout(() => child.kill("SIGKILL"), 4_000);
         try {
             const [exit, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
