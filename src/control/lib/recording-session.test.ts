@@ -25,6 +25,7 @@ import {
     nativeSegmentRecorder,
     segmentCaptureSpec,
     segmentJoiner,
+    titleAudioTracks,
 } from "./recording-native";
 import {
     concatCopyArgv,
@@ -1259,6 +1260,33 @@ describe("nativeSegmentRecorder", () => {
         expect(await readFile(output, "utf8")).toBe("partial movie");
     });
 
+    it("a run that ended because a restart could not leave the excluded windows out is a failure with the reason", async () => {
+        const output = join(root, "segment.mp4");
+        const reason = "could not restart the recording on display 2: windows 7 must be left out of the movie";
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async () => {
+            await writeFile(output, "movie");
+            return {
+                ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                captureFailed: false,
+                sessionDir: join(root, "session"),
+                warnings: [],
+                capture: {
+                    data: { endedEarly: "exclusion-unresolved", endedEarlyReason: reason, stats: { durationMs: 900 } },
+                },
+            };
+        });
+        const result = await nativeSegmentRecorder().record({
+            target: display,
+            output,
+            maxSeconds: 3,
+            signal: new AbortController().signal,
+            onRecording: () => {},
+        });
+
+        // Not a deadline: the session must pause with the reason, not start the next segment.
+        expect(result).toMatchObject({ ok: true, endedBy: "failure", error: reason, code: "exclusion-unresolved" });
+    });
+
     it("a stop on a recorder that failed probes its movie and drops an unfinished one", async () => {
         const { result, output, probes } = await stoppedRun(true);
         expect(probes).toBe(1);
@@ -1350,6 +1378,26 @@ describe("joining segments with their audio and cursor tracks", () => {
         ]);
         expect(single).toContain("title=Microphone");
         expect(single.at(-1)).toBe("/m/screen.mp4.titled.mp4");
+    });
+
+    it("a titling copy that fails half way leaves no second copy of the movie beside it", async () => {
+        const folder = join(tmpdir(), `gt-titles-${randomUUID()}`);
+        await mkdir(folder, { recursive: true });
+        const movie = join(folder, "screen.mp4");
+        await writeFile(movie, "the recording");
+        const copy = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            await writeFile(String(command.at(-1)), "half a copy");
+            throw new Error("ffmpeg timed out");
+        });
+
+        try {
+            await expect(titleAudioTracks(movie, ["Microphone"])).rejects.toThrow("ffmpeg timed out");
+            expect(existsSync(`${movie}.titled.mp4`)).toBe(false);
+            expect(await readFile(movie, "utf8")).toBe("the recording");
+        } finally {
+            copy.mockRestore();
+            await rm(folder, { recursive: true, force: true });
+        }
     });
 
     it("moves each segment's cursor samples by the length of the segments before it", () => {
