@@ -1918,6 +1918,25 @@ private struct PRBadge: View {
     }
 }
 
+/// Review layouts share the confirmation form and keyboard request path.
+struct PRSubmitReviewButton: View {
+    @ObservedObject var model: ReviewModel
+    @ObservedObject var store: PRThreadsStore
+    @State private var submitting = false
+
+    var body: some View {
+        Button("Submit review…") { submitting = true }
+            .disabled(!store.canWrite || store.busy != nil)
+            .instantTooltip("Publish pending drafts as one review; asks first")
+            .popover(isPresented: $submitting, arrowEdge: .bottom) {
+                SubmitReviewForm(store: store) { submitting = false }
+            }
+            .onChange(of: model.submitRequests) { _, _ in
+                if store.canWrite, store.busy == nil { submitting = true }
+            }
+    }
+}
+
 /// Comment / Approve / Request changes with an optional summary. Submitting asks again in an
 /// NSAlert that names the PR and the number of drafts: it is the one path to `pr publish`.
 private struct SubmitReviewForm: View {

@@ -4304,7 +4304,7 @@ private struct FileRow: View, Equatable {
 /// ran after the Worktrees pane had attached it, so the view left with the closed pane and the Worktrees diff
 /// stayed blank (2026-10-29). So a container in a window claims the view when it arrives there, and an update
 /// takes it only from a container that is no longer in a window.
-private struct RendererHost: NSViewRepresentable {
+struct RendererHost: NSViewRepresentable {
     let renderer: DiffRenderer
     /// The page's scroll bar follows Settings → Hub → Appearance → Scroll bars.
     @AppStorage(GenScrollBarStyle.key) private var scrollBars = GenScrollBarStyle.genesis.rawValue
@@ -4326,7 +4326,7 @@ private struct RendererHost: NSViewRepresentable {
     }
 }
 
-private final class RendererContainer: NSView {
+final class RendererContainer: NSView {
     var renderer: DiffRenderer?
 
     override func viewDidMoveToWindow() {

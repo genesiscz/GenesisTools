@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 // Hub UX wave 2, area "prDetail", option B (design sketch, `--sketch prDetail=b`): the PR is one document with tabs
@@ -45,6 +46,14 @@ struct PRDetailSketchB: View {
         }
         .background { tabKeys }
         .onAppear { PRChecksSection.prepareSnapshot() }
+        .onReceive(prs.review?.$selectedID.dropFirst().eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
+            tab = .changes
+            pickingFiles = false
+        }
+        .onReceive(prs.review?.$scope.dropFirst().eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in tab = .changes }
+        .onReceive(prs.review?.$focusedCard.dropFirst().eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { card in
+            if card != nil { tab = .changes }
+        }
     }
 
     // MARK: Header (C13, C14): title row, fact line, then the tabs with the open tab's controls on the same row
@@ -186,14 +195,11 @@ struct PRDetailSketchB: View {
                 ChangesControls(review: review, pr: pr, pickingFiles: $pickingFiles)
             }
         case .threads:
-            if let store = prs.review?.pr, let payload = store.payload {
+            if let review = prs.review, let store = review.pr, let payload = store.payload {
                 let counts = PRThreadCounts(payload.threads)
                 Text(verbatim: "\(counts.open) open · \(counts.outdated) outdated · \(counts.total) in all")
                     .foregroundColor(ReviewPalette.dim)
-                // Sketch: inert. The current Submit review form is private to the threads bar; the pick moves it here.
-                Button("Submit review…") {}
-                    .disabled(true)
-                    .instantTooltip("Publish your pending drafts as one review. In this sketch the button is not wired yet.")
+                PRSubmitReviewButton(model: review, store: store)
             }
         case .overview, .commits, .checks:
             EmptyView()
@@ -479,7 +485,7 @@ private struct DiffColumn: View {
             } else if review.files.isEmpty && !review.loading {
                 EmptyState(symbol: "checkmark.circle", text: review.emptyMessage)
             } else {
-                DiffHost(renderer: review.renderer)
+                RendererHost(renderer: review.renderer)
                     .overlay {
                         if review.files.isEmpty && review.loading {
                             DiffSkeleton()
@@ -494,50 +500,5 @@ private struct DiffColumn: View {
         .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < HubDiffLayout.autoSplitBelow }) { review.fitStyle(narrow: $0) }
         .onAppear { review.start() }
         .onDisappear { review.stop() }
-    }
-}
-
-/// The renderer's one web view, claimed by the container that enters a window (the rule of `RendererHost` in
-/// Review/ReviewWindow.swift, which is private there; the pick makes that one shared instead of this copy).
-private struct DiffHost: NSViewRepresentable {
-    let renderer: DiffRenderer
-    @AppStorage(GenScrollBarStyle.key) private var scrollBars = GenScrollBarStyle.genesis.rawValue
-
-    func makeNSView(context: Context) -> DiffHostContainer {
-        renderer.setScrollBars(GenScrollBarStyle(stored: scrollBars))
-        let container = DiffHostContainer()
-        container.renderer = renderer
-        if renderer.view.window == nil { container.claim() }
-        return container
-    }
-
-    func updateNSView(_ container: DiffHostContainer, context: Context) {
-        renderer.setScrollBars(GenScrollBarStyle(stored: scrollBars))
-        container.renderer = renderer
-        if renderer.view.superview !== container, container.window != nil, renderer.view.window == nil {
-            container.claim()
-        }
-    }
-}
-
-private final class DiffHostContainer: NSView {
-    var renderer: DiffRenderer?
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if window != nil, renderer?.view.superview !== self { claim() }
-    }
-
-    func claim() {
-        guard let view = renderer?.view else { return }
-        view.removeFromSuperview()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(view)
-        NSLayoutConstraint.activate([
-            view.leadingAnchor.constraint(equalTo: leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: trailingAnchor),
-            view.topAnchor.constraint(equalTo: topAnchor),
-            view.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
     }
 }
