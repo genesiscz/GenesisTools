@@ -50,6 +50,7 @@ import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHE
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
 import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
 import { parseRosters, ROSTER_DEFINITIONS, readRosters, rosterCounts, rosterGrowth } from "./rosters";
+import { SWIFT_ROSTERS, swiftRosterApplies, swiftRosterLines } from "./rosters/swift";
 import { checkSwiftRowRules, checkSwiftStructRules } from "./swift-lint-rules";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
@@ -1845,8 +1846,12 @@ interface SwiftLintString {
     interpolationDepth: number;
 }
 
-/** Blank Swift comments, strings and hash-delimited regexes without moving code's line or column offsets. */
-export function maskSwiftNonCode(source: string): string {
+/**
+ * Blank Swift comments, strings and hash-delimited regexes without moving code's line or column offsets.
+ * `keepStrings` leaves string text as it is and blanks only the comments: a Swift roster that reads what a literal
+ * says needs it, and a `//` inside a string is still no comment.
+ */
+export function maskSwiftNonCode(source: string, { keepStrings = false }: { keepStrings?: boolean } = {}): string {
     const masked = source.split("");
     let index = 0;
     let blockDepth = 0;
@@ -1860,6 +1865,14 @@ export function maskSwiftNonCode(source: string): string {
             }
 
             index++;
+        }
+    };
+    /** A string's own characters: blanked, or stepped over when strings are kept. */
+    const literal = (end: number) => {
+        if (keepStrings) {
+            index = end;
+        } else {
+            blank(end);
         }
     };
 
@@ -1887,15 +1900,15 @@ export function maskSwiftNonCode(source: string): string {
             }
         } else if (string?.interpolationDepth === 0) {
             if (source.startsWith(string.end, index)) {
-                blank(index + string.end.length);
+                literal(index + string.end.length);
                 strings.pop();
             } else if (source.startsWith(`\\${string.hashes}(`, index)) {
-                blank(index + string.hashes.length + 2);
+                literal(index + string.hashes.length + 2);
                 string.interpolationDepth = 1;
             } else if (source.startsWith(`\\${string.hashes}`, index)) {
-                blank(Math.min(index + string.hashes.length + 2, source.length));
+                literal(Math.min(index + string.hashes.length + 2, source.length));
             } else {
-                blank(index + 1);
+                literal(index + 1);
             }
         } else if (source.startsWith("//", index)) {
             const newline = source.indexOf("\n", index);
@@ -1912,7 +1925,7 @@ export function maskSwiftNonCode(source: string): string {
                 blank(index + regexOpening[0].length);
             } else if (opening) {
                 strings.push({ end: opening[2] + opening[1], hashes: opening[1], interpolationDepth: 0 });
-                blank(index + opening[0].length);
+                literal(index + opening[0].length);
             } else {
                 index++;
             }
@@ -1921,7 +1934,7 @@ export function maskSwiftNonCode(source: string): string {
             index++;
         } else if (string && source[index] === ")") {
             string.interpolationDepth--;
-            blank(index + 1);
+            literal(index + 1);
         } else {
             index++;
         }
@@ -1967,6 +1980,28 @@ export function checkSwiftSource(
                 message: rule.message,
                 text: text.trim().slice(0, 120),
             });
+        }
+    }
+
+    const rosters = SWIFT_ROSTERS.filter((roster) => swiftRosterApplies(roster, file));
+
+    if (rosters.length > 0) {
+        const withStrings = maskSwiftNonCode(source, { keepStrings: true }).split("\n");
+
+        for (const roster of rosters) {
+            for (const hit of swiftRosterLines(roster, { code: codeLines, withStrings }, (line) =>
+                isSuppressed(lines, line)
+            )) {
+                findings.push({
+                    file,
+                    line: hit.line,
+                    column: hit.column,
+                    rule: roster.name,
+                    severity: "error",
+                    message: `${roster.message} (Roster ${roster.candidate}: scripts/ci/rosters/swift.ts; after removing a match, run bun scripts/ci/rosters/generate.ts.)`,
+                    text: (lines[hit.line - 1] ?? "").trim().slice(0, 120),
+                });
+            }
         }
     }
 
@@ -2267,9 +2302,11 @@ export function countRatchetShortfalls(
 }
 
 /** The per-file counts of every rule that has them, by rule name. */
-const COUNT_RATCHETS: ReadonlyMap<string, ReadonlyMap<string, number>> = new Map(
-    RULES.flatMap((rule) => (rule.allowedCounts ? [[rule.name, rule.allowedCounts] as const] : []))
-);
+const COUNT_RATCHETS: ReadonlyMap<string, ReadonlyMap<string, number>> = new Map([
+    ...RULES.flatMap((rule) => (rule.allowedCounts ? [[rule.name, rule.allowedCounts] as const] : [])),
+    // The Swift rosters are line rules of `checkSwiftSource`, not `RULES`; their counts come from the same manifest.
+    ...SWIFT_ROSTERS.map((roster) => [roster.name, rosterCounts(ROSTERS, roster.name)] as const),
+]);
 
 /**
  * Drops the findings a per-file count still allows. A file over its count keeps every finding, each saying the
