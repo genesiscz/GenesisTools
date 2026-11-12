@@ -223,6 +223,14 @@ final class TimelineDockModel {
         return (whole[meeting]?.peaks ?? [], 0...max(durationSec, 1))
     }
 
+    /// Finest cached peaks at one playhead position. An activity glyph needs no new read or viewport-scale test.
+    func activityPeaks(_ meeting: String, at second: Double) -> (peaks: [Double], range: ClosedRange<Double>) {
+        if let zoomed, zoomed.meeting == meeting, (zoomed.fromSec...zoomed.toSec).contains(second) {
+            return (zoomed.peaks, zoomed.fromSec...max(zoomed.toSec, zoomed.fromSec + 1))
+        }
+        return (whole[meeting]?.peaks ?? [], 0...max(durationSec(meeting, fallback: nil), 1))
+    }
+
     /// True when `held` holds `view` and is at most four view lengths long (else its bars are too coarse).
     static func covers(_ held: ClosedRange<Double>, _ view: ClosedRange<Double>) -> Bool {
         let length = view.upperBound - view.lowerBound

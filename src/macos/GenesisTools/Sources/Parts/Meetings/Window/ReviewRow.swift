@@ -35,6 +35,9 @@ struct ReviewRowView: View, Equatable {
     /// the reader scrolls, so another choice can change the answer without opening a separate editor.
     var held = false
     @Environment(\.kitLook) private var look
+    @AppStorage(MeetingsPreferences.Playback.animateActivity.key) private var animateActivity =
+        MeetingsPreferences.Playback.animateActivity.defaultValue
+    @GenReduceMotion private var reduceMotion
 
     /// A question draws in the ask hue (not in the classic look).
     private var asks: Bool { row.isQuestion && look != .classic }
@@ -75,6 +78,16 @@ struct ReviewRowView: View, Equatable {
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .liveRow(selected: selected)
+        .background {
+            RoundedRectangle(cornerRadius: 5)
+                .fill(Color.accentColor.opacity(0.07))
+                .overlay(alignment: .leading) {
+                    Capsule().fill(Color.accentColor.opacity(0.65)).frame(width: 2)
+                }
+                .opacity(play.phase == .playing ? 1 : 0)
+                .animation(animateActivity && !reduceMotion ? .easeOut(duration: 0.16) : nil, value: play.phase == .playing)
+                .allowsHitTesting(false)
+        }
         .accessibilityElement(children: editing ? .contain : .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityActions { actions }

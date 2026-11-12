@@ -314,6 +314,7 @@ enum SidePanelCatalog {
         let playback = SidePanelSection(id: "playback", title: "Playback", rows: [
             row(Playback.view, value: Playback.view.value(defaults)),
             row(Playback.speed, value: Playback.speed.value(defaults)),
+            row(Playback.animateActivity, value: Playback.animateActivity.value(defaults)),
             row(Playback.repeatClip, value: Playback.repeatClip.value(defaults)),
             row(Playback.afterClip, value: Playback.afterClip.value(defaults)),
             row(Playback.moreSec, value: Playback.moreSec.value(defaults))

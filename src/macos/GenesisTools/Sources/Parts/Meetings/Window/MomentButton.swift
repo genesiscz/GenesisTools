@@ -15,6 +15,9 @@ struct MomentButton: View {
     /// What the button shows, handed in by a list that computed it once per row (`MomentPlay`); nil reads the player
     /// here, which makes the button re-run on every play, pause and stop of any Moment.
     var shown: Shown?
+    @AppStorage(MeetingsPreferences.Playback.animateActivity.key) private var animateActivity =
+        MeetingsPreferences.Playback.animateActivity.defaultValue
+    @GenReduceMotion private var reduceMotion
 
     /// The player's state as one button shows it.
     struct Shown: Equatable {
@@ -31,9 +34,16 @@ struct MomentButton: View {
         // already over the row, VoiceOver and `tools control` could not press it.
         LiveButton(tooltip: reason?.message ?? tooltip(top: top, playing: playing), enabled: reason == nil, pressable: true, action: press) {
             HStack(spacing: 4) {
-                Image(systemName: playing ? "pause.fill" : "play.fill")
-                    .font(.system(size: 8.5, weight: .bold))
-                    .accessibilityHidden(true)
+                Group {
+                    if playing && animateActivity && !reduceMotion {
+                        MomentActivityGlyph(player: player, meeting: meeting)
+                    } else {
+                        Image(systemName: playing ? "pause.fill" : "play.fill")
+                            .font(.system(size: 8.5, weight: .bold))
+                    }
+                }
+                .frame(width: 9, height: 10)
+                .accessibilityHidden(true)
                 if let label {
                     // One line at its own width: in a squeezed header a range wrapped at its dash.
                     Text(verbatim: label).font(.system(size: 11.5, design: .monospaced)).lineLimit(1).fixedSize()

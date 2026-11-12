@@ -318,6 +318,9 @@ private struct TranscriptBlockLineView: View {
     let selectWords: (TranscriptBlockLine, NSRange) -> Void
     @Environment(\.rowLive) private var live
     @State private var hovering = false
+    @AppStorage(MeetingsPreferences.Playback.animateActivity.key) private var animateActivity =
+        MeetingsPreferences.Playback.animateActivity.defaultValue
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -328,7 +331,10 @@ private struct TranscriptBlockLineView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 3)
                 .padding(.vertical, 1)
-                .background(RoundedRectangle(cornerRadius: 4).fill(fill))
+                .background {
+                    RoundedRectangle(cornerRadius: 4).fill(fill)
+                        .animation(animateActivity && !reduceMotion ? .easeOut(duration: 0.16) : nil, value: heard)
+                }
             if line.marks.contains(.unclearSpeaker) {
                 Image(systemName: "questionmark.circle")
                     .font(.system(size: 11)).foregroundStyle(.orange)

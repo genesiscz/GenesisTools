@@ -33,6 +33,18 @@ extension MeetingsTimelineTests {
         screen: { _ in throw MeetingsService.Unavailable(reason: "test") },
         rows: { _ in throw MeetingsService.Unavailable(reason: "test") })
 
+    func testPlaybackActivityUsesTheRecordedLevelAndHandlesMissingPeaks() {
+        XCTAssertEqual(MomentActivityGlyph.heights([], range: 0...1, at: 0.5), [])
+        XCTAssertEqual(MomentActivityGlyph.heights([0, 0, 0], range: 0...1, at: 0.5), [1, 1, 1])
+        XCTAssertEqual(MomentActivityGlyph.heights([1, 1, 1], range: 0...1, at: 0.5), [10, 10, 10])
+        let peaks = [0.0, 0, 1, 1]
+        XCTAssertEqual(MomentActivityGlyph.heights(peaks, range: 0...4, at: 1), [1, 1, 1])
+        XCTAssertEqual(MomentActivityGlyph.heights(peaks, range: 0...4, at: 3), [10, 10, 10])
+        let malformed = MomentActivityGlyph.heights([Double.nan, -1, 2], range: 0...1, at: 0.5)
+        XCTAssertTrue(malformed.allSatisfy { $0.isFinite && $0 >= 1 && $0 <= 10 })
+        XCTAssertEqual(MomentActivityGlyph.heights([1], range: 0...1, at: .infinity), [])
+    }
+
     // MARK: What the timeline shows (R1, R4, R47)
 
     func testTheDockShowsTheClipTheContextOrTheMeetingAndALensRangeOnlyForItsOwnLayer() {
@@ -156,6 +168,10 @@ extension MeetingsTimelineTests {
         XCTAssertEqual(asked.last?.fromSec, 0)
         XCTAssertEqual(asked.last?.toSec, 300)
         XCTAssertEqual(dock.zoomPeaks("m", view: 100...200, durationSec: 8772).range, 0...300)
+        XCTAssertEqual(dock.activityPeaks("m", at: 150).peaks.first, 0.8,
+                       "a subsecond activity mark uses the finer cache even when its viewport-scale test would reject it")
+        XCTAssertEqual(dock.activityPeaks("m", at: 600).peaks.first, 0.2, "outside the fine cache, use the whole recording")
+        XCTAssertTrue(dock.activityPeaks("other", at: 150).peaks.isEmpty, "never borrow another meeting's peaks")
         dock.ensureZoomPeaks("m", view: 120...220, durationSec: 8772)
         XCTAssertEqual(asked.count, 2, "a view the held peaks cover asks nothing")
     }

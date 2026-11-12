@@ -70,6 +70,18 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertEqual(sections.first { $0.id == "panes" }?.isDefault, true)
     }
 
+    func testPlaybackMotionIsOptionalAndPersists() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = "meetings.playback.animateActivity"
+        let row = try XCTUnwrap(SidePanelCatalog.windowSections(defaults).flatMap(\.rows).first { $0.id == key })
+        XCTAssertEqual(row.value, .flag(true))
+        SidePanelCatalog.write(.flag(false), key: key, to: defaults)
+        let reopened = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let saved = try XCTUnwrap(SidePanelCatalog.windowSections(reopened).flatMap(\.rows).first { $0.id == key })
+        XCTAssertEqual(saved.value, .flag(false))
+    }
+
     func testPausedSeekResumePolicyHasBothChoicesAndPersists() throws {
         let (defaults, suite) = try defaults()
         defer { defaults.removePersistentDomain(forName: suite) }
