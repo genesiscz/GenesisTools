@@ -21,7 +21,12 @@ interface Found extends ProjectMeetingPerson {
     record: MeetingRecord;
 }
 
-function found(options: { records: MeetingRecord[]; config: MeetingsConfig; project: string }): Found[] {
+function found(options: {
+    records: MeetingRecord[];
+    config: MeetingsConfig;
+    project: string;
+    meeting?: string;
+}): Found[] {
     const paired = options.config.projects[options.project]?.match?.people ?? [];
     // The owner is marked in some meetings only (a participant or attendee with `self`); a named speaker carries no
     // mark, so the owner's name from any meeting is left out everywhere.
@@ -32,7 +37,7 @@ function found(options: { records: MeetingRecord[]; config: MeetingsConfig; proj
     );
     const people: Found[] = [];
     const ofProject = options.records
-        .filter((record) => record.project === options.project)
+        .filter((record) => record.project === options.project && (!options.meeting || record.id === options.meeting))
         .sort((a, b) => a.start.localeCompare(b.start));
 
     for (const record of ofProject) {
@@ -128,6 +133,7 @@ export async function pairFromMeetings(options: {
     config: MeetingsConfigStore;
     project: string;
     people?: PersonRef[];
+    meeting?: string;
     now: Date;
 }): Promise<PairedFromMeetings> {
     const config = await options.config.read();
@@ -140,28 +146,20 @@ export async function pairFromMeetings(options: {
 
     const at = options.now.toISOString();
     const wanted = options.people;
-    const chosen = found({ records: options.records, config, project: options.project }).filter(
-        (person) => !wanted || wanted.some((one) => samePerson(one, person))
-    );
-    const paired: PairedFromMeetings["paired"] = [];
+    const chosen = found({
+        records: options.records,
+        config,
+        project: options.project,
+        meeting: options.meeting,
+    }).filter((person) => !wanted || wanted.some((one) => samePerson(one, person)));
+    const paired = await options.config.pairUnpairedPeople({
+        project: options.project,
+        people: chosen.map((person) => {
+            const ref: PersonRef = { name: person.name, ...(person.email ? { email: person.email } : {}) };
+            return { person: ref, by: meetingPairingSource(person.record, ref, at) };
+        }),
+    });
 
-    // One write per source: the people of one calendar entry land together.
-    const bySource = new Map<string, { by: PairedBy; people: PersonRef[] }>();
-
-    for (const person of chosen) {
-        const ref: PersonRef = { name: person.name, ...(person.email ? { email: person.email } : {}) };
-        const by = meetingPairingSource(person.record, ref, at);
-        const key = by.kind === "calendar" ? `calendar:${by.from}:${by.entryId}` : `manual:${by.note ?? ""}`;
-        const group = bySource.get(key) ?? { by, people: [] };
-        group.people.push(ref);
-        bySource.set(key, group);
-        paired.push({ ...ref, by });
-    }
-
-    for (const group of bySource.values()) {
-        await options.config.pairPeople({ project: options.project, people: group.people, by: group.by });
-    }
-
-    log.debug({ project: options.project, paired: paired.length, writes: bySource.size }, "paired from meetings");
+    log.debug({ project: options.project, paired: paired.length }, "paired from meetings");
     return { project: options.project, paired };
 }

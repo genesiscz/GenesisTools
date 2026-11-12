@@ -248,6 +248,57 @@ describe("meetings config", () => {
         expect(meetingsConfigSchema.parse({ version: 99, future: { key: 1 } }).version).toBe(99);
     });
 
+    test("pairing receipts and Undo preserve existing and later independent sources on disk", async () => {
+        const config = store();
+        const existing = { name: "Alice Example", email: "alice@example.com" };
+        const fresh = { name: "Bob Example", email: "bob@example.com" };
+        const first = { kind: "manual" as const, at: "2026-11-04T10:00:00.000Z", note: "first" };
+        const added = { kind: "calendar" as const, from: "calendar", entryId: "new", at: "2026-11-04T11:00:00.000Z" };
+        const later = { kind: "calendar" as const, from: "calendar", entryId: "later", at: "2026-11-04T12:00:00.000Z" };
+        await config.addProject("work");
+        await config.pairPeople({ project: "work", people: [existing], by: first });
+        const receipt = await config.pairUnpairedPeople({
+            project: "work",
+            people: [
+                { person: existing, by: added },
+                { person: fresh, by: added },
+                { person: { name: "Owner", self: true }, by: added },
+            ],
+        });
+        expect(receipt).toEqual([{ ...fresh, by: added }]);
+        await config.pairPeople({ project: "work", people: [fresh], by: later });
+        expect(await config.unpairSource("work", fresh, added)).toEqual([{ ...fresh, left: false }]);
+        expect(await config.unpairSource("work", fresh, added)).toEqual([]);
+        const reopened = new MeetingsConfigStore(config.storage);
+        expect((await reopened.read()).projects.work?.match?.people).toEqual([
+            { ...existing, pairedBy: [first] },
+            { ...fresh, pairedBy: [later] },
+        ]);
+        const changed = { ...added, title: "Changed after pairing" };
+        await config.pairPeople({ project: "work", people: [fresh], by: changed });
+        await expect(config.unpairSource("work", fresh, added)).rejects.toThrow("changed after it was added");
+        expect((await reopened.read()).projects.work?.match?.people[1]?.pairedBy).toEqual([later, changed]);
+    });
+
+    test("concurrent first-time pairings return one committed receipt", async () => {
+        const config = store();
+        await config.addProject("work");
+        const person = { name: "Alice Example" };
+        const receipts = await Promise.all(
+            ["first", "second"].map((note) =>
+                config.pairUnpairedPeople({
+                    project: "work",
+                    people: [{ person, by: { kind: "manual", note, at: "2026-11-04T10:00:00.000Z" } }],
+                })
+            )
+        );
+        expect(receipts.flat()).toHaveLength(1);
+        const reopened = new MeetingsConfigStore(config.storage);
+        const saved = (await reopened.read()).projects.work?.match?.people;
+        expect(saved).toHaveLength(1);
+        expect(saved?.[0]?.pairedBy).toEqual([receipts.flat()[0]?.by]);
+    });
+
     test("labels and people pairings: many projects per person, unpairing an entry keeps other sources", async () => {
         const config = store();
         const entry = (entryId: string) => ({

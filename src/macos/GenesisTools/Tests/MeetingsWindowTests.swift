@@ -372,6 +372,40 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(MeetingsSettingsModel.projectNote("", to: nil), "“Untitled meeting” has no project now")
     }
 
+    func testManualProjectPairingPolicyAsksByDefaultAndCanBeDisabled() throws {
+        let suite = "meetings.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let setting = MeetingsPreferences.Projects.pairOnAssignment
+        XCTAssertEqual(setting.value(defaults), .ask)
+        let notices = NoticeStackModel(announces: false)
+        MeetingProjectPairing.offer(meeting: "m", project: "work", service: nil, notices: notices, defaults: defaults)
+        let question = try XCTUnwrap(notices.notices.first)
+        XCTAssertEqual(question.actions.map(\.label), ["Pair people", "Not now"])
+        notices.press(try XCTUnwrap(question.actions.last), of: question.id)
+        XCTAssertTrue(notices.notices.isEmpty)
+        defaults.set("never", forKey: setting.key)
+        MeetingProjectPairing.offer(meeting: "m", project: "work", service: nil, notices: notices, defaults: defaults)
+        XCTAssertTrue(notices.notices.isEmpty)
+        defaults.set("always", forKey: setting.key)
+        MeetingProjectPairing.offer(meeting: "m", project: "work", service: nil, notices: notices, defaults: defaults)
+        XCTAssertEqual(notices.notices.first?.tone, .error, "Always attempts pairing and reports an unavailable service")
+        defaults.set("unknown", forKey: setting.key)
+        XCTAssertEqual(setting.value(defaults), .ask)
+    }
+
+    func testPairingUndoKeepsItsCompleteSourceOnTheWire() throws {
+        let source = try JSONDecoder().decode(PairedBy.self, from: Data(#"{"kind":"calendar","from":"calendar","entryId":"event-1","at":"2026-11-04T10:00:00.000Z","meetingId":"m"}"#.utf8))
+        let request = MeetingsAPI.ProjectsUnpair.Params(project: "work", person: .init(name: "Alice Example"), by: source)
+        let encoded = try JSONEncoder().encode(request)
+        let restored = try JSONDecoder().decode(MeetingsAPI.ProjectsUnpair.Params.self, from: encoded)
+        XCTAssertEqual(restored.by, source)
+        XCTAssertEqual(restored.by?.from, "calendar")
+        XCTAssertEqual(restored.by?.at, "2026-11-04T10:00:00.000Z")
+        let scoped = MeetingsAPI.ProjectsPairFromMeetings.Params(project: "work", people: nil, meeting: "m")
+        XCTAssertEqual(try JSONDecoder().decode(MeetingsAPI.ProjectsPairFromMeetings.Params.self, from: JSONEncoder().encode(scoped)).meeting, "m")
+    }
+
     func testAPairingFromTheMeetingsNamesWhoItPaired() throws {
         let paired = try JSONDecoder().decode([MeetingsAPI.ProjectsPairFromMeetings.Paired].self, from: Data("""
         [{"name":"Alice Example","email":"alice@example.com","by":{"kind":"calendar","entryId":"e1","title":"Sync","at":"2026-11-10T08:00:00.000Z"}},

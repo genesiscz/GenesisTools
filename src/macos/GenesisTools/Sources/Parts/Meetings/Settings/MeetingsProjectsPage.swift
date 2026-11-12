@@ -5,12 +5,20 @@ import SwiftUI
 struct MeetingsProjectsPage: View {
     @Bindable var model: MeetingsSettingsModel
     @State private var newProject = ""
+    @AppStorage(MeetingsPreferences.Projects.pairOnAssignment.key)
+    private var pairOnAssignment = MeetingsPreferences.Projects.PairOnAssignment.ask
     /// Read here once, not in each card: a link to a card hands that card its own request count.
     @ObservedObject private var anchors = NativeSettingsHighlightCenter.shared
 
     var body: some View {
         MeetingsSettingsFrame(model: model, reads: .preview) { settings in
             let assign = settings.global.assign
+            NativeSettingsCard("Manual project assignment", subtitle: "What happens after you choose a project for a meeting.") {
+                NativeSettingsSegmented("Pair this meeting's people", identifier: "meetings.projects.pairOnAssignment",
+                    options: MeetingsPreferences.Projects.PairOnAssignment.allCases.map { NativeSettingsOption($0, $0.title) },
+                    selection: $pairOnAssignment)
+                    .disabled(!model.writes)
+            }
             NativeSettingsCard("Ask each time", subtitle: "A meeting with no project after its sources link gets one question in the decision inbox, with ranked proposals.") {
                 NativeSettingsToggle("Ask about each meeting without a project", identifier: "meetings.assign.ask",
                                      isOn: Binding(get: { assign.ask }, set: { model.set(["global", "assign", "ask"], $0) }))

@@ -160,6 +160,22 @@ extension MeetingsWindowSetting where Value == Bool {
 }
 
 extension MeetingsPreferences {
+    enum Projects {
+        enum PairOnAssignment: String, CaseIterable {
+            case ask, always, never
+            var title: String {
+                switch self {
+                case .ask: "Ask"
+                case .always: "Always"
+                case .never: "Never"
+                }
+            }
+        }
+        static let pairOnAssignment = MeetingsWindowSetting(
+            key: "meetings.projects.pairOnAssignment", defaultValue: PairOnAssignment.ask, choices: PairOnAssignment.allCases,
+            title: "Pair people after assigning a project", detail: "Pairs only people from the meeting you assigned. Each pairing has its own Undo.")
+    }
+
     /// The review rows (F6).
     enum Rows {
         enum ReturnKey: String, CaseIterable { case edit, confirm }

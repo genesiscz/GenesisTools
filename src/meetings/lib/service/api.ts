@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { TONE_PRESET_NAMES, toneSoundSettingSchema } from "@genesiscz/utils/meetings/config";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
+import { pairedBySchema } from "@genesiscz/utils/meetings/people";
 import {
     type KnownPeople,
     type KnownPerson,
@@ -1018,11 +1019,16 @@ const projectsUnpair = defineMethod({
             /** With person: this person leaves this project, whatever paired them. */
             project: projectName.optional(),
             person: pairedPersonRefSchema.optional(),
+            /** With project and person: remove only this source, as returned by a pairing operation. */
+            by: pairedBySchema.optional(),
         })
-        .strict(),
+        .strict()
+        .refine((value) => !value.by || (!!value.project && !!value.person && !value.entry), {
+            message: "A source-specific unpair needs project and person, without entry.",
+        }),
     result: z.object({ removed: z.array(unpairedSchema) }),
     resultName: "{ removed: { project, name, email?, left }[] }",
-    doc: "Removes project pairings, as `projects unpair` does: the ones a calendar entry made (entry), or one person from one project (project and person). Refused without either.",
+    doc: "Removes project pairings: the ones a calendar entry made (entry), or one person from one project (project and person). Optional by removes only that recorded source and preserves other sources. Refused without a target.",
     effect: "destructive",
 });
 
@@ -1067,11 +1073,13 @@ const projectsPairFromMeetings = defineMethod({
             project: projectName,
             /** Only these people; absent pairs every person `projects.meetingPeople` lists. */
             people: z.array(pairedPersonRefSchema).optional(),
+            /** Only people of this meeting, which must still have the named project. */
+            meeting: z.string().min(1).optional(),
         })
         .strict(),
     result: pairedFromMeetingsSchema,
     resultName: "{ project, paired: { name, email?, by }[] }",
-    doc: "Pairs people of the project's meetings with the project. A person on a meeting's calendar entry is paired through that entry; anyone else by hand, with the meeting in the note. `projects.unpair` with the project and the person undoes one. An unknown project is refused.",
+    doc: "Pairs previously unpaired people of the project's meetings in one write. Optional meeting limits the operation to that meeting. Returns only added pairings with their source; projects.unpair with project, person and by undoes just that source. Unknown projects or a meeting that changed project are refused.",
     effect: "reversible",
 });
 

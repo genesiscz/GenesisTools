@@ -109,6 +109,7 @@ extension MeetingsAPI {
             var entry: String?
             var project: String?
             var person: Person?
+            var by: PairedBy?
         }
 
         /// One removed pairing; `left`: the person is no longer paired with the project at all.
@@ -205,6 +206,8 @@ extension MeetingsAPI {
             var project: String
             /// nil pairs everyone `projects.meetingPeople` lists.
             var people: [ProjectsUnpair.Person]?
+            /// Limits pairing to one meeting after its project is assigned.
+            var meeting: String?
         }
 
         struct Paired: Decodable, Equatable {

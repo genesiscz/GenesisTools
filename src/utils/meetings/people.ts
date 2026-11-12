@@ -1,4 +1,6 @@
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
+import { MeetingsConflictError } from "./conflict";
 
 const isoTime = z.string().min(1);
 
@@ -128,6 +130,38 @@ export function removeEntryPairings(list: PairedPerson[], entryId: string): Unpa
         }
     }
 
+    return { people, removed };
+}
+
+/** Removes only the recorded source from one person. A later source or re-created pairing stays. */
+export function removeSourcePairing(list: PairedPerson[], person: PersonRef, source: PairedBy): UnpairResult {
+    const removed: UnpairResult["removed"] = [];
+    const people: PairedPerson[] = [];
+    for (const existing of list) {
+        if (!samePerson(existing, person)) {
+            people.push(existing);
+            continue;
+        }
+        if (existing.pairedBy.some((by) => sameSource(by, source) && !isDeepStrictEqual(by, source))) {
+            throw new MeetingsConflictError(
+                "config-stale",
+                `The pairing for ${existing.name} changed after it was added; nothing was removed.`
+            );
+        }
+        const kept = existing.pairedBy.filter((by) => !isDeepStrictEqual(by, source));
+        if (kept.length === existing.pairedBy.length) {
+            people.push(existing);
+            continue;
+        }
+        removed.push({
+            name: existing.name,
+            ...(existing.email ? { email: existing.email } : {}),
+            left: kept.length === 0,
+        });
+        if (kept.length > 0) {
+            people.push({ ...existing, pairedBy: kept });
+        }
+    }
     return { people, removed };
 }
 

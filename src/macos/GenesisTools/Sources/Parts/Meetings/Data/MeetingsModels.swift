@@ -292,7 +292,7 @@ struct DisplayPolicy: Decodable, Equatable, Hashable {
     }
 }
 
-struct PairedBy: Decodable, Equatable, Hashable {
+struct PairedBy: Codable, Equatable, Hashable {
     let kind: String
     let entryId: String?
     let calendar: String?
@@ -301,6 +301,7 @@ struct PairedBy: Decodable, Equatable, Hashable {
     let meetingId: String?
     let at: String?
     let note: String?
+    var from: String? = nil
 }
 
 struct PairedPerson: Decodable, Equatable, Hashable, Identifiable {

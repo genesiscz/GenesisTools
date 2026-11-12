@@ -432,8 +432,13 @@ final class MeetingDetailModel {
     func setProject(_ project: String?) {
         let reload = Self.reloadsTranscript(after: .project)
         if let project {
+            let changed = record.value?.project != project
             journalChange("project", .set(project: project), done: "Project set to \(project)",
-                          orRun: ["set", id, "--project", project], reloadTranscript: reload)
+                          orRun: ["set", id, "--project", project], reloadTranscript: reload,
+                          applied: { [weak self] in
+                              guard changed, let self else { return }
+                              MeetingProjectPairing.offer(meeting: id, project: project, service: service, notices: notices, defaults: defaults)
+                          })
         } else {
             // "No project" has no journal action: the command clears it, without an Undo.
             change("project", ["assign", "apply", id, "--none"], done: "No project for this meeting", reloadTranscript: reload)
@@ -442,9 +447,10 @@ final class MeetingDetailModel {
 
     /// One change of the meeting through the decision journal, as the window: its notice has an Undo that takes back
     /// exactly it (G64). Without a service the command `orRun` makes it, as before.
-    func journalChange(_ key: String, _ action: DecisionAction, done: String, orRun args: [String], reloadTranscript: Bool) {
+    func journalChange(_ key: String, _ action: DecisionAction, done: String, orRun args: [String], reloadTranscript: Bool,
+                       applied: (() -> Void)? = nil) {
         guard let service else {
-            change(key, args, done: done, reloadTranscript: reloadTranscript)
+            change(key, args, done: done, reloadTranscript: reloadTranscript, applied: applied)
             return
         }
         guard !busy.contains(key) else { return }
@@ -464,12 +470,13 @@ final class MeetingDetailModel {
                 notices.push(StackedNotice(text: done, actions: [.undo { [weak self] id in
                     self?.revert(token: entry.token, items: nil, replacing: id)
                 }]))
+                applied?()
             } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
                 busy.remove(key)
-                change(key, args, done: done, reloadTranscript: reloadTranscript)
+                change(key, args, done: done, reloadTranscript: reloadTranscript, applied: applied)
             } catch {
                 notices.push(.meetingsFailure(error) { [weak self] in
-                    self?.journalChange(key, action, done: done, orRun: args, reloadTranscript: reloadTranscript)
+                    self?.journalChange(key, action, done: done, orRun: args, reloadTranscript: reloadTranscript, applied: applied)
                 })
             }
         }

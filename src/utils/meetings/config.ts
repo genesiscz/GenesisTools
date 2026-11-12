@@ -20,7 +20,10 @@ import {
     type PersonRef,
     pairedPersonSchema,
     removeEntryPairings,
+    removeSourcePairing,
     samePerson,
+    type UnpairResult,
+    withoutSelf,
 } from "./people";
 import { MEETING_SOURCE_IDS, type MeetingSourceId } from "./sources";
 
@@ -1022,6 +1025,53 @@ export class MeetingsConfigStore {
             const match = objectAt(objectAt(objectAt(raw, "projects"), options.project), "match");
             match.people = addPairings(rawPeople(match.people), options.people, options.by);
         });
+    }
+
+    /** Pairs only previously unpaired people in one atomic write and returns exactly what that write added. */
+    async pairUnpairedPeople(options: {
+        project: string;
+        people: Array<{ person: PersonRef; by: PairedBy }>;
+    }): Promise<Array<{ name: string; email?: string; by: PairedBy }>> {
+        projectNameSchema.parse(options.project);
+        let added: Array<{ name: string; email?: string; by: PairedBy }> = [];
+        const allowed = withoutSelf(options.people.map((entry) => entry.person));
+        await this.update((raw) => {
+            added = [];
+            const project = objectAt(raw, "projects")[options.project];
+            if (!isObject(project)) {
+                throw new Error(`No project ${options.project}.`);
+            }
+            const match = objectAt(project, "match");
+            let people = rawPeople(match.people);
+            for (const { person, by } of options.people) {
+                if (
+                    !allowed.some((candidate) => samePerson(candidate, person)) ||
+                    people.some((existing) => samePerson(existing, person))
+                ) {
+                    continue;
+                }
+                people = addPairings(people, [person], by);
+                added.push({ name: person.name, ...(person.email ? { email: person.email } : {}), by });
+            }
+            match.people = people;
+        });
+        return added;
+    }
+
+    /** Undo one pairing source without removing another relationship of the same person. */
+    async unpairSource(project: string, person: PersonRef, source: PairedBy): Promise<UnpairResult["removed"]> {
+        let removed: UnpairResult["removed"] = [];
+        await this.update((raw) => {
+            const settings = objectAt(raw, "projects")[project];
+            const match = isObject(settings) && isObject(settings.match) ? settings.match : undefined;
+            if (!match) {
+                return;
+            }
+            const result = removeSourcePairing(rawPeople(match.people), person, source);
+            match.people = result.people;
+            removed = result.removed;
+        });
+        return removed;
     }
 
     /** Removes the pairings one calendar entry made, in every project; a person another source pairs stays. */

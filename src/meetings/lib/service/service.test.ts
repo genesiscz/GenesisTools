@@ -1098,6 +1098,35 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(overview.meetings.map((one) => one.id)).toEqual([RETRO.id, REVIEW.id]);
     });
 
+    test("manual assignment pairs only its meeting and Undo removes only its own source", async () => {
+        const { client, store, config } = await ADAPTERS[kind]();
+        await config.addProject("Atlas");
+        await store.update(RETRO.id, { command: "test", change: "another project meeting" }, (record) => {
+            record.project = "Atlas";
+            record.participants = [{ name: "Bob Example", from: ["calendar"] }];
+        });
+        const receipt = await client.call("projects.pairFromMeetings", { project: "Atlas", meeting: REVIEW.id });
+        expect(receipt.paired.map((person) => person.name)).toEqual(["Alex Example"]);
+        const added = receipt.paired[0];
+        if (!added) {
+            throw new Error("pairing receipt missing");
+        }
+        const later = { kind: "calendar" as const, from: "calendar", entryId: "later", at: NOW.toISOString() };
+        await config.pairPeople({ project: "Atlas", people: [{ name: added.name }], by: later });
+        expect(
+            await client.call("projects.unpair", { project: "Atlas", person: { name: added.name }, by: added.by })
+        ).toEqual({ removed: [{ name: added.name, project: "Atlas", left: false }] });
+        expect((await new MeetingsConfigStore(config.storage).read()).projects.Atlas?.match?.people).toEqual([
+            { name: added.name, pairedBy: [later] },
+        ]);
+        expect(
+            (await client.call("projects.meetingPeople", { project: "Atlas" })).map((person) => person.name)
+        ).toEqual(["Bob Example"]);
+        const moved = await failure(client.call("projects.pairFromMeetings", { project: "Other", meeting: REVIEW.id }));
+        expect(moved.message).toContain("no longer has project Other");
+        expect(moved).toMatchObject({ code: "project-changed" });
+    });
+
     test("the projects: add, labels, preview, rename, unpair and remove answer what their commands print", async () => {
         const { client, store, config } = await ADAPTERS[kind]();
 

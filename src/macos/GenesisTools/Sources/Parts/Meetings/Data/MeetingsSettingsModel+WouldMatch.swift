@@ -63,6 +63,11 @@ extension MeetingsSettingsModel {
                 }] : []
                 notices.push(StackedNotice(text: undoable ? Self.projectNote(row.title, to: project) : "Undone: \(Self.projectNote(row.title, to: project))",
                                            actions: actions))
+                if undoable, let project {
+                    MeetingProjectPairing.offer(meeting: row.id, project: project, service: service, notices: notices) { [weak self] in
+                        self?.loadSettings()
+                    }
+                }
             } catch {
                 notices.push(.meetingsFailure(error) { [weak self] in self?.setMeetingProject(row, to: project, undoable: undoable) })
             }

@@ -58,8 +58,8 @@ extension MeetingsSettingsModel {
             do {
                 let refs = people?.map { MeetingsAPI.ProjectsUnpair.Person(name: $0.name, email: $0.email) }
                 let result = try await service.call(MeetingsAPI.ProjectsPairFromMeetings.self, .init(project: project, people: refs))
-                let undo = StackedNotice.Action("Undo", symbol: "arrow.uturn.backward") { [weak self] _ in
-                    self?.unpairPaired(result.paired, from: project)
+                let undo = StackedNotice.Action.undo { [weak self] id in
+                    self?.unpairPaired(result.paired, from: project, replacing: id)
                 }
                 notices.push(StackedNotice(text: Self.pairedNote(result.paired, project: project), actions: result.paired.isEmpty ? [] : [undo]))
             } catch {
@@ -69,18 +69,21 @@ extension MeetingsSettingsModel {
         }
     }
 
-    /// The Undo of a pairing from the meetings: each person it paired leaves the project again.
-    private func unpairPaired(_ paired: [MeetingsAPI.ProjectsPairFromMeetings.Paired], from project: String) {
-        guard let service else { return }
+    /// The Undo of a pairing from the meetings removes only the sources that operation added.
+    private func unpairPaired(_ paired: [MeetingsAPI.ProjectsPairFromMeetings.Paired], from project: String,
+                              replacing notice: StackedNotice.ID) {
+        guard let service else { notices.release(notice); return }
         Task {
             do {
                 for person in paired {
                     _ = try await service.call(MeetingsAPI.ProjectsUnpair.self,
-                                               .init(project: project, person: .init(name: person.name, email: person.email)))
+                                               .init(project: project, person: .init(name: person.name, email: person.email), by: person.by))
                 }
-                notices.push(StackedNotice(text: "Unpaired \(Plural.count(paired.count, "person", "people")) from \(project) again"))
+                notices.push(StackedNotice(text: "New pairings with \(project) undone"), replacing: notice)
             } catch {
-                notices.push(.meetingsFailure(error) { [weak self] in self?.unpairPaired(paired, from: project) })
+                notices.push(.meetingsFailure(error) { [weak self] in
+                    self?.unpairPaired(paired, from: project, replacing: notice)
+                }, replacing: notice)
             }
             loadSettings()
         }
