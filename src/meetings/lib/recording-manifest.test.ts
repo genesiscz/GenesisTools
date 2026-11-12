@@ -635,6 +635,17 @@ describe("the frame index and the OCR worker (two phases)", () => {
         expect([lastSecond?.getHours(), lastSecond?.getMinutes(), lastSecond?.getSeconds()]).toEqual([23, 59, 59]);
     });
 
+    it("a local OCR reread time before the meeting start refers to the next calendar day", () => {
+        const start = new Date(2026, 10, 11, 23, 30);
+        const expected = new Date(2026, 10, 12, 0, 20);
+        expect(parseRereadSince("00:20", { start: start.toISOString() })?.getTime()).toBe(expected.getTime());
+        expect(parseRereadSince("23:45", { start: start.toISOString() })?.getTime()).toBe(
+            new Date(2026, 10, 11, 23, 45).getTime()
+        );
+        const absolute = new Date(2026, 10, 11, 0, 20).toISOString();
+        expect(parseRereadSince(absolute, { start: start.toISOString() })?.toISOString()).toBe(absolute);
+    });
+
     it("ensureOcrWorkers starts a worker only for a recent meeting with frames that have no OCR row", async () => {
         const waiting = await meetingWith([{ name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" }]);
         const read = await meetingWith([{ name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" }]);
