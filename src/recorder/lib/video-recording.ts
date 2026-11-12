@@ -212,8 +212,11 @@ export async function recordedNothing(folder: string): Promise<boolean> {
 
 /** What went wrong with a recording's camera movie at its end. */
 export interface CameraEndProblem {
-    /** `camera-missing`: no camera.json came; `camera-unaligned`: the movie could not be cut to the screen's spans. */
-    code: "camera-missing" | "camera-unaligned";
+    /**
+     * `camera-missing`: no camera.json came; `camera-unaligned`: the movie could not be cut to the screen's spans;
+     * `camera-leftover`: the movie is cut, but its uncut original could not be removed and still holds the cut footage.
+     */
+    code: "camera-missing" | "camera-unaligned" | "camera-leftover";
     message: string;
 }
 
@@ -258,7 +261,11 @@ export async function endRecordingCamera({
 
     const aligned = await align({ folder, spans });
     log.info({ folder, spans: spans.length, result: aligned.result }, "the camera movie is lined up with the screen");
-    return aligned.warning ? { code: "camera-unaligned", message: aligned.warning } : undefined;
+    if (!aligned.warning) {
+        return undefined;
+    }
+
+    return { code: aligned.result === "trimmed" ? "camera-leftover" : "camera-unaligned", message: aligned.warning };
 }
 
 /**

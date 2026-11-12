@@ -1700,6 +1700,7 @@ private final class ScreenStreamHost {
     private func restart(on target: CGDirectDisplayID) {
         let geometry = displayGeometry(target)
         do {
+            // The old stream is gone with its display: a new one that cannot leave the window out ends the recording.
             let requested = options.selection.excludedWindowIDs
             let content = try awaitResult(timeoutSeconds: 10) { try await listedContent(requested) }
             guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else { return }

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { validateNativeCapturePlan } from "./capture-native";
 import type { Plan } from "./capture-plan";
-import type { CaptureAttempt } from "./peekaboo";
+import type { CaptureAttempt, CountdownHold } from "./peekaboo";
 
 /**
  * The recorder child is a fake: `startCapture` returns it, and `killTree` only records the pid,
@@ -24,10 +24,23 @@ const startCalls: string[][] = [];
 const killed: number[] = [];
 let onKill: (pid: number) => void = () => {};
 const published: unknown[][] = [];
+/** The countdown and recorder start, in order; the countdown fake calls `lastSecond` when it gets a hold. */
+const order: string[] = [];
 
 mock.module("./peekaboo", () => ({
     ...realPeekaboo,
+    runCountdown: async (_sec: number, { hold }: { hold?: CountdownHold } = {}) => {
+        order.push("countdown");
+
+        if (hold) {
+            hold.lastSecond({ excludeWindowIds: [4242] });
+            await hold.until;
+        }
+
+        order.push("zero");
+    },
     startCapture: (argv: string[], signal?: AbortSignal) => {
+        order.push("start");
         startCalls.push(argv);
         return startImpl(argv, signal);
     },
@@ -144,6 +157,7 @@ function regionPlan(extra: Partial<Plan> = {}): Plan {
 
 function reset(recorder?: FakeRecorder): void {
     startCalls.length = 0;
+    order.length = 0;
     killed.length = 0;
     published.length = 0;
     onKill = (pid) => {
@@ -193,6 +207,19 @@ describe("recorder lifetime", () => {
         });
         expect(targets).toEqual(["Fixture"]);
         expect(result.actions[0]).toMatchObject({ ok: false, error: "focus refused" });
+    });
+
+    test("with the peekaboo backend the countdown reaches zero before the recorder starts, so its panel is not filmed", async () => {
+        const recorder = fakeRecorder({ envelope: { ok: true, data: { frames: [] } } });
+        reset(recorder);
+        recorder.finish(0);
+        const plan = regionPlan();
+        const result = await runCapturePlanWithSignal({
+            plan: { ...plan, capture: { ...plan.capture, countdownSec: 3 } },
+            signal: new AbortController().signal,
+        });
+        expect(result.ok).toBe(true);
+        expect(order).toEqual(["countdown", "zero", "start"]);
     });
 
     test("a recorder that exits 0 with an ok envelope completes the run", async () => {

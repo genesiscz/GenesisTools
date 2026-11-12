@@ -419,11 +419,13 @@ circle, rounded or square); drag it before or while recording. The movie leaves 
 into `camera.mov` beside `screen.mp4`. The camera movie runs on the wall clock, pauses included. At the end the face
 writes `camera.json` (`version`, `file`, `startedAt`, `screenStartedAt`, `clock: "wall"`,
 `placement: { x, y, size, shape }`), and the recording lines the camera up with the screen: it writes each kept
-segment's first frame and length into `recording.json` (`settings.video.spans`), cuts `camera.mov` to those spans when
-there are two or more (a pause, a 180 s rollover, a rate change or a switch leaves a gap the screen movie does not
-have), and sets `camera.json` to count from the screen's first frame (`clock: "screen"`, offset 0 after a cut). A cut
-that fails keeps the movie, still counts from the first frame, and adds a warning (`camera-unaligned`). A new edit
-takes it as `camera` in `edit.json`:
+segment's first frame and measured length into `recording.json` (`settings.video.spans`) and cuts `camera.mov` to
+every span. A single span is cut too: the camera keeps filming during a pause before Stop. Pauses, a capture limit,
+rate changes and display switches can leave gaps that the screen movie does not have. After a cut, `camera.json`
+counts from the screen's first frame (`clock: "screen"`, offset 0). A cut that fails retains the original movie and
+adds `camera-unaligned`. If its uncut original (`.camera-original-*.mov`) cannot be removed, `camera-leftover` names
+the file. That uncut file still holds the excluded periods; remove it before sharing the folder. A new edit takes
+the aligned movie as `camera` in `edit.json`:
 
 ```json
 "camera": { "file": "camera.mov", "offsetMs": 0, "show": true, "corner": "custom", "x": 0.88, "y": 0.82,

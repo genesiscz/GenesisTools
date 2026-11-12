@@ -1,6 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -4431,7 +4441,7 @@ describe("the camera on the screen's clock", () => {
         });
     });
 
-    test("one span needs no cut: the offset counts from the screen's first frame, not from when the face saw it", async () => {
+    test("one span is cut too, so the camera's footage of a pause before the stop leaves camera.mov", async () => {
         const folder = folderWith({
             startedAt: iso(T0 + 250),
             screenStartedAt: iso(T0),
@@ -4443,13 +4453,17 @@ describe("the camera on the screen's clock", () => {
             spans: [{ sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 8000 }],
             runCommand: async (command) => {
                 commands.push(command);
+                writeFileSync(command.at(-1) ?? "", "cut camera movie");
             },
         });
-        expect(result).toEqual({ result: "offset" });
-        expect(commands).toEqual([]);
+        expect(result).toEqual({ result: "trimmed" });
+        expect(commands).toHaveLength(1);
+        // Only the span's 8 s from 1.15 s of camera time stay: the paused tail after it is cut away.
+        expect(commands[0]?.join(" ")).toContain("select='gte(t,1.150000)*lt(t,9.150000)'");
+        expect(readFileSync(join(folder, "camera.mov"), "utf8")).toBe("cut camera movie");
         const sidecar = readCameraSidecar(join(folder, "screen.mp4"));
-        expect(sidecar?.screenStartedAt).toBe(iso(T0 + 1400));
-        expect(sidecar && bubbleFromSidecar(sidecar).offsetMs).toBe(-1150);
+        expect(sidecar).toMatchObject({ screenStartedAt: iso(T0 + 1400), clock: "screen" });
+        expect(sidecar && bubbleFromSidecar(sidecar).offsetMs).toBe(0);
     });
 
     test("a face that left out the paused time it saw is not cut: only its offset moves to the first frame", async () => {
@@ -4484,10 +4498,71 @@ describe("the camera on the screen's clock", () => {
         });
         expect(result.result).toBe("offset");
         expect(result.warning).toContain("ffmpeg exited 1");
+        expect(result.warning).toContain("camera.mov still holds the footage filmed during the pauses");
         expect(readFileSync(join(folder, "camera.mov"), "utf8")).toBe("raw camera movie");
         const sidecar = readCameraSidecar(join(folder, "screen.mp4"));
         expect(sidecar?.screenStartedAt).toBe(iso(T0 + 1400));
         expect(sidecar?.clock).toBe("wall");
+
+        // One span: no pause inside it to drift over, but the movie still holds what the screen movie left out.
+        const single = folderWith({ startedAt: iso(T0 + 250), screenStartedAt: iso(T0), clock: "wall" });
+        const one = await alignCameraMovie({
+            folder: single,
+            spans: [{ sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 2000 }],
+            runCommand: async () => {
+                throw new Error("ffmpeg exited 1");
+            },
+        });
+        expect(one.warning).toContain("camera.mov still holds footage the screen movie left out");
+        expect(one.warning).not.toContain("drifts");
+    });
+
+    test("a cut whose uncut original cannot be removed says so and names the file", async () => {
+        const folder = folderWith({ startedAt: iso(T0 + 250), screenStartedAt: iso(T0), clock: "wall" });
+        const unlink = fsPromises.unlink;
+        // Only the original's removal fails, as on a folder that lost its write permission after the sidecar.
+        const spy = spyOn(fsPromises, "unlink").mockImplementation((path) =>
+            String(path).includes(".camera-original-")
+                ? Promise.reject(new Error("EACCES: permission denied"))
+                : unlink(path)
+        );
+
+        try {
+            const result = await alignCameraMovie({
+                folder,
+                spans: [{ sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 8000 }],
+                runCommand: async (command) => {
+                    writeFileSync(command.at(-1) ?? "", "cut camera movie");
+                },
+            });
+            const left = readdirSync(folder).filter((name) => name.startsWith(".camera-original-"));
+
+            expect(result.result).toBe("trimmed");
+            expect(left).toHaveLength(1);
+            expect(result.warning).toContain(join(folder, left[0] ?? ""));
+            expect(result.warning).toContain("EACCES");
+            expect(readFileSync(join(folder, "camera.mov"), "utf8")).toBe("cut camera movie");
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    test("a cut whose camera.json cannot be written puts the uncut movie back, so no later alignment cuts it twice", async () => {
+        const folder = folderWith({ startedAt: iso(T0 + 250), screenStartedAt: iso(T0), clock: "wall" });
+        // A folder where the sidecar's partial file goes: every sidecar write fails, as on a full disk.
+        mkdirSync(join(folder, `${CAMERA_SIDECAR}.partial`));
+        const run = alignCameraMovie({
+            folder,
+            spans: [{ sourceStartMs: 0, firstFrameEpochMs: T0 + 1400, lengthMs: 8000 }],
+            runCommand: async (command) => {
+                writeFileSync(command.at(-1) ?? "", "cut camera movie");
+            },
+        });
+
+        await expect(run).rejects.toThrow();
+        expect(readFileSync(join(folder, "camera.mov"), "utf8")).toBe("raw camera movie");
+        expect(readCameraSidecar(join(folder, "screen.mp4"))?.clock).toBe("wall");
+        expect(readdirSync(folder).filter((name) => name.startsWith(".camera-"))).toEqual([]);
     });
 
     test.skipIf(skip.integration)(
