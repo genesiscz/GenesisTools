@@ -3668,6 +3668,22 @@ struct ScopeMenu: View {
     }
 }
 
+/// The same proposal and newer-push feedback in either redesign diff.
+struct ReviewVariantStatus: View {
+    @ObservedObject var model: ReviewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let proposal = model.proposal { ProposalBanner(model: model, proposal: proposal) }
+            if let news = model.pushNews, model.dismissedNewsHead != news.newest.headSha {
+                PushNewsBanner(model: model, news: news)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+            }
+        }
+    }
+}
+
 /// The agent's overall verdict above the diff, with a tally of what Martin decided so far.
 /// Chip, then three lines: who reviewed what (one line), the counts (one line, or two short ones in a
 /// narrow pane), the summary. The counts used to share the title's row and broke "!1234" in two.
