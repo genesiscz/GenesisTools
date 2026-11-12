@@ -25,6 +25,10 @@ export async function probeMedia(file: string): Promise<{ seconds: number; audio
         data.streams.find((stream) => stream.codec_type === "video") ??
         data.streams.find((stream) => stream.codec_type === "audio");
     const duration = Number(selected?.duration);
+    if (selected?.codec_type === "video" && (!Number.isFinite(duration) || duration <= 0)) {
+        throw new Error("Cannot determine video stream duration; remux to a format with a measured picture duration");
+    }
+
     return {
         seconds: Number.isFinite(duration) && duration > 0 ? duration : data.format.duration,
         audio: data.streams.some((stream) => stream.codec_type === "audio"),

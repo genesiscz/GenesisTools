@@ -69,6 +69,22 @@ describe("music score and MIDI", () => {
         expect(midi.includes(Buffer.from([0x80, 60, 0]))).toBe(true);
     });
 
+    test("ends a held pitch before retriggering it on the same channel", () => {
+        const midi = encodeMidi({
+            ...minimal,
+            parts: [
+                {
+                    ...minimal.parts[0],
+                    notes: [
+                        { at: 0, duration: 1.5, midi: 60, velocity: 90 },
+                        { at: 1, duration: 1.5, midi: 60, velocity: 90 },
+                    ],
+                },
+            ],
+        });
+        expect(midi.includes(Buffer.from([0x87, 0x40, 0x80, 60, 0, 0, 0x90, 60, 90]))).toBe(true);
+    });
+
     test("keeps drums on channel 10 and skips it for pitched voices", () => {
         const part = minimal.parts[0];
         const score = {
@@ -184,6 +200,27 @@ describe("measurement, effects and publishing", () => {
         });
         try {
             expect(await probeMedia("fixture.mp4")).toEqual({ seconds: 1, video: true, audio: true });
+        } finally {
+            exec.mockRestore();
+        }
+    });
+
+    test("refuses an unknown picture duration instead of using an audio tail", async () => {
+        const exec = spyOn(Executor.prototype, "exec").mockResolvedValue({
+            success: true,
+            exitCode: 0,
+            stderr: "",
+            stdout: '{"streams":[{"codec_type":"video","duration":"N/A"},{"codec_type":"audio","duration":"2"}],"format":{"duration":"2"}}',
+        });
+        try {
+            await expect(probeMedia("fixture.mkv")).rejects.toThrow("video stream duration");
+            exec.mockResolvedValue({
+                success: true,
+                exitCode: 0,
+                stderr: "",
+                stdout: '{"streams":[{"codec_type":"audio"}],"format":{"duration":"2"}}',
+            });
+            expect(await probeMedia("fixture.wav")).toEqual({ seconds: 2, video: false, audio: true });
         } finally {
             exec.mockRestore();
         }

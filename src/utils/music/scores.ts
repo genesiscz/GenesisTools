@@ -15,13 +15,15 @@ const volumes: Partial<Record<keyof typeof tracks, readonly number[]>> = {
 };
 
 function trackKey(value: string): keyof typeof tracks {
-    const entry = Object.keys(tracks).find((key) => key.toLowerCase() === value.toLowerCase());
+    const entry = Object.keys(tracks).find(
+        (key): key is keyof typeof tracks => key in tracks && key.toLowerCase() === value.toLowerCase()
+    );
 
-    if (entry === undefined || !(entry in tracks)) {
+    if (entry === undefined) {
         throw new Error(`Unknown track ${value}; choose ${TRACK_KEYS.join(", ")}`);
     }
 
-    return entry as keyof typeof tracks;
+    return entry;
 }
 
 /** Original note patterns, voiced by sampled GM instruments instead of lavfi partials. */

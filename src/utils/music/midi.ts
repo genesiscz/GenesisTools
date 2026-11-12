@@ -82,12 +82,19 @@ export function encodeMidi(input: Score): Buffer {
             { tick: 0, order: -1, bytes: [0xb0 | channel, 10, part.pan] },
         ];
 
-        for (const note of part.notes) {
+        const nextStartByPitch = new Map<number, number>();
+        const notes = [...part.notes].sort((a, b) => b.at - a.at);
+        for (const note of notes) {
             const start = ticks(note.at);
+            const end = Math.min(
+                Math.max(start + 1, ticks(note.at + note.duration)),
+                nextStartByPitch.get(note.midi) ?? Infinity
+            );
+            nextStartByPitch.set(note.midi, start);
             events.push(
                 { tick: start, order: 1, bytes: [0x90 | channel, note.midi, note.velocity] },
                 {
-                    tick: Math.max(start + 1, ticks(note.at + note.duration)),
+                    tick: end,
                     order: 0,
                     bytes: [0x80 | channel, note.midi, 0],
                 }
