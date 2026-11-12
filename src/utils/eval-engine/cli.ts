@@ -153,7 +153,7 @@ function options<T>(schema: z.ZodType<T>, raw: unknown): T {
 
 const StringList = z.array(z.string());
 
-function parseJsonText(text: string, what: string): unknown {
+function parseEvalOptionJson(text: string, what: string): unknown {
     try {
         return JSON.parse(text);
     } catch (error) {
@@ -329,7 +329,11 @@ export function createEvalCommand<TSetup, TSignals, TTool extends string, THandl
                             "--stdin takes its scenarios from stdin; do not name ids too"
                         );
                     }
-                    scenarios = parseAdHocScenarios(project, parseJsonText(await io.readStdin(), "stdin"), "stdin");
+                    scenarios = parseAdHocScenarios(
+                        project,
+                        parseEvalOptionJson(await io.readStdin(), "stdin"),
+                        "stdin"
+                    );
                 } else if (!scenarioIds.length && !matrix && opts.tag?.length) {
                     scenarios = await loadScenarios(project);
                 } else {
@@ -382,7 +386,7 @@ export function createEvalCommand<TSetup, TSignals, TTool extends string, THandl
                             model: opts.model,
                             variant: opts.variant,
                             repeats: opts.repeats,
-                            setup: opts.setup === undefined ? undefined : parseJsonText(opts.setup, "--setup"),
+                            setup: opts.setup === undefined ? undefined : parseEvalOptionJson(opts.setup, "--setup"),
                             target: opts.target,
                         },
                         { concurrency: opts.concurrency, signal, clock: io.clock }
@@ -406,7 +410,7 @@ export function createEvalCommand<TSetup, TSignals, TTool extends string, THandl
                 const scenarioIds = StringList.parse(ids);
                 const matrix = opts.matrix ? findMatrix(project, opts.matrix) : undefined;
                 const scenarios = opts.stdin
-                    ? parseAdHocScenarios(project, parseJsonText(await io.readStdin(), "stdin"), "stdin")
+                    ? parseAdHocScenarios(project, parseEvalOptionJson(await io.readStdin(), "stdin"), "stdin")
                     : scenarioIds.length || matrix
                       ? await selectProjectScenarios(project, { ids: scenarioIds, matrix })
                       : await loadScenarios(project);
