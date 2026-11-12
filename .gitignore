@@ -265,4 +265,4 @@ test-worker-log.jsonl
 .biome-staged.*
 
 # Scenario evaluation transcripts and immutable run records
-/.evals/
+.evals/
