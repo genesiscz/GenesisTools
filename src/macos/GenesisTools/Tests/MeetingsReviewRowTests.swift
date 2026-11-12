@@ -280,6 +280,14 @@ final class MeetingsReviewRowTests: XCTestCase {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = false
+            // This checks rendered words, not GPU inference. Shared GPU initialization can fail before OCR starts.
+            for (stage, devices) in try request.supportedComputeStageDevices {
+                let cpu = try XCTUnwrap(devices.first { device in
+                    if case .cpu = device { return true }
+                    return false
+                }, "OCR needs a CPU device for \(stage)")
+                request.setComputeDevice(cpu, for: stage)
+            }
             try VNImageRequestHandler(cgImage: held).perform([request])
             let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
             XCTAssertTrue(text.contains("Dana Example"), text)
