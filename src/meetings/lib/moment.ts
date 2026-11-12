@@ -810,10 +810,11 @@ export async function clipMoment(
         cut?: typeof cutClip;
         control?: Pick<CutControl, "signal" | "onProgress">;
         /** The recording's audio streams; ffprobe reads them when absent. */
-        probe?: (path: string) => Promise<{ tracks: number }>;
+        probe?: (path: string, options?: { signal?: AbortSignal }) => Promise<{ tracks: number }>;
     }
 ): Promise<Moment & { path: string }> {
     const { store, record } = options;
+    options.control?.signal?.throwIfAborted();
     const opened = options.opened ?? OpenedMeeting.of(store, record);
     const moment = await momentIn(opened, options);
     const audioPath = await opened.audioPath();
@@ -833,10 +834,13 @@ export async function clipMoment(
     mkdirSync(dirname(path), { recursive: true });
 
     try {
-        const { tracks } = await (options.probe ?? probeAudio)(audioPath).catch((error: unknown) => {
-            log.debug({ error, audioPath }, "the recording's tracks do not read; it is cut as one track");
-            return { tracks: 1 };
-        });
+        const { tracks } = await (options.probe ?? probeAudio)(audioPath, { signal: options.control?.signal }).catch(
+            (error: unknown) => {
+                options.control?.signal?.throwIfAborted();
+                log.debug({ error, audioPath }, "the recording's tracks do not read; it is cut as one track");
+                return { tracks: 1 };
+            }
+        );
         await (options.cut ?? cutClip)({
             audioPath,
             outPath: partial,

@@ -536,6 +536,17 @@ describe("rows --json: the review rows (F3)", () => {
         expect(reviewRow(record, record.items[2]!).answer).toBeUndefined();
     });
 
+    test.each(["rejected", "suggested"] as const)(
+        "a %s question does not publish its retained answer",
+        async (status) => {
+            const { reviewRow } = await import("./review-rows");
+            const question = { ...record.items[5]!, status };
+            expect(question).toMatchObject({ kind: "question", answer: "EMP" });
+            expect(reviewRow(record, question).answer).toBeUndefined();
+            expect(question).toMatchObject({ status, answer: "EMP" });
+        }
+    );
+
     test("a question reads as parts: who, when, what it asks without the baked time, what it settles", async () => {
         const { reviewRow } = await import("./review-rows");
         const speaker = reviewRow(record, record.items[3]!);

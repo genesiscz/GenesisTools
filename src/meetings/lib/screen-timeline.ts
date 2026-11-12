@@ -5,6 +5,8 @@ import { changedLines, frameBoxes, imageSize, type OcrBox } from "@genesiscz/uti
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { CallTimeline } from "./call-timeline";
 import { hasFrameIndex } from "./frame-index";
+import { readRecorderState } from "./recorder-shared";
+import { type ScreenCaptureCoverage, screenCaptureCoverage } from "./screen";
 import { readScreenRows } from "./screen-boxes";
 
 const { log } = logger.scoped("meetings-screen-timeline");
@@ -64,7 +66,7 @@ export function displayFocusSpans(
     return spans.filter((span) => span.toSec === undefined || span.toSec > span.fromSec);
 }
 
-export interface ScreenTimeline {
+export interface ScreenTimeline extends ScreenCaptureCoverage {
     meeting: string;
     folder: string;
     displays: Array<{ id?: number; name?: string; frames: number }>;
@@ -93,6 +95,12 @@ export async function screenTimeline(options: {
     }
 
     const zeroMs = (await CallTimeline.forRecord(record)).zeroMs;
+    const recorder = readRecorderState(store);
+    const live =
+        recorder.running && recorder.state?.meetingId === record.id && !recorder.state.paused
+            ? recorder.state
+            : undefined;
+    const coverage = screenCaptureCoverage({ record, zeroMs, live });
     const screenRows = readScreenRows(folder);
     const rows = screenRows.rows.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
     const sizes = new Map<number | undefined, { width: number; height: number }>();
@@ -152,6 +160,7 @@ export async function screenTimeline(options: {
     return {
         meeting: record.id,
         folder,
+        ...coverage,
         ...(focusSpans.length ? { focusSpans } : {}),
         displays: [...counts].map(([id, count]) => ({
             ...(id !== undefined ? { id } : {}),

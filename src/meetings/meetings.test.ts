@@ -27,6 +27,7 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import * as bounded from "@genesiscz/utils/process/bounded-command";
 import {
     buildPidRecord,
     clearPidFile,
@@ -90,8 +91,10 @@ import {
     recorderAcknowledged,
     recorderFiles,
 } from "./lib/recorder-shared";
-import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
+import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary, screenCaptureCoverage } from "./lib/screen";
 import { framesMatching, ocrRowSchema, readOcrRows, renderScreenBoxes } from "./lib/screen-boxes";
+import { InProcessMeetingsClient } from "./lib/service/client";
+import { readScreen } from "./lib/service/reads-handlers";
 import { showText } from "./lib/show-text";
 import {
     addPolish,
@@ -5153,6 +5156,92 @@ test("audio processing kills expired children and names the affected audio", asy
     }
 });
 
+describe("bounded audio probe", () => {
+    const output = SafeJSON.stringify({
+        streams: [{ codec_type: "video" }, { codec_type: "audio", channels: 2 }],
+        format: { duration: "2.5" },
+    });
+
+    test.each([
+        ["ETIMEDOUT", "timed out"],
+        ["ENOBUFS", "output exceeded"],
+    ])("reports %s with the affected file", async (code, message) => {
+        const { probeAudio } = await import("./lib/audio");
+        const originalSpawn = Bun.spawn;
+        const which = spyOn(Bun, "which").mockReturnValue("/fixture/ffprobe");
+        const spawn = spyOn(Bun, "spawn").mockImplementation(() =>
+            originalSpawn(["/bin/echo", output], { stdout: "pipe", stderr: "pipe" })
+        );
+        const run = spyOn(bounded, "boundedCommand").mockResolvedValue({
+            status: null,
+            signal: "SIGTERM",
+            stdout: "",
+            stderr: "",
+            error: Object.assign(new Error("fixture failure"), { code }),
+        });
+        try {
+            await expect(probeAudio("fixture-tone.wav")).rejects.toThrow(message);
+            await expect(probeAudio("fixture-tone.wav")).rejects.toThrow("fixture-tone.wav");
+            expect(run.mock.calls[0]?.[0]).toMatchObject({ timeoutMs: 10_000, maxBufferBytes: 65_536 });
+        } finally {
+            run.mockRestore();
+            spawn.mockRestore();
+            which.mockRestore();
+        }
+    });
+
+    test("cancellation during a probe is propagated and passed to the bounded runner", async () => {
+        const { probeAudio } = await import("./lib/audio");
+        const originalSpawn = Bun.spawn;
+        const which = spyOn(Bun, "which").mockReturnValue("/fixture/ffprobe");
+        const spawn = spyOn(Bun, "spawn").mockImplementation(() =>
+            originalSpawn(["/bin/echo", output], { stdout: "pipe", stderr: "pipe" })
+        );
+        const controller = new AbortController();
+        const reason = new DOMException("stop probing", "AbortError");
+        const run = spyOn(bounded, "boundedCommand").mockImplementation(async () => {
+            controller.abort(reason);
+            return {
+                status: null,
+                signal: "SIGTERM",
+                stdout: "",
+                stderr: "",
+                error: Object.assign(new Error("cancelled"), { code: "ABORT_ERR" }),
+            };
+        });
+        try {
+            await expect(probeAudio("fixture-tone.wav", { signal: controller.signal })).rejects.toBe(reason);
+            expect(run.mock.calls[0]?.[0].signal).toBe(controller.signal);
+        } finally {
+            run.mockRestore();
+            spawn.mockRestore();
+            which.mockRestore();
+        }
+    });
+
+    test("a successful bounded probe retains the audio-only result shape", async () => {
+        const { probeAudio } = await import("./lib/audio");
+        const originalSpawn = Bun.spawn;
+        const spawn = spyOn(Bun, "spawn").mockImplementation(() =>
+            originalSpawn(["/bin/echo", output], { stdout: "pipe", stderr: "pipe" })
+        );
+        const which = spyOn(Bun, "which").mockReturnValue("/fixture/ffprobe");
+        const run = spyOn(bounded, "boundedCommand").mockResolvedValue({
+            status: 0,
+            signal: null,
+            stdout: output,
+            stderr: "",
+        });
+        try {
+            expect(await probeAudio("fixture-tone.wav")).toEqual({ tracks: 1, channels: 2, durationSec: 2.5 });
+        } finally {
+            run.mockRestore();
+            spawn.mockRestore();
+            which.mockRestore();
+        }
+    });
+});
+
 describe.skipIf(!Bun.which("ffmpeg"))("audio clip source clock", () => {
     let movie: string;
     let silence: string;
@@ -5639,5 +5728,203 @@ describe("suggest: words said on purpose", () => {
         });
 
         expect([...settled.keys()].sort()).toEqual(["i1", "i3"]);
+    });
+});
+
+describe("saved screen capture coverage", () => {
+    test("capture intervals outlive unchanged frames, preserve pauses and use the transcript clock", async () => {
+        const store = new MeetingStore(new Storage("screen-capture-coverage"));
+        const zero = Date.parse("2026-11-05T08:00:00.000Z");
+        const at = (second: number) => new Date(zero + second * 1000).toISOString();
+        const saved = await store.create(
+            {
+                title: "Coverage fixture",
+                start: at(0),
+                createdBy: "record",
+                recording: {
+                    status: "stopped",
+                    clock: { source: "fixture", startedAt: at(5) },
+                    spans: [
+                        { from: at(0), to: at(180) },
+                        { from: at(240), to: at(300) },
+                    ],
+                    displaySpans: [
+                        { displayId: 1, from: at(0), to: at(300) },
+                        { displayId: 2, from: at(60), to: at(280) },
+                    ],
+                },
+            },
+            { command: "test", change: "fixture" }
+        );
+        const folder = store.folder(saved.id);
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        const image = createCanvas(20, 10).toBuffer("image/png");
+        const rows = [10, 20].map((second) => ({
+            file: `frames/f${second}.png`,
+            at: at(second),
+            displayId: 1,
+            text: "",
+            blocks: [],
+        }));
+        for (const row of rows) {
+            writeFileSync(join(folder, row.file), image);
+        }
+        writeFileSync(join(folder, "ocr.jsonl"), `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`);
+        const result = await readScreen({ meeting: saved.id, fromSec: 100, toSec: 150 }, store);
+        expect(result.frames).toEqual([]);
+        const client = new InProcessMeetingsClient({ deps: { store: () => new MeetingStore(store.storage) } });
+        try {
+            const wire = await client.call("meeting.screen", { meeting: saved.id, fromSec: 100, toSec: 150 });
+            expect(wire).toEqual(result);
+            const timeline = await client.call("meeting.timeline", { meeting: saved.id });
+            expect(timeline.recordingSpans).toEqual(result.recordingSpans);
+            expect(timeline.displaySpans).toEqual(result.displaySpans);
+        } finally {
+            client.close();
+        }
+        expect(result).toMatchObject({
+            recordingSpans: [
+                { fromSec: -5, toSec: 175 },
+                { fromSec: 235, toSec: 295 },
+            ],
+            displaySpans: [
+                { displayId: 1, fromSec: -5, toSec: 175 },
+                { displayId: 1, fromSec: 235, toSec: 295 },
+                { displayId: 2, fromSec: 55, toSec: 175 },
+                { displayId: 2, fromSec: 235, toSec: 275 },
+            ],
+        });
+    });
+});
+
+describe("capture coverage evidence", () => {
+    const zeroMs = Date.parse("2026-11-05T08:00:00.000Z");
+    const at = (second: number) => new Date(zeroMs + second * 1000).toISOString();
+    const coverage = (recording?: MeetingRecord["recording"]) =>
+        screenCaptureCoverage({
+            record: meetingRecordSchema.parse({ ...record, history: [], recording }),
+            zeroMs,
+        });
+
+    test("missing metadata remains unknown while explicit empty intervals mean no capture", () => {
+        expect(coverage()).toEqual({});
+        expect(coverage({ status: "stopped", startedAt: at(0), stoppedAt: at(60), frames: 2 })).toEqual({});
+        expect(coverage({ spans: [] })).toEqual({ recordingSpans: [] });
+        expect(coverage({ spans: [], displaySpans: [] })).toEqual({ recordingSpans: [], displaySpans: [] });
+        expect(coverage({ spans: [{ from: at(0), to: at(60) }], displaySpans: [] })).toEqual({
+            recordingSpans: [{ fromSec: 0, toSec: 60 }],
+        });
+    });
+
+    test("partial display history or a gap in its evidence stays unknown", () => {
+        for (const displaySpans of [
+            [{ displayId: 1, from: at(30), to: at(60) }],
+            [
+                { displayId: 1, from: at(0), to: at(20) },
+                { displayId: 2, from: at(30), to: at(60) },
+            ],
+        ]) {
+            expect(coverage({ spans: [{ from: at(0), to: at(60) }], displaySpans })).toEqual({
+                recordingSpans: [{ fromSec: 0, toSec: 60 }],
+            });
+        }
+        expect(
+            coverage({
+                spans: [{ from: at(0), to: at(60) }],
+                displaySpans: [
+                    { displayId: 1, from: at(0), to: at(30) },
+                    { displayId: 2, from: at(30), to: at(60) },
+                ],
+            })
+        ).toEqual({
+            recordingSpans: [{ fromSec: 0, toSec: 60 }],
+            displaySpans: [
+                { displayId: 1, fromSec: 0, toSec: 30 },
+                { displayId: 2, fromSec: 30, toSec: 60 },
+            ],
+        });
+    });
+
+    test("closed legacy history is coverage, but mixed history before display tracking is not display evidence", () => {
+        const historical = meetingRecordSchema.parse({
+            ...record,
+            history: [
+                { at: at(0), command: "record start", change: "created source record" },
+                { at: at(10), command: "record start", change: "display 1" },
+                { at: at(20), command: "record stop", change: "stopped" },
+            ],
+        });
+        expect(screenCaptureCoverage({ record: historical, zeroMs })).toEqual({
+            recordingSpans: [{ fromSec: 10, toSec: 20 }],
+        });
+        expect(
+            screenCaptureCoverage({
+                record: {
+                    ...historical,
+                    recording: {
+                        spans: [{ from: at(30), to: at(60) }],
+                        displaySpans: [{ displayId: 2, from: at(30), to: at(60) }],
+                    },
+                },
+                zeroMs,
+            })
+        ).toEqual({
+            recordingSpans: [
+                { fromSec: 10, toSec: 20 },
+                { fromSec: 30, toSec: 60 },
+            ],
+        });
+    });
+
+    test("open stored intervals need live ownership, not a persisted recording status", () => {
+        const open = meetingRecordSchema.parse({
+            ...record,
+            recording: {
+                status: "recording",
+                spans: [{ from: at(12.345) }],
+                displaySpans: [{ displayId: 1, from: at(12.345) }],
+            },
+        });
+        expect(screenCaptureCoverage({ record: open, zeroMs, nowMs: zeroMs + 20_789 })).toEqual({});
+        expect(
+            screenCaptureCoverage({
+                record: open,
+                zeroMs,
+                nowMs: zeroMs + 20_789,
+                live: { startedAt: at(10), displaySpans: [{ displayId: 2, from: at(12.345) }] },
+            })
+        ).toEqual({
+            recordingSpans: [{ fromSec: 12.345, toSec: 20.789 }],
+            displaySpans: [{ displayId: 2, fromSec: 12.345, toSec: 20.789 }],
+        });
+        expect(
+            screenCaptureCoverage({
+                record: open,
+                zeroMs,
+                nowMs: zeroMs + 20_789,
+                live: { startedAt: at(15) },
+            })
+        ).toEqual({});
+        expect(coverage({ status: "stopped", spans: [{ from: at(0) }] })).toEqual({});
+        expect(coverage({ status: "paused", spans: [{ from: at(0) }] })).toEqual({});
+    });
+
+    test("invalid or unfinished metadata cannot manufacture a positive coverage range", () => {
+        expect(coverage({ spans: [{ from: at(60), to: at(0) }] })).toEqual({});
+        expect(coverage({ spans: [{ from: at(0), to: at(0) }] })).toEqual({});
+        expect(
+            coverage({ spans: [{ from: at(0), to: at(60) }], displaySpans: [{ displayId: 1, from: at(0) }] })
+        ).toEqual({
+            recordingSpans: [{ fromSec: 0, toSec: 60 }],
+        });
+        expect(
+            coverage({
+                spans: [{ from: at(0), to: at(60) }],
+                displaySpans: [{ displayId: 1, from: at(60), to: at(0) }],
+            })
+        ).toEqual({
+            recordingSpans: [{ fromSec: 0, toSec: 60 }],
+        });
+        expect(screenCaptureCoverage({ record, zeroMs: Number.NaN })).toEqual({});
     });
 });

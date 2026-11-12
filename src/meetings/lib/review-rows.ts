@@ -599,12 +599,12 @@ function choicesOf(record: MeetingRecord, item: MeetingItem): RowChoice[] {
 
 /** What a decided item was decided as; nothing for an open or rejected one, and for a kind that decides no value. */
 function decidedAs(item: MeetingItem): string | undefined {
-    if (item.kind === "question") {
-        return item.answer;
-    }
-
     if (item.status !== "confirmed") {
         return undefined;
+    }
+
+    if (item.kind === "question") {
+        return item.answer;
     }
 
     if (item.kind === "term") {

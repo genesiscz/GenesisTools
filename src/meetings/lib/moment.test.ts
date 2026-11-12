@@ -774,6 +774,30 @@ describe("a Moment of a saved meeting", () => {
         expect(readFileSync(oldPath, "utf8")).toBe("old shifted clock");
     });
 
+    test("cancel during the track probe does not fall back to a one-track cut", async () => {
+        const { store, saved, opened } = await savedMeeting("meetings-moment-probe-cancel", recording("probe-cancel"));
+        const controller = new AbortController();
+        let cuts = 0;
+        await expect(
+            clipMoment({
+                store,
+                record: saved,
+                target: { kind: "item", id: "Q2" },
+                opened,
+                control: { signal: controller.signal },
+                probe: async (_path, options) => {
+                    expect(options?.signal).toBe(controller.signal);
+                    controller.abort(new Error("cancel track probe"));
+                    throw controller.signal.reason;
+                },
+                cut: async () => {
+                    cuts++;
+                },
+            })
+        ).rejects.toThrow("cancel track probe");
+        expect(cuts).toBe(0);
+    });
+
     test("a recording with two tracks is cut with both, and another recording file is another clip", async () => {
         const { store, saved, opened } = await savedMeeting("meetings-moment-tracks", recording("tracks"));
         const cuts: Array<Parameters<typeof cutClip>[0]> = [];

@@ -1,3 +1,4 @@
+import { isAbsolute, win32 } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { DEFAULT_OCR_TILE_PX, OCR_READS } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS, type FillerLists } from "@genesiscz/utils/recording-editor/transcript-cuts";
@@ -271,7 +272,7 @@ export const toneSoundSettingSchema = z
     )
     // Checked after the union, so a relative path reads as its own sentence instead of the union's "Invalid input".
     .superRefine((setting, context) => {
-        if ("file" in setting && !setting.file.startsWith("/")) {
+        if ("file" in setting && !isAbsolute(setting.file) && !win32.isAbsolute(setting.file)) {
             context.addIssue({
                 code: "custom",
                 path: ["file"],

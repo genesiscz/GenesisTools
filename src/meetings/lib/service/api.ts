@@ -545,6 +545,14 @@ const meetingSpeakers = defineMethod({
     effect: "read",
 });
 
+const captureIntervalSchema = z.object({ fromSec: z.number(), toSec: z.number() });
+const screenCoverageShape = {
+    /** Omitted is unknown coverage; [] is known no captured time. Uses the transcript clock, without frame inference. */
+    recordingSpans: z.array(captureIntervalSchema).optional(),
+    /** Intersected with recordingSpans; omitted if any recording interval lacks display evidence, including legacy history. */
+    displaySpans: z.array(captureIntervalSchema.extend({ displayId: z.number() })).optional(),
+};
+
 const meetingScreen = defineMethod({
     name: "meeting.screen",
     params: z
@@ -560,6 +568,7 @@ const meetingScreen = defineMethod({
         meeting: z.string(),
         /** False without a screen recording: no pane, and the dock keeps its height (G-SCR-2). */
         recorded: z.boolean(),
+        ...screenCoverageShape,
         displays: z.array(z.object({ id: z.number().optional(), name: z.string().optional(), frames: z.number() })),
         frames: z.array(
             z.object({
@@ -575,8 +584,8 @@ const meetingScreen = defineMethod({
         ),
     }),
     resultName:
-        "{ meeting, recorded, displays, frames: { file, path, meetingSec, displayId?, width, height, lineCount }[] }",
-    doc: "The screen frames by time, oldest first, between fromSec and toSec (all without them): what the timeline shows beside the sound (R41).",
+        "{ meeting, recorded, displays, frames, recordingSpans?: { fromSec, toSec }[], displaySpans?: { displayId, fromSec, toSec }[] }",
+    doc: "Screen frames by time between fromSec and toSec (all without them), plus full saved capture intervals on the same transcript clock. Intervals are independent of frame spacing and are not clipped to the frame query. Omitted coverage is unknown; an empty array is known no captured time. Display intervals are intersected with recording intervals and omitted when any captured interval lacks display evidence.",
     effect: "read",
 });
 
@@ -601,6 +610,7 @@ const meetingTimeline = defineMethod({
     result: z.object({
         meeting: z.string(),
         folder: z.string(),
+        ...screenCoverageShape,
         displays: z.array(z.object({ id: z.number().optional(), name: z.string().optional(), frames: z.number() })),
         frames: z.array(
             z.object({

@@ -90,7 +90,14 @@ export async function readScreen(
             height: frame.height,
             lineCount: frame.lineCount,
         }));
-    return { meeting: record.id, recorded: true, displays: timeline.displays, frames };
+    return {
+        meeting: record.id,
+        recorded: true,
+        displays: timeline.displays,
+        frames,
+        ...(timeline.recordingSpans === undefined ? {} : { recordingSpans: timeline.recordingSpans }),
+        ...(timeline.displaySpans === undefined ? {} : { displaySpans: timeline.displaySpans }),
+    };
 }
 
 export async function readTimeline(

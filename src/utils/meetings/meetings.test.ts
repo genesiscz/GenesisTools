@@ -478,6 +478,25 @@ describe("meetings config", () => {
         expect(TONE_PRESETS.click).toMatchObject({ volume: 0.7, sound: { hz: 2000, sec: 0.03 } });
     });
 
+    test("tone files accept POSIX, Windows drive and UNC absolute paths without rewriting them", () => {
+        for (const file of [
+            "/sounds/chime.wav",
+            "C:\\Sounds\\chime.wav",
+            "D:/Sounds/chime.wav",
+            "\\\\fileserver\\sounds\\chime.wav",
+        ]) {
+            const config = meetingsConfigSchema.parse({
+                global: { playback: { listen: { tone: { sound: { file } } } } },
+            });
+            expect(config.global.playback.listen.tone.sound).toEqual({ file, volume: 0.6 });
+        }
+        for (const file of ["sounds/chime.wav", "sounds\\chime.wav", "C:chime.wav", ".\\chime.wav"]) {
+            expect(() =>
+                meetingsConfigSchema.parse({ global: { playback: { listen: { tone: { sound: { file } } } } } })
+            ).toThrow("absolute path");
+        }
+    });
+
     test("a meeting language needs its block in languages", () => {
         expect(() => meetingsConfigSchema.parse({ version: 2, global: { language: "de" } })).toThrow(
             "no block languages.de"
