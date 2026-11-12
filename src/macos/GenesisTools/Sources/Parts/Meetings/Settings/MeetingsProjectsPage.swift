@@ -508,13 +508,13 @@ private struct WouldMatchRow: View {
                 .instantTooltip("It is in \(project), as the rules say")
                 .accessibilityLabel("It is in \(project), as the rules say")
         case .confirm(let project):
-            LiveButton(tooltip: "Put “\(title)” in \(project); Undo follows", enabled: !busy) {
+            LiveButton(tooltip: "Put “\(title)” in \(project); Undo follows", enabled: !busy, pressable: true) {
                 model.setMeetingProject(row, to: project)
             } label: {
                 Text("Confirm").font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 3)
             }
         case .update(let from, let to):
-            LiveButton(tooltip: "Move “\(title)” from \(from) to \(to), as the rules say; Undo follows", enabled: !busy) {
+            LiveButton(tooltip: "Move “\(title)” from \(from) to \(to), as the rules say; Undo follows", enabled: !busy, pressable: true) {
                 model.setMeetingProject(row, to: to)
             } label: {
                 Text("Update").font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 3)
@@ -627,6 +627,7 @@ struct TokenList: View {
             text = ""
             return
         }
+        text = value
         commit(values + [value])
     }
 }
