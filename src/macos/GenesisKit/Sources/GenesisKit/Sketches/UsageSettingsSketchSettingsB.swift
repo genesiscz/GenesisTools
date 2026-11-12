@@ -1,7 +1,7 @@
 import SwiftUI
 
-// Hub UX wave 2, area "usageSettings", option B for the settings pages: flat pages with no fill at all. Drawn only in
-// a run started with `--sketch usageSettings=b` (`HubLayout`); without the flag every page draws its current cards.
+// Hub UX wave 2, area "usageSettings", option B for the settings pages: flat pages with no fill at all.
+// HubLayout reads the saved choice, Classic by default; --sketch usageSettings=b overrides it for this process.
 //
 // - A section is a heading and a hairline; rows are separated by hairlines on the window's own background, the way a
 //   Golden Gate form reads with its decorative radii removed (C61).
