@@ -39,6 +39,7 @@ per-category coverage, citations, `Confidence & Gaps` — holds unchanged on all
 3. **MCP availability check** — for each MCP listed in the category preset, check whether `mcp__<server>__<tool>` is exposed this session. Drop missing ones from the agent's allowlist; record the gap. If a more capable MCP is live that isn't in the preset, use it. **Optionally offer install** for the most-impactful missing MCP — see "MCP availability" below.
 4. **Clarify if needed** — call `AskUserQuestion` once before dispatch when confidence is low (~<0.6), depth is unstated for `deep_technical`, or local-vs-online / project-vs-general is ambiguous.
 5. **Dispatch** per category preset. Single agent for `factual` / `news` / `code_hunt`; parallel fan-out (2–3 agents) for `comparison` / `deep_technical` / `sentiment`. Mix Sonnet + Haiku in parallel when non-critical. Concurrency cap = 4. When the query names observed symptoms (measured numbers, an error, "X differs from Y"), put them in a `CONTEXT:` line and add the **METHOD block** (see **Agent prompt template**) to every brief, whatever the model.
+   Before dispatch, count per MCP how many agents of this run list it under PREFERRED TOOLS, counting each agent once per MCP even when it lists several operations. Fill the shared-load table, including heaviest users, in every brief. For a run with 2 or more agents, include the full THROTTLING block in every brief. When the user or preset limits an agent to one or two tools, state the restriction explicitly, for example "use only X and Y"; preferred tools and fallbacks cannot override it.
 6. **Stitch** — every agent report ends with a Claims ledger (the CLAIMS block goes into every brief). Run `bun <this skill directory>/scripts/check-ledger.ts <report>` on each: it fetches each proof and confirms its quoted passage is there. Then look at every ledger line the answer rests on that it marks `missing`, `no-proof`, `unloaded`, `mostly` or `by-hand`: run its `verify`, and lower or drop a claim whose proof fails or stays unconfirmed. The script exits 1 while a claim at 80% or more is `missing`, `no-proof` or `unloaded`, and lists those claims. Merge agent reports, dedupe sources, write file (if saving), return inline summary with citations + file pointer.
 
 ## MCP availability
@@ -430,9 +431,26 @@ PREFERRED TOOLS (prefer these; avoid other MCPs unless you hit a dead end and an
 - <tool2>
 - ...
 
+<fill tool restrictions before dispatch: "use only X and Y", or "no additional restriction">
+TOOL RESTRICTIONS: <allowed tools, including allowed readers; restrictions override preferences and fallbacks>
+
 FALLBACKS IF PREFERRED TOOLS UNAVAILABLE:
 - <preferred> → <fallback>
 - ...
+
+<include for every agent of a run with 2 or more agents:>
+THROTTLING:
+Shared load, filled by the dispatcher before dispatch. Count each agent once per MCP:
+| Tool / MCP | Number of agents of this run that use it | Heaviest users |
+|---|---|---|
+| <tool / MCP from PREFERRED TOOLS> | <count> | <agent roles or IDs> |
+
+- Do not slow down, delay, ration or skip searches because of this table. It is information only. Work at full speed until a tool actually hits a limit.
+- Rotate tools as the normal order of work: search A, search B, code search, read a page, then back to A. Use only tools relevant to the query and allowed by TOOL RESTRICTIONS. Never put two calls to a per-second-limited search API, including Brave, in one parallel batch. This is a dispatch rule, not a claim that every Brave key has the same requests-per-second limit; use current response headers or plan evidence for that number.
+- A 429 / rate-limited / throttled / quota / timeout answer is not a dead end. Run the next useful query on another allowed tool, then retry the exact refused call. After each following useful call on other allowed tools, retry it again if still unanswered. Keep short gaps through useful work, with no idle wait or rapid retry loop. Honor an explicit retry-after or reset time by doing other work until the call is eligible again.
+- Keep trying for at least six retry attempts beyond the initial refused call, spread over several minutes, before calling the tool unavailable. Record attempts and elapsed time; six calls in a few seconds do not satisfy this rule. If other calls finish too quickly, continue useful source reading and analysis between retry rounds.
+- If told to use only one or two tools, retry on those allowed tools only. Do not look for other search routes, invoke an unlisted reader, or bypass the restriction through a shell or browser. With only one allowed tool, interleave retries with useful reading of already returned material and analysis instead of inventing a second route. If authorized work ends before the retry window, report the incomplete retry window and actual attempts; do not claim the tool unavailable.
+- Every throttled query must end either answered later, or listed under "Queries not answered" by its exact query text, tool and total attempt count, including the initial call. Include the error and elapsed retry window there. Never silently drop a refused query.
 
 MINIMUM SOURCES: <N distinct sources>
 If you cannot reach N, return what you have and state exactly:
@@ -471,12 +489,16 @@ RETURN FORMAT:
 - Findings, grouped by sub-topic, each followed by inline source citations
 - Source list: URL + one-line takeaway + retrieval date
 - Confidence note (conflicting info, dead ends, MCPs that didn't respond)
+- Queries not answered: exact query text + tool + total attempt count + error + elapsed retry window, or "none"
 
 <include only if this agent is saving raw material:>
 SAVE RAW REPORT TO: <exact absolute path, provided by main Claude>
 ```
 
 ## Guardrails
+
+- **Before dispatch, count per MCP** how many agents of this run list it under PREFERRED TOOLS, once per agent per MCP. Fill the shared-load table with those counts and heaviest users in every brief. For 2 or more agents, include the full THROTTLING block in every brief. The table never justifies pre-emptive slowing or rationing.
+- **State tool restrictions explicitly** when the user or preset limits an agent to one or two tools, for example "use only X and Y". Restrictions override preferences, fallbacks and rotation; retries stay on the allowed tools and never seek another search route.
 
 - **Source minimums are hard** (see table above). No invention, no padding.
 - **Always run `scripts/resolve.ts` when saving, and surface its `warnings`.** Never hardcode `.claude/work/research/`, never read the config file yourself, and never fall back to `defaultPath` when a project declares a resolver that failed.
