@@ -9,6 +9,8 @@
     },
     "roster-cdp-conn-outside-connect": {},
     "roster-cdp-socket-outside-connect": {},
+    "roster-choose-cost-outside-priced-usage": {},
+    "roster-clarity-fill-outside-month-fill": {},
     "roster-cmux-send-outside-surface-input": {
         "src/claude/commands/cmux/find.ts": 1,
         "src/claude/lib/cmux/pane-send.ts": 2,
@@ -16,6 +18,7 @@
         "src/cmux/lib/restore.ts": 1
     },
     "roster-cmux-tree-outside-reader": {},
+    "roster-cmux-tree-parse-outside-reader": {},
     "roster-doctor-direct-delete": {},
     "roster-launchctl-outside-launchd-agent": {
         "src/control/lib/simulator/simctl.ts": 1,
@@ -43,5 +46,6 @@
         "src/ai-proxy/lib/providers/openai-subscription.ts": 1
     },
     "roster-provider-pool-outside-lifecycle": {},
+    "roster-question-items-outside-verbs": {},
     "roster-session-listing-outside-claude": {}
 }

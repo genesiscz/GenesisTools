@@ -5,9 +5,9 @@ export default defineRoster({
     name: "roster-provider-pool-outside-lifecycle",
     candidate: "C16",
     message:
-        'Take a provider and answer "unavailable" through the one request lifecycle in ' +
-        "src/ai-proxy/lib/request-lifecycle.ts; a door that calls the pool itself skips its cooldown and release.",
-    matcher: callTo(["acquireProvider", "providerUnavailableResponse"]),
+        'Take a provider, check the client\'s route and quota, and answer "unavailable" through the one request ' +
+        "lifecycle in src/ai-proxy/lib/request-lifecycle.ts; a door that calls these steps itself skips the others.",
+    matcher: callTo(["acquireProvider", "providerUnavailableResponse", "routeDenial", "checkClientQuota"]),
     onlyIn: /^src\//,
-    allowedIn: /^src\/ai-proxy\/lib\/(?:request-lifecycle|providers\/pool)\.ts$/,
+    allowedIn: /^src\/ai-proxy\/lib\/(?:request-lifecycle|providers\/pool|clients|usage\/client-ledger)\.ts$/,
 });
