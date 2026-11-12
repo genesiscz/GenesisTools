@@ -227,7 +227,14 @@ public final class FileEventStream: @unchecked Sendable {
     /// Starts the stream. False when FSEvents refused it (no existing path, too many streams).
     @discardableResult
     public func start() -> Bool {
-        onQueue { startOnQueue() }
+        start(since: nil)
+    }
+
+    /// A transient event boundary covers writes made before an asynchronous caller starts the stream.
+    /// A valid saved cursor takes precedence. False when FSEvents refused the stream.
+    @discardableResult
+    public func start(since eventID: UInt64?) -> Bool {
+        onQueue { startOnQueue(since: eventID) }
     }
 
     /// Stops the stream and saves the cursor. Safe from any thread, also from the batch callback.
@@ -246,18 +253,24 @@ public final class FileEventStream: @unchecked Sendable {
 
     // MARK: - Queue side
 
-    private func startOnQueue() -> Bool {
+    private func startOnQueue(since eventID: UInt64?) -> Bool {
         guard stream == nil else { return true }
         let paths = configuration.paths.filter { !$0.isEmpty }
         guard !paths.isEmpty else { return false }
         deviceUUIDs = Array(Set(paths.compactMap(Self.deviceUUID(forPath:)))).sorted()
-        var since = FSEventStreamEventId(kFSEventStreamEventIdSinceNow)
+        var since = eventID ?? FSEventStreamEventId(kFSEventStreamEventIdSinceNow)
+        var startId: UInt64 = 0
+        var startReplaying = false
+        if let eventID {
+            startId = eventID
+            startReplaying = true
+        }
         var invalid = false
         if let key = configuration.cursorKey, let store = cursorStore, let cursor = store.loadCursor(forKey: key) {
             if Self.canReplay(cursor, deviceUUIDs: deviceUUIDs, currentId: Self.currentEventId) {
                 since = FSEventStreamEventId(cursor.eventId)
-                lastId = cursor.eventId
-                replaying = true
+                startId = cursor.eventId
+                startReplaying = true
             } else {
                 invalid = true
             }
@@ -303,6 +316,9 @@ public final class FileEventStream: @unchecked Sendable {
             return false
         }
         stream = created
+        // A failed start must not leave replay state behind for the next attempt.
+        lastId = startId
+        replaying = startReplaying
         // Live from now: the position to save is the system's current id until the first event arrives.
         if !replaying, lastId == 0 { lastId = Self.currentEventId }
         if invalid {

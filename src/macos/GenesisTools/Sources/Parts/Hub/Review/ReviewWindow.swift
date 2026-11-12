@@ -1,5 +1,6 @@
 import AppKit
 import CoreServices
+import GenesisKitDisk
 import SwiftUI
 import WebKit
 
@@ -4359,73 +4360,115 @@ final class RendererContainer: NSView {
 
 // MARK: - Live reload
 
-/// FSEvents on the checkout and its actual Git directories, including shared refs of linked worktrees.
-/// The stream's latency coalesces writes; object database and build output noise is ignored.
-/// The stream holds this box (retained, released by the stream), never the watcher itself, so an
-/// event queued after the watcher is gone finds a nil reference instead of freed memory.
-private final class RepoWatcherBox {
-    weak var watcher: RepoWatcher?
-
-    init(_ watcher: RepoWatcher) {
-        self.watcher = watcher
-    }
+/// The disk stream's synchronous API is called only on the review watcher's owner queue.
+protocol RepoWatchStream: AnyObject, Sendable {
+    func start(since eventID: UInt64?) -> Bool
+    func stop()
 }
 
-private final class RepoWatcher {
-    private var stream: FSEventStreamRef?
-    /// Told each batch of events that can change the diff (`ReviewRepositoryLayout.classify`).
-    private let onChange: (ReviewWatchBatch) -> Void
-    private let layout: ReviewRepositoryLayout
+extension FileEventStream: RepoWatchStream {}
 
-    init(layout: ReviewRepositoryLayout, onChange: @escaping (ReviewWatchBatch) -> Void) {
-        self.layout = layout
-        self.onChange = onChange
-        var context = FSEventStreamContext(
-            version: 0,
-            info: Unmanaged.passRetained(RepoWatcherBox(self)).toOpaque(),
-            retain: nil,
-            release: { info in
-                if let info {
-                    Unmanaged<RepoWatcherBox>.fromOpaque(info).release()
+/// FSEvents on the checkout and its Git directories. Native lifecycle stays off main; classification and delivery
+/// keep the Review model's main-thread contract. A queued callback cannot outlive stop or this facade.
+final class RepoWatcher {
+    typealias StreamFactory = @Sendable (FileEventStream.Configuration, @escaping @Sendable (FileEventBatch) -> Void) -> any RepoWatchStream
+
+    private final class Delivery: @unchecked Sendable {
+        private let lock = NSRecursiveLock()
+        private var stopped = false
+        private let layout: ReviewRepositoryLayout
+        private let onChange: (ReviewWatchBatch) -> Void
+
+        init(layout: ReviewRepositoryLayout, onChange: @escaping (ReviewWatchBatch) -> Void) {
+            self.layout = ReviewRepositoryLayout(
+                root: URL(fileURLWithPath: DirectoryWatcher.normalizedEventPath(layout.root.path)),
+                gitDirectory: URL(fileURLWithPath: DirectoryWatcher.normalizedEventPath(layout.gitDirectory.path)),
+                commonDirectory: URL(fileURLWithPath: DirectoryWatcher.normalizedEventPath(layout.commonDirectory.path)))
+            self.onChange = onChange
+        }
+
+        var isStopped: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return stopped
+        }
+
+        func cancel() {
+            lock.lock()
+            stopped = true
+            lock.unlock()
+        }
+
+        func enqueue(_ events: FileEventBatch) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                guard !self.stopped else { return }
+                var batch = ReviewWatchBatch()
+                if !events.rescanRoots.isEmpty { batch.add(.rescan) }
+                for event in events.events {
+                    if let classified = self.layout.classify(event.path, flags: event.flags.rawValue) {
+                        batch.add(classified)
+                    }
                 }
-            },
-            copyDescription: nil
-        )
-        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
-            guard let info, let watcher = Unmanaged<RepoWatcherBox>.fromOpaque(info).takeUnretainedValue().watcher else { return }
-            let list = unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []
-            var batch = ReviewWatchBatch()
-            for index in 0..<min(count, list.count) {
-                if let event = watcher.layout.classify(list[index], flags: flags[index]) {
-                    batch.add(event)
-                }
-            }
-            if !batch.isEmpty {
-                watcher.onChange(batch)
+                if !batch.isEmpty { self.onChange(batch) }
             }
         }
-        stream = FSEventStreamCreate(
-            nil,
-            callback,
-            &context,
-            layout.watchPaths as CFArray,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            0.35,
-            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents)
-        )
-        if let stream {
-            FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
-            FSEventStreamStart(stream)
+
+        func failedToStart() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                guard !self.stopped else { return }
+                HubPerf.log("review.watch failed to start for \(self.layout.root.path)")
+            }
         }
     }
 
-    deinit {
-        if let stream {
-            FSEventStreamStop(stream)
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
+    private final class Owner: @unchecked Sendable {
+        private let queue = DispatchQueue(label: "genesis.review.file-events", qos: .utility)
+        private let delivery: Delivery
+        private var stream: (any RepoWatchStream)?
+
+        init(delivery: Delivery, configuration: FileEventStream.Configuration, since eventID: UInt64,
+             makeStream: @escaping StreamFactory) {
+            self.delivery = delivery
+            queue.async { [self] in
+                guard !delivery.isStopped else { return }
+                let created = makeStream(configuration) { [delivery] in delivery.enqueue($0) }
+                stream = created
+                if !created.start(since: eventID) {
+                    stream = nil
+                    delivery.failedToStart()
+                }
+            }
+        }
+
+        func stop() {
+            delivery.cancel()
+            queue.async { [self] in
+                stream?.stop()
+                stream = nil
+            }
         }
     }
+
+    private let owner: Owner
+
+    init(layout: ReviewRepositoryLayout,
+         makeStream: @escaping StreamFactory = { FileEventStream(configuration: $0, onBatch: $1) },
+         onChange: @escaping (ReviewWatchBatch) -> Void) {
+        let since = FileEventStream.currentEventId
+        let delivery = Delivery(layout: layout, onChange: onChange)
+        owner = Owner(delivery: delivery, configuration: .init(paths: layout.watchPaths, latency: 0.35, ignoreSelf: false),
+                      since: since, makeStream: makeStream)
+    }
+
+    func stop() { owner.stop() }
+
+    deinit { owner.stop() }
 }
 
 // MARK: - Snapshot

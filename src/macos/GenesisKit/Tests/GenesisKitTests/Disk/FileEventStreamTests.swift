@@ -70,6 +70,70 @@ final class FileEventStreamTests: XCTestCase {
         FileEventStream.Configuration(paths: [root], latency: 0.2, ignoreSelf: ignoreSelf, cursorKey: cursorKey)
     }
 
+    @MainActor
+    func testDirectoryWatcherStartAndStopDoNotWaitForTheNativeService() {
+        let entered = expectation(description: "native startup entered")
+        let cleaned = expectation(description: "native cleanup finished")
+        let release = DispatchSemaphore(value: 0)
+        let began = Date()
+        var watcher: DirectoryWatcher? = DirectoryWatcher(paths: [root], since: 42, start: { _, since, receive in
+            XCTAssertFalse(Thread.isMainThread)
+            XCTAssertEqual(since, 42, "keep the event position from before queued startup")
+            entered.fulfill()
+            _ = release.wait(timeout: .now() + 2)
+            receive(["late.json"])
+            return {
+                XCTAssertFalse(Thread.isMainThread)
+                cleaned.fulfill()
+            }
+        }, onChange: { _ in XCTFail("stopped startup must not deliver a callback") })
+        XCTAssertLessThan(Date().timeIntervalSince(began), 0.2)
+        wait(for: [entered], timeout: 2)
+        let stopped = Date()
+        watcher?.stop()
+        watcher = nil
+        XCTAssertLessThan(Date().timeIntervalSince(stopped), 0.2)
+        release.signal()
+        wait(for: [cleaned], timeout: 2)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+
+    @MainActor
+    func testDirectoryWatcherKeepsMainThreadCallbackOrderAndCancelsQueuedDelivery() {
+        var events: [[String]] = []
+        var watcher: DirectoryWatcher?
+        let cleaned = expectation(description: "cleanup")
+        watcher = DirectoryWatcher(paths: [root], since: 3, start: { _, _, receive in
+            receive(["/private/tmp/first.json", "/private/tmp/ignored.txt"])
+            receive(["/private/tmp/second.json"])
+            receive(["/private/tmp/stopped.json"])
+            return { cleaned.fulfill() }
+        }, accepts: { path in
+            XCTAssertTrue(Thread.isMainThread, "existing predicates can access main-thread state")
+            return path.hasSuffix(".json")
+        }, onChange: { paths in
+            XCTAssertTrue(Thread.isMainThread)
+            events.append(paths)
+            if events.count == 2 { watcher?.stop() }
+        })
+        wait(for: [cleaned], timeout: 2)
+        XCTAssertEqual(events, [["/tmp/first.json"], ["/tmp/second.json"]])
+        watcher = nil
+    }
+
+    @MainActor
+    func testDirectoryWatcherIncludesAWritingBeforeQueuedRegistrationFinishes() throws {
+        let target = directory.appendingPathComponent("immediate.json")
+        var observed = false
+        let watcher = DirectoryWatcher(paths: [root], latency: 0.1, accepts: { $0 == self.reported(target) }) { _ in
+            XCTAssertTrue(Thread.isMainThread)
+            observed = true
+        }
+        defer { watcher.stop() }
+        try Data("written immediately".utf8).write(to: target)
+        waitUntil("the write during startup") { observed }
+    }
+
     func testCreateGrowAndDeleteArriveOffTheMainThreadMergedPerPath() throws {
         let log = BatchLog()
         let stream = FileEventStream(configuration: config()) { log.add($0) }
@@ -233,5 +297,48 @@ final class FileEventStreamTests: XCTestCase {
         store.saveCursor(cursor, forKey: "disk/radar")
         XCTAssertEqual(store.loadCursor(forKey: "disk/radar"), cursor)
         XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("disk_radar.json").path))
+    }
+}
+
+extension FileEventStreamTests {
+    func testATransientStartBoundaryReplaysWritesBeforeRegistration() throws {
+        let observed = BatchLog()
+        let witness = FileEventStream(configuration: config()) { observed.add($0) }
+        XCTAssertTrue(witness.start())
+        defer { witness.stop() }
+        let boundary = FileEventStream.currentEventId
+        let file = directory.appendingPathComponent("before-start.txt")
+        try Data("before registration".utf8).write(to: file)
+        waitUntil("the witness sees the pre-registration write") { !observed.flags(for: reported(file)).isEmpty }
+        let log = BatchLog()
+        let stream = FileEventStream(configuration: config()) { log.add($0) }
+        XCTAssertTrue(stream.start(since: boundary))
+        defer { stream.stop() }
+        waitUntil("the pre-registration write is replayed") { !log.flags(for: reported(file)).isEmpty }
+        XCTAssertTrue(log.all.contains(where: \.isReplay))
+        XCTAssertEqual(log.deliveredOnMain, 0)
+    }
+
+    func testASavedCursorTakesPrecedenceOverATransientStartBoundary() throws {
+        let store = MemoryCursorStore()
+        let first = FileEventStream(configuration: config(cursorKey: "precedence"), cursorStore: store) { _ in }
+        XCTAssertTrue(first.start())
+        first.stop()
+        let saved = try XCTUnwrap(store.loadCursor(forKey: "precedence"))
+        let seen = BatchLog()
+        let witness = FileEventStream(configuration: config()) { seen.add($0) }
+        XCTAssertTrue(witness.start())
+        defer { witness.stop() }
+        let file = directory.appendingPathComponent("after-saved.txt")
+        try Data("between boundaries".utf8).write(to: file)
+        waitUntil("the witness sees the write") { !seen.flags(for: reported(file)).isEmpty }
+        let newerBoundary = witness.lastEventId
+        XCTAssertGreaterThan(newerBoundary, saved.eventId)
+        let log = BatchLog()
+        let replay = FileEventStream(configuration: config(cursorKey: "precedence"), cursorStore: store) { log.add($0) }
+        XCTAssertTrue(replay.start(since: newerBoundary))
+        defer { replay.stop() }
+        waitUntil("the older saved cursor wins") { !log.flags(for: reported(file)).isEmpty }
+        XCTAssertFalse(log.all.contains(where: \.historyInvalid))
     }
 }
