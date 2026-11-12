@@ -279,6 +279,9 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
         })
     );
 
+    if (cut.tone?.sound.fallback && !opts.json) {
+        ui.warn(cut.tone.sound.fallback);
+    }
     if (!player) {
         opts.json ? out.result(SafeJSON.stringify(cut, null, 2)) : ui.ok(`Cut ${momentLine(cut)}: ${cut.path}`);
         return;

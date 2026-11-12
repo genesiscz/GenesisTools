@@ -308,6 +308,58 @@ describe("the playback settings a Moment carries", () => {
         expect(after).toMatchObject({ padSec: 2, padAfterSec: 1, endSec: 36 });
     });
 
+    test("an unavailable tone uses an explicit beep policy and retains the requested volume", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "mtg-tone-policy-"));
+        const file = join(folder, "missing.wav");
+        const sound = await resolveToneSound(
+            { file, volume: 0.23 },
+            {
+                probe: async () => {
+                    throw new Error("must not probe a missing file");
+                },
+                onMissing: "beep",
+            }
+        );
+        expect(sound).toMatchObject({ hz: 880, sec: 0.15, volume: 0.23, preset: "beep" });
+        expect(sound.fallback).toContain("Using a beep");
+        await expect(
+            resolveToneSound(
+                { file, volume: 0.23 },
+                {
+                    probe: async () => ({ durationSec: 1 }),
+                    onMissing: "error",
+                }
+            )
+        ).rejects.toThrow("is not there");
+        writeFileSync(file, "invalid sound");
+        const invalid = await resolveToneSound(
+            { file, volume: 0.4 },
+            {
+                probe: async () => ({ durationSec: Number.NaN }),
+                onMissing: "beep",
+            }
+        );
+        expect(invalid.fallback).toContain("Using a beep");
+        const failed = await resolveToneSound(
+            { file, volume: 0.4 },
+            {
+                probe: async () => {
+                    throw new Error("decoder failed");
+                },
+                onMissing: "beep",
+            }
+        );
+        expect(failed.fallback).toContain("Using a beep");
+        const repaired = await resolveToneSound(
+            { file, volume: 0.4 },
+            {
+                probe: async () => ({ durationSec: 0.7 }),
+                onMissing: "beep",
+            }
+        );
+        expect(repaired).toEqual({ hz: 0, sec: 0.7, volume: 0.4, file });
+    });
+
     test("a preset or a sound file is the tone's sound; a file's length is read once and cut to 2 s (decision 8)", async () => {
         const soft = meetingsConfigSchema.parse({
             version: 5,
@@ -635,6 +687,21 @@ describe("a Moment of a saved meeting", () => {
         expect(named.tone?.atSec).toBe(
             (await openMoment({ store, record: saved, target, opened, toneSound: { preset: "beep" } })).tone?.atSec
         );
+    });
+
+    test("a saved missing-tone choice controls planning without changing the sound preference", async () => {
+        const { store, saved, opened } = await savedMeeting("meetings-moment-fallback", recording("fallback"));
+        const config = meetingsConfigSchema.parse({
+            global: { playback: { listen: { tone: { sound: { file: "/missing/tone.wav", volume: 0.2 } } } } },
+        });
+        spyOn(opened, "config").mockResolvedValue(config);
+        const options = { store, record: saved, target: { kind: "item" as const, id: "Q1" }, opened, screen: false };
+        const result = await openMoment(options);
+        expect(result.tone?.sound).toMatchObject({ preset: "beep", volume: 0.2 });
+        expect(result.tone?.sound.fallback).toContain("Using a beep");
+        expect(config.global.playback.listen.tone.sound).toEqual({ file: "/missing/tone.wav", volume: 0.2 });
+        config.global.playback.listen.tone.onMissing = "error";
+        await expect(openMoment(options)).rejects.toThrow("is not there");
     });
 
     test("Wave E: an explicit silent Moment never resolves a tone or changes the saved setting", async () => {

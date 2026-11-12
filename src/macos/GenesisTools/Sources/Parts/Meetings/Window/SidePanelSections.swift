@@ -442,6 +442,7 @@ enum SidePanelCatalog {
                               fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> SidePanelSection {
         func number(_ path: [String]) -> Double? { if case .number(let value) = listen.at(path) { return value } else { return nil } }
         func flag(_ path: [String]) -> Bool? { if case .bool(let value) = listen.at(path) { return value } else { return nil } }
+        func text(_ path: [String]) -> String? { if case .string(let value) = listen.at(path) { return value } else { return nil } }
         let toneOn = "\(listenPath).tone.enabled"
         let setting = toneSetting(listen.at(["tone", "sound"]))
         return SidePanelSection(id: "engine", title: "Clip and Tone", rows: padRows(before: number(["padBeforeSec"]), after: number(["padAfterSec"])) + [
@@ -455,6 +456,11 @@ enum SidePanelCatalog {
             toneSoundRow(setting, presets: presets, fileExists: fileExists)
                 .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
             toneVolumeRow(setting, presets: presets.presets)
+                .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
+            SidePanelRow(store: .engine(path: "\(listenPath).tone.onMissing"), title: "If the tone file is missing",
+                         detail: "Use a beep with a notice, or stop playback and show the error.",
+                         choices: [.init(value: .text("beep"), title: "Use beep"), .init(value: .text("error"), title: "Stop with an error")],
+                         value: .text(text(["tone", "onMissing"]) ?? "beep"), defaultValue: .text("beep"))
                 .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
             numberRow(key: "longestClipSec", title: "Longest clip",
                       detail: "A longer item or turn is shown, not played.",

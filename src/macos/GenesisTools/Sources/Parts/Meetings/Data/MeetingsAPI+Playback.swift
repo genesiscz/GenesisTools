@@ -86,6 +86,7 @@ struct ToneSound: Codable, Equatable, Hashable {
     var hz: Double
     var sec: Double
     var volume: Double
+    var fallback: String? = nil
 }
 
 /// One frame of a Moment's spot, with the OCR hit that named it first (Vision's normalized box).

@@ -178,14 +178,17 @@ export async function previewTone(
     params: MeetingsParsedParams<"tone.preview">,
     deps: MeetingsHandlerDeps
 ): Promise<MeetingsResult<"tone.preview">> {
-    const config = params.sound ? undefined : await (deps.config ?? (() => new MeetingsConfigStore().read()))();
-    const setting = params.sound ?? config?.global.playback.listen.tone.sound;
+    const config = await (deps.config ?? (() => new MeetingsConfigStore().read()))();
+    const setting = params.sound ?? config.global.playback.listen.tone.sound;
 
     if (!setting) {
         throw refusal("failed", "no tone sound to preview");
     }
 
-    const sound = await resolveToneSound(setting, { probe: deps.probe ?? probeAudio });
+    const sound = await resolveToneSound(setting, {
+        probe: deps.probe ?? probeAudio,
+        onMissing: config.global.playback.listen.tone.onMissing,
+    });
     // A sine keeps the key it had before sound files; a file's key holds its version, so an edited file is made again.
     const version = sound.file ? (({ mtimeMs, size }) => [mtimeMs, size])(statSync(sound.file)) : [];
     const key = Bun.hash(

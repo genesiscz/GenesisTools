@@ -769,7 +769,10 @@ async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Prom
     const enabled = options.tone ?? (options.toneSound !== undefined || saved.tone.enabled);
     const listen = enabled === saved.tone.enabled ? saved : { ...saved, tone: { ...saved.tone, enabled } };
     const toneSound = listen.tone.enabled
-        ? await resolveToneSound(options.toneSound ?? listen.tone.sound, { probe: options.probeTone ?? probeAudio })
+        ? await resolveToneSound(options.toneSound ?? listen.tone.sound, {
+              probe: options.probeTone ?? probeAudio,
+              onMissing: listen.tone.onMissing,
+          })
         : undefined;
     const moment = planMoment({
         record,

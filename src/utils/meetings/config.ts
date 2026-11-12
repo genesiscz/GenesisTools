@@ -287,6 +287,8 @@ const toneSchema = z.object({
     /** How long before the asked spot the tone sounds (version 3 kept it as `beepLeadSec`). */
     leadSec: z.number().min(0).max(3).default(0.4),
     sound: toneSoundSettingSchema.prefault({}),
+    /** A missing or unreadable tone file may use a beep, with a notice, or stop the clip. */
+    onMissing: z.enum(["beep", "error"]).default("beep"),
 });
 export type ToneSettings = z.infer<typeof toneSchema>;
 

@@ -361,7 +361,9 @@ final class MeetingsWindowModel {
     func previewTone(_ sound: MeetingsAPI.ToneSoundSetting) {
         Task {
             do {
-                try await TonePreviewPlayer.play(sound, service: service)
+                if let message = try await TonePreviewPlayer.play(sound, service: service) {
+                    notices.push(StackedNotice(text: message))
+                }
             } catch is MeetingsService.Unavailable {
                 notices.push(StackedNotice(text: TonePreviewPlayer.unavailableText))
             } catch {

@@ -53,6 +53,16 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertEqual(sections.first { $0.id == "panes" }?.isDefault, true)
     }
 
+    func testMissingTonePolicyHasBothChoicesAndKeepsStrictSelection() throws {
+        let key = "global.playback.listen.tone.onMissing"
+        let (_, fresh) = engine([:])
+        let row = try XCTUnwrap(fresh[key])
+        XCTAssertEqual(row.value, .text("beep"))
+        XCTAssertEqual(row.choices.map(\.value), [.text("beep"), .text("error")])
+        let (_, strict) = engine(["tone": .object(["onMissing": .string("error")])])
+        XCTAssertEqual(strict[key]?.value, .text("error"))
+    }
+
     func testTheWordsMatchTheSettingsPage() {
         XCTAssertEqual(SidePanelWords.choice("always", key: MeetingsPreferences.typedAnswerKey), "On every question")
         XCTAssertEqual(SidePanelWords.choice("always", key: "meetings.rows.askReach"), "Always")
@@ -116,7 +126,7 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertEqual(section.footnote, "Applies from the next clip. The clip that plays keeps its sound.")
         XCTAssertEqual(section.enginePaths, ["global.playback.listen.padBeforeSec", "global.playback.listen.padAfterSec",
                                              "global.playback.listen.tone.enabled", "global.playback.listen.tone.leadSec",
-                                             Self.soundPath, "global.playback.listen.longestClipSec"],
+                                             Self.soundPath, "global.playback.listen.tone.onMissing", "global.playback.listen.longestClipSec"],
                        "the volume goes with the sound: one unset, no second write")
         let sound = try XCTUnwrap(rows[Self.soundPath])
         XCTAssertEqual(sound.value, .text("soft"), "a stored sine with Soft's pitch and length is Soft")

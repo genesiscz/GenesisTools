@@ -43,6 +43,16 @@ describe("meetings config", () => {
         expect(fs.readFileSync(config.path, "utf8")).toBe(original);
     });
 
+    test("tone fallback defaults to beep and an explicit strict choice survives reopening", async () => {
+        const config = store();
+        expect((await config.read()).global.playback.listen.tone.onMissing).toBe("beep");
+        await config.update((value) => {
+            value.global = { playback: { listen: { tone: { onMissing: "error" } } } };
+        });
+        const reopened = new MeetingsConfigStore(new Storage(`meetings-test-${stores}`));
+        expect((await reopened.read()).global.playback.listen.tone.onMissing).toBe("error");
+    });
+
     test("an empty file is every default, with autoRecord off", () => {
         const config = meetingsConfigSchema.parse({});
 
@@ -323,6 +333,7 @@ describe("meetings config", () => {
             enabled: false,
             leadSec: 0.8,
             sound: { hz: 880, sec: 0.15, volume: 0.6 },
+            onMissing: "beep",
         });
 
         const both = { version: 3, global: { playback: { listen: { beep: false, tone: { enabled: true } } } } };

@@ -85,6 +85,9 @@ struct TimelineDock: View {
                     dock.ensureZoomPeaks(meeting, view: view, durationSec: duration)
                 }
                 .onChange(of: Self.span(of: top)) { _, next in if let next { lastSpan = next } }
+                .onChange(of: top.moment?.tone?.sound.fallback, initial: true) { _, message in
+                    if let message { window?.notices.push(StackedNotice(text: message)) }
+                }
         }
     }
 

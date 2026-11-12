@@ -68,6 +68,7 @@ export const toneSoundSchema = z.object({
     volume: z.number(),
     file: z.string().optional(),
     preset: z.enum(TONE_PRESET_NAMES).optional(),
+    fallback: z.string().optional(),
 }) satisfies z.ZodType<ToneSound>;
 
 /** One frame of a Moment's spot (`MomentFrame`). */
