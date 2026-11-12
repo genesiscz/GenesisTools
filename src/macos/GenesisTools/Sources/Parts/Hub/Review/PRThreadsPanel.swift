@@ -1916,6 +1916,17 @@ struct PRSubmitReviewButton: View {
     }
 }
 
+/// The PR detail owns its watcher across tab changes and stops that exact model on replacement or exit.
+struct PRVariantReviewLifetime: View {
+    let model: ReviewModel
+
+    var body: some View {
+        Color.clear
+            .onAppear { model.start() }
+            .onDisappear { model.stop() }
+    }
+}
+
 struct PRSubmitReviewHost: View {
     @ObservedObject var model: ReviewModel
     @ObservedObject var store: PRThreadsStore

@@ -84,7 +84,11 @@ struct PRDetailSketchA: View {
             }
         }
         .onAppear { PRChecksSection.prepareSnapshot() }
-        .onChange(of: prs.review.map(ObjectIdentifier.init), initial: true) { prs.review?.start() }
+        .background {
+            if let review = prs.review {
+                PRVariantReviewLifetime(model: review).id(ObjectIdentifier(review))
+            }
+        }
         .overlay {
             if let review = prs.review, let store = review.pr {
                 PRSubmitReviewHost(model: review, store: store)
@@ -574,7 +578,6 @@ private struct DiffColumn: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < ReviewRootView.wrapBelow }) { review.fitWrap(narrow: $0) }
         .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < HubDiffLayout.autoSplitBelow }) { review.fitStyle(narrow: $0) }
-        .onAppear { review.start() }
-        .onDisappear { review.stop() }
+
     }
 }
