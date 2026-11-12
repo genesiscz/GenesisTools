@@ -18,10 +18,24 @@ final class TimelineDockModel {
         var rows: @MainActor (String) async throws -> ReviewRows
     }
 
-    /// A range the lens or a merged pin set, for the layer that played then: a new top shows its own span again.
+    /// The ranges the reader zoomed to, for the layer that played then: a new top shows its own span again. The trail
+    /// holds every range on the way, the shown one last: a merged pin or a "Show" adds or starts one, the lens moves
+    /// the last one. The breadcrumb names them and a click goes back.
     struct ViewOverride: Equatable {
         let layer: UUID
-        let range: ClosedRange<Double>
+        var trail: [ClosedRange<Double>]
+
+        init(layer: UUID, trail: [ClosedRange<Double>]) {
+            self.layer = layer
+            self.trail = trail
+        }
+
+        init(layer: UUID, range: ClosedRange<Double>) {
+            self.init(layer: layer, trail: [range])
+        }
+
+        /// The range the timeline shows.
+        var range: ClosedRange<Double> { trail.last ?? 0...1 }
     }
 
     /// Peaks across the whole meeting (the strip), and across the zoomed view widened by one view length each side, so
@@ -47,7 +61,9 @@ final class TimelineDockModel {
 
     @ObservationIgnored private let reads: Reads
     @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private var asked: Set<String> = []
+    @ObservationIgnored private var preparingAudio: Set<String> = []
+    @ObservationIgnored private var preparingWaveform: Set<String> = []
+    @ObservationIgnored private var preparingScreen: Set<String> = []
     @ObservationIgnored private var askedRows: Set<String> = []
     @ObservationIgnored private var zoomTask: Task<Void, Never>?
     @ObservationIgnored private var zoomAsked: ClosedRange<Double>?
@@ -96,37 +112,91 @@ final class TimelineDockModel {
         setZoom(all[min(max(index + (out ? 1 : -1), 0), all.count - 1)])
     }
 
-    /// A range from the strip's lens or a merged pin, kept while the same layer is on top.
+    /// A range from the strip's lens, kept while the same layer is on top: the shown range moves, no level is added.
     func setView(_ range: ClosedRange<Double>, layer: UUID?) {
         guard let layer else { return }
-        viewOverride = ViewOverride(layer: layer, range: range)
+        var trail = trail(of: layer)
+        if trail.isEmpty { trail = [range] } else { trail[trail.count - 1] = range }
+        viewOverride = ViewOverride(layer: layer, trail: trail)
+    }
+
+    /// A merged pin's range: one level deeper, so the reader can go back to the range before it.
+    func pushView(_ range: ClosedRange<Double>, layer: UUID?) {
+        guard let layer else { return }
+        var trail = trail(of: layer)
+        if trail.last != range { trail.append(range) }
+        viewOverride = ViewOverride(layer: layer, trail: trail)
+    }
+
+    /// "Show" on a stretch: that range alone, whatever was zoomed to before.
+    func showView(_ range: ClosedRange<Double>, layer: UUID?) {
+        guard let layer else { return }
+        viewOverride = ViewOverride(layer: layer, trail: [range])
+    }
+
+    /// Back to level `index` of the trail; nil shows the layer's own view again.
+    func popView(to index: Int?) {
+        guard let held = viewOverride else { return }
+        guard let index, index >= 0, index < held.trail.count else {
+            viewOverride = nil
+            return
+        }
+        viewOverride = ViewOverride(layer: held.layer, trail: Array(held.trail.prefix(index + 1)))
+    }
+
+    /// One level back: the range before this one, or the layer's own view from the first level.
+    func backView() {
+        guard let held = viewOverride else { return }
+        popView(to: held.trail.count >= 2 ? held.trail.count - 2 : nil)
+    }
+
+    /// The ranges zoomed to while `layer` is on top, the shown one last; none for another layer.
+    func trail(of layer: UUID?) -> [ClosedRange<Double>] {
+        guard let held = viewOverride, held.layer == layer else { return [] }
+        return held.trail
+    }
+
+    /// A layer that takes the place of `old` in the same play (the next stretch of a whole meeting, a click in it)
+    /// keeps the zoomed range.
+    func moveView(from old: UUID, to next: UUID) {
+        guard let held = viewOverride, held.layer == old else { return }
+        viewOverride = ViewOverride(layer: next, trail: held.trail)
     }
 
     // MARK: Reads
 
     /// The recording's length, its whole peaks and its screen frames, read once per meeting.
     func prepare(_ meeting: String) {
-        guard asked.insert(meeting).inserted else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            if let audio = try? await self.reads.audio(meeting) { self.audio[meeting] = audio }
+        if audio[meeting] == nil, preparingAudio.insert(meeting).inserted {
+            Task { [weak self] in
+                guard let self else { return }
+                defer { self.preparingAudio.remove(meeting) }
+                if let audio = try? await self.reads.audio(meeting) { self.audio[meeting] = audio }
+            }
         }
-        Task { [weak self] in
-            guard let self else { return }
-            let params = MeetingsAPI.MeetingWaveform.Params(meeting: meeting, buckets: Self.wholeBuckets)
-            if let peaks = try? await self.reads.waveform(params) { self.whole[meeting] = peaks }
+        if whole[meeting] == nil, preparingWaveform.insert(meeting).inserted {
+            Task { [weak self] in
+                guard let self else { return }
+                defer { self.preparingWaveform.remove(meeting) }
+                let params = MeetingsAPI.MeetingWaveform.Params(meeting: meeting, buckets: Self.wholeBuckets)
+                if let peaks = try? await self.reads.waveform(params) { self.whole[meeting] = peaks }
+            }
         }
-        Task { [weak self] in
-            guard let self else { return }
-            if let screen = try? await self.reads.screen(meeting) { self.screens[meeting] = screen }
+        if screens[meeting] == nil, preparingScreen.insert(meeting).inserted {
+            Task { [weak self] in
+                guard let self else { return }
+                defer { self.preparingScreen.remove(meeting) }
+                if let screen = try? await self.reads.screen(meeting) { self.screens[meeting] = screen }
+            }
         }
     }
 
     /// The rows of a playing meeting that is not open, for its pins; read once.
     func prepareRows(_ meeting: String) {
-        guard askedRows.insert(meeting).inserted else { return }
+        guard otherRows[meeting] == nil, askedRows.insert(meeting).inserted else { return }
         Task { [weak self] in
             guard let self else { return }
+            defer { self.askedRows.remove(meeting) }
             if let rows = try? await self.reads.rows(meeting) { self.otherRows[meeting] = rows.rows }
         }
     }
@@ -164,6 +234,14 @@ final class TimelineDockModel {
         return (whole[meeting]?.peaks ?? [], 0...max(durationSec, 1))
     }
 
+    /// Finest cached peaks at one playhead position. An activity glyph needs no new read or viewport-scale test.
+    func activityPeaks(_ meeting: String, at second: Double) -> (peaks: [Double], range: ClosedRange<Double>) {
+        if let zoomed, zoomed.meeting == meeting, (zoomed.fromSec...zoomed.toSec).contains(second) {
+            return (zoomed.peaks, zoomed.fromSec...max(zoomed.toSec, zoomed.fromSec + 1))
+        }
+        return (whole[meeting]?.peaks ?? [], 0...max(durationSec(meeting, fallback: nil), 1))
+    }
+
     /// True when `held` holds `view` and is at most four view lengths long (else its bars are too coarse).
     static func covers(_ held: ClosedRange<Double>, _ view: ClosedRange<Double>) -> Bool {
         let length = view.upperBound - view.lowerBound
@@ -198,21 +276,22 @@ final class TimelineDockModel {
         return frames[found ?? 0]
     }
 
-    /// How far the shown frame is from `second` when the capture does not cover that time: positive when `frame` is
-    /// the capture's last frame and `second` is more than `limit` after it (the capture ended earlier), negative when
-    /// it is the first frame and `second` is more than `limit` before it. Nil inside the capture, where an older frame
-    /// means the screen did not change. The pane then says that its picture is from another time.
+    /// A saved capture interval establishes coverage; a sparse frame list cannot. Nil coverage on older records is
+    /// unknown. A known gap (including a pause or an inactive display) labels the retained frame with its true age.
     static func apart(_ frame: MeetingsAPI.MeetingScreen.Frame, in screen: MeetingsAPI.MeetingScreen.Result, at second: Double,
-                      display: Int?, limit: Double = 30) -> Double? {
-        let frames = display.map { id in screen.frames.filter { $0.displayId == id } } ?? screen.frames
-        let gap = second - frame.meetingSec
-        if frame == frames.last, gap > limit { return gap }
-        if frame == frames.first, gap < -limit { return gap }
-        return nil
+                      display: Int?) -> Double? {
+        if let display, let spans = screen.displaySpans {
+            return spans.contains { $0.displayId == display && $0.fromSec <= second && second <= $0.toSec }
+                ? nil : second - frame.meetingSec
+        }
+        guard let spans = screen.recordingSpans else { return nil }
+        return spans.contains { $0.fromSec <= second && second <= $0.toSec } ? nil : second - frame.meetingSec
     }
 
     /// The display the pane shows by itself (G-SCR-1): the one with the Moment's OCR hit, else the one most frames show.
-    static func autoDisplay(screen: MeetingsAPI.MeetingScreen.Result, moment: Moment?) -> Int? {
+    static func autoDisplay(screen: MeetingsAPI.MeetingScreen.Result, moment: Moment?, at second: Double? = nil) -> Int? {
+        if let second, let focused = screen.frames.last(where: { $0.meetingSec <= second && $0.focusedDisplayId != nil })?.focusedDisplayId,
+           screen.frames.contains(where: { $0.displayId == focused }) { return focused }
         if let hit = moment?.screen?.first(where: { $0.hit != nil }), let id = hit.displayId { return id }
         let counts = Dictionary(grouping: screen.frames.compactMap(\.displayId), by: { $0 }).mapValues(\.count)
         return counts.max { $0.value < $1.value }?.key

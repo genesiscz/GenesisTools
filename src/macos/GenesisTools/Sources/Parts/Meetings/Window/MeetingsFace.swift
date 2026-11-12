@@ -53,6 +53,13 @@ struct MeetingsRequest {
     var snapshot: String?
     /// `--play <target json>`: the Moment a snapshot starts, silently, before the picture.
     var play: MomentTarget?
+    /// A routed Moment with all per-call playback options preserved.
+    var playRequest: MeetingsAPI.MomentParams?
+    /// `--show <from>,<to>`: a snapshot of what a "Show" chip does: the whole meeting plays from `from`, silently, and
+    /// the timeline shows the range.
+    var show: ClosedRange<Double>?
+    /// `--zoom-to <from>,<to>` (repeatable): a snapshot's zoom levels, as clicks on merged pins add them.
+    var zoomTo: [ClosedRange<Double>] = []
     /// `--select <row id>` and `--edit <row id>`: a snapshot's selected review row, and the row whose editor is open.
     var select: String?
     var edit: String?
@@ -94,6 +101,9 @@ struct MeetingsRequest {
             case "--sheet": request.sheet = value()
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
             case "--play": request.play = value().flatMap { try? JSONDecoder().decode(MomentTarget.self, from: Data($0.utf8)) }
+            case "--play-request": request.playRequest = value().flatMap { try? JSONDecoder().decode(MeetingsAPI.MomentParams.self, from: Data($0.utf8)) }
+            case "--show": request.show = value().flatMap(MeetingsRequest.range)
+            case "--zoom-to": if let range = value().flatMap(MeetingsRequest.range) { request.zoomTo.append(range) }
             case "--width": request.width = value().flatMap(Double.init).map { CGFloat($0) } ?? request.width
             case "--height": request.height = value().flatMap(Double.init).map { CGFloat($0) } ?? request.height
             default: break
@@ -101,6 +111,13 @@ struct MeetingsRequest {
             index += 1
         }
         return request
+    }
+
+    /// "2926,5220" as seconds; nil for anything else.
+    static func range(_ text: String) -> ClosedRange<Double>? {
+        let parts = text.split(separator: ",").compactMap { Double($0) }
+        guard parts.count == 2, parts[1] > parts[0] else { return nil }
+        return parts[0]...parts[1]
     }
 }
 
@@ -115,10 +132,6 @@ package func runMeetings(_ args: [String]) -> Never {
     MainActor.assumeIsolated {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
-        if request.muted {
-            let model = MeetingsWindow.shared.model
-            model.player = MomentPlayer(load: { try AVMomentSound(url: $0, muted: true) }, defaults: model.defaults)
-        }
         MeetingsMenuTarget.shared.model = MeetingsWindow.shared.model
         MeetingsMenu.install()
         HangWatch.start()
@@ -134,15 +147,37 @@ package func runMeetings(_ args: [String]) -> Never {
 
 @MainActor
 final class MeetingsWindow: NSObject, NSWindowDelegate {
-    static let shared = MeetingsWindow()
+    static let shared = MeetingsWindow(primary: true)
+    /// The windows "Open in New Window" made: each has its own model, so two meetings show side by side.
+    private static var extras: [MeetingsWindow] = []
+    /// The first window keeps the saved frame and answers forwarded requests; an extra one cascades from the key window.
+    let primary: Bool
     private var window: NSWindow?
     let model = MeetingsWindowModel()
+
+    init(primary: Bool) {
+        self.primary = primary
+    }
+
+    /// Opens `meeting` in a new window of its own, offset from the key window, so the reader can put the two side by side.
+    static func openExtra(meeting: String) {
+        let face = MeetingsWindow(primary: false)
+        extras.append(face)
+        var request = MeetingsRequest()
+        request.meeting = meeting
+        let source = NSApp.keyWindow
+        face.show(request)
+        if let source, let window = face.window {
+            window.setFrame(source.frame, display: false)
+            window.setFrameTopLeftPoint(window.cascadeTopLeft(from: NSPoint(x: source.frame.minX, y: source.frame.maxY)))
+        }
+    }
 
     func show(_ request: MeetingsRequest) {
         let window = window ?? Self.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
         if self.window == nil {
             window.delegate = self
-            window.setFrameAutosaveName("GenesisToolsMeetings")
+            if primary { window.setFrameAutosaveName("GenesisToolsMeetings") }
             self.window = window
             model.load()
         }
@@ -156,12 +191,19 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
     }
 
     func apply(_ request: MeetingsRequest, to model: MeetingsWindowModel) {
+        if request.muted {
+            model.player.stop()
+            model.player = MomentPlayer(load: { try AVMomentSound(url: $0, muted: true) }, defaults: model.defaults)
+        }
         if let place = request.place { model.go(place) }
         if request.sidePanel { model.sidePanelOpen = true }
         if let meeting = request.meeting {
             model.select(meeting, tab: request.tab)
         } else if let tab = request.tab {
             model.detail?.show(tab)
+        }
+        if let play = request.playRequest {
+            model.player.play(play, from: .link)
         }
     }
 
@@ -204,6 +246,8 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        // The menu bar and the playback keys act on the window in front.
+        MeetingsMenuTarget.shared.model = model
         // A meeting changed elsewhere (a confirm in a terminal, a new recording) shows when the window comes back.
         if case .loaded = model.overview { model.refreshAfterReturn() }
     }
@@ -222,9 +266,18 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
         return noticeUndoManager
     }
 
-    /// The window is the face: closing it ends the process, as the hub's window does.
+    /// The last window closed ends the process, as the hub's window does. An extra window stops its sound and its
+    /// listener; the first window stays made, so a forwarded request opens it again.
     func windowWillClose(_ notification: Notification) {
-        NSApp.terminate(nil)
+        if !primary {
+            model.player.stop()
+            model.detail?.cancelReads()
+            model.detachLiveUpdates()
+            Self.extras.removeAll { $0 === self }
+            if MeetingsMenuTarget.shared.model === model { MeetingsMenuTarget.shared.model = Self.shared.model }
+        }
+        let others = ([Self.shared] + Self.extras).filter { $0 !== self && $0.window?.isVisible == true }
+        if others.isEmpty { NSApp.terminate(nil) }
     }
 }
 
@@ -328,6 +381,26 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                     FileHandle.standardError.write(Data("meetings snapshot: the Moment did not play: \(failure.sentence)\n".utf8))
                 }
             }
+            if let range = request.show {
+                guard let meeting = model.detail?.id else {
+                    FileHandle.standardError.write(Data("meetings snapshot: --show needs --meeting\n".utf8))
+                    exit(1)
+                }
+                model.player.showMeeting(meeting, from: range.lowerBound)
+                model.player.timeline.showView(range, layer: model.player.top?.id)
+                guard await waitUntil(60, { model.player.phase == .playing || model.player.isFailed }) else {
+                    FileHandle.standardError.write(Data("meetings snapshot timed out starting the meeting\n".utf8))
+                    exit(1)
+                }
+            }
+            for range in request.zoomTo {
+                model.player.timeline.pushView(range, layer: model.player.top?.id)
+            }
+            if request.play != nil || request.show != nil, let detail = model.detail {
+                // The dock's waveform has the speakers' colours, which it reads after it shows.
+                if case .idle = detail.speakers { detail.loadSpeakers() }
+                _ = await waitUntil(60) { detail.speakers.value != nil || detail.speakers.failure != nil }
+            }
             if model.sidePanelOpen {
                 _ = await waitUntil(30) { model.settingsRaw != nil || model.settings.failure != nil }
             }
@@ -343,6 +416,23 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             }
             window.orderInForSnapshot()
             try? await Task.sleep(for: .milliseconds(900))
+            if request.card == nil, request.sheet == nil, let top = model.player.top {
+                // The dock reads its waveform once it shows, after the reads the window sent before it (the service
+                // answers in order): a picture taken before they land showed a timeline without a waveform.
+                let dock = model.player.timeline
+                if await waitUntil(8, { dock.whole[top.meeting] != nil }) {
+                    try? await Task.sleep(for: .milliseconds(400))
+                }
+            }
+            if request.card == nil, request.sheet == nil {
+                // The flags name the entire window, not its content rect. SwiftUI installs a toolbar after the
+                // first layout, adding 66 pt (80 with the dock) to the initial content size. Resize only after
+                // those views are present so snapshots at the same requested size remain comparable.
+                let size = MeetingsWindow.floored(NSSize(width: request.width, height: request.height))
+                window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
+                window.contentView?.layoutSubtreeIfNeeded()
+                try? await Task.sleep(for: .milliseconds(200))
+            }
             guard let capture = await WindowSnapshot.capture(window),
                   let png = capture.image.representation(using: .png, properties: [:]) else {
                 FileHandle.standardError.write(Data("meetings snapshot failed: the window could not be drawn\n".utf8))

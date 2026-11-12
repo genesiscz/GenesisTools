@@ -138,7 +138,7 @@ struct MeetingsContactsView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Contacts")
+        .accessibilityLabel("People")
     }
 
     // MARK: Header
@@ -280,7 +280,6 @@ struct MeetingsContactsView: View {
                                 query: $mergeQuery, title: "Merge \(person.name) with", prompt: "Search people",
                                 addRule: .noResults,
                                 pick: { other in mergeFrom = nil; requestMerge(person, other) },
-                                addNew: { _ in },
                                 cancel: { mergeFrom = nil })
                         }
                         Divider().padding(.leading, 52)
@@ -506,5 +505,44 @@ struct ContactsMergeSheet: View {
 
     static func meetingTitle(_ id: String, _ plan: PeopleMergePlan) -> String {
         plan.meetings.first { $0.id == id }?.title ?? id
+    }
+}
+
+/// All known appearances, including meetings outside the window's current date filter.
+struct PersonMeetingsSheet: View {
+    let history: MeetingsPeopleModel.History
+    let retry: () -> Void
+    let open: (String) -> Void
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Meetings with \(history.person.name)").font(.headline)
+                Spacer()
+                Button("Close", action: close).keyboardShortcut(.cancelAction)
+            }
+            LoadablePane(state: history.meetings, reading: "Reading meeting history…", retry: retry) { result in
+                if result.meetings.isEmpty {
+                    Text("No meeting names this person yet.").foregroundStyle(.secondary)
+                } else {
+                    List(result.meetings) { meeting in
+                        Button { open(meeting.meeting) } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(meeting.title.isEmpty ? "Untitled meeting" : meeting.title)
+                                Text([PeopleDates.day(meeting.start) ?? meeting.start,
+                                      meeting.roles.map(\.rawValue).joined(separator: ", ")].joined(separator: " · "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .accessibilityHint("Open this meeting")
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 520, minHeight: 360)
     }
 }

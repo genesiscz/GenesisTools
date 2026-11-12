@@ -21,6 +21,13 @@ enum MeetingsMenu {
         bar.addItem(withTitle: appName, action: nil, keyEquivalent: "").submenu = app
 
         let file = NSMenu(title: "File")
+        let newWindow = file.addItem(withTitle: "Open Meeting in New Window", action: #selector(MeetingsMenuTarget.openInNewWindow(_:)), keyEquivalent: "N")
+        newWindow.target = target
+        let duplicate = file.addItem(withTitle: "Duplicate Meeting", action: #selector(MeetingsMenuTarget.duplicateMeeting(_:)), keyEquivalent: "d")
+        duplicate.target = target
+        let rename = file.addItem(withTitle: "Rename Meeting…", action: #selector(MeetingsMenuTarget.renameMeeting(_:)), keyEquivalent: "")
+        rename.target = target
+        file.addItem(.separator())
         file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         bar.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = file
 
@@ -31,7 +38,7 @@ enum MeetingsMenu {
         needs.target = target
         let all = view.addItem(withTitle: "All Meetings", action: #selector(MeetingsMenuTarget.showAll(_:)), keyEquivalent: "2")
         all.target = target
-        let contacts = view.addItem(withTitle: "Contacts", action: #selector(MeetingsMenuTarget.showContacts(_:)), keyEquivalent: "3")
+        let contacts = view.addItem(withTitle: "People", action: #selector(MeetingsMenuTarget.showContacts(_:)), keyEquivalent: "3")
         contacts.target = target
         view.addItem(.separator())
         // The toolbar's toggle answers ⌥⌘I too; the item names what a press does (validateMenuItem).
@@ -68,7 +75,7 @@ enum MeetingsMenu {
 
 /// The player's plain keys in the Meetings window (G-KEY-1, G-STACK-2): Space plays or pauses, Left and Right go 5 s,
 /// `[` and `]` step to the previous and next pin, Esc pops the context stack (announced) before the views get it. A text
-/// field, a sheet or a popover keeps every key; a key the player has no use for goes on to the views (Up and Down,
+/// field, a sheet, the "This also affects" card or a popover keeps every key; a key the player has no use for goes on to the views (Up and Down,
 /// Return, the number keys, Esc that closes an editor or clears the selection).
 @MainActor
 enum MeetingsPlaybackKeys {
@@ -88,8 +95,10 @@ enum MeetingsPlaybackKeys {
     }
 
     /// The key a plain key press names; none with ⌘, ⌃ or ⌥ held.
-    static func key(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags) -> Key? {
+    static func key(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags, controlFocused: Bool = false) -> Key? {
         guard modifiers.intersection([.command, .control, .option]).isEmpty else { return nil }
+        // Space activates a focused button; arrows change a focused picker or slider. Escape keeps its stack order.
+        guard !controlFocused || ![49, 123, 124].contains(keyCode) else { return nil }
         switch keyCode {
         case 49: return .space
         case 123: return .left
@@ -107,8 +116,12 @@ enum MeetingsPlaybackKeys {
     private static func handle(_ event: NSEvent) -> Bool {
         guard let window = event.window, window.frameAutosaveName == windowName, window.attachedSheet == nil,
               !(window.firstResponder is NSText),
-              let key = key(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags),
-              let model = MeetingsMenuTarget.shared.model else { return false }
+              let key = key(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags,
+                            controlFocused: StandardEditing.controlHasFocus(firstResponder: window.firstResponder,
+                                                                           focusedElement: NSApp.accessibilityFocusedUIElement)),
+              let model = MeetingsMenuTarget.shared.model,
+              // The "This also affects" card is drawn in the window (no attached sheet) and keeps every key, as a sheet did.
+              model.detail?.pendingReach == nil else { return false }
         return perform(key, model: model)
     }
 
@@ -178,9 +191,26 @@ final class MeetingsMenuTarget: NSObject, NSMenuItemValidation {
     @objc func showContacts(_ sender: Any?) { model?.go(.contacts) }
     @objc func toggleSidePanel(_ sender: Any?) { model?.sidePanelOpen.toggle() }
 
+    /// The selected meeting in a window of its own (⇧⌘N), a copy of it (⌘D), and its title in edit (`renamingMeetingID`).
+    @objc func openInNewWindow(_ sender: Any?) {
+        guard let id = model?.selectedMeetingID else { return }
+        MeetingsWindow.openExtra(meeting: id)
+    }
+    @objc func duplicateMeeting(_ sender: Any?) {
+        guard let id = model?.selectedMeetingID else { return }
+        model?.duplicate(id)
+    }
+    @objc func renameMeeting(_ sender: Any?) { model?.renamingMeetingID = model?.selectedMeetingID }
+
+    static let meetingActions: Set<Selector> = [#selector(openInNewWindow(_:)), #selector(duplicateMeeting(_:)), #selector(renameMeeting(_:))]
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(toggleSidePanel(_:)) {
             menuItem.title = model?.sidePanelOpen == true ? "Hide Settings Panel" : "Show Settings Panel"
+        }
+        if let action = menuItem.action, Self.meetingActions.contains(action) {
+            guard let id = model?.selectedMeetingID else { return false }
+            return action != #selector(duplicateMeeting(_:)) || model?.duplicating.contains(id) != true
         }
         return true
     }

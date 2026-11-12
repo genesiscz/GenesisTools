@@ -119,7 +119,7 @@ struct MeetingContextRef: Decodable, Equatable, Hashable, Identifiable {
 }
 
 struct MeetingRecordView: Decodable, Equatable {
-    struct Speakers: Decodable, Equatable { let labels: [String: String] }
+    struct Speakers: Decodable, Equatable { var labels: [String: String] }
     struct Recording: Decodable, Equatable {
         struct Display: Decodable, Equatable, Hashable { let id: Int; let name: String?; let frames: Int? }
         let frames: Int?
@@ -130,14 +130,14 @@ struct MeetingRecordView: Decodable, Equatable {
     }
 
     let id: String
-    let title: String
-    let project: String?
-    let labels: [String]
+    var title: String
+    var project: String?
+    var labels: [String]
     let start: String
     let end: String?
     var items: [MeetingItem]
     let context: [MeetingContextRef]
-    let speakers: Speakers
+    var speakers: Speakers
     let recording: Recording?
     let sources: [String: JSONValue]
 
@@ -145,6 +145,29 @@ struct MeetingRecordView: Decodable, Equatable {
 }
 
 // MARK: - Transcript (`tools meetings transcript <id> --format json`)
+
+struct TranscriptWord: Decodable, Equatable, Hashable {
+    struct Range: Decodable, Equatable, Hashable { let location: Int; let length: Int }
+    let range: Range
+    let startSec: Double
+    let endSec: Double
+    let sourceId: String
+
+    func heardRange(at position: Double, in text: String) -> NSRange? {
+        let count = (text as NSString).length
+        guard startSec.isFinite, endSec.isFinite, startSec >= 0, endSec > startSec,
+              position >= startSec, position < endSec, range.location >= 0, range.length > 0,
+              range.length <= count, range.location <= count - range.length else { return nil }
+        return NSRange(location: range.location, length: range.length)
+    }
+}
+
+struct TranscriptWordTimingStatus: Decodable, Equatable {
+    struct Source: Decodable, Equatable { let modelId: String; let kind: String }
+    let state: String
+    let revision: String
+    let sources: [Source]
+}
 
 struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
     let id: String?
@@ -154,12 +177,14 @@ struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
     /// When the line stops being heard: the next timed line's start (G-TR-1). `meeting.transcript` sends it; the
     /// command `transcript --format json` leaves it out, and the transcript blocks compute it then.
     var endSec: Double? = nil
+    var words: [TranscriptWord]? = nil
     var rowID: String { id ?? "\(startSec ?? -1)-\(speaker)-\(text.prefix(24))" }
 }
 
 struct MeetingTranscript: Decodable, Equatable {
     let meeting: String
     let entries: [TranscriptLine]
+    var wordTimings: TranscriptWordTimingStatus? = nil
 }
 
 // MARK: - Speakers (`tools meetings speakers stats <id> --json`)
@@ -227,7 +252,7 @@ struct SpeakerHint: Decodable, Equatable, Hashable {
 
 // MARK: - Screen timeline (`tools meetings screen <id> --timeline --json`)
 
-struct OcrBox: Decodable, Equatable, Hashable {
+struct OcrBox: Decodable, Equatable, Hashable, Sendable {
     let x: Double
     let y: Double
     let width: Double
@@ -236,7 +261,7 @@ struct OcrBox: Decodable, Equatable, Hashable {
     let confidence: Double
 }
 
-struct TimelineFrame: Decodable, Equatable, Hashable, Identifiable {
+struct TimelineFrame: Decodable, Equatable, Hashable, Identifiable, Sendable {
     let file: String
     let path: String
     let at: String
@@ -245,17 +270,24 @@ struct TimelineFrame: Decodable, Equatable, Hashable, Identifiable {
     let width: Double
     let height: Double
     let lineCount: Int
+    var focusedDisplayId: Int? = nil
     let changed: [OcrBox]
     let lines: [OcrBox]?
     var id: String { file }
 }
 
 struct ScreenTimeline: Decodable, Equatable {
+    struct CaptureSpan: Decodable, Equatable { let fromSec: Double; let toSec: Double }
+    struct DisplayCaptureSpan: Decodable, Equatable { let displayId: Int; let fromSec: Double; let toSec: Double }
     struct Display: Decodable, Equatable, Hashable { let id: Int?; let name: String?; let frames: Int }
+    struct FocusSpan: Decodable, Equatable { let displayId: Int; let fromSec: Double; let toSec: Double? }
+    var focusSpans: [FocusSpan]? = nil
     let meeting: String
     let folder: String
     let displays: [Display]
     let frames: [TimelineFrame]
+    var recordingSpans: [CaptureSpan]? = nil
+    var displaySpans: [DisplayCaptureSpan]? = nil
 }
 
 // MARK: - Project proposals (`tools meetings assign proposals <id> --json`)
@@ -289,7 +321,7 @@ struct DisplayPolicy: Decodable, Equatable, Hashable {
     }
 }
 
-struct PairedBy: Decodable, Equatable, Hashable {
+struct PairedBy: Codable, Equatable, Hashable {
     let kind: String
     let entryId: String?
     let calendar: String?
@@ -298,6 +330,7 @@ struct PairedBy: Decodable, Equatable, Hashable {
     let meetingId: String?
     let at: String?
     let note: String?
+    var from: String? = nil
 }
 
 struct PairedPerson: Decodable, Equatable, Hashable, Identifiable {
@@ -345,6 +378,8 @@ struct MeetingsSettings: Decodable, Equatable {
             let idleFps: Double
             let threshold: Double
             let retentionDays: Int
+            /// `failing-and-recovered`, `failing` or `off`; absent in a config written before the key.
+            let failureNotices: String?
         }
         struct Assign: Decodable, Equatable {
             let ask: Bool

@@ -75,7 +75,7 @@ final class MeetingsUXTests: XCTestCase {
                 $0.keyEquivalent == key && $0.keyEquivalentModifierMask == mask
             }
         }
-        XCTAssertEqual(item("3")?.title, "Contacts")
+        XCTAssertEqual(item("3")?.title, "People")
         XCTAssertEqual(item("+")?.title, "Zoom In on the Timeline")
         XCTAssertEqual(item("-")?.title, "Zoom Out on the Timeline")
         XCTAssertEqual(item("0")?.title, "Fit the Clip")
@@ -459,6 +459,56 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(MeetingsPreferences.speakerOrder(defaults), .transcript)
     }
 
+    func testANoticePlaceChangedInSettingsMovesTheOpenPanesStack() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        XCTAssertEqual(model.noticePlace, .bottom)
+
+        var redraws = 0
+        // lint-rules-ignore: one shot on purpose, the test counts the first change only
+        withObservationTracking { _ = model.noticePlace } onChange: { redraws += 1 }
+        defaults.set(MeetingsPreferences.NoticePlace.top.rawValue, forKey: MeetingsPreferences.noticePlaceKey)
+        model.windowSettingsChanged()
+        XCTAssertEqual(model.noticePlace, .top)
+        XCTAssertEqual(redraws, 1, "a view that reads the place draws again")
+
+        // lint-rules-ignore: one shot on purpose, the test checks that no change arrives
+        withObservationTracking { _ = model.noticePlace } onChange: { redraws += 1 }
+        model.windowSettingsChanged()
+        XCTAssertEqual(redraws, 1, "an unchanged place draws nothing again")
+    }
+
+    func testAPhraseTestFailureNoticeGoesWhenALaterTestWorksOrThePhraseIsEmptied() async throws {
+        let notices = NoticeStackModel(clock: ManualNoticeClock(), announces: false)
+        var fails = true
+        let model = MeetingsSettingsModel(writes: false, notices: notices, command: { args in
+            let phrase = args[2]
+            if fails { throw MeetingsCLI.Failure(sentence: "The dictionary test failed.", detail: phrase) }
+            return Data("""
+            {"phrase":"\(phrase)","text":"\(phrase)","fired":[],"suggestions":[]}
+            """.utf8)
+        })
+
+        model.testPhrase("ship it")
+        for _ in 0..<100 where notices.notices.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(notices.notices.map(\.text), ["The dictionary test failed."])
+
+        fails = false
+        model.testPhrase("ship it now")
+        for _ in 0..<100 where model.phraseResult == nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(model.phraseResult?.phrase, "ship it now")
+        XCTAssertTrue(notices.notices.isEmpty, "a test that worked takes the failure away")
+
+        fails = true
+        model.testPhrase("again")
+        for _ in 0..<100 where notices.notices.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(notices.notices.count, 1)
+        model.testPhrase("  ")
+        XCTAssertTrue(notices.notices.isEmpty, "an emptied phrase takes the failure away at once")
+        XCTAssertNil(model.phraseResult)
+    }
+
     func testASandboxWindowNeverFollowsTheRealWindowsRequests() {
         let real = meetingsNotificationPrefix(home: "/Users/alice", realHome: "/Users/alice")
         let sandbox = meetingsNotificationPrefix(home: "/tmp/sandbox", realHome: "/Users/alice")
@@ -662,60 +712,6 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(HintChip.chips(for: lines[0].ranges).chips.map(\.action), [.show, .show, .show], "a long silence zooms the timeline")
         XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Bob").map(\.text),
                        ["Silent from 00:10 to 00:20 while in the call, so the voice is under other labels"])
-    }
-
-    /// "Notices float at" changed on the Settings page: the open pane read the place from the defaults on each draw, and
-    /// nothing redrew it, so it kept the old edge. The place is an observed value that the window's return reads again.
-    func testANoticePlaceChangedInSettingsMovesTheOpenPanesStack() throws {
-        let (defaults, suite) = try defaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
-        XCTAssertEqual(model.noticePlace, .bottom)
-
-        var redraws = 0
-        // lint-rules-ignore: one shot on purpose, the test counts the first change only
-        withObservationTracking { _ = model.noticePlace } onChange: { redraws += 1 }
-        defaults.set(MeetingsPreferences.NoticePlace.top.rawValue, forKey: MeetingsPreferences.noticePlaceKey)
-        model.windowSettingsChanged()
-        XCTAssertEqual(model.noticePlace, .top)
-        XCTAssertEqual(redraws, 1, "a view that reads the place draws again")
-
-        // lint-rules-ignore: one shot on purpose, the test checks that no change arrives
-        withObservationTracking { _ = model.noticePlace } onChange: { redraws += 1 }
-        model.windowSettingsChanged()
-        XCTAssertEqual(redraws, 1, "an unchanged place draws nothing again")
-    }
-
-    /// A failed phrase test put an error notice up with no timeout, and a later test that worked (or an emptied phrase)
-    /// left it on screen. The failure notice now goes with the test it belongs to.
-    func testAPhraseTestFailureNoticeGoesWhenALaterTestWorksOrThePhraseIsEmptied() async throws {
-        let notices = NoticeStackModel(clock: ManualNoticeClock(), announces: false)
-        let model = MeetingsSettingsModel(writes: false, notices: notices)
-        var fails = true
-        model.phraseTester = { phrase, _ in
-            if fails { throw MeetingsCLI.Failure(sentence: "The dictionary test failed.", detail: phrase) }
-            return try JSONDecoder().decode(PhraseTest.self, from: Data("""
-            {"phrase":"\(phrase)","text":"\(phrase)","fired":[],"suggestions":[]}
-            """.utf8))
-        }
-
-        model.testPhrase("ship it")
-        for _ in 0..<100 where notices.notices.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
-        XCTAssertEqual(notices.notices.map(\.text), ["The dictionary test failed."])
-
-        fails = false
-        model.testPhrase("ship it now")
-        for _ in 0..<100 where model.phraseResult == nil { try await Task.sleep(nanoseconds: 20_000_000) }
-        XCTAssertEqual(model.phraseResult?.phrase, "ship it now")
-        XCTAssertTrue(notices.notices.isEmpty, "a test that worked takes the failure away")
-
-        fails = true
-        model.testPhrase("again")
-        for _ in 0..<100 where notices.notices.isEmpty { try await Task.sleep(nanoseconds: 20_000_000) }
-        XCTAssertEqual(notices.notices.count, 1)
-        model.testPhrase("  ")
-        XCTAssertTrue(notices.notices.isEmpty, "an emptied phrase takes the failure away at once")
-        XCTAssertNil(model.phraseResult)
     }
 
     func testATitledNoteShowsItsText() throws {

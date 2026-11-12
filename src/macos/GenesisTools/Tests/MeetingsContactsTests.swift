@@ -46,6 +46,14 @@ final class MeetingsContactsTests: XCTestCase {
                     XCTAssertEqual(known.people.first?.rank, .meeting)
                     XCTAssertEqual(known.sources.map(\.kind), [.meetings, .projects, .own, .contacts])
                 }
+            case MeetingsAPI.PeopleMeetings.name:
+                try roundTrip(MeetingsAPI.PeopleMeetings.Params.self, params, label)
+                if let result {
+                    let history = try MeetingsService.decode(MeetingsAPI.PeopleMeetings.Result.self, result)
+                    XCTAssertEqual(history.person.name, "Alex Example")
+                    XCTAssertEqual(history.meetings.map(\.meeting), ["2026-11-03-1000-design-review"])
+                    XCTAssertTrue(history.meetings.first?.roles.contains(.participant) == true)
+                }
             case MeetingsAPI.PeopleAdd.name:
                 try roundTrip(MeetingsAPI.PeopleAdd.Params.self, params, label)
                 if let result {
@@ -90,7 +98,7 @@ final class MeetingsContactsTests: XCTestCase {
             }
             decoded[method, default: 0] += 1
         }
-        for method in [MeetingsAPI.PeopleKnown.name, MeetingsAPI.PeopleAdd.name, MeetingsAPI.PeopleHide.name,
+        for method in [MeetingsAPI.PeopleKnown.name, MeetingsAPI.PeopleMeetings.name, MeetingsAPI.PeopleAdd.name, MeetingsAPI.PeopleHide.name,
                        MeetingsAPI.PeoplePlanMerge.name, MeetingsAPI.PeopleMerge.name, MeetingsAPI.PeopleUnmerge.name] {
             XCTAssertGreaterThan(decoded[method] ?? 0, 0, "the fixture has an example of \(method)")
         }
@@ -126,6 +134,15 @@ final class MeetingsContactsTests: XCTestCase {
         XCTAssertNil(PeopleText.newName("Dana", people: people, rule: .noResults), "noResults waits for an empty list")
     }
 
+    func testExistingPersonPickerDoesNotOfferAnUnusableAddAction() {
+        let picker = PersonPicker(people: [], query: .constant("New person"), title: "Merge with",
+                                  pick: { _ in })
+        XCTAssertNil(picker.newName, "An existing-person picker cannot add the typed name")
+        let addingPicker = PersonPicker(people: [], query: .constant("New person"),
+                                        pick: { _ in }, addNew: { _ in })
+        XCTAssertEqual(addingPicker.newName, "New person")
+    }
+
     func testTheRowSaysTheAddressElseWhereTheyWereSeen() {
         XCTAssertEqual(PeopleText.address(Fixture.person("Robin Example", email: "robin@example.com")), "robin@example.com")
         XCTAssertEqual(PeopleText.address(Fixture.person("Alex Example", meetings: 4)), "4 meetings")
@@ -146,6 +163,14 @@ final class MeetingsContactsTests: XCTestCase {
         XCTAssertFalse(PersonNameField.isDirty(draft: "Dana Example ", saved: "Dana Example"))
         XCTAssertTrue(PersonNameField.isDirty(draft: "Dana Ex", saved: "Dana Example"))
         XCTAssertTrue(PersonNameField.isDirty(draft: "Dana", saved: nil))
+    }
+
+    func testSavedNameChangesReplaceOnlyACleanDraft() {
+        XCTAssertEqual(PersonNameField.draftAfterSavedChange(draft: "Dana Example", old: "Dana Example", new: "Robin Example"), "Robin Example")
+        XCTAssertEqual(PersonNameField.draftAfterSavedChange(draft: "Dana Example ", old: "Dana Example", new: "Robin Example"), "Robin Example")
+        XCTAssertEqual(PersonNameField.draftAfterSavedChange(draft: "My draft", old: "Dana Example", new: "Robin Example"), "My draft")
+        XCTAssertEqual(PersonNameField.draftAfterSavedChange(draft: "Dana Example", old: "Dana Example", new: nil), "")
+        XCTAssertEqual(PersonNameField.draftAfterSavedChange(draft: "", old: nil, new: "Robin Example"), "Robin Example")
     }
 
     // MARK: The Contacts view's words
@@ -182,7 +207,7 @@ final class MeetingsContactsTests: XCTestCase {
     // MARK: Snapshots
 
     /// F10: the command forms the window runs when no Meetings service answers, with the query after `--`.
-    func testThePeopleCommandsWithoutAService() {
+    func testThePeopleCommandsWithoutAService() throws {
         XCTAssertEqual(PeopleCalls.knownArgs(.init(query: "-dana", meeting: "m1", atSec: 12.5, limit: 20, includeHidden: true)),
                        ["people", "list", "--json", "--meeting", "m1", "--at", "12.5", "--limit", "20", "--hidden", "--", "-dana"])
         XCTAssertEqual(PeopleCalls.knownArgs(.init(limit: 500)), ["people", "list", "--json", "--limit", "500"])
@@ -194,9 +219,14 @@ final class MeetingsContactsTests: XCTestCase {
                        ["people", "merge", "--json", "--name", "Alex Example", "--yes", "--", "email:a@example.com", "name:a example"])
         XCTAssertEqual(PeopleCalls.mergeArgs(.init(a: "x", b: "y"), make: false), ["people", "merge", "--json", "--", "x", "y"])
         XCTAssertEqual(PeopleCalls.unmergeArgs("t1"), ["people", "unmerge", "--json", "--", "t1"])
-        XCTAssertEqual(PeopleCalls.assignArgs(meeting: "m1", person: "Dana Example", email: nil,
-                                              stretch: .init(label: "Speaker 2", fromSec: 9, toSec: 21.5)),
-                       ["people", "assign", "--json", "--from", "9", "--to", "21.5", "--label", "Speaker 2", "--", "m1", "Dana Example"])
+        let action = DecisionAction.assign("Dana Example", stretches: [.init(label: "Speaker 2", fromSec: 9, toSec: 21.5)])
+        let args = try XCTUnwrap(MeetingDetailModel.commandArgs(meeting: "m1", action: action, reason: nil))
+        XCTAssertEqual(Array(args.prefix(3)), ["decide", "m1", "--action"])
+        XCTAssertEqual(try JSONDecoder().decode(DecisionAction.self, from: Data(args[3].utf8)), action)
+        var undo = DecisionAction(kind: "revert")
+        undo.token = "t1"
+        let revert = try XCTUnwrap(MeetingDetailModel.journalCommand(meeting: "m1", action: undo, reason: nil))
+        XCTAssertEqual(try JSONDecoder().decode(DecisionAction.self, from: Data(revert[3].utf8)), undo)
     }
 
     /// F10, R22: the speaker plan's mirror reads an assign's other stretches and a rename's warning.

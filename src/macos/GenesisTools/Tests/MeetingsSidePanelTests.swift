@@ -28,12 +28,30 @@ final class MeetingsSidePanelTests: XCTestCase {
                     "meetings.playback.repeat", "meetings.playback.afterClip", "meetings.playback.moreSec",
                     "meetings.playback.contextSec", "meetings.playback.rewindSec", "meetings.playback.stack.clickInQuestion",
                     "meetings.playback.stack.onTopEnd", "meetings.playback.stack.depth", "meetings.timeline.shown",
-                    "meetings.timeline.hoverDelayMs", "meetings.transcript.followPlayback", "meetings.screen.besidePlayback",
+                    "meetings.timeline.hoverDelayMs", "meetings.timeline.pinLanes", "meetings.timeline.waveform",
+                    "meetings.transcript.followPlayback", "meetings.screen.besidePlayback",
                     "meetings.items.transcriptPane", "meetings.people.renameBlur", "meetings.people.offerNew"] {
             XCTAssertTrue(keys.contains(key), "the panel has a row for \(key)")
         }
         XCTAssertTrue(sections.allSatisfy(\.isDefault), "fresh defaults: every section is at its defaults")
         XCTAssertEqual(sections.first { $0.id == "notices" }?.settingsAnchor, MeetingsSettingsPages.noticesAnchor)
+    }
+
+    func testNoticeInteractionChoicesPersistAndReachTheExistingStack() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsPreferences.makeNoticeStack(defaults: defaults)
+        XCTAssertEqual(model.interactionPolicy, NoticeStackInteractionPolicy(pauseWhenInactive: true, passScrollWhenFits: true))
+        let rows = try XCTUnwrap(SidePanelCatalog.windowSections(defaults).first { $0.id == "notices" }).rows
+        for key in [MeetingsPreferences.Notices.pauseWhenInactive.key, MeetingsPreferences.Notices.passScrollWhenFits.key] {
+            let row = try XCTUnwrap(rows.first { $0.id == key })
+            XCTAssertEqual(row.value, .flag(true))
+            SidePanelCatalog.write(.flag(false), key: key, to: defaults)
+        }
+        let reopened = try XCTUnwrap(UserDefaults(suiteName: suite))
+        XCTAssertFalse(MeetingsPreferences.Notices.pauseWhenInactive.value(reopened))
+        XCTAssertFalse(MeetingsPreferences.Notices.passScrollWhenFits.value(reopened))
+        XCTAssertEqual(model.interactionPolicy, NoticeStackInteractionPolicy())
     }
 
     func testAChangedValueShowsAndTheSectionCanReset() throws {
@@ -50,6 +68,41 @@ final class MeetingsSidePanelTests: XCTestCase {
         let speed = try XCTUnwrap(sections.first { $0.id == "playback" }?.rows.first { $0.id == "meetings.playback.speed" })
         XCTAssertEqual(speed.valueTitle, "1.5×")
         XCTAssertEqual(sections.first { $0.id == "panes" }?.isDefault, true)
+    }
+
+    func testPlaybackMotionIsOptionalAndPersists() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = "meetings.playback.animateActivity"
+        let row = try XCTUnwrap(SidePanelCatalog.windowSections(defaults).flatMap(\.rows).first { $0.id == key })
+        XCTAssertEqual(row.value, .flag(true))
+        SidePanelCatalog.write(.flag(false), key: key, to: defaults)
+        let reopened = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let saved = try XCTUnwrap(SidePanelCatalog.windowSections(reopened).flatMap(\.rows).first { $0.id == key })
+        XCTAssertEqual(saved.value, .flag(false))
+    }
+
+    func testPausedSeekResumePolicyHasBothChoicesAndPersists() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = MeetingsPreferences.Playback.resumeAfterSeek.key
+        let rows = SidePanelCatalog.windowSections(defaults).flatMap(\.rows)
+        let row = try XCTUnwrap(rows.first { $0.id == key })
+        XCTAssertEqual(row.value, .text("selectedTime"))
+        XCTAssertEqual(row.choices.map(\.value), [.text("selectedTime"), .text("rewind")])
+        SidePanelCatalog.write(.text("rewind"), key: key, to: defaults)
+        let reopened = try XCTUnwrap(UserDefaults(suiteName: suite))
+        XCTAssertEqual(MeetingsPreferences.Playback.resumeAfterSeek.value(reopened), .rewind)
+    }
+
+    func testMissingTonePolicyHasBothChoicesAndKeepsStrictSelection() throws {
+        let key = "global.playback.listen.tone.onMissing"
+        let (_, fresh) = engine([:])
+        let row = try XCTUnwrap(fresh[key])
+        XCTAssertEqual(row.value, .text("beep"))
+        XCTAssertEqual(row.choices.map(\.value), [.text("beep"), .text("error")])
+        let (_, strict) = engine(["tone": .object(["onMissing": .string("error")])])
+        XCTAssertEqual(strict[key]?.value, .text("error"))
     }
 
     func testTheWordsMatchTheSettingsPage() {
@@ -115,7 +168,7 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertEqual(section.footnote, "Applies from the next clip. The clip that plays keeps its sound.")
         XCTAssertEqual(section.enginePaths, ["global.playback.listen.padBeforeSec", "global.playback.listen.padAfterSec",
                                              "global.playback.listen.tone.enabled", "global.playback.listen.tone.leadSec",
-                                             Self.soundPath, "global.playback.listen.longestClipSec"],
+                                             Self.soundPath, "global.playback.listen.tone.onMissing", "global.playback.listen.longestClipSec"],
                        "the volume goes with the sound: one unset, no second write")
         let sound = try XCTUnwrap(rows[Self.soundPath])
         XCTAssertEqual(sound.value, .text("soft"), "a stored sine with Soft's pitch and length is Soft")

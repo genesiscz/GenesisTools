@@ -9,6 +9,30 @@ import XCTest
 final class MeetingsTimelineTests: XCTestCase {
     // MARK: - Pure rules
 
+    func testScreenThumbnailsRefreshChangedFilesAndDoNotReturnDeletedFiles() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-frame-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("frame.png")
+        func write(width: Int, height: Int) throws {
+            let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            let image = try XCTUnwrap(context.makeImage())
+            let data = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            try data.write(to: file, options: .atomic)
+        }
+        let thumbnails = FrameThumbnails()
+        try write(width: 32, height: 16)
+        let first = await thumbnails.image(path: file.path, maxPixel: 128)
+        XCTAssertEqual(try XCTUnwrap(first).size, NSSize(width: 32, height: 16))
+        try write(width: 16, height: 32)
+        let replaced = await thumbnails.image(path: file.path, maxPixel: 128)
+        XCTAssertEqual(try XCTUnwrap(replaced).size, NSSize(width: 16, height: 32))
+        try FileManager.default.removeItem(at: file)
+        let deleted = await thumbnails.image(path: file.path, maxPixel: 128)
+        XCTAssertNil(deleted)
+    }
+
     /// G-PLAY-3: a flag click plays from 0.3 s before the tone, so the tone is heard whole; from the spot without a
     /// tone; never before the clip starts.
     func testAFlagClickPlaysFromThreeTenthsOfASecondBeforeTheTone() {
@@ -27,10 +51,10 @@ final class MeetingsTimelineTests: XCTestCase {
         let clusters = PinCluster.clusters(pins, in: 0...600, width: 600)
         XCTAssertEqual(clusters.map { $0.pins.map(\.id) }, [["i0", "i1", "i2"], ["i3", "i4"], ["i5"], ["i6"]],
                        "40 and 46 are 6 pt apart: two 16 pt marks there drew over each other")
-        XCTAssertEqual(clusters[0].x, 13.5)
+        XCTAssertEqual(clusters[0].x, 10, "merged marks stay anchored to their first pin")
         XCTAssertEqual(clusters[0].range, 10...17)
-        XCTAssertEqual(clusters[1].x, 43)
-        XCTAssertEqual(clusters[1].room, 27)
+        XCTAssertEqual(clusters[1].x, 40)
+        XCTAssertEqual(clusters[1].room, 30)
         XCTAssertEqual(clusters[3].room, 300)
 
         // A dense stretch (a pin every 8 pt) is a row of counts, never one count for all of it, and never an overlap.
@@ -47,16 +71,38 @@ final class MeetingsTimelineTests: XCTestCase {
                                      "a mark stays at its pins")
         }
 
-        // A pin just past a mark's reach is pushed clear of it, not drawn into it.
+        // First-pin anchoring leaves the next mark clear without shifting its time.
         let edge = PinCluster.clusters([100, 119, 120].enumerated().map { TimelinePin(id: "e\($0)", sec: Double($1), text: "e", state: .open) },
                                        in: 0...600, width: 600)
-        XCTAssertEqual(edge.map(\.x), [109.5, 129.5])
+        XCTAssertEqual(edge.map(\.x), [100, 120])
+    }
+
+    func testDenseEndPinsStayInsideTheTimelineInBothLayouts() {
+        let pins = stride(from: 80.0, through: 100, by: 1).enumerated().map {
+            TimelinePin(id: "end\($0.offset)", sec: $0.element, text: "end", state: .open)
+        }
+        for width in [CGFloat(20), 80, 400] {
+            for marks in [PinCluster.clusters(pins, in: 0...100, width: width),
+                          PinCluster.laid(pins, in: 0...100, width: width, lanes: 3)] {
+                XCTAssertEqual(marks.flatMap(\.pins).count, pins.count)
+                for mark in marks {
+                    XCTAssertGreaterThanOrEqual(mark.x - PinMark.iconWidth / 2, 0)
+                    XCTAssertLessThanOrEqual(mark.x + PinMark.iconWidth / 2, width)
+                }
+                for lane in Set(marks.map(\.lane)) {
+                    let row = marks.filter { $0.lane == lane }
+                    for (before, after) in zip(row, row.dropFirst()) {
+                        XCTAssertGreaterThanOrEqual(after.x - before.x, PinMark.markWidth)
+                    }
+                }
+            }
+        }
     }
 
     /// D8: outside the capture the screen pane says that its picture is from another time.
     func testTheScreenPaneSaysWhenItsFrameIsFromAnotherTime() throws {
         let json = Data("""
-        {"meeting":"m","recorded":true,"displays":[],"frames":[
+        {"meeting":"m","recorded":true,"recordingSpans":[{"fromSec":60,"toSec":1080}],"displays":[],"frames":[
          {"file":"a.png","path":"/x/a.png","meetingSec":60,"width":10,"height":10,"lineCount":0},
          {"file":"b.png","path":"/x/b.png","meetingSec":600,"width":10,"height":10,"lineCount":0},
          {"file":"c.png","path":"/x/c.png","meetingSec":1048,"width":10,"height":10,"lineCount":0}]}
@@ -70,12 +116,24 @@ final class MeetingsTimelineTests: XCTestCase {
         XCTAssertNil(TimelineDockModel.apart(middle, in: screen, at: 500, display: nil), "inside the capture an older frame is an unchanged screen")
         let first = try XCTUnwrap(TimelineDockModel.frame(in: screen, at: 5, display: nil))
         XCTAssertEqual(TimelineDockModel.apart(first, in: screen, at: 5, display: nil), -55)
-        XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 1048, apartSec: 2227), "Last frame, 37 min earlier")
+        XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 1048, apartSec: 2227), "Frame, 37 min earlier")
         XCTAssertEqual(ScreenBesidePlayback.sentence(atSec: 1048, apartSec: 2227),
-                       "The screen capture ended at 17:28, 37 min before this spot. This is its last frame.")
-        XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 60, apartSec: -55), "First frame, 55 s later")
+                       "The capture does not cover this spot. This frame is from 17:28, 37 min before it.")
+        XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 60, apartSec: -55), "Frame, 55 s later")
         XCTAssertNil(ScreenBesidePlayback.sentence(atSec: 3275, apartSec: nil))
         XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 3275, apartSec: nil), "Screen at 54:35")
+    }
+
+    func testCaptureCoveragePreservesUnchangedScreensPausesAndDisplayGaps() {
+        let frame = MeetingsAPI.MeetingScreen.Frame(file: "a", path: "/a", meetingSec: 60, displayId: 1, width: 10, height: 10, lineCount: 0)
+        var screen = MeetingsAPI.MeetingScreen.Result(meeting: "m", recorded: true, displays: [], frames: [frame])
+        XCTAssertNil(TimelineDockModel.apart(frame, in: screen, at: 9000, display: 1), "old metadata is unknown, not a stopped capture")
+        screen.recordingSpans = [.init(fromSec: 0, toSec: 100), .init(fromSec: 200, toSec: 10000)]
+        XCTAssertNil(TimelineDockModel.apart(frame, in: screen, at: 9000, display: 1), "unchanged screen remains current")
+        XCTAssertEqual(TimelineDockModel.apart(frame, in: screen, at: 150, display: nil), 90, "pause remains a gap")
+        screen.displaySpans = [.init(displayId: 1, fromSec: 0, toSec: 100), .init(displayId: 2, fromSec: 200, toSec: 10000)]
+        XCTAssertEqual(TimelineDockModel.apart(frame, in: screen, at: 250, display: 1), 190, "another display's capture does not cover this display")
+        XCTAssertNil(TimelineDockModel.apart(frame, in: screen, at: 250, display: 2))
     }
 
     /// G-PLAY-5: a mark is dimmed only when every pin in it is filtered out; its state is the strongest of its pins.
@@ -111,6 +169,95 @@ final class MeetingsTimelineTests: XCTestCase {
         XCTAssertEqual(ZoomSpan(startSec: 3271, endSec: 3286, fromSec: 3276, toSec: 3281, spotSec: 3276, label: "x").fitView, 3266...3291)
         XCTAssertEqual(TimelineFixture.span.contextView(contextSec: 120, durationSec: 8772), 3216...3336)
         XCTAssertEqual(ZoomSpan(startSec: 0, endSec: 10, fromSec: 5, toSec: 6, spotSec: 5, label: "x").contextView(contextSec: 120, durationSec: 8772), 0...120)
+    }
+
+    /// 2026-11-10: two items a second apart were a "2" that no zoom took apart. On two rows they stand under each
+    /// other with their texts; a third at the same place joins the first row's mark.
+    func testPinsCloseInTimeStandOnRowsAndOnlyTheOverflowBecomesACount() {
+        func pin(_ id: String, _ sec: Double, _ text: String = "Robertem → Róbertem") -> TimelinePin {
+            TimelinePin(id: id, sec: sec, text: text, state: .done)
+        }
+        // 4 s over 1200 pt: a second is 300 pt.
+        let two = PinCluster.laid([pin("a", 3059.0), pin("b", 3059.02)], in: 3056...3060, width: 1200, lanes: 2)
+        XCTAssertEqual(two.map(\.pins.count), [1, 1], "two rows hold both, each with its text")
+        XCTAssertEqual(two.map(\.lane), [0, 1])
+        let three = PinCluster.laid([pin("a", 3059.0), pin("b", 3059.02), pin("c", 3059.04)], in: 3056...3060, width: 1200, lanes: 2)
+        XCTAssertEqual(three.map(\.pins.count).sorted(), [1, 2], "no row has room for the third: it joins the first row's mark")
+        XCTAssertEqual(three.first { $0.lane == 0 }?.pins.map(\.id), ["a", "c"])
+        // Far apart: one row, the texts whole.
+        let apart = PinCluster.laid([pin("a", 3056.5, "one"), pin("b", 3058.5, "two")], in: 3056...3060, width: 1200, lanes: 2)
+        XCTAssertEqual(apart.map(\.lane), [0, 0])
+        XCTAssertEqual(apart[0].room, 600, "the room to the next mark on the same row")
+        // The first mark's text does not fit before the second pin: the second goes one row down, the text stays whole.
+        let near = PinCluster.laid([pin("a", 3057.0), pin("b", 3057.2)], in: 3056...3060, width: 1200, lanes: 2)
+        XCTAssertEqual(near.map(\.lane), [0, 1])
+        XCTAssertEqual(PinCluster.laid([pin("a", 10), pin("b", 9000)], in: 0...100, width: 500, lanes: 2).count, 1, "a pin outside the view is left out")
+    }
+
+    func testDensePinsReserveCaptionRoomAndKeepAnUnansweredTitle() {
+        let pins = (0..<24).map { index in
+            TimelinePin(id: "i\(index)", sec: Double(index) * 2, text: "Item \(index)", state: index == 2 ? .question : .done)
+        }
+        let clusters = PinCluster.laid(pins, in: 0...60, width: 600, lanes: 2, markWidth: 72)
+        for cluster in clusters where cluster.x < 528 {
+            XCTAssertGreaterThanOrEqual(cluster.room, 72)
+            XCTAssertFalse(cluster.caption.isEmpty)
+        }
+        XCTAssertLessThan(clusters.count, pins.count)
+        let question = clusters.first { $0.pins.contains { $0.id == "i2" } }
+        XCTAssertEqual(question?.caption, "Item 2")
+    }
+
+    func testAMarkThatNoZoomTakesApartOpensAListInsteadOfAZoom() {
+        let same = PinCluster(pins: [TimelinePin(id: "a", sec: 3059, text: "a", state: .done), TimelinePin(id: "b", sec: 3059, text: "b", state: .done)],
+                              x: 0, room: 0)
+        XCTAssertTrue(same.expands(in: 2926...5220), "from a wide view a zoom to its 12 s shows less")
+        XCTAssertFalse(same.expands(in: 3053...3065), "the view is its 12 s already: a click lists its rows")
+        let wide = PinCluster(pins: [TimelinePin(id: "a", sec: 100, text: "a", state: .open), TimelinePin(id: "b", sec: 700, text: "b", state: .open)],
+                              x: 0, room: 0)
+        XCTAssertTrue(wide.expands(in: 0...8772))
+        XCTAssertEqual(PinCluster.expanded(100...200), 90...210)
+    }
+
+    /// 2026-11-10: a view from 48:46 showed "50:00" as its first time. The ruler names the view's two ends, and a
+    /// round mark that would stand in an end's label is left out.
+    func testTheRulerNamesTheViewsEndsAndKeepsTheMarksOffThem() {
+        let labels = TimelineGeometry.rulerLabels(in: 2926...5220, width: 1500)
+        XCTAssertEqual(labels.first, RulerLabel(sec: 2926, x: 0, kind: .start))
+        XCTAssertEqual(labels.last, RulerLabel(sec: 5220, x: 1500, kind: .end))
+        let marks = labels.filter { $0.kind == .mark }
+        XCTAssertEqual(marks.first?.sec, 3120, "52:00: the mark at 50:00 is 48 pt from the start label and is left out")
+        XCTAssertTrue(marks.allSatisfy { $0.x >= 62 && $0.x <= 1500 - 62 })
+        XCTAssertEqual(TimelineGeometry.rulerLabels(in: 0...600, width: 600).filter { $0.kind == .mark }.first?.sec, 120,
+                       "a view from 00:00 names it once, as its start")
+        XCTAssertTrue(TimelineGeometry.rulerLabels(in: 5...5, width: 600).isEmpty)
+    }
+
+    /// The waveform's colour per bar is the voice that talks longest in it; a bar nobody talks in has none.
+    func testABarHasTheColourOfTheVoiceThatTalksLongestInIt() {
+        let voices = [VoiceSpan(fromSec: 0, toSec: 5, color: .purple), VoiceSpan(fromSec: 4, toSec: 12, color: .green),
+                      VoiceSpan(fromSec: 30, toSec: 31, color: .purple)]
+        XCTAssertEqual(TimelineGeometry.barVoices(voices, view: 0...40, count: 4), [.green, .green, nil, .purple])
+        XCTAssertEqual(TimelineGeometry.barVoices(voices, view: 0...10, count: 2), [.purple, .green])
+        XCTAssertEqual(TimelineGeometry.barVoices([], view: 0...10, count: 2), [nil, nil])
+    }
+
+    func testTheWaveformHasEachSpeakersOwnColourAndTheLegendTheMostSpokenFirst() {
+        func speaker(_ label: String, _ spoken: Double, _ turns: [(Double, Double)]) -> MeetingsAPI.MeetingSpeakers.Speaker {
+            let spans = turns.map { MeetingsAPI.MeetingSpeakers.Span(fromSec: $0.0, toSec: $0.1, turns: 1) }
+            return MeetingsAPI.MeetingSpeakers.Speaker(label: label, speakerId: nil, origin: "call", turns: turns.count, lines: 1, words: 1,
+                                                       spokenSec: spoken, firstSec: turns.first?.0, lastSec: turns.last?.1, spans: spans, talk: spans)
+        }
+        let voices = TimelineDock.voices([speaker("Speaker 1", 10, [(20, 30)]), speaker("Speaker 2", 60, [(0, 20), (30, 70)])],
+                                         names: ["Speaker 1": "Alice Novak"])
+        XCTAssertEqual(voices.legend.map(\.name), ["Speaker 2", "Alice Novak"], "the most spoken first, by the shown name")
+        XCTAssertEqual(voices.spans.map(\.fromSec), [0, 20, 30], "in the order of their start")
+        XCTAssertEqual(voices.spans[1].color, KitPersonColor.color(for: "Alice Novak", among: ["Alice Novak", "Speaker 2"]),
+                       "the avatar's colour: the shown name among the meeting's shown names")
+        XCTAssertNotEqual(voices.spans[0].color, voices.spans[1].color)
+        XCTAssertTrue(TimelineDock.coloursVoices("speakers", look: .aurora))
+        XCTAssertFalse(TimelineDock.coloursVoices("plain", look: .aurora))
+        XCTAssertFalse(TimelineDock.coloursVoices("speakers", look: .classic), "the classic look keeps its one colour")
     }
 
     /// The ruler marks fall on round seconds at least 70 pt apart; a second maps to x and back.
@@ -156,6 +303,20 @@ final class MeetingsTimelineTests: XCTestCase {
         XCTAssertEqual(TimelinePin(row: TimelineFixture.questionRow, playing: true)?.state, .playing)
     }
 
+    /// The pins follow `meetings.rows.stateLook`: hue and glyph by default, the older flags and tints under Shade.
+    func testThePinsFollowTheStateLookSetting() {
+        let rejected = TimelinePin(id: "r", sec: 1, text: "x", state: .rejected)
+        XCTAssertEqual(rejected.symbol(.hueAndGlyph), "xmark")
+        XCTAssertEqual(rejected.symbol(.shade), "checkmark", "the shade look has no rejected pin of its own")
+        XCTAssertEqual(TimelinePin.State.rejected.hue(.shade), .done)
+        let open = TimelinePin(id: "o", sec: 1, text: "x", state: .open)
+        XCTAssertEqual(open.symbol(.hueAndGlyph), "sparkles")
+        XCTAssertEqual(open.symbol(.shade), "flag.fill")
+        XCTAssertEqual(TimelinePin.State.open.hue(.hueAndGlyph), .play)
+        XCTAssertEqual(TimelinePin.State.open.hue(.shade), .care)
+        XCTAssertEqual(TimelinePin(id: "p", sec: 1, text: "x", state: .playing).symbol(.shade), "flag.fill")
+    }
+
     // MARK: - Snapshots
 
     func testSnapshotsOfTheZoomedTimeline() throws {
@@ -193,6 +354,15 @@ final class MeetingsTimelineTests: XCTestCase {
                     name: "conversation-strip", width: width, scheme: scheme)
             }
         }
+    }
+
+    func testPinChoiceChipsWrapAnOversizedAnswerWithinTheCard() throws {
+        let text = "An oversized answer must keep every word visible when this card is narrow"
+        let renderer = ImageRenderer(content: PinChoiceChips(items: [text]).frame(width: 180))
+        renderer.scale = 1
+        let image = try XCTUnwrap(renderer.cgImage)
+        XCTAssertEqual(image.width, 180)
+        XCTAssertGreaterThan(image.height, 40, "the answer needs several lines, not one clipped chip")
     }
 
     func testSnapshotsOfThePinCard() throws {

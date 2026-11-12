@@ -56,6 +56,30 @@ struct ZoomSpan: Equatable {
     var flagSeekTarget: Double { TimelineGeometry.flagSeekTarget(toneSec: toneSec, spotSec: spotSec, clipStartSec: startSec) }
 }
 
+/// A stretch one speaker talks in, with that speaker's colour (the avatars' and the lanes').
+struct VoiceSpan: Equatable {
+    let fromSec: Double
+    let toSec: Double
+    let color: Color
+}
+
+/// A speaker in the legend under the timeline.
+struct VoiceLegend: Equatable, Identifiable {
+    let name: String
+    let color: Color
+
+    var id: String { name }
+}
+
+/// One label of the ruler: an end of the view, or a round mark.
+struct RulerLabel: Equatable {
+    enum Kind: Equatable { case start, end, mark }
+
+    let sec: Double
+    let x: CGFloat
+    let kind: Kind
+}
+
 /// The timeline's pure rules: where a second sits, where a flag click plays from, the ruler's marks.
 enum TimelineGeometry {
     /// The flag plays from 0.3 s before the tone, so the tone is heard whole (G-PLAY-3); from the spot when the Moment
@@ -96,6 +120,46 @@ enum TimelineGeometry {
         return marks
     }
 
+    /// The ruler's labels: the view's two ends, so the reader sees where the timeline starts and ends (a view from
+    /// 48:46 showed "50:00" as its first time), and the round marks that stand at least `edgeGap` from an end.
+    static func rulerLabels(in range: ClosedRange<Double>, width: CGFloat, minGap: CGFloat = 70, edgeGap: CGFloat = 62) -> [RulerLabel] {
+        guard range.upperBound > range.lowerBound, width > 0 else { return [] }
+        var labels = [RulerLabel(sec: range.lowerBound, x: 0, kind: .start)]
+        for mark in ticks(in: range, width: width, minGap: minGap) {
+            let at = x(mark, in: range, width: width)
+            if at >= edgeGap, at <= width - edgeGap { labels.append(RulerLabel(sec: mark, x: at, kind: .mark)) }
+        }
+        labels.append(RulerLabel(sec: range.upperBound, x: width, kind: .end))
+        return labels
+    }
+
+    /// The voice of each of `count` bars over `view`: the colour that talks longest inside the bar, nil for a bar
+    /// nobody talks in. `voices` in the order of their start.
+    static func barVoices(_ voices: [VoiceSpan], view: ClosedRange<Double>, count: Int) -> [Color?] {
+        guard count > 0 else { return [] }
+        let length = view.upperBound - view.lowerBound
+        var first = 0
+        return (0..<count).map { bar in
+            let from = view.lowerBound + length * Double(bar) / Double(count)
+            let to = view.lowerBound + length * Double(bar + 1) / Double(count)
+            while first < voices.count, voices[first].toSec <= from { first += 1 }
+            var talk: [(color: Color, sec: Double)] = []
+            var index = first
+            while index < voices.count, voices[index].fromSec < to {
+                let overlap = min(to, voices[index].toSec) - max(from, voices[index].fromSec)
+                if overlap > 0 {
+                    if let known = talk.firstIndex(where: { $0.color == voices[index].color }) {
+                        talk[known].sec += overlap
+                    } else {
+                        talk.append((voices[index].color, overlap))
+                    }
+                }
+                index += 1
+            }
+            return talk.max { $0.sec < $1.sec }?.color
+        }
+    }
+
     /// The peaks of a whole-range waveform that fall inside `view`, resampled to `count` bars.
     static func bars(_ peaks: [Double], peaksRange: ClosedRange<Double>, view: ClosedRange<Double>, count: Int) -> [Double] {
         guard !peaks.isEmpty, count > 0 else { return [] }
@@ -113,7 +177,8 @@ enum TimelineGeometry {
     }
 }
 
-/// A waveform drawn as bars in one Canvas: dim outside the clip, brighter in it, brightest in the asked span.
+/// A waveform drawn as bars in one Canvas: dim outside the clip, brighter in it, brightest in the asked span. With
+/// `voices` each bar has the colour of the speaker who talks there, and the clip and the asked span show as strength.
 struct WaveformBars: View {
     let peaks: [Double]
     /// The seconds the peaks cover.
@@ -123,6 +188,8 @@ struct WaveformBars: View {
     /// The clip's audio and the asked span, when a Moment is shown.
     var clip: ClosedRange<Double>?
     var asked: ClosedRange<Double>?
+    /// Who talks when, in the order of their start; empty draws the one-colour waveform.
+    var voices: [VoiceSpan] = []
     var barWidth: CGFloat = 2
     var gap: CGFloat = 1
 
@@ -130,14 +197,21 @@ struct WaveformBars: View {
         Canvas { context, size in
             let count = max(1, Int(size.width / (barWidth + gap)))
             let bars = TimelineGeometry.bars(peaks, peaksRange: peaksRange, view: view, count: count)
+            let owners = voices.isEmpty ? [] : TimelineGeometry.barVoices(voices, view: view, count: count)
             for (index, peak) in bars.enumerated() {
                 let x = CGFloat(index) * (barWidth + gap)
                 let sec = TimelineGeometry.sec(atX: x + barWidth / 2, in: view, width: size.width)
                 let height = max(2, CGFloat(peak) * size.height)
                 let rect = CGRect(x: x, y: (size.height - height) / 2, width: barWidth, height: height)
+                let inAsked = asked?.contains(sec) ?? false
+                let inClip = clip?.contains(sec) ?? false
                 let tone: Color
-                if let asked, asked.contains(sec) { tone = Color.accentColor.opacity(0.95) }
-                else if let clip, clip.contains(sec) { tone = Color.accentColor.opacity(0.55) }
+                if owners.indices.contains(index) {
+                    // A speaker's colour: full in the asked span, strong in the clip, faint outside a clip.
+                    let strength: Double = inAsked ? 1 : inClip ? 0.82 : clip == nil ? 0.85 : 0.4
+                    tone = owners[index].map { $0.opacity(strength) } ?? Color.secondary.opacity(clip == nil || inClip ? 0.4 : 0.26)
+                } else if inAsked { tone = Color.accentColor.opacity(0.95) }
+                else if inClip { tone = Color.accentColor.opacity(0.55) }
                 else { tone = Color.secondary.opacity(0.55) }
                 context.fill(Path(roundedRect: rect, cornerRadius: barWidth / 2), with: .color(tone))
             }
@@ -167,23 +241,107 @@ struct TimelinePlayhead: View {
     }
 }
 
-/// The ruler's time marks over a view.
+/// The ruler's times over a view: the round marks, and with `edges` the view's own start and end at its two ends
+/// (stronger, so a view that starts at 48:46 says so).
 struct TimelineRuler: View {
     let view: ClosedRange<Double>
+    var edges: Bool = true
 
     var body: some View {
         GeometryReader { proxy in
-            ForEach(TimelineGeometry.ticks(in: view, width: proxy.size.width), id: \.self) { mark in
-                let x = TimelineGeometry.x(mark, in: view, width: proxy.size.width)
-                Text(verbatim: MeetingsFormat.clock(mark))
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .fixedSize()
-                    .position(x: min(max(x, 18), proxy.size.width - 18), y: proxy.size.height / 2)
+            let width = proxy.size.width
+            if edges {
+                ForEach(TimelineGeometry.rulerLabels(in: view, width: width), id: \.sec) { label in
+                    switch label.kind {
+                    case .mark:
+                        time(label.sec, strong: false).position(x: label.x, y: proxy.size.height / 2)
+                    case .start:
+                        time(label.sec, strong: true).padding(.leading, 5).frame(width: width, height: proxy.size.height, alignment: .leading)
+                    case .end:
+                        time(label.sec, strong: true).padding(.trailing, 5).frame(width: width, height: proxy.size.height, alignment: .trailing)
+                    }
+                }
+            } else {
+                ForEach(TimelineGeometry.ticks(in: view, width: width), id: \.self) { mark in
+                    let x = TimelineGeometry.x(mark, in: view, width: width)
+                    time(mark, strong: false).position(x: min(max(x, 18), width - 18), y: proxy.size.height / 2)
+                }
             }
         }
         .frame(height: 12)
         .accessibilityHidden(true)
+    }
+
+    private func time(_ sec: Double, strong: Bool) -> some View {
+        Text(verbatim: MeetingsFormat.clock(sec))
+            .font(.system(size: 10, weight: strong ? .semibold : .regular).monospacedDigit())
+            .foregroundStyle(strong ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+            .fixedSize()
+    }
+}
+
+/// A line at each round mark of the ruler, through the waveform: the reader sees where "50:00" is, not only its
+/// label above.
+struct TimelineGrid: View {
+    let view: ClosedRange<Double>
+
+    var body: some View {
+        Canvas { context, size in
+            var lines = Path()
+            for mark in TimelineGeometry.ticks(in: view, width: size.width) {
+                let x = TimelineGeometry.x(mark, in: view, width: size.width).rounded() + 0.5
+                lines.move(to: CGPoint(x: x, y: 0))
+                lines.addLine(to: CGPoint(x: x, y: size.height))
+            }
+            context.stroke(lines, with: .color(Color.primary.opacity(0.22)), lineWidth: 1)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// What the pins' glyphs mean, in the pins' colours.
+struct PinLegend: View {
+    @Environment(\.kitLook) private var look
+
+    var body: some View {
+        if look == .classic {
+            Text(verbatim: "⚑ open · ✓ answered · ? question")
+        } else {
+            HStack(spacing: 10) {
+                item("flag.fill", "open", .care)
+                item("checkmark", "answered", .done)
+                item("questionmark", "question", .ask)
+            }
+        }
+    }
+
+    private func item(_ symbol: String, _ word: String, _ hue: KitHue) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: symbol).font(.system(size: 8.5, weight: .bold)).foregroundStyle(hue.ink)
+            Text(verbatim: word)
+        }
+    }
+}
+
+/// Whose colour the waveform has where: a dot and a name per speaker, the most spoken first.
+struct VoiceLegendRow: View {
+    let voices: [VoiceLegend]
+    var shown = 5
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(voices.prefix(shown)) { voice in
+                HStack(spacing: 4) {
+                    Circle().fill(voice.color).frame(width: 7, height: 7)
+                    Text(verbatim: voice.name).lineLimit(1)
+                }
+            }
+            if voices.count > shown { Text(verbatim: "and \(voices.count - shown) more") }
+        }
+        .font(.system(size: 10.5)).foregroundStyle(.secondary)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("The waveform's colours: \(voices.map(\.name).joined(separator: ", "))")
     }
 }
 
@@ -209,6 +367,11 @@ struct MomentTimeline: View {
     var moreSec: Double = 30
     /// Whether the view is wider than the clip (Zoom out is on): the button then says "Fit clip".
     var zoomedOut: Bool = false
+    /// Who talks when (the waveform's colours) and the speakers' legend under it; empty: one colour, no legend.
+    var voices: [VoiceSpan] = []
+    var legend: [VoiceLegend] = []
+    /// Rows the pins have in whole-meeting mode (`meetings.timeline.pinLanes`).
+    var pinLanes: Int = 2
     var height: CGFloat = 112
     /// A flag click: the second to play from (G-PLAY-3).
     var onFlag: (Double) -> Void = { _ in }
@@ -219,37 +382,52 @@ struct MomentTimeline: View {
     var onPlayMore: () -> Void = {}
     var pinActions: TimelinePinsRow.Actions = .init()
 
+    /// The pins' rows in whole-meeting mode; none while a clip shows (its pins are on the strip).
+    private var lanes: Int { span == nil && !pins.isEmpty ? min(3, max(1, pinLanes)) : 0 }
+    /// The timeline's height: each row of pins after the first adds one row's height, so the waveform keeps its own.
+    private var fullHeight: CGFloat { height + CGFloat(max(0, lanes - 1)) * PinMark.laneHeight }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let lanes = lanes
+        let fullHeight = fullHeight
+        // Under the pins' rows in whole-meeting mode; under the flag's head beside a clip.
+        let waveY: CGFloat = span == nil ? 20 + CGFloat(max(1, lanes)) * PinMark.laneHeight : 26
+        let waveHeight: CGFloat = span == nil ? height - 50 : height - 58
+        return VStack(alignment: .leading, spacing: 4) {
             GeometryReader { proxy in
                 let width = proxy.size.width
+                // Every layer maps a second onto the whole width, so a mark, the playhead and a click agree.
                 ZStack(alignment: .topLeading) {
                     TimelineRuler(view: view).frame(width: width).offset(y: 3)
                     if let span { shading(span, width: width) }
                     WaveformBars(peaks: peaks, peaksRange: peaksRange, view: view,
                                  clip: span.map { $0.startSec...max($0.startSec, $0.endSec) },
-                                 asked: span.map { $0.fromSec...max($0.fromSec, $0.toSec) })
-                        .frame(width: width - 8, height: span == nil ? height - 50 : height - 58)
-                        .offset(x: 4, y: span == nil ? 38 : 26)
+                                 asked: span.map { $0.fromSec...max($0.fromSec, $0.toSec) }, voices: voices)
+                        .frame(width: width, height: waveHeight)
+                        // Move the interactive region with the waveform, leaving the pins above it reachable.
                         .contentShape(Rectangle())
                         .onTapGesture(coordinateSpace: .local) { point in
-                            onSeek(TimelineGeometry.sec(atX: point.x, in: view, width: width - 8))
+                            onSeek(TimelineGeometry.sec(atX: point.x, in: view, width: width))
                         }
+                        .offset(y: waveY)
                         .accessibilityHidden(true)
-                    if span == nil, !pins.isEmpty {
-                        TimelinePinsRow(pins: pins, view: view, actions: pinActions)
-                            .frame(width: width, height: 18)
+                    TimelineGrid(view: view)
+                        .frame(width: width, height: fullHeight - 16 - (span == nil ? 6 : 24))
+                        .offset(y: 16)
+                    if lanes > 0 {
+                        TimelinePinsRow(pins: pins, view: view, actions: pinActions, lanes: lanes)
+                            .frame(width: width, height: CGFloat(lanes) * PinMark.laneHeight)
                             .offset(y: 16)
                     }
                     if let span { flag(span, width: width) }
                     TimelinePlayhead(position: position, view: view)
-                        .frame(width: width, height: height - 40)
+                        .frame(width: width, height: fullHeight - 40)
                         .offset(y: 18)
                     if let span { padWords(span, width: width) }
                 }
-                .frame(width: width, height: height, alignment: .topLeading)
+                .frame(width: width, height: fullHeight, alignment: .topLeading)
             }
-            .frame(height: height)
+            .frame(height: fullHeight)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.1)))
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -324,7 +502,11 @@ struct MomentTimeline: View {
                             tooltip: "Play on after this clip, as its own Moment",
                             identifier: "meetings.timeline.more", action: onPlayMore)
             }
+            if !legend.isEmpty { VoiceLegendRow(voices: legend) }
             Spacer(minLength: 0)
+            if lanes > 0 {
+                PinLegend().font(.system(size: 10.5)).foregroundStyle(.secondary).accessibilityHidden(true)
+            }
             if span != nil {
                 GhostButton(zoomedOut ? "Fit clip" : "Zoom out", symbol: zoomedOut ? "arrow.down.right.and.arrow.up.left" : "minus.magnifyingglass",
                             tooltip: zoomedOut ? "Show the clip alone again; the sound goes on" : "Show more of the meeting around the clip; the sound goes on",

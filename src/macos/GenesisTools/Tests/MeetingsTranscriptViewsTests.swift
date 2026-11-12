@@ -9,6 +9,189 @@ import XCTest
 @MainActor
 final class MeetingsTranscriptViewsTests: XCTestCase {
 
+    func testWordTimingFormValidatesItsInitialRangeAndEveryEdit() {
+        XCTAssertEqual(WordTimingOptions.range(from: "64.0", to: "84.0")?.0, 64)
+        XCTAssertEqual(WordTimingOptions.range(from: " 1796 ", to: "1816")?.1, 1816)
+        XCTAssertNil(WordTimingOptions.range(from: "64", to: "85"))
+        XCTAssertNil(WordTimingOptions.range(from: "-1", to: "10"))
+        XCTAssertNil(WordTimingOptions.range(from: "nan", to: "10"))
+        XCTAssertNil(WordTimingOptions.range(from: "1", to: "inf"))
+        XCTAssertNil(WordTimingOptions.range(from: "1", to: "1"))
+    }
+
+    func testWordTimingHighlightsUseExactUTF16RangesAndKeepUntimedLineFallback() {
+        let first = TranscriptWord(range: .init(location: 3, length: 5), startSec: 10.1, endSec: 10.5, sourceId: "asr-a")
+        let second = TranscriptWord(range: .init(location: 9, length: 4), startSec: 10.8, endSec: 11.2, sourceId: "asr-a")
+        let entry = TranscriptLine(id: "l1", startSec: 10, speaker: "Example", text: "😀 alpha beta", endSec: 12,
+                                   words: [first, second])
+        let blocks = TranscriptBlock.build(from: [entry])
+        let heard = TranscriptBlock.heard(in: blocks, at: 10.2)
+        XCTAssertEqual(heard?.wordRange, NSRange(location: 3, length: 5))
+        XCTAssertEqual(heard, TranscriptBlock.heard(in: blocks, at: 10.3), "Ticks inside one word do not redraw the list")
+        XCTAssertNil(TranscriptBlock.heard(in: blocks, at: 10.6)?.wordRange, "An untimed gap keeps the line highlight")
+        XCTAssertEqual(TranscriptBlock.heard(in: blocks, at: 10.9)?.wordRange, NSRange(location: 9, length: 4))
+        XCTAssertNil(TranscriptBlock.heard(in: blocks, at: 10.2, wordHighlights: false)?.wordRange)
+        XCTAssertNotNil(TranscriptBlock.heard(in: blocks, at: 10.2, wordHighlights: false)?.lineID)
+        XCTAssertNil(TranscriptBlock.heard(in: blocks, at: 12))
+        let invalid = TranscriptWord(range: .init(location: Int.max, length: 4), startSec: 10, endSec: 11, sourceId: "bad")
+        XCTAssertNil(invalid.heardRange(at: 10.5, in: entry.text))
+    }
+
+    func testWordHighlightDoesNotReplaceNativeTextSelection() {
+        let view = TranscriptWordText.TextView()
+        view.string = "alpha beta"
+        view.setSelectedRange(NSRange(location: 6, length: 4))
+        view.highlightHeardRange(NSRange(location: 0, length: 5))
+        XCTAssertEqual(view.accessibilityHelp(), "Timed word: alpha")
+        XCTAssertNotNil(view.textStorage?.attribute(.backgroundColor, at: 0, effectiveRange: nil))
+        XCTAssertNil(view.textStorage?.attribute(.backgroundColor, at: 6, effectiveRange: nil))
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 6, length: 4))
+        view.highlightHeardRange(nil)
+        XCTAssertNil(view.accessibilityHelp())
+        XCTAssertNil(view.textStorage?.attribute(.backgroundColor, at: 0, effectiveRange: nil))
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 6, length: 4))
+        view.highlightHeardRange(NSRange(location: Int.max, length: 2))
+        XCTAssertNil(view.textStorage?.attribute(.backgroundColor, at: 0, effectiveRange: nil))
+    }
+
+    func testFrameReviewSearchAndTimeNavigation() async throws {
+        func frame(_ file: String, _ time: Double, _ text: String, display: Int = 1) -> TimelineFrame {
+            let box = OcrBox(x: 10, y: 20, width: 100, height: 30, text: text, confidence: 1)
+            return TimelineFrame(file: file, path: "/fixture/\(file)", at: "2026-11-01T10:00:00Z", meetingSec: time,
+                                 displayId: display, width: 800, height: 600, lineCount: 1, changed: [box], lines: [box])
+        }
+        let first = frame("a.png", 10, "Café launch")
+        let second = frame("b.png", 20, "Review")
+        let other = frame("c.png", 30, "Cafe notes", display: 2)
+        let timeline = ScreenTimeline(meeting: "m1", folder: "/fixture", displays: [], frames: [first, second, other])
+        let model = FrameReviewModel(meeting: "m1", file: first.file, at: 10, player: nil, defaults: .standard, timeline: timeline)
+        await model.waitForIndex()
+        model.query = "cafe"
+        XCTAssertEqual(model.matches.compactMap { $0.frame?.file }, ["a.png", "c.png"])
+        model.nextMatch(1)
+        XCTAssertEqual(model.frame?.file, "c.png")
+        XCTAssertEqual(model.display, 2)
+        model.query = ""
+        model.display = 1
+        model.selectTime(25)
+        XCTAssertEqual(model.frame?.file, "b.png")
+        model.step(-1, seek: false)
+        XCTAssertEqual(model.time, 10)
+        XCTAssertEqual(FrameReviewModel.nearest(in: [first, second], at: 0)?.file, "a.png")
+    }
+
+    func testAutoDisplayFollowsRecordedFocusAndManualSelectionStaysFixed() throws {
+        func frame(_ file: String, _ time: Double, _ display: Int, _ focus: Int) -> TimelineFrame {
+            var value = TimelineFrame(file: file, path: "/fixture/\(file)", at: "2026-11-01T10:00:00Z", meetingSec: time,
+                                      displayId: display, width: 20, height: 10, lineCount: 0, changed: [], lines: [])
+            value.focusedDisplayId = focus
+            return value
+        }
+        let frames = [frame("one-a", 0, 1, 1), frame("two-a", 1, 2, 1), frame("one-b", 10, 1, 2), frame("two-b", 11, 2, 2)]
+        let suite = "meetings.focus.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let timeline = ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: frames)
+        let model = FrameReviewModel(meeting: "m", file: "one-a", at: 5, player: nil, defaults: defaults, timeline: timeline)
+        XCTAssertEqual(model.displayChoice, -2)
+        XCTAssertEqual(model.frame?.file, "one-a")
+        model.selectTime(12)
+        XCTAssertEqual(model.frame?.file, "two-b")
+        model.chooseDisplay(1)
+        model.selectTime(12)
+        XCTAssertEqual(model.frame?.file, "one-b")
+        XCTAssertFalse(MeetingsPreferences.Panes.frameAutoDisplay.value(defaults))
+        model.chooseDisplay(-2)
+        XCTAssertEqual(model.frame?.file, "two-b")
+        XCTAssertTrue(MeetingsPreferences.Panes.frameAutoDisplay.value(defaults))
+    }
+
+    func testAutoDisplayDoesNotInventFocusForOlderPartsOfARecording() throws {
+        let old = TimelineFrame(file: "old", path: "/old", at: "", meetingSec: 0, displayId: 1,
+                                width: 20, height: 10, lineCount: 0, changed: [], lines: [])
+        var focused = TimelineFrame(file: "new", path: "/new", at: "", meetingSec: 10, displayId: 2,
+                                    width: 20, height: 10, lineCount: 0, changed: [], lines: [])
+        focused.focusedDisplayId = 2
+        let unknown = TimelineFrame(file: "unknown", path: "/unknown", at: "", meetingSec: 20, displayId: 1,
+                                    width: 20, height: 10, lineCount: 0, changed: [], lines: [])
+        let suite = "meetings.focus.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let timeline = ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: [old, focused, unknown])
+        let model = FrameReviewModel(meeting: "m", file: "old", at: 5, player: nil, defaults: defaults, timeline: timeline)
+        XCTAssertEqual(model.frame?.file, "old")
+        model.selectTime(12)
+        XCTAssertEqual(model.frame?.file, "new")
+        model.selectTime(20)
+        XCTAssertEqual(model.frame?.file, "unknown")
+    }
+
+    func testFrameReviewGroupsRepeatedOCRAndSearchesBothSources() async throws {
+        func frame(_ file: String, _ time: Double, _ text: String, _ display: Int = 1) -> TimelineFrame {
+            let box = OcrBox(x: 10, y: 20, width: 120, height: 30, text: text, confidence: 1)
+            return TimelineFrame(file: file, path: "/fixture/\(file)", at: "2026-11-01T10:00:00Z", meetingSec: time,
+                                 displayId: display, width: 800, height: 600, lineCount: 1, changed: [box], lines: [box])
+        }
+        let frames = [frame("a", 10, "The API is ready"), frame("b", 20, "The API is ready"),
+                      frame("c", 30, "Other text"), frame("d", 40, "The API is ready"), frame("e", 10, "The API is ready", 2)]
+        let transcript = MeetingTranscript(meeting: "m", entries: [
+            TranscriptLine(id: "l1", startSec: 5, speaker: "Alex", text: "Before this"),
+            TranscriptLine(id: "l2", startSec: 15, speaker: "Jordan", text: "The API changed"),
+            TranscriptLine(id: "l3", startSec: 25, speaker: "Alex", text: "After this")])
+        let model = FrameReviewModel(meeting: "m", file: "a", at: 10, player: nil, defaults: .standard,
+            timeline: ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: frames), transcript: transcript)
+        await model.waitForIndex()
+        model.query = "api"
+        XCTAssertEqual(model.matches.count, 3)
+        let grouped = model.matches.first { $0.frame?.file == "a" }
+        XCTAssertEqual(grouped?.occurrences, 3)
+        XCTAssertEqual(grouped?.fromSec, 10)
+        XCTAssertEqual(grouped?.toSec, 40)
+        XCTAssertEqual(grouped?.seenAt, [10, 20, 40])
+        model.chooseMatch(try XCTUnwrap(grouped))
+        model.nextAppearance(1)
+        XCTAssertEqual(model.time, 20)
+        model.searchSource = .transcript
+        XCTAssertEqual(model.matches.count, 1)
+        XCTAssertEqual(model.selectedMatch?.speaker, "Jordan")
+        XCTAssertEqual(model.time, 15)
+        XCTAssertEqual(model.context.map(\.speaker), ["Alex", "Jordan", "Alex"])
+        model.searchSource = .ocr
+        XCTAssertEqual(model.matches.count, 2)
+        XCTAssertTrue(model.matches.allSatisfy { $0.source == .ocr })
+    }
+
+    func testFrameReviewHoverDoesNotMoveSelectionAndFocusCentersTheBox() async throws {
+        let box = OcrBox(x: 100, y: 100, width: 200, height: 40, text: "Matching text", confidence: 1)
+        func frame(_ name: String, _ time: Double) -> TimelineFrame {
+            TimelineFrame(file: name, path: "/fixture/\(name)", at: "2026-11-01T10:00:00Z", meetingSec: time,
+                          displayId: 1, width: 1600, height: 900, lineCount: 1, changed: [box], lines: [box])
+        }
+        let first = frame("a", 10), second = frame("b", 20)
+        let model = FrameReviewModel(meeting: "m", file: "a", at: 10, player: nil, defaults: .standard,
+            timeline: ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: [first, second]))
+        await model.waitForIndex()
+        model.query = "Matching"
+        let hover = FrameReviewModel.Match(id: "hover", content: .ocr(second), text: box.text, fromSec: 20, toSec: 20)
+        model.hoveredMatch = hover
+        XCTAssertEqual(model.previewFrame?.file, "b")
+        XCTAssertEqual(model.frame?.file, "a")
+        XCTAssertEqual(model.time, 10)
+        model.hoveredMatch = nil
+        XCTAssertEqual(model.previewFrame?.file, "a")
+        let focused = FrameReviewFocus.layout(box: box, image: CGSize(width: 1600, height: 900), viewport: CGSize(width: 800, height: 600))
+        XCTAssertGreaterThan(focused.scale, 0.5)
+        XCTAssertEqual((box.x + box.width / 2) * focused.scale + focused.offset.width, 400, accuracy: 0.001)
+        XCTAssertEqual((box.y + box.height / 2) * focused.scale + focused.offset.height, 300, accuracy: 0.001)
+    }
+
+    func testFrameReviewHighlightsEveryExactMatchIncludingAccents() {
+        let text = "Café, CAFE and a longer sentence"
+        let ranges = FrameReviewModel.highlightRanges(in: text, query: "cafe")
+        XCTAssertEqual(ranges.map { (text as NSString).substring(with: $0) }, ["Café", "CAFE"])
+        XCTAssertTrue(FrameReviewModel.highlightRanges(in: text, query: "  ").isEmpty)
+    }
+
     // MARK: Fixtures (invented people)
 
     private static let entries: [TranscriptLine] = [
@@ -89,6 +272,26 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertTrue(other == otherLater, "a block that is not heard compares equal across ticks")
     }
 
+    /// The list takes the end of the last block passed, not the position: the same blocks are past at it as at the
+    /// position, and it holds still between block ends, so a 10 Hz tick inside a block hands the list nothing new.
+    func testThePassedEndDimsWhatThePositionDimsAndHoldsBetweenBlockEnds() {
+        let blocks = TranscriptBlock.build(from: Self.entries, durationSec: 3300)
+        let ends = blocks.compactMap(\.endSec)
+        XCTAssertGreaterThan(ends.count, 1)
+        for position in stride(from: 3250.0, through: 3310.0, by: 0.1) {
+            let passed = TranscriptBlock.passedEnd(in: blocks, at: position)
+            for block in blocks {
+                guard let end = block.endSec else { continue }
+                XCTAssertEqual(end <= position, passed.map { end <= $0 } ?? false, "block \(block.id) at \(position)")
+            }
+        }
+        let inside = ends[0] + 0.05
+        XCTAssertEqual(TranscriptBlock.passedEnd(in: blocks, at: inside), TranscriptBlock.passedEnd(in: blocks, at: inside + 0.4),
+                       "no block ends between the two ticks: the same value")
+        XCTAssertNil(TranscriptBlock.passedEnd(in: blocks, at: nil))
+        XCTAssertNil(TranscriptBlock.passedEnd(in: blocks, at: 0), "before every end nothing is past")
+    }
+
     func testAClickPlaysAndShiftOrCommandSelects() {
         XCTAssertEqual(TranscriptLineClick(modifiers: []), .play)
         XCTAssertEqual(TranscriptLineClick(modifiers: .shift), .extendSelection)
@@ -117,6 +320,31 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     // MARK: Selection popover and staged comments
 
+    func testNativeSelectionReportsTheSelectedWord() async {
+        let text = TranscriptWordText.TextView()
+        text.string = "alpha beta gamma"
+        let selected = expectation(description: "native selected range")
+        text.selected = { range in
+            XCTAssertEqual(range, NSRange(location: 6, length: 4))
+            selected.fulfill()
+        }
+        text.setSelectedRange(NSRange(location: 6, length: 4))
+        await fulfillment(of: [selected], timeout: 1)
+    }
+
+    func testWordSelectionKeepsItsQuoteAndLineFractions() throws {
+        let line = TranscriptBlockLine(id: "l1", index: 4, startSec: 10, endSec: 20, text: "Hi 🌍 alpha beta")
+        let range = (line.text as NSString).range(of: "alpha")
+        let chosen = try XCTUnwrap(TranscriptSelection.words(line, range: range))
+        XCTAssertEqual(chosen.quote, "alpha")
+        XCTAssertEqual(chosen.from.line, 4)
+        XCTAssertEqual(chosen.from.fraction, Double(range.location) / Double(line.text.utf16.count))
+        XCTAssertEqual(chosen.to.fraction, Double(range.location + range.length) / Double(line.text.utf16.count))
+        XCTAssertNil(TranscriptSelection.words(line, range: NSRange(location: 0, length: 0)))
+        XCTAssertNil(TranscriptSelection.words(line, range: NSRange(location: NSNotFound, length: 1)))
+        XCTAssertNil(TranscriptSelection.words(line, range: NSRange(location: 3, length: 1)), "never split a surrogate pair")
+    }
+
     func testASelectionOfLinesRunsFromTheFirstStartToTheLastLine() throws {
         let blocks = TranscriptBlock.build(from: Self.entries)
         let lines = [blocks[5].lines[0], blocks[4].lines[0]]
@@ -138,7 +366,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     func testTheSendResultSaysHowManyListenersGotThemOrThatNobodyListens() {
         XCTAssertEqual(CommentDelivery.sent(comments: 3, listeners: 1).text, "Sent 3 comments to 1 listener")
-        XCTAssertEqual(CommentDelivery.sent(comments: 1, listeners: 0).text, "Nobody listens: 1 comment stay staged")
+        XCTAssertEqual(CommentDelivery.sent(comments: 1, listeners: 0).text, "Nobody is listening. Kept 1 comment staged.")
         XCTAssertTrue(CommentDelivery.sent(comments: 1, listeners: 0).isError)
         XCTAssertNil(CommentDelivery.idle.text)
         XCTAssertEqual(StagedCommentsBar.sendTitle(count: 3, listeners: 1), "Send 3 comments")
@@ -152,7 +380,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     func testSnapshotSelectionPopoverAndStagedComments() throws {
         let selection = try XCTUnwrap(TranscriptSelection.lines(TranscriptBlock.build(from: Self.entries)[4].lines))
-        try snapshot(SelectionPopover(selection: selection, stage: { _, _ in }, clip: { _, _ in }).fixedSize(),
+        try snapshot(SelectionPopover(selection: selection, stage: { _, _ in }, clip: { _, _ in }, saveClip: { _, _ in }).fixedSize(),
                      name: "selection-popover", width: nil)
         try snapshot(SelectionPopover(selection: selection, startsInComment: true, stage: { _, _ in }, clip: { _, _ in }).fixedSize(),
                      name: "selection-popover-comment", width: nil)
@@ -166,6 +394,46 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
     }
 
     // MARK: Talk-time lanes
+
+    func testLaneClickNeedsNoHoverAndMovingAwayDoesNotPlay() throws {
+        let view = SpeakerLaneInteraction.InputView(frame: NSRect(x: 0, y: 0, width: 100, height: 30))
+        let block = TalkTimeBlock(fromSec: 10, toSec: 20, x: 20, width: 30, spans: 1, ticks: [])
+        view.blocks = [block]
+        var played: [TalkTimeBlock] = []
+        view.click = { played.append($0) }
+        func event(_ type: NSEvent.EventType, x: CGFloat) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 15), modifierFlags: [],
+                timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0))
+        }
+        view.mouseDown(with: try event(.leftMouseDown, x: 25))
+        view.mouseUp(with: try event(.leftMouseUp, x: 25))
+        XCTAssertEqual(played, [block])
+        view.mouseDown(with: try event(.leftMouseDown, x: 25))
+        view.mouseUp(with: try event(.leftMouseUp, x: 80))
+        view.mouseDown(with: try event(.leftMouseDown, x: 80))
+        view.mouseUp(with: try event(.leftMouseUp, x: 80))
+        XCTAssertEqual(played, [block], "moving away or clicking a gap must not play a stretch")
+    }
+
+    func testSpeakerDragRoundTripsAndRejectsForeignOrStaleStretches() throws {
+        let speakers = Self.speakers()
+        let source = speakers[0], target = speakers[1]
+        let first = try XCTUnwrap(source.talkSpans.first), last = try XCTUnwrap(source.talkSpans.last)
+        let owner = UUID()
+        let drag = SpeakerLaneDrag(owner: owner, label: source.label, fromSec: first.fromSec, toSec: last.toSec)
+        let decoded = try JSONDecoder().decode(SpeakerLaneDrag.self, from: JSONEncoder().encode(drag))
+        XCTAssertEqual(decoded, drag)
+        XCTAssertEqual(drag.stretch(owner: owner, target: target.label, speakers: speakers),
+                       .init(label: source.label, fromSec: first.fromSec, toSec: last.toSec))
+        XCTAssertNil(drag.stretch(owner: UUID(), target: target.label, speakers: speakers))
+        XCTAssertNil(drag.stretch(owner: owner, target: source.label, speakers: speakers))
+        XCTAssertNil(drag.stretch(owner: owner, target: "missing", speakers: speakers))
+        XCTAssertNil(drag.stretch(owner: owner, target: target.label, speakers: [target]))
+        XCTAssertNil(SpeakerLaneDrag(owner: owner, label: source.label, fromSec: first.fromSec + 1, toSec: last.toSec)
+            .stretch(owner: owner, target: target.label, speakers: speakers))
+        XCTAssertNil(SpeakerLaneDrag(owner: owner, label: source.label, fromSec: .nan, toSec: last.toSec)
+            .stretch(owner: owner, target: target.label, speakers: speakers))
+    }
 
     func testThinSpansJoinAndKeepTheirTurnTicks() {
         let spans: [MeetingsAPI.MeetingSpeakers.Span] = [.init(fromSec: 0, toSec: 1, turns: 1), .init(fromSec: 2, toSec: 3, turns: 1),

@@ -101,6 +101,33 @@ enum MeetingsAPI {
         typealias Result = MeetingTranscript
     }
 
+    enum WordTimings: MeetingsServiceMethod {
+        static let name = "meeting.wordTimings.generate"
+        struct Params: Codable, Equatable {
+            let ref: String
+            let fromSec: Double
+            let toSec: Double
+            let model: String
+            var language: String?
+        }
+        struct Result: Decodable, Equatable {
+            struct Coverage: Decodable, Equatable {
+                let eligibleWords: Int
+                let matchedWords: Int
+            }
+            let meeting: String
+            let cacheRevision: String
+            let reused: Bool
+            let coverage: Coverage
+        }
+    }
+
+    struct WordTimingsChanged: Decodable, Equatable {
+        static let name = "meeting.wordTimings.changed"
+        let meeting: String
+        let revision: String
+    }
+
     /// `meeting.revisions`: one token per window part, as `revisions <meeting> --json` prints it.
     enum Revisions: MeetingsServiceMethod {
         static let name = "meeting.revisions"
@@ -205,10 +232,17 @@ enum MeetingsAPI {
         DecisionApplied.name: { .decisionApplied(try MeetingsService.decode(DecisionApplied.self, $0)) },
         DecisionReverted.name: { .decisionReverted(try MeetingsService.decode(DecisionReverted.self, $0)) },
         CommentSent.name: { .commentSent(try MeetingsService.decode(CommentSent.self, $0)) },
+        CommentChanged.name: { .commentChanged(try MeetingsService.decode(CommentChanged.self, $0)) },
+        PeopleChanged.name: { .peopleChanged(try MeetingsService.decode(PeopleChanged.self, $0)) },
+        WordTimingsChanged.name: { .wordTimingsChanged(try MeetingsService.decode(WordTimingsChanged.self, $0)) },
     ]
 
     /// The events the window subscribes to.
-    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name]
+    struct PeopleChanged: Decodable, Equatable {
+        static let name = "people.changed"
+    }
+
+    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, CommentChanged.name, PeopleChanged.name, WordTimingsChanged.name]
 }
 
 /// One event of the Meetings service, as the window hears it.
@@ -217,14 +251,20 @@ enum MeetingsEvent: Equatable {
     case decisionApplied(MeetingsAPI.DecisionApplied)
     case decisionReverted(MeetingsAPI.DecisionReverted)
     case commentSent(MeetingsAPI.CommentSent)
+    case commentChanged(MeetingsAPI.CommentChanged)
+    case peopleChanged(MeetingsAPI.PeopleChanged)
+    case wordTimingsChanged(MeetingsAPI.WordTimingsChanged)
 
     /// The meeting the event is about.
-    var meeting: String {
+    var meeting: String? {
         switch self {
         case .meetingChanged(let event): return event.meeting
+        case .wordTimingsChanged(let event): return event.meeting
         case .decisionApplied(let event): return event.meeting
         case .decisionReverted(let event): return event.meeting
         case .commentSent(let event): return event.meeting
+        case .commentChanged(let event): return event.meeting
+        case .peopleChanged: return nil
         }
     }
 
@@ -233,7 +273,7 @@ enum MeetingsEvent: Equatable {
         switch self {
         case .decisionApplied(let event): return event.entry
         case .decisionReverted(let event): return event.entry
-        case .meetingChanged, .commentSent: return nil
+        case .meetingChanged, .commentSent, .commentChanged, .peopleChanged, .wordTimingsChanged: return nil
         }
     }
 }
@@ -290,12 +330,13 @@ struct MeetingListRow: Decodable, Equatable {
 /// down or changing. When no service answers, this side starts one in the background through the launcher
 /// (`tools meetings serve --detach`), at most once per `startThrottle`; the read that found none does not wait for it.
 /// A service whose code is changing refuses the hello with `code-mismatch` and exits within a minute: the window looks
-/// again only after `refusedBackoff`. The connection closes after `idleClose` with no call and no subscription, so the
+/// again after `refusedBackoff`, or sooner when that instance exits or its discovery entry changes. The connection
+/// closes after `idleClose` with no call and no subscription, so the
 /// service can exit when it is idle. A kept subscription keeps a connection: when it closes, this side connects again
 /// by itself (`resumeSubscription`).
 @MainActor
 final class MeetingsService {
-    /// The window's service: nil in the preview build and under XCTest, and when it is turned off with
+    /// The window's service: nil in Preview unless explicitly enabled with an isolated home, under XCTest, and when turned off with
     /// `GENESIS_MEETINGS_SERVICE=0` or `defaults write com.genesiscz.genesistools meetings.service -bool NO`. Every
     /// read then runs as a command, as before. The service folder is under `genesisHome()`, so a sandbox home
     /// (`GENESIS_TOOLS_HOME`) has its own service; a service answers only when its `sourceRoot` is the checkout of the
@@ -304,14 +345,24 @@ final class MeetingsService {
     /// set.
     static let shared: MeetingsService? = {
         let environment = ProcessInfo.processInfo.environment
-        guard !NativePreview.enabled, NSClassFromString("XCTestCase") == nil,
+        guard (!NativePreview.enabled || allowsPreviewService(environment: environment)), NSClassFromString("XCTestCase") == nil,
               environment["GENESIS_MEETINGS_SERVICE"] != "0",
               UserDefaults.standard.object(forKey: "meetings.service") as? Bool ?? true else { return nil }
         let overridden = environment["GENESIS_TOOLS_HOME"] != nil || environment["GENESIS_TOOLS_BIN"] != nil
-        return MeetingsService(folder: URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/meetings-service"),
+        return MeetingsService(folder: GenesisToolsHome.url("meetings-service"),
                                checkout: .init(root: { ToolsBridge.workingDirectory(forBinary: ToolsBridge.defaultBinaryPath()).path },
                                                acceptsUnnamed: !overridden))
     }()
+
+    /// Preview can exercise service-only controls with the existing opt-in switch, but must not use the real data home.
+    static func allowsPreviewService(environment: [String: String], userHome: String = NSHomeDirectory()) -> Bool {
+        guard environment["GENESIS_MEETINGS_SERVICE"] == "1",
+              let override = environment[GenesisToolsHome.variable]?.trimmingCharacters(in: .whitespaces),
+              override.hasPrefix("/") else { return false }
+        let candidate = URL(fileURLWithPath: override).standardizedFileURL.resolvingSymlinksInPath()
+        let real = URL(fileURLWithPath: userHome).standardizedFileURL.resolvingSymlinksInPath()
+        return candidate.path != real.path
+    }
 
     /// Which service this window may use: the one whose `sourceRoot` (service.json, the checkout its code runs from) is
     /// `root()`, the checkout of the `tools` the window runs. A service of another checkout answers with other code
@@ -365,6 +416,8 @@ final class MeetingsService {
     /// The service did not answer the call; the caller runs the command instead.
     struct Unavailable: Error, Equatable, CustomStringConvertible {
         let reason: String
+        /// False once a request may have changed data, even if its reply could not be read.
+        var safeToRetry = true
         var description: String { reason }
     }
 
@@ -384,13 +437,15 @@ final class MeetingsService {
     private var client: JSONRPCSocketClient?
     private var connecting: Task<JSONRPCSocketClient?, Never>?
     private var refusedUntil: Date?
+    /// Discovery is written once per service lifetime. A refusal belongs to that instance, not its replacement.
+    private var refusedDiscovery: Data?
+    private var clientDiscovery: Data?
     private var lastStart: Date?
     private var failedStarts = 0
     private var starting: Task<Void, Never>?
     private var subscription: MeetingsAPI.Subscribe.Params?
     /// Connects again while a subscription is kept and no connection is open (`resumeSubscription`).
     private var resuming: Task<Void, Never>?
-    /// Restores of the kept subscription that failed in a row: each one waits twice as long before the next connection.
     private var restoreFailures = 0
     private var callsInFlight = 0
     private var idleGeneration = 0
@@ -460,7 +515,28 @@ final class MeetingsService {
             return result
         } catch {
             span.end("failed")
-            throw failure(of: M.name, error, on: client)
+            throw failure(of: M.name, error, on: client, params: { Self.commandLine(M.name, params) })
+        }
+    }
+
+    /// A mutation may use the command only when the service could not have applied it.
+    static func write<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params,
+                                               service: MeetingsService?, orRun args: [String],
+                                               command: (([String], Int) async throws -> M.Result)? = nil) async throws -> M.Result {
+        if let service {
+            do {
+                return try await service.call(method, params)
+            } catch let failure as Unavailable where failure.safeToRetry {
+                try Task.checkCancellation()
+            }
+        }
+        if let command { return try await command(args, 60) }
+        let data = try await MeetingsCLI.run(args)
+        do {
+            return try JSONDecoder().decode(M.Result.self, from: data)
+        } catch {
+            throw MeetingsCLI.Failure(sentence: "The command completed, but its reply could not be read. Reload before retrying.",
+                                      detail: "\(args.joined(separator: " ")): \(error)")
         }
     }
 
@@ -479,6 +555,7 @@ final class MeetingsService {
             throw Unavailable(reason: "no Meetings service answers; the next connection subscribes")
         }
         let heard = try await call(MeetingsAPI.Subscribe.self, params, timeout: timing.helloTimeout).events
+        restoreFailures = 0
         isSubscribed = true
         return heard
     }
@@ -486,6 +563,7 @@ final class MeetingsService {
     /// Forgets the subscription and closes the connection, so the service can go idle.
     func unsubscribe() {
         subscription = nil
+        restoreFailures = 0
         isSubscribed = false
         resuming?.cancel()
         resuming = nil
@@ -502,7 +580,17 @@ final class MeetingsService {
 
     /// What a failed call throws: `Unavailable` (the command answers), the command's `MeetingsCLI.Failure` for a
     /// refusal, or `CancellationError`.
-    private func failure(of method: String, _ error: Error, on client: JSONRPCSocketClient) -> Error {
+    /// "meetings service moment.clip {"meeting":"…","target":…}": the call as a failure report names it, its params cut
+    /// at 600 characters.
+    static func commandLine<P: Encodable>(_ method: String, _ params: P) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let json = (try? encoder.encode(params)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        return "meetings service \(method) " + (json.count > 600 ? String(json.prefix(600)) + "…" : json)
+    }
+
+    private func failure(of method: String, _ error: Error, on client: JSONRPCSocketClient,
+                         params: () -> String) -> Error {
         if Task.isCancelled || error is CancellationError { return CancellationError() }
         switch error {
         case let remote as JSONRPCSocketClient.RemoteError:
@@ -510,7 +598,7 @@ final class MeetingsService {
             guard remote.code == MeetingsAPI.refusedCode, let code = remote.decodeData(MeetingsAPI.ErrorData.self)?.code else {
                 // Not a refusal (an older service without the method, params it does not take): the command answers.
                 HubPerf.log("meetings.service: \(method) answered \(remote.code) \(remote.message); the command answers it")
-                return Unavailable(reason: "\(method) answered \(remote.code): \(remote.message)")
+                return Unavailable(reason: "\(method) answered \(remote.code): \(remote.message)", safeToRetry: [-32601, -32602].contains(remote.code))
             }
             if MeetingsAPI.connectionRefusals.contains(code) {
                 HubPerf.log("meetings.service: \(method) refused the connection [\(code)] \(remote.message)")
@@ -519,11 +607,11 @@ final class MeetingsService {
             }
             return MeetingsCLI.Failure(sentence: MeetingsCLI.sentence(fromStderr: remote.message) ?? "The Meetings service refused it.",
                                        detail: "The Meetings service refused \(method) [\(code)]:\n\(remote.message)", code: code,
-                                       data: remote.data)
+                                       data: remote.data, command: params(), stack: remote.stack, issue: remote.issue)
         case let failure as JSONRPCSocketClient.Failure:
             // A service that does not answer in time may hang: the next call opens a new connection.
             if case .timeout = failure { drop(client) }
-            return Unavailable(reason: "\(method): \(failure.localizedDescription)")
+            return Unavailable(reason: "\(method): \(failure.localizedDescription)", safeToRetry: false)
         case let decoding as DecodeFailure:
             // A service this app cannot read (another checkout or version: the window's hello names no code) is not the
             // answer. The command answers, as with no service, and shows its own format error when it cannot be read
@@ -531,9 +619,9 @@ final class MeetingsService {
             HubPerf.log("meetings.service: \(method) answered a shape the window cannot read (\(decoding.error)); "
                 + "the command answers it: \(decoding.preview.prefix(300))")
             drop(client, backoff: timing.refusedBackoff)
-            return Unavailable(reason: "\(method): the answer does not decode")
+            return Unavailable(reason: "\(method): the answer does not decode", safeToRetry: false)
         default:
-            return Unavailable(reason: "\(method): \(error)")
+            return Unavailable(reason: "\(method): \(error)", safeToRetry: false)
         }
     }
 
@@ -576,7 +664,7 @@ final class MeetingsService {
     /// The connection, after its hello; nil when no service answers now. Calls that arrive while it opens wait for it.
     private func connection() async -> JSONRPCSocketClient? {
         if let client, case .connected = state { return client }
-        if let refusedUntil, Date() < refusedUntil { return nil }
+        if backoffRemaining > 0 { return nil }
         if let connecting { return await connecting.value }
         let task = Task { await self.connect() }
         connecting = task
@@ -585,8 +673,28 @@ final class MeetingsService {
         return connected
     }
 
+    private func backOff(for duration: TimeInterval, discovery: Data?) {
+        refusedUntil = Date().addingTimeInterval(duration)
+        refusedDiscovery = discovery
+    }
+
+    /// Keep a refused instance quiet, but let an exited or replaced service recover immediately.
+    private var backoffRemaining: TimeInterval {
+        guard let until = refusedUntil else { return 0 }
+        let remaining = until.timeIntervalSinceNow
+        guard remaining > 0 else { return 0 }
+        if discover() == .none || (try? Data(contentsOf: discovery)) != refusedDiscovery {
+            refusedUntil = nil
+            refusedDiscovery = nil
+            HubPerf.log("meetings.service: refused instance exited or changed; looking for its replacement")
+            return 0
+        }
+        return remaining
+    }
+
     private func connect() async -> JSONRPCSocketClient? {
         state = .connecting
+        let entry = try? Data(contentsOf: discovery)
         let socket: String
         switch discover() {
         case .none:
@@ -598,7 +706,7 @@ final class MeetingsService {
             // only find it running; look again after the backoff (it may exit idle, and then this window starts its own).
             HubPerf.log("meetings.service: the live service runs \(root ?? "a checkout it does not name"), not "
                 + "\(checkout?.root() ?? "?"); the command answers")
-            refusedUntil = Date().addingTimeInterval(timing.refusedBackoff)
+            backOff(for: timing.refusedBackoff, discovery: entry)
             state = .idle
             return nil
         case .socket(let found):
@@ -621,11 +729,11 @@ final class MeetingsService {
             guard answer.protocol == MeetingsAPI.protocolVersion else {
                 HubPerf.log("meetings.service: the service speaks protocol \(answer.protocol), the window \(MeetingsAPI.protocolVersion)")
                 candidate.close()
-                refusedUntil = Date().addingTimeInterval(timing.refusedBackoff)
+                backOff(for: timing.refusedBackoff, discovery: entry)
                 state = .idle
                 return nil
             }
-            attach(candidate, hello: answer)
+            attach(candidate, hello: answer, discovery: entry)
             return candidate
         } catch {
             candidate.close()
@@ -633,7 +741,7 @@ final class MeetingsService {
             let refusal = (error as? JSONRPCSocketClient.RemoteError)?.decodeData(MeetingsAPI.ErrorData.self)?.code
             HubPerf.log("meetings.service: hello failed (\(refusal ?? "no answer")): \(error.localizedDescription)")
             if let refusal, MeetingsAPI.connectionRefusals.contains(refusal) {
-                refusedUntil = Date().addingTimeInterval(timing.refusedBackoff)
+                backOff(for: timing.refusedBackoff, discovery: entry)
             }
             return nil
         }
@@ -673,9 +781,11 @@ final class MeetingsService {
     }
 
     /// The connection answered its hello: a kept subscription is sent again.
-    private func attach(_ connected: JSONRPCSocketClient, hello: MeetingsAPI.Hello.Result) {
+    private func attach(_ connected: JSONRPCSocketClient, hello: MeetingsAPI.Hello.Result, discovery: Data?) {
         client = connected
+        clientDiscovery = discovery
         refusedUntil = nil
+        refusedDiscovery = nil
         state = .connected(methods: hello.methods, events: hello.events)
         HubPerf.log("meetings.service: connected (service \(hello.version), \(hello.methods.count) methods)")
         if let subscription {
@@ -687,13 +797,10 @@ final class MeetingsService {
                     isSubscribed = true
                     signal(.resumed)
                 } catch {
-                    // A connection without the kept subscription hears no event, and a kept subscription keeps it from
-                    // closing when idle: drop it, so `resumeSubscription` connects again, each failure waiting twice
-                    // as long up to `refusedBackoff`.
-                    HubPerf.log("meetings.service: subscribe again failed: \(error.localizedDescription); connecting again")
-                    guard client === connected else { return }
+                    guard self.subscription != nil, self.client === connected else { return }
                     restoreFailures += 1
                     let backoff = min(timing.reconnectDelay * pow(2, Double(restoreFailures - 1)), timing.refusedBackoff)
+                    HubPerf.log("meetings.service: subscribe again failed: \(error.localizedDescription); connecting again")
                     drop(connected, backoff: backoff)
                 }
             }
@@ -712,17 +819,19 @@ final class MeetingsService {
         dropped.onClose = nil
         dropped.onNotification = nil
         dropped.close()
+        if let backoff { backOff(for: backoff, discovery: clientDiscovery) }
         if client === dropped {
             client = nil
+            clientDiscovery = nil
             state = .idle
             subscriptionLost()
         }
-        if let backoff { refusedUntil = Date().addingTimeInterval(backoff) }
         resumeSubscription()
     }
 
     /// While a subscription is kept and no connection is open, connects again by itself: after `reconnectDelay`, then
-    /// twice as long each time up to `refusedBackoff`, never before a refusal's backoff ends. `connection()` starts the
+    /// twice as long each time up to `refusedBackoff`. During a refusal, inspect discovery every reconnectDelay so a
+    /// replacement can connect promptly without knocking again on the refused instance. `connection()` starts the
     /// service when none runs, and `attach` sends the kept subscription. Nothing else would connect: the window reads
     /// on events, not on a timer.
     private func resumeSubscription() {
@@ -731,8 +840,8 @@ final class MeetingsService {
         resuming = Task { [weak self] in
             var delay = first
             while true {
-                let refused = self?.refusedUntil?.timeIntervalSinceNow ?? 0
-                try? await Task.sleep(for: .seconds(max(delay, refused)))
+                let refused = self?.backoffRemaining ?? 0
+                try? await Task.sleep(for: .seconds(refused > 0 ? min(first, refused) : delay))
                 // Cancelled: `unsubscribe` cleared `resuming` itself, and a later subscription may own it now.
                 guard let self, !Task.isCancelled else { return }
                 var done = self.subscription == nil || self.client != nil
@@ -744,7 +853,7 @@ final class MeetingsService {
                     self.resumeSubscription()
                     return
                 }
-                delay = min(delay * 2, self.timing.refusedBackoff)
+                delay = self.backoffRemaining > 0 ? first : min(delay * 2, self.timing.refusedBackoff)
             }
         }
     }

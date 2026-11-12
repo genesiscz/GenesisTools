@@ -15,7 +15,18 @@ enum MeetingsCLI {
         var code: String? = nil
         /// A Meetings service refusal's `data` (`already-decided` names the entry that decided the items).
         var data: Data? = nil
+        /// What ran, as a person reads it: `tools meetings <args>`, or the service method with its params.
+        var command: String? = nil
+        /// The service's stack where it refused, and the issue it names (`[meetings] <title>`).
+        var stack: String? = nil
+        var issue: FailureIssue? = nil
+        let occurredAt = Date()
         var description: String { sentence }
+
+        static func == (lhs: Failure, rhs: Failure) -> Bool {
+            lhs.sentence == rhs.sentence && lhs.detail == rhs.detail && lhs.code == rhs.code && lhs.data == rhs.data
+                && lhs.command == rhs.command && lhs.stack == rhs.stack && lhs.issue == rhs.issue
+        }
 
         func decodeData<T: Decodable>(_ type: T.Type) -> T? {
             data.flatMap { try? JSONDecoder().decode(T.self, from: $0) }
@@ -34,12 +45,32 @@ enum MeetingsCLI {
         }
         guard result.exitCode == 0 else {
             span.end("exit \(result.exitCode)")
-            throw Failure(sentence: sentence(fromStderr: result.stderr) ?? "The meetings command failed.",
-                          detail: "tools meetings \(args.joined(separator: " ")) exited \(result.exitCode):\n\(result.stderr)",
-                          code: code(fromStderr: result.stderr))
+            throw failure(result, args: args)
         }
         span.end()
         return Data(result.stdout.utf8)
+    }
+
+    private struct ErrorEnvelope: Decodable {
+        struct Body: Decodable {
+            var message: String
+            var stack: String?
+            var issue: FailureIssue?
+        }
+        var error: Body
+    }
+
+    /// A JSON stderr error keeps the original throw's stack; older commands still use their human error line.
+    static func failure(_ result: ToolsRunResult, args: [String]) -> Failure {
+        let body = result.stderr.split(separator: "\n").reversed().compactMap { line in
+            try? JSONDecoder().decode(ErrorEnvelope.self, from: Data(line.utf8)).error
+        }.first
+        let command = "tools meetings \(args.joined(separator: " "))"
+        let message = body.map { "✗ " + $0.message } ?? result.stderr
+        return Failure(sentence: sentence(fromStderr: message) ?? "The meetings command failed.",
+                       detail: "\(command) exited \(result.exitCode):\n\(result.stderr)",
+                       code: code(fromStderr: message), command: command,
+                       stack: body?.stack, issue: body?.issue)
     }
 
     /// Runs a `--json` command and decodes its stdout.

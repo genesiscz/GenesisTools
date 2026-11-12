@@ -41,12 +41,26 @@ struct DecisionAction: Codable, Equatable, Hashable {
     /// respell: the item and its new text.
     var item: String?
     var text: String?
+    /// rephrase: the wording seen when this draft opened.
+    var expectedText: String?
+    /// A term's chosen source lines and independent dictionary teaching choice.
+    var reach: SpellingReach?
+    struct SpellingReach: Codable, Equatable, Hashable {
+        struct Line: Codable, Equatable, Hashable { let atSec: Double; let line: Int? }
+        var lines: [Line]?
+        var dictionary: Bool?
+    }
     /// answer, skip, split: the question; answer: the answer and its comment.
     var question: String?
     var answer: String?
     var comment: String?
     /// answer: "leave" keeps the questions that look alike open ("Only this question"); nil settles them.
     var lookAlikes: String?
+    /// answer: the targets and look-alikes struck in the "This also affects" sheet; they stay as they were and leave
+    /// the decision, so its Undo never touches them.
+    var except: [String]?
+    /// answer: the token of the question's earlier answer this one replaces (a changed answer, one Undo).
+    var replaces: String?
     /// rename: a diarization label and its name for this meeting.
     var label: String?
     var name: String?
@@ -108,6 +122,14 @@ struct DecisionAction: Codable, Equatable, Hashable {
         return action
     }
 
+    static func rephrase(_ question: String, text: String, was expectedText: String?) -> DecisionAction {
+        var action = DecisionAction(kind: "rephrase")
+        action.question = question
+        action.text = text
+        action.expectedText = expectedText
+        return action
+    }
+
     static func answer(_ question: String, _ answer: String, comment: String? = nil) -> DecisionAction {
         var action = DecisionAction(kind: "answer")
         action.question = question
@@ -164,6 +186,28 @@ struct LabelChange: Decodable, Equatable {
     let after: String?
 }
 
+/// A journaled assignment keeps the exact before/after speaker span, including an Undo that removes it.
+struct AssignmentChange: Decodable, Equatable {
+    struct Value: Decodable, Equatable {
+        let id: String
+        let label: String
+        let fromSec: Double
+        let toSec: Double
+        let person: String
+        let email: String?
+        let at: String
+    }
+    let id: String
+    let before: Value?
+    let after: Value?
+}
+
+struct MeetingFieldChange: Decodable, Equatable {
+    let field: String
+    let before: JSONValue?
+    let after: JSONValue?
+}
+
 /// An item a decision named and left, with the reason; `needs` says what decides it (speaker, proposed, listen) or
 /// `nothing` when it is decided that way already.
 struct DecisionSkip: Decodable, Equatable, Hashable {
@@ -188,13 +232,16 @@ struct JournalEntry: Decodable, Equatable, Identifiable {
     let skipped: [DecisionSkip]
     let changes: [ItemChange]
     let labels: [LabelChange]
+    let assignments: [AssignmentChange]
+    let fields: [MeetingFieldChange]
     /// `journal.read` only: the later entry that gave back every item this one decided.
     let revertedBy: String?
 
     var id: String { token }
+    var canUndo: Bool { revertedBy == nil && !["comment", "revert", "unsupported"].contains(action.kind) }
 
     enum CodingKeys: String, CodingKey {
-        case token, at, meeting, actor, reason, action, question, decided, settled, skipped, changes, labels, revertedBy
+        case token, at, meeting, actor, reason, action, question, decided, settled, skipped, changes, labels, assignments, fields, revertedBy
     }
 
     init(from decoder: Decoder) throws {
@@ -211,7 +258,14 @@ struct JournalEntry: Decodable, Equatable, Identifiable {
         skipped = try container.decodeIfPresent([DecisionSkip].self, forKey: .skipped) ?? []
         changes = try container.decodeIfPresent([ItemChange].self, forKey: .changes) ?? []
         labels = try container.decodeIfPresent([LabelChange].self, forKey: .labels) ?? []
+        assignments = try container.decodeIfPresent([AssignmentChange].self, forKey: .assignments) ?? []
+        fields = try container.decodeIfPresent([MeetingFieldChange].self, forKey: .fields) ?? []
         revertedBy = try container.decodeIfPresent(String.self, forKey: .revertedBy)
+    }
+
+    var changesTranscript: Bool {
+        !labels.isEmpty || !changes.isEmpty || !assignments.isEmpty || action.kind == "assign"
+            || fields.contains { $0.field == "project" }
     }
 
     /// Every item id this entry changed, decided or settled.
@@ -225,12 +279,53 @@ struct DecisionResult: Decodable, Equatable {
     let entry: JournalEntry?
     let skipped: [DecisionSkip]
     let warnings: [String]?
+    var rows: ReviewRowsPatch? = nil
 }
 
 /// What a planned decision reaches beyond the items it names (`DecisionReach`): look-alikes it settles, the lines a
 /// spelling changes, the dictionary entries it teaches.
 struct DecisionReach: Decodable, Equatable {
-    struct Item: Decodable, Equatable, Hashable { let id: String; let match: String }
+    /// One reached item (`ReachItem`, decision-journal.ts) with the evidence it is judged by.
+    struct Item: Decodable, Equatable, Identifiable {
+        /// `sets`: a target of the question outside the asked span; `lookAlike`: settled the same way; `same`: the
+        /// same question over the same span, closed with it and never asked again.
+        enum Role: String, Decodable { case sets, lookAlike = "look-alike", same }
+
+        let id: String
+        let match: String
+        let role: Role
+        /// What a person sees the item as before and after: a speaker, a spelling, an answer.
+        let before: String?
+        let after: String?
+        /// Its own review row: its quote of its own speaker, its time and its play target.
+        let row: ReviewRow?
+        /// The answer this one replaces left it out: shown struck at first.
+        let struck: Bool
+
+        init(id: String, match: String = "same", role: Role, before: String? = nil, after: String? = nil, row: ReviewRow? = nil, struck: Bool = false) {
+            self.id = id
+            self.match = match
+            self.role = role
+            self.before = before
+            self.after = after
+            self.row = row
+            self.struck = struck
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            match = try container.decodeIfPresent(String.self, forKey: .match) ?? "same"
+            // An engine older than the roles listed only look-alikes.
+            role = (try? container.decodeIfPresent(Role.self, forKey: .role)) ?? .lookAlike
+            before = try container.decodeIfPresent(String.self, forKey: .before)
+            after = try container.decodeIfPresent(String.self, forKey: .after)
+            row = try? container.decodeIfPresent(ReviewRow.self, forKey: .row)
+            struck = try container.decodeIfPresent(Bool.self, forKey: .struck) ?? false
+        }
+
+        private enum CodingKeys: String, CodingKey { case id, match, role, before, after, row, struck }
+    }
     struct Dictionary: Decodable, Equatable, Hashable {
         let project: String?
         let heard: String
@@ -242,9 +337,26 @@ struct DecisionReach: Decodable, Equatable {
     let items: [Item]
     let lines: Int?
     let dictionary: [Dictionary]
+    var spelling: Spelling? = nil
+    struct Spelling: Decodable, Equatable {
+        struct Occurrence: Decodable, Equatable, Identifiable {
+            let line: Int
+            let atSec: Double
+            let speaker: String
+            let text: String
+            let selected: Bool
+            let primary: Bool
+            var id: Int { line }
+        }
+        let occurrences: [Occurrence]
+        let dictionary: Bool
+    }
 
-    /// Nothing beyond the named items: no sheet to show.
-    var isEmpty: Bool { items.isEmpty && (lines ?? 0) <= 1 && dictionary.allSatisfy { !$0.teaches } }
+    /// The items a person judges in the sheet; `same` ones are the asked question itself and are never asked again.
+    var judged: [Item] { items.filter { $0.role != .same } }
+
+    /// Nothing beyond the named items: no sheet to show. The same question over the same span is not a reach.
+    var isEmpty: Bool { judged.isEmpty && (lines ?? 0) <= 1 && dictionary.allSatisfy { !$0.teaches } && spelling == nil }
 }
 
 /// A refusal's `data` for `already-decided`: the items and the entry that decided them since the caller saw them.
@@ -263,6 +375,7 @@ extension MeetingsAPI {
         /// `decision.apply` only: `refuse` answers `already-decided` for an item someone decided since the caller saw
         /// it (the window), `skip` (the default) skips it.
         var onDecided: String?
+        var lowPriority: String? = nil
     }
 
     /// `decision.plan`: what `decision.apply` would do now and reach, without saving anything.
@@ -367,6 +480,18 @@ extension MeetingsAPI {
         typealias Result = MeetingComment
     }
 
+    enum CommentRead: MeetingsServiceMethod {
+        static let name = "comment.read"
+        typealias Params = CommentUnstage.Params
+        typealias Result = MeetingComment
+    }
+
+    enum CommentWithdraw: MeetingsServiceMethod {
+        static let name = "comment.withdraw"
+        typealias Params = CommentUnstage.Params
+        typealias Result = MeetingComment
+    }
+
     /// `comment.send`: the staged comments (or only `ids`) to the listening agent; it cannot be taken back.
     enum CommentSend: MeetingsServiceMethod {
         static let name = "comment.send"
@@ -375,6 +500,7 @@ extension MeetingsAPI {
             var meeting: String
             var ids: [String]?
             var reason: String?
+            var requireListener: Bool? = nil
         }
 
         struct Result: Decodable, Equatable {
@@ -399,6 +525,12 @@ extension MeetingsAPI {
         let meeting: String
         let token: String
         let entry: JournalEntry
+    }
+
+    struct CommentChanged: Decodable, Equatable {
+        static let name = "comment.changed"
+        let meeting: String
+        let comment: MeetingComment?
     }
 
     /// `comment.sent`: comments went to the listening agent (`listeners` empty: nobody listened).
@@ -614,6 +746,65 @@ struct ReviewRows: Decodable, Equatable {
     let hidden: Hidden
 }
 
+/// A decision's changed rows. Before values protect rows that a later decision changed while this reply travelled.
+struct ReviewRowsPatch: Decodable, Equatable {
+    struct Change: Decodable, Equatable {
+        let id: String
+        let before: ReviewRow?
+        let after: ReviewRow?
+    }
+    struct Hidden: Decodable, Equatable { let before: ReviewRows.Hidden; let after: ReviewRows.Hidden }
+    struct Fields: Decodable, Equatable {
+        struct Value: Decodable, Equatable {
+            let title: String
+            let project: String?
+            let labels: [String]
+            let speakerLabels: [String: String]
+        }
+        let before: Value
+        let after: Value
+    }
+    let meeting: String
+    let changes: [Change]
+    let order: [String]
+    let hidden: Hidden
+    let fields: Fields
+
+    func applying(to current: ReviewRows, token: String, latest: [String: String]) -> ReviewRows {
+        guard current.meeting == meeting else { return current }
+        var rows = current.rows
+        var conflicted = false
+        for change in changes {
+            if let last = latest[change.id], last != token, last != change.before?.decision?.token {
+                conflicted = true
+                continue
+            }
+            let index = rows.firstIndex { $0.id == change.id }
+            let present = index.map { rows[$0] }
+            var optimistic = change.before
+            if let status = change.after?.status { optimistic?.status = status }
+            guard present == change.before || present == change.after || present == optimistic else {
+                conflicted = true
+                continue
+            }
+            if let after = change.after {
+                if let index { rows[index] = after } else { rows.append(after) }
+            } else if let index {
+                rows.remove(at: index)
+            }
+        }
+        if !conflicted {
+            let positions = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) })
+            rows = rows.enumerated().sorted {
+                let a = positions[$0.element.id] ?? Int.max, b = positions[$1.element.id] ?? Int.max
+                return a == b ? $0.offset < $1.offset : a < b
+            }.map(\.element)
+        }
+        return ReviewRows(meeting: current.meeting, rows: rows,
+                          hidden: !conflicted && current.hidden == hidden.before ? hidden.after : current.hidden)
+    }
+}
+
 // MARK: - Comments (`meetingCommentSchema`)
 
 /// A comment for the listening agent: staged (it can still be unstaged) or sent with its journal entry's token.
@@ -624,10 +815,15 @@ struct MeetingComment: Decodable, Equatable, Identifiable {
     let text: String
     let quote: String?
     let actor: DecisionActor
-    /// staged or sent.
+    /// staged or sent; a sent comment can carry its receipt or withdrawal time.
     let state: String
     let sentAt: String?
     let token: String?
+    var readAt: String? = nil
+    var readBy: DecisionActor? = nil
+    var withdrawnAt: String? = nil
+
+    var canWithdraw: Bool { state == "sent" && readAt == nil && withdrawnAt == nil }
 }
 
 /// A `listen --subscribe-answers --with-comments` process: who a send reaches.

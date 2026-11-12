@@ -198,6 +198,50 @@ final class MeetingsServiceTests: XCTestCase {
     private static let design = "2026-11-03-1000-design-review"
     private static let retro = "2026-11-03-1400-retro"
 
+    func testASilentSubscribeOnANewConnectionIsTriedAgainOnAnother() async throws {
+        try writeServiceEntry()
+        let log = commands!
+        let service = MeetingsService(folder: folder, timing: .init(helloTimeout: 0.3, startThrottle: 30, refusedBackoff: 60,
+                                                                    idleClose: 60, reconnectDelay: 0.05),
+                                      pid: 4242, startService: { log.starts += 1 })
+        var resumed = 0
+        let listening = service.listen { if case .resumed = $0 { resumed += 1 } }
+        defer { listening.cancel() }
+        _ = try await service.subscribe(meeting: Self.design, events: ["meeting.changed"])
+
+        fake.silent = ["subscribe"]
+        fake.hangUp()
+        for _ in 0..<200 where fake.count("subscribe") < 3 { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertGreaterThanOrEqual(fake.count("hello"), 3, "a silent subscribe dropped its connection and a new one opened")
+        XCTAssertEqual(resumed, 0, "no subscribe was answered yet")
+
+        fake.silent = []
+        for _ in 0..<300 where resumed == 0 { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(resumed, 1, "the next connection carried the subscription and told the subscriber")
+        let hellos = fake.count("hello")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(fake.count("hello"), hellos, "an answered subscribe keeps its connection")
+        service.unsubscribe()
+    }
+
+    func testPreviewServiceRequiresOptInAndADistinctDataHome() {
+        let userHome = "/tmp/preview-service-user"
+        func allowed(_ flag: String? = nil, _ home: String? = nil) -> Bool {
+            var environment: [String: String] = [:]
+            environment["GENESIS_MEETINGS_SERVICE"] = flag
+            environment["GENESIS_TOOLS_HOME"] = home
+            return MeetingsService.allowsPreviewService(environment: environment, userHome: userHome)
+        }
+        XCTAssertFalse(allowed())
+        XCTAssertFalse(allowed(nil, "/tmp/preview-service-fixture"))
+        XCTAssertFalse(allowed("1"))
+        XCTAssertFalse(allowed("1", userHome))
+        XCTAssertFalse(allowed("1", "\(userHome)/sub/.."))
+        XCTAssertFalse(allowed("1", "relative-fixture"))
+        XCTAssertFalse(allowed("0", "/tmp/preview-service-fixture"))
+        XCTAssertTrue(allowed("1", "/tmp/preview-service-fixture"))
+    }
+
     // MARK: The fixture
 
     /// The params decode as the Swift type and encode back to the same object.
@@ -241,6 +285,18 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.Transcript.name:
                 try roundTrip(MeetingsAPI.Transcript.Params.self, params, label)
                 if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.Transcript.Result.self, result).entries.isEmpty) }
+            case MeetingsAPI.WordTimings.name:
+                try roundTrip(MeetingsAPI.WordTimings.Params.self, params, label)
+                if let result {
+                    let generated = try MeetingsService.decode(MeetingsAPI.WordTimings.Result.self, result)
+                    XCTAssertEqual(generated.meeting, Self.design)
+                    XCTAssertEqual(generated.coverage.matchedWords, 1)
+                }
+            case MeetingsAPI.WordTimingsChanged.name:
+                let notification = try XCTUnwrap((example["notification"] as? [String: Any])?["params"])
+                let event = try XCTUnwrap(MeetingsAPI.eventDecoders[method])(notification)
+                XCTAssertEqual(event.meeting, Self.design)
+                XCTAssertFalse(MeetingsWindowModel.changesOverview(event))
             case MeetingsAPI.Revisions.name:
                 try roundTrip(MeetingsAPI.Revisions.Params.self, params, label)
                 if let result { XCTAssertNotNil(try MeetingsService.decode(MeetingsAPI.Revisions.Result.self, result).show) }
@@ -253,6 +309,11 @@ final class MeetingsServiceTests: XCTestCase {
                 let changed = try MeetingsService.decode(MeetingsAPI.MeetingChanged.self, notification)
                 XCTAssertEqual(changed.meeting, Self.design)
                 XCTAssertEqual(changed.parts, ["show", "transcript"])
+            case MeetingsAPI.PeopleChanged.name:
+                let notification = try XCTUnwrap((example["notification"] as? [String: Any])?["params"])
+                let event = try XCTUnwrap(MeetingsAPI.eventDecoders[method])(notification)
+                XCTAssertNil(event.meeting, "a people-book change is not scoped to one meeting")
+                XCTAssertFalse(MeetingsWindowModel.changesOverview(event))
             case MeetingsAPI.DecisionApplied.name, MeetingsAPI.DecisionReverted.name, MeetingsAPI.CommentSent.name:
                 // Every event decodes through the table the connection uses.
                 let notification = try XCTUnwrap((example["notification"] as? [String: Any])?["params"])
@@ -269,15 +330,14 @@ final class MeetingsServiceTests: XCTestCase {
                     let entry = try XCTUnwrap(decided.entry, label)
                     XCTAssertEqual(entry.actor.kind, "agent", label)
                     XCTAssertFalse(entry.changes.isEmpty, "\(label): the item before and after decode")
+                    let patch = try XCTUnwrap(decided.rows, "\(label): changed rows decode from the additive response")
+                    XCTAssertEqual(patch.meeting, entry.meeting)
+                    XCTAssertEqual(Set(patch.changes.map(\.id)), Set(entry.changes.map(\.id)))
                 }
                 if let data = (reply?["error"] as? [String: Any])?["data"] {
-                    let code = try MeetingsService.decode(MeetingsAPI.ErrorData.self, data).code
-                    if code == "already-decided" {
-                        let refused = try MeetingsService.decode(AlreadyDecided.self, data)
-                        XCTAssertNotNil(refused.entry, "\(label): the refusal names the entry that decided it")
-                    } else {
-                        XCTAssertEqual(code, "failed", label)
-                    }
+                    let refused = try MeetingsService.decode(AlreadyDecided.self, data)
+                    XCTAssertEqual(refused.code, "already-decided", label)
+                    XCTAssertNotNil(refused.entry, "\(label): the refusal names the entry that decided it")
                 }
             case MeetingsAPI.DecisionRevert.name:
                 try roundTrip(MeetingsAPI.DecisionRevert.Params.self, params, label)
@@ -300,6 +360,14 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.MomentClipCut.name:
                 try roundTrip(MeetingsAPI.MomentClipCut.Params.self, params, label)
                 if let result { XCTAssertTrue(try MeetingsService.decode(MeetingsAPI.MomentClipCut.Result.self, result).path.hasSuffix(".wav"), label) }
+            case MeetingsAPI.MomentSave.name:
+                try roundTrip(MeetingsAPI.MomentSave.Params.self, params, label)
+                if let result {
+                    let saved = try MeetingsService.decode(MeetingsAPI.MomentSave.Result.self, result)
+                    XCTAssertEqual(saved.entry.ref, saved.clip.path)
+                    XCTAssertTrue(saved.clip.path.contains("/clips/"))
+                    XCTAssertNil(saved.clip.moment.tone)
+                }
             case MeetingsAPI.TonePreview.name:
                 try roundTrip(MeetingsAPI.TonePreview.Params.self, params, label)
                 if let result {
@@ -317,6 +385,9 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.MeetingSpeakers.name:
                 try roundTrip(MeetingsAPI.MeetingSpeakers.Params.self, params, label)
                 if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.MeetingSpeakers.Result.self, result).speakers.isEmpty, label) }
+            case MeetingsAPI.MeetingTimeline.name:
+                try roundTrip(MeetingsAPI.MeetingTimeline.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(ScreenTimeline.self, result) }
             case MeetingsAPI.MeetingScreen.name:
                 try roundTrip(MeetingsAPI.MeetingScreen.Params.self, params, label)
                 if let result { _ = try MeetingsService.decode(MeetingsAPI.MeetingScreen.Result.self, result) }
@@ -354,6 +425,16 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.CommentUnstage.name:
                 try roundTrip(MeetingsAPI.CommentUnstage.Params.self, params, label)
                 if let result { _ = try MeetingsService.decode(MeetingsAPI.CommentUnstage.Result.self, result) }
+            case MeetingsAPI.CommentRead.name:
+                try roundTrip(MeetingsAPI.CommentRead.Params.self, params, label)
+                if let result { XCTAssertNotNil(try MeetingsService.decode(MeetingComment.self, result).readAt) }
+            case MeetingsAPI.CommentWithdraw.name:
+                try roundTrip(MeetingsAPI.CommentWithdraw.Params.self, params, label)
+                if let result { XCTAssertNotNil(try MeetingsService.decode(MeetingComment.self, result).withdrawnAt) }
+            case MeetingsAPI.CommentChanged.name:
+                let notification = try XCTUnwrap((example["notification"] as? [String: Any])?["params"])
+                let changed = try MeetingsService.decode(MeetingsAPI.CommentChanged.self, notification)
+                XCTAssertEqual(changed.meeting, Self.design)
             case MeetingsAPI.CommentSend.name:
                 try roundTrip(MeetingsAPI.CommentSend.Params.self, params, label)
                 if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.CommentSend.Result.self, result).entry?.action.kind, "comment") }
@@ -418,8 +499,9 @@ final class MeetingsServiceTests: XCTestCase {
     /// The methods Wave B mirrors.
     private static let wavebMethods = [
         MeetingsAPI.DecisionPlan.name, MeetingsAPI.DecisionApply.name, MeetingsAPI.DecisionRevert.name, MeetingsAPI.JournalRead.name,
-        MeetingsAPI.MomentPlan.name, MeetingsAPI.MomentClipCut.name, MeetingsAPI.TonePreview.name, MeetingsAPI.MeetingAudio.name,
-        MeetingsAPI.MeetingSpeakers.name, MeetingsAPI.MeetingScreen.name, MeetingsAPI.MeetingWaveform.name, MeetingsAPI.Overview.name,
+        MeetingsAPI.MomentPlan.name, MeetingsAPI.MomentClipCut.name, MeetingsAPI.MomentSave.name, MeetingsAPI.TonePreview.name, MeetingsAPI.MeetingAudio.name,
+        MeetingsAPI.MeetingSpeakers.name, MeetingsAPI.MeetingScreen.name, MeetingsAPI.MeetingTimeline.name,
+        MeetingsAPI.MeetingWaveform.name, MeetingsAPI.Overview.name,
         MeetingsAPI.ConfigRead.name, MeetingsAPI.ConfigSet.name, MeetingsAPI.ConfigUnset.name, MeetingsAPI.MeetingRows.name,
         MeetingsAPI.CommentStage.name, MeetingsAPI.CommentList.name, MeetingsAPI.CommentUnstage.name, MeetingsAPI.CommentSend.name,
     ]
@@ -458,9 +540,9 @@ final class MeetingsServiceTests: XCTestCase {
 
     /// service.json as the TypeScript host writes it, naming the fake's socket and a live pid (and the checkout its code
     /// runs from, when given).
-    private func writeServiceEntry(sourceRoot: String? = nil) throws {
+    private func writeServiceEntry(sourceRoot: String? = nil, startedAt: String = "2026-11-09T19:00:00.000Z") throws {
         var entry: [String: Any] = ["version": 1, "protocol": 1, "pid": Int(getpid()), "socket": fake.path,
-                                    "startedAt": "2026-11-09T19:00:00.000Z", "codeStamp": 0]
+                                    "startedAt": startedAt, "codeStamp": 0]
         entry["sourceRoot"] = sourceRoot
         try JSONSerialization.data(withJSONObject: entry).write(to: folder.appendingPathComponent("service.json"))
     }
@@ -484,6 +566,29 @@ final class MeetingsServiceTests: XCTestCase {
         }
     }
 
+    func testReturningToALiveWindowRefreshesExternalSettings() async throws {
+        try writeServiceEntry()
+        let service = makeService()
+        let model = MeetingsWindowModel(service: service, loadDetail: { _ in })
+        defer { model.stopLiveUpdates() }
+        model.receive(.resumed)
+        for _ in 0..<100 where fake.count("config.read") == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        let previous = fake.count("config.read")
+        model.refreshAfterReturn()
+        for _ in 0..<100 where fake.count("config.read") == previous { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertGreaterThan(fake.count("config.read"), previous, "live meeting events do not carry external config changes")
+    }
+
+    func testAReconnectedWindowRefreshesExternalSettings() async throws {
+        try writeServiceEntry()
+        let service = makeService()
+        let model = MeetingsWindowModel(service: service, loadDetail: { _ in })
+        defer { model.stopLiveUpdates() }
+        model.receive(.resumed)
+        for _ in 0..<100 where fake.count("config.read") == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertGreaterThan(fake.count("config.read"), 0, "settings may have changed while disconnected")
+    }
+
     func testAReadGoesThroughTheServiceAfterOneHello() async throws {
         try writeServiceEntry()
         let service = makeService()
@@ -491,9 +596,10 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(record.id, Self.design)
         XCTAssertEqual(record.project, "Atlas")
         let revisions = try await MeetingDetailModel.revisionsRead(Self.design).run(service: service, command: command())
-        let fixture = try XCTUnwrap(MeetingsFixture.reply(MeetingsAPI.Revisions.name, params: ["ref": Self.design])?["result"])
-        let expected = try MeetingsService.decode(MeetingsAPI.Revisions.Result.self, fixture)
-        XCTAssertEqual(revisions.show, expected.show)
+        // The token hashes the record as the fixture's capture wrote it, so it changes when the fixture is captured again.
+        let captured = try XCTUnwrap(try MeetingsFixture.examples().first { $0["method"] as? String == "meeting.revisions" })
+        let expected = ((captured["reply"] as? [String: Any])?["result"] as? [String: Any])?["show"] as? String
+        XCTAssertEqual(revisions.show, try XCTUnwrap(expected))
         let transcript = try await MeetingDetailModel.transcriptRead(Self.design).run(service: service, command: command())
         XCTAssertEqual(transcript.entries.map(\.speaker), ["Dana Example", "Alex Example"])
 
@@ -551,6 +657,22 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(fake.count("meeting.show"), 1, "the service the window cannot read is not asked again before the backoff")
     }
 
+    func testAWriteWithAnUnreadableReplyNeverRunsAgainAsACommand() async throws {
+        try writeServiceEntry()
+        fake.answers["comment.stage"] = ["result": ["id": "c1"]]
+        let service = makeService()
+        do {
+            _ = try await MeetingsService.write(MeetingsAPI.CommentStage.self,
+                                                .init(meeting: Self.design, target: .time(3), text: "Check", quote: nil),
+                                                service: service, orRun: ["comments", "stage"], command: command())
+            XCTFail("An unreadable mutation reply must surface the uncertainty")
+        } catch let failure as MeetingsService.Unavailable {
+            XCTAssertFalse(failure.safeToRetry)
+        }
+        XCTAssertEqual(fake.count("comment.stage"), 1)
+        XCTAssertTrue(commands.runs.isEmpty)
+    }
+
     func testNoServiceRunsTheCommandAndStartsOneInTheBackground() async throws {
         let service = makeService()
         for _ in 0..<2 {
@@ -599,6 +721,60 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(fake.count("hello"), 1, "the second read did not knock again")
         XCTAssertEqual(commands.starts, 0, "a refusing service is not started over")
         XCTAssertEqual(service.state, .idle)
+    }
+
+    func testAReplacementServiceBypassesTheRejectedInstancesBackoff() async throws {
+        try writeServiceEntry()
+        fake.helloAnswer = ["error": ["code": 1100, "message": "code changed",
+                                      "data": ["code": "code-mismatch"]]]
+        let service = makeService()
+        defer { service.disconnect() }
+        _ = try? await service.call(MeetingsAPI.Show.self, .init(ref: Self.design))
+        XCTAssertEqual(fake.count("hello"), 1)
+
+        // Same socket and PID, new service lifetime. Rewriting the discovery entry happens at service startup.
+        fake.helloAnswer = ["result": try MeetingsFixture.helloResult()]
+        try writeServiceEntry(startedAt: "2026-11-09T19:01:00.000Z")
+        let record = try await service.call(MeetingsAPI.Show.self, .init(ref: Self.design))
+        XCTAssertEqual(record.id, Self.design)
+        XCTAssertEqual(fake.count("hello"), 2, "a replacement is not held behind the old service's minute-long refusal")
+        XCTAssertEqual(commands.starts, 0, "the replacement already runs")
+    }
+
+    func testARejectedServiceThatExitedAllowsAStartImmediately() async throws {
+        try writeServiceEntry()
+        fake.helloAnswer = ["error": ["code": 1100, "message": "code changed",
+                                      "data": ["code": "code-mismatch"]]]
+        let service = makeService()
+        _ = try? await service.call(MeetingsAPI.Show.self, .init(ref: Self.design))
+        // Retain the file with a dead PID, as an abruptly exited service can do.
+        var entry = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("service.json"))) as? [String: Any])
+        entry["pid"] = Int(Int32.max)
+        try JSONSerialization.data(withJSONObject: entry).write(to: folder.appendingPathComponent("service.json"))
+        XCTAssertEqual(service.discover(), .none)
+        _ = try? await service.call(MeetingsAPI.Show.self, .init(ref: Self.design))
+        await Task.yield()
+        XCTAssertEqual(commands.starts, 1, "a dead rejected instance cannot block recovery")
+        XCTAssertEqual(fake.count("hello"), 1, "the dead instance is not contacted again")
+    }
+
+    func testAKeptSubscriptionNoticesAReplacementDuringRefusalBackoff() async throws {
+        try writeServiceEntry()
+        fake.helloAnswer = ["error": ["code": 1100, "message": "code changed",
+                                      "data": ["code": "code-mismatch"]]]
+        let service = makeService()
+        defer { service.unsubscribe() }
+        _ = try? await service.subscribe(meeting: Self.design, events: ["meeting.changed"])
+        XCTAssertEqual(fake.count("hello"), 1)
+        // Give the reconnect loop time to enter its refusal wait before replacing the service.
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(fake.count("hello"), 1, "do not repeatedly knock on the refused service")
+        fake.helloAnswer = ["result": try MeetingsFixture.helloResult()]
+        try writeServiceEntry(startedAt: "2026-11-09T19:01:00.000Z")
+        for _ in 0..<100 where !service.isSubscribed { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(service.isSubscribed, "metadata changes resume the subscription without another read")
+        XCTAssertEqual(fake.count("hello"), 2)
+        XCTAssertEqual(fake.count("subscribe"), 1)
     }
 
     func testADroppedConnectionIsOpenedAgainWithANewHello() async throws {
@@ -673,36 +849,6 @@ final class MeetingsServiceTests: XCTestCase {
         service.unsubscribe()
         try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertEqual(fake.count("hello"), 2, "without a subscription nothing connects again")
-    }
-
-    /// A new connection whose subscribe goes unanswered would stay connected and hear nothing (the kept subscription
-    /// also keeps it from closing when idle): the window drops it and connects again until a subscribe is answered.
-    func testASilentSubscribeOnANewConnectionIsTriedAgainOnAnother() async throws {
-        try writeServiceEntry()
-        let log = commands!
-        let service = MeetingsService(folder: folder, timing: .init(helloTimeout: 0.3, startThrottle: 30, refusedBackoff: 60,
-                                                                    idleClose: 60, reconnectDelay: 0.05),
-                                      pid: 4242, startService: { log.starts += 1 })
-        var resumed = 0
-        let listening = service.listen { signal in
-            if signal == .resumed { resumed += 1 }
-        }
-        defer { listening.cancel() }
-        _ = try await service.subscribe(meeting: Self.design, events: ["meeting.changed"])
-
-        fake.silent = ["subscribe"]
-        fake.hangUp()
-        for _ in 0..<200 where fake.count("subscribe") < 3 { try await Task.sleep(nanoseconds: 20_000_000) }
-        XCTAssertGreaterThanOrEqual(fake.count("hello"), 3, "a silent subscribe dropped its connection and a new one opened")
-        XCTAssertEqual(resumed, 0, "no subscribe was answered yet")
-
-        fake.silent = []
-        for _ in 0..<300 where resumed == 0 { try await Task.sleep(nanoseconds: 20_000_000) }
-        XCTAssertEqual(resumed, 1, "the next connection carried the subscription and told the subscriber")
-        let hellos = fake.count("hello")
-        try await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertEqual(fake.count("hello"), hellos, "an answered subscribe keeps its connection")
-        service.unsubscribe()
     }
 
     func testACancelledReadIsCancelledOnTheWireAndRunsNoCommand() async throws {
@@ -807,5 +953,213 @@ final class MeetingsServiceTests: XCTestCase {
         await fulfillment(of: [heard], timeout: 3)
         XCTAssertEqual(first.first?.entry?.action, .confirm(["i1"]))
         XCTAssertEqual(first, second)
+    }
+}
+
+extension MeetingsServiceTests {
+    private func libraryAnswers() throws {
+        for example in try MeetingsFixture.examples() {
+            guard let method = example["method"] as? String,
+                  var reply = example["reply"] as? [String: Any], reply["result"] != nil else { continue }
+            reply["id"] = nil // The fake assigns the current request's id, not the fixture capture's id.
+            if fake.answers[method] == nil { fake.answers[method] = reply }
+        }
+        // The shared protocol fixture reads one config path, while Settings reads the whole config.
+        fake.answers["config.read"] = ["result": ["path": "/fixture/config.json", "value": [
+            "global": ["dictionary": ["entries": []], "language": "en",
+                       "capture": ["displays": "all", "activeFps": 1, "idleFps": 0.1, "threshold": 0.02, "retentionDays": 30],
+                       "assign": ["ask": true, "lookbackHours": 48, "maxProposals": 5, "calendarSlackMin": 15],
+                       "suggest": ["applyAbove": 0.5]],
+            "projects": ["Harbor": ["labels": [], "match": ["people": [], "title": ["words": []]]]],
+            "sources": [:], "languages": ["en": ["ocr": ["en-US"]]]
+        ]]]
+    }
+
+    private func settingsWithDeniedCommands(_ service: MeetingsService) -> MeetingsSettingsModel {
+        let log = commands!
+        return MeetingsSettingsModel(service: service, command: { args in
+            log.runs.append(args)
+            throw MeetingsCLI.Failure(sentence: "Test command denied", detail: args.joined(separator: " "))
+        })
+    }
+
+    private func waitForSettingsCalls(_ expected: [String], model: MeetingsSettingsModel) async throws {
+        for _ in 0..<150 {
+            let idle = model.writing.isEmpty && !model.settings.isLoading && !model.preview.isLoading && !model.dictionary.isLoading
+            let phraseReady = !expected.contains("dictionary.test") || model.phraseResult != nil
+            if (expected.allSatisfy({ fake.count($0) > 0 }) && idle && phraseReady) || commands.runs.count >= expected.count { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        for method in expected { XCTAssertGreaterThan(fake.count(method), 0, "Settings did not call \(method)") }
+        XCTAssertEqual(commands.runs, [], "a healthy typed service must not launch a command")
+    }
+
+    func testSettingsLibraryReadsUseTheTypedService() async throws {
+        try writeServiceEntry()
+        try libraryAnswers()
+        let model = settingsWithDeniedCommands(makeService())
+        model.loadPreview()
+        model.loadDictionary()
+        model.testPhrase("The Atlass page")
+        try await waitForSettingsCalls(["projects.preview", "dictionary.show", "dictionary.test"], model: model)
+        XCTAssertNotNil(model.preview.value)
+        XCTAssertNotNil(model.dictionary.value)
+        XCTAssertNotNil(model.phraseResult)
+    }
+
+    func testSettingsLibraryWritesUseTheTypedService() async throws {
+        try writeServiceEntry()
+        try libraryAnswers()
+        let model = settingsWithDeniedCommands(makeService())
+        model.addProject("Harbor")
+        model.changeLabels("Harbor", add: ["Checkout"])
+        model.renameProject("Harbor", to: "Atlas")
+        model.removeProject("Unused")
+        model.addEntry(type: "term", value: "Harbor", substitution: nil, spoken: ["har bor"], meaning: "A project",
+                       replacing: "Old", scope: .some("Harbor"), ifAbsent: true)
+        try await waitForSettingsCalls(["projects.add", "projects.labels", "projects.rename", "projects.remove", "dictionary.add"], model: model)
+        let add = try XCTUnwrap(fake.received.first { $0["method"] as? String == "dictionary.add" })
+        let params = try XCTUnwrap(add["params"] as? [String: Any])
+        let entry = try XCTUnwrap(params["entry"] as? [String: Any])
+        XCTAssertEqual(params["project"] as? String, "Harbor")
+        XCTAssertEqual(params["replace"] as? String, "Old")
+        XCTAssertEqual(params["ifAbsent"] as? Bool, true)
+        XCTAssertEqual(entry["spoken"] as? [String], ["har bor"])
+        XCTAssertEqual(entry["meaning"] as? String, "A project")
+        XCTAssertNil(entry["substitution"])
+        XCTAssertNil(entry["caseSensitive"], "term entries must fit the strict schema")
+    }
+}
+
+extension MeetingsServiceTests {
+    func testSettingsBatchRulesAndRemovalsUseTypedParams() async throws {
+        try writeServiceEntry()
+        try libraryAnswers()
+        let model = settingsWithDeniedCommands(makeService())
+        model.loadSettings()
+        for _ in 0..<150 where model.settings.value == nil { try await Task.sleep(for: .milliseconds(10)) }
+        let settings = try XCTUnwrap(model.settings.value)
+        let project = try XCTUnwrap(settings.projectNames.first)
+        var draft = model.savedRules(project, in: settings)
+        draft.titleWords.append("review")
+        model.drafts[project] = draft
+        model.saveRules(project)
+        model.unpair(entry: "entry-1", title: "Review", preview: .init(pairings: 1, projects: 1, leaving: 1))
+        model.unpair(person: .init(name: "Alex Example", email: "alex@example.com", pairedBy: []), from: project)
+        let entry = try MeetingsService.decode(DictionaryEntry.self,
+                                               ["type": "fix", "value": "Atlass", "substitution": "Atlas", "level": "global"])
+        model.removeEntry(entry)
+        try await waitForSettingsCalls(["config.edit", "projects.unpair", "dictionary.remove"], model: model)
+        let request = try XCTUnwrap(fake.received.first { $0["method"] as? String == "config.edit" })
+        let params = try MeetingsService.decode(MeetingsAPI.ConfigEdit.Params.self, try XCTUnwrap(request["params"]))
+        let change = try XCTUnwrap(params.edits.first)
+        XCTAssertEqual(change.path, MeetingsCLI.jsonArgument(["projects", project, "match", "title", "words"]))
+        XCTAssertEqual(change.value, .array(draft.titleWords.map(JSONValue.string)))
+        XCTAssertNotNil(change.expect, "the atomic write keeps its optimistic concurrency expectation")
+    }
+
+    func testSettingsWriteNeverReplaysARefusalOrAnAmbiguousReply() async throws {
+        try writeServiceEntry()
+        let service = makeService()
+        let model = settingsWithDeniedCommands(service)
+        fake.answers["projects.add"] = ["error": ["code": 1100, "message": "changed", "data": ["code": "config-stale"]]]
+        do {
+            _ = try await model.writeLibrary(MeetingsAPI.ProjectsAdd.self, .init(name: "Harbor"), orRun: ["projects", "add", "Harbor"])
+            XCTFail("the refusal must be retained")
+        } catch let failure as MeetingsCLI.Failure {
+            XCTAssertEqual(failure.code, "config-stale")
+        }
+        fake.answers["projects.add"] = ["result": ["invalid": true]]
+        do {
+            _ = try await model.writeLibrary(MeetingsAPI.ProjectsAdd.self, .init(name: "Harbor"), orRun: ["projects", "add", "Harbor"])
+            XCTFail("an undecodable reply may follow a successful write")
+        } catch let failure as MeetingsService.Unavailable {
+            XCTAssertFalse(failure.safeToRetry)
+        }
+        XCTAssertEqual(commands.runs, [])
+    }
+
+    func testSettingsWriteFallsBackOnlyBeforeDispatchAndHonorsCancellation() async throws {
+        try writeServiceEntry()
+        let model = settingsWithDeniedCommands(makeService())
+        fake.answers["projects.add"] = ["error": ["code": -32601, "message": "method unavailable"]]
+        let args = ["projects", "add", "Harbor"]
+        do {
+            _ = try await model.writeLibrary(MeetingsAPI.ProjectsAdd.self, .init(name: "Harbor"), orRun: args)
+            XCTFail("the injected command denies execution")
+        } catch let failure as MeetingsCLI.Failure {
+            XCTAssertEqual(failure.sentence, "Test command denied")
+        }
+        XCTAssertEqual(commands.runs, [args])
+        let task = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await model.writeLibrary(MeetingsAPI.ProjectsAdd.self, .init(name: "Harbor"), orRun: args)
+        }
+        do { _ = try await task.value; XCTFail("cancelled writes must stop") }
+        catch is CancellationError {}
+        XCTAssertEqual(commands.runs, [args], "cancellation cannot reach compatibility execution")
+    }
+}
+
+extension MeetingsServiceTests {
+    func testLocalSpeakerDecisionPatchRefreshesSpeakersAndSkipsItsOwnEvent() async throws {
+        try writeServiceEntry()
+        let examples = try MeetingsFixture.examples()
+        let example = try XCTUnwrap(examples.first {
+            $0["method"] as? String == "decision.apply"
+                && (($0["reply"] as? [String: Any])?["result"] as? [String: Any])?["rows"] != nil
+        })
+        var reply = try XCTUnwrap(example["reply"] as? [String: Any])
+        reply["id"] = nil
+        let result = try MeetingsService.decode(DecisionResult.self, try XCTUnwrap(reply["result"]))
+        let entry = try XCTUnwrap(result.entry)
+        let patch = try XCTUnwrap(result.rows)
+        let row = try XCTUnwrap(patch.changes.first?.before)
+        XCTAssertEqual(row.kind, "speaker-range")
+        XCTAssertTrue(entry.changesTranscript)
+        fake.answers["decision.apply"] = reply
+
+        let recordObject = try XCTUnwrap((examples.first {
+            $0["method"] as? String == "meeting.show"
+        }?["reply"] as? [String: Any])?["result"])
+        let speakersObject = try XCTUnwrap((examples.first {
+            $0["method"] as? String == "meeting.speakers"
+        }?["reply"] as? [String: Any])?["result"] as? [String: Any])
+        let before = try MeetingsService.decode(MeetingsAPI.MeetingSpeakers.Result.self, speakersObject)
+        var changed = speakersObject
+        var speakers = try XCTUnwrap(changed["speakers"] as? [[String: Any]])
+        XCTAssertFalse(speakers.isEmpty)
+        speakers[0]["label"] = "Alex Example"
+        changed["speakers"] = speakers
+        let after = try MeetingsService.decode(MeetingsAPI.MeetingSpeakers.Result.self, changed)
+        XCTAssertNotEqual(before, after)
+        fake.answers["meeting.speakers"] = ["result": speakersObject]
+
+        let detail = MeetingDetailModel(id: patch.meeting, window: nil, service: makeService())
+        defer { detail.cancelReads() }
+        detail.settleDecisionRecord(try MeetingsService.decode(MeetingRecordView.self, recordObject))
+        detail.rows = .loaded(.init(meeting: patch.meeting, rows: [row], hidden: patch.hidden.before))
+        detail.readSpeakers(quiet: false)
+        for _ in 0..<200 where detail.speakers.value != before { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(detail.speakers.value, before)
+        let previousReads = fake.count("meeting.speakers")
+        fake.answers["meeting.speakers"] = ["result": changed]
+        // Keep the transcript unrequested and the model detached from any player: no audio, window or extra reads.
+        detail.decide(row, .confirm([row.id]), askReach: false)
+        for _ in 0..<200 {
+            if !detail.busyItems.contains(row.id), detail.refreshedTokens.contains(entry.token), detail.speakers.value == after { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(detail.busyItems.contains(row.id))
+        XCTAssertTrue(detail.refreshedTokens.contains(entry.token))
+        XCTAssertEqual(detail.rows.value?.rows.first?.status, "confirmed", "the response used the row patch")
+        XCTAssertEqual(detail.speakers.value, after, "loaded speaker data must refresh even when the row patch succeeds")
+        XCTAssertEqual(fake.count("meeting.speakers"), previousReads + 1)
+
+        detail.receive(.decisionApplied(.init(meeting: patch.meeting, entry: entry)))
+        await detail.eventRefresh?.value
+        XCTAssertEqual(fake.count("meeting.speakers"), previousReads + 1, "the matching own event must not duplicate the refresh")
+        XCTAssertEqual(fake.count("meeting.show"), 0, "the successful patch still avoids a full record read")
+        XCTAssertEqual(fake.count("meeting.rows"), 0, "the successful patch still avoids a full rows read")
     }
 }

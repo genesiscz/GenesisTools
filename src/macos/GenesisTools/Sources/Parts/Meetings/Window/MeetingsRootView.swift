@@ -39,6 +39,8 @@ struct MeetingsRootView: View {
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.player.isActive)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
+            // Last, so the dock and the sheets above take the look too.
+            .meetingsLook()
     }
 
     /// The settings panel takes 320 pt of the meeting's column (`MeetingDetailView.paneWidth`). Below this window width
@@ -83,7 +85,7 @@ struct MeetingsRootView: View {
                 .safeAreaPadding(.bottom, dockHeight)
                 .heightFromWindow()
                 .noticeStack(model.notices, alignment: model.noticePlace.alignment)
-                .navigationTitle("Contacts")
+                .navigationTitle("People")
         }
     }
 
@@ -147,7 +149,7 @@ private struct SidePanelToggle: View {
 
     var body: some View {
         Toggle(isOn: $model.sidePanelOpen) {
-            Label("Settings", systemImage: "sidebar.trailing")
+            Label("Settings", systemImage: "gearshape")
         }
         .toggleStyle(.button)
         .keyboardShortcut("i", modifiers: [.command, .option])
@@ -168,7 +170,8 @@ private struct MeetingsContactsPane: View {
         VStack(spacing: 0) {
             if let failure = people.known.failure {
                 NoticePill(text: "The people did not load: \(failure.sentence)", more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { people.load() }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { people.load() },
+                                   failure.detailsFix { people.load() }])
                     .padding(10)
             }
             MeetingsContactsView(
@@ -181,7 +184,8 @@ private struct MeetingsContactsPane: View {
                 cancelMerge: { people.mergePlan = nil },
                 unmerge: { people.unmerge($0) },
                 setSource: { people.setSource($0, on: $1) },
-                grantContacts: { people.grantContacts() })
+                grantContacts: { people.grantContacts() },
+                showMeetings: { people.showMeetings($0) })
                 .overlay {
                     if answer == nil, people.known.failure == nil {
                         VStack(spacing: 8) {
@@ -194,6 +198,10 @@ private struct MeetingsContactsPane: View {
                 }
         }
         .onAppear { people.ensure() }
+        .sheet(item: $people.history) { history in
+            PersonMeetingsSheet(history: history, retry: { people.showMeetings(history.person) },
+                                open: { people.openHistoryMeeting($0) }, close: { people.history = nil })
+        }
     }
 }
 
@@ -224,6 +232,8 @@ private extension View {
 
 private struct MeetingsSidebar: View {
     @Bindable var model: MeetingsWindowModel
+    @Environment(\.kitLook) private var look
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let overview = model.overview.value
@@ -238,7 +248,7 @@ private struct MeetingsSidebar: View {
                     tooltip: "Every meeting of the last \(Plural.count(model.days, "day")) (⌘2)")
             }
             Section("People") {
-                row("Contacts", symbol: "person.crop.circle", count: nil, place: .contacts,
+                row("All people", symbol: "person.crop.circle", count: nil, place: .contacts,
                     tooltip: "Everyone from your meetings, calendars, Contacts and the people you added: search, add, hide and merge")
             }
             Section("Projects") {
@@ -259,7 +269,9 @@ private struct MeetingsSidebar: View {
             Label(title, systemImage: symbol)
             Spacer(minLength: 4)
             if let count, count > 0 {
-                Text(verbatim: "\(count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                Text(verbatim: "\(count)").font(.system(size: 11, weight: place == .needs ? .semibold : .regular).monospacedDigit())
+                    .foregroundStyle(place == .needs && look != .classic
+                                     ? (scheme == .dark ? KitHue.care.ink : KitHue.care.solid) : Color.secondary)
                     .accessibilityLabel(Plural.count(count, "meeting"))
             }
         }
@@ -279,7 +291,8 @@ private struct MeetingsListPane: View {
                 // A failed config read is not an empty project: the summary shows only data that was read.
                 if let unread = MeetingsUnread.of([(.projectSettings, model.settings.failure)]).first {
                     NoticePill(text: unread.text, more: unread.failure.detail, tone: .error,
-                               fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadSettings() }])
+                               fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadSettings() },
+                                       unread.failure.detailsFix { model.loadSettings() }])
                         .padding(10)
                 }
                 if let settings = model.settings.value {
@@ -289,7 +302,8 @@ private struct MeetingsListPane: View {
             }
             if let failure = model.overview.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadOverview() }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadOverview() },
+                                   failure.detailsFix { model.loadOverview() }])
                     .padding(10)
             }
             content
@@ -321,7 +335,7 @@ private struct MeetingsListPane: View {
         switch model.place {
         case .needs: return "Needs you"
         case .all: return "All meetings"
-        case .contacts: return "Contacts"
+        case .contacts: return "People"
         case .project(let name): return name
         }
     }
@@ -376,11 +390,27 @@ private struct MeetingsByDayList: View {
                     ForEach(group.meetings) { meeting in
                         MeetingRow(meeting: meeting).equatable()
                             .tag(meeting.id)
+                            .contextMenu { MeetingRowMenu(id: meeting.id, model: model) }
                     }
                 }
             }
         }
         .listStyle(.inset)
+    }
+}
+
+/// A meeting's own actions, in a list row's context menu and the header's "More" menu.
+struct MeetingRowMenu: View {
+    let id: String
+    let model: MeetingsWindowModel
+
+    var body: some View {
+        Button("Open in New Window") { MeetingsWindow.openExtra(meeting: id) }
+        Button("Duplicate") { model.duplicate(id) }.disabled(model.duplicating.contains(id))
+        Button("Rename…") {
+            model.select(id)
+            model.renamingMeetingID = id
+        }
     }
 }
 
@@ -438,7 +468,7 @@ struct MeetingBadgesView: View {
         // A list row only: under the header's badges the project picker says "No project" itself.
         if badges.noProject, open == nil { Badge("No project", color: KitPalette.modified) }
         if badges.openQuestions > 0 {
-            badge(Badge(Plural.count(badges.openQuestions, "question"), color: KitPalette.renamed, symbol: "ear"),
+            badge(Badge(Plural.count(badges.openQuestions, "question"), color: KitHue.ask.ink, symbol: "ear"),
                   opens: .items, tooltip: "Answer them in Items")
         }
         if badges.unclearSpeakers > 0 {
@@ -581,6 +611,10 @@ private struct NotInPlaceNote: View {
 private struct NeedsRow: View {
     let meeting: OverviewMeeting
     let reason: String
+    @Environment(\.kitLook) private var look
+    @Environment(\.colorScheme) private var scheme
+
+    private var hue: KitHue { meeting.badges.openQuestions > 0 ? .ask : .care }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -590,7 +624,8 @@ private struct NeedsRow: View {
                 Text(verbatim: "\(MeetingsFormat.dayTitle(meeting.day)) \(MeetingsFormat.time(meeting.start))")
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             }
-            Text(verbatim: reason).font(.system(size: 11.5)).foregroundStyle(.secondary)
+            Text(verbatim: reason).font(.system(size: 11.5))
+                .foregroundStyle(look == .classic ? Color.secondary : (scheme == .dark ? hue.ink : hue.solid))
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)

@@ -32,6 +32,7 @@ final class MeetingsLibraryAPITests: XCTestCase {
         MeetingsAPI.ProjectsLabels.name, MeetingsAPI.ProjectsUnpair.name, MeetingsAPI.ProjectsPreview.name,
         MeetingsAPI.DictionaryShowEntries.name, MeetingsAPI.DictionaryAdd.name, MeetingsAPI.DictionaryRemove.name,
         MeetingsAPI.DictionaryTest.name, MeetingsAPI.ConfigEdit.name, MeetingsAPI.TonePresets.name,
+        MeetingsAPI.ProjectsSuggestions.name, MeetingsAPI.ProjectsMeetingPeople.name, MeetingsAPI.ProjectsPairFromMeetings.name,
     ]
 
     func testEveryLibraryExampleDecodesWithTheSwiftTypes() throws {
@@ -77,6 +78,30 @@ final class MeetingsLibraryAPITests: XCTestCase {
                     let rows = try MeetingsService.decode(MeetingsAPI.ProjectsPreview.Result.self, result)
                     XCTAssertEqual(rows.map(\.id), ["2026-11-03-1400-retro", Self.review])
                     XCTAssertEqual(rows.first?.draft, ["Atlas"], "the draft's title word matches the retro")
+                }
+            case MeetingsAPI.ProjectsSuggestions.name:
+                try roundTrip(MeetingsAPI.ProjectsSuggestions.Params.self, params, label)
+                if let result {
+                    let suggestions = try MeetingsService.decode(MeetingsAPI.ProjectsSuggestions.Result.self, result)
+                    XCTAssertEqual(suggestions.folders["wisprflow"], .init(values: ["Design", "Ops"], from: "source", reason: nil))
+                    XCTAssertEqual(suggestions.calendars.values, ["Home", "Work"])
+                    XCTAssertEqual(suggestions.labels, ["Checkout"])
+                }
+            case MeetingsAPI.ProjectsMeetingPeople.name:
+                try roundTrip(MeetingsAPI.ProjectsMeetingPeople.Params.self, params, label)
+                if let result {
+                    let people = try MeetingsService.decode(MeetingsAPI.ProjectsMeetingPeople.Result.self, result)
+                    XCTAssertEqual(people.map(\.name), ["Alex Example"])
+                    XCTAssertEqual(people.first?.meetings, 1)
+                    XCTAssertEqual(people.first?.last.id, Self.review)
+                }
+            case MeetingsAPI.ProjectsPairFromMeetings.name:
+                try roundTrip(MeetingsAPI.ProjectsPairFromMeetings.Params.self, params, label)
+                if let result {
+                    let paired = try MeetingsService.decode(MeetingsAPI.ProjectsPairFromMeetings.Result.self, result).paired
+                    XCTAssertEqual(paired.map(\.name), ["Alex Example"])
+                    XCTAssertEqual(paired.first?.by.kind, "manual")
+                    XCTAssertEqual(paired.first.map { MeetingsWords.pairedBy($0.by) }, "by hand: from the meeting “Design review” on 2026-11-03")
                 }
             case MeetingsAPI.DictionaryShowEntries.name:
                 try roundTrip(MeetingsAPI.DictionaryShowEntries.Params.self, params, label)

@@ -200,20 +200,22 @@ enum SidePanelWords {
         "priority": "Priority", "time": "Time",
         "hide": "Hide", "show": "Show",
         "afterAnswer": "After an answer",
+        "hueAndGlyph": "Hue and glyph", "shade": "Shade only",
         "moment": "Its Moment", "meeting": "The meeting from there",
         "once": "Once",
         "stop": "Stop", "offerMore": "Offer more", "continue": "Play on",
         "push": "Push", "replace": "Replace", "return": "Return",
+        "selectedTime": "At the selected time", "rewind": "Apply the rewind",
         "noChoices": "Without choices",
         "bottom": "Bottom", "top": "Top",
         "keepDraft": "Keep it", "commit": "Save it",
         "noExactMatch": "No one has the name", "noResults": "No one matches",
+        "speakers": "By speaker", "plain": "One colour",
     ]
 
     /// Choices whose words depend on the key ("always" of the typed answer is "On every question").
     static let keyedTitles: [String: [String: String]] = [
         MeetingsPreferences.typedAnswerKey: ["always": "On every question", "noChoices": "Without choices"],
-        MeetingsPreferences.speakerOrderKey: ["spoken": "Most spoken", "transcript": "Transcript"],
     ]
 
     /// A number choice of 0 that means "not at all" for its key.
@@ -312,6 +314,7 @@ enum SidePanelCatalog {
         let playback = SidePanelSection(id: "playback", title: "Playback", rows: [
             row(Playback.view, value: Playback.view.value(defaults)),
             row(Playback.speed, value: Playback.speed.value(defaults)),
+            row(Playback.animateActivity, value: Playback.animateActivity.value(defaults)),
             row(Playback.repeatClip, value: Playback.repeatClip.value(defaults)),
             row(Playback.afterClip, value: Playback.afterClip.value(defaults)),
             row(Playback.moreSec, value: Playback.moreSec.value(defaults))
@@ -319,6 +322,7 @@ enum SidePanelCatalog {
                            "Off while a clip's end is Stop."),
             row(Playback.contextSec, value: Playback.contextSec.value(defaults)),
             row(Playback.rewindSec, value: Playback.rewindSec.value(defaults)),
+            row(Playback.resumeAfterSeek, value: Playback.resumeAfterSeek.value(defaults)),
             row(Playback.clickInQuestion, value: Playback.clickInQuestion.value(defaults)),
             row(Playback.onTopEnd, value: Playback.onTopEnd.value(defaults)),
             row(Playback.stackDepth, value: Playback.stackDepth.value(defaults)),
@@ -330,6 +334,7 @@ enum SidePanelCatalog {
             row(Rows.choiceKeys, value: Rows.choiceKeys.value(defaults)),
             row(Rows.decided, value: Rows.decided.value(defaults)),
             row(Rows.keepPlace, value: Rows.keepPlace.value(defaults)),
+            row(Rows.stateLook, value: Rows.stateLook.value(defaults)),
             row(Rows.order, value: Rows.order.value(defaults)),
             row(Rows.lowPriority, value: Rows.lowPriority.value(defaults)),
             row(Rows.askReach, value: Rows.askReach.value(defaults)),
@@ -356,6 +361,8 @@ enum SidePanelCatalog {
                          value: .text(MeetingsPreferences.noticePlace(defaults).rawValue),
                          defaultValue: .text(MeetingsPreferences.NoticePlace.bottom.rawValue)),
             row(MeetingsPreferences.Notices.maxVisible, value: MeetingsPreferences.Notices.maxVisible.value(defaults)),
+            row(MeetingsPreferences.Notices.pauseWhenInactive, value: MeetingsPreferences.Notices.pauseWhenInactive.value(defaults)),
+            row(MeetingsPreferences.Notices.passScrollWhenFits, value: MeetingsPreferences.Notices.passScrollWhenFits.value(defaults)),
         ], settingsAnchor: MeetingsSettingsPages.noticesAnchor)
         let timelineOn: [SidePanelValue] = [.flag(true)]
         let panes = SidePanelSection(id: "panes", title: "Timeline and Panes", rows: [
@@ -364,18 +371,36 @@ enum SidePanelCatalog {
                 .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off."),
             row(Panes.collapseHeight, value: Panes.collapseHeight.value(defaults))
                 .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off: the dock is one line."),
+            row(Panes.pinLanes, value: Panes.pinLanes.value(defaults))
+                .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off."),
+            row(Panes.waveform, value: Panes.waveform.value(defaults))
+                .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off."),
             row(Panes.followPlayback, value: Panes.followPlayback.value(defaults)),
             row(Panes.screenBesidePlayback, value: Panes.screenBesidePlayback.value(defaults)),
             row(Panes.screenHeight, value: Panes.screenHeight.value(defaults))
                 .requiring(Panes.screenBesidePlayback.key, [.flag(true)], "Off while the screen is not beside the sound."),
             row(Panes.transcriptPane, value: Panes.transcriptPane.value(defaults)),
+            row(Panes.frameBoxes, value: Panes.frameBoxes.value(defaults)),
+            row(Panes.frameFocusSingle, value: Panes.frameFocusSingle.value(defaults)),
+            row(Panes.frameAutoDisplay, value: Panes.frameAutoDisplay.value(defaults)),
+            row(Panes.frameSeek, value: Panes.frameSeek.value(defaults)),
+            SidePanelRow(store: .window(key: MeetingsPreferences.lookKey), title: "Window look",
+                         detail: "Aurora: raised surfaces and a colour per meaning, including list needs and counts. Candy: capsules and gradients. Glass: hairlines and colour on state. Classic: grey controls, needs and counts.",
+                         choices: KitLook.allCases.map { SidePanelChoice(value: .text($0.rawValue), title: $0.title) },
+                         value: .text(MeetingsPreferences.look(defaults).rawValue),
+                         defaultValue: .text(MeetingsPreferences.defaultLook.rawValue)),
         ])
         let transcript = SidePanelSection(id: "transcript", title: "Transcript and Speakers", rows: [
+            SidePanelRow(store: .window(key: MeetingsPreferences.speakerOrderKey), title: "Speakers in order of",
+                         detail: "The speaker who talked longest first, or the order the transcript first names them.",
+                         choices: [SidePanelChoice(value: .text("spoken"), title: "Most spoken"),
+                                   SidePanelChoice(value: .text("transcript"), title: "Transcript")],
+                         value: .text(MeetingsPreferences.speakerOrder(defaults).rawValue), defaultValue: .text("spoken")),
+            row(Transcript.wordHighlights, value: Transcript.wordHighlights.value(defaults)),
             row(Transcript.dimPast, value: Transcript.dimPast.value(defaults)),
             row(Transcript.avatars, value: Transcript.avatars.value(defaults)),
             row(Transcript.blockBreakSec, value: Transcript.blockBreakSec.value(defaults)),
             row(Transcript.clipSec, value: Transcript.clipSec.value(defaults)),
-            row(Speakers.order, value: Speakers.order.value(defaults)),
             row(Speakers.showQuestions, value: Speakers.showQuestions.value(defaults)),
             row(Speakers.hintChips, value: Speakers.hintChips.value(defaults)),
         ])
@@ -393,6 +418,7 @@ enum SidePanelCatalog {
         MeetingsPreferences.Notices.maxVisible.key, MeetingsPreferences.Playback.stackDepth.key,
         MeetingsPreferences.Panes.hoverDelayMs.key, MeetingsPreferences.Panes.collapseHeight.key,
         MeetingsPreferences.Panes.screenHeight.key, MeetingsPreferences.Speakers.hintChips.key,
+        MeetingsPreferences.Panes.pinLanes.key,
     ]
 
     /// Writes a window row's value into `defaults` as the type its reader reads (the side panel and the Settings page).
@@ -427,6 +453,7 @@ enum SidePanelCatalog {
                               fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> SidePanelSection {
         func number(_ path: [String]) -> Double? { if case .number(let value) = listen.at(path) { return value } else { return nil } }
         func flag(_ path: [String]) -> Bool? { if case .bool(let value) = listen.at(path) { return value } else { return nil } }
+        func text(_ path: [String]) -> String? { if case .string(let value) = listen.at(path) { return value } else { return nil } }
         let toneOn = "\(listenPath).tone.enabled"
         let setting = toneSetting(listen.at(["tone", "sound"]))
         return SidePanelSection(id: "engine", title: "Clip and Tone", rows: padRows(before: number(["padBeforeSec"]), after: number(["padAfterSec"])) + [
@@ -440,6 +467,11 @@ enum SidePanelCatalog {
             toneSoundRow(setting, presets: presets, fileExists: fileExists)
                 .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
             toneVolumeRow(setting, presets: presets.presets)
+                .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
+            SidePanelRow(store: .engine(path: "\(listenPath).tone.onMissing"), title: "If the tone file is missing",
+                         detail: "Use a beep with a notice, or stop playback and show the error.",
+                         choices: [.init(value: .text("beep"), title: "Use beep"), .init(value: .text("error"), title: "Stop with an error")],
+                         value: .text(text(["tone", "onMissing"]) ?? "beep"), defaultValue: .text("beep"))
                 .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
             numberRow(key: "longestClipSec", title: "Longest clip",
                       detail: "A longer item or turn is shown, not played.",

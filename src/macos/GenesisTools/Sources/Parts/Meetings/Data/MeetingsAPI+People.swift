@@ -229,6 +229,26 @@ extension MeetingsAPI {
         }
     }
 
+    enum PeopleMeetings: MeetingsServiceMethod {
+        static let name = "people.meetings"
+        struct Params: Codable, Equatable { let person: String }
+        struct Appearance: Decodable, Equatable, Identifiable {
+            struct Presence: Decodable, Equatable { let fromSec: Double; let toSec: Double }
+            let meeting: String
+            let title: String
+            let start: String
+            let roles: [MeetingRole]
+            let present: [Presence]
+            let labels: [String]
+            var id: String { meeting }
+            private enum CodingKeys: String, CodingKey { case meeting, title, start, roles = "as", present, labels }
+        }
+        struct Result: Decodable, Equatable {
+            let person: KnownPerson
+            let meetings: [Appearance]
+        }
+    }
+
     /// `people.add`: a person added by hand (the picker's "Add 'X' as new speaker").
     enum PeopleAdd: MeetingsServiceMethod {
         static let name = "people.add"

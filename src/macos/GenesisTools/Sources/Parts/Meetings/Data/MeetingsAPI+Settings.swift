@@ -49,7 +49,7 @@ enum MeetingsConfigWrite: Equatable {
                     _ = try await service.call(MeetingsAPI.ConfigUnset.self, .init(path: pathArgument, expect: expect))
                 }
                 return
-            } catch is MeetingsService.Unavailable {
+            } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
                 try Task.checkCancellation()
             }
         }
@@ -80,13 +80,15 @@ enum TonePreviewPlayer {
     private static var player: AVAudioPlayer?
 
     /// Throws `MeetingsService.Unavailable` when no service answers; the caller says so in a notice.
-    static func play(_ sound: MeetingsAPI.ToneSoundSetting, service: MeetingsService?) async throws {
+    @discardableResult
+    static func play(_ sound: MeetingsAPI.ToneSoundSetting, service: MeetingsService?) async throws -> String? {
         guard let service else { throw MeetingsService.Unavailable(reason: "no Meetings service in this build") }
         let preview = try await service.call(MeetingsAPI.TonePreview.self, .init(sound: sound))
         let next = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: preview.path))
         player?.stop()
         player = next
         next.play()
+        return preview.sound.fallback
     }
 
     /// The notice of a preview the service could not cut yet.

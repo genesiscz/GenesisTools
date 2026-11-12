@@ -30,6 +30,7 @@ final class MeetingDetailModel {
     /// The tab is the one the meeting opened on by itself, not one a request named or the reader picked.
     var tabIsDefault = false
     private(set) var record: Loadable<MeetingRecordView> = .idle
+    private(set) var lastSuccessfulRead: Date?
     private(set) var transcript: Loadable<MeetingTranscript> = .idle
     private(set) var timeline: Loadable<ScreenTimeline> = .idle
     /// `meeting.speakers`: talk time per label with its spans (the Speakers tab's lanes, R40) and the hints.
@@ -49,6 +50,10 @@ final class MeetingDetailModel {
     /// The read in flight per part. A new read of a part cancels the one before it, which stops its process, its
     /// server call or its Meetings service call (`$/cancel`); `cancelReads()` stops them all.
     @ObservationIgnored private var inFlight: [AnyKeyPath: Task<Void, Never>] = [:]
+    /// The record and rows read together after a decision (`readRecordAndRows`). Kept apart from `inFlight`: a later
+    /// read of one part must not cancel the other part's half.
+    @ObservationIgnored private var pairRead: Task<Void, Never>?
+    @ObservationIgnored private var wordTimingTask: Task<Void, Never>?
     /// The window let this meeting go (another one opened): no read starts, and one that still lands is ignored.
     @ObservationIgnored private(set) var isDropped = false
     /// Opened before the list showed the meeting: whether proposals read waits for its record.
@@ -57,6 +62,14 @@ final class MeetingDetailModel {
     @ObservationIgnored private var tabAwaitsList = false
     /// A change made the transcript stale while its tab was hidden: the next show reads it quietly over the old lines.
     @ObservationIgnored private var transcriptStale = false
+    /// Each mounted side pane owns one visibility token; an old pane disappearing cannot hide its replacement.
+    @ObservationIgnored private var transcriptPanes: Set<UUID> = []
+
+    var transcriptIsShowing: Bool { tab == .transcript || !transcriptPanes.isEmpty }
+
+    func setTranscriptPane(_ token: UUID, visible: Bool) {
+        if visible { transcriptPanes.insert(token) } else { transcriptPanes.remove(token) }
+    }
 
     /// A part of the pane with a `meetings revisions` token.
     enum RevisionPart: Hashable { case record, transcript, speakers, timeline }
@@ -69,6 +82,8 @@ final class MeetingDetailModel {
     /// The review rows (`meeting.rows`): what the Items tab lists, computed by the engine.
     var rows: Loadable<ReviewRows> = .idle
     @ObservationIgnored var rowsGeneration = 0
+    /// The Items kind filter lives with the selection, so an explicit reveal can make its row visible.
+    var itemsFilter: ItemsFilter = .all
     /// The keyboard's row.
     var selectedRow: String?
     /// The row whose editor is open (a spelling, a person, a typed answer, a reason).
@@ -76,12 +91,22 @@ final class MeetingDetailModel {
     /// What was typed in a row's editor, by row id (R10, R11, G4): it survives a re-read, a fold and a decision made
     /// elsewhere meanwhile.
     var drafts: [String: String] = [:]
+    /// A question's wording is edited independently of its answer.
+    var editingQuestion: String?
+    struct QuestionWordingDraft { var text: String; let original: String }
+    var questionDrafts: [String: QuestionWordingDraft] = [:]
     /// The reason typed for a row's next decision, by row id (G5: one word for a comment and a reason).
     var reasons: [String: String] = [:]
     /// Rows decided elsewhere while their editor held a draft, with the entry that decided them (G47, G48).
     var decidedMeanwhile: [String: JournalEntry] = [:]
     /// The "This also affects" sheet waiting for an answer (R22).
     var pendingReach: PendingReach?
+    /// The sheet's struck items: they leave the decision (genesiscz.md 6).
+    var pendingStruck: Set<String> = []
+    /// Answered questions whose answer is being changed: their choices show until a new answer replaces it or "Keep".
+    var changingRows: Set<String> = []
+    /// What this window's last answer to a question row left out, by row id: a changed answer strikes it again.
+    @ObservationIgnored var carriedStruck: [String: [String]] = [:]
     /// The History sheet: the meeting's journal, or one row's (G43).
     var history: HistorySheet?
     /// Rows this window just answered that keep their open height until the reader scrolls, so the rows under them do
@@ -89,6 +114,13 @@ final class MeetingDetailModel {
     var heldFolds: Set<String> = []
     /// The row each window decision was about, by its journal token: an event of it is not news.
     @ObservationIgnored var ownTokens: Set<String> = []
+    /// The tokens of the decision events heard since the last event refresh: a burst that holds only decisions whose
+    /// own path already read the record and the rows reads nothing again.
+    @ObservationIgnored var eventBurstTokens: Set<String> = []
+    @ObservationIgnored var eventTranscriptChanged = false
+    /// The window's decisions whose own path read the record and the rows again (`refreshAfterDecision`).
+    @ObservationIgnored var refreshedTokens: Set<String> = []
+    @ObservationIgnored var rowDecisionTokens: [String: String] = [:]
     @ObservationIgnored var autoplayTask: Task<Void, Never>?
     @ObservationIgnored var eventRefresh: Task<Void, Never>?
     /// The Meetings service the writes go through; nil runs the commands (tests, the preview, a service turned off).
@@ -102,7 +134,7 @@ final class MeetingDetailModel {
     init(id: String, window: MeetingsWindowModel?, notices: NoticeStackModel? = nil, service: MeetingsService? = nil) {
         self.id = id
         self.window = window
-        self.notices = notices ?? window?.makeNoticeStack() ?? NoticeStackModel(timing: { MeetingsPreferences.noticeTiming() })
+        self.notices = notices ?? window?.makeNoticeStack() ?? MeetingsPreferences.makeNoticeStack()
         self.service = service ?? window?.service
     }
 
@@ -186,6 +218,31 @@ final class MeetingDetailModel {
     func loadSpeakers() { readSpeakers(quiet: false) }
     func loadProposals() { readProposals(quiet: false) }
 
+    func generateWordTimings(from: Double, to: Double, model: String, language: String?) {
+        guard !isDropped, !busy.contains("word-timings") else { return }
+        busy.insert("word-timings")
+        wordTimingTask = Task { [weak self] in
+            guard let self else { return }
+            defer { busy.remove("word-timings"); wordTimingTask = nil }
+            do {
+                let params = MeetingsAPI.WordTimings.Params(ref: id, fromSec: from, toSec: to, model: model, language: language)
+                let args = ["word-timings", "generate", id, "--from", String(from), "--to", String(to), "--model", model, "--json"]
+                    + (language.map { ["--language", $0] } ?? [])
+                let result = try await MeetingsRead<MeetingsAPI.WordTimings.Result>
+                    .service(MeetingsAPI.WordTimings.self, params, orRun: args, timeoutSeconds: 125).run(service: service)
+                guard !Task.isCancelled, !isDropped else { return }
+                readTranscript(quiet: true)
+                notices.push(StackedNotice(text: "Timed \(result.coverage.matchedWords) of \(result.coverage.eligibleWords) words",
+                    detail: "Only exact matches are highlighted. Other words keep the line highlight."))
+            } catch {
+                guard !Task.isCancelled, !isDropped else { return }
+                notices.push(.meetingsFailure(error))
+            }
+        }
+    }
+
+    func cancelWordTimings() { wordTimingTask?.cancel() }
+
     /// The record: the Meetings service's `meeting.show`, or `show <id> --json` when no service answers.
     static func recordRead(_ id: String) -> MeetingsRead<MeetingRecordView> {
         .service(MeetingsAPI.Show.self, .init(ref: id), orRun: ["show", id, "--json"])
@@ -215,14 +272,16 @@ final class MeetingDetailModel {
     func readTimeline(quiet: Bool) {
         let all = MeetingsPreferences.timelineLines() == .all
         read(\.timeline, generation: \.timelineGeneration,
-             .command(["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []), timeoutSeconds: 120),
+             .service(MeetingsAPI.MeetingTimeline.self, .init(meeting: id, all: all),
+                      orRun: ["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []), timeoutSeconds: 120),
              quiet: quiet, revision: .timeline)
     }
 
     /// Every OCR line of one frame, for the frame sheet's "All text" when the timeline was read with changed lines only.
     func frameLines(file: String) async throws -> [OcrBox] {
-        let view = try await MeetingsCLI.json(ScreenTimeline.self, ["screen", id, "--timeline", "--json", "--frame", file],
-                                              timeoutSeconds: 120)
+        let view = try await MeetingsRead<ScreenTimeline>
+            .service(MeetingsAPI.MeetingTimeline.self, .init(meeting: id, frame: file),
+                     orRun: ["screen", id, "--timeline", "--json", "--frame", file], timeoutSeconds: 120).run(service: service)
         return view.frames.first?.lines ?? []
     }
 
@@ -251,9 +310,10 @@ final class MeetingDetailModel {
         let current = self[keyPath: generation]
         if !quiet { self[keyPath: part] = .loading(previous: self[keyPath: part].value) }
         inFlight[part]?.cancel()
+        let service = service
         inFlight[part] = Task { [weak self] in
             do {
-                let value = try await source.run()
+                let value = try await source.run(service: service)
                 guard let self, !self.isDropped, current == self[keyPath: generation] else { return }
                 self.settle(part, .loaded(value))
                 landed?(value)
@@ -265,8 +325,68 @@ final class MeetingDetailModel {
         }
     }
 
+    /// The record and the rows read again quietly, both at once, and set in one main-actor turn when both answered, so
+    /// the Items list re-runs once for the pair instead of once per part (a decision's refresh). A read of either part
+    /// started meanwhile wins over that part's half.
+    func readRecordAndRows() {
+        guard rows != .idle else { return readRecord(quiet: true) }
+        guard !isDropped else { return }
+        recordGeneration += 1
+        rowsGeneration += 1
+        let recordTurn = recordGeneration, rowsTurn = rowsGeneration
+        let recordSource = Self.recordRead(id)
+        let rowsSource = Self.rowsRead(id, lowPriority: MeetingsPreferences.Rows.lowPriority.value(defaults))
+        inFlight[\MeetingDetailModel.record]?.cancel()
+        inFlight[\MeetingDetailModel.rows]?.cancel()
+        pairRead?.cancel()
+        let service = service
+        pairRead = Task { [weak self] in
+            async let record = Self.attempt(recordSource, service: service)
+            async let rows = Self.attempt(rowsSource, service: service)
+            let (recordResult, rowsResult) = await (record, rows)
+            guard let self, !Task.isCancelled, !self.isDropped else { return }
+            if recordTurn == self.recordGeneration {
+                self.land(\.record, recordResult, revision: .record) { [weak self] in self?.recordLanded($0) }
+            }
+            if rowsTurn == self.rowsGeneration {
+                self.land(\.rows, rowsResult, revision: nil) { [weak self] in self?.rowsLanded($0) }
+            }
+        }
+    }
+
+    private static func attempt<Value>(_ source: MeetingsRead<Value>, service: MeetingsService?) async -> Result<Value, Error> {
+        do { return .success(try await source.run(service: service)) } catch { return .failure(error) }
+    }
+
+    func settleDecisionRecord(_ value: MeetingRecordView) {
+        settle(\.record, .loaded(value))
+    }
+
+    /// A response patch supersedes reads started before this decision's committed snapshot.
+    func cancelReadsBeforeDecisionPatch() {
+        recordGeneration += 1
+        rowsGeneration += 1
+        inFlight[\MeetingDetailModel.record]?.cancel()
+        inFlight[\MeetingDetailModel.rows]?.cancel()
+        pairRead?.cancel()
+    }
+
+    /// One part's answer of a paired read, set as `read` sets it.
+    private func land<Value: Equatable>(_ part: ReferenceWritableKeyPath<MeetingDetailModel, Loadable<Value>>,
+                                        _ result: Result<Value, Error>, revision: RevisionPart?, then landed: (Value) -> Void) {
+        switch result {
+        case .success(let value):
+            settle(part, .loaded(value))
+            landed(value)
+        case .failure(let error):
+            if let revision { readAt[revision] = nil }
+            settle(part, .failed(asFailure(error), previous: self[keyPath: part].value))
+        }
+    }
+
     /// Sets a part only when it changes: `@Observable` redraws every view that reads a property on each set, equal or not.
     func settle<Value: Equatable>(_ part: ReferenceWritableKeyPath<MeetingDetailModel, Loadable<Value>>, _ new: Loadable<Value>) {
+        if case .loaded = new { lastSuccessfulRead = Date() }
         if self[keyPath: part] != new { self[keyPath: part] = new }
     }
 
@@ -276,6 +396,10 @@ final class MeetingDetailModel {
         isDropped = true
         for task in inFlight.values { task.cancel() }
         inFlight.removeAll()
+        pairRead?.cancel()
+        wordTimingTask?.cancel()
+        autoplayTask?.cancel()
+        autoplayTask = nil
     }
 
     // MARK: - Actions
@@ -329,7 +453,7 @@ final class MeetingDetailModel {
     }
 
     func transcriptChanged() {
-        switch Self.transcriptRefresh(read: transcript != .idle, showing: tab == .transcript) {
+        switch Self.transcriptRefresh(read: transcript != .idle, showing: transcriptIsShowing) {
         case .none: break
         case .readQuietly: readTranscript(quiet: true)
         case .markStale: transcriptStale = true
@@ -350,8 +474,13 @@ final class MeetingDetailModel {
     func setProject(_ project: String?) {
         let reload = Self.reloadsTranscript(after: .project)
         if let project {
+            let changed = record.value?.project != project
             journalChange("project", .set(project: project), done: "Project set to \(project)",
-                          orRun: ["set", id, "--project", project], reloadTranscript: reload)
+                          orRun: ["set", id, "--project", project], reloadTranscript: reload,
+                          applied: { [weak self] in
+                              guard changed, let self else { return }
+                              MeetingProjectPairing.offer(meeting: id, project: project, service: service, notices: notices, defaults: defaults)
+                          })
         } else {
             // "No project" has no journal action: the command clears it, without an Undo.
             change("project", ["assign", "apply", id, "--none"], done: "No project for this meeting", reloadTranscript: reload)
@@ -360,9 +489,10 @@ final class MeetingDetailModel {
 
     /// One change of the meeting through the decision journal, as the window: its notice has an Undo that takes back
     /// exactly it (G64). Without a service the command `orRun` makes it, as before.
-    func journalChange(_ key: String, _ action: DecisionAction, done: String, orRun args: [String], reloadTranscript: Bool) {
+    func journalChange(_ key: String, _ action: DecisionAction, done: String, orRun args: [String], reloadTranscript: Bool,
+                       applied: (() -> Void)? = nil) {
         guard let service else {
-            change(key, args, done: done, reloadTranscript: reloadTranscript)
+            change(key, args, done: done, reloadTranscript: reloadTranscript, applied: applied)
             return
         }
         guard !busy.contains(key) else { return }
@@ -382,12 +512,13 @@ final class MeetingDetailModel {
                 notices.push(StackedNotice(text: done, actions: [.undo { [weak self] id in
                     self?.revert(token: entry.token, items: nil, replacing: id)
                 }]))
-            } catch is MeetingsService.Unavailable {
+                applied?()
+            } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
                 busy.remove(key)
-                change(key, args, done: done, reloadTranscript: reloadTranscript)
+                change(key, args, done: done, reloadTranscript: reloadTranscript, applied: applied)
             } catch {
                 notices.push(.meetingsFailure(error) { [weak self] in
-                    self?.journalChange(key, action, done: done, orRun: args, reloadTranscript: reloadTranscript)
+                    self?.journalChange(key, action, done: done, orRun: args, reloadTranscript: reloadTranscript, applied: applied)
                 })
             }
         }
@@ -406,8 +537,9 @@ final class MeetingDetailModel {
         let id = id
         let key: AnyKeyPath = \MeetingDetailModel.refreshGeneration
         inFlight[key]?.cancel()
+        let service = service
         inFlight[key] = Task { [weak self] in
-            let revisions = try? await Self.revisionsRead(id).run()
+            let revisions = try? await Self.revisionsRead(id).run(service: service)
             guard let self, !Task.isCancelled, !self.isDropped, generation == self.refreshGeneration else { return }
             let recordStale = self.mustRead(.record, revisions?.show)
             if recordStale || force { self.readRecord(quiet: true) }
@@ -416,6 +548,7 @@ final class MeetingDetailModel {
             if self.timeline != .idle, self.mustRead(.timeline, revisions?.timeline) || force { self.readTimeline(quiet: true) }
             if self.rows != .idle, recordStale || force { self.readRows(quiet: true) }
             if proposals, self.proposals != .idle { self.readProposals(quiet: true) }
+            if self.comments != .idle { self.loadComments() }
         }
     }
 
@@ -431,6 +564,16 @@ final class MeetingDetailModel {
     static func mustRead(seen: String?, now: String?) -> Bool {
         guard let seen, let now else { return true }
         return seen != now
+    }
+
+    /// Renames the meeting through the journal (`set` with a title), with an Undo. An empty or unchanged title changes
+    /// nothing.
+    func rename(to typed: String) {
+        let title = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let current = record.value?.title ?? window?.meeting(id)?.title
+        guard !title.isEmpty, title != current else { return }
+        journalChange("title", .set(title: title), done: "Renamed to \(title)", orRun: ["set", id, "--title", title],
+                      reloadTranscript: false)
     }
 
     func toggleLabel(_ label: String, on: Bool) {

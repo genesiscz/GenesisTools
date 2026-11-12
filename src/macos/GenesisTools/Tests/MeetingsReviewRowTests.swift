@@ -1,4 +1,7 @@
+import AppKit
 import Foundation
+import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsMeetings
 
@@ -121,6 +124,126 @@ final class MeetingsReviewRowTests: XCTestCase {
         return try JSONDecoder().decode(JournalEntry.self, from: Data(json.utf8))
     }
 
+    private func rowPatch(_ changes: [ReviewRowsPatch.Change], order: [String], hiddenBefore: Int = 0,
+                          hiddenAfter: Int = 0) -> ReviewRowsPatch {
+        .init(meeting: "m", changes: changes, order: order,
+              hidden: .init(before: .init(lowPriority: hiddenBefore, minPriority: 0.5),
+                            after: .init(lowPriority: hiddenAfter, minPriority: 0.5)),
+              fields: .init(before: .init(title: "Before", project: nil, labels: [], speakerLabels: [:]),
+                            after: .init(title: "After", project: nil, labels: [], speakerLabels: [:])))
+    }
+
+    func testAChangedRowPatchReconcilesOptimisticStatusAndKeepsNewerDecisions() throws {
+        let initial = try rows()
+        let before = initial.rows[0]
+        var after = before
+        after.status = "confirmed"
+        after.answer = "Dana Example"
+        let patch = rowPatch([.init(id: before.id, before: before, after: after)], order: initial.rows.map(\.id))
+        var optimistic = before
+        optimistic.status = "confirmed"
+        let current = ReviewRows(meeting: "m", rows: [optimistic] + initial.rows.dropFirst(), hidden: initial.hidden)
+        XCTAssertEqual(patch.applying(to: current, token: "ours", latest: [before.id: "ours"]).rows[0], after,
+                       "the event can set the status before the response brings the complete row")
+        XCTAssertEqual(patch.applying(to: current, token: "ours", latest: [before.id: "later"]).rows[0], optimistic,
+                       "a newer event can have exactly the same status, so its token must still protect it")
+        var newer = after
+        newer.answer = "Alex Example"
+        let reloaded = ReviewRows(meeting: "m", rows: [newer] + initial.rows.dropFirst(), hidden: initial.hidden)
+        XCTAssertEqual(patch.applying(to: reloaded, token: "ours", latest: [:]).rows[0], newer,
+                       "a newer full read is protected by its row value too")
+        XCTAssertEqual(patch.applying(to: initial, token: "ours", latest: [:]).rows[1], initial.rows[1],
+                       "unrelated rows are kept")
+    }
+
+    func testAFullRowsReadReconcilesOldEventTokensBeforeTheNextPatch() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let full = try rows()
+        let before = full.rows[2]
+        detail.rowDecisionTokens[before.id] = "old-event"
+        detail.rows = .loaded(full)
+        detail.rowsLanded(full)
+        XCTAssertEqual(detail.rowDecisionTokens[before.id], before.decision?.token)
+        var after = before
+        after.status = "rejected"
+        let patch = rowPatch([.init(id: before.id, before: before, after: after)], order: full.rows.map(\.id))
+        XCTAssertEqual(patch.applying(to: full, token: "ours", latest: detail.rowDecisionTokens).rows[2], after,
+                       "a reconnect or full read must clear markers that predate its snapshot")
+        let newer = try entry(token: "newer-event", action: #"{"kind":"reject","items":["i3"]}"#,
+                              changes: [("i3", "confirmed", "rejected")])
+        detail.markRows(newer)
+        XCTAssertEqual(patch.applying(to: full, token: "ours", latest: detail.rowDecisionTokens).rows[2], before,
+                       "an event after that full read still protects the newer decision")
+    }
+
+    func testARowPatchAddsRemovesOrdersAndUpdatesVisibilityWithoutDroppingConcurrentRows() throws {
+        let initial = try rows()
+        let current = ReviewRows(meeting: "m", rows: Array(initial.rows.prefix(2)), hidden: .init(lowPriority: 1, minPriority: 0.5))
+        let patch = rowPatch([.init(id: "i2", before: initial.rows[1], after: nil),
+                              .init(id: "i3", before: nil, after: initial.rows[2])], order: ["i3", "q1"], hiddenBefore: 1)
+        let patched = patch.applying(to: current, token: "ours", latest: [:])
+        XCTAssertEqual(patched.rows.map(\.id), ["i3", "q1"])
+        XCTAssertEqual(patched.hidden.lowPriority, 0)
+        let concurrent = ReviewRows(meeting: "m", rows: initial.rows, hidden: current.hidden)
+        let remove = rowPatch([.init(id: "i2", before: initial.rows[1], after: nil)], order: ["q1"], hiddenBefore: 1)
+        XCTAssertEqual(remove.applying(to: concurrent, token: "ours", latest: [:]).rows.map(\.id), ["q1", "i3"],
+                       "an added row not present in the response's order survives")
+        let protected = patch.applying(to: current, token: "ours", latest: ["i2": "later"])
+        XCTAssertNotNil(protected.rows.first { $0.id == "i2" })
+        XCTAssertEqual(protected.hidden.lowPriority, 1, "a rejected stale patch cannot replace newer visibility counts")
+    }
+
+    func testTheDecisionPatchUpdatesTheRecordAndAnOldReplyUsesTheReadPath() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let initial = try rows()
+        detail.rows = .loaded(initial)
+        detail.settleDecisionRecord(try JSONDecoder().decode(MeetingRecordView.self, from: Data("""
+        {"id":"m","title":"Before","labels":[],"start":"2026-11-03T09:00:00Z","items":[{"id":"i2","kind":"term","status":"suggested"}],
+         "context":[],"speakers":{"labels":{}},"sources":{}}
+        """.utf8)))
+        let entry = try entry(token: "ours", action: #"{"kind":"confirm","items":["i2"]}"#, changes: [("i2", "suggested", "confirmed")])
+        let legacy = DecisionResult(entry: entry, skipped: [], warnings: nil)
+        XCTAssertFalse(detail.patchDecision(legacy), "a response from an older service retains the full read fallback")
+        var after = initial.rows[1]
+        after.status = "confirmed"
+        let patch = rowPatch([.init(id: "i2", before: initial.rows[1], after: after)], order: initial.rows.map(\.id))
+        var result = legacy
+        result.rows = patch
+        detail.markRows(entry)
+        XCTAssertTrue(detail.patchDecision(result))
+        XCTAssertEqual(detail.rows.value?.rows[1], after)
+        XCTAssertEqual(detail.record.value?.items[0].status, "confirmed")
+        XCTAssertEqual(detail.record.value?.title, "After")
+        var newer = try XCTUnwrap(detail.record.value)
+        newer.title = "Someone else's title"
+        detail.settleDecisionRecord(newer)
+        XCTAssertTrue(detail.patchDecision(result))
+        XCTAssertEqual(detail.record.value?.title, "Someone else's title", "a later field edit survives an older response")
+    }
+
+    func testTheKindFilterShowsOneKindAndHoldsOnlyWhileBothKindsWait() throws {
+        let rows = try rows().rows
+        XCTAssertEqual(ItemsFilter.all.rows(rows).map(\.id), ["q1", "i2", "i3"])
+        XCTAssertEqual(ItemsFilter.questions.rows(rows).map(\.id), ["q1"])
+        XCTAssertEqual(ItemsFilter.suggestions.rows(rows).map(\.id), ["i2", "i3"])
+        XCTAssertEqual(ItemsFilter.effective(.questions, open: 2, questions: 1), .questions)
+        XCTAssertEqual(ItemsFilter.effective(.questions, open: 1, questions: 0), .all, "the last question is answered: the suggestions show")
+        XCTAssertEqual(ItemsFilter.effective(.suggestions, open: 2, questions: 2), .all, "only questions wait: they show")
+        XCTAssertEqual(SelectionPopover.started("", with: "Fix the speaker"), "Fix the speaker: ")
+        XCTAssertEqual(SelectionPopover.started("Fix the speaker: it is Mira", with: "Make this a question"), "Make this a question: it is Mira")
+    }
+
+    /// The filter bar builds one strip, picked from the room its slot has: counts while they fit, then the titles at
+    /// their own width, then the titles sharing the room. The order the `ViewThatFits` it replaced tried them in.
+    func testTheFilterBarPicksOneStripFromItsRoom() {
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: nil, counts: 260, titles: 200), .counts, "before the first layout")
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: 400, counts: 260, titles: 200), .counts)
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: 260, counts: 260, titles: 200), .counts, "a strip that fits exactly")
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: 259, counts: 260, titles: 200), .titles)
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: 199, counts: 260, titles: 200), .shared)
+        XCTAssertEqual(ItemsFilter.Bar.pick(room: 0, counts: 260, titles: 200), .shared)
+    }
+
     func testRowsKeepTheEnginesOrderOrGoByTimeAndDecidedRowsFoldOrLeave() throws {
         let rows = try rows().rows
         XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .priority, decided: .inPlace).map(\.id), ["q1", "i2", "i3"],
@@ -135,6 +258,45 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertNil(ReviewRowView.actorGlyph(rows[1]), "a row nobody decided, or the reader decided, has no mark")
     }
 
+    func testAHeldDecidedRowKeepsItsChoicesAndHeight() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let open = try JSONDecoder().decode(ReviewRow.self, from: Data("""
+        {"id":"q1","label":"Q1","kind":"question","status":"suggested","what":"Who speaks?","edit":"answer","sources":[],"parts":[],
+         "choices":[{"value":"Dana Example","label":"Dana Example","role":"suggested","action":{"kind":"answer","answer":"Dana Example"}},
+                    {"value":"Alex Example","label":"Alex Example","role":"candidate","action":{"kind":"answer","answer":"Alex Example"}}],
+         "target":{"kind":"item","id":"q1"}}
+        """.utf8))
+        var answered = open
+        answered.status = "confirmed"
+        answered.answer = "Dana Example"
+        for width in [320.0, 680.0] {
+            let before = ImageRenderer(content: ReviewRowView(row: open, detail: detail, player: nil, selected: true).frame(width: width).background(Color.white).environment(\.colorScheme, .light))
+            let after = ImageRenderer(content: ReviewRowView(row: answered, detail: detail, player: nil, selected: true, held: true).frame(width: width).background(Color.white).environment(\.colorScheme, .light))
+            before.scale = 2
+            after.scale = 2
+            let original = try XCTUnwrap(before.cgImage)
+            let held = try XCTUnwrap(after.cgImage)
+            XCTAssertEqual(held.height, original.height, "answering keeps the choices' layout at width \(width)")
+            let request = VNRecognizeTextRequest()
+            // These large Latin labels need the fast recognizer. The accurate recognizer initializes an unrelated
+            // E5RT model that fails before recognition on some macOS builds; keep the same rendered-word assertions.
+            request.recognitionLevel = .fast
+            request.usesLanguageCorrection = false
+            for (stage, devices) in try request.supportedComputeStageDevices {
+                let cpu = try XCTUnwrap(devices.first { device in
+                    if case .cpu = device { return true }
+                    return false
+                }, "OCR needs a CPU device for \(stage)")
+                request.setComputeDevice(cpu, for: stage)
+            }
+            try VNImageRequestHandler(cgImage: held).perform([request])
+            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            XCTAssertTrue(text.contains("Dana Example"), text)
+            XCTAssertTrue(text.contains("Alex Example"), "the other answer stays available: \(text)")
+            XCTAssertFalse(text.contains("Revert and edit"), "the choices occupy their original slot: \(text)")
+        }
+    }
+
     func testTheNextOpenRowWrapsAndTheQueueEndsWhenNoneIsLeft() throws {
         let rows = try rows().rows
         XCTAssertEqual(MeetingDetailModel.nextOpenRow(after: "q1", in: rows)?.id, "i2")
@@ -147,6 +309,10 @@ final class MeetingsReviewRowTests: XCTestCase {
         let rows = try rows().rows
         XCTAssertEqual(ItemsTab.returnAction(for: rows[1], key: .edit), .edit, "R11: Return opens the editor")
         XCTAssertEqual(ItemsTab.returnAction(for: rows[1], key: .confirm), .choose(rows[1].choices[0]), "or takes the suggestion")
+        XCTAssertEqual(ItemsTab.returnAction(for: rows[1], key: .edit, editing: true), .submit,
+                       "the second Return saves the existing draft instead of reopening its editor")
+        XCTAssertEqual(ItemsTab.returnAction(for: rows[0], key: .confirm, editing: true), .submit,
+                       "an active custom answer takes precedence over the suggested choice")
         XCTAssertEqual(rows[1].choices[0].action.decision(on: rows[1]), .confirm(["i2"]))
         XCTAssertEqual(rows[1].choices[1].action.decision(on: rows[1]), .reject(["i2"]))
         XCTAssertEqual(rows[0].choices[0].action.decision(on: rows[0]), .answer("q1", "Dana Example"))
@@ -189,14 +355,187 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(ReviewRowView.sourceQuote("Who speaks?", in: rows[0]), "Who speaks?", "a row that quotes nothing keeps its source's words")
     }
 
-    func testOnlyThisQuestionNeedsTheServiceAndKeepsItsWireKey() throws {
+    func testOnlyThisQuestionKeepsItsWireKeyWithoutTheService() throws {
         var only = DecisionAction.answer("q1", "Dana Example")
         XCTAssertNotNil(MeetingDetailModel.commandArgs(meeting: "m", action: only, reason: nil))
         only.lookAlikes = "leave"
-        XCTAssertNil(MeetingDetailModel.commandArgs(meeting: "m", action: only, reason: nil),
-                     "R22: the command always settles the look-alikes, so this answer waits for the service")
+        let args = try XCTUnwrap(MeetingDetailModel.commandArgs(meeting: "m", action: only, reason: nil))
+        XCTAssertEqual(Array(args.prefix(3)), ["decide", "m", "--action"])
+        let decoded = try JSONDecoder().decode(DecisionAction.self, from: Data(args[3].utf8))
+        XCTAssertEqual(decoded, only)
         let wire = try XCTUnwrap(String(data: JSONEncoder().encode(only), encoding: .utf8))
         XCTAssertTrue(wire.contains(#""lookAlikes":"leave""#), wire)
+    }
+
+    func testAReplacementAnswerKeepsItsStruckItemsWithoutTheService() {
+        var action = DecisionAction.answer("q1", "Alex Example")
+        action.except = ["q2", "i3"]
+        action.replaces = "earlier-token"
+        XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: action, reason: "heard it"),
+                       ["listen", "m", "--item", "q1", "--answer", "Alex Example", "--except", "q2", "i3",
+                        "--replaces", "earlier-token", "--reason", "heard it", "--json"])
+    }
+
+    // MARK: A decision and what it carries (genesiscz.md 6, 9, 12a)
+
+    /// A plan's reach as `decision.plan` sends it: a target outside the asked span with its own row, a look-alike, the
+    /// same question over the same span, and one item struck by the answer this one replaces.
+    static let reachJSON = Data("""
+    {"items":[
+     {"id":"i3","match":"same","role":"sets","before":"Speaker 3","after":"Dana Example",
+      "row":{"id":"i3","label":"i3","kind":"speaker-range","status":"suggested","what":"Speaker 3 00:12–00:30","edit":"person","sources":[],
+             "parts":[{"kind":"said","text":"The button moved."},{"kind":"when","from":{"sec":12,"text":"00:12"},"to":{"sec":30,"text":"00:30"},"target":{"kind":"item","id":"i3"}}],
+             "choices":[],"target":{"kind":"item","id":"i3"}}},
+     {"id":"q2","match":"same","role":"look-alike","after":"Dana Example","struck":true},
+     {"id":"q3","match":"same","role":"same","after":"Dana Example"}],
+     "dictionary":[]}
+    """.utf8)
+
+    func testSpellingReachDecodesAndTheActionKeepsSelectedLines() throws {
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Data(#"{"items":[],"dictionary":[],"spelling":{"occurrences":[{"line":2,"atSec":15,"speaker":"Alex","text":"Ada is here","selected":true,"primary":true},{"line":3,"atSec":20,"speaker":"Jordan","text":"Ada again","selected":false,"primary":false}],"dictionary":false}}"#.utf8))
+        XCTAssertEqual(reach.spelling?.occurrences.map(\.line), [2, 3])
+        XCTAssertEqual(reach.spelling?.dictionary, false)
+        XCTAssertFalse(reach.isEmpty)
+        var action = DecisionAction.respell("i1", to: "ADA")
+        action.reach = .init(lines: [.init(atSec: 15, line: 2)], dictionary: false)
+        let decoded = try JSONDecoder().decode(DecisionAction.self, from: JSONEncoder().encode(action))
+        XCTAssertEqual(decoded, action)
+        XCTAssertEqual(decoded.reach?.lines?.first?.line, 2)
+    }
+
+    func testTheReachSortsTargetsFromLookAlikesAndNeverAsksTheSameQuestionTwice() throws {
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Self.reachJSON)
+        XCTAssertEqual(reach.items.map(\.role), [.sets, .lookAlike, .same])
+        XCTAssertEqual(reach.judged.map(\.id), ["i3", "q2"], "the same question over the same span is not judged again")
+        XCTAssertEqual(reach.items[0].row?.whenText, "00:12–00:30", "each item carries its own time and play target")
+        let onlySame = DecisionReach(items: [.init(id: "q3", role: .same)], lines: nil, dictionary: [])
+        XCTAssertTrue(onlySame.isEmpty, "a reach that is only the asked question itself opens no sheet")
+        let old = try JSONDecoder().decode(DecisionReach.self, from: Data(#"{"items":[{"id":"q2","match":"same"}],"dictionary":[]}"#.utf8))
+        XCTAssertEqual(old.items.first?.role, .lookAlike, "an engine older than the roles listed only look-alikes")
+
+        let pending = MeetingDetailModel.PendingReach(row: try rows().rows[0], action: .answer("q1", "Dana Example"), reason: nil, reach: reach)
+        XCTAssertEqual(pending.initiallyStruck(), ["q2"], "what the replaced answer left out starts struck")
+        XCTAssertEqual(pending.initiallyStruck(remembered: ["i3", "gone"]), ["q2", "i3"], "only items the sheet shows can start struck")
+    }
+
+    func testOnlyThisQuestionHonorsDoNotAskAgain() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let window = MeetingsWindowModel(defaults: defaults, service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        let row = try rows().rows[0]
+        let pending = MeetingDetailModel.PendingReach(row: row, action: .answer("q1", "Dana Example"), reason: nil,
+            reach: try JSONDecoder().decode(DecisionReach.self, from: Self.reachJSON))
+        detail.busyItems.insert(row.id) // isolate the checkbox from the asynchronous write
+        detail.applyOnlyThis(pending, askAgain: true)
+        XCTAssertEqual(MeetingsPreferences.Rows.askReach.value(defaults), .always)
+        detail.applyOnlyThis(pending, askAgain: false)
+        XCTAssertEqual(MeetingsPreferences.Rows.askReach.value(defaults), .never)
+    }
+
+    func testAssignmentAndProjectJournalPayloadsInvalidateCorrectedSpeech() throws {
+        func decode(_ extra: [String: Any]) throws -> JournalEntry {
+            var value: [String: Any] = ["token": "t1", "at": "2026-11-12T00:00:00Z", "meeting": "m", "actor": ["kind": "window"],
+                "action": ["kind": "revert", "token": "old"]]
+            value.merge(extra) { _, new in new }
+            return try JSONDecoder().decode(JournalEntry.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+        let assignment: [String: Any] = ["id": "a1", "label": "Speaker 1", "fromSec": 10, "toSec": 20,
+            "person": "Dana Example", "at": "2026-11-12T00:00:00Z"]
+        let assigned = try decode(["assignments": [["id": "a1", "after": assignment]]])
+        XCTAssertEqual(assigned.assignments.first?.after?.person, "Dana Example")
+        XCTAssertTrue(assigned.changesTranscript)
+        let undone = try decode(["assignments": [["id": "a1", "before": assignment]]])
+        XCTAssertTrue(undone.changesTranscript, "Undo also changes the corrected speakers")
+        XCTAssertTrue(try decode(["fields": [["field": "project", "after": "work"]]]).changesTranscript)
+        XCTAssertFalse(try decode(["fields": [["field": "title", "after": "A new title"]]]).changesTranscript)
+    }
+
+    func testALongDecidedAnswerWrapsInANarrowColumn() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        func height(_ answer: String) throws -> CGFloat {
+            let json: [String: Any] = ["id": "q1", "label": "Q1", "kind": "question", "status": "confirmed", "answer": answer,
+                "what": "Who owns the next action?", "edit": "answer", "sources": [], "parts": [], "choices": [],
+                "target": ["kind": "item", "id": "q1"]]
+            let row = try JSONDecoder().decode(ReviewRow.self, from: JSONSerialization.data(withJSONObject: json))
+            let host = NSHostingView(rootView: ReviewRowView(row: row, detail: detail, player: nil, foldedFit: 2).frame(width: 350))
+            return host.fittingSize.height
+        }
+        let short = try height("Dana Example")
+        let long = try height(String(repeating: "The owner will verify the package, update the documentation and report the result. ", count: 4))
+        XCTAssertGreaterThan(long, short + 30, "the saved answer must remain fully readable")
+    }
+
+    /// The sheet as a picture (`MEETINGS_UI_SNAPSHOTS=<folder>` keeps it): one target struck, one look-alike, the same
+    /// question as a line, and the strike toggle comes undone with one more click.
+    func testTheReachSheetStrikesAndUnstrikesAnItemAndRenders() throws {
+        let window = MeetingsWindowModel(defaults: try XCTUnwrap(UserDefaults(suiteName: "meetings.rows.tests.\(UUID().uuidString)")),
+                                         noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        detail.rows = .loaded(try rows())
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Self.reachJSON)
+        let pending = MeetingDetailModel.PendingReach(row: try rows().rows[0], action: .answer("q1", "Dana Example"), reason: nil, reach: reach)
+        detail.pendingReach = pending
+        detail.pendingStruck = pending.initiallyStruck()
+        detail.toggleStruck("i3")
+        XCTAssertEqual(detail.pendingStruck, ["q2", "i3"])
+        try TimelineSnapshot.write(ReachList(pending: pending, detail: detail).padding(18), name: "reach-sheet", width: 520, scheme: .dark)
+        detail.toggleStruck("i3")
+        XCTAssertEqual(detail.pendingStruck, ["q2"], "a second click puts the item back")
+        try TimelineSnapshot.write(ReachList(pending: pending, detail: detail).padding(18), name: "reach-sheet-unstruck", width: 520, scheme: .light)
+        // The card over the column (no window sheet): the backdrop, the card, its buttons; a narrow column narrows it.
+        try TimelineSnapshot.write(ReachOverlay(detail: detail).frame(height: 560), name: "reach-card", width: 680, scheme: .dark)
+        try TimelineSnapshot.write(ReachOverlay(detail: detail).frame(height: 560), name: "reach-card-narrow", width: 440, scheme: .dark)
+        XCTAssertEqual(ReachSheet.lead(pending), "Besides Q1 (→ Dana Example), this decision also changes:")
+        XCTAssertEqual(ReachList.sameLine(reach.items.filter { $0.role == .same }, detail: detail),
+                       "It also closes 1 question, about the same span: the same question, not asked again.",
+                       "a question no row names is counted, never shown by its item id")
+        detail.cancelReach()
+        XCTAssertTrue(detail.pendingStruck.isEmpty)
+    }
+
+    func testAStruckItemLeavesTheAnswerAndAChangedAnswerNamesTheOneItReplaces() throws {
+        let rows = try rows().rows
+        let answer = DecisionAction.answer("q1", "Dana Example")
+        XCTAssertNil(MeetingDetailModel.striking(answer, []).except)
+        let struck = MeetingDetailModel.striking(answer, ["q2", "i3"])
+        XCTAssertEqual(struck.except, ["i3", "q2"])
+        XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: struck, reason: nil),
+                       ["listen", "m", "--item", "q1", "--answer", "Dana Example", "--except", "i3", "q2", "--json"])
+
+        XCTAssertNil(MeetingDetailModel.changing(answer, on: rows[0]).replaces, "an open question is answered, not changed")
+        let decided = try JSONDecoder().decode(ReviewRow.self, from: Data("""
+        {"id":"q1","label":"Q1","kind":"question","status":"confirmed","what":"Who says this?","edit":"answer","sources":[],"parts":[],
+         "choices":[{"value":"Dana Example","label":"Dana Example","role":"suggested","action":{"kind":"answer","answer":"Dana Example"}},
+                    {"value":"Alex Example","label":"Alex Example","role":"candidate","action":{"kind":"answer","answer":"Alex Example"}}],
+         "target":{"kind":"item","id":"q1"},"answer":"Alex Example",
+         "decision":{"token":"t-old","actor":{"kind":"window"},"by":"you","action":"answer"}}
+        """.utf8))
+        let changed = MeetingDetailModel.changing(answer, on: decided)
+        XCTAssertEqual(changed.replaces, "t-old", "a choice on an answered question changes that answer in one entry")
+        let wire = try XCTUnwrap(String(data: JSONEncoder().encode(MeetingDetailModel.striking(changed, ["i3"])), encoding: .utf8))
+        XCTAssertTrue(wire.contains(#""replaces":"t-old""#) && wire.contains(#""except":["i3"]"#), wire)
+
+        // Suggested, confirmed and rejected each have their own state, so their own hue and glyph.
+        XCTAssertEqual(DecisionState.of(rows[0].choices[0], in: rows[0]), .suggested)
+        XCTAssertEqual(DecisionState.of(decided.choices[1], in: decided), .confirmed, "the answer of a decided row is confirmed")
+        XCTAssertEqual(DecisionState.of(decided.choices[0], in: decided), .suggested)
+        for state in [DecisionState.suggested, .confirmed, .rejected] {
+            XCTAssertNotNil(state.glyph(.hueAndGlyph))
+            XCTAssertNotNil(state.hue(.hueAndGlyph))
+        }
+        XCTAssertNotEqual(DecisionState.suggested.glyph(.hueAndGlyph), DecisionState.confirmed.glyph(.hueAndGlyph))
+        XCTAssertNotEqual(DecisionState.suggested.hue(.hueAndGlyph), DecisionState.confirmed.hue(.hueAndGlyph))
+        XCTAssertNil(DecisionState.confirmed.hue(.shade), "the older look stays reachable as a setting")
+        XCTAssertEqual(MeetingsPreferences.Rows.stateLook.defaultValue, .hueAndGlyph)
+    }
+
+    func testAFutureJournalActionExplainsItsOriginWithoutOfferingUndo() throws {
+        let future = try entry(token: "future", action: #"{"kind":"unsupported","name":"future-action"}"#, changes: [])
+        XCTAssertFalse(future.canUndo)
+        XCTAssertEqual(MeetingsWords.entryAction(future), "made a decision with a newer build (future-action)")
+        let known = try entry(token: "known", action: #"{"kind":"confirm","items":["i1"]}"#, changes: [("i1", "suggested", "confirmed")])
+        XCTAssertTrue(known.canUndo)
     }
 
     func testANoticeNamesAQuestionByItsLabel() throws {
@@ -219,6 +558,26 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertFalse(MeetingDetailModel.mayReach(.reject(["i2"])))
     }
 
+    func testQuestionWordingAndAnswerDraftsStaySeparate() throws {
+        let row = try rows().rows[0]
+        let detail = MeetingDetailModel(id: "m", window: nil, service: nil)
+        detail.drafts[row.id] = "An answer draft"
+        detail.editQuestion(row)
+        XCTAssertEqual(detail.questionDrafts[row.id]?.original, ReviewRowView.asked(row))
+        detail.questionDrafts[row.id]?.text = "A clearer question?"
+        detail.closeEditor()
+        detail.editQuestion(row)
+        XCTAssertEqual(detail.questionDrafts[row.id]?.text, "A clearer question?")
+        XCTAssertEqual(detail.drafts[row.id], "An answer draft")
+        detail.edit(row)
+        XCTAssertNil(detail.editingQuestion)
+        XCTAssertEqual(detail.questionDrafts[row.id]?.text, "A clearer question?")
+        let action = DecisionAction.rephrase(row.id, text: "A clearer question?", was: "Old wording?")
+        let encoded = try JSONEncoder().encode(action)
+        XCTAssertEqual(try JSONDecoder().decode(DecisionAction.self, from: encoded), action)
+        XCTAssertFalse(MeetingDetailModel.mayReach(action))
+    }
+
     func testWithoutAServiceTheCommandMakesTheDecisionsItHas() {
         XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: .confirm(["i2"], speaker: "Dana Example"), reason: "heard it"),
                        ["confirm", "m", "i2", "--speaker", "Dana Example", "--reason", "heard it", "--json"])
@@ -228,8 +587,8 @@ final class MeetingsReviewRowTests: XCTestCase {
         var bulk = DecisionAction.confirm([])
         bulk.minConfidence = 0.8
         XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: bulk, reason: nil), ["confirm", "m", "--min-confidence", "0.8", "--json"])
-        XCTAssertNil(MeetingDetailModel.commandArgs(meeting: "m", action: .respell("i2", to: "EMP"), reason: nil),
-                     "a respell needs the service")
+        XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: .respell("i2", to: "EMP"), reason: nil)?.first,
+                       "decide", "respelling uses the complete decision command")
     }
 
     func testTheActorAndTheActionReadAsTheEnginesWords() throws {
@@ -365,6 +724,7 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(ItemsTab.noticeRoom(count: 1, limit: nil), 78)
         XCTAssertEqual(ItemsTab.noticeRoom(count: 2, limit: nil), 144)
         XCTAssertEqual(ItemsTab.noticeRoom(count: 5, limit: 2), 172, "folded notices take one chip, not a pill each")
+        XCTAssertEqual(ItemsTab.noticeRoom(count: 8, limit: nil), 378, "reserve only the capped stack plus its outer inset")
     }
 
     /// A transcript line at the row's own time, whose words the row already quotes, is the header's time button again.
@@ -430,6 +790,35 @@ final class MeetingsReviewRowTests: XCTestCase {
     }
 
     /// The playing row's bar is left out below the width it reads at: squeezed, its flag drew over its text.
+    func testAFoldedRowTakesTheWidestShapeItsRoomHoldsAsItsOwnLayoutMeasuresIt() throws {
+        guard let decided = try rows().rows.first(where: { $0.id == "i3" }) else { return XCTFail("the fixture's decided row") }
+        let shapes = ReviewRowView.foldedShapes(isQuestion: ReviewRowView.foldedAnswer(decided) != nil)
+        let needs = shapes.map { ReviewRowView.foldedNeed(decided, shape: $0, busy: false) }
+        XCTAssertEqual(needs, needs.sorted(by: >), "each shape needs less room than the one before it")
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: nil), 0, "the widest before the first layout")
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: needs[0]), 0, "a shape that fits exactly")
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: needs[0] - 1), 1)
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: needs[1] - 1), 2)
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: 0), 2, "the narrowest when none fits, as ViewThatFits did")
+        XCTAssertGreaterThan(ReviewRowView.foldedNeed(decided, shape: shapes[0], busy: true), needs[0], "a busy row's spinner takes room")
+        // The arithmetic follows the line term by term: the row's own ideal width in each shape is what it computes.
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        for (fit, need) in needs.enumerated() {
+            let ideal = NSHostingView(rootView: ReviewRowView(row: decided, detail: detail, player: nil, foldedFit: fit)).fittingSize.width
+            XCTAssertEqual(ideal, need, accuracy: 2, "shape \(fit)")
+        }
+    }
+
+    func testARowSeesThePlayerOnlyThroughItsOwnMoments() {
+        let layer = MomentLayer(meeting: "m", target: .item("i2"), source: .row, kind: .moment, label: "i2")
+        var play = MomentPlay(top: layer, phase: .playing)
+        XCTAssertEqual(play.button(.item("i2")), MomentButton.Shown(reason: nil, top: true, playing: true))
+        XCTAssertEqual(play.button(.time(12)), MomentButton.Shown(), "another Moment of the row is neither top nor playing")
+        play.phase = .paused
+        XCTAssertEqual(play.button(.item("i2")), MomentButton.Shown(reason: nil, top: true, playing: false))
+        XCTAssertNotEqual(play, .none, "a row whose Moment is on top differs from one without")
+    }
+
     func testThePlayingBarNeedsRoomForItsLength() {
         XCTAssertGreaterThan(PlayingRowBar.smallestWidth(length: true), PlayingRowBar.smallestWidth(length: false) + 60,
                              "\"12 min clip\" needs about 60 pt")

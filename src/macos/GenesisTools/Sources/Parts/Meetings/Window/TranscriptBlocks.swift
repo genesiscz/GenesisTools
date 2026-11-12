@@ -28,6 +28,7 @@ struct TranscriptBlockLine: Equatable, Hashable, Identifiable {
     let endSec: Double?
     let text: String
     var marks: Set<TranscriptLineMark> = []
+    var words: [TranscriptWord] = []
 
     /// True while `position` is inside the line. A line without an end is heard from its start on.
     func isHeard(at position: Double) -> Bool {
@@ -61,7 +62,7 @@ struct TranscriptBlock: Equatable, Identifiable {
         var blocks: [TranscriptBlock] = []
         for (index, entry) in entries.enumerated() {
             let line = TranscriptBlockLine(id: entry.rowID, index: index, startSec: entry.startSec, endSec: ends[index],
-                                           text: entry.text, marks: marks[entry.rowID] ?? [])
+                                           text: entry.text, marks: marks[entry.rowID] ?? [], words: entry.words ?? [])
             if var last = blocks.last, last.speaker == entry.speaker, !breaks(after: last.lines.last, before: line, gap: breakAfterGapSec) {
                 last.lines.append(line)
                 blocks[blocks.count - 1] = last
@@ -97,12 +98,24 @@ struct TranscriptBlock: Equatable, Identifiable {
 
     /// The heard block and line at `position`: the last timed block that starts at or before it, then its heard line.
     /// Nil in a silence between blocks. A linear scan: a few hundred comparisons per 10 Hz tick.
-    static func heard(in blocks: [TranscriptBlock], at position: Double?) -> TranscriptHeard? {
+    static func heard(in blocks: [TranscriptBlock], at position: Double?, wordHighlights: Bool = true) -> TranscriptHeard? {
         guard let position,
               let index = blocks.lastIndex(where: { ($0.startSec ?? .infinity) <= position }) else { return nil }
         let block = blocks[index]
         guard let line = block.lines.last(where: { $0.isHeard(at: position) }) else { return nil }
-        return TranscriptHeard(blockID: block.id, lineID: line.id)
+        let wordRange = wordHighlights ? line.words.compactMap { $0.heardRange(at: position, in: line.text) }.first : nil
+        return TranscriptHeard(blockID: block.id, lineID: line.id, wordRange: wordRange)
+    }
+
+    /// The end of the last block the playback has passed: the latest block end at or before `position`. A block is
+    /// past at this value exactly when it is past at `position`, but the value changes only when the playback crosses
+    /// a block's end, so a view that takes it in place of the 10 Hz position renders again every few seconds.
+    static func passedEnd(in blocks: [TranscriptBlock], at position: Double?) -> Double? {
+        guard let position else { return nil }
+        return blocks.reduce(nil) { latest, block in
+            guard let end = block.endSec, end <= position else { return latest }
+            return max(latest ?? end, end)
+        }
     }
 }
 
@@ -110,6 +123,7 @@ struct TranscriptBlock: Equatable, Identifiable {
 struct TranscriptHeard: Equatable, Hashable {
     let blockID: String
     let lineID: String
+    var wordRange: NSRange? = nil
 }
 
 /// What a click on a line asks for. A plain click plays from the line (R42); ⇧ extends the selection to it and ⌘ adds
@@ -144,7 +158,8 @@ struct TranscriptBlocksList: View {
     var dimsPast = true
     /// Draws the round initials badge before each block (Riverside). Neutral grey: colour means state (G-SPK-6).
     var showsAvatar = true
-    /// The player's position, read only to say which blocks are past; nil dims nothing.
+    /// A block whose end is at or before this is past; nil dims nothing. Pass `TranscriptBlock.passedEnd(in:at:)`,
+    /// never the raw position: a value that changes per tick re-runs this list and lays out its whole column.
     var pastBefore: Double? = nil
     /// The line the selection popover points at (R43), and the popover: it opens beside that line's block.
     var popoverLine: String? = nil
@@ -154,20 +169,24 @@ struct TranscriptBlocksList: View {
     let play: (Double) -> Void
     /// A ⇧ or ⌘ click on a line (R43).
     var select: (TranscriptBlockLine, TranscriptLineClick) -> Void = { _, _ in }
+    var selectWords: (TranscriptBlockLine, NSRange) -> Void = { _, _ in }
 
     var body: some View {
+        let speakerNames = Set(blocks.map(\.speaker)).sorted()
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(blocks) { block in
                 TranscriptBlockView(
                     block: block,
                     heardLineID: heard?.blockID == block.id ? heard?.lineID : nil,
+                    heardWordRange: heard?.blockID == block.id ? heard?.wordRange : nil,
                     selected: selection.isEmpty ? [] : Set(block.lines.map(\.id)).intersection(selection),
                     past: dimsPast && isPast(block),
                     showsAvatar: showsAvatar,
                     play: play,
-                    select: select
+                    select: select, selectWords: selectWords
                 )
                 .equatable()
+                .environment(\.meetingSpeakerNames, speakerNames)
                 .popover(isPresented: Binding(get: { holdsPopover(block) }, set: { if !$0 { closePopover() } }),
                          arrowEdge: .leading) { popover() }
                 .id(block.id)
@@ -191,14 +210,17 @@ struct TranscriptBlockView: View, Equatable {
     let block: TranscriptBlock
     /// The heard line when this is the heard block; nil for every other block.
     let heardLineID: String?
+    var heardWordRange: NSRange? = nil
     let selected: Set<String>
     let past: Bool
     var showsAvatar = true
     let play: (Double) -> Void
     var select: (TranscriptBlockLine, TranscriptLineClick) -> Void = { _, _ in }
+    var selectWords: (TranscriptBlockLine, NSRange) -> Void = { _, _ in }
 
     nonisolated static func == (a: TranscriptBlockView, b: TranscriptBlockView) -> Bool {
-        a.block == b.block && a.heardLineID == b.heardLineID && a.selected == b.selected && a.past == b.past
+        a.block == b.block && a.heardLineID == b.heardLineID && a.heardWordRange == b.heardWordRange
+            && a.selected == b.selected && a.past == b.past
             && a.showsAvatar == b.showsAvatar
     }
 
@@ -218,7 +240,8 @@ struct TranscriptBlockView: View, Equatable {
                 ForEach(block.lines) { line in
                     TranscriptBlockLineView(
                         line: line, speaker: SpeakerChip(speaker: block.speaker).name, heard: line.id == heardLineID,
-                        selected: selected.contains(line.id), past: past, play: play, select: select
+                        wordRange: line.id == heardLineID ? heardWordRange : nil,
+                        selected: selected.contains(line.id), past: past, play: play, select: select, selectWords: selectWords
                     )
                 }
             }
@@ -250,17 +273,28 @@ struct TranscriptBlockView: View, Equatable {
     }
 }
 
-/// The round initials badge of a block. Neutral on purpose: identity colours would read as state (G-SPK-6).
+/// The round initials badge of a block. In a look it has the person's own colour, from a palette without the play
+/// blue, so a colour is never read as "this plays" (G-SPK-6 kept the badge neutral for that reason; the classic look
+/// still does). A voice without a name stays neutral.
 struct TranscriptAvatar: View {
     let speaker: String
     var size: CGFloat = 26
+    @Environment(\.kitLook) private var look
+    @Environment(\.meetingSpeakerNames) private var names
 
     var body: some View {
+        let coloured = look != .classic && !speaker.isEmpty
         Text(verbatim: Self.initials(speaker))
-            .font(.system(size: size * 0.42, weight: .semibold))
-            .foregroundStyle(.secondary)
+            .font(.system(size: size * 0.42, weight: coloured ? .bold : .semibold))
+            .foregroundStyle(coloured ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
             .frame(width: size, height: size)
-            .background(Circle().fill(Color.secondary.opacity(0.18)))
+            .background {
+                if coloured {
+                    Circle().fill(KitPersonColor.color(for: speaker, among: names).gradient)
+                } else {
+                    Circle().fill(Color.secondary.opacity(0.18))
+                }
+            }
             .accessibilityHidden(true)
     }
 
@@ -284,23 +318,31 @@ private struct TranscriptBlockLineView: View {
     let line: TranscriptBlockLine
     let speaker: String
     let heard: Bool
+    let wordRange: NSRange?
     let selected: Bool
     let past: Bool
     let play: (Double) -> Void
     let select: (TranscriptBlockLine, TranscriptLineClick) -> Void
+    let selectWords: (TranscriptBlockLine, NSRange) -> Void
     @Environment(\.rowLive) private var live
     @State private var hovering = false
+    @AppStorage(MeetingsPreferences.Playback.animateActivity.key) private var animateActivity =
+        MeetingsPreferences.Playback.animateActivity.defaultValue
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(verbatim: line.text)
-                .font(.system(size: 13))
-                .foregroundStyle(textStyle)
-                .underline(line.marks.contains(.corrected), pattern: .dot, color: KitPalette.renamed)
+            TranscriptWordText(text: line.text,
+                               color: heard || selected ? .labelColor : (past ? .tertiaryLabelColor : .secondaryLabelColor),
+                               corrected: line.marks.contains(.corrected), heardRange: wordRange, click: click,
+                               selected: { selectWords(line, $0) })
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 3)
                 .padding(.vertical, 1)
-                .background(RoundedRectangle(cornerRadius: 4).fill(fill))
+                .background {
+                    RoundedRectangle(cornerRadius: 4).fill(fill)
+                        .animation(animateActivity && !reduceMotion ? .easeOut(duration: 0.16) : nil, value: heard)
+                }
             if line.marks.contains(.unclearSpeaker) {
                 Image(systemName: "questionmark.circle")
                     .font(.system(size: 11)).foregroundStyle(.orange)
@@ -319,11 +361,10 @@ private struct TranscriptBlockLineView: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { click() }
         .onHover { inside in
             if live || !inside { hovering = inside && line.startSec != nil }
         }
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { if let start = line.startSec { play(start) } }

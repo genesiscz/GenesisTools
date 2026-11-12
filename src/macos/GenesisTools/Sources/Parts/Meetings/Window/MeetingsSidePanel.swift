@@ -19,7 +19,8 @@ struct MeetingsSidePanel: View {
             Divider()
             if let failure = window.settings.failure, window.settingsRaw == nil {
                 NoticePill(text: "The clip and tone settings did not load: \(failure.sentence)", more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { window.loadSettings() }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { window.loadSettings() },
+                                   failure.detailsFix { window.loadSettings() }])
                     .padding(10)
             }
             SidePanelSections(sections: sections, change: change, reset: reset,
