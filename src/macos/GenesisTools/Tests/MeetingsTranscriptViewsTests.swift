@@ -321,7 +321,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     func testTheSendResultSaysHowManyListenersGotThemOrThatNobodyListens() {
         XCTAssertEqual(CommentDelivery.sent(comments: 3, listeners: 1).text, "Sent 3 comments to 1 listener")
-        XCTAssertEqual(CommentDelivery.sent(comments: 1, listeners: 0).text, "Nobody listens: 1 comment stay staged")
+        XCTAssertEqual(CommentDelivery.sent(comments: 1, listeners: 0).text, "Nobody is listening. Kept 1 comment staged.")
         XCTAssertTrue(CommentDelivery.sent(comments: 1, listeners: 0).isError)
         XCTAssertNil(CommentDelivery.idle.text)
         XCTAssertEqual(StagedCommentsBar.sendTitle(count: 3, listeners: 1), "Send 3 comments")

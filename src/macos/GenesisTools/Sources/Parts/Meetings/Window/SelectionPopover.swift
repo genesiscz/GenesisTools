@@ -202,7 +202,7 @@ enum CommentDelivery: Equatable {
     case sent(comments: Int, listeners: Int)
     case failed(message: String)
 
-    /// "Sent 3 comments to 1 listener", "Nobody listens: 3 comments stay staged", "Sending 2 comments…".
+    /// "Sent 3 comments to 1 listener", "Nobody is listening. Kept 3 comments staged.", "Sending 2 comments…".
     var text: String? {
         switch self {
         case .idle:
@@ -210,7 +210,7 @@ enum CommentDelivery: Equatable {
         case .sending(let count):
             return "Sending \(Plural.count(count, "comment"))…"
         case .sent(let comments, let listeners):
-            if listeners == 0 { return "Nobody listens: \(Plural.count(comments, "comment")) stay staged" }
+            if listeners == 0 { return "Nobody is listening. Kept \(Plural.count(comments, "comment")) staged." }
             return "Sent \(Plural.count(comments, "comment")) to \(Plural.count(listeners, "listener"))"
         case .failed(let message):
             return "Not sent: \(message). The comments stay staged."
