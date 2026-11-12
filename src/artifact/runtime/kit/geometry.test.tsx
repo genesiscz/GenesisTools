@@ -89,6 +89,28 @@ describe("diagram geometry", () => {
             )
         ).toBe(true);
     });
+    test("automatic nodes leave a later pinned node its requested column", () => {
+        const layout = layoutLayerDiagram({
+            layers: [
+                {
+                    id: "row",
+                    label: "Row",
+                    columns: [1, 1],
+                    nodes: [
+                        { id: "auto", title: "Automatic" },
+                        { id: "pinned", title: "Pinned", col: 1 },
+                    ],
+                },
+            ],
+        });
+        expect(layout.nodes.map((placed) => placed.node.id)).toEqual(["auto", "pinned"]);
+        const automatic = layout.nodes.find((placed) => placed.node.id === "auto");
+        const pinned = layout.nodes.find((placed) => placed.node.id === "pinned");
+        expect(automatic).toBeDefined();
+        expect(pinned).toBeDefined();
+        expect(pinned?.x).toBeLessThan(automatic?.x ?? 0);
+    });
+
     test("explicit starts leave empty cells and column lanes need no viewBox x", () => {
         const layers: DiagramLayer[] = BANDS.map((band, i) =>
             i === 1 || i === 2 ? { ...band, nodes: [{ id: band.id, title: band.label, col: 3 }] } : band
@@ -131,6 +153,22 @@ describe("diagram geometry", () => {
         expect(borderPoint(ELEMENT, { x: 110, y: -1000 })).toEqual({ x: 110, y: 50 });
         expect(borderPoint(ELEMENT, { x: 110, y: 50 + h / 2 })).toEqual({ x: 200, y: 50 + h / 2 });
     });
+    test("close vertically separated UML boxes use their facing borders in either direction", () => {
+        const source: UmlElement = { id: "source", name: "Source", kind: "class", x: 20, y: 50, w: 180 };
+        const target: UmlElement = { ...source, id: "target", name: "Target", y: 50 + elementHeight(source) + 7 };
+        for (const [from, to] of [
+            [source, target],
+            [target, source],
+        ]) {
+            const route = orthogonal(from, to);
+            const down = to.y > from.y;
+            expect(route).toEqual([
+                { x: 110, y: down ? from.y + elementHeight(from) : from.y },
+                { x: 110, y: down ? to.y : to.y + elementHeight(to) },
+            ]);
+        }
+    });
+
     test("orthogonal connectors attach to borders and each segment has one fixed axis", () => {
         const source = MODEL.elements[0];
         const target = MODEL.elements[1];

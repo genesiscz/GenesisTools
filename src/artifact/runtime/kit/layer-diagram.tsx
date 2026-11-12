@@ -255,7 +255,12 @@ export function layoutLayerDiagram({
             return true;
         };
 
-        for (const node of layer.nodes) {
+        const placements = new Map<DiagramNode, PlacedNode>();
+        const placementOrder = [
+            ...layer.nodes.filter((node) => node.col !== undefined),
+            ...layer.nodes.filter((node) => node.col === undefined),
+        ];
+        for (const node of placementOrder) {
             const cs = layer.columns ? (node.colSpan ?? 1) : 1;
             const rs = layer.columns ? (node.rowSpan ?? 1) : 1;
             let slot: [number, number] | null = null;
@@ -284,7 +289,7 @@ export function layoutLayerDiagram({
             const lastCol = c + cs - 1;
             const color = node.color ?? layer.color ?? DEFAULT_COLOR;
 
-            nodes.push({
+            placements.set(node, {
                 node,
                 layer: li,
                 x,
@@ -294,6 +299,13 @@ export function layoutLayerDiagram({
                 color,
                 titleColor: layer.titles === "ink" ? "var(--text)" : color,
             });
+        }
+
+        for (const node of layer.nodes) {
+            const placed = placements.get(node);
+            if (placed) {
+                nodes.push(placed);
+            }
         }
 
         y += h + gap;

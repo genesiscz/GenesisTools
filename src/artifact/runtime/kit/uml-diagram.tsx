@@ -180,7 +180,7 @@ export function orthogonal(source: UmlElement, target: UmlElement): UmlPoint[] {
     const verticalGap = down
         ? target.y - source.y - elementHeight(source)
         : source.y - target.y - elementHeight(target);
-    if (verticalGap > 12) {
+    if (verticalGap > 0) {
         const sy = down ? source.y + elementHeight(source) : source.y;
         const ty = down ? target.y : target.y + elementHeight(target);
         const left = Math.max(source.x, target.x);

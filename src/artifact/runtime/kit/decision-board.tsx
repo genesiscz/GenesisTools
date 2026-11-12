@@ -260,14 +260,14 @@ export function DecisionBoard({
                             const selected = presets.find((item) => item.id === id);
                             if (selected) {
                                 setChoices((current) => {
-                                    const next = presetChoices(selected);
+                                    const next = { ...initial, ...selected.choices };
                                     for (const point of points) {
                                         if (point.locked && !unlocked.includes(point.key)) {
                                             next[point.key] = current[point.key];
                                         }
                                     }
 
-                                    return next;
+                                    return apply(next);
                                 });
                                 setBaseline(id);
                                 setCopied(false);

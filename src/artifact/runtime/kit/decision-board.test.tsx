@@ -133,6 +133,36 @@ describe("DecisionBoard", () => {
         await dom.unmount();
     });
 
+    test("presets normalize after retaining locked choices and honor an explicit unlock", async () => {
+        const points = POINTS.map((point) => ({ ...point, locked: point.key === "source" }));
+        const dom = await mountDom(
+            <DecisionBoard
+                points={points}
+                initial={INITIAL}
+                hash={false}
+                presets={[{ id: "live-text", label: "Live text preset", choices: { source: "live", format: "text" } }]}
+                normalize={(choices) => (choices.source === "cache" ? { ...choices, format: "object" } : choices)}
+            >
+                {(choices) => <output>{`${choices.source}/${choices.format}`}</output>}
+            </DecisionBoard>
+        );
+        try {
+            const preset = () =>
+                [...dom.container.querySelectorAll('[role="radio"]')].find(
+                    (node) => node.textContent === "Live text preset"
+                );
+            await dom.click(preset());
+            expect(dom.container.querySelector("output")?.textContent).toBe("cache/object");
+            await dom.click(
+                [...dom.container.querySelectorAll("button")].find((node) => node.textContent === "Unlock")
+            );
+            await dom.click(preset());
+            expect(dom.container.querySelector("output")?.textContent).toBe("live/text");
+        } finally {
+            await dom.unmount();
+        }
+    });
+
     test("copy uses human point numbers and expansion has its own bounded scroll", async () => {
         const dom = await mountDom(
             <DecisionBoard points={POINTS} initial={INITIAL}>
