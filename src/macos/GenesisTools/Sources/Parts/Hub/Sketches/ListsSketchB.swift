@@ -647,6 +647,12 @@ extension ListsSketchB {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onChange(of: inbox.focusRequest, initial: true) { _, _ in
+                guard let id = inbox.focusedItemID, all.contains(where: { $0.id == id }) else { return }
+                pick.bucket = nil
+                pick.project = nil
+                pick.open = id
+            }
             .modifier(ListVariantInboxKeys(inbox: inbox, entries: shown.map { ListVariantInboxEntry(session: $0.session, item: $0.item) }, selected: open, focused: $keys) { entry in
                 inbox.selectedID = entry.session.id; inbox.keyCardID = entry.item.id; pick.open = entry.item.id
             })
