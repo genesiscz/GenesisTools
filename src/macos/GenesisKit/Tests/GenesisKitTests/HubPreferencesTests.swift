@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Observation
 import XCTest
 
 @testable import GenesisKitBase
@@ -44,6 +45,38 @@ final class HubPreferencesTests: XCTestCase {
                                       "--sketch", "lists=unknown", "--sketch", "unknown=a", "--sketch"])
         XCTAssertEqual(parsed, ["prDetail": "classic"])
         XCTAssertEqual(defaults.string(forKey: HubLayout.Area.prDetail.key), "b")
+    }
+
+    func testLayoutChangeInvalidatesAnOpenReaderAcrossTheNotificationBoundary() async {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let writer = HubLayoutState(defaults: defaults, namespace: name, observeChanges: false)
+        let reader = HubLayoutState(defaults: UserDefaults(suiteName: name)!, namespace: name, broadcasts: false)
+        for choice in [HubLayout.Choice.focused, .compact, .classic] {
+            let changed = expectation(description: "open view observes \(choice.rawValue)")
+            withObservationTracking {
+                XCTAssertNotEqual(reader.choice(.prDetail), choice)
+            } onChange: {
+                changed.fulfill()
+            }
+            writer.set(choice, for: .prDetail)
+            await fulfillment(of: [changed], timeout: 3)
+            XCTAssertEqual(reader.choice(.prDetail), choice)
+            XCTAssertEqual(reader.choice(.transcript), .classic)
+            XCTAssertEqual(defaults.string(forKey: HubLayout.Area.prDetail.key), choice.rawValue)
+        }
+    }
+
+    func testScriptedLayoutChangesStayIsolatedFromTheOpenReader() async throws {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let scripted = HubLayoutState(defaults: defaults, namespace: name, broadcasts: false, observeChanges: false)
+        let reader = HubLayoutState(defaults: defaults, namespace: name, broadcasts: false)
+        scripted.set(.compact, for: .lists)
+        XCTAssertEqual(scripted.choice(.lists), .compact)
+        XCTAssertEqual(reader.choice(.lists), .classic)
+        reader.reload()
+        XCTAssertEqual(reader.choice(.lists), .compact)
     }
 
     func testAFreshDomainReadsTheHubLookWithoutGlassEnergyOrAnIdleRule() {

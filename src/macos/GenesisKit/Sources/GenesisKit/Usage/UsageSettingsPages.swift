@@ -16,10 +16,12 @@ public enum UsageSettingsPages {
                     subtitle: "How the hub's Usage mode draws limits, forecasts and spend."
                 ) {
                     // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current page.
-                    switch HubLayout.option("usageSettings") {
-                    case "a": UsageSettingsSketchChartsA(preferences: preferences)
-                    case "b": UsageSettingsSketchChartsB(preferences: preferences)
-                    default: UsageChartSettings(preferences: preferences)
+                    HubLayoutView(.usageSettings) {
+                        UsageSettingsSketchChartsA(preferences: preferences)
+                    } compact: {
+                        UsageSettingsSketchChartsB(preferences: preferences)
+                    } classic: {
+                        UsageChartSettings(preferences: preferences)
                     }
                 },
             ], order: 36)
