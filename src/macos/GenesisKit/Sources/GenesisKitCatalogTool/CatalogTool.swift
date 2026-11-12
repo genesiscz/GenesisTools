@@ -56,7 +56,7 @@ enum CatalogTool {
     static let usage = """
     genesis-kit-catalog: draw the GenesisKit component catalog
 
-      --out <dir>       write one PNG per sheet (<entry>.<look>.png) and manifest.json into <dir>
+      --out <dir>       write PNG sheets, manifest.json and the searchable index.html board into <dir>
       --only <entry>    draw only this entry (repeat for more); the manifest is then not written
       --list            print the entries and their looks, draw nothing
       --probe <png>     draw the regression probe (today's controls in a fixed layout) to <png>
@@ -64,7 +64,7 @@ enum CatalogTool {
     """
 
     @MainActor
-    static func main() {
+    static func main() async {
         var out: String?
         var only: [String] = []
         var list = false
@@ -103,7 +103,7 @@ enum CatalogTool {
         app.appearance = NSAppearance(named: .darkAqua)
 
         if let probe {
-            guard let data = KitCatalogRenderer.png(of: KitClassicProbe(), width: KitClassicProbe.width) else {
+            guard let data = await KitCatalogRenderer.png(of: KitClassicProbe(), width: KitClassicProbe.width) else {
                 fail("the probe did not draw")
             }
             write(data, to: URL(fileURLWithPath: probe))
@@ -128,7 +128,7 @@ enum CatalogTool {
             var sheets: [Manifest.Sheet] = []
             for look in entry.looks {
                 let file = "\(entry.id).\(look.rawValue).png"
-                guard let data = KitCatalogRenderer.png(of: CatalogSheet(entry: entry, look: look), width: CatalogSheet.width, scale: scale),
+                guard let data = await KitCatalogRenderer.png(of: CatalogSheet(entry: entry, look: look), width: CatalogSheet.width, scale: scale),
                       let image = NSBitmapImageRep(data: data) else {
                     fail("\(file) did not draw")
                 }
@@ -159,7 +159,9 @@ enum CatalogTool {
                 looks: KitLook.allCases.map { .init(id: $0.rawValue, title: $0.catalogTitle, pitch: $0.catalogPitch) },
                 entries: manifest))
             write(data, to: directory.appendingPathComponent("manifest.json"))
+            write(Data(CatalogBoard.html(manifest: data).utf8), to: directory.appendingPathComponent("index.html"))
             print("manifest.json\t\(manifest.count) entries")
+            print("index.html\tsearchable comparison board")
         } catch {
             fail("cannot encode the manifest: \(error.localizedDescription)")
         }

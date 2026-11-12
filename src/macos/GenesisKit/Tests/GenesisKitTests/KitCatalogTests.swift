@@ -1,38 +1,13 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import GenesisKit
 import GenesisKitCatalog
 
-/// The component catalog stays complete and drawable. A control added to `Controls/` needs an entry in
-/// `KitCatalogEntries.swift`, or a line in one of the two lists here with the reason it has none.
+/// The component catalog stays complete and drawable. A control added to `Controls/` needs a catalog entry,
+/// unless it is a nonvisual helper listed below with its reason.
 @MainActor
 final class KitCatalogTests: XCTestCase {
-    /// Controls with a look of their own that the catalog does not draw yet. Remove a line when you add its entry.
-    static let pending: [String: String] = [
-        "CopyChip.swift": "tier 2, feedback and status",
-        "EmptyState.swift": "tier 2, feedback and status",
-        "ForgeBadge.swift": "tier 2, feedback and status",
-        "InfoStrip.swift": "tier 2, feedback and status",
-        "Kicker.swift": "tier 2, feedback and status",
-        "MenuButton.swift": "tier 2, feedback and status",
-        "NewItemsPill.swift": "tier 2, feedback and status",
-        "NoticePill.swift": "tier 2, feedback and status",
-        "NoticeStack.swift": "tier 2, feedback and status",
-        "ProviderBadge.swift": "tier 2, feedback and status",
-        "PulsingDots.swift": "tier 2, feedback and status",
-        "RefreshingMark.swift": "tier 2, feedback and status",
-        "Skeleton.swift": "tier 2, feedback and status",
-        "SpinningArc.swift": "tier 2, feedback and status",
-        "UserAvatar.swift": "tier 2, feedback and status",
-        "AgentRosterRow.swift": "tier 3, inputs and rows",
-        "AgentTextField.swift": "tier 3, inputs and rows",
-        "FittedScroll.swift": "tier 3, inputs and rows",
-        "GenScrollBars.swift": "tier 3, inputs and rows",
-        "GrowingTextEditor.swift": "tier 3, inputs and rows",
-        "HotkeyRecorder.swift": "tier 3, inputs and rows",
-        "ScrollOverflowHints.swift": "tier 3, inputs and rows",
-    ]
-
     /// Files in `Controls/` that draw nothing of their own.
     static let notDrawn: [String: String] = [
         "AutocompleteFloatingList.swift": "the child window of AutocompleteField; its entry draws the floating list",
@@ -63,10 +38,10 @@ final class KitCatalogTests: XCTestCase {
         let catalogued = Set(KitCatalog.entries.flatMap { $0.source.components(separatedBy: " · ") }.map { ($0 as NSString).lastPathComponent })
 
         for file in files {
-            let known = catalogued.contains(file) || Self.pending[file] != nil || Self.notDrawn[file] != nil
+            let known = catalogued.contains(file) || Self.notDrawn[file] != nil
             XCTAssertTrue(known, "\(file) has no catalog entry. Add one to KitCatalogEntries.swift, or a line with the reason to KitCatalogTests.")
         }
-        for file in Array(Self.pending.keys) + Array(Self.notDrawn.keys) {
+        for file in Self.notDrawn.keys {
             XCTAssertTrue(files.contains(file), "\(file) is listed here but is not in Controls/ any more: remove its line.")
             XCTAssertFalse(catalogued.contains(file), "\(file) has a catalog entry now: remove its line here.")
         }
@@ -78,7 +53,53 @@ final class KitCatalogTests: XCTestCase {
         }
     }
 
-    func testEveryEntryDraws() throws {
+    func testDisabledAgentFieldRejectsAccessibilityWrites() throws {
+        var value = "Original"
+        let root = NSHostingView(rootView: AgentTextField("Name", text: Binding(get: { value }, set: { value = $0 }))
+            .disabled(true).frame(width: 220, height: 30))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 30),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = root
+        root.layoutSubtreeIfNeeded()
+        _ = root.fittingSize
+        func field(in view: NSView) -> AgentTextField.Field? {
+            if let field = view as? AgentTextField.Field { return field }
+            return view.subviews.compactMap { field(in: $0) }.first
+        }
+        let field = try XCTUnwrap(field(in: root))
+        XCTAssertFalse(field.isEnabled)
+        field.setAccessibilityValue("Changed")
+        XCTAssertEqual(value, "Original")
+        XCTAssertEqual(field.stringValue, "Original")
+        field.isEnabled = true
+        field.setAccessibilityValue("Enabled")
+        XCTAssertEqual(value, "Enabled")
+    }
+
+    func testPulsingDotsStayVisibleAndStillWithReducedMotion() throws {
+        let root = NSHostingView(rootView: PulsingDots(color: .blue)
+            .environment(\.nativeSettingsReduceMotion, true).frame(width: 40, height: 12))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 12),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = root
+        root.layoutSubtreeIfNeeded()
+        _ = root.fittingSize
+        func dots(in view: NSView) -> PulsingDots.DotsView? {
+            if let dots = view as? PulsingDots.DotsView { return dots }
+            return view.subviews.compactMap { dots(in: $0) }.first
+        }
+        let view = try XCTUnwrap(dots(in: root))
+        let layers = try XCTUnwrap(view.layer?.sublayers)
+        XCTAssertEqual(layers.count, 3)
+        XCTAssertTrue(layers.allSatisfy { ($0.animationKeys() ?? []).isEmpty })
+        XCTAssertTrue(layers.allSatisfy { $0.opacity >= 0.7 })
+    }
+
+    func testEveryEntryDraws() async throws {
         let entries = KitCatalog.entries
         XCTAssertEqual(Set(entries.map(\.id)).count, entries.count, "two entries share an id")
         for entry in entries {
@@ -86,11 +107,13 @@ final class KitCatalogTests: XCTestCase {
             XCTAssertFalse(entry.critique.isEmpty, "\(entry.id) has no critique")
             // One sheet per entry keeps the test short; the looks share the layout.
             let look = try XCTUnwrap(entry.looks.last)
-            let data = try XCTUnwrap(KitCatalogRenderer.png(of: CatalogSheet(entry: entry, look: look), width: CatalogSheet.width, scale: 1),
-                                     "\(entry.id) did not draw")
+            let rendered = await KitCatalogRenderer.png(of: CatalogSheet(entry: entry, look: look), width: CatalogSheet.width, scale: 1)
+            let data = try XCTUnwrap(rendered, "\(entry.id) did not draw")
             let image = try XCTUnwrap(NSBitmapImageRep(data: data))
             XCTAssertEqual(image.pixelsWide, Int(CatalogSheet.width))
             XCTAssertGreaterThan(image.pixelsHigh, 200, "\(entry.id) drew an empty sheet")
+            XCTAssertGreaterThan(image.colorAt(x: 10, y: 10)?.alphaComponent ?? 0, 0.99,
+                                 "\(entry.id) lost its background while capturing native materials")
         }
     }
 

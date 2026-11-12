@@ -109,7 +109,7 @@ public extension KitLook {
 public enum KitCatalog {
     public static var entries: [CatalogEntry] {
         [hues, people, tabs, buttons, toggleChips, iconButtons, ghostButton, primaryButton, hoverStyles, badges,
-         autocomplete, autocompleteFolder, numberField, failureInline]
+         autocomplete, autocompleteFolder, numberField, failureInline] + statusEntries + inputEntries + settingsEntries + dataEntries
     }
 }
 
@@ -204,7 +204,7 @@ public struct CatalogSheet: View {
 /// (a text field, a menu) draw too. The caller owns the application object and its activation policy.
 @MainActor
 public enum KitCatalogRenderer {
-    public static func png(of view: some View, width: CGFloat, scale: CGFloat = 2) -> Data? {
+    public static func png(of view: some View, width: CGFloat, scale: CGFloat = 2) async -> Data? {
         let hosting = NSHostingView(rootView: AnyView(view.frame(width: width, alignment: .topLeading)))
         let fitting = hosting.fittingSize
         let size = NSSize(width: width, height: max(1, fitting.height))
@@ -213,18 +213,27 @@ public enum KitCatalogRenderer {
         window.isReleasedWhenClosed = false
         window.contentView = hosting
         hosting.frame = NSRect(origin: .zero, size: size)
+        window.orderInForSnapshot()
+        defer { window.close() }
         hosting.layoutSubtreeIfNeeded()
-        // Anchor preferences (the tabs' pill) and tasks settle on the next turns of the run loop.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.12))
+        // Anchor preferences and asynchronous control state settle before the window server captures them.
+        try? await Task.sleep(for: .milliseconds(120))
         hosting.layoutSubtreeIfNeeded()
+        guard let capture = await WindowSnapshot.capture(window) else { return nil }
+        if capture.method != "window server" {
+            FileHandle.standardError.write(Data("catalog snapshot: \(capture.method)\n".utf8))
+        }
 
         let pixels = NSSize(width: size.width * scale, height: size.height * scale)
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(pixels.width), pixelsHigh: Int(pixels.height),
                                             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                                             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
         bitmap.size = size
-        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-        window.contentView = nil
+        guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        capture.image.draw(in: NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
         return bitmap.representation(using: .png, properties: [:])
     }
 }

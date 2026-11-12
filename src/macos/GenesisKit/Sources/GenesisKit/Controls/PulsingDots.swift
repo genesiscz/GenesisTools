@@ -9,6 +9,7 @@ import SwiftUI
 /// render server and the app does nothing between frames (measured on the widget's ring, 2026-10-08:
 /// 0.72 s of CPU per 15 s for one SwiftUI ring, none for the layer one).
 public struct PulsingDots: NSViewRepresentable {
+    @GenReduceMotion private var reduceMotion
     public var color: Color
     public var count: Int
     public var diameter: CGFloat
@@ -33,7 +34,7 @@ public struct PulsingDots: NSViewRepresentable {
 
     public func updateNSView(_ view: DotsView, context: Context) {
         view.configure(
-            DotsView.Style(color: NSColor(color).cgColor, count: count, diameter: diameter, spacing: spacing, period: period, stagger: stagger)
+            DotsView.Style(color: NSColor(color).cgColor, count: count, diameter: diameter, spacing: spacing, period: reduceMotion ? 0 : period, stagger: stagger)
         )
     }
 
@@ -106,9 +107,9 @@ public struct PulsingDots: NSViewRepresentable {
             let now = CACurrentMediaTime()
             for (index, dot) in dots.enumerated() {
                 dot.removeAnimation(forKey: Self.pulseKey)
-                // The resting look between runs, as the SwiftUI version showed before its first frame.
-                dot.transform = CATransform3DMakeScale(0.55, 0.55, 1)
-                dot.opacity = 0.4
+                // A static indicator stays legible when motion is disabled.
+                dot.transform = style.period > 0 ? CATransform3DMakeScale(0.55, 0.55, 1) : CATransform3DIdentity
+                dot.opacity = style.period > 0 ? 0.4 : 0.8
                 guard window != nil, style.period > 0 else { continue }
                 let scale = CABasicAnimation(keyPath: "transform.scale")
                 scale.fromValue = 0.55

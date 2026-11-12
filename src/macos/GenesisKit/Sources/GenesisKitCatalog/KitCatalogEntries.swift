@@ -4,7 +4,7 @@ import SwiftUI
 
 // The entries of the catalog. One static per component; `KitCatalog.entries` lists them in the board's order.
 
-private extension View {
+extension View {
     /// Draws the kit's buttons inside as the pointer would make them.
     func shown(_ state: KitInteraction) -> some View {
         environment(\.kitForcedInteraction, state == .rest ? nil : state)
