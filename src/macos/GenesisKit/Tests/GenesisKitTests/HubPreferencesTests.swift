@@ -22,7 +22,7 @@ final class HubPreferencesTests: XCTestCase {
         let (defaults, name) = suite()
         defer { defaults.removePersistentDomain(forName: name) }
         for area in HubLayout.Area.allCases {
-            XCTAssertEqual(HubLayout.choice(area, defaults: defaults), .focused)
+            XCTAssertEqual(HubLayout.choice(area, defaults: defaults), .classic)
             defaults.set(HubLayout.Choice.compact.rawValue, forKey: area.key)
         }
         defaults.synchronize()
@@ -30,7 +30,7 @@ final class HubPreferencesTests: XCTestCase {
         for area in HubLayout.Area.allCases {
             XCTAssertEqual(HubLayout.choice(area, defaults: reopened), .compact)
             reopened.set("unknown", forKey: area.key)
-            XCTAssertEqual(HubLayout.choice(area, defaults: reopened), .focused)
+            XCTAssertEqual(HubLayout.choice(area, defaults: reopened), .classic)
             reopened.set("classic", forKey: area.key)
             XCTAssertEqual(HubLayout.choice(area, defaults: reopened), .classic)
         }

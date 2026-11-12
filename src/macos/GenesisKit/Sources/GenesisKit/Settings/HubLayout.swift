@@ -47,7 +47,7 @@ public enum HubLayout {
 
     /// Unknown stored values fall back without overwriting the user's data.
     public static func choice(_ area: Area, defaults: UserDefaults) -> Choice {
-        defaults.string(forKey: area.key).flatMap(Choice.init(rawValue:)) ?? .focused
+        defaults.string(forKey: area.key).flatMap(Choice.init(rawValue:)) ?? .classic
     }
 
     /// Retain the existing capture flag as a per-process override, including `classic` for baseline comparisons.
@@ -81,7 +81,7 @@ private struct HubLayoutSetting: View {
 
     init(area: HubLayout.Area) {
         self.area = area
-        _stored = AppStorage(wrappedValue: HubLayout.Choice.focused.rawValue, area.key)
+        _stored = AppStorage(wrappedValue: HubLayout.Choice.classic.rawValue, area.key)
     }
 
     var body: some View {
@@ -92,7 +92,7 @@ private struct HubLayoutSetting: View {
                 NativeSettingsOption(HubLayout.Choice.compact, area.compactTitle),
                 NativeSettingsOption(HubLayout.Choice.classic, "Classic"),
             ],
-            selection: Binding(get: { HubLayout.Choice(rawValue: stored) ?? .focused }, set: { stored = $0.rawValue }),
+            selection: Binding(get: { HubLayout.Choice(rawValue: stored) ?? .classic }, set: { stored = $0.rawValue }),
             minSegmentWidth: 80)
     }
 }
