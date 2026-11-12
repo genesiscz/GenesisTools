@@ -829,6 +829,7 @@ extension ListsSketchA {
                 InboxFormCard(inbox: inbox, item: entry.item).id(entry.item.id)
             } else {
                 InboxDecisionCard(model: model, inbox: inbox, session: entry.session, item: entry.item, keyed: keys)
+                    .id(entry.item.id)
                     .liveRow(selected: true)
             }
         }
