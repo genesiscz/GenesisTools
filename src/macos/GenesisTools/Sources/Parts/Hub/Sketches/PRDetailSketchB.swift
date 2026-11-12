@@ -195,7 +195,7 @@ struct PRDetailSketchB: View {
                 ChangesControls(review: review, pr: pr, pickingFiles: $pickingFiles)
             }
         case .threads:
-            if let store = prs.review?.pr, let payload = store.payload {
+            if let review = prs.review, let store = review.pr, let payload = store.payload {
                 let counts = PRThreadCounts(payload.threads)
                 Text(verbatim: "\(counts.open) open · \(counts.outdated) outdated · \(counts.total) in all")
                     .foregroundColor(ReviewPalette.dim)
