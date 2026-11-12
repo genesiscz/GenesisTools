@@ -33,6 +33,15 @@ uses `node:zlib`'s one-frame compressor, the only API that takes parameters (che
 
 ## API
 
+Transparent APFS compression is a separate same-path mode, reached through `tools compress transparent`.
+It writes kernel decmpfs data rather than a seekable zstd archive. Shared functions live in `transparent.ts`,
+`transparent-native.ts`, `transparent-config.ts` and `transparent-run.ts`; they accept native file records rather
+than importing a tool. `plan` only filters metadata. `compressOne` verifies a temporary copy and retains its old
+inode until `settle`; `applyTransparent` owns the battery guard, fresh lsof checks, recovery, clone settlement and
+existing ledger records. `sampleRatio` uses the selected libcompression codec on the first and middle 1 MiB.
+See `src/compress/README.md` for command options, storage limits and the exact saved-byte meaning.
+
+
 | Need | Function | File |
 |---|---|---|
 | Compress a file to `<file>.zst` (atomic, mode kept) | `compressFile` | `file.ts` |
