@@ -632,9 +632,9 @@ Everything lives under `~/.genesis-tools/ai-proxy/`:
   `AI_PROXY_DEBUG_CAPTURE=1`. It stores the account name, the model, the status, the full request body sent upstream
   and the upstream error text, with no redaction. It leaves out the request headers, so the account's
   `Authorization` token and the proxy key are not in it. Anything inside the body is: a key pasted into a prompt, a
-  secret in a file or a tool result, or one that the upstream error repeats. The file is written with default
-  permissions (`0644` in a `0755` folder), so other users of this Mac can read it. Delete it when you are done.
-  Before you share it, search it for secrets and redact them, or share only `status` and the error text.
+  secret in a file or a tool result, or one that the upstream error repeats. The file is `0600` in a `0700` folder,
+  so other users of this Mac cannot read it. Delete it when you are done. Before you share any part of it, the error
+  text included, search that part for secrets and redact them: an upstream error can repeat a secret from the request.
 - The data stays on this Mac. To reset the request history, truncate or delete `usage/requests.jsonl` (and
   optionally `usage/daily.json`). `tools ai-proxy usage --paths` prints the paths.
 - Every booking is also mirrored into the shared GenesisTools usage layer, which never throws, so a failure there

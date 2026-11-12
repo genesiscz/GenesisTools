@@ -53,7 +53,8 @@ Use `bun run test`, never bare `bun test`. The wrapper repairs the dependency tr
    - It skips binary files (`git grep -I`).
    - It finds only what the list names.
 
-   So also read your diff, every commit you push and any binary file you add for personal data and secrets.
+   So also read your diff, every commit you push and every binary file you add or change (an image, a fixture, an
+   archive: the diff does not show its contents) for personal data and secrets.
 4. Fill in the pull request template: what changed and why, how you tested it, screenshots for UI changes.
 5. Answer review comments with a fix or a reason.
 

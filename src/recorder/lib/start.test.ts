@@ -587,6 +587,16 @@ describe("a window or app movie", () => {
             align: async () => ({ result: "offset" as const, warning: "the camera movie could not be cut" }),
         });
         expect(unaligned).toEqual({ code: "camera-unaligned", message: "the camera movie could not be cut" });
+
+        // A cut that worked but left its uncut original behind is not an unaligned movie.
+        const leftover = await endRecordingCamera({
+            folder,
+            outcome: "done",
+            spans,
+            host: host(true),
+            align: async () => ({ result: "trimmed" as const, warning: "the uncut original stays" }),
+        });
+        expect(leftover).toEqual({ code: "camera-leftover", message: "the uncut original stays" });
         await rm(folder, { recursive: true, force: true });
         await rm(empty, { recursive: true, force: true });
     });

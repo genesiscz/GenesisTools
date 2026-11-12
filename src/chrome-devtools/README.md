@@ -214,7 +214,7 @@ The old skill's `watch` verb is gone; running `watch` explains the split and exi
 | `har -o <file> --last 30m` | HAR from the buffer (default output `/tmp/cdp.har`; a bare number is minutes) |
 | `har --now [--reload] [--seconds <n>] [--no-bodies]` | HAR of a live window on one tab, with bodies; 8 s with `--reload`, else 15 s |
 | `har --port <n> --from-buffer` | Dumps a leftover buffer although its recorder already exited; name the port |
-| `har --sanitize --analyze --summary` | Redacts secrets, runs `tools har-analyzer load`, prints one line per entry |
+| `har --sanitize --analyze --summary` | Redacts secret headers and parameters (not bodies), runs `tools har-analyzer load`, prints one line per entry |
 | `trace --match <p> --seconds 90 --out <file>` | One tab's document and redirect chain to a log (default `/tmp/cdp-trace.log`) |
 | `net-panel --match <p>` | Dumps the user's open DevTools Network panel log (see below) |
 
@@ -280,9 +280,20 @@ An empty `har` means the recorder started after the action, not that nothing hap
   The `attach` guidance says "bodies are OFF" when that is the case: a field session once spent an hour
   fingerprinting OAuth grants by Content-Length because nothing said so.
 - 🛑 A HAR of a login flow contains the plaintext password and live session tokens. `--sanitize` redacts `Cookie`,
-  `Set-Cookie` and `Authorization` headers, cookie values, and password, token and code POST parameters. Use it
-  before a HAR leaves the machine. For a HAR you already wrote, `tools har-analyzer load` it, then
-  `tools har-analyzer export --sanitize --strip-bodies -o clean.har`. Do not paste secrets into shell commands: they land in shell history and agent transcripts.
+  `Set-Cookie` and `Authorization` headers, cookie values, password, token and code POST parameters, and those
+  query parameters (percent-encoded names such as `co%64e` included) in the request URLs, the page titles (a page is
+  titled with the URL it opened) and the URL headers `Location`, `Content-Location` and `Referer`, where a redirect
+  and the next request carry the OAuth code. It does not
+  touch response bodies, and `har --now` keeps them by default, so a token that a response returned stays in a
+  sanitized HAR. `--sanitize` alone is not enough before a HAR leaves the machine: `tools har-analyzer load` it, then
+  `tools har-analyzer export --sanitize --strip-bodies -o clean.har` (it redacts the page titles too), and then read
+  the whole file before you share it: the URLs, the headers, the `log.pages` titles and any request body text.
+  Neither step is a guarantee. Note that the analyzer's redactor keeps a bare `code` parameter, in a URL and in a
+  `Location` header alike, so the OAuth code leaves the file only through `--sanitize` at record time: a HAR recorded
+  without it still holds the code after the analyzer's export.
+  Record with `--no-bodies` when you do not need the bodies: it applies to a live `har --now` or `--reload` capture,
+  not to a buffer export, and it leaves out response bodies only. Request bodies (POST data, a typed password
+  included) stay in the HAR, so `--sanitize` is still needed. Do not paste secrets into shell commands: they land in shell history and agent transcripts.
 - Read a HAR with `tools har-analyzer load <file>`, never with `cat` or `jq`.
 
 #### The third network log: `net-panel`

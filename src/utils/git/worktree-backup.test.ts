@@ -1,9 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    symlinkSync,
+    unlinkSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { type ExecCallOptions, Executor } from "@genesiscz/utils/cli/executor";
 import { TestRepo } from "./test-repo";
-import { backupWorktree, planWorktreeBackup } from "./worktree-backup";
+import { backupWorktree, HASH_OBJECT_BATCH, planWorktreeBackup } from "./worktree-backup";
 
 /**
  * One repository for the whole file: a branch worktree with every kind of dirt, a detached worktree with a commit no
@@ -239,6 +249,198 @@ describe("worktree backup", () => {
         expect(result.refusal).toContain("locked (busy)");
         expect(result.folder).toBeNull();
         expect(existsSync(spare)).toBe(true);
+    });
+
+    it("a same-day backup in another root keeps the first safety ref, and copies a name ending in a backslash", async () => {
+        const first = "refs/backups/worktrees/2026-11-09-repo-detached";
+        const firstHead = await repo.git(["rev-parse", "--verify", first]);
+        await repo.commit({ file: "later.txt", content: "later\n", message: "later lost commit", cwd: detached });
+        repo.write({ file: "trail\\", content: "backslash\n", cwd: detached });
+        // An ignored name ending in a backslash: split on it, "notes.log" would read as a rebuildable log and be dropped.
+        repo.write({ file: join(".git", "info", "exclude"), content: "notes.log\\\\\n", cwd: repo.dir });
+        repo.write({ file: "notes.log\\", content: "kept\n", cwd: detached });
+        const result = await backupWorktree({ path: detached, backupRoot: join(repo.root, "backups-other"), now });
+
+        expect(result.refusal).toBeNull();
+        expect(result.ref).toBe(`${first}-2`);
+        expect(await repo.git(["rev-parse", "--verify", first])).toBe(firstHead);
+        expect(await repo.git(["rev-parse", "--verify", result.ref ?? ""])).toBe(result.plan.head);
+        expect(result.plan.untracked).toEqual(["trail\\"]);
+        expect(result.proof.copies).toBe("ok");
+        expect(readFileSync(join(result.folder ?? "", "untracked", "trail\\"), "utf8")).toBe("backslash\n");
+        expect(result.plan.ignored).toEqual(["notes.log\\"]);
+        expect(readFileSync(join(result.folder ?? "", "ignored", "notes.log\\"), "utf8")).toBe("kept\n");
+    });
+
+    it("refuses a backup root inside the worktree, also through a symlink, before writing", async () => {
+        const link = join(repo.root, "spare-link");
+        symlinkSync(spare, link);
+        const result = await backupWorktree({ path: spare, backupRoot: join(link, "node_modules", "backups"), now });
+
+        expect(result.refusal).toContain("lies inside the worktree");
+        expect(result.folder).toBeNull();
+        expect(existsSync(join(spare, "node_modules"))).toBe(false);
+    });
+
+    it("refuses when assume-unchanged or skip-worktree hides an edit from git diff", async () => {
+        await repo.git(["update-index", "--assume-unchanged", "README.md"], { cwd: spare });
+        await repo.git(["update-index", "--skip-worktree", ".gitignore"], { cwd: spare });
+        // The flags alone hide nothing.
+        expect((await planWorktreeBackup({ path: spare })).blockers).toEqual([]);
+
+        repo.write({ file: "README.md", content: "hidden edit\n", cwd: spare });
+        const plan = await planWorktreeBackup({ path: spare });
+
+        expect(plan.changed).toEqual([]);
+        expect(plan.blockers).toHaveLength(1);
+        expect(plan.blockers[0]).toContain("skip-worktree hides them from git diff (README.md)");
+    });
+
+    it("refuses an executable bit that assume-unchanged hides from git diff", async () => {
+        // The test above left README.md assume-unchanged with an edit: its committed bytes come back first.
+        repo.write({ file: "README.md", content: "seed\n", cwd: spare });
+        expect((await planWorktreeBackup({ path: spare })).blockers).toEqual([]);
+
+        chmodSync(join(spare, "README.md"), 0o755);
+        const plan = await planWorktreeBackup({ path: spare });
+        chmodSync(join(spare, "README.md"), 0o644);
+
+        expect(plan.changed).toEqual([]);
+        expect(plan.blockers).toHaveLength(1);
+        expect(plan.blockers[0]).toContain("skip-worktree hides them from git diff (README.md)");
+    });
+
+    it("never starts the clean filter of a flagged file during a read-only plan", async () => {
+        // A clean filter is a configured command, so the dry run must not run it; the raw bytes still show the edit.
+        const marker = join(repo.root, "clean-filter-ran");
+        const attributes = join(repo.root, "attributes");
+        writeFileSync(attributes, "README.md filter=marker\n");
+        await repo.git(["config", "core.attributesFile", attributes]);
+        await repo.git(["config", "filter.marker.clean", `touch '${marker}'; cat`]);
+        repo.write({ file: "README.md", content: "filtered edit\n", cwd: spare });
+
+        try {
+            const plan = await planWorktreeBackup({ path: spare });
+
+            expect(existsSync(marker)).toBe(false);
+            expect(plan.blockers).toHaveLength(1);
+            expect(plan.blockers[0]).toContain("skip-worktree hides them from git diff (README.md)");
+        } finally {
+            await repo.git(["config", "--unset", "core.attributesFile"]);
+            await repo.git(["config", "--remove-section", "filter.marker"]);
+        }
+    });
+
+    it("hashes many flagged files in batches that stay lined up with their paths", async () => {
+        repo.write({ file: "README.md", content: "seed\n", cwd: spare });
+        const files = Object.fromEntries(
+            Array.from({ length: HASH_OBJECT_BATCH + 10 }, (_, i) => [
+                `many/f-${String(i).padStart(4, "0")}.txt`,
+                `${i}\n`,
+            ])
+        );
+        await repo.commitMany({ files, message: "many files", cwd: spare });
+        const names = Object.keys(files);
+        const first = names[0] ?? "";
+        const last = names.at(-1) ?? "";
+        await repo.git(["update-index", "--assume-unchanged", "--", ...names], { cwd: spare });
+        // One edit in the first batch and one in the second: a batch read out of line would name other files.
+        repo.write({ file: first, content: "edited\n", cwd: spare });
+        repo.write({ file: last, content: "edited\n", cwd: spare });
+
+        const exec = Executor.prototype.exec;
+        const hashed: number[] = [];
+        const spy = spyOn(Executor.prototype, "exec").mockImplementation(function (
+            this: Executor,
+            args: string[],
+            options?: ExecCallOptions
+        ) {
+            if (args.includes("hash-object")) {
+                hashed.push(args.length - args.indexOf("--") - 1);
+            }
+
+            return exec.call(this, args, options);
+        });
+
+        try {
+            const plan = await planWorktreeBackup({ path: spare });
+
+            // README.md and .gitignore are flagged too, so 2 files more than the many.
+            expect(hashed).toEqual([HASH_OBJECT_BATCH, names.length + 2 - HASH_OBJECT_BATCH]);
+            expect(plan.blockers).toHaveLength(1);
+            expect(plan.blockers[0]).toContain(`hides them from git diff (${first}, ${last})`);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it("refuses a deletion that assume-unchanged hides, and passes a skip-worktree file a sparse checkout left out", async () => {
+        // The test above edited the first and the last of the many files: their committed bytes come back first.
+        const last = HASH_OBJECT_BATCH + 9;
+        repo.write({ file: "many/f-0000.txt", content: "0\n", cwd: spare });
+        repo.write({ file: `many/f-${String(last).padStart(4, "0")}.txt`, content: `${last}\n`, cwd: spare });
+        expect((await planWorktreeBackup({ path: spare })).blockers).toEqual([]);
+
+        // Two calls: one update-index with both flags leaves the entry with neither.
+        await repo.git(["update-index", "--no-assume-unchanged", "many/f-0002.txt"], { cwd: spare });
+        await repo.git(["update-index", "--skip-worktree", "many/f-0002.txt"], { cwd: spare });
+        unlinkSync(join(spare, "many", "f-0001.txt"));
+        unlinkSync(join(spare, "many", "f-0002.txt"));
+        const plan = await planWorktreeBackup({ path: spare });
+
+        expect(plan.changed).toEqual([]);
+        expect(plan.blockers).toHaveLength(1);
+        expect(plan.blockers[0]).toContain("hides them from git diff (many/f-0001.txt)");
+    });
+
+    it("clears both flags with the two commands the blocker names, where one combined call is not enough", async () => {
+        // The test above deleted many/f-0001.txt under assume-unchanged: it comes back first.
+        repo.write({ file: "many/f-0001.txt", content: "1\n", cwd: spare });
+        await repo.git(["update-index", "--skip-worktree", "--", "README.md"], { cwd: spare });
+        repo.write({ file: "README.md", content: "both flags\n", cwd: spare });
+        expect((await planWorktreeBackup({ path: spare })).blockers[0]).toContain("git diff (README.md)");
+        expect((await planWorktreeBackup({ path: spare })).blockers[0]).toContain(
+            "git update-index --no-assume-unchanged -- <paths>, then git update-index --no-skip-worktree -- <paths>"
+        );
+
+        // One call with both flags clears only the first, so the edit stays hidden.
+        await repo.git(["update-index", "--no-assume-unchanged", "--no-skip-worktree", "--", "README.md"], {
+            cwd: spare,
+        });
+        expect((await planWorktreeBackup({ path: spare })).blockers[0]).toContain("git diff (README.md)");
+
+        await repo.git(["update-index", "--no-skip-worktree", "--", "README.md"], { cwd: spare });
+        const plan = await planWorktreeBackup({ path: spare });
+
+        expect(plan.blockers).toEqual([]);
+        expect(plan.changed).toEqual(["README.md"]);
+    });
+
+    it("takes the base from the other branches when no candidate gives one, and refuses --remove without a base", async () => {
+        const lone = await TestRepo.create({ prefix: "gt-wt-backup-nobase-" });
+
+        try {
+            await lone.branch("side");
+            const side = await lone.worktreeAdd({ name: "side", ref: "side" });
+            await lone.commit({ file: "side.txt", content: "side\n", message: "side work", cwd: side });
+            // No origin and a detached main checkout, as in a bare clone: no candidate gives a merge base.
+            await lone.git(["checkout", "-q", "--detach"]);
+            const result = await backupWorktree({ path: side, backupRoot: join(lone.root, "backups"), now });
+
+            expect(result.plan.base?.sha).toBe(await lone.git(["rev-parse", "master"]));
+            expect(result.plan.commits.map((commit) => commit.subject)).toEqual(["side work"]);
+            expect(result.proof.commits).toBe("ok");
+            expect(readdirSync(join(result.folder ?? "", "commits"))).toHaveLength(1);
+
+            await lone.git(["checkout", "-q", "--orphan", "alone"], { cwd: side });
+            await lone.commit({ file: "root.txt", content: "root\n", message: "orphan root", cwd: side });
+            const orphan = await planWorktreeBackup({ path: side, remove: true });
+
+            expect(orphan.base).toBeNull();
+            expect(orphan.blockers.some((blocker) => blocker.startsWith("No base commit was found"))).toBe(true);
+        } finally {
+            lone.cleanup();
+        }
     });
 
     it("throws for a main checkout and for a folder outside git", async () => {

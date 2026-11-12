@@ -385,8 +385,9 @@ export async function runCapturePlanWithSignal({
     }
 
     throwIfCancelled("during focus");
-    // With a countdown the recorder starts as its last second begins, and the countdown holds zero until the first
-    // frame: arming takes about a second, which used to come after zero. The overlay stays out of the movie.
+    // With a countdown the native recorder starts as its last second begins, and the countdown holds zero until the
+    // first frame: arming takes about a second, which used to come after zero. The overlay stays out of the movie,
+    // because the native recorder leaves its window out. Peekaboo cannot leave a window out, so it starts after zero.
     let arming: Promise<CaptureAttempt> | undefined;
     const startRecorder = (excludeWindowIds: number[] = []): Promise<CaptureAttempt> => {
         if (arming) {
@@ -405,7 +406,9 @@ export async function runCapturePlanWithSignal({
 
         return arming;
     };
-    if (cap.countdownSec && cap.countdownSec > 0) {
+    if (cap.countdownSec && cap.countdownSec > 0 && backend !== "native") {
+        await runCountdown(Math.min(cap.countdownSec, 10), { signal });
+    } else if (cap.countdownSec && cap.countdownSec > 0) {
         const armed = Promise.withResolvers<void>();
         await runCountdown(Math.min(cap.countdownSec, 10), {
             signal,

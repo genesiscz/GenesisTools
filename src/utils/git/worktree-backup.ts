@@ -35,6 +35,7 @@ import {
 } from "node:fs";
 import { devNull, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { chunk } from "@genesiscz/utils/array";
 import type { ExecResult } from "@genesiscz/utils/cli";
 import { gitWorktreeBackupCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -149,9 +150,11 @@ export interface WorktreeBackupResult {
     plan: WorktreeBackupPlan;
     /** The backup folder; null when refused before anything was written. */
     folder: string | null;
-    /** `refs/backups/worktrees/<folder name>` when `plan.unreachable > 0`. */
+    /** `refs/backups/worktrees/<folder name>` (`-2`, `-3`, ... when taken) when `plan.unreachable > 0`. */
     ref: string | null;
     proof: WorktreeBackupProof;
+    /** The backup is written and its proof passed, so it is usable even when the removal was then refused. */
+    proven: boolean;
     removed: boolean;
     /** Why it was not backed up, or (with `remove`) not removed; null on full success. */
     refusal: string | null;
@@ -284,13 +287,29 @@ function realOrResolved(path: string): string {
     return existsSync(path) ? realpathSync(path) : resolve(path);
 }
 
+/** The real path of a folder that may not exist yet: its nearest existing ancestor resolved, symlinks included. */
+function realOfNearestAncestor(path: string): string {
+    const absolute = resolve(path);
+
+    for (let dir = absolute; ; dir = dirname(dir)) {
+        if (existsSync(dir)) {
+            return join(realpathSync(dir), relative(dir, absolute));
+        }
+
+        if (dirname(dir) === dir) {
+            return absolute;
+        }
+    }
+}
+
 function isInside(child: string, parent: string): boolean {
     const rel = relative(parent, child);
     return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
+/** `rel` is a path git printed: "/" between segments on every platform, and a backslash is part of a POSIX name. */
 function hasRebuildableSegment(rel: string): boolean {
-    return rel.split(/[/\\]/).some((segment) => segment !== "" && isRebuildableName(segment));
+    return rel.split("/").some((segment) => segment !== "" && isRebuildableName(segment));
 }
 
 interface WorktreeIdentity {
@@ -449,7 +468,8 @@ function hashFile(path: string): string {
 function readLinkOrEmpty(path: string): string {
     try {
         return readlinkSync(path);
-    } catch {
+    } catch (err) {
+        log.debug({ err, path }, "readlink failed; the symlink reads as an empty target");
         return "";
     }
 }
@@ -513,11 +533,102 @@ function walkEntries({
         found.push({ ...base, kind: "file", size: stat.size, digest: budget.over ? "" : hashFile(join(root, rel)) });
     };
 
+    // Only git's directory marker: on POSIX a trailing backslash is part of the file name.
     for (const entry of entries) {
-        visit(entry.replace(/[/\\]+$/, ""));
+        visit(entry.replace(/\/+$/, ""));
     }
 
     return found;
+}
+
+/**
+ * Tracked files whose working copy differs from the index while `assume-unchanged` or `skip-worktree` hides them from
+ * `git diff`, so neither patch holds the edit. A skip-worktree file that is not on disk is no change (a sparse
+ * checkout leaves it out); a missing assume-unchanged file is a deletion. A flagged file that still matches its index
+ * blob and mode is no change. The bytes are compared raw: a clean filter is a configured
+ * command, which a read-only plan never starts, so a filtered or line-ending-converted file reads as changed.
+ */
+async function hiddenIndexChanges(path: string): Promise<string[]> {
+    const hidden: string[] = [];
+    const files: Array<{ rel: string; sha: string }> = [];
+    const [records, fileMode] = await Promise.all([
+        mustReadZ(path, ["ls-files", "-v", "-s", "-z"]),
+        readGit(path, ["config", "--type=bool", "core.fileMode"]),
+    ]);
+    // Git compares the executable bit only while core.fileMode is on, its default (an unset key exits 1).
+    const checkMode = !(fileMode.success && fileMode.stdout.trim() === "false");
+
+    for (const record of records) {
+        const tab = record.indexOf("\t");
+        const [tag = "", mode = "", sha = ""] = record.slice(0, tab).split(" ");
+        const rel = record.slice(tab + 1);
+        // `S` is skip-worktree, a lowercase tag is assume-unchanged, and `s` is both. A gitlink is a submodule, which is
+        // a blocker anyway.
+        const skipWorktree = tag.toUpperCase() === "S";
+
+        if ((!skipWorktree && tag === tag.toUpperCase()) || mode === "160000") {
+            continue;
+        }
+
+        const stat = lstatSync(join(path, rel), { throwIfNoEntry: false });
+
+        if (!stat) {
+            // A sparse checkout leaves a skip-worktree file out on purpose; a missing assume-unchanged file was deleted.
+            if (!skipWorktree) {
+                hidden.push(rel);
+            }
+
+            continue;
+        }
+
+        if (mode === "120000") {
+            const target = stat.isSymbolicLink() ? readlinkSync(join(path, rel), { encoding: "buffer" }) : null;
+            const blob = target === null ? "" : gitBlobId(target, sha.length);
+
+            if (blob !== sha) {
+                hidden.push(rel);
+            }
+
+            continue;
+        }
+
+        // Git keeps only the owner's executable bit of a regular file, as 100755 or 100644.
+        const worktreeMode = stat.mode & 0o100 ? "100755" : "100644";
+
+        if (!stat.isFile() || (checkMode && worktreeMode !== mode)) {
+            hidden.push(rel);
+            continue;
+        }
+
+        files.push({ rel, sha });
+    }
+
+    // Without -w nothing is written, and --no-filters hashes the bytes as they are, so no clean filter starts. Batches
+    // keep each argv far below the OS limit; git prints one id per path, in order, so each batch lines up on its own.
+    for (const batch of chunk(files, HASH_OBJECT_BATCH)) {
+        const ids = (
+            await mustRead(path, ["hash-object", "--no-filters", "--", ...batch.map((file) => file.rel)])
+        ).split("\n");
+
+        for (const [i, file] of batch.entries()) {
+            if (ids[i] !== file.sha) {
+                hidden.push(file.rel);
+            }
+        }
+    }
+
+    return hidden.sort();
+}
+
+/** Paths per `git hash-object` call: at 1024 bytes each (PATH_MAX) a batch stays near 256 KiB, a quarter of ARG_MAX. */
+export const HASH_OBJECT_BATCH = 256;
+
+/** A blob id as git computes it, sha1 or sha256 by the length of the ids the repository uses. */
+function gitBlobId(content: Buffer, idLength: number): string {
+    return createHash(idLength === 64 ? "sha256" : "sha1")
+        .update(`blob ${content.length}\0`)
+        .update(content)
+        .digest("hex");
 }
 
 interface WorkState {
@@ -525,6 +636,8 @@ interface WorkState {
     headSubject: string;
     untracked: string[];
     ignored: string[];
+    /** Tracked files with an edit that an index flag hides from `git diff` (see `hiddenIndexChanges`). */
+    hidden: string[];
     entries: WalkedEntry[];
     copyBytes: number;
     overLimit: boolean;
@@ -536,12 +649,13 @@ interface WorkState {
  * recheck share it. The index diff is its own input: a staged version that the working tree no longer shows is work too.
  */
 async function readWorkState(path: string, maxCopyBytes: number): Promise<WorkState> {
-    const [headLine, diff, stagedDiff, untracked, ignoredAll] = await Promise.all([
+    const [headLine, diff, stagedDiff, untracked, ignoredAll, hidden] = await Promise.all([
         mustRead(path, ["log", "-1", "--format=%H%x1f%s", "HEAD"]),
         mustRead(path, ["diff", "HEAD", ...PATCH_FLAGS], { trim: false }),
         mustRead(path, ["diff", "--cached", "HEAD", ...PATCH_FLAGS], { trim: false }),
         mustReadZ(path, ["ls-files", "--others", "--exclude-standard", "-z"]),
         mustReadZ(path, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]),
+        hiddenIndexChanges(path),
     ]);
     const [head, headSubject = ""] = headLine.split("\x1f");
     const ignored = ignoredAll.filter((rel) => !hasRebuildableSegment(rel));
@@ -555,7 +669,7 @@ async function readWorkState(path: string, maxCopyBytes: number): Promise<WorkSt
     hash.update(diff);
     hash.update("\0staged\0");
     hash.update(stagedDiff);
-    hash.update("\0");
+    hash.update(`\0hidden\0${hidden.join("\0")}\0`);
 
     for (const entry of entries) {
         hash.update(
@@ -568,6 +682,7 @@ async function readWorkState(path: string, maxCopyBytes: number): Promise<WorkSt
         headSubject,
         untracked,
         ignored,
+        hidden,
         entries,
         copyBytes: budget.bytes,
         overLimit: budget.over,
@@ -646,7 +761,54 @@ async function detectBackupBase({
         }
     }
 
-    return best === null ? null : { sha: best.sha, ref: best.ref };
+    return best === null ? boundaryBase({ path, head, identity }) : { sha: best.sha, ref: best.ref };
+}
+
+/**
+ * The base when no candidate gave one (a bare clone's worktree has no `origin/HEAD` and no main-checkout branch): the
+ * one commit where the commits that no other branch, remote branch or tag holds start. Null when they start at a root
+ * commit or hang off several commits, because then no single base replays them.
+ */
+async function boundaryBase({
+    path,
+    head,
+    identity,
+}: {
+    path: string;
+    head: string;
+    identity: WorktreeIdentity;
+}): Promise<{ sha: string; ref: string } | null> {
+    const own = identity.branch === null ? [] : [`--exclude=${identity.branch.slice("refs/heads/".length)}`];
+    const res = await readGit(path, [
+        "rev-list",
+        "--boundary",
+        head,
+        "--not",
+        ...own,
+        "--branches",
+        "--remotes",
+        "--tags",
+    ]);
+
+    if (!res.success) {
+        log.debug({ path, stderr: res.stderr }, "no boundary base: rev-list failed");
+        return null;
+    }
+
+    const lines = res.stdout.split("\n").filter(Boolean);
+    const boundaries = lines.filter((line) => line.startsWith("-")).map((line) => line.slice(1));
+    const ref = "another branch, remote branch or tag";
+
+    if (lines.length === 0) {
+        return { sha: head, ref };
+    }
+
+    if (boundaries.length !== 1) {
+        log.debug({ path, commits: lines.length - boundaries.length, boundaries }, "no single boundary base");
+        return null;
+    }
+
+    return { sha: boundaries[0], ref };
 }
 
 function readLock(gitdir: string): string | null {
@@ -779,6 +941,14 @@ async function inspectWorktree(options: PlanWorktreeBackupOptions): Promise<Insp
         blockers.push(`The index has unmerged entries (${unmerged.size} paths); resolve the conflict first.`);
     }
 
+    if (state.hidden.length > 0) {
+        const shown = state.hidden.slice(0, 5).join(", ");
+        const more = state.hidden.length > 5 ? ` and ${state.hidden.length - 5} more` : "";
+        blockers.push(
+            `Tracked files differ from the index, or are gone, while assume-unchanged or skip-worktree hides them from git diff (${shown}${more}), so no patch would hold them; clear the flags first with git update-index --no-assume-unchanged -- <paths>, then git update-index --no-skip-worktree -- <paths> (one call applies only the first of the two). The check reads raw bytes and the executable bit without clean filters, so a filtered file counts as changed.`
+        );
+    }
+
     if (state.overLimit) {
         blockers.push(
             `The untracked and ignored files to copy take more than ${mib(maxCopyBytes)} (counted ${mib(state.copyBytes)} before stopping); raise the limit (maxCopyBytes, --max-copy-mb) or clean them up first.`
@@ -790,6 +960,12 @@ async function inspectWorktree(options: PlanWorktreeBackupOptions): Promise<Insp
     }
 
     if (options.remove) {
+        if (base === null) {
+            blockers.push(
+                "No base commit was found (no upstream, no origin/HEAD or main-checkout branch, and no single commit where the worktree's own commits start), so its commits cannot be saved as patches; back up without --remove, or set an upstream first."
+            );
+        }
+
         if (locked !== null) {
             blockers.push(
                 `The worktree is locked${locked === "" ? "" : ` (${locked})`}; unlock it with git worktree unlock first.`
@@ -902,6 +1078,30 @@ function createBackupFolder({ root, base }: { root: string; base: string }): str
     }
 
     throw new Error(`Every name from ${base} to ${base}-9999 is taken under ${root}.`);
+}
+
+/**
+ * Creates `refs/backups/worktrees/<base>` at `head`, adding `-2`, `-3`, ... when the name is taken. The empty old value
+ * makes git refuse to move an existing ref: a same-day backup of a same-named worktree in another backup root (or after
+ * its folder was deleted) would otherwise overwrite the only ref that kept an earlier removal's commits alive.
+ */
+async function createSafetyRef({ cwd, base, head }: { cwd: string; base: string; head: string }): Promise<string> {
+    for (let n = 1; n < 1000; n++) {
+        const ref = `${WORKTREE_BACKUP_REF_PREFIX}${n === 1 ? base : `${base}-${n}`}`;
+        const update = await runGit({ cwd, args: ["update-ref", ref, head, ""] });
+
+        if (update.success) {
+            return ref;
+        }
+
+        const exists = await readGit(cwd, ["show-ref", "--verify", "--quiet", ref]);
+
+        if (!exists.success) {
+            throw new Error(`git update-ref ${ref} failed: ${firstLines(update.stderr)}`);
+        }
+    }
+
+    throw new Error(`Every safety ref from ${WORKTREE_BACKUP_REF_PREFIX}${base} to ${base}-999 is taken.`);
 }
 
 function copyEntries({
@@ -1266,7 +1466,7 @@ function renderReadme({
     );
     lines.push(`| HEAD | \`${plan.head}\` ${headSubject.replaceAll("|", "\\|")} |`);
     lines.push(
-        `| Base | ${plan.base === null ? "none found (no upstream, no origin/HEAD, no other branch in the main checkout), so no commit patches" : `\`${plan.base.sha}\` from \`${plan.base.ref}\``} |`
+        `| Base | ${plan.base === null ? "none found (no upstream, no origin/HEAD or main-checkout branch, no single commit where its own commits start), so no commit patches and no removal" : `\`${plan.base.sha}\` from \`${plan.base.ref}\``} |`
     );
     lines.push(
         `| Safety ref | ${result.ref === null ? "not needed: a branch, a remote branch or a tag holds every commit of HEAD" : `\`${result.ref}\` holds ${plan.unreachable} commit(s) nothing else holds`} |`
@@ -1445,6 +1645,7 @@ export async function backupWorktree(options: BackupWorktreeOptions): Promise<Wo
         folder: null,
         ref: null,
         proof: { uncommitted: "none", staged: "none", commits: "none", treeMatches: null, copies: "none" },
+        proven: false,
         removed: false,
         refusal: null,
         skipped: [],
@@ -1457,6 +1658,14 @@ export async function backupWorktree(options: BackupWorktreeOptions): Promise<Wo
     }
 
     const root = options.backupRoot ?? genesisToolsDir("backups", "worktrees");
+
+    // A removal would delete a backup inside the worktree, and an ignored rebuildable folder there is not fingerprinted.
+    if (isInside(realOfNearestAncestor(root), realOrResolved(plan.path))) {
+        result.refusal = `The backup folder ${root} lies inside the worktree, so a removal would delete it with the work; choose a backup root outside ${plan.path}.`;
+        log.debug({ path: plan.path, root }, "worktree backup refused: backup root inside the worktree");
+        return result;
+    }
+
     const folder = createBackupFolder({
         root,
         base: backupFolderBase({ now, repo: plan.repo, name: basename(plan.path) }),
@@ -1466,14 +1675,7 @@ export async function backupWorktree(options: BackupWorktreeOptions): Promise<Wo
 
     try {
         if (plan.unreachable > 0) {
-            const ref = `${WORKTREE_BACKUP_REF_PREFIX}${basename(folder)}`;
-            const update = await runGit({ cwd: plan.path, args: ["update-ref", ref, plan.head] });
-
-            if (!update.success) {
-                throw new Error(`git update-ref ${ref} failed: ${firstLines(update.stderr)}`);
-            }
-
-            result.ref = ref;
+            result.ref = await createSafetyRef({ cwd: plan.path, base: basename(folder), head: plan.head });
         }
 
         let patchFiles: string[] = [];
@@ -1525,10 +1727,11 @@ export async function backupWorktree(options: BackupWorktreeOptions): Promise<Wo
             ...(await proveBackup({ plan, commonDir: identity.commonDir, patchFile, stagedFile, patchFiles })),
             copies: verifyCopies({ folder, entries: state.entries }),
         };
+        result.proven = proofPassed(result.proof);
         report();
         await options.afterBackup?.(result);
 
-        if (!proofPassed(result.proof)) {
+        if (!result.proven) {
             const { uncommitted, staged, commits, copies } = result.proof;
             result.refusal = `The proof failed, so nothing was removed: uncommitted ${uncommitted}; staged ${staged}; commits ${commits}; copies ${copies}.`;
         } else if (options.remove) {
@@ -1536,7 +1739,10 @@ export async function backupWorktree(options: BackupWorktreeOptions): Promise<Wo
             result.removed = result.refusal === null;
         }
     } catch (err) {
-        result.refusal = `The backup failed, so nothing was removed: ${err instanceof Error ? err.message : String(err)}`;
+        const reason = err instanceof Error ? err.message : String(err);
+        result.refusal = result.proven
+            ? `The removal failed, so the worktree was kept; the proven backup stays: ${reason}`
+            : `The backup failed, so nothing was removed: ${reason}`;
         log.debug({ err, path: plan.path, folder }, "worktree backup failed");
     }
 
