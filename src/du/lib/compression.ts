@@ -1,4 +1,5 @@
 import { dirname, resolve } from "node:path";
+// lint-rules-ignore: the explicit task-registration command delegates to the daemon owner; read-only scans never register or enable it.
 import { ensureColdCompressTask } from "@app/macos/lib/clones/daemon-tasks";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {

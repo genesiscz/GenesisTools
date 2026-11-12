@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
+// lint-rules-ignore: compress intentionally reuses du's native read-only metadata walker instead of implementing a second filesystem scan.
 import { listCompressionFiles } from "@app/du/lib/engine";
 import { type Mirror, openPaths, plan, type TransparentWriter } from "@genesiscz/utils/compress/transparent";
 import { loadTransparentConfig } from "@genesiscz/utils/compress/transparent-config";
