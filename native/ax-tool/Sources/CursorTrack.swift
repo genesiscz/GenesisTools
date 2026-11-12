@@ -27,7 +27,7 @@ import SnapshotSupport
 /// never reach the file, and macOS sends no key to a global monitor while a password field has secure input on.
 final class CursorTrackWriter {
     private let handle: FileHandle
-    private let rect: () -> CGRect
+    private let geometry: () -> CursorTrackGeometry
     private let queue = DispatchQueue(label: "ax-tool.cursor-track", qos: .userInitiated)
     private var timer: DispatchSourceTimer?
     private var movieStart: () -> CMTime? = { nil }
@@ -44,6 +44,7 @@ final class CursorTrackWriter {
     private var pendingShape: String?
     private var savedShapes = Set<String>()
     private var wrotePointWidth = false
+    private var lastPointWidth: CGFloat?
     private var pendingKeys: [String] = []
     private var paused = false
 
@@ -59,15 +60,14 @@ final class CursorTrackWriter {
     private(set) var shortcuts = 0
     var shapeCount: Int { queue.sync { savedShapes.count } }
 
-    /// `rect` is the recorded rectangle in global display points (top-left origin), read per sample, so a window
-    /// that moves keeps its cursor coordinates right.
-    init?(path: String, shapes: String? = nil, rect: @escaping () -> CGRect) {
+    /// Geometry comes from the last rendered picture, including letterboxing and visible selected windows.
+    init?(path: String, shapes: String? = nil, geometry: @escaping () -> CursorTrackGeometry) {
         let descriptor = Darwin.open(path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else { return nil }
         let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         self.path = path
         self.handle = handle
-        self.rect = rect
+        self.geometry = geometry
         if let shapes, (try? FileManager.default.createDirectory(atPath: shapes, withIntermediateDirectories: true)) != nil {
             shapesDir = shapes
         } else {
@@ -139,17 +139,19 @@ final class CursorTrackWriter {
     private func sample() {
         guard !paused, let origin = movieStart(), let point = CGEvent(source: nil)?.location else { return }
         let now = CMClockGetTime(CMClockGetHostTimeClock())
-        let frame = rect()
-        guard frame.width > 0, frame.height > 0 else { return }
+        let geometry = geometry()
+        let frame = geometry.rect
+        guard let normalized = geometry.normalized(point) else { return }
         let ms = movieTimeMs(of: now, movieStart: origin)
-        let x = Double((point.x - frame.minX) / frame.width)
-        let y = Double((point.y - frame.minY) / frame.height)
+        let x = Double(normalized.x)
+        let y = Double(normalized.y)
         let left = CGEventSource.buttonState(.combinedSessionState, button: .left)
         let right = CGEventSource.buttonState(.combinedSessionState, button: .right)
         var click: String?
         if left && !leftDown { click = "left" } else if right && !rightDown { click = "right" }
         leftDown = left
         rightDown = right
+        if !geometry.acceptsClick(at: point) { click = nil }
         if shapesDir != nil {
             if shapeTick % 6 == 0 { readShape() }
             shapeTick += 1
@@ -174,9 +176,10 @@ final class CursorTrackWriter {
             shortcuts += pendingKeys.count
             pendingKeys.removeAll()
         }
-        if shapesDir != nil, !wrotePointWidth {
+        if shapesDir != nil, !wrotePointWidth || lastPointWidth != frame.width {
             line += String(format: ",\"pw\":%.1f", frame.width)
             wrotePointWidth = true
+            lastPointWidth = frame.width
         }
         line += "}\n"
         buffer.append(Data(line.utf8))
@@ -217,16 +220,16 @@ final class CursorTrackWriter {
     }
 }
 
-/// A rectangle one thread writes and another reads.
-final class LockedRect: @unchecked Sendable {
+/// Capture geometry one thread writes and the cursor sampler reads.
+final class LockedCursorGeometry: @unchecked Sendable {
     private let lock = NSLock()
-    private var stored: CGRect
+    private var stored: CursorTrackGeometry
 
-    init(_ rect: CGRect) {
-        stored = rect
+    init(_ geometry: CursorTrackGeometry) {
+        stored = geometry
     }
 
-    var value: CGRect {
+    var value: CursorTrackGeometry {
         get { lock.lock(); defer { lock.unlock() }; return stored }
         set { lock.lock(); stored = newValue; lock.unlock() }
     }

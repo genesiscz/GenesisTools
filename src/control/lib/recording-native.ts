@@ -51,8 +51,7 @@ export interface NativeRecorderOptions {
     /** The microphone's input UID from `ax-tool audio-devices`; needs audio "mic". */
     micDevice?: string;
     /**
-     * Each segment writes `<segment>.cursor.jsonl`; the joiner makes `<output>.cursor.jsonl` of them. Display and region
-     * targets only.
+     * Each segment writes `<segment>.cursor.jsonl`; the joiner makes `<output>.cursor.jsonl` of them for every target.
      */
     cursorTrack?: boolean;
     /** Needs cursorTrack: the movie records without the system cursor and its images go here, for the editor to draw. */
@@ -79,10 +78,9 @@ export function segmentCaptureSpec({
     maxSeconds: number;
     options: NativeRecorderOptions;
 }): CaptureSpec {
-    if (target.kind !== "display" && target.kind !== "region" && (options.audio?.length || options.cursorTrack)) {
-        // A window or app recording composes that window alone (isolated mode), which records no audio or pointer.
+    if (target.kind !== "display" && target.kind !== "region" && options.audio?.length) {
         throw new Error(
-            `${describeRecordingTarget(target)} cannot record audio or the cursor track: those need a display or an area target`
+            `${describeRecordingTarget(target)} cannot record audio: those need a display or an area target`
         );
     }
 

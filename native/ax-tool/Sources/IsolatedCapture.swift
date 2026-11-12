@@ -327,6 +327,7 @@ private final class IsolatedCompositor {
     let output: CGSize
     let initialCanvas: CGRect
     let displayCanvas: CGRect?
+    let cursorGeometry: LockedCursorGeometry
     let context = CIContext(options: [.cacheIntermediates: false])
     var sources: [IsolatedWindowSource] = []
     var layers: IsolatedLayers<SourceFrame>
@@ -356,6 +357,8 @@ private final class IsolatedCompositor {
         self.output = output
         self.initialCanvas = canvas
         self.displayCanvas = displayCanvas
+        self.cursorGeometry = LockedCursorGeometry(CursorTrackGeometry(
+            rect: cursorTrackRect(display: canvas, movie: output), clickRegions: selected.map(\.bounds)))
         self.layers = IsolatedLayers(selected.map { IsolatedLayer(id: $0.id, pid: $0.pid, bounds: $0.bounds) })
         CVPixelBufferPoolCreate(nil, nil, [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
                                           kCVPixelBufferWidthKey: Int(output.width), kCVPixelBufferHeightKey: Int(output.height),
@@ -421,6 +424,8 @@ private final class IsolatedCompositor {
         var buffer: CVPixelBuffer?
         guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer) == kCVReturnSuccess, let buffer else { return }
         context.render(image, to: buffer, bounds: outputRect, colorSpace: CGColorSpaceCreateDeviceRGB())
+        cursorGeometry.value = CursorTrackGeometry(
+            rect: cursorTrackRect(display: canvas, movie: output), clickRegions: visible.map(\.bounds))
         recorder.consume(buffer, timestamp: timestamp)
         layers.markRendered()
         let movieSeconds = throttle.rendered(at: elapsed)
@@ -550,6 +555,13 @@ func captureIsolatedWindows(_ options: RecordOptions) {
         indicator.close()
         errorExit("isolated recording never started: \(error.localizedDescription)")
     }
+    var cursorTrack: CursorTrackWriter?
+    if let path = argValue("--cursor-track") {
+        cursorTrack = CursorTrackWriter(path: path, shapes: argValue("--cursor-shapes")) { compositor.cursorGeometry.value }
+        if CommandLine.arguments.contains("--shortcuts") { cursorTrack?.watchShortcuts() }
+        if cursorTrack == nil { recorder.warn("the cursor track \(path) could not be created") }
+    }
+    cursorTrack?.start { recorder.movieStart }
     let started = Date()
     let cancelled = runRecordingLoop(duration: options.duration) {
         let rows = captureWindowRows()
@@ -569,6 +581,7 @@ func captureIsolatedWindows(_ options: RecordOptions) {
         catch { compositor.queue.sync { compositor.error = error } }
     }
     compositor.queue.sync { compositor.finish() }
+    cursorTrack?.stop()
     let stoppedAt = CMClockGetTime(CMClockGetHostTimeClock())
     let duration = Date().timeIntervalSince(started)
     recorder.drainFrames()
@@ -594,6 +607,10 @@ func captureIsolatedWindows(_ options: RecordOptions) {
                                   "firstFrameAfterStartMs": compositor.firstFrameAfterStartMs ?? -1], recorder.movieMs),
         "warnings": recorder.warnings + compositor.queue.sync { compositor.layers.warnings + compositor.placementWarnings },
     ]
+    if let cursorTrack {
+        data["cursorTrack"] = ["path": cursorTrack.path, "samples": cursorTrack.samples, "clicks": cursorTrack.clicks,
+                               "shapes": cursorTrack.shapeCount, "shortcuts": cursorTrack.shortcuts]
+    }
     let contact = directory.appendingPathComponent("contact.png")
     if let layout = writeContactSheet(recorder.kept, in: directory, to: contact) {
         data["contactSheet"] = ["path": contact.path, "rows": layout.rows, "columns": layout.columns, "sampledFrameIndexes": layout.sampled]

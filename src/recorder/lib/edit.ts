@@ -259,6 +259,10 @@ export async function openProject(value: string): Promise<OpenedProject> {
         ...(existsSync(cursor) ? { cursor } : {}),
         ...(manifest ? { recording: manifest.id } : {}),
     });
+    if (manifest?.settings.cursor === "none") {
+        project.cursor = { show: false, size: 1, smoothing: 0.5, hideAfterMs: 0 };
+    }
+
     return { path, project: camera ? { ...project, camera: bubbleFromSidecar(camera) } : project, fresh: true };
 }
 

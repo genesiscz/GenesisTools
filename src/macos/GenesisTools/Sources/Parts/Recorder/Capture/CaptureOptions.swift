@@ -69,8 +69,8 @@ struct CaptureOptions: Equatable {
     /// sits on every tab and records all of them, so the rows stay usable and only this line explains.
     static func notRecorded(on tab: RecordingPickerTab) -> String? {
         switch tab {
-        case .windows: "A window movie has no audio, no cursor track and no shortcuts. Choose a display or an area for those."
-        case .apps: "An app movie has no audio, no cursor track and no shortcuts. Choose a display or an area for those."
+        case .windows: "A window movie has no audio. Cursor positions and clicks are always kept; shortcuts follow the option below."
+        case .apps: "An app movie has no audio. Cursor positions and clicks are always kept; shortcuts follow the option below."
         case .displays: nil
         }
     }

@@ -57,8 +57,9 @@ Target flags of `start` (one at most):
 | `--region <x,y,w,h>` | an area, in global screen points from the top-left corner (CoreGraphics) |
 
 A display that is not connected, or an area off every display, is refused, naming the displays. A window or app
-movie has no audio and no cursor track: `--audio` is refused with them, and the editor draws no pointer, clicks or
-shortcuts. Record `--display` or `--region` for those. An area is recorded in ax-tool's region mode.
+movie has no audio: `--audio` needs `--display` or `--region`. Every target keeps cursor positions and clicks,
+including a recording with the cursor hidden. Window clicks outside the selected windows are excluded. Shortcuts
+are kept unless `--no-shortcuts` is set. An area is recorded in ax-tool's region mode.
 
 Movie flags of `start`:
 
@@ -74,7 +75,7 @@ Movie flags of `start`:
 | `--max-seconds <n>` | none, 1 to 14400 | stop after this long |
 | `--exclude-window-ids <ids>` | none | leave these windows out of the movie |
 | `--camera` | off | record the camera into `camera.mov` ([Camera bubble](#camera-bubble)) |
-| `--system-cursor` | off | keep the system cursor in the picture instead of drawing it |
+| `--system-cursor` | off | keep the system cursor for display/area movies; start with the cursor hidden for window/app movies |
 | `--no-shortcuts` | keeps them | keep no ⌘/⌃ shortcuts for the keys overlay |
 | `--no-indicator` | border on | no red border around what is recorded (never in the movie) |
 | `--no-controls` | controls on | do not open the floating controls |
@@ -810,8 +811,8 @@ again); the first run may ask for the AI vault key in GenesisTools.app. A movie 
   in System Settings. `tools macos permissions` exits 1 while a grant is missing.
 - **`--camera` is refused.** The menu bar recorder must run, because only it writes `camera.mov`. Start it with
   `tools recorder library --no-focus`, then start again.
-- **The editor draws no pointer, clicks or shortcuts.** The movie is a window or app recording, which has no cursor
-  track. Record `--display` or `--region`.
+- **The editor draws no pointer.** In Cursor and Clicks, turn on Show cursor. A hidden cursor still keeps clicks for
+  click rings, annotations and auto zoom. Older recordings without a cursor track cannot recover their clicks.
 - **An export says the file exists.** Exports never overwrite. Pass another `--out`, or `--overwrite`.
 - **An export above 2560×1600 came out smaller.** H.264 fits the size to keep 60 fps. Export HEVC for the full size.
 - **`undo` is refused.** The editor window changed the edit since; undo that with ⌘Z there. `redo` works only while

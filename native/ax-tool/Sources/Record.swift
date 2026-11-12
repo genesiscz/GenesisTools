@@ -1164,12 +1164,14 @@ func cmdCaptureScreen() {
     // tick keeps it current), the region, or the recorded display, which a switch or follow-focus changes. A movie keeps
     // its first size and letterboxes a display of another shape into it, so that rectangle takes the movie's shape.
     let movieSize = options.videoOut == nil ? nil : CGSize(width: width, height: height)
-    let trackedRect = LockedRect(windowTarget?.bounds ?? options.region ?? sourceRect.map {
+    let capturedRect = windowTarget?.bounds ?? options.region ?? sourceRect.map {
         $0.offsetBy(dx: display.bounds.minX, dy: display.bounds.minY)
-    } ?? cursorTrackRect(display: display.bounds, movie: movieSize))
+    } ?? display.bounds
+    let trackedGeometry = LockedCursorGeometry(CursorTrackGeometry(
+        rect: cursorTrackRect(display: capturedRect, movie: movieSize), clickRegions: [capturedRect]))
     var cursorTrack: CursorTrackWriter?
     if let path = argValue("--cursor-track") {
-        cursorTrack = CursorTrackWriter(path: path, shapes: argValue("--cursor-shapes")) { trackedRect.value }
+        cursorTrack = CursorTrackWriter(path: path, shapes: argValue("--cursor-shapes")) { trackedGeometry.value }
         if CommandLine.arguments.contains("--shortcuts") { cursorTrack?.watchShortcuts() }
         if cursorTrack == nil { recorder.warn("the cursor track \(path) could not be created") }
     }
@@ -1180,7 +1182,8 @@ func cmdCaptureScreen() {
     if options.mode == "screen", sourceRect == nil {
         // Moved when the stream takes the new display, not on a later tick; the next row names the new point width.
         host.onDisplayChange = { geometry in
-            trackedRect.value = cursorTrackRect(display: geometry.bounds, movie: movieSize)
+            trackedGeometry.value = CursorTrackGeometry(
+                rect: cursorTrackRect(display: geometry.bounds, movie: movieSize), clickRegions: [geometry.bounds])
             cursorTrack?.pointWidthChanged()
         }
     }
@@ -1190,7 +1193,8 @@ func cmdCaptureScreen() {
            let rows = CGWindowListCopyWindowInfo([.optionIncludingWindow], target.id) as? [[CFString: Any]],
            let raw = rows.first?[kCGWindowBounds] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw) {
             indicator.update([bounds])
-            trackedRect.value = bounds
+            trackedGeometry.value = CursorTrackGeometry(
+                rect: cursorTrackRect(display: bounds, movie: movieSize), clickRegions: [bounds])
         }
         guard options.mode == "screen" else { return recorder.failure == nil && !host.stopRequested }
 

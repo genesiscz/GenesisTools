@@ -66,6 +66,20 @@ final class RecorderHuntPreviewRebuildInputsTests: XCTestCase {
         return EditProject.whole(video: movie.path, durationUs: 2_000_000, width: 320, height: 200, cursor: cursor, recording: nil)
     }
 
+    func testACursorOffRecordingStartsHiddenAndKeepsItsClickTrack() async throws {
+        let project = try await screenProject()
+        try Data(#"{"settings":{"cursor":"none"}}"#.utf8).write(to: folder.appendingPathComponent("recording.json"))
+        try Data("{\"t\":0,\"x\":0.4,\"y\":0.5,\"click\":\"left\"}\n".utf8)
+            .write(to: folder.appendingPathComponent("cursor.jsonl"))
+        let opened = try await ProjectStore.newProject(video: URL(fileURLWithPath: project.source.video))
+        let cursor = try XCTUnwrap(opened.cursor)
+        XCTAssertFalse(cursor.show)
+        let track = try XCTUnwrap(CursorTrack.load(opened.source.cursor))
+        XCTAssertEqual(track.clicks.count, 1)
+        XCTAssertEqual(track.clicks.first?.x, 0.4)
+        XCTAssertNil(ZoomState.cursorMark(atSourceUs: 0, track: track, settings: cursor, videoWidth: 320))
+    }
+
     /// One rule decides every rebuild of the preview: the window's own changes, the service's answers, undo and redo,
     /// and outside edits.
     func testTheMovieIsMadeAgainOnlyForWhatTheRendererReadsOnce() {

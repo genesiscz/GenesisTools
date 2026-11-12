@@ -138,7 +138,7 @@ export function withStartOptions(command: Command): Command {
         )
         .option(
             "--system-cursor",
-            "keep the system cursor in the movie (by default it stays out and the editor draws it: smoothed, any size)"
+            "keep the system cursor for a display/area movie; start a window/app movie with its editable cursor hidden"
         )
         .option("--no-controls", "do not open the floating controls")
         .option("--open", "open the editor when the recording stops")

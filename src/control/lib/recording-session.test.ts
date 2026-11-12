@@ -1523,12 +1523,12 @@ describe("segmentCaptureSpec", () => {
         expect(spec.idleFps).toBeUndefined();
     });
 
-    it("refuses audio and the cursor track for a window or an app before the capture starts", () => {
+    it("refuses audio for a window or app but preserves the independent cursor track", () => {
         const targets: RecordingTarget[] = [
             { kind: "window", windowIds: [7] },
             { kind: "app", app: "Notes" },
         ];
-        const asks: NativeRecorderOptions[] = [{ audio: ["mic"] }, { cursorTrack: true }];
+        const asks: NativeRecorderOptions[] = [{ audio: ["mic"] }];
 
         for (const target of targets) {
             for (const options of asks) {
@@ -1536,6 +1536,18 @@ describe("segmentCaptureSpec", () => {
                     segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options })
                 ).toThrow("those need a display or an area target");
             }
+        }
+
+        for (const target of targets) {
+            const spec = segmentCaptureSpec({
+                target,
+                output: "/tmp/segment.mp4",
+                maxSeconds: 60,
+                options: { cursorTrack: true, cursorShapes: "/tmp/shapes", shortcuts: true },
+            });
+            expect(spec.mode).toBe("isolated");
+            expect(spec.cursorTrack).toBe("/tmp/segment.mp4.cursor.jsonl");
+            expect(spec.shortcuts).toBe(true);
         }
 
         const region = segmentCaptureSpec({

@@ -241,11 +241,8 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         throw new Error("audioSidecar must be a boolean");
     }
 
-    if (
-        cap.cursorTrack !== undefined &&
-        (typeof cap.cursorTrack !== "string" || !cap.cursorTrack || cap.mode === "isolated")
-    ) {
-        throw new Error("cursorTrack needs a file path and the screen, window or region mode");
+    if (cap.cursorTrack !== undefined && (typeof cap.cursorTrack !== "string" || !cap.cursorTrack)) {
+        throw new Error("cursorTrack needs a file path");
     }
 
     if (

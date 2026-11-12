@@ -110,6 +110,11 @@ final class ProjectStore {
             cursor: FileManager.default.fileExists(atPath: cursor.path) ? cursor.path : nil,
             recording: isRecording ? folder.lastPathComponent : nil
         )
+        if let data = try? Data(contentsOf: folder.appendingPathComponent("recording.json")),
+           let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let settings = manifest["settings"] as? [String: Any], settings["cursor"] as? String == "none" {
+            project.cursor = .init(show: false)
+        }
         if let data = try? Data(contentsOf: folder.appendingPathComponent("camera.json")),
            let sidecar = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let file = sidecar["file"] as? String {

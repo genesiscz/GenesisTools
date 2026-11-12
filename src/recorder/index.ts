@@ -81,7 +81,7 @@ import {
     withStartOptions,
 } from "./lib/start-options";
 import { Movie, movieDemoDriver, recordingMovie } from "./lib/toolset";
-import { announcedCountdown, recordVideo, tracksPointer, videoDoneLine } from "./lib/video-recording";
+import { announcedCountdown, recordVideo, videoDoneLine } from "./lib/video-recording";
 
 const { log } = logger.scoped("recorder");
 
@@ -343,12 +343,6 @@ withStartOptions(
         }
 
         const target = request.target ?? (await defaultStartTarget());
-
-        if (!tracksPointer(target)) {
-            out.printlnErr(
-                "note: a window or app movie has no cursor track, so the editor draws no pointer, clicks or shortcuts; record --display or --region for those"
-            );
-        }
 
         const result = await recordVideo({
             ...request,

@@ -69,7 +69,7 @@ export interface VideoRecordingOptions {
     cameraHost?: CameraHost;
     audio?: ("system" | "mic")[];
     micDevice?: string;
-    /** Keep the system cursor in the movie; by default it stays out and the editor draws it from the track. */
+    /** Keep the system cursor for a display/area; hide the editable cursor initially for an isolated window/app. */
     systemCursor?: boolean;
     /** False keeps the shortcuts out of the cursor track; by default the ⌘/⌃ presses are kept for the keys overlay. */
     shortcuts?: boolean;
@@ -100,13 +100,9 @@ export interface VideoRecordingOptions {
 /** A countdown before a recording: it calls `hold.lastSecond` as its last second begins and holds zero for `hold.until`. */
 export type RecorderCountdown = (seconds: number, hold: CountdownHold) => Promise<void>;
 
-/**
- * A display or an area records the pointer beside the movie (the drawn cursor, clicks and the ⌘/⌃ shortcut rows). A
- * window or app movie is composed from those windows alone (ScreenCaptureKit's isolated capture), which has no pointer
- * and no audio to record.
- */
-export function tracksPointer(target: RecordingTarget): boolean {
-    return target.kind === "display" || target.kind === "region";
+/** Isolated window/app movies never bake the system cursor into their picture. */
+function isolatedTarget(target: RecordingTarget): boolean {
+    return target.kind === "window" || target.kind === "app";
 }
 
 /** What each segment's native recorder records for this movie. */
@@ -114,7 +110,7 @@ export function segmentRecorderOptions(
     options: Omit<VideoRecordingOptions, "emit">,
     folder: string
 ): NativeRecorderOptions {
-    const pointer = tracksPointer(options.target);
+    const isolated = isolatedTarget(options.target);
     return {
         fps: options.fps,
         idleFps: options.idleFps,
@@ -123,9 +119,9 @@ export function segmentRecorderOptions(
         indicator: options.indicator,
         audio: options.audio,
         micDevice: options.micDevice,
-        cursorTrack: pointer,
-        cursorShapes: pointer && !options.systemCursor ? join(folder, "cursor-shapes") : undefined,
-        shortcuts: pointer && options.shortcuts !== false,
+        cursorTrack: true,
+        cursorShapes: isolated || !options.systemCursor ? join(folder, "cursor-shapes") : undefined,
+        shortcuts: options.shortcuts !== false,
     };
 }
 
@@ -398,9 +394,8 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
             ...(options.threshold === undefined ? {} : { threshold: options.threshold }),
             ...(options.camera ? { camera: { requested: true, file: CAMERA_MOVIE } } : {}),
             audio: { sources: options.audio ?? [], micDevice: options.micDevice },
-            // "none": a window or app movie has no cursor track, so the editor draws no pointer and no shortcuts.
-            cursor: tracksPointer(options.target) ? (options.systemCursor ? "system" : "drawn") : "none",
-            shortcuts: tracksPointer(options.target) && options.shortcuts !== false,
+            cursor: options.systemCursor ? (isolatedTarget(options.target) ? "none" : "system") : "drawn",
+            shortcuts: options.shortcuts !== false,
         },
         frames: [],
         warnings: [],

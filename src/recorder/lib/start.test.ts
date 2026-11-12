@@ -383,15 +383,18 @@ const app: RecordingTarget = { kind: "app", app: "Notes" };
 const display: RecordingTarget = { kind: "display", screenIndex: 0, follow: true };
 
 describe("a window or app movie", () => {
-    it("asks for no cursor track, so its capture spec is valid", () => {
+    it("keeps positions, clicks and cursor pictures for hidden window and app cursors", () => {
         for (const target of [window, app]) {
-            const options = segmentRecorderOptions({ target }, folder);
-            expect(options.cursorTrack).toBe(false);
-            expect(options.cursorShapes).toBeUndefined();
-            expect(options.shortcuts).toBe(false);
-            expect(() =>
-                segmentCaptureSpec({ target, output: `${folder}/s.mp4`, maxSeconds: 4, options })
-            ).not.toThrow();
+            for (const systemCursor of [false, true]) {
+                const options = segmentRecorderOptions({ target, systemCursor, shortcuts: false }, folder);
+                expect(options.cursorTrack).toBe(true);
+                expect(options.cursorShapes).toBe(`${folder}/cursor-shapes`);
+                expect(options.shortcuts).toBe(false);
+                const spec = segmentCaptureSpec({ target, output: `${folder}/s.mp4`, maxSeconds: 4, options });
+                expect(spec.cursorTrack).toBe(`${folder}/s.mp4.cursor.jsonl`);
+                expect(spec.cursorShapes).toBe(`${folder}/cursor-shapes`);
+            }
+            expect(segmentRecorderOptions({ target }, folder).shortcuts).toBe(true);
         }
     });
 
