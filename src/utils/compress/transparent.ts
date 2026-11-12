@@ -678,6 +678,7 @@ export const DITTO_WRITER: TransparentWriter = {
 };
 
 async function readLsof(fields: string[], timeoutMs = 60_000): Promise<string> {
+    // lint-rules-ignore: settlement needs every held inode including renamed asides; process.openFiles exposes only selected paths.
     const p = Bun.spawn(["/usr/sbin/lsof", "-nP", ...fields], { stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => p.kill(), timeoutMs);
     try {
