@@ -1,5 +1,6 @@
 import { meetingsConfigSetCommand } from "@genesiscz/utils/genesis-tools/tools/system";
-import { getDarwinKit } from "@genesiscz/utils/macos/darwinkit";
+import { logger } from "@genesiscz/utils/logger";
+import { createIdleCloser, DarwinKit, type IdleCloser } from "@genesiscz/utils/macos/darwinkit";
 import { describeResponsibleIdentity } from "@genesiscz/utils/macos/genesis-app";
 import type { PeopleQuery, PeopleSource, SourceAnswer, SourcePerson } from "./people-directory";
 
@@ -14,21 +15,125 @@ export interface ContactCard {
     email_addresses: Array<{ value: string }>;
 }
 
-/** What the Contacts source asks of macOS: the access state, and a search or a list. Tests pass a fake. */
+interface ContactsAccess {
+    status: string;
+    authorized: boolean;
+}
+
+/** Existing injected readers remain supported; the native reader uses an atomic query below. */
 export interface ContactsReader {
-    authorized(): Promise<{ status: string; authorized: boolean }>;
+    authorized(): Promise<ContactsAccess>;
     search(query: string, limit: number): Promise<ContactCard[]>;
     list(limit: number): Promise<ContactCard[]>;
 }
 
-/** Contacts through darwinkit, in this process: the process must hold GenesisTools.app's Contacts grant. */
-export function darwinkitContacts(): ContactsReader {
+/** Authorization and its fetch belong to one native client generation. */
+interface ContactsQueryReader {
+    read(query: PeopleQuery): Promise<{ access: ContactsAccess; cards: ContactCard[] }>;
+}
+
+interface ContactsClient {
+    contacts: {
+        authorized(options: { timeout: number }): Promise<ContactsAccess>;
+        search(
+            query: { query: string; limit: number },
+            options: { timeout: number }
+        ): Promise<{ contacts: ContactCard[] }>;
+        list(query: { limit: number }, options: { timeout: number }): Promise<{ contacts: ContactCard[] }>;
+    };
+    close(): Promise<void>;
+}
+
+interface ContactsGeneration {
+    client: ContactsClient;
+    closer: IdleCloser;
+    closed: Promise<void>;
+    retired: boolean;
+}
+
+let sharedContactsReader: ContactsQueryReader | undefined;
+
+/**
+ * Contacts owns its helper: native authorization can stay stale after either grant change. Completed reads retire
+ * their generation; overlapping reads share it until their leases finish. Short-lived directories share this owner.
+ */
+export function darwinkitContacts(options: { createClient?: () => ContactsClient } = {}): ContactsQueryReader {
+    if (options.createClient) {
+        return createContactsReader(options.createClient);
+    }
+
+    sharedContactsReader ??= createContactsReader(() => new DarwinKit({ timeout: 60_000, logger, logLevel: "warn" }));
+    return sharedContactsReader;
+}
+
+function createContactsReader(createClient: () => ContactsClient): ContactsQueryReader {
+    let current: ContactsGeneration | undefined;
+    let acquiring: Promise<ContactsGeneration> | undefined;
+    let closing: Promise<void> | undefined;
+
+    function createGeneration(): ContactsGeneration {
+        const client = createClient();
+        let closeClient = () => {};
+        const closed = new Promise<void>((resolve, reject) => {
+            closeClient = () => {
+                Promise.resolve()
+                    .then(() => client.close())
+                    .then(resolve, reject);
+            };
+        });
+        return { client, closer: createIdleCloser(closeClient), closed, retired: false };
+    }
+
+    async function acquire(): Promise<{ generation: ContactsGeneration; release: () => void }> {
+        if (current) {
+            return { generation: current, release: current.closer.lease() };
+        }
+
+        acquiring ??= (async () => {
+            // A completed generation may still have another query's fetch in flight. Do not accumulate helpers.
+            await closing;
+            current = createGeneration();
+            return current;
+        })().finally(() => {
+            acquiring = undefined;
+        });
+        const generation = await acquiring;
+        return { generation, release: generation.closer.lease() };
+    }
+
+    function retire(generation: ContactsGeneration): void {
+        if (generation.retired) {
+            return;
+        }
+
+        generation.retired = true;
+        current = undefined;
+        closing = generation.closed;
+        // Close failure remains observable on the next acquisition; never spawn over a helper that failed to close.
+        void closing.catch(() => undefined);
+        generation.closer.closeWhenIdle();
+    }
+
     return {
-        authorized: () => getDarwinKit().contacts.authorized({ timeout: CONTACTS_TIMEOUT_MS }),
-        search: async (query, limit) =>
-            (await getDarwinKit().contacts.search({ query, limit }, { timeout: CONTACTS_TIMEOUT_MS })).contacts,
-        list: async (limit) =>
-            (await getDarwinKit().contacts.list({ limit }, { timeout: CONTACTS_TIMEOUT_MS })).contacts,
+        async read(query) {
+            const { generation, release } = await acquire();
+            const { contacts } = generation.client;
+            try {
+                const access = await contacts.authorized({ timeout: CONTACTS_TIMEOUT_MS });
+
+                if (!access.authorized) {
+                    return { access, cards: [] };
+                }
+
+                const result = query.text
+                    ? await contacts.search({ query: query.text, limit: query.limit }, { timeout: CONTACTS_TIMEOUT_MS })
+                    : await contacts.list({ limit: query.limit }, { timeout: CONTACTS_TIMEOUT_MS });
+                return { access, cards: result.contacts };
+            } finally {
+                retire(generation);
+                release();
+            }
+        },
     };
 }
 
@@ -56,10 +161,11 @@ export function contactPerson(card: ContactCard): SourcePerson | undefined {
 export class ContactsPeopleSource implements PeopleSource {
     readonly kind = "contacts" as const;
 
-    constructor(private readonly reader: ContactsReader = darwinkitContacts()) {}
+    constructor(private readonly reader: ContactsReader | ContactsQueryReader = darwinkitContacts()) {}
 
     async people(query: PeopleQuery): Promise<SourceAnswer> {
-        const access = await this.reader.authorized();
+        const { access, cards } =
+            "read" in this.reader ? await this.reader.read(query) : await readLegacyContacts(this.reader, query);
 
         if (!access.authorized) {
             const host = describeResponsibleIdentity();
@@ -69,9 +175,17 @@ export class ContactsPeopleSource implements PeopleSource {
             };
         }
 
-        const cards = query.text
-            ? await this.reader.search(query.text, query.limit)
-            : await this.reader.list(query.limit);
         return { state: "ok", people: cards.flatMap((card) => contactPerson(card) ?? []) };
     }
+}
+
+/** Keep previously injected readers compatible without splitting the native generation's lease. */
+async function readLegacyContacts(reader: ContactsReader, query: PeopleQuery) {
+    const access = await reader.authorized();
+    const cards = !access.authorized
+        ? []
+        : query.text
+          ? await reader.search(query.text, query.limit)
+          : await reader.list(query.limit);
+    return { access, cards };
 }
