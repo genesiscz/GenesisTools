@@ -19,7 +19,7 @@ interface OcrOptions {
 
 /**
  * `--reread-empty-since`: a full date (`2026-11-11T15:56:00+01:00`, `2026-11-11T14:56Z`), or a local time of day
- * (`15:56`, `15:56:30`) on the day the meeting started.
+ * (`15:56`, `15:56:30`), taking its first occurrence on or after the meeting started.
  */
 export function parseRereadSince(raw: string, record: Pick<MeetingRecord, "start">): Date | undefined {
     const clock = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
@@ -35,6 +35,11 @@ export function parseRereadSince(raw: string, record: Pick<MeetingRecord, "start
         }
 
         day.setHours(hours, minutes, seconds, 0);
+
+        if (day.getTime() < Date.parse(record.start)) {
+            day.setDate(day.getDate() + 1);
+        }
+
         return day;
     }
 
