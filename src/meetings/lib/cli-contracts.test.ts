@@ -53,6 +53,28 @@ test("standalone subscription flags fail before resolving or reading a meeting",
     }
 });
 
+test("saved clips reject playback and read-only flags before touching the meeting", async () => {
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    const human = spyOn(ui, "err").mockImplementation(() => {});
+    const resolve = spyOn(MeetingStore.prototype, "resolve");
+    try {
+        for (const flag of ["--clip", "--no-start", "--window"]) {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
+            await program.parseAsync(["play", "missing", "--at", "10", "--save", flag], { from: "user" });
+            expect(human).toHaveBeenLastCalledWith(
+                "--save keeps a clip without playing it; omit --clip, --no-start, --window and --player."
+            );
+        }
+        expect(resolve).not.toHaveBeenCalled();
+    } finally {
+        raw.mockRestore();
+        human.mockRestore();
+        resolve.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 const failureRecordSchema = z.object({
     error: z.object({
         message: z.string(),

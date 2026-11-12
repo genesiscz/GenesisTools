@@ -85,9 +85,12 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
 
     /** A notification to every connection subscribed to the event and to its meeting (or to every meeting). */
     const emit = <E extends MeetingsEvent>(event: E, params: MeetingsNotification<E>): void => {
-        // A decision wrote the record: the watch leaves that write out, since `decision.applied` tells it already.
+        // The event already announces this record write, so the watcher must not announce it again.
         const meeting = "meeting" in params ? params.meeting : undefined;
-        if ((event === "decision.applied" || event === "decision.reverted") && typeof meeting === "string") {
+        if (
+            (event === "decision.applied" || event === "decision.reverted" || event === "meeting.changed") &&
+            typeof meeting === "string"
+        ) {
             watch?.ownWrite(meeting);
         }
 

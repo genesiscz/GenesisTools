@@ -289,7 +289,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     func testSnapshotSelectionPopoverAndStagedComments() throws {
         let selection = try XCTUnwrap(TranscriptSelection.lines(TranscriptBlock.build(from: Self.entries)[4].lines))
-        try snapshot(SelectionPopover(selection: selection, stage: { _, _ in }, clip: { _, _ in }).fixedSize(),
+        try snapshot(SelectionPopover(selection: selection, stage: { _, _ in }, clip: { _, _ in }, saveClip: { _, _ in }).fixedSize(),
                      name: "selection-popover", width: nil)
         try snapshot(SelectionPopover(selection: selection, startsInComment: true, stage: { _, _ in }, clip: { _, _ in }).fixedSize(),
                      name: "selection-popover-comment", width: nil)

@@ -444,6 +444,7 @@ export type MeetingRecord = z.infer<typeof meetingRecordSchema>;
 export type MeetingCalendar = z.infer<typeof calendarSchema>;
 export type MeetingParticipant = z.infer<typeof participantSchema>;
 export type MeetingContext = z.infer<typeof contextSchema>;
+export { contextSchema as meetingContextSchema };
 
 const SLUG_MAX = 40;
 

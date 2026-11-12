@@ -30,6 +30,9 @@ interface PlayOptions {
     item?: string;
     target?: string;
     clip?: boolean;
+    save?: boolean;
+    title?: string;
+    quote?: string;
     moment?: boolean;
     window?: boolean;
     before?: string;
@@ -97,7 +100,7 @@ function wanted(opts: PlayOptions): { target: MomentTarget } | { atSec: number }
     }
 
     if (opts.to === undefined) {
-        return opts.clip || opts.moment ? { target: { kind: "time", atSec } } : { atSec };
+        return opts.clip || opts.save || opts.moment ? { target: { kind: "time", atSec } } : { atSec };
     }
 
     const toSec = parseClock(opts.to);
@@ -187,6 +190,24 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
         overrides.screen = false;
     }
 
+    if (opts.save) {
+        const saved = await withMeetingsClient((client) =>
+            client.call("moment.save", {
+                meeting: record.id,
+                target,
+                ...overrides,
+                ...(toneSound ? { toneSound, tone: true } : {}),
+                ...(opts.tone === false ? { tone: false } : {}),
+                ...(opts.title ? { title: opts.title } : {}),
+                ...(opts.quote ? { quote: opts.quote } : {}),
+            })
+        );
+        opts.json
+            ? out.result(SafeJSON.stringify(saved, null, 2))
+            : ui.ok(`Saved ${saved.entry.title}: ${saved.clip.path}`);
+        return;
+    }
+
     if (!opts.clip && opts.start === false) {
         const planned = await withMeetingsClient((client) =>
             client.call("moment.plan", {
@@ -273,6 +294,14 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
 }
 
 async function play(ref: string, opts: PlayOptions): Promise<void> {
+    if (opts.save && (opts.clip || opts.start === false || opts.window || opts.player !== undefined)) {
+        fail("--save keeps a clip without playing it; omit --clip, --no-start, --window and --player.");
+        return;
+    }
+    if (!opts.save && (opts.title !== undefined || opts.quote !== undefined)) {
+        fail("--title and --quote describe a saved clip; add --save.");
+        return;
+    }
     const what = wanted(opts);
 
     if ("error" in what) {
@@ -392,6 +421,12 @@ export function registerPlayCommand(program: Command): void {
             'any Moment target as JSON: {"kind":"selection","from":{"atSec":60,"fraction":0.5},"to":{"atSec":70}}, {"kind":"stretch","atSec":60}'
         )
         .option("--clip", "cut the Moment to a WAV in the clip cache and print it; plays nothing")
+        .option(
+            "--save",
+            "save the clip under the meeting and list it in Context; no playback, tone or padding by default"
+        )
+        .option("--title <text>", "title for --save in the meeting's Context")
+        .option("--quote <text>", "selected words to keep beside --save in Context")
         .option(
             "--moment",
             "with --at alone: play the Moment at that time (a bounded clip with the tone), not on from there"

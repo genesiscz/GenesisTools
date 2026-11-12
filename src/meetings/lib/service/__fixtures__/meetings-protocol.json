@@ -33,6 +33,7 @@
             "journal.read",
             "moment.plan",
             "moment.clip",
+            "moment.save",
             "tone.preview",
             "tone.presets",
             "meeting.audio",
@@ -83,7 +84,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "3742cb7182f1"
+          "version": "0179aa009572"
         }
       }
     },
@@ -655,6 +656,7 @@
             "journal.read",
             "moment.plan",
             "moment.clip",
+            "moment.save",
             "tone.preview",
             "tone.presets",
             "meeting.audio",
@@ -705,7 +707,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "3742cb7182f1"
+          "version": "0179aa009572"
         }
       }
     },
@@ -4968,6 +4970,7 @@
             "journal.read",
             "moment.plan",
             "moment.clip",
+            "moment.save",
             "tone.preview",
             "tone.presets",
             "meeting.audio",
@@ -5018,7 +5021,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "3742cb7182f1"
+          "version": "0179aa009572"
         }
       }
     },
@@ -5107,6 +5110,59 @@
           "issue": {
             "tool": "meetings"
           }
+        }
+      }
+    },
+    {
+      "method": "moment.save",
+      "direction": "client→service",
+      "note": "Keep audio outside the temporary clip cache and publish its Context entry.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 83,
+        "method": "moment.save",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "range",
+            "fromSec": 2,
+            "toSec": 4
+          },
+          "quote": "Saved words"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 83,
+        "result": {
+          "entry": {
+            "id": "c1",
+            "kind": "file",
+            "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-<key>.wav",
+            "title": "Clip 00:02–00:04",
+            "note": "Saved words",
+            "addedAt": "2026-11-03T10:00:00.000Z",
+            "addedBy": "user"
+          },
+          "clip": {
+            "meeting": "2026-11-03-1000-design-review",
+            "target": {
+              "kind": "range",
+              "fromSec": 2,
+              "toSec": 4
+            },
+            "label": "00:02–00:04",
+            "fromSec": 2,
+            "toSec": 4,
+            "padSec": 0,
+            "startSec": 2,
+            "endSec": 4,
+            "spotSec": 2,
+            "delaySec": 2,
+            "repeatGapSec": 1,
+            "path": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-<key>.wav"
+          },
+          "created": true
         }
       }
     }

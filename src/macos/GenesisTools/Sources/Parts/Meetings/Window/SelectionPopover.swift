@@ -62,6 +62,8 @@ struct SelectionPopover: View {
     let clip: (MomentTarget, Double) -> Void
     /// Plays the whole selection, from its first line to the end of its last; nil hides "Play selection".
     var playAll: ((MomentTarget) -> Void)? = nil
+    var saveClip: ((TranscriptSelection, Double) -> Void)? = nil
+    var savingClip = false
     var close: () -> Void = {}
 
     /// Words that start a comment of a usual kind: a click writes them, the reader types the rest.
@@ -106,6 +108,16 @@ struct SelectionPopover: View {
             .padding(.horizontal, 6).frame(minHeight: 24)
             .instantTooltip("Play \(MeetingsFormat.seconds(clipLengthSec)) from \(MeetingsFormat.clock(selection.fromSec))")
             .accessibilityLabel("Clip \(MeetingsFormat.seconds(clipLengthSec)) from \(MeetingsFormat.clock(selection.fromSec))")
+            if let saveClip {
+                Button { saveClip(selection, clipLengthSec) } label: {
+                    Label(savingClip ? "Saving…" : "Save clip", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.genHoverPlain())
+                .padding(.horizontal, 6).frame(minHeight: 24)
+                .disabled(savingClip)
+                .instantTooltip("Save this audio under the meeting and add it to Context")
+                .accessibilityIdentifier("meetings.selection.saveClip")
+            }
             if let playAll {
                 Button { playAll(selection.target) } label: {
                     Label("Play selection", systemImage: "play.fill")

@@ -39,6 +39,7 @@ import {
     reject,
     rename,
     reopen,
+    saveClip,
     screen,
     screenTimelineMethod,
     set,
@@ -515,6 +516,10 @@ export class MeetingsToolset extends ReplToolset {
                 // lazy, like meetingScreen: the timeline reads frame sizes and OCR boxes only on use
                 const { screenTimeline } = await import("@app/meetings/lib/screen-timeline");
                 return screenTimeline({ store, record: current(), all: all === true });
+            },
+            saveClip: async (input: z.input<typeof saveClip.params>) => {
+                const parsed = saveClip.params.parse(input);
+                return withMeetingsClient((client) => client.call("moment.save", { ...parsed, meeting: id }));
             },
             export: async (input: z.input<typeof exportMethod.params> = {}) => {
                 const parsed = exportMethod.params.parse(input);

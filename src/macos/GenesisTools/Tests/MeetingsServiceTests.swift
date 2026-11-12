@@ -304,6 +304,14 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.MomentClipCut.name:
                 try roundTrip(MeetingsAPI.MomentClipCut.Params.self, params, label)
                 if let result { XCTAssertTrue(try MeetingsService.decode(MeetingsAPI.MomentClipCut.Result.self, result).path.hasSuffix(".wav"), label) }
+            case MeetingsAPI.MomentSave.name:
+                try roundTrip(MeetingsAPI.MomentSave.Params.self, params, label)
+                if let result {
+                    let saved = try MeetingsService.decode(MeetingsAPI.MomentSave.Result.self, result)
+                    XCTAssertEqual(saved.entry.ref, saved.clip.path)
+                    XCTAssertTrue(saved.clip.path.contains("/clips/"))
+                    XCTAssertNil(saved.clip.moment.tone)
+                }
             case MeetingsAPI.TonePreview.name:
                 try roundTrip(MeetingsAPI.TonePreview.Params.self, params, label)
                 if let result {
@@ -435,7 +443,7 @@ final class MeetingsServiceTests: XCTestCase {
     /// The methods Wave B mirrors.
     private static let wavebMethods = [
         MeetingsAPI.DecisionPlan.name, MeetingsAPI.DecisionApply.name, MeetingsAPI.DecisionRevert.name, MeetingsAPI.JournalRead.name,
-        MeetingsAPI.MomentPlan.name, MeetingsAPI.MomentClipCut.name, MeetingsAPI.TonePreview.name, MeetingsAPI.MeetingAudio.name,
+        MeetingsAPI.MomentPlan.name, MeetingsAPI.MomentClipCut.name, MeetingsAPI.MomentSave.name, MeetingsAPI.TonePreview.name, MeetingsAPI.MeetingAudio.name,
         MeetingsAPI.MeetingSpeakers.name, MeetingsAPI.MeetingScreen.name, MeetingsAPI.MeetingTimeline.name,
         MeetingsAPI.MeetingWaveform.name, MeetingsAPI.Overview.name,
         MeetingsAPI.ConfigRead.name, MeetingsAPI.ConfigSet.name, MeetingsAPI.ConfigUnset.name, MeetingsAPI.MeetingRows.name,

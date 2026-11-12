@@ -169,6 +169,10 @@ struct TranscriptBlocksPane: View {
             playAll: { target in
                 detail.window?.player.play(target, in: detail.id, from: .selection)
             },
+            saveClip: { selection, length in
+                detail.saveSelectionClip(selection, length: length) { clearSelection() }
+            },
+            savingClip: detail.isBusy("clip.save"),
             close: { clearSelection() }))
     }
 

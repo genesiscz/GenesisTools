@@ -14,6 +14,7 @@ import {
 } from "@genesiscz/utils/repl/toolsets/recorder";
 import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
+import { momentSave } from "./api";
 
 /**
  * The REPL `meetings` toolset's descriptor (src/node-repl/lib/toolsets/meetings.ts reads it), beside the Meetings
@@ -317,6 +318,15 @@ export const screenTimelineMethod = defineMethod({
     effect: "read",
     doc: "Every frame of the screen recording in time order with the OCR lines that changed since the display's earlier frame (all: every line too).",
 });
+export const saveClip = defineMethod({
+    name: "saveClip",
+    params: momentSave.params.omit({ meeting: true }),
+    result: momentSave.result,
+    resultName: momentSave.resultName,
+    effect: "reversible",
+    doc: "Save selected audio in this meeting's clips folder and Context, without playing. By default it has no tone or padding. Repeating the same cut returns its existing Context entry.",
+});
+
 export const exportMethod = defineMethod({
     name: "export",
     params: z
@@ -480,6 +490,7 @@ export const meetingsToolsetApi = defineApi({
                 screen,
                 editorProject,
                 screenTimelineMethod,
+                saveClip,
                 exportMethod,
                 assignProposals,
                 assignAsk,

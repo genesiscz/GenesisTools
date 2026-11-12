@@ -11,7 +11,7 @@ import {
     PERSON_RANKS,
     PERSON_SOURCE_KINDS,
 } from "@genesiscz/utils/meetings/people-directory";
-import { meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
+import { meetingContextSchema, meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
 import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import type { SpeakerHint, SpeakerLeave } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
@@ -389,6 +389,19 @@ const momentClip = defineMethod({
     resultName: "Moment & { path }",
     doc: "The Moment cut to a WAV in the clip cache (a clip cut before for the same recording is used again). Reports `$/progress` while ffmpeg cuts and stops on `$/cancel`; a newer moment.clip on the same connection cancels the older cut (answered with 1013, cancelled). Refused with `unplayable` and data.reason (a moment.plan code). Writes only the cache.",
     effect: "read",
+});
+
+export const momentSave = defineMethod({
+    name: "moment.save",
+    params: momentParams.extend({ title: z.string().trim().min(1).optional(), quote: z.string().optional() }),
+    result: z.object({
+        entry: meetingContextSchema,
+        clip: momentSchema.extend({ path: z.string() }),
+        created: z.boolean(),
+    }),
+    resultName: "{ entry: MeetingContext, clip: Moment & { path }, created }",
+    doc: "Saves a clip in the meeting's clips folder and lists it in Context. No tone or padding by default. Repeated saves of the same cut reuse its file and Context entry. Never starts playback.",
+    effect: "reversible",
 });
 
 const tonePreview = defineMethod({
@@ -1132,6 +1145,7 @@ export const meetingsApi = defineApi({
         journalRead,
         momentPlan,
         momentClip,
+        momentSave,
         tonePreview,
         tonePresets,
         meetingAudio,

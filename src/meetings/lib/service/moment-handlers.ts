@@ -9,6 +9,7 @@ import { cutTone, probeAudio } from "../audio";
 import { clipMoment, MomentError, openMoment } from "../moment";
 import type { MomentStateCode } from "../moment-schema";
 import { OpenedMeeting } from "../opened-meeting";
+import { persistClip } from "../saved-clip";
 import { resolveToneSound } from "../tone-sound";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
 import { type MeetingsCallContext, type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
@@ -128,6 +129,39 @@ export async function clipMomentCall(
 
         throw error;
     }
+}
+
+export async function saveMomentCall(
+    params: MeetingsParsedParams<"moment.save">,
+    context: MeetingsCallContext,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<MeetingsResult<"moment.save">> {
+    const clip = await clipMomentCall(
+        {
+            ...params,
+            padSec: params.padSec ?? 0,
+            padAfterSec: params.padAfterSec ?? 0,
+            tone: params.tone ?? false,
+            screen: false,
+        },
+        context,
+        store,
+        deps
+    );
+    const saved = await persistClip({
+        store,
+        record: recordOf(store, params.meeting),
+        clip,
+        title: params.title,
+        quote: params.quote,
+        signal: context.signal,
+        now: deps.now?.(),
+    });
+    if (saved.created) {
+        context.emit?.("meeting.changed", { meeting: clip.meeting, parts: ["show"] });
+    }
+    return saved;
 }
 
 /** A refusal of a Moment, with the reason a `moment.plan` would name; one issue title per reason. */

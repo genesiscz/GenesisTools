@@ -42,6 +42,33 @@ extension MeetingDetailModel {
 
     // MARK: Comments for the listening agent (R43, G60)
 
+    /// Save selected audio into the meeting, independently of the playback stack and its temporary cache.
+    func saveSelectionClip(_ selection: TranscriptSelection, length: Double, saved: @escaping () -> Void) {
+        guard !busy.contains("clip.save") else { return }
+        busy.insert("clip.save")
+        Task {
+            defer { busy.remove("clip.save") }
+            do {
+                let params = MeetingsAPI.MomentSave.Params(meeting: id, target: selection.target, lengthSec: length,
+                                                          quote: selection.quote)
+                let result = try await MeetingsService.write(MeetingsAPI.MomentSave.self, params, service: service,
+                    orRun: ["play", id, "--save", "--target", MomentPlayer.Engine.targetJSON(selection.target),
+                            "--length", String(length), "--quote", selection.quote, "--json"])
+                reloadRecord()
+                window?.loadOverview(quiet: true)
+                var actions: [StackedNotice.Action] = [.init("Show Context", symbol: "doc.on.doc") { [weak self] _ in self?.show(.context) }]
+                if result.created {
+                    actions.append(.init("Undo", symbol: "arrow.uturn.backward") { [weak self] _ in self?.removeContext(result.entry) })
+                }
+                notices.push(StackedNotice(text: result.created ? "Saved clip in Context" : "This clip is already in Context",
+                                           detail: result.entry.title, actions: actions))
+                saved()
+            } catch {
+                notices.push(.meetingsFailure(error) { [weak self] in self?.saveSelectionClip(selection, length: length, saved: saved) })
+            }
+        }
+    }
+
     /// The staged comments and the listeners, through the service (no command keeps them); listens for `comment.sent`
     /// so a send from another window shows here too.
     func loadComments() {

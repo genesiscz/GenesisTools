@@ -215,6 +215,23 @@ extension MeetingsAPI {
         typealias Result = MomentClip
     }
 
+    /// `moment.save`: a durable clip listed in the meeting's Context, with no playback.
+    enum MomentSave: MeetingsServiceMethod {
+        static let name = "moment.save"
+        struct Params: Codable, Equatable {
+            let meeting: String
+            let target: MomentTarget
+            var lengthSec: Double?
+            var title: String?
+            var quote: String?
+        }
+        struct Result: Decodable, Equatable {
+            let entry: MeetingContextRef
+            let clip: MomentClip
+            let created: Bool
+        }
+    }
+
     /// `tone.preview`: the tone alone as a WAV, for a sound picker's Play button.
     enum TonePreview: MeetingsServiceMethod {
         static let name = "tone.preview"

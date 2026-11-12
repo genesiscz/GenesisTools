@@ -238,6 +238,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         // The Moments load the engine and the OCR readers only when a call plays.
         "moment.plan": async (params) => (await moments()).planMomentCall(params, storeOf(), deps),
         "moment.clip": async (params, context) => (await moments()).clipMomentCall(params, context, storeOf(), deps),
+        "moment.save": async (params, context) => (await moments()).saveMomentCall(params, context, storeOf(), deps),
         "tone.preview": async (params) => (await moments()).previewTone(params, deps),
         "tone.presets": async () => (await moments()).listTonePresets(),
         "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),

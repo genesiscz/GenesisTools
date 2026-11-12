@@ -13,6 +13,7 @@ import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
 import { MeetingComments } from "../comments";
+import { persistClip } from "../saved-clip";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
 import fixture from "./__fixtures__/meetings-protocol.json";
@@ -777,6 +778,90 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(clipped.tone).toBeUndefined();
     });
 
+    test("saving a clip keeps audio in the meeting and concurrent repeats share one Context entry", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const params = {
+            meeting: REVIEW.id,
+            target: { kind: "range" as const, fromSec: 2, toSec: 4 },
+            padSec: 0,
+            padAfterSec: 0,
+            tone: false,
+            screen: false,
+        };
+        const cached = await client.call("moment.clip", params);
+        const bytes = await Bun.file(cached.path).arrayBuffer();
+        const saved = await Promise.all(
+            [1, 2].map(() => client.call("moment.save", { ...params, quote: "The selected words" }))
+        );
+        expect(saved[0]!.entry.id).toBe(saved[1]!.entry.id);
+        expect(saved.filter((result) => result.created)).toHaveLength(1);
+        expect(saved[0]!.entry).toMatchObject({
+            kind: "file",
+            ref: saved[0]!.clip.path,
+            note: "The selected words",
+            title: "Clip 00:02–00:04",
+        });
+        expect(saved[0]!.clip.path).toStartWith(`${store.folder(REVIEW.id)}/clips/`);
+        expect(await Bun.file(saved[0]!.clip.path).arrayBuffer()).toEqual(bytes);
+        expect(new MeetingStore(store.storage).read(REVIEW.id)!.context).toEqual([saved[0]!.entry]);
+        const { unlink } = await import("node:fs/promises");
+        await unlink(cached.path);
+        expect(await Bun.file(saved[0]!.clip.path).arrayBuffer()).toEqual(bytes);
+    });
+
+    test("a failed Context write removes only its newly copied clip", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const params = {
+            meeting: REVIEW.id,
+            target: { kind: "range" as const, fromSec: 6, toSec: 7 },
+            padSec: 0,
+            padAfterSec: 0,
+            tone: false,
+            screen: false,
+        };
+        const cached = await client.call("moment.clip", params);
+        const { basename } = await import("node:path");
+        const artifact = join(store.folder(REVIEW.id), "clips", basename(cached.path));
+        const update = store.update;
+        store.update = async () => {
+            throw new Error("simulated Context write failure");
+        };
+        try {
+            expect((await failure(client.call("moment.save", params))).message).toContain(
+                "simulated Context write failure"
+            );
+            expect(await Bun.file(artifact).exists()).toBe(false);
+            expect(await Bun.file(cached.path).exists()).toBe(true);
+            expect(new MeetingStore(store.storage).read(REVIEW.id)!.context).toEqual([]);
+        } finally {
+            store.update = update;
+        }
+    });
+
+    test("a save canceled while waiting for the record lock leaves no artifact or Context entry", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const clip = await client.call("moment.clip", {
+            meeting: REVIEW.id,
+            target: { kind: "range", fromSec: 5, toSec: 6 },
+        });
+        const controller = new AbortController();
+        const update = store.update;
+        store.update = async (...args) => {
+            controller.abort();
+            return update.apply(store, args);
+        };
+        try {
+            await expect(
+                persistClip({ store, record: store.read(REVIEW.id)!, clip, signal: controller.signal })
+            ).rejects.toThrow();
+            const { basename } = await import("node:path");
+            expect(await Bun.file(join(store.folder(REVIEW.id), "clips", basename(clip.path))).exists()).toBe(false);
+            expect(new MeetingStore(store.storage).read(REVIEW.id)!.context).toEqual([]);
+        } finally {
+            store.update = update;
+        }
+    });
+
     test("moment.plan answers the Moment, or the target's refusal; moment.clip cuts it into the cache once", async () => {
         const { client } = await ADAPTERS[kind]();
         const missing = await client.call("moment.plan", { meeting: REVIEW.id, target: { kind: "item", id: "i9" } });
@@ -1351,6 +1436,16 @@ describe("the Meetings service's connections", () => {
             method: "meeting.changed",
             params: { meeting: RETRO.id, parts: ["timeline"] },
         });
+        await client.call("moment.save", { meeting: REVIEW.id, target: { kind: "range", fromSec: 2, toSec: 4 } });
+        expect(await heard.next()).toEqual({
+            method: "meeting.changed",
+            params: { meeting: REVIEW.id, parts: ["show"] },
+        });
+        folder.raise(file(REVIEW.id, MEETING_FILE), file(RETRO.id, "frames", "0002.png"));
+        expect(await heard.next()).toEqual({
+            method: "meeting.changed",
+            params: { meeting: RETRO.id, parts: ["timeline"] },
+        });
         // A hand edit after it is outside again.
         handEdit(REVIEW.id);
         folder.raise(file(REVIEW.id, MEETING_FILE));
@@ -1626,6 +1721,7 @@ async function captureExamples(): Promise<Example[]> {
         { meeting: REVIEW.id, target: { kind: "time", atSec: 9 } },
         "Cut into the clip cache."
     );
+
     await ask(window, "meeting.audio", { meeting: REVIEW.id }, "One track: the window plays the file itself.");
     await ask(
         window,
@@ -1914,6 +2010,12 @@ async function captureExamples(): Promise<Example[]> {
         { role: "cli", protocol: 1, code: "ffffffffffff" },
         "Another checkout's code: code-mismatch; the CLI answers in its own process."
     );
+    await ask(
+        window,
+        "moment.save",
+        { meeting: REVIEW.id, target: { kind: "range", fromSec: 2, toSec: 4 }, quote: "Saved words" },
+        "Keep audio outside the temporary clip cache and publish its Context entry."
+    );
     return examples;
 }
 
@@ -1930,6 +2032,10 @@ function normalized(examples: Example[]): unknown {
             .replace(/"(path)":"[^"]*?(\/meetings-cache\/[^"]*?)-[0-9a-z]+\.wav"/g, '"$1":"<home>$2-<key>.wav"')
             .replace(/"path":"[^"]*\/upload\.ogg"/g, '"path":"<recording>"')
             .replace(/"path":"[^"]*\/meetings\/config\.json"/g, '"path":"<config>"')
+            .replace(
+                /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-[0-9a-z]+\.wav"/g,
+                '"$1":"<meetings>/$2-<key>.wav"'
+            )
             // A removed project's backup: under the sandbox home, named by the local time of the removal.
             .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
             .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"')
@@ -1958,6 +2064,10 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
                 examples: SafeJSON.parse(
                     SafeJSON.stringify(captured, { strict: true })
                         .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
+                        .replace(
+                            /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-[0-9a-z]+\.wav"/g,
+                            '"$1":"<meetings>/$2-<key>.wav"'
+                        )
                         .replace(
                             /"(path|folder)":"[^"\n]*\/(2026-11-03-1400-retro(?:\/frames\/screen\.png)?)"/g,
                             '"$1":"<meetings>/$2"'
