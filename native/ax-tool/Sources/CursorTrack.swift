@@ -8,9 +8,10 @@ import SnapshotSupport
 /// `capture --cursor-track <file>`: the pointer while the movie records, one JSON line per sample,
 /// `{"t": <ms since the movie's first frame>, "x": 0...1, "y": 0...1}` from the top left of the recorded rectangle, and
 /// `"click": "left" | "right"` on the sample where a button went down. An editor zooms on the clicks and follows the
-/// smoothed path (GenesisTools' recorder part, CursorTrack.swift). Sampled at 60 Hz on its own queue from the
-/// window server's pointer (`CGEvent(source: nil)`) and button state, which needs no Input Monitoring grant; a
-/// sample is written only when something changed, plus one every 0.5 s so a still pointer keeps its place.
+/// smoothed path (GenesisTools' recorder part, CursorTrack.swift). Positions are sampled at 60 Hz on their own queue.
+/// Mouse-down events are kept separately so a short click cannot fall between samples; button-state polling remains
+/// the fallback when a global mouse monitor is unavailable. A sample is written only when something changed, plus
+/// one every 0.5 s so a still pointer keeps its place.
 /// `t` is on the host clock the frames carry, so it is the movie time of the frames that show the sample; nothing is
 /// written before the movie has its first frame.
 ///
@@ -47,6 +48,9 @@ final class CursorTrackWriter {
     private var lastPointWidth: CGFloat?
     private var pendingKeys: [String] = []
     private var paused = false
+    private var stopped = false
+    private var mouseMonitor: Any?
+    private var capturesMouseEvents = false
 
     func setPaused(_ value: Bool) {
         queue.sync {
@@ -80,7 +84,7 @@ final class CursorTrackWriter {
         keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard !event.isARepeat, let label = Self.shortcutLabel(event) else { return }
             self?.queue.async {
-                guard let self, !self.paused else { return }
+                guard let self, !self.paused, !self.stopped else { return }
                 self.pendingKeys.append(label)
             }
         }
@@ -118,6 +122,16 @@ final class CursorTrackWriter {
     /// `movieStart` is the movie's first frame timestamp (host clock), nil until that frame came; it is read per sample.
     func start(movieStart: @escaping () -> CMTime?) {
         self.movieStart = movieStart
+        // Polling button state misses short presses, including synthetic HID clicks. Keep their own events.
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let point = event.cgEvent?.location else { return }
+            let button = event.type == .leftMouseDown ? "left" : "right"
+            let time = event.timestamp > 0
+                ? CMTime(seconds: event.timestamp, preferredTimescale: 1_000_000_000)
+                : CMClockGetTime(CMClockGetHostTimeClock())
+            self?.queue.async { [weak self] in self?.sample(click: button, point: point, time: time) }
+        }
+        capturesMouseEvents = mouseMonitor != nil
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .nanoseconds(16_666_667), leeway: .milliseconds(2))
         timer.setEventHandler { [weak self] in self?.sample() }
@@ -128,7 +142,10 @@ final class CursorTrackWriter {
     func stop() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+        mouseMonitor = nil
         queue.sync {
+            stopped = true
             timer?.cancel()
             timer = nil
             flush()
@@ -136,21 +153,24 @@ final class CursorTrackWriter {
         try? handle.close()
     }
 
-    private func sample() {
-        guard !paused, let origin = movieStart(), let point = CGEvent(source: nil)?.location else { return }
-        let now = CMClockGetTime(CMClockGetHostTimeClock())
+    private func sample(click eventClick: String? = nil, point eventPoint: CGPoint? = nil, time eventTime: CMTime? = nil) {
+        guard !paused, !stopped, let origin = movieStart(), let point = eventPoint ?? CGEvent(source: nil)?.location else { return }
+        let now = eventTime ?? CMClockGetTime(CMClockGetHostTimeClock())
         let geometry = geometry()
         let frame = geometry.rect
         guard let normalized = geometry.normalized(point) else { return }
-        let ms = movieTimeMs(of: now, movieStart: origin)
+        // The main-thread event callback can arrive after a position sample; keep the JSONL clock ordered.
+        let ms = max(last?.ms ?? 0, movieTimeMs(of: now, movieStart: origin))
         let x = Double(normalized.x)
         let y = Double(normalized.y)
-        let left = CGEventSource.buttonState(.combinedSessionState, button: .left)
-        let right = CGEventSource.buttonState(.combinedSessionState, button: .right)
-        var click: String?
-        if left && !leftDown { click = "left" } else if right && !rightDown { click = "right" }
-        leftDown = left
-        rightDown = right
+        var click = eventClick
+        if !capturesMouseEvents {
+            let left = CGEventSource.buttonState(.combinedSessionState, button: .left)
+            let right = CGEventSource.buttonState(.combinedSessionState, button: .right)
+            if left && !leftDown { click = "left" } else if right && !rightDown { click = "right" }
+            leftDown = left
+            rightDown = right
+        }
         if !geometry.acceptsClick(at: point) { click = nil }
         if shapesDir != nil {
             if shapeTick % 6 == 0 { readShape() }
