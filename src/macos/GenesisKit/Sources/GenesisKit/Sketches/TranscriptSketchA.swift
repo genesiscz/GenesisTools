@@ -177,9 +177,20 @@ struct TranscriptSketchAPaneBar: View {
     let actions: SessionDetailActions
     var leadingInset: CGFloat
     @Binding var showSidebar: Bool
+    @Environment(\.transcriptSubjectAbove) private var subjectAbove
 
     var body: some View {
         HStack(spacing: 14) {
+            if !subjectAbove {
+                Text(verbatim: info.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .instantTooltip(info.title)
+                    .contextMenu {
+                        Button("Copy title") { actions.copy(info.title) }
+                        Button("Copy session id") { actions.copy(info.sessionId) }
+                    }
+            }
             if let cwd = info.cwd, !cwd.isEmpty {
                 item("folder", (cwd as NSString).abbreviatingWithTildeInPath, tip: "\(cwd) · click to show it in Finder",
                      action: info.cwdExists ? actions.openInFinder : nil)

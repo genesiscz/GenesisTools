@@ -2384,13 +2384,8 @@ struct HubRootView: View {
                     .flexiblePane(neighbourOf: "hub.sidebar")
             } else if model.mode == .inbox {
                 // InboxMain with its ⌘F find (Hub/HubInboxFind.swift).
-                switch HubLayout.option("lists") {
-                case "a": ListsSketchA.InboxFocus(model: model, inbox: model.inbox).flexiblePane(neighbourOf: "hub.sidebar")
-                case "b": ListsSketchB.InboxTable(model: model, inbox: model.inbox).flexiblePane(neighbourOf: "hub.sidebar")
-                default:
                 InboxFindHost(model: model, inbox: model.inbox)
                     .flexiblePane(neighbourOf: "hub.sidebar")
-                }
             } else if model.mode == .timeline {
                 switch HubLayout.option("lists") {
                 case "a": ListsSketchA.ActivityRuns(model: model, timeline: model.timeline).flexiblePane(neighbourOf: "hub.sidebar")
@@ -2440,6 +2435,7 @@ struct HubRootView: View {
         .hubSurface(.content)
         // The window style, glass and General → Theme, for every surface above (Hub/HubStyle.swift).
         .modifier(HubStyleHost())
+        .environment(\.transcriptSubjectAbove, model.mode == .sessions)
         .preferredColorScheme(.dark)
         // Every stall and dropped-frame line in app-perf.log names this (GenesisKit Perf/PerfContext.swift).
         .task(id: perfArea) { PerfContext.area = perfArea }

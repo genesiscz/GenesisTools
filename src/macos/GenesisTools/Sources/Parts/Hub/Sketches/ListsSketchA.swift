@@ -719,6 +719,7 @@ extension ListsSketchA {
             let index = current.flatMap { entry in entries.firstIndex { $0.id == entry.id } }
             VStack(spacing: 0) {
                 header(entries, index: index)
+                PanelFindBarSlot()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         if let current {
@@ -743,16 +744,12 @@ extension ListsSketchA {
                 .focusable()
                 .focusEffectDisabled()
                 .focused($keys)
-                .onKeyPress(phases: .down) { press in
-                    guard !(NSApp.keyWindow?.firstResponder is NSTextView), press.modifiers.isEmpty else { return .ignored }
-                    switch press.characters {
-                    case "j": return move(entries, index: index, by: 1)
-                    case "k": return move(entries, index: index, by: -1)
-                    default: return .ignored
-                    }
-                }
+
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .modifier(ListVariantInboxKeys(inbox: inbox, entries: entries.map { ListVariantInboxEntry(session: $0.session, item: $0.item) }, selected: current?.item.id) { entry in
+                inbox.selectedID = entry.session.id; inbox.keyCardID = entry.item.id
+            })
         }
 
         private func move(_ entries: [Entry], index: Int?, by step: Int) -> KeyPress.Result {
@@ -830,9 +827,7 @@ extension ListsSketchA {
         @ViewBuilder
         private func card(_ entry: Entry) -> some View {
             if entry.item.isForm {
-                Text("This question is a form. Its fields stay in the current Inbox (the sketch draws decisions only).")
-                    .font(.system(size: 12))
-                    .foregroundColor(ReviewPalette.dim)
+                InboxFormCard(inbox: inbox, item: entry.item)
             } else {
                 InboxDecisionCard(model: model, inbox: inbox, session: entry.session, item: entry.item, keyed: keys)
                     .liveRow(selected: true)
@@ -969,6 +964,8 @@ extension ListsSketchA {
         @ObservedObject var timeline: HubTimelineModel
         @ObservedObject private var repos = RepoFactsStore.shared
         @State private var openRuns: Set<String> = []
+        @State private var find = PanelFindModel(scope: "timeline", title: "Activity")
+        @State private var searching = false
         @GenReduceMotion private var reduceMotion
         @AppStorage(HubActivityRows.allActionsKey, store: HubDefaults.store) private var allActions = false
         @AppStorage(HubActivityRows.commitPrefixKey, store: HubDefaults.store) private var commitPrefix = false
@@ -979,6 +976,10 @@ extension ListsSketchA {
             let runs = items.filter { if case .run = $0 { return true } else { return false } }.count
             VStack(spacing: 0) {
                 header(events: events.count, rows: items.count, runs: runs)
+                PanelFindBar(find: find)
+                if let failure = timeline.error {
+                    FailureInline(failure, form: .compact) { timeline.load(fresh: true) }
+                }
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         if events.isEmpty, timeline.loading {
@@ -1010,6 +1011,11 @@ extension ListsSketchA {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .safeAreaInset(edge: .bottom) { ListVariantActivityFooter(timeline: timeline) }
+            .onReceive(find.$isOpen) { searching = $0 }
+            .panelFind(find, revision: events.map(\.rowID).joined(separator: "|")) {
+                events.map { TimelineRowView.searchable($0, detail: timeline.details[$0.id], commitPrefix: commitPrefix) }
+            }
         }
 
         @ViewBuilder
@@ -1018,7 +1024,7 @@ extension ListsSketchA {
             case .event(let event):
                 eventRow(event, nested: false)
             case .run(let run):
-                let open = openRuns.contains(run.id)
+                let open = searching || openRuns.contains(run.id)
                 RunRow(run: run, open: open, commitPrefix: commitPrefix) {
                     GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
                         if open { openRuns.remove(run.id) } else { openRuns.insert(run.id) }
@@ -1047,6 +1053,8 @@ extension ListsSketchA {
                 commitPrefix: commitPrefix
             )
             .equatable()
+            .swrFlash(timeline.changed.contains(event.id), cornerRadius: 6)
+            .findRow(event.rowID)
             .padding(.leading, nested ? 34 : 0)
         }
 

@@ -1,5 +1,16 @@
 import SwiftUI
 
+private struct TranscriptSubjectAboveKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+public extension EnvironmentValues {
+    var transcriptSubjectAbove: Bool {
+        get { self[TranscriptSubjectAboveKey.self] }
+        set { self[TranscriptSubjectAboveKey.self] = newValue }
+    }
+}
+
 /// Hub UX wave 2, area "transcript" (C17, C18, C19, C1-later): what the two redesign options change in the shared
 /// session screen. HubLayout reads the saved choice, Classic by default, and a per-process
 /// `--sketch transcript=a|b|classic` overrides that choice. Option A lives in `TranscriptSketchA.swift`, option B

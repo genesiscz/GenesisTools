@@ -40,7 +40,7 @@ struct UsageSettingsSketchDaemonA: View {
                     ForEach(Array(status.tasks.enumerated()), id: \.element.id) { index, task in
                         if index > 0 { UsageSettingsSketchSeparatorA() }
                         UsageSketchDaemonRowA(
-                            task: task,
+                            task: task, store: store,
                             stats: store.stats(for: task.name),
                             running: store.runningNow.contains(task.name),
                             saving: store.savingTasks.contains(task.name),
@@ -80,6 +80,7 @@ struct UsageSettingsSketchDaemonA: View {
 @MainActor
 private struct UsageSketchDaemonRowA: View {
     let task: DaemonTaskConfig
+    let store: DaemonSettingsStore
     let stats: DaemonTaskStats?
     let running: Bool
     let saving: Bool
@@ -176,30 +177,11 @@ private struct UsageSketchDaemonRowA: View {
                 Text(verbatim: "\(Plural.count(stats.runs, "run")) in 24 hours: \(stats.ok) ok, \(stats.failed) failed, \(stats.timedOut) timed out (\(DaemonFormat.percent(stats.failureRate))). Typical \(DaemonFormat.duration(stats.p50Ms)), slow \(DaemonFormat.duration(stats.p90Ms)), longest \(DaemonFormat.duration(stats.maxMs)).")
                     .font(.system(size: 11.5))
                     .fixedSize(horizontal: false, vertical: true)
-                ForEach(stats.recentRuns.prefix(6)) { run in
-                    HStack(spacing: 10) {
-                        Circle().fill(DaemonFormat.status(run.status).color).frame(width: 6, height: 6)
-                        Text(SessionFormat.parseISO(run.startedAt).map { $0.formatted(date: .abbreviated, time: .shortened) } ?? run.startedAt)
-                            .font(.system(size: 11)).monospacedDigit()
-                            .frame(width: 130, alignment: .leading)
-                        Text(DaemonFormat.status(run.status).label).font(.system(size: 11))
-                            .frame(width: 80, alignment: .leading)
-                        Text(DaemonFormat.duration(run.durationMs)).font(.system(size: 11)).monospacedDigit()
-                            .foregroundStyle(.secondary)
-                        if let reason = run.reason {
-                            Text(reason).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .accessibilityElement(children: .combine)
-                }
+                DaemonRunList(runs: Array(stats.recentRuns.prefix(6)), store: store)
             } else {
                 Text("No run in the last 24 hours.").font(.system(size: 11.5)).foregroundStyle(.secondary)
             }
-            Text("Timeout \(DaemonFormat.duration(Double(task.timeoutMs))), priority \(task.priority), \(Plural.count(task.retries, "retry", "retries")). The schedule editor stays in the current page; this sketch does not draw it.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            DaemonTaskEditor(task: task, store: store)
         }
         .padding(.bottom, 8)
     }

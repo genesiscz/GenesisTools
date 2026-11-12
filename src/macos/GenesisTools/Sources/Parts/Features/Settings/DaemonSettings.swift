@@ -639,7 +639,7 @@ enum DaemonRetryTimeDraft {
 }
 
 @MainActor
-private struct DaemonTaskEditor: View {
+struct DaemonTaskEditor: View {
     let task: DaemonTaskConfig
     @ObservedObject var store: DaemonSettingsStore
     @State private var every = ""
@@ -821,7 +821,7 @@ private struct DaemonTaskEditor: View {
 
 /// The recent runs; a click opens the run's output under it, from its run log.
 @MainActor
-private struct DaemonRunList: View {
+struct DaemonRunList: View {
     let runs: [DaemonRun]
     @ObservedObject var store: DaemonSettingsStore
     @State private var openRun: String?

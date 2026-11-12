@@ -882,7 +882,8 @@ public struct SessionTranscriptList: View {
         // The host's tool filter narrows the chips' result (`filters`).
         let filtered = TranscriptBus.onlyTool(toolFilter, in: document.filtered(chips, query: appliedQuery))
         // `TranscriptSketch.foldsToolRuns`: true only under `--sketch transcript=a` (Sketches/TranscriptSketchA.swift).
-        let sections = verbosity == .minimal || TranscriptSketch.foldsToolRuns ? TranscriptDocument.folded(filtered) : filtered
+        let sections = verbosity == .minimal || TranscriptSketch.foldsToolRuns
+            ? TranscriptDocument.folded(filtered, keepsThinking: verbosity != .minimal) : filtered
         visible = sections
         noteArrivals(after: previousLast, intent: intent, documentChanged: documentChanged)
         let ids = sections.flatMap { $0.rows.filter(\.isPrompt).map(\.id) }

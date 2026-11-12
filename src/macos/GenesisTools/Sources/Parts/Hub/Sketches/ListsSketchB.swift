@@ -643,6 +643,7 @@ extension ListsSketchB {
             let open = pick.open.flatMap { id in shown.contains { $0.id == id } ? id : nil } ?? shown.first?.id
             VStack(spacing: 0) {
                 header(all: all, shown: shown.count)
+                PanelFindBarSlot()
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         if shown.isEmpty, inbox.loading {
@@ -675,6 +676,9 @@ extension ListsSketchB {
                 pick.project = nil
                 pick.open = id
             }
+            .modifier(ListVariantInboxKeys(inbox: inbox, entries: shown.map { ListVariantInboxEntry(session: $0.session, item: $0.item) }, selected: open) { entry in
+                inbox.selectedID = entry.session.id; inbox.keyCardID = entry.item.id; pick.open = entry.item.id
+            })
         }
 
         @ViewBuilder
@@ -688,9 +692,7 @@ extension ListsSketchB {
             if open {
                 VStack(alignment: .leading, spacing: 8) {
                     if entry.item.isForm {
-                        Text("This question is a form. Its fields stay in the current Inbox (the sketch draws decisions only).")
-                            .font(.system(size: 12))
-                            .foregroundColor(ReviewPalette.dim)
+                        InboxFormCard(inbox: inbox, item: entry.item)
                     } else {
                         InboxDecisionCard(model: model, inbox: inbox, session: entry.session, item: entry.item)
                             .liveRow(selected: true)
@@ -926,6 +928,8 @@ extension ListsSketchB {
         @ObservedObject var timeline: HubTimelineModel
         @ObservedObject private var repos = RepoFactsStore.shared
         @State private var allEvents: Set<String> = []
+        @State private var find = PanelFindModel(scope: "timeline", title: "Activity")
+        @State private var searching = false
         @State private var openGroups: Set<String> = []
         @GenReduceMotion private var reduceMotion
         @AppStorage(HubActivityRows.allActionsKey, store: HubDefaults.store) private var allActions = false
@@ -938,6 +942,10 @@ extension ListsSketchB {
             let digests = ListsSketchB.digests(events)
             VStack(spacing: 0) {
                 header(events: events.count, projects: digests.count)
+                PanelFindBar(find: find)
+                if let failure = timeline.error {
+                    FailureInline(failure, form: .compact) { timeline.load(fresh: true) }
+                }
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         if events.isEmpty, timeline.loading {
@@ -963,11 +971,16 @@ extension ListsSketchB {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .safeAreaInset(edge: .bottom) { ListVariantActivityFooter(timeline: timeline) }
+            .onReceive(find.$isOpen) { searching = $0 }
+            .panelFind(find, revision: events.map(\.rowID).joined(separator: "|")) {
+                events.map { TimelineRowView.searchable($0, detail: timeline.details[$0.id], commitPrefix: commitPrefix) }
+            }
         }
 
         @ViewBuilder
         private func section(_ digest: ProjectDigest) -> some View {
-            let showsAll = allEvents.contains(digest.name)
+            let showsAll = searching || allEvents.contains(digest.name)
             let shown = showsAll ? digest.events : Array(digest.events.prefix(Self.eventsShown))
             ForEach(shown, id: \.rowID) { event in
                 eventRow(event, nested: false)
@@ -987,7 +1000,7 @@ extension ListsSketchB {
                 .padding(.vertical, 3)
             }
             ForEach(digest.commitGroups) { group in
-                let open = openGroups.contains(group.id)
+                let open = searching || openGroups.contains(group.id)
                 CommitGroupRow(group: group, open: open, commitPrefix: commitPrefix) {
                     GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
                         if open { openGroups.remove(group.id) } else { openGroups.insert(group.id) }
@@ -1018,6 +1031,8 @@ extension ListsSketchB {
                 commitPrefix: commitPrefix
             )
             .equatable()
+            .swrFlash(timeline.changed.contains(event.id), cornerRadius: 6)
+            .findRow(event.rowID)
             .padding(.leading, nested ? 44 : 10)
             .padding(.trailing, 10)
         }

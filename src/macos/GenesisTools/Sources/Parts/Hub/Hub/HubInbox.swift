@@ -3085,7 +3085,7 @@ private struct QaAttachedImage: Identifiable {
     }
 }
 
-private struct InboxFormCard: View {
+struct InboxFormCard: View {
     @ObservedObject var inbox: HubInboxModel
     let item: InboxItem
     @State private var picked: [String: Set<String>] = [:]
