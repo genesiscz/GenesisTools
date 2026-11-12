@@ -1041,7 +1041,12 @@ const SimulateShape = z.strictObject({
     expect: z.unknown().optional(),
 });
 
-function parseStep(input: unknown, index: number, ctx: ParseContext, path: readonly PathSegment[]): Step | null {
+function parseScenarioStep(
+    input: unknown,
+    index: number,
+    ctx: ParseContext,
+    path: readonly PathSegment[]
+): Step | null {
     const stepId = `s${index + 1}`;
     if (!isRecord(input)) {
         return issue(ctx, path, "a step is an object");
@@ -1205,7 +1210,7 @@ function parseOne(
 
     const steps: Step[] = [];
     raw.steps.forEach((step, i) => {
-        const parsed = parseStep(step, i, ctx, [...path, "steps", i]);
+        const parsed = parseScenarioStep(step, i, ctx, [...path, "steps", i]);
         if (parsed) {
             steps.push(parsed);
         }

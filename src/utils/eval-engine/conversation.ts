@@ -140,7 +140,7 @@ export interface ConversationInput<TResolved> {
     setup: TResolved;
 }
 
-function transcriptOf(turns: readonly TurnRecord[]): TranscriptLine[] {
+function evaluationTranscript(turns: readonly TurnRecord[]): TranscriptLine[] {
     return turns.flatMap((turn): TranscriptLine[] => [
         { role: "user", text: turn.user.text, toolCalls: [] },
         { role: "assistant", text: turn.reply, toolCalls: turn.toolCalls },
@@ -155,7 +155,7 @@ function turnScope(turn: TurnRecord, turns: readonly TurnRecord[]): Scope {
         toolEvidence: turn.toolEvidence,
         replies: [turn.reply],
         signals: turn.signals,
-        transcript: transcriptOf(turns.slice(0, turn.turn)),
+        transcript: evaluationTranscript(turns.slice(0, turn.turn)),
     };
 }
 
@@ -168,7 +168,7 @@ function conversationScope(turns: readonly TurnRecord[]): Scope {
         toolEvidence: turns.some((t) => t.toolEvidence === "unavailable") ? "unavailable" : "observed",
         replies: turns.map((t) => t.reply),
         signals: last ? last.signals : {},
-        transcript: transcriptOf(turns),
+        transcript: evaluationTranscript(turns),
     };
 }
 
@@ -333,7 +333,7 @@ export async function runConversation<TResolved, TSignals, THandle>(
         for (let i = 0; i < step.simulate.maxTurns; i++) {
             const completion = await deps.limited(model.limitKey, () =>
                 complete({
-                    ...buildSimulatorRequest(step.simulate, transcriptOf(turns), model.id),
+                    ...buildSimulatorRequest(step.simulate, evaluationTranscript(turns), model.id),
                     signal: deps.signal,
                 })
             );
