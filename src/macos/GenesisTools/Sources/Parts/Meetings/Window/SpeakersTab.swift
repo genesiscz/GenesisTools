@@ -76,7 +76,8 @@ struct SpeakersTab: View {
                                     names: names,
                                     playSpan: { from, to in playRange(from, to) },
                                     zoom: { from, to in zoom(from, to) },
-                                    openQuestion: { ids in if let first = ids.first { detail.reveal(row: first) } })
+                                    openQuestion: { ids in if let first = ids.first { detail.reveal(row: first) } },
+                                    assign: { stretch, person in detail.startAssign(stretch, to: person, email: nil) })
     }
 
     /// The meeting's length for the lanes: the recording's, else the overview's, else the last line's time.

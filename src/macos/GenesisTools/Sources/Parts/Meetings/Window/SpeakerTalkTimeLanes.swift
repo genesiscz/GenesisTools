@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Talk time per speaker (R20, R21, R40, G-SPK-6, G-SPK-7, G-SPK-8)
 //
@@ -133,6 +134,8 @@ struct SpeakerTalkTimeLanes: View {
     let zoom: (Double, Double) -> Void
     /// A click on a banner: the question ids under it.
     var openQuestion: ([String]) -> Void = { _ in }
+    /// A stretch dropped on another speaker's lane; the owner applies it through the assignment journal.
+    var assign: ((DecisionAction.Stretch, String) -> Void)? = nil
 
     static let nameWidth: CGFloat = 170
     /// "50 % · 1 h 02 min" in 11 pt monospaced digits on one line (92 pt wrapped it in two).
@@ -148,6 +151,10 @@ struct SpeakerTalkTimeLanes: View {
     static let rulerEndRoom: CGFloat = 80
 
     @State private var compact = false
+    @State private var dragOwner = UUID()
+    @State private var hovered: SpeakerLaneDrag?
+    @State private var dropTarget: String?
+    private static let dragType = UTType(exportedAs: "tools.genesis.meetings.speaker-stretch")
 
     var body: some View {
         if !timed {
@@ -176,10 +183,34 @@ struct SpeakerTalkTimeLanes: View {
                             .lineLimit(1).minimumScaleFactor(0.8)
                     }
                     .frame(height: Self.laneHeight)
+                    .overlay {
+                        if dropTarget == speaker.label {
+                            RoundedRectangle(cornerRadius: 5).strokeBorder(Color.accentColor, lineWidth: 2)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .onDrop(of: [Self.dragType], isTargeted: Binding(
+                        get: { dropTarget == speaker.label },
+                        set: { if $0 { dropTarget = speaker.label } else if dropTarget == speaker.label { dropTarget = nil } }
+                    )) { providers in receive(providers, on: speaker) }
                     .accessibilityElement(children: .ignore)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("meetings.lane.\(speaker.label)")
                     .accessibilityLabel(accessibilityText(speaker))
+                    .accessibilityAction {
+                        if let first = speaker.talkSpans.first { playSpan(first.fromSec, first.toSec) }
+                    }
                     .accessibilityAction(named: "Play the first stretch") {
                         if let first = speaker.talkSpans.first { playSpan(first.fromSec, first.toSec) }
+                    }
+                    .accessibilityActions {
+                        if let assign, let first = speaker.talkSpans.first {
+                            ForEach(sortedSpeakers.filter { $0.label != speaker.label }, id: \.label) { target in
+                                Button("Assign first stretch to \(displayName(target))") {
+                                    assign(.init(label: speaker.label, fromSec: first.fromSec, toSec: first.toSec), displayName(target))
+                                }
+                            }
+                        }
                     }
                 }
                 row(name: EmptyView()) { _ in ruler.frameProbe("meetings.lanes.ruler") } share: { EmptyView() }
@@ -250,7 +281,51 @@ struct SpeakerTalkTimeLanes: View {
             guard let block = TalkTimeLayout.block(at: location.x, in: blocks) else { return }
             if block.isJoined { zoom(block.fromSec, block.toSec) } else { playSpan(block.fromSec, block.toSec) }
         }
-        .instantTooltip("A click plays one stretch; a joined block (with ticks) zooms the timeline to it")
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let location):
+                let block = TalkTimeLayout.block(at: location.x, in: blocks)
+                let next = block.map { SpeakerLaneDrag(owner: dragOwner, label: speaker.label, fromSec: $0.fromSec, toSec: $0.toSec) }
+                if hovered != next { hovered = next }
+            case .ended:
+                if hovered?.label == speaker.label { hovered = nil }
+            }
+        }
+        .onDrag {
+            let provider = NSItemProvider()
+            guard assign != nil, let hovered, hovered.label == speaker.label,
+                  let data = try? JSONEncoder().encode(hovered) else { return provider }
+            provider.registerDataRepresentation(forTypeIdentifier: Self.dragType.identifier, visibility: .ownProcess) { completion in
+                completion(data, nil)
+                return nil
+            }
+            return provider
+        } preview: {
+            if let hovered, hovered.label == speaker.label {
+                Label("\(displayName(speaker)) · \(MeetingsFormat.clock(hovered.fromSec))–\(MeetingsFormat.clock(hovered.toSec))",
+                      systemImage: "waveform").padding(8)
+            }
+        }
+        .instantTooltip(assign == nil ? "A click plays one stretch; a joined block (with ticks) zooms the timeline to it"
+                           : "Click to play or zoom. Drag a stretch to another speaker's lane to assign it.")
+    }
+
+    private func receive(_ providers: [NSItemProvider], on target: MeetingsAPI.MeetingSpeakers.Speaker) -> Bool {
+        guard let assign, let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(Self.dragType.identifier) }) else { return false }
+        Task { @MainActor in
+            defer { dropTarget = nil }
+            let data: Data? = await withCheckedContinuation { continuation in
+                provider.loadDataRepresentation(forTypeIdentifier: Self.dragType.identifier) { data, _ in
+                    continuation.resume(returning: data)
+                }
+            }
+            guard let data, let drag = try? JSONDecoder().decode(SpeakerLaneDrag.self, from: data),
+                  let stretch = drag.stretch(owner: dragOwner, target: target.label, speakers: speakers) else { return }
+            let person = displayName(target)
+            guard let source = speakers.first(where: { $0.label == drag.label }), displayName(source) != person else { return }
+            assign(stretch, person)
+        }
+        return true
     }
 
     private func bannerLane(width: CGFloat) -> some View {

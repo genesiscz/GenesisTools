@@ -304,6 +304,26 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     // MARK: Talk-time lanes
 
+    func testSpeakerDragRoundTripsAndRejectsForeignOrStaleStretches() throws {
+        let speakers = Self.speakers()
+        let source = speakers[0], target = speakers[1]
+        let first = try XCTUnwrap(source.talkSpans.first), last = try XCTUnwrap(source.talkSpans.last)
+        let owner = UUID()
+        let drag = SpeakerLaneDrag(owner: owner, label: source.label, fromSec: first.fromSec, toSec: last.toSec)
+        let decoded = try JSONDecoder().decode(SpeakerLaneDrag.self, from: JSONEncoder().encode(drag))
+        XCTAssertEqual(decoded, drag)
+        XCTAssertEqual(drag.stretch(owner: owner, target: target.label, speakers: speakers),
+                       .init(label: source.label, fromSec: first.fromSec, toSec: last.toSec))
+        XCTAssertNil(drag.stretch(owner: UUID(), target: target.label, speakers: speakers))
+        XCTAssertNil(drag.stretch(owner: owner, target: source.label, speakers: speakers))
+        XCTAssertNil(drag.stretch(owner: owner, target: "missing", speakers: speakers))
+        XCTAssertNil(drag.stretch(owner: owner, target: target.label, speakers: [target]))
+        XCTAssertNil(SpeakerLaneDrag(owner: owner, label: source.label, fromSec: first.fromSec + 1, toSec: last.toSec)
+            .stretch(owner: owner, target: target.label, speakers: speakers))
+        XCTAssertNil(SpeakerLaneDrag(owner: owner, label: source.label, fromSec: .nan, toSec: last.toSec)
+            .stretch(owner: owner, target: target.label, speakers: speakers))
+    }
+
     func testThinSpansJoinAndKeepTheirTurnTicks() {
         let spans: [MeetingsAPI.MeetingSpeakers.Span] = [.init(fromSec: 0, toSec: 1, turns: 1), .init(fromSec: 2, toSec: 3, turns: 1),
                                                         .init(fromSec: 500, toSec: 700, turns: 2)]

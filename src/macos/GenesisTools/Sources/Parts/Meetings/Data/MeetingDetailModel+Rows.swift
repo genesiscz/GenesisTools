@@ -632,11 +632,13 @@ extension MeetingDetailModel {
                 try Task.checkCancellation()
             }
         }
-        guard let items, !items.isEmpty else {
-            throw MeetingsCLI.Failure(sentence: "This Undo needs the Meetings service, and it does not answer yet. Try again in a moment.",
-                                      detail: "reopen --token needs the items")
+        var action = DecisionAction(kind: "revert")
+        action.token = token
+        action.items = items
+        guard let args = journalCommand(meeting: meeting, action: action, reason: nil) else {
+            throw MeetingsCLI.Failure(sentence: "The Undo could not be encoded.", detail: "decision.revert \(token)")
         }
-        return try await decodedDecision(["reopen", meeting] + items + ["--token", token, "--json"])
+        return try await decodedDecision(args)
     }
 
     /// The command of a decision the CLI makes, or nil.
