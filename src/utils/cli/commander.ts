@@ -136,12 +136,18 @@ export interface RunToolOpts {
      * real CLI run: process.argv is not touched.
      */
     rewriteArgs?: (args: string[]) => string[];
-    /** Formats an action failure; undefined keeps the standard error report. */
+    /**
+     * The tool's own words for an action error (a setup guide, a hidden secret, a shorter line). Return undefined to
+     * keep the default `ERROR: <message>` report. A formatter that throws falls back to the default report.
+     */
     formatError?: (error: unknown) => ToolErrorReport | undefined;
 }
 
+/** What a tool's `formatError` prints instead of the default report. */
 export interface ToolErrorReport {
+    /** Printed to stderr as is: no "ERROR: " prefix is added. */
     message: string;
+    /** Defaults to 1. */
     exitCode?: number;
 }
 
@@ -222,10 +228,12 @@ export function reportUnhandledToolError(error: unknown): void {
 
 function reportToolError(error: unknown, formatError: RunToolOpts["formatError"]): void {
     let report: ToolErrorReport | undefined;
+
     try {
         report = formatError?.(error);
     } catch (formatterError) {
         logger.debug({ err: formatterError }, "formatError threw; using the default report");
+        report = undefined;
     }
 
     if (!report) {
