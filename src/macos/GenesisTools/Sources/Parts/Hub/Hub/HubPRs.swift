@@ -365,6 +365,9 @@ final class PRsModel: ObservableObject {
     @Published private(set) var linkedRange: PRLinkedRange?
     /// The parent or local-commit lookup of the last link: an older link's answer sets no scope or notice.
     private var rangeLookup: UUID?
+    /// The local-commit lookup (`pickLocalCommits`) and the link it answers. It reads the checkout against the head the
+    /// review showed when it began, so a head move drops it and the link is asked again (`dropLocalLookup`).
+    private var localLookup: (lookup: UUID, pick: PRCommitPick)?
     /// What a link asked of a PR and could not get (its commit is not in the PR), in that PR's header until
     /// dismissed or another PR opens. Not in `errors`: every list load replaces those.
     let notices = NoticeStackModel()
@@ -894,13 +897,31 @@ final class PRsModel: ObservableObject {
             } else {
                 span.end("not in this checkout's PR line; the forge decides")
             }
-            guard pendingCommit == pending, let shown = selected, pending.ref.matches(shown) else { return }
-            if reviewPRID == shown.id, let review, review.home.path == repo {
-                pickPendingCommit()
-            } else {
-                showDiff(shown)
+            guard let shown = selected else { return }
+            switch Self.linkLookupFollowUp(pickStillPending: pendingCommit == pending, linkNamesSelected: pending.ref.matches(shown),
+                                           reviewDeferred: deferredReview == shown.id,
+                                           reviewOnScreen: reviewPRID == shown.id && review?.home.path == repo) {
+            case .nothing: return
+            case .pickCommit: pickPendingCommit()
+            case .buildReview: showDiff(shown)
             }
         }
+    }
+
+    /// What the checkout's answer about a link's commits does once it lands (`lookUpLinkLocally`).
+    enum LinkLookupFollowUp: Equatable {
+        case nothing, pickCommit, buildReview
+    }
+
+    /// The answer acts only while the link names the PR on screen. A pick still pending selects its commit in the review on
+    /// screen, or builds the review. A pick that went meanwhile (a failed detail, `detailFailed`) still builds a review
+    /// that `showReview` deferred for this answer: without it the PR showed its overview and no diff until a list
+    /// reload (2026-11-10, PR #756 review).
+    nonisolated static func linkLookupFollowUp(pickStillPending: Bool, linkNamesSelected: Bool, reviewDeferred: Bool,
+                                               reviewOnScreen: Bool) -> LinkLookupFollowUp {
+        guard linkNamesSelected else { return .nothing }
+        guard pickStillPending else { return reviewDeferred ? .buildReview : .nothing }
+        return reviewOnScreen ? .pickCommit : .buildReview
     }
 
     /// The diff of a link's commits read from the checkout: one commit; or a range from the commit before its first one
@@ -941,7 +962,7 @@ final class PRsModel: ObservableObject {
         }
         let pushed = Set(commits.map(\.sha))
         let bases = [details[shown.id]?.baseSha, fetchedHead(shown)?.base, "origin/\(shown.baseBranch)"].compactMap { $0 }
-        let lookup = beginRangeLookup()
+        let lookup = beginLocalLookup(pending)
         Task.detached(priority: .userInitiated) { [weak self] in
             let found = HubLocalCommits.resolve(ends: ends, repo: repo, head: head, bases: bases, pushed: pushed)
             let rewritten: HubLocalCommits.Rewritten?
@@ -1043,9 +1064,30 @@ final class PRsModel: ObservableObject {
     }
 
     func finishRangeLookup(_ lookup: UUID, apply: () -> Void) {
+        if localLookup?.lookup == lookup { localLookup = nil }
         guard rangeLookup == lookup else { return }
         rangeLookup = nil
         apply()
+    }
+
+    /// `beginRangeLookup` for the local-commit lookup of `pick` (`pickLocalCommits`), which clears the pick while git
+    /// runs: the lookup keeps it, so a head move can ask again (`dropLocalLookup`).
+    func beginLocalLookup(_ pick: PRCommitPick) -> UUID {
+        let lookup = beginRangeLookup()
+        localLookup = (lookup, pick)
+        return lookup
+    }
+
+    /// The review of `pr` moves to a new head in place (`moveHead`), so the same review would accept a local-commit
+    /// lookup asked against the old head, and its answer would set a scope or notice for a head no longer shown. That
+    /// lookup is dropped and its link is pending again, so `pickPendingCommit` asks against the new head (2026-11-10, PR
+    /// #756 review). A parent lookup of a link's range stays: that range does not depend on the head.
+    func dropLocalLookup(movingTo pr: HubPR) {
+        guard let asked = localLookup else { return }
+        localLookup = nil
+        guard asked.lookup == rangeLookup, asked.pick.ref.matches(pr) else { return }
+        rangeLookup = nil
+        if pendingCommit == nil { pendingCommit = asked.pick }
     }
 
     /// A link's `commit=<from>..<to>`: those commits of the PR, both ends included, in either order.
@@ -1479,6 +1521,7 @@ final class PRsModel: ObservableObject {
     /// parses again only the files whose text changed (`ReviewModel.follow`). A commit, a range or a compare on screen
     /// stays, since its diff does not depend on the head, and a pending link picks its own (`pickPendingCommit`).
     private func moveHead(of current: ReviewModel, to pr: HubPR, fetch: HubPRFetch?) {
+        dropLocalLookup(movingTo: pr)
         let whole = Self.showsWholePR(current.scope, pr: pr, head: current.remoteHead?.sha ?? reviewHeadSha ?? "HEAD")
         let linked = pendingCommit.map { $0.ref.matches(pr) } ?? false
         let follows = whole && !linked
