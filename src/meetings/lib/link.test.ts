@@ -1,21 +1,25 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
     appendFileSync,
     chmodSync,
     existsSync,
     mkdirSync,
+    mkdtempSync,
     readdirSync,
     readFileSync,
+    realpathSync,
     statSync,
     writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, sep } from "node:path";
 import type { LinkGate } from "@genesiscz/utils/browser-router/link-gate";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import * as rm from "@genesiscz/utils/rm";
 import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { ANSWER_LOG_FILE, appendAnswerEvent, readAnswerEvents, roundRunning } from "./answer-log";
@@ -443,6 +447,23 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
 });
 
 describe("duplicate: a second record of one meeting", () => {
+    let previousHome: string;
+    let fixtureHome: string;
+    let restoreDrainer: (() => void) | undefined;
+
+    beforeEach(() => {
+        previousHome = env.tools.getHome();
+        fixtureHome = mkdtempSync(join(tmpdir(), "meetings-duplicate-"));
+        env.testing.set("GENESIS_TOOLS_HOME", fixtureHome);
+        rm.saveRmConfig({ ...rm.defaultRmConfig(), trashRoot: join(fixtureHome, "GenesisTools", "rm") });
+        const drainer = spyOn(rm, "kickDrainer").mockImplementation(() => {});
+        restoreDrainer = () => drainer.mockRestore();
+    });
+
+    afterEach(() => {
+        restoreDrainer?.();
+        env.testing.set("GENESIS_TOOLS_HOME", previousHome);
+    });
     test("a killed copy stays unpublished and the next Duplicate reclaims it before retrying", async () => {
         stores += 1;
         const namespace = `meetings-duplicate-crash-${process.pid}-${stores}`;
@@ -547,6 +568,18 @@ describe("duplicate: a second record of one meeting", () => {
             await expect(duplicateMeeting({ store, ref: original.id })).rejects.toThrow("ENOSPC");
             expect(visibleDuringCopy).toEqual([original.id]);
             expect(existsSync(unfinishedFolder)).toBe(false);
+            const discarded = rm
+                .listBatches()
+                .flatMap((batch) => batch.items)
+                .filter((item) => item.original === unfinishedFolder);
+            expect(discarded.length).toBeGreaterThan(0);
+            const privateTrash = join(realpathSync(fixtureHome), "GenesisTools", "rm") + sep;
+            for (const item of discarded) {
+                expect(item.stored.startsWith(privateTrash)).toBe(true);
+            }
+            const partial = discarded.find((item) => existsSync(join(item.stored, "capture.txt")));
+            expect(partial).toBeDefined();
+            expect(readFileSync(join(partial!.stored, "capture.txt"), "utf8")).toBe("partial copy");
             expect(new MeetingStore(store.storage).list().map((record) => record.id)).toEqual([original.id]);
             expect(readFileSync(store.path(original.id), "utf8")).toBe(recordBefore);
             expect(readFileSync(join(store.folder(original.id), "capture.txt"), "utf8")).toBe("original bytes");
