@@ -8,6 +8,53 @@ import XCTest
 /// footnote. Without rows (a settings change, an older CLI): who asked, the first lines, and the rest folded into
 /// Details, so a long request never grows the window past the screen.
 final class RmApproveTests: XCTestCase {
+    @MainActor
+    func testMeasurementBurstRebuildsOnceAndEOFFlushesTheLastFacts() {
+        let items = (0..<1_000).map { RmApproveItem(path: "/w/frame-\($0).png", kind: "file", bytes: nil,
+                                                  empty: nil, storedAt: nil, reason: "Review", measuring: true) }
+        var params = request(items)
+        var scheduled: [@MainActor () -> Void] = []
+        var deliveries = 0
+        var ends = 0
+        let buffer = RmApproveUpdateBuffer(deliver: { updates, ended in
+            deliveries += 1
+            params = params.applying(updates)
+            if ended {
+                ends += 1
+                params = params.endingUpdates()
+            }
+        }, schedule: { scheduled.append($0) })
+        for index in items.indices {
+            buffer.receive(RmApproveItemUpdate(path: items[index].path, bytes: Int64(index), measuring: false))
+        }
+        buffer.finish()
+        XCTAssertEqual(scheduled.count, 1)
+        XCTAssertEqual(deliveries, 0)
+        scheduled.removeFirst()()
+        XCTAssertEqual(deliveries, 1)
+        XCTAssertEqual(ends, 1)
+        XCTAssertEqual(params.request?.items.map(\.bytes), items.indices.map { Int64($0) })
+        XCTAssertTrue(params.request?.items.allSatisfy { $0.measuring == nil } == true)
+        buffer.finish()
+        XCTAssertTrue(scheduled.isEmpty)
+    }
+
+    func testBatchUpdatesKeepSeparateCopiesAndAllPartialFields() {
+        let items = [
+            RmApproveItem(path: "/w/a", kind: "file", bytes: nil, empty: nil, storedAt: "/aside/a", reason: "r"),
+            RmApproveItem(path: "/w/a", kind: "file", bytes: nil, empty: nil, storedAt: "/aside/b", reason: "r"),
+        ]
+        let updated = request(items).applying([
+            RmApproveItemUpdate(path: "/w/a", storedAt: "/aside/a", bytes: 10),
+            RmApproveItemUpdate(path: "/w/a", storedAt: "/aside/a", git: RmApproveGit(state: "untracked")),
+            RmApproveItemUpdate(path: "/w/a", storedAt: "/aside/b", bytes: 20),
+            RmApproveItemUpdate(path: "/unknown", bytes: 99),
+        ])
+        XCTAssertEqual(updated.request?.items.map(\.bytes), [10, 20])
+        XCTAssertEqual(updated.request?.items.first?.git?.state, "untracked")
+        XCTAssertNil(updated.request?.items.last?.git)
+    }
+
     private func request(_ items: [RmApproveItem], asker: RmApproveAsker? = RmApproveAsker(agent: "Claude Code", session: "shop-admin", project: "shop-web", branch: "develop"),
                          kind: String = "delete", grace: Int? = 60) -> RmApproveParams {
         RmApproveParams(
