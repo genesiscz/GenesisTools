@@ -549,8 +549,10 @@ private struct DiffColumn: View {
 
     var body: some View {
         Group {
-            if let report = review.errorReport {
-                FailureInline(report, form: .pane) { review.reload() }
+            if let error = review.error {
+                Text(error)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(ReviewPalette.removed)
                     .padding(12)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else if review.files.isEmpty && !review.loading {
