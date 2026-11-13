@@ -150,6 +150,34 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(model.frame?.file, "unknown")
     }
 
+    /// In Auto a display keeps showing its last frame after focus moved to it, though that frame was taken while
+    /// another display had focus, so it is not in the Auto sequence. Previous and Next then step by time.
+    func testAutoDisplayStepsFromAFrameTakenBeforeFocusMovedToItsDisplay() throws {
+        func frame(_ file: String, _ time: Double, _ display: Int, _ focus: Int) -> TimelineFrame {
+            var value = TimelineFrame(file: file, path: "/fixture/\(file)", at: "2026-11-01T10:00:00Z", meetingSec: time,
+                                      displayId: display, width: 20, height: 10, lineCount: 0, changed: [], lines: [])
+            value.focusedDisplayId = focus
+            return value
+        }
+        let frames = [frame("one-a", 5, 1, 1), frame("two-kept", 10, 2, 1), frame("one-b", 20, 1, 2), frame("two-b", 30, 2, 2)]
+        let suite = "meetings.focus.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let timeline = ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: frames)
+        let model = FrameReviewModel(meeting: "m", file: "one-a", at: 5, player: nil, defaults: defaults, timeline: timeline)
+        model.selectTime(25)
+        XCTAssertEqual(model.frame?.file, "two-kept", "focus moved to display 2 at 20 s, whose last frame is from 10 s")
+        XCTAssertEqual(model.stepTarget(1)?.file, "two-b", "Next is enabled")
+        XCTAssertEqual(model.stepTarget(-1)?.file, "one-a", "Previous is enabled")
+        model.step(1, seek: false)
+        XCTAssertEqual(model.frame?.file, "two-b")
+        XCTAssertNil(model.stepTarget(1), "the last frame: Next is disabled")
+        model.selectTime(25)
+        model.step(-1, seek: false)
+        XCTAssertEqual(model.frame?.file, "one-a")
+        XCTAssertNil(model.stepTarget(-1), "the first frame: Previous is disabled")
+    }
+
     func testFrameReviewGroupsRepeatedOCRAndSearchesBothSources() async throws {
         func frame(_ file: String, _ time: Double, _ text: String, _ display: Int = 1) -> TimelineFrame {
             let box = OcrBox(x: 10, y: 20, width: 120, height: 30, text: text, confidence: 1)

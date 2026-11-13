@@ -251,12 +251,12 @@ private struct FrameReviewTransport: View {
         HStack(spacing: 10) {
             Button { model.step(-1, seek: seek) } label: { Image(systemName: "backward.end.fill") }
                 .help("Previous frame").accessibilityLabel("Previous frame").accessibilityIdentifier("meetings.frame-review.previous")
-                .disabled(model.frame == nil || model.frame?.file == model.frames.first?.file)
+                .disabled(model.stepTarget(-1) == nil)
             Button { model.playPause() } label: { Image(systemName: model.isPlaying ? "pause.fill" : "play.fill") }
                 .help("Play or pause at this time").accessibilityLabel(model.isPlaying ? "Pause playback" : "Play from this frame")
             Button { model.step(1, seek: seek) } label: { Image(systemName: "forward.end.fill") }
                 .help("Next frame").accessibilityLabel("Next frame").accessibilityIdentifier("meetings.frame-review.next")
-                .disabled(model.frame == nil || model.frame?.file == model.frames.last?.file)
+                .disabled(model.stepTarget(1) == nil)
             Text(MeetingsFormat.clock(model.time)).font(.system(.body, design: .monospaced)).frame(width: 75)
             Slider(value: Binding(get: { model.time }, set: { model.scrub(to: $0, seek: seek) }), in: 0...model.duration,
                    onEditingChanged: { editing in if editing { model.beginScrub() } else { model.endScrub(seek: seek) } })
