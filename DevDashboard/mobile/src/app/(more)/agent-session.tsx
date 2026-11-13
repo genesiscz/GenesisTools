@@ -60,10 +60,25 @@ const Turn = memo(function Turn({ turn }: { turn: AgentTranscriptTurnDto }) {
 const turnKey = (turn: AgentTranscriptTurnDto, index: number) => turn.id || String(index);
 const renderTurn = ({ item }: { item: AgentTranscriptTurnDto }) => <Turn turn={item} />;
 
-function StopButton({ session }: { session: AgentBoardSession }) {
+/**
+ * A stop's answer. The screen holds it, not the Stop button: a stopped session leaves the refetched board, which
+ * unmounts the header and its button, and the confirmation must outlive that.
+ */
+function StopReceipt({ receipt }: { receipt: AgentStopReceiptDto }) {
     const c = useThemeColors();
-    const [receipt, setReceipt] = useState<AgentStopReceiptDto | null>(null);
-    const stop = useStopSession(setReceipt);
+
+    return (
+        <Text testID="stop-receipt" className="px-4 pt-3" style={{ color: receipt.stopped ? c.accent : c.danger, fontSize: 12 }}>
+            {receipt.stopped ? `Stopped (${receipt.signal}).` : `Not stopped: ${receipt.reason ?? "unknown"}`}
+        </Text>
+    );
+}
+
+type OnStopReceipt = (receipt: AgentStopReceiptDto) => void;
+
+function StopButton({ session, onReceipt }: { session: AgentBoardSession; onReceipt: OnStopReceipt }) {
+    const c = useThemeColors();
+    const stop = useStopSession(onReceipt);
     const pid = session.pid;
 
     // The destructive confirmation first, then Face ID (F4): a stop ends a process tree and cannot be undone.
@@ -112,11 +127,6 @@ function StopButton({ session }: { session: AgentBoardSession }) {
                     {stop.isPending ? "Stopping…" : pid === null ? "No process to stop" : `Stop (pid ${pid})`}
                 </Text>
             </Pressable>
-            {receipt ? (
-                <Text testID="stop-receipt" style={{ color: receipt.stopped ? c.accent : c.danger, fontSize: 12 }}>
-                    {receipt.stopped ? `Stopped (${receipt.signal}).` : `Not stopped: ${receipt.reason ?? "unknown"}`}
-                </Text>
-            ) : null}
             {stop.isError ? (
                 <Text style={{ color: c.danger, fontSize: 12 }}>{`Stop failed: ${String(stop.error)}`}</Text>
             ) : null}
@@ -124,7 +134,7 @@ function StopButton({ session }: { session: AgentBoardSession }) {
     );
 }
 
-function SessionHeader({ session }: { session: AgentBoardSession }) {
+function SessionHeader({ session, onStopReceipt }: { session: AgentBoardSession; onStopReceipt: OnStopReceipt }) {
     const c = useThemeColors();
     const meta = [session.provider, session.account, session.model].filter(Boolean).join(" · ");
 
@@ -150,7 +160,7 @@ function SessionHeader({ session }: { session: AgentBoardSession }) {
                 </Text>
             ) : null}
             <PingButton session={session} />
-            <StopButton session={session} />
+            <StopButton session={session} onReceipt={onStopReceipt} />
         </View>
     );
 }
@@ -209,18 +219,29 @@ export default function AgentSessionScreen() {
     const board = useAgentsBoard();
     const session = board.data?.sessions.find((entry) => entry.key === key);
     const timings = board.data?.sendTimings;
+    // Kept per session key, so the route's next session does not show the last one's stop.
+    const [stop, setStop] = useState<{ key: string; receipt: AgentStopReceiptDto } | null>(null);
+    const stopReceipt = stop && stop.key === key ? stop.receipt : null;
+    const onStopReceipt = useCallback(
+        (receipt: AgentStopReceiptDto) => setStop(key ? { key, receipt } : null),
+        [key]
+    );
 
     return (
         <>
             <Stack.Screen options={{ title: session?.project ?? "Session" }} />
             <View testID="screen-agent-session" accessibilityLabel="screen-agent-session" className="flex-1 bg-dd-bg-base">
+                {stopReceipt ? <StopReceipt receipt={stopReceipt} /> : null}
                 {session ? (
+                    // Keyed by the session: the route stays mounted when `key` changes, and the composer's unsent text,
+                    // its timing and the transcript's scroll belong to the session they were made for.
                     <KeyboardAvoidingView
+                        key={session.key}
                         className="flex-1"
                         behavior={Platform.OS === "ios" ? "padding" : undefined}
                         keyboardVerticalOffset={96}
                     >
-                        <SessionHeader session={session} />
+                        <SessionHeader session={session} onStopReceipt={onStopReceipt} />
                         <Transcript session={session} />
                         <SteerComposer session={session} timings={timings?.[session.provider]} initialText={text} />
                     </KeyboardAvoidingView>
