@@ -905,6 +905,56 @@ test("manual room and remote device stays persist through a reopened store, upda
     expect(saved.sections!.flatMap((s) => s.present)).not.toContain("Dana Example");
 });
 
+test("a first manual stay keeps the roster's presence, and a time edit keeps a placement changed while it waited", async () => {
+    const storage = new Storage(`room-people-roster-${process.pid}`);
+    const store = new MeetingStore(storage);
+    mkdirSync(store.folder(record.id), { recursive: true });
+    writeFileSync(
+        join(store.folder(record.id), "meeting.json"),
+        SafeJSON.stringify({
+            ...record,
+            end: "2026-11-03T13:00:00Z",
+            participants: [
+                ...record.participants.map((person) => ({ ...person, firstSeenSec: 0 })),
+                {
+                    name: "Fay Example",
+                    from: ["wisprflow"],
+                    stays: [{ fromSec: 30, toSec: 900, source: "attendance" }],
+                },
+            ],
+            seats: { room: ["Gil Example"], remote: [] },
+        })
+    );
+
+    await editMeetingPerson({
+        store,
+        meeting: record.id,
+        edit: { action: "add", name: "Dana Example", atMic: true, fromSec: 10, toSec: 100 },
+    });
+    expect(new MeetingStore(storage).resolve(record.id)!.attendance!.people).toEqual([
+        { name: USER, fromSec: 0, toSec: 3600 },
+        { name: "Fay Example", fromSec: 30, toSec: 900 },
+        { name: "Dana Example", fromSec: 10, toSec: 100, joinedAtExact: true, leftAtExact: true },
+    ]);
+
+    // Another edit moves Gil to a remote device while this time-only edit waits for the record.
+    const update = store.update.bind(store);
+    spyOn(store, "update").mockImplementationOnce(async (id, change, mutate) => {
+        await update(id, { command: "test", change: "move Gil remote" }, (next) => {
+            next.seats = { room: [], remote: [{ name: "Gil Example" }] };
+        });
+        return update(id, change, mutate);
+    });
+    await editMeetingPerson({
+        store,
+        meeting: record.id,
+        edit: { action: "add", name: "Gil Example", fromSec: 5, toSec: 50 },
+    });
+    const saved = new MeetingStore(storage).resolve(record.id)!;
+    expect(saved.seats!.room).not.toContain("Gil Example");
+    expect(saved.seats!.remote.map((seat) => seat.name)).toContain("Gil Example");
+});
+
 test("streamed synthetic stereo voice features preserve pitch, level, silence and anchored clusters", async () => {
     const folder = new Storage(`room-voice-audio-${process.pid}`).getBaseDir();
     mkdirSync(folder, { recursive: true });
