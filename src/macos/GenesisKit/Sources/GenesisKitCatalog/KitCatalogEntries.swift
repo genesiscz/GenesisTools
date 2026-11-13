@@ -500,7 +500,8 @@ extension KitCatalog {
         return CatalogEntry(
             id: "failure-inline", group: "Status", name: "Inline failure (FailureInline)",
             summary: "A load or an action that failed, where its data should be: one sentence a person reads, one quiet line of what ran and how it ended, and Try again, Details (the failure window: log, Copy context for agents) and Report a bug. `FailureReport.toolsCall` makes the report of a failed tools call.",
-            source: "GenesisKit/Controls/FailureNotice/FailureInline.swift · GenesisKit/Controls/FailureNotice/FailureReport+ToolsCall.swift",
+            source: "GenesisKit/Controls/FailureNotice/FailureInline.swift · GenesisKit/Controls/FailureNotice/FailureReport+ToolsCall.swift"
+                + " · GenesisKit/Controls/FailureNotice/FailureNoticeView.swift · GenesisKit/Controls/FailureNotice/IssueDraftWindow.swift",
             isNew: true,
             critique: [
                 "Before it, a failed pane drew a triangle and the raw error in red (\"tools call exceeded 30s\"), with nothing to click.",
@@ -524,6 +525,19 @@ extension KitCatalog {
                     },
                     CatalogVariant("A long headline wraps, never truncates", props: "form: .compact, 360 pt") {
                         FailureInline(long, form: .compact, retry: {}).frame(width: 360)
+                    },
+                ]),
+                CatalogSection("The window Details opens, and its issue draft", flow: .column, [
+                    CatalogVariant("The failure window", props: "FailureNoticeView(model:), details closed") {
+                        FailureNoticeView(model: FailureNoticeModel(report: timeoutReport, detailsOpen: false, retry: {}, dismiss: {}))
+                            .frame(width: 560)
+                    },
+                    CatalogVariant("Draft an issue", props: "IssueDraftView(model:close:)") {
+                        IssueDraftView(model: IssueDraftModel(
+                            draft: IssueDraft(repo: "acme/storefront", title: "The transcript did not load",
+                                              body: "`tools ai sessions tail` ended after 30 s with no answer."),
+                            poster: ToolsIssuePoster(dryRun: true)), close: {})
+                            .frame(width: 680, height: 420)
                     },
                 ]),
             ])

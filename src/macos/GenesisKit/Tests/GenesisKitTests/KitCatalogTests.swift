@@ -11,6 +11,11 @@ final class KitCatalogTests: XCTestCase {
     /// Files in `Controls/` that draw nothing of their own.
     static let notDrawn: [String: String] = [
         "AutocompleteFloatingList.swift": "the child window of AutocompleteField; its entry draws the floating list",
+        "FailureCapture.swift": "captures a failure's machine facts when it happens",
+        "FailureLog.swift": "reads the events and the headline out of a failure's log",
+        "FailureNoticePanel.swift": "the window of FailureNoticeView; the failure-inline entry draws the view",
+        "FailureReport.swift": "a failure's facts and their text forms",
+        "IssueDraft.swift": "an issue draft's text and the command that posts it",
         "FrameProbe.swift": "reports a control's frame to a test",
         "GenRenderSwap.swift": "swaps content when it is ready",
         "GenResize.swift": "the state of a resize drag",
@@ -33,8 +38,10 @@ final class KitCatalogTests: XCTestCase {
         // The base's controls (GenesisKitBase/Controls) are held to the same rule.
         let folders = ["Sources/GenesisKit/Controls", "Sources/GenesisKitBase/Controls"].map { Self.kitRoot.appendingPathComponent($0) }
         let controls = folders[0]
+        // Every level: a control in a folder of its own (Controls/FailureNotice/) is held to the rule too.
         let files = try folders.flatMap { folder in
-            try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0.hasSuffix(".swift") }
+            try FileManager.default.subpathsOfDirectory(atPath: folder.path).filter { $0.hasSuffix(".swift") }
+                .map { ($0 as NSString).lastPathComponent }
         }.sorted()
         XCTAssertGreaterThan(files.count, 20, "the Controls folder was not read: \(controls.path)")
         let catalogued = Set(KitCatalog.entries.flatMap { $0.source.components(separatedBy: " · ") }.map { ($0 as NSString).lastPathComponent })
