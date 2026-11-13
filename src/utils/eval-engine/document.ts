@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/document.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * What a scenario and a matrix are: the check algebra, expectations, steps, their JSON form, validation against a
  * system's vocabulary, the typed builder, the canonical JSON and the hash, signal paths, bindings and templates.

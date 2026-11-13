@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/cli.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * The command line every project gets: `run`, `say`, `check`, `list`, `runs`, `show`, `compare`, `cleanup`.
  * Every command prints exactly one JSON document on stdout (`show --text` prints text) and sets the exit code;

@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/plan.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * Which conversations a run consists of: cells (scenario × model × variant), conversation keys, their order, and the
  * plan hash that `--resume` requires to be equal. Pure.

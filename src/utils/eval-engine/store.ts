@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/store.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * The run folder, reading and writing. No other file knows a file name inside a run folder.
  *

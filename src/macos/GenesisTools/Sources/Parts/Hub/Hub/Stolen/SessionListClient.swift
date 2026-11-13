@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/lib/GenesisAIMonitorKit/Sources/GenesisAIMonitorKit/SessionListClient.swift at 2026-09-24T03:58:53+02:00 at commit hash 0d268a43e86e6e5e0ce16132aed8c862e201923e
 import Foundation
 
 public enum SessionListClient {

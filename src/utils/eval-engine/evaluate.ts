@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/evaluate.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * What a verdict is and how verdicts combine. `evaluateCheck` is pure and three-valued; judge questions come back as
  * `needs`, and the thin loop `evaluateExpectations` asks them and evaluates again. `conversationOutcome` is the sticky

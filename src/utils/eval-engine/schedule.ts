@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/schedule.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * How many conversations run at once and what is retried. One adaptive limiter per `limitKey` (halve on a rate
  * limit, grow by one after five successes in a row, honour `retryAfterMs`), a global bound on open conversations,

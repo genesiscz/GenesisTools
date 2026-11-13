@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/testing.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * `fakeSystem(script)`: an in-memory system with scripted replies, tool calls, signals and errors, a log of every
  * call, and `fakeClock()` for the limiter and the backoff. For the engine's tests and for a project's own tests.

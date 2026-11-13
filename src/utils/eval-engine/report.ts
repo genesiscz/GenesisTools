@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/report.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * What counts as passing: cell statistics and verdicts, the run summary and its exit code, `compare` and what it
  * leaves out, and the transcript as text. Pure functions over a `RunView`.

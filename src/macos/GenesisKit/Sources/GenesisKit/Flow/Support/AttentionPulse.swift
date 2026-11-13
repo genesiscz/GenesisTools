@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Sources/Genesis/Components/AttentionPulse.swift at 2026-10-08T05:10:39+02:00 at commit hash 7bd89a24c79510fb90ab0c2a0701c1d085f2023e
 import SwiftUI
 
 /// How an attention pulse looks and moves. Two presets cover the cases so far; every field

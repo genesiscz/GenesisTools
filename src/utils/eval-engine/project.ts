@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/project.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * How a project hands over its parts (`defineEvalProject`), loading `*.eval.ts` files, and the library entries behind
  * the commands: `runEval` (new run or `--resume`), `sayEval`, `checkEval`, `listEval`, `cleanupEval`.

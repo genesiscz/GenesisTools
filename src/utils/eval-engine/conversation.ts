@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/conversation.ts at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165
 /**
  * How one conversation is played: open, bind and choose, send each turn exactly once, evaluate, simulated blocks,
  * final checks, close. Owns the transcript types `ConversationRecord` and `TurnRecord`.

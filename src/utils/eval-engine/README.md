@@ -1,4 +1,3 @@
-<!-- Copied from /Users/Martin/Tresors/Projects/Kalendora/src/eval-engine/README.md at 2026-11-12T06:18:59+01:00 at commit hash 2b9937db296fcb22d402376689d926a71fe9f165 -->
 # eval-engine
 
 A project-agnostic engine that plays scenario conversations against a system, checks every answer, and writes a
