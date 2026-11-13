@@ -35,6 +35,7 @@ import type {
     WorkflowRun,
     WorkflowSupersession,
 } from "../workflow-types";
+import { workflowAgentTranscripts } from "../workflow-types";
 import { parseRow } from "./analysis-lines";
 import {
     type ClaudeSubagentFile,
@@ -312,8 +313,10 @@ async function readRun(input: {
     recordsDir: string;
     runDir: string | null;
     files: ClaudeSubagentFile[];
+    /** The session's direct sub-agent transcripts by agent id: a workflow agent's own is its revival. */
+    direct: ReadonlyMap<string, string[]>;
 }): Promise<WorkflowRun> {
-    const { runId, recordsDir, runDir, files } = input;
+    const { runId, recordsDir, runDir, files, direct } = input;
     const recordFile = join(recordsDir, `${runId}.json`);
     const record = existsSync(recordFile) ? readJsonFile(recordFile) : null;
     const journalFile = runDir ? join(runDir, JOURNAL) : null;
@@ -341,6 +344,7 @@ async function readRun(input: {
             attempt: draft.attempt,
             startedAt: draft.startedAt,
             transcript,
+            revivals: direct.get(draft.agentId) ?? [],
             bytes: transcript ? sizeOf(transcript) : 0,
             hasResult: draft.hasResult,
             resultBytes: draft.resultBytes,
@@ -395,10 +399,13 @@ export async function claudeWorkflowRuns(sessionTranscript: string): Promise<Wor
     }
 
     const filesByRun = new Map<string, ClaudeSubagentFile[]>();
+    const direct = new Map<string, string[]>();
 
     for (const file of claudeSubagentTranscripts(sessionTranscript)) {
         if (file.runId !== null) {
             filesByRun.set(file.runId, [...(filesByRun.get(file.runId) ?? []), file]);
+        } else {
+            direct.set(file.agentId, [...(direct.get(file.agentId) ?? []), file.transcript]);
         }
     }
 
@@ -408,7 +415,13 @@ export async function claudeWorkflowRuns(sessionTranscript: string): Promise<Wor
 
     for (const runId of runIds) {
         runs.push(
-            await readRun({ runId, recordsDir, runDir: runDirs.get(runId) ?? null, files: filesByRun.get(runId) ?? [] })
+            await readRun({
+                runId,
+                recordsDir,
+                runDir: runDirs.get(runId) ?? null,
+                files: filesByRun.get(runId) ?? [],
+                direct,
+            })
         );
     }
 
@@ -450,39 +463,47 @@ async function grepAgent(
     run: WorkflowRun,
     agent: WorkflowAgent,
     pattern: RegExp,
-    options: Required<Pick<WorkflowGrepOptions, "maxHits" | "context">> & Pick<WorkflowGrepOptions, "before">
+    options: Required<Pick<WorkflowGrepOptions, "maxHits" | "context">> & { beforeMs: number | null }
 ): Promise<WorkflowAgentGrep | null> {
-    if (!agent.transcript) {
-        return null;
-    }
-
     const hits: WorkflowGrepHit[] = [];
     let matchingLines = 0;
-    let lineNumber = 0;
 
-    for await (const line of readLines(agent.transcript)) {
-        lineNumber++;
-        pattern.lastIndex = 0;
-        const match = pattern.exec(line);
+    // The agent's own transcript, then each revival's: a revived agent's later words are its words too.
+    for (const transcript of workflowAgentTranscripts(agent)) {
+        let lineNumber = 0;
 
-        if (!match) {
-            continue;
-        }
+        for await (const line of readLines(transcript)) {
+            lineNumber++;
+            pattern.lastIndex = 0;
+            const match = pattern.exec(line);
 
-        const row = parseRow(line, agent.transcript) ?? {};
-        const timestamp = text(row.timestamp);
+            if (!match) {
+                continue;
+            }
 
-        if (options.before && timestamp && timestamp >= options.before) {
-            continue;
-        }
+            const row = parseRow(line, transcript) ?? {};
+            const timestamp = text(row.timestamp);
+            // Compared as instants: "11:00+02:00" is before "10:00Z", which a string comparison gets wrong.
+            const at = timestamp ? Date.parse(timestamp) : Number.NaN;
 
-        matchingLines++;
+            if (options.beforeMs !== null && Number.isFinite(at) && at >= options.beforeMs) {
+                continue;
+            }
 
-        // A transcript line is a whole tool result and can be megabytes, so a hit is a bounded excerpt.
-        if (hits.length < options.maxHits) {
-            const start = Math.max(0, match.index - options.context);
-            const end = Math.min(line.length, match.index + match[0].length + options.context);
-            hits.push({ line: lineNumber, timestamp, where: whereOf(row), excerpt: line.slice(start, end) });
+            matchingLines++;
+
+            // A transcript line is a whole tool result and can be megabytes, so a hit is a bounded excerpt.
+            if (hits.length < options.maxHits) {
+                const start = Math.max(0, match.index - options.context);
+                const end = Math.min(line.length, match.index + match[0].length + options.context);
+                hits.push({
+                    transcript,
+                    line: lineNumber,
+                    timestamp,
+                    where: whereOf(row),
+                    excerpt: line.slice(start, end),
+                });
+            }
         }
     }
 
@@ -494,14 +515,22 @@ async function claudeWorkflowGrep(
     pattern: RegExp,
     options: WorkflowGrepOptions = {}
 ): Promise<WorkflowAgentGrep[]> {
-    const jobs = runs.flatMap((run) => run.agents.map((agent) => ({ run, agent })));
+    const beforeMs = options.before === undefined ? null : Date.parse(options.before);
+
+    if (beforeMs !== null && !Number.isFinite(beforeMs)) {
+        throw new Error(`before must be an ISO instant, got "${options.before}"`);
+    }
+
+    const jobs = runs.flatMap((run) =>
+        run.agents.filter((agent) => workflowAgentTranscripts(agent).length > 0).map((agent) => ({ run, agent }))
+    );
     const found = await concurrentMap({
         items: jobs,
         fn: ({ run, agent }) =>
             grepAgent(run, agent, pattern, {
                 maxHits: options.maxHits ?? 3,
                 context: options.context ?? 100,
-                before: options.before,
+                beforeMs,
             }),
         concurrency: PARALLEL_TRANSCRIPTS,
         onError: ({ agent }, error) =>

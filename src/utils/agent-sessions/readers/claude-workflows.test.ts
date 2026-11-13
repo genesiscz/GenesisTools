@@ -18,7 +18,13 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { buildSessionReport } from "../analysis/report";
 import { factsOf } from "../analysis-types";
 import { claudeHistoryReader, codexHistoryReader, grokHistoryReader } from "../compact-readers";
-import { pickWorkflowAgent, pickWorkflowRun, type WorkflowRun, workflowRunTotals } from "../workflow-types";
+import {
+    pickWorkflowAgent,
+    pickWorkflowRun,
+    type WorkflowRun,
+    workflowAgentTranscripts,
+    workflowRunTotals,
+} from "../workflow-types";
 import { subagentFiles } from "./claude-changes-parse";
 import {
     claudeSubagentCandidates,
@@ -394,7 +400,7 @@ describe("the Claude workflow reader", () => {
         const agent = pickWorkflowRun(await runsOf(parent), RUN_A).agents.find(
             (candidate) => candidate.agentId === "aaa1"
         );
-        const usage = await workflowAgentUsage("claude", agent?.transcript ?? "");
+        const usage = await workflowAgentUsage("claude", [agent?.transcript ?? ""]);
         expect(usage).toMatchObject({
             calls: 2,
             input: 200,
@@ -557,6 +563,56 @@ describe("a session's agent listing", () => {
             files: [first, revival],
             bytes: statSync(first).size + statSync(revival).size,
         });
+    });
+});
+
+describe("a revived workflow agent", () => {
+    test("its revival's calls count in its usage, and grep searches the revival and names the file", async () => {
+        const local = buildSession();
+        const revival = join(local.replace(/\.jsonl$/, ""), "subagents", "agent-aaa1.jsonl");
+        writeFileSync(
+            revival,
+            jsonl([
+                {
+                    type: "user",
+                    timestamp: "2026-11-01T11:00:00.000Z",
+                    message: { role: "user", content: "one more thing" },
+                },
+                assistantRow("msg_9", "2026-11-01T11:00:05.000Z", { type: "text", text: "revived and done" }),
+            ])
+        );
+        const runs = await runsOf(local);
+        const agent = pickWorkflowRun(runs, RUN_A).agents.find((candidate) => candidate.agentId === "aaa1");
+        expect(agent?.revivals).toEqual([revival]);
+        expect(pickWorkflowRun(runs, RUN_A).agents.find((candidate) => candidate.agentId === "ccc3")?.revivals).toEqual(
+            []
+        );
+
+        const usage = agent ? await workflowAgentUsage("claude", workflowAgentTranscripts(agent)) : null;
+        expect(usage).toMatchObject({ calls: 3, lastAt: "2026-11-01T11:00:05.000Z" });
+
+        const hits = await claudeWorkflows.grep(runs, /revived and done/);
+        expect(hits.map((hit) => hit.agent.agentId)).toEqual(["aaa1"]);
+        expect(hits[0]?.hits[0]).toMatchObject({ transcript: revival, line: 2, where: "assistant" });
+    });
+
+    test("grep compares `before` with each row's instant, whatever its offset", async () => {
+        const local = buildSession();
+        const revival = join(local.replace(/\.jsonl$/, ""), "subagents", "agent-aaa1.jsonl");
+        // 12:30 at +02:00 is 10:30Z: before an 11:00Z cutoff, though its text sorts after it.
+        writeFileSync(
+            revival,
+            jsonl([assistantRow("msg_9", "2026-11-01T12:30:00+02:00", { type: "text", text: "offset needle" })])
+        );
+        const runs = await runsOf(local);
+
+        const kept = await claudeWorkflows.grep(runs, /offset needle/, { before: "2026-11-01T11:00:00.000Z" });
+        expect(kept[0]?.matchingLines).toBe(1);
+        const cut = await claudeWorkflows.grep(runs, /offset needle/, { before: "2026-11-01T10:30:00.000Z" });
+        expect(cut).toEqual([]);
+        await expect(claudeWorkflows.grep(runs, /offset needle/, { before: "yesterday" })).rejects.toThrow(
+            "ISO instant"
+        );
     });
 });
 

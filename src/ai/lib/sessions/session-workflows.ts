@@ -6,6 +6,7 @@ import {
     type WorkflowAgentGrep,
     type WorkflowGrepOptions,
     type WorkflowRun,
+    workflowAgentTranscripts,
     workflowRunTotals,
 } from "@genesiscz/utils/agent-sessions/workflow-types";
 import type { ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -32,9 +33,9 @@ function noReaderLine(provider: string, reason: string): string {
     return `${provider}: no workflow reader. ${reason}`;
 }
 
-/** An instant as the machine's local time. The JSON forms keep the UTC instant. */
+/** An instant as the machine's local time. The JSON forms keep the UTC instant. A text that is no instant stays. */
 function local(iso: string | null): string {
-    return iso === null ? "" : formatLocalDateTimeStamp(iso);
+    return iso === null ? "" : Number.isFinite(Date.parse(iso)) ? formatLocalDateTimeStamp(iso) : iso;
 }
 
 /** `tools ai sessions workflows list` with no session: which providers have a workflow reader, and why not. */
@@ -92,14 +93,20 @@ async function runsOf(
 
 type AgentUsage = Map<WorkflowAgent, WorkflowAgentUsage | null>;
 
+/** The agents that have a transcript of their own or of a revival: the ones whose calls usage reads. */
+function readable(run: WorkflowRun): WorkflowAgent[] {
+    return run.agents.filter((agent) => workflowAgentTranscripts(agent).length > 0);
+}
+
 /**
- * The calls, tokens and list-price cost of each agent of these runs that has a transcript. All runs share one bound of
- * eight transcript reads, so `--usage` over every run of a session reads no more at once than over one run.
+ * The calls, tokens and list-price cost of each agent of these runs that has a transcript, its revivals' included.
+ * All runs share one bound of eight agents read at once, so `--usage` over every run of a session reads no more at
+ * once than over one run.
  */
 async function usageOf(session: ResolvedTranscript, runs: readonly WorkflowRun[]): Promise<AgentUsage> {
     return concurrentMap({
-        items: runs.flatMap((run) => run.agents.filter((agent) => agent.transcript !== null)),
-        fn: (agent) => workflowAgentUsage(session.provider, agent.transcript ?? ""),
+        items: runs.flatMap(readable),
+        fn: (agent) => workflowAgentUsage(session.provider, workflowAgentTranscripts(agent)),
         concurrency: 8,
         onError: (agent, error) =>
             logger.warn({ error, transcript: agent.transcript }, "[ai sessions workflows] usage unreadable"),
@@ -107,7 +114,7 @@ async function usageOf(session: ResolvedTranscript, runs: readonly WorkflowRun[]
 }
 
 function runUsage(run: WorkflowRun, usage: AgentUsage): WorkflowRunUsage {
-    return sumWorkflowUsage(run.agents.filter((agent) => agent.transcript !== null).map((agent) => usage.get(agent)));
+    return sumWorkflowUsage(readable(run).map((agent) => usage.get(agent)));
 }
 
 function usageCells(usage: WorkflowAgentUsage | WorkflowRunUsage | null | undefined): string[] {
@@ -116,7 +123,23 @@ function usageCells(usage: WorkflowAgentUsage | WorkflowRunUsage | null | undefi
     }
 
     const tokens = usage.input + usage.cacheRead + usage.cacheWrite + usage.output;
-    return [String(usage.calls), formatTokens(tokens), usage.costUsd === null ? "unpriced" : formatCost(usage.costUsd)];
+    const cost = usage.costUsd === null ? "unpriced" : formatCost(usage.costUsd);
+    // A total that lacks unread agents says so in the cell, so it never reads as the whole run.
+    const unread = "unread" in usage && usage.unread > 0 ? ` (+${usage.unread} unread)` : "";
+    return [String(usage.calls), formatTokens(tokens), `${cost}${unread}`];
+}
+
+/** An agent's usage cells: "unread" when it has a transcript whose calls could not be read (the log says why). */
+function agentUsageCells(agent: WorkflowAgent, usage: AgentUsage): string[] {
+    const found = usage.get(agent);
+    return found || workflowAgentTranscripts(agent).length === 0 ? usageCells(found) : ["unread", "", ""];
+}
+
+/** The line under a usage total that lacks agents: how many, and where the reason is. */
+function unreadNote(unread: number): string | null {
+    return unread > 0
+        ? `${unread} agent transcript(s) could not be read; their calls, tokens and cost are missing from the totals (the day log names each one and why)`
+        : null;
 }
 
 /** What an agent's journal rows and its run's retries say, in one word, for the RESULT column. */
@@ -143,7 +166,7 @@ function agentTable(run: WorkflowRun, live: ReadonlyMap<string, SessionSubagent>
             resultCell(agent),
             formatBytes(agent.bytes),
             agent.sources.join("+"),
-            ...(usage ? [...usageCells(usage.get(agent)), String(live.get(agent.agentId)?.toolCalls ?? "")] : []),
+            ...(usage ? [...agentUsageCells(agent, usage), String(live.get(agent.agentId)?.toolCalls ?? "")] : []),
             agent.agentId,
         ]),
         [
@@ -247,6 +270,12 @@ export async function printWorkflowList(session: ResolvedTranscript, options: Wo
         )
     );
 
+    const unread = usage ? unreadNote(runs.reduce((sum, run) => sum + runUsage(run, usage).unread, 0)) : null;
+
+    if (unread) {
+        out.println(unread);
+    }
+
     const noRecord = runs.filter((run) => run.recordPath === null);
 
     if (noRecord.length > 0) {
@@ -317,8 +346,14 @@ export async function printWorkflowRun(
     );
 
     if (usage) {
-        const [calls, tokens, cost] = usageCells(runUsage(run, usage));
+        const total = runUsage(run, usage);
+        const [calls, tokens, cost] = usageCells(total);
         out.println(`  ${"usage".padEnd(12)}${calls} calls, ${tokens} tokens, ${cost}`);
+        const unread = unreadNote(total.unread);
+
+        if (unread) {
+            out.println(`  ${"".padEnd(12)}${unread}`);
+        }
     }
 
     out.println(agentTable(run, liveAgents(session, [run], options.usage === true), usage));
@@ -369,8 +404,11 @@ export async function printWorkflowGrep(session: ResolvedTranscript, request: Wo
         out.println(`  ${agent.agent.transcript}`);
 
         for (const hit of agent.hits) {
+            // A revival's line numbers count in its own file, so its hits name it.
+            const file = hit.transcript === agent.agent.transcript ? "" : `${hit.transcript} `;
+            const at = hit.timestamp === null ? "no time" : local(hit.timestamp);
             // `assistant`: the agent wrote it. `tool-result`: it was shown it. `prompt`: it was told it.
-            out.println(`  L${hit.line} ${hit.timestamp ?? "no time"} [${hit.where}] ${hit.excerpt}`);
+            out.println(`  ${file}L${hit.line} ${at} [${hit.where}] ${hit.excerpt}`);
         }
     }
 }

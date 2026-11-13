@@ -3,7 +3,7 @@
  * (`NativeSessionReader.workflows`), so this file names no transcript format and no folder.
  */
 import { callCostUsd } from "@genesiscz/utils/agent-sessions/analysis/cost";
-import { factsOf, type SessionFacts } from "@genesiscz/utils/agent-sessions/analysis-types";
+import { factsOf, type SessionCall, type SessionFacts } from "@genesiscz/utils/agent-sessions/analysis-types";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import {
     type WorkflowReaderSupport,
@@ -11,6 +11,7 @@ import {
     workflowRunTotals,
 } from "@genesiscz/utils/agent-sessions/workflow-types";
 import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { logger } from "@genesiscz/utils/logger";
 import type { ResolvedTranscript } from "./resolve";
 import { type ListSubagentsOptions, listSubagents, type SessionSubagents } from "./subagents";
 
@@ -142,17 +143,37 @@ export function sumWorkflowUsage(agents: Iterable<WorkflowAgentUsage | null | un
     return total;
 }
 
-/** Null when the provider's reader cannot trace the calls of a transcript. */
+/**
+ * The calls of an agent's transcripts (its own and each revival's, `workflowAgentTranscripts`), each call once by its
+ * id. Null when the provider's reader cannot trace one of them: the reason is logged with the transcript, and the
+ * caller counts the agent as unread rather than print a total that silently lacks it.
+ */
 export async function workflowAgentUsage(
     provider: ResolvedTranscript["provider"],
-    transcript: string
+    transcripts: readonly string[]
 ): Promise<WorkflowAgentUsage | null> {
-    const trace = await resolveHistoryProvider(provider).reader.analysis.callTrace(transcript);
+    const reader = resolveHistoryProvider(provider).reader.analysis;
+    const calls = new Map<string, SessionCall>();
 
-    if (!trace.supported) {
-        return null;
+    for (const transcript of transcripts) {
+        const trace = await reader.callTrace(transcript);
+
+        if (!trace.supported) {
+            logger.warn(
+                { transcript, reason: trace.reason },
+                "[workflows] an agent transcript's calls cannot be read; the agent is missing from the usage sums"
+            );
+            return null;
+        }
+
+        for (const call of trace.items) {
+            if (!calls.has(call.id)) {
+                calls.set(call.id, call);
+            }
+        }
     }
 
+    const ordered = [...calls.values()].sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
     const usage: WorkflowAgentUsage = {
         calls: 0,
         input: 0,
@@ -161,11 +182,11 @@ export async function workflowAgentUsage(
         output: 0,
         costUsd: null,
         models: [],
-        firstAt: trace.items[0]?.t ?? null,
-        lastAt: trace.items.at(-1)?.t ?? null,
+        firstAt: ordered[0]?.t ?? null,
+        lastAt: ordered.at(-1)?.t ?? null,
     };
 
-    for (const call of trace.items) {
+    for (const call of ordered) {
         usage.calls++;
         usage.input += call.input;
         usage.cacheRead += call.cacheRead;
