@@ -284,11 +284,37 @@ describe("diagram geometry", () => {
             />
         );
         try {
+            const branch = () => dom.container.querySelector("li ul");
             expect(dom.container.textContent).toContain("Keynew");
             await dom.click(dom.container.querySelector('button[aria-label="Collapse Models"]'));
-            expect(dom.container.textContent).not.toContain("Key");
+            expect(branch()?.hasAttribute("hidden")).toBe(true);
             await dom.click(dom.container.querySelector('button[aria-label="Expand Models"]'));
+            expect(branch()?.hasAttribute("hidden")).toBe(false);
             expect(dom.container.textContent).toContain("Keynew");
+        } finally {
+            await dom.unmount();
+        }
+    });
+    test("collapsing a branch keeps what its descendants had open or closed", async () => {
+        const dom = await mountDom(
+            <ModelBrowser
+                root={[
+                    {
+                        name: "Models",
+                        icon: "package",
+                        children: [
+                            { name: "Inner", icon: "package", children: [{ name: "Leaf", icon: "primitiveType" }] },
+                        ],
+                    },
+                ]}
+            />
+        );
+        try {
+            await dom.click(dom.container.querySelector('button[aria-label="Collapse Inner"]'));
+            await dom.click(dom.container.querySelector('button[aria-label="Collapse Models"]'));
+            await dom.click(dom.container.querySelector('button[aria-label="Expand Models"]'));
+            // Inner comes back closed, as the user left it, not reset to its model default (open).
+            expect(dom.container.querySelector('button[aria-label="Expand Inner"]')).not.toBeNull();
         } finally {
             await dom.unmount();
         }

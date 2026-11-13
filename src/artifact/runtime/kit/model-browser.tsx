@@ -142,8 +142,9 @@ function BrowserRow({
                     <span className="flex items-center gap-1.5">{label}</span>
                 )}
             </div>
-            {nested && open ? (
-                <ul className="m-0 border-l border-line p-0 pl-5">
+            {/* Hidden, not unmounted: a collapsed ancestor keeps each descendant's own open or closed state. */}
+            {nested ? (
+                <ul hidden={!open} className="m-0 border-l border-line p-0 pl-5">
                     {node.children?.map((child, i) => (
                         <BrowserRow
                             key={child.id ?? `${i}-${child.name}`}
