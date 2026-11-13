@@ -14,6 +14,7 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { defaultDatabaseDirectory } from "expo-sqlite";
 import * as TaskManager from "expo-task-manager";
+import { queueTappedRoute } from "@/push/open-route";
 import { openSealed, pushIdentity, rememberMacKey } from "@/push/push-keys";
 import { noticeDataOf, pushDataOf } from "@/push/wire";
 import { useConnectionStore } from "@/state/connection-store";
@@ -221,7 +222,9 @@ export function startPush(): void {
     void registerCategories().catch((err: unknown) => console.warn("[push] categories", err));
     void Notifications.registerTaskAsync(PUSH_TASK).catch((err: unknown) => console.warn("[push] task", err));
 
+    // A plain tap opens the screen the notice names; an answer button answers it.
     Notifications.addNotificationResponseReceivedListener((response) => {
+        queueTappedRoute(response);
         void answerFromNotification(response).catch((err: unknown) => console.warn("[push] answer", err));
     });
     // A press that launched the app came before the listener existed.
@@ -229,6 +232,7 @@ export function startPush(): void {
 
     if (last) {
         Notifications.clearLastNotificationResponse();
+        queueTappedRoute(last);
         void answerFromNotification(last).catch((err: unknown) => console.warn("[push] answer", err));
     }
 

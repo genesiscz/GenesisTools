@@ -1,10 +1,13 @@
 import { NativeTabs } from "expo-router/unstable-native-tabs";
 import { useOutboxDrain } from "@/features/agents/hooks";
+import { useOpenQueuedRoute } from "@/push/use-open-queued-route";
 
 export default function TabsLayout() {
     // The tabs stay mounted under every pushed screen while a Mac is connected, so the steer outbox drains here
     // rather than in the session screen that saved the draft.
     useOutboxDrain();
+    // A notification tap that names a screen (the Friday timesheet reminder) opens it once the tabs are in place.
+    useOpenQueuedRoute();
 
     return (
         <NativeTabs>
