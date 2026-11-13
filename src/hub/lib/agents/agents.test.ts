@@ -377,6 +377,44 @@ describe("hub agents mail", () => {
         }
     });
 
+    test("a revived workflow agent's mail comes from both its files, and its name from the run folder's metadata", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-hub-mail-revived-"));
+        const session = "fixture-revived";
+        const direct = join(root, session, "subagents");
+        const run = join(direct, "workflows", "wf-run-1");
+        const parentFile = join(root, `${session}.jsonl`);
+        mkdirSync(run, { recursive: true });
+        writeFileSync(parentFile, "");
+        // The original transcript and its metadata stay in the run folder; the revival has no metadata.
+        writeFileSync(
+            join(run, "agent-arevived.jsonl"),
+            lines(prompt("2026-03-10T10:00:00.000Z", '<teammate-message teammate_id="lead">first</teammate-message>'))
+        );
+        writeFileSync(
+            join(run, "agent-arevived.meta.json"),
+            SafeJSON.stringify({ name: "worker-one", teamName: TEAM })
+        );
+        writeFileSync(
+            join(direct, "agent-arevived.jsonl"),
+            lines(prompt("2026-03-10T10:30:00.000Z", '<teammate-message teammate_id="lead">again</teammate-message>'))
+        );
+        const resolveSpy = spyOn(transcriptResolver, "resolveTranscript").mockResolvedValue({
+            provider: "claude",
+            source: "native",
+            sessionId: session,
+            filePath: parentFile,
+        });
+
+        try {
+            const mail = await agentMail({ session, agent: "arevived", teamsRoot: teams });
+
+            expect(mail.received.map((message) => message.text)).toEqual(["first", "again"]);
+            expect(mail.unread.map((message) => message.text)).toEqual(["not yet", "also not yet"]);
+        } finally {
+            resolveSpy.mockRestore();
+        }
+    });
+
     test("received messages keep their arrival time; sent ones come from SendMessage calls", () => {
         const unread = unreadInbox(teams, TEAM, "worker-one").map((entry) => ({
             from: entry.from,
