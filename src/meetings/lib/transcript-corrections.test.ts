@@ -15,7 +15,7 @@ import { prepareFindings } from "./add-findings";
 import { findingSchema } from "./findings";
 import { answerQuestion } from "./questions";
 import { composedMeeting } from "./sources";
-import { checkAnchors, correctTranscript, ledgerEntryFor, outcomeText } from "./transcript-corrections";
+import { checkAnchors, correctionsOf, correctTranscript, ledgerEntryFor, outcomeText } from "./transcript-corrections";
 
 function line(speaker: string, startSec: number, text: string): TranscriptEntry {
     return { speaker, startSec, text };
@@ -659,4 +659,32 @@ test("a line-scoped stem fixes the addressed inflected form and leaves its neigh
             (entry) => entry.text
         )
     ).toEqual(["in-app browserem", "i na browseru"]);
+});
+
+test("an assignment reaches a join's voice within the line tolerance once, never twice", () => {
+    const joinsAt = (atSec: number) =>
+        correctionsOf(
+            meetingRecordSchema.parse({
+                ...base,
+                speakers: {
+                    ...base.speakers,
+                    assignments: [
+                        {
+                            id: "a1",
+                            label: "Speaker 5",
+                            fromSec: 10,
+                            toSec: 10,
+                            person: "Alice Example",
+                            at: "2026-11-03T10:00:00.000Z",
+                        },
+                    ],
+                },
+                items: [item({ id: "i1", kind: "join", atSec, speaker: "Speaker 5" })],
+            }),
+            config,
+            { format: "txt", dictionary: false }
+        ).joins?.[0]?.speaker;
+
+    expect(joinsAt(9.6)).toBe("Alice Example");
+    expect(joinsAt(9.25)).toBe("Speaker 5");
 });
