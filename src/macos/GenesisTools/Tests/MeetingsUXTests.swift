@@ -64,6 +64,40 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(bar.items.map(\.title), ["GenesisTools", "File", "Edit", "View", "Window"])
     }
 
+    /// G-KEY-1 and the settings lane's keys: the timeline's zoom, Contacts and the settings panel are menu items, so
+    /// they work wherever the keyboard is and the menu names them.
+    func testTheViewMenuZoomsTheTimelineOpensContactsAndTogglesTheSettingsPanel() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let bar = MeetingsMenu.build(appName: "GenesisTools")
+        func item(_ key: String, _ mask: NSEvent.ModifierFlags = .command) -> NSMenuItem? {
+            bar.items.compactMap(\.submenu).flatMap(\.items).first {
+                $0.keyEquivalent == key && $0.keyEquivalentModifierMask == mask
+            }
+        }
+        XCTAssertEqual(item("3")?.title, "Contacts")
+        XCTAssertEqual(item("+")?.title, "Zoom In on the Timeline")
+        XCTAssertEqual(item("-")?.title, "Zoom Out on the Timeline")
+        XCTAssertEqual(item("0")?.title, "Fit the Clip")
+        let panel = try XCTUnwrap(item("i", [.command, .option]))
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        model.remembersPanel = false
+        MeetingsMenuTarget.shared.model = model
+        defer { MeetingsMenuTarget.shared.model = nil }
+        _ = MeetingsMenuTarget.shared.validateMenuItem(panel)
+        XCTAssertEqual(panel.title, "Show Settings Panel")
+        MeetingsMenuTarget.shared.toggleSidePanel(nil)
+        XCTAssertTrue(model.sidePanelOpen)
+        _ = MeetingsMenuTarget.shared.validateMenuItem(panel)
+        XCTAssertEqual(panel.title, "Hide Settings Panel")
+        MeetingsMenuTarget.shared.showContacts(nil)
+        XCTAssertEqual(model.place, .contacts)
+        MeetingsMenuTarget.shared.zoomOut(nil)
+        XCTAssertEqual(model.player.timeline.zoom, .context, "⌘- zooms out; the sound is not touched (R4)")
+        MeetingsMenuTarget.shared.fitClip(nil)
+        XCTAssertEqual(model.player.timeline.zoom, .clip)
+    }
+
     func testTheViewMenuMovesTheWindowsPlace() throws {
         let (defaults, suite) = try defaults()
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -105,156 +139,9 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertLessThanOrEqual(tabs.maxX, width + 1, "the last tab is inside the window: \(tabs) in \(width) pt")
     }
 
-    // MARK: MU5 the audio plays under the window's control
-
-    /// A real process with no sound stands in for the player.
-    private func silentPlayer(seconds: String) throws -> Process {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
-        process.arguments = [seconds]
-        try process.run()
-        return process
-    }
-
-    private func until(_ what: String, timeout: TimeInterval = 3, _ condition: () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !condition() {
-            guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-    }
-
-    private func isPlaying(_ playback: MeetingsPlayback) -> Bool {
-        if case .playing = playback.state { return true } else { return false }
-    }
-
-    func testStopEndsThePlayerTheWindowStarted() async throws {
-        let player = try silentPlayer(seconds: "30")
-        defer { if player.isRunning { player.terminate() } }
-        var asked: [String] = []
-        let playback = MeetingsPlayback(start: { meeting, seconds, choice in
-            asked.append("\(meeting) \(seconds) \(choice ?? "config")")
-            return .init(audioPath: "/x/upload.ogg", startSec: seconds, player: "ffplay", pid: player.processIdentifier)
-        })
-        playback.play(meeting: "a", at: 20, player: "ffplay")
-        XCTAssertEqual(playback.state, .starting(fromSec: 20), "the bar shows the start at once")
-        try await until("it plays") { isPlaying(playback) }
-        XCTAssertEqual(asked, ["a 20.0 ffplay"])
-        XCTAssertEqual(playback.meeting, "a")
-
-        playback.stop()
-        XCTAssertEqual(playback.state, .idle)
-        XCTAssertNil(playback.meeting)
-        try await until("the player process ends") { !player.isRunning }
-    }
-
-    func testPauseAndResumeSuspendOnlyAPlayerWithNoWindow() async throws {
-        let player = try silentPlayer(seconds: "30")
-        defer { if player.isRunning { player.terminate() } }
-        var signals: [Int32] = []
-        var name = "ffplay"
-        let playback = MeetingsPlayback(start: { _, seconds, _ in
-            .init(audioPath: nil, startSec: seconds, player: name, pid: player.processIdentifier)
-        }, signal: { _, signal in signals.append(signal) })
-        playback.play(meeting: "a", at: 5, player: "ffplay")
-        try await until("it plays") { isPlaying(playback) }
-
-        playback.pause()
-        guard case .paused(_, let at) = playback.state else { return XCTFail("paused, got \(playback.state)") }
-        XCTAssertGreaterThanOrEqual(at, 5)
-        playback.resume()
-        XCTAssertTrue(isPlaying(playback))
-        playback.stop()
-        XCTAssertEqual(signals, [SIGSTOP, SIGCONT, SIGCONT, SIGTERM], "a stopped player is woken before it is ended")
-
-        name = "vlc"
-        signals = []
-        playback.play(meeting: "a", at: 5, player: nil)
-        try await until("it plays in VLC") { isPlaying(playback) }
-        playback.pause()
-        XCTAssertTrue(isPlaying(playback), "VLC has its own window and controls, so the bar offers no pause")
-        XCTAssertEqual(signals, [])
-        playback.stop()
-    }
-
-    func testThePlayerEndingByItselfClearsTheBar() async throws {
-        let player = try silentPlayer(seconds: "0.3")
-        let playback = MeetingsPlayback(start: { _, seconds, _ in
-            .init(audioPath: nil, startSec: seconds, player: "ffplay", pid: player.processIdentifier)
-        })
-        playback.play(meeting: "a", at: 0, player: "ffplay")
-        try await until("it plays") { isPlaying(playback) }
-        try await until("the audio's end clears the bar") { playback.state == .idle }
-    }
-
-    func testAFailedStartShowsTheRefusalAndRetries() async throws {
-        let player = try silentPlayer(seconds: "30")
-        defer { if player.isRunning { player.terminate() } }
-        var calls = 0
-        var fail = true
-        let failure = MeetingsCLI.Failure(sentence: "ffplay is not installed.", detail: "brew install ffmpeg", code: "player-missing")
-        let playback = MeetingsPlayback(start: { _, seconds, _ in
-            calls += 1
-            if fail { throw failure }
-            return .init(audioPath: nil, startSec: seconds, player: "ffplay", pid: player.processIdentifier)
-        })
-        playback.play(meeting: "a", at: 12, player: "ffplay")
-        try await until("the failure shows") { playback.state == .failed(failure, fromSec: 12) }
-        fail = false
-        playback.retry()
-        try await until("Retry plays") { isPlaying(playback) }
-        XCTAssertEqual(calls, 2, "Retry starts the same request again")
-        playback.stop()
-
-        let silent = MeetingsPlayback(start: { _, seconds, _ in .init(audioPath: nil, startSec: seconds, player: "ffplay", pid: nil) })
-        silent.play(meeting: "a", at: 3, player: "ffplay")
-        try await until("a start with no process is a failure") {
-            if case .failed = silent.state { return true } else { return false }
-        }
-        silent.dismiss()
-        XCTAssertEqual(silent.state, .idle)
-    }
-
-    func testANewTimeEndsThePlayerOfTheTimeBefore() async throws {
-        let player = try silentPlayer(seconds: "30")
-        defer { if player.isRunning { player.terminate() } }
-        var signals: [String] = []
-        var pids: [Int32] = [424_242, player.processIdentifier]
-        let playback = MeetingsPlayback(start: { _, seconds, _ in
-            .init(audioPath: nil, startSec: seconds, player: "ffplay", pid: pids.removeFirst())
-        }, signal: { pid, signal in signals.append("\(pid):\(signal)") })
-        playback.play(meeting: "a", at: 10, player: "ffplay")
-        playback.play(meeting: "a", at: 40, player: "ffplay")
-        try await until("the second time plays") { isPlaying(playback) }
-        guard case .playing(let session) = playback.state else { return XCTFail("playing") }
-        XCTAssertEqual(session.startSec, 40)
-        XCTAssertEqual(signals, ["424242:\(SIGTERM)"], "the first player ends as soon as it names itself")
-        playback.stop()
-    }
-
-    func testATranscriptTimePlaysInTheWindowsPlayerByDefault() async throws {
-        let (defaults, suite) = try defaults()
-        defer { defaults.removePersistentDomain(forName: suite) }
-        XCTAssertEqual(MeetingsPreferences.player(defaults), .window)
-        XCTAssertEqual(MeetingsPreferences.Player.window.cliPlayer, "ffplay")
-        XCTAssertNil(MeetingsPreferences.Player.app.cliPlayer, "the meetings config's player")
-
-        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
-        var asked: [String] = []
-        model.playback = MeetingsPlayback(start: { meeting, seconds, _ in
-            asked.append("\(meeting) \(seconds)")
-            return .init(audioPath: nil, startSec: seconds, player: "ffplay", pid: nil)
-        })
-        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()))
-        model.select("a")
-        model.detail?.play(at: 12.7)
-        try await until("the window's playback starts") { !asked.isEmpty }
-        XCTAssertEqual(asked, ["a 12.7"])
-    }
-
     // MARK: R15, R31 notices float over the pane, stack, and each keeps its Undo
 
-    func testTwoAnswersInARowKeepTwoUndoButtons() throws {
+    func testTwoDecisionsInARowKeepTwoUndoButtons() throws {
         let (defaults, suite) = try defaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let clock = ManualNoticeClock()
@@ -433,8 +320,8 @@ final class MeetingsUXTests: XCTestCase {
         [{"id":"r1","kind":"speaker-range","status":"suggested","fromSec":20,"toSec":30,"label":"Speaker 1","speaker":"Alice"},
          {"id":"r2","kind":"speaker-range","status":"suggested","fromSec":20.2,"toSec":20.8,"label":"Speaker 1"}]
         """.utf8))
-        XCTAssertEqual(MeetingsWords.itemTitle(items[0]), "Speaker 1 from 0:20 to 0:30 is Alice", "MU17")
-        XCTAssertEqual(MeetingsWords.itemTitle(items[1]), "Speaker 1 at 0:20 is someone else")
+        XCTAssertEqual(MeetingsWords.itemTitle(items[0]), "Speaker 1 from 00:20 to 00:30 is Alice", "MU17")
+        XCTAssertEqual(MeetingsWords.itemTitle(items[1]), "Speaker 1 at 00:20 is someone else")
     }
 
     func testTheMeetingLanguageReadsAsItsName() {
@@ -449,7 +336,7 @@ final class MeetingsUXTests: XCTestCase {
          "hints":[{"kind":"several-people","label":"Speaker 2","share":0.4,"strength":"weak"},
                   {"kind":"label-drift","label":"Speaker 2"}]}
         """.utf8))
-        XCTAssertEqual(MeetingsWords.speakerSpan(stats.speakers[0]), "0:12 to 25:40", "MU8")
+        XCTAssertEqual(MeetingsWords.speakerSpan(stats.speakers[0]), "00:12 to 25:40", "MU8")
         XCTAssertNil(MeetingsWords.speakerSpan(stats.speakers[1]))
         XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 2"),
                        ["May hold several people (weak sign)", "Silent while in the call, so the voice is under other labels"])
@@ -648,7 +535,7 @@ final class MeetingsUXTests: XCTestCase {
          {"kind":"a-future-kind","label":"Dan"}]
         """.utf8))
         func words(_ label: String) -> [String] { MeetingsWords.speakerHints(hints, for: label) }
-        XCTAssertEqual(words("Alice"), ["Silent from 6:15 to 30:00 while in the call, so the voice is under other labels (weak sign)"],
+        XCTAssertEqual(words("Alice"), ["Silent from 06:15 to 30:00 while in the call, so the voice is under other labels (weak sign)"],
                        "R2-MU7: label-drift is the person's own label staying silent, not a switch partway")
         XCTAssertEqual(words("Bob"), ["Speaks while not in the call, so 3 lines are someone else (strong sign)"])
         XCTAssertEqual(words("Speaker 1"), ["Only you were in the call, so its 12 lines are you (strong sign)"])

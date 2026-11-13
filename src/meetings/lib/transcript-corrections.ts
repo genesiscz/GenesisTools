@@ -161,11 +161,30 @@ export function correctionsOf(
         const line = lineOf(item);
         return line === undefined ? {} : { line };
     };
-    const ranges = used.flatMap((item) =>
-        item.kind === "speaker-range" && item.speaker
-            ? [{ label: item.label, fromSec: item.fromSec, toSec: item.toSec, speaker: item.speaker, item: item.id }]
-            : []
-    );
+    // A person's own assignments (`assign`) come after the items' ranges, so they win over a rule's or an answer's;
+    // among them the latest act wins (`at`), since a stretch given again keeps its place and id in the list.
+    const assignments = [...(record.speakers.assignments ?? [])].sort((a, b) => a.at.localeCompare(b.at));
+    const ranges = [
+        ...used.flatMap((item) =>
+            item.kind === "speaker-range" && item.speaker
+                ? [
+                      {
+                          label: item.label,
+                          fromSec: item.fromSec,
+                          toSec: item.toSec,
+                          speaker: item.speaker,
+                          item: item.id,
+                      },
+                  ]
+                : []
+        ),
+        ...assignments.map((assignment) => ({
+            label: assignment.label,
+            fromSec: assignment.fromSec - LINE_AT_TOLERANCE_SEC,
+            toSec: assignment.toSec + LINE_AT_TOLERANCE_SEC,
+            speaker: assignment.person,
+        })),
+    ];
     // A joined word makes the two lines one voice: the line before the cut takes the voice a range gives the line
     // after it, because joins apply before ranges and that range would no longer reach it.
     const voiceAt = (label: string, atSec: number) =>

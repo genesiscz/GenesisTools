@@ -733,7 +733,6 @@
         "src/macos/GenesisTools/Sources/Host/Notify.swift": 2,
         "src/macos/GenesisTools/Sources/Host/Router.swift": 1,
         "src/macos/GenesisTools/Sources/Host/WidgetLaunch.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Meetings/Data/MeetingsCLI.swift": 1,
         "src/macos/GenesisTools/Sources/Parts/Meetings/Data/MeetingsService.swift": 1
     },
     "roster-swift-hand-built-genesis-tools-path": {
@@ -763,7 +762,6 @@
     },
     "roster-swift-tools-server-client-outside-bridge": {
         "src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubData.swift": 1,
-        "src/macos/GenesisTools/Sources/Parts/Meetings/Data/MeetingsCLI.swift": 1,
         "src/macos/GenesisTools/Sources/Parts/Widget/WidgetWindow.swift": 1
     },
     "roster-swift-unix-socket-outside-rpc-clients": {

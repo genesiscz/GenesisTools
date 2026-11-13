@@ -5,9 +5,11 @@ import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/reco
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { actorText, DecisionJournal, itemIdOf, type JournalReadEntry } from "../lib/decision-journal";
+import { actorText, itemIdOf, type JournalReadEntry } from "../lib/decision-journal";
 import { questionLabel } from "../lib/questions";
+import { withMeetingsClient } from "../lib/service/client";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { assignmentText } from "../lib/speaker-assign";
 
 /** At most this many items are named on an entry's line; the rest are counted. */
 const NAMED_ITEMS = 8;
@@ -26,6 +28,15 @@ function named(record: MeetingRecord, ids: string[]): string {
     });
     const more = ids.length - shown.length;
     return `${shown.join(" ")}${more > 0 ? ` (+${more} more)` : ""}`;
+}
+
+/** A meeting field's value in a journal line: a label list joined, an absent value as "none". */
+function fieldText(value: string | string[] | undefined): string {
+    if (Array.isArray(value)) {
+        return value.length > 0 ? value.join(", ") : "none";
+    }
+
+    return value ?? "none";
 }
 
 /** What an entry did, in a few words: "confirm i1 i2", "Q3 → Alice Example (settled Q4)", "undo of 1b2c3d4e: i1". */
@@ -51,10 +62,20 @@ function whatText(record: MeetingRecord, entry: JournalReadEntry): string {
         }
         case "rename":
             return `rename ${action.label} → ${action.name.trim()}`;
+        case "assign": {
+            const stretches = (entry.assignments ?? []).flatMap((change) => (change.after ? [change.after] : []));
+            return `assign ${stretches.map(assignmentText).join(", ") || "nothing"} → ${action.person.trim()}`;
+        }
         case "reopen":
             return `reopen ${named(record, changed)}`;
         case "revert":
             return `undo of ${action.token.slice(0, 8)}: ${named(record, changed)}`;
+        case "add":
+            return `add ${named(record, changed)}`;
+        case "set":
+            return `set ${(entry.fields ?? []).map((field) => `${field.field} ${fieldText(field.after)}`).join(", ")}`;
+        case "comment":
+            return `told the listening agent: ${action.comments.map((comment) => `"${comment.text.trim()}"`).join(", ")}`;
     }
 }
 
@@ -82,10 +103,16 @@ async function journal(ref: string, opts: JournalOptions): Promise<void> {
     }
 
     const item = opts.item ? itemIdOf(record, opts.item) : undefined;
-    const entries = new DecisionJournal({ store }).read(record.id, {
-        ...(item ? { item } : {}),
-        ...(limit ? { limit } : {}),
-    });
+    let entries: JournalReadEntry[];
+
+    try {
+        ({ entries } = await withMeetingsClient((client) =>
+            client.call("journal.read", { meeting: record.id, ...(item ? { item } : {}), ...(limit ? { limit } : {}) })
+        ));
+    } catch (err) {
+        fail(errorText(err));
+        return;
+    }
 
     if (opts.json) {
         out.result(SafeJSON.stringify({ meeting: record.id, entries }, null, 2));

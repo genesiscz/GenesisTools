@@ -29,13 +29,13 @@ import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
-import { prepareFindings } from "../lib/add-findings";
-import { decideEntry, decideResult, reopenEntry, reopenResult } from "../lib/decide";
-import { callerActor, DecisionJournal } from "../lib/decision-journal";
+import { decideResult, decisionOf, reopenResult } from "../lib/decide";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
 import { questionLabel, questionWarnings } from "../lib/questions";
+import { type ReviewRow, type RowPart, reviewRow } from "../lib/review-rows";
+import { withMeetingsClient } from "../lib/service/client";
 import { errorText, fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
 import { meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
@@ -76,23 +76,112 @@ const STATUS_COLOR: Record<MeetingItem["status"], (text: string) => string> = {
 
 /** The WHAT column's width: a longer item is cut, but a quote keeps its source (`itemWhat`). */
 const WHAT_WIDTH = 90;
+function percent(confidence: number | undefined): string {
+    return confidence === undefined ? "—" : `${Math.round(confidence * 100)} %`;
+}
 
 function printItems(record: MeetingRecord, items: MeetingItem[]): void {
     const table = createBoxTable(["ID", "Q", "KIND", "STATUS", "CONF", "WHAT", "RULES"]);
 
     for (const item of items) {
+        // The row's label and text, so `items` names a question and reads it as the window and `rows` do.
+        const row = reviewRow(record, item);
         table.push([
             pc.white(item.id),
-            item.kind === "question" ? pc.cyan(questionLabel(record, item.id)) : "",
+            item.kind === "question" ? pc.cyan(row.label) : "",
             item.kind,
             STATUS_COLOR[item.status](item.status),
-            item.confidence === undefined ? "—" : `${Math.round(item.confidence * 100)} %`,
+            percent(item.confidence),
             truncateDisplay(itemWhat(item, { width: WHAT_WIDTH }), WHAT_WIDTH),
             item.rules.join(", "),
         ]);
     }
 
     out.println(table.toString());
+}
+
+/** A row part in one line for the terminal; `when` and `asks` are the row's head line instead. */
+function partText(part: RowPart): string | undefined {
+    switch (part.kind) {
+        case "who":
+            return `who      ${part.text}`;
+        case "said":
+            return `said     ${part.text}`;
+        case "settles":
+            return `settles  ${part.items.join(" ")}`;
+        case "reason":
+            return `why      ${part.pieces.map((piece) => piece.text).join("")}`;
+        case "when":
+        case "asks":
+            return undefined;
+    }
+}
+
+function printRow(row: ReviewRow): void {
+    const when = row.parts.find((part) => part.kind === "when");
+    const asks = row.parts.find((part) => part.kind === "asks");
+    const time = when?.kind === "when" ? `${when.from.text}${when.to ? `–${when.to.text}` : ""}` : "";
+    const head = asks?.kind === "asks" ? asks.pieces.map((piece) => piece.text).join("") : row.what;
+    const state = row.decision ? `${row.status} by ${row.decision.by}` : row.status;
+    out.println(`${pc.cyan(row.label.padEnd(5))} ${STATUS_COLOR[row.status](state)}  ${pc.dim(time)}  ${head}`);
+
+    for (const part of row.parts) {
+        const text = partText(part);
+
+        if (text) {
+            out.println(pc.dim(`      ${truncateDisplay(text, 110)}`));
+        }
+    }
+
+    const choices = row.choices.map((choice) =>
+        choice.confidence === undefined ? choice.label : `${choice.label} ${percent(choice.confidence)}`
+    );
+    out.println(`      ${pc.dim("choices")}  ${choices.join(pc.dim(" · "))}`);
+}
+
+async function rows(ref: string, opts: { all?: boolean; json?: boolean }): Promise<void> {
+    const record = requireMeeting(new MeetingStore(), ref);
+
+    if (!record) {
+        return;
+    }
+
+    let answer: Awaited<ReturnType<typeof readRows>>;
+
+    try {
+        answer = await readRows(record.id, opts.all === true);
+    } catch (err) {
+        fail(errorText(err));
+        return;
+    }
+
+    if (opts.json) {
+        out.result(windowJson(answer));
+        return;
+    }
+
+    if (answer.rows.length === 0) {
+        ui.info(`No items. Suggest some: ${TOOL} suggest ${record.id}`);
+    }
+
+    for (const row of answer.rows) {
+        printRow(row);
+    }
+
+    if (answer.hidden.lowPriority > 0) {
+        const n = answer.hidden.lowPriority;
+        out.println(
+            pc.dim(
+                `${n} more question${n === 1 ? "" : "s"} below the priority line (playback.listen.minPriority ${answer.hidden.minPriority}); --all shows them.`
+            )
+        );
+    }
+}
+
+function readRows(meeting: string, all: boolean) {
+    return withMeetingsClient((client) =>
+        client.call("meeting.rows", { meeting, ...(all ? { lowPriority: "show" as const } : {}) })
+    );
 }
 
 async function suggest(
@@ -314,24 +403,14 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
     });
 
     try {
-        let added: MeetingItem[] = [];
-        let anchorWarnings: string[] = [];
-        const updated = await store.update(
-            record.id,
-            { command: "items add", change: `${parsed.data.length} findings` },
-            (current) => {
-                const prepared = prepareFindings({
-                    findings: parsed.data,
-                    items: current.items,
-                    transcript: meeting?.transcript,
-                });
-                added = prepared.added;
-                anchorWarnings = prepared.warnings;
-                current.items.push(...added);
-            }
+        // Through the decision journal, so the history says who suggested them (an agent, a person) and an Undo removes them.
+        const decided = await withMeetingsClient((client) =>
+            client.call("decision.apply", { meeting: record.id, action: { kind: "add", findings: parsed.data } })
         );
+        const added = (decided.entry?.changes ?? []).flatMap((change) => (change.after ? [change.after] : []));
+        const updated = store.read(record.id) ?? record;
 
-        for (const warning of anchorWarnings) {
+        for (const warning of decided.warnings ?? []) {
             ui.warn(warning);
         }
 
@@ -401,17 +480,13 @@ async function decide(
     const failed = (skipped: Array<{ needs: string }>) => skipped.some((skip) => skip.needs !== "nothing");
 
     try {
-        const decided = await decideEntry({
-            store,
-            record,
-            status,
-            ids,
-            minConfidence,
-            speaker: opts.speaker,
-            proposed: opts.proposed,
-            actor: callerActor(),
-            ...(opts.reason ? { reason: opts.reason } : {}),
-        });
+        const decided = await withMeetingsClient((client) =>
+            client.call("decision.apply", {
+                meeting: record.id,
+                action: decisionOf({ status, ids, minConfidence, speaker: opts.speaker, proposed: opts.proposed }),
+                ...(opts.reason ? { reason: opts.reason } : {}),
+            })
+        );
         const result = decideResult(decided);
 
         if (opts.json) {
@@ -458,14 +533,21 @@ async function reopen(
     }
 
     try {
-        const decided = await reopenEntry({
-            store,
-            record,
-            ids,
-            ...(opts.token ? { token: opts.token } : {}),
-            actor: callerActor(),
-            ...(opts.reason ? { reason: opts.reason } : {}),
-        });
+        const reason = opts.reason ? { reason: opts.reason } : {};
+        const decided = await withMeetingsClient((client) =>
+            opts.token
+                ? client.call("decision.revert", {
+                      meeting: record.id,
+                      token: opts.token,
+                      ...(ids.length > 0 ? { items: ids } : {}),
+                      ...reason,
+                  })
+                : client.call("decision.apply", {
+                      meeting: record.id,
+                      action: { kind: "reopen", items: ids },
+                      ...reason,
+                  })
+        );
         const result = reopenResult(decided);
 
         if (opts.json) {
@@ -536,12 +618,13 @@ async function speakersRename(ref: string, label: string, name: string, opts: { 
             return;
         }
 
-        await new DecisionJournal({ store }).apply({
-            meeting: record.id,
-            action: { kind: "rename", label, name },
-            actor: callerActor(),
-            ...(opts.reason ? { reason: opts.reason } : {}),
-        });
+        await withMeetingsClient((client) =>
+            client.call("decision.apply", {
+                meeting: record.id,
+                action: { kind: "rename", label, name },
+                ...(opts.reason ? { reason: opts.reason } : {}),
+            })
+        );
         ui.ok(
             name.trim() === label
                 ? `${record.id}: ${label} is ${label} again (the rename is gone)`
@@ -646,6 +729,16 @@ export function registerItemCommands(program: Command): void {
             "print the new items as a JSON array (the retired ids are not in it; items --json shows them)"
         )
         .action(suggest);
+
+    program
+        .command("rows")
+        .argument("<meeting>", MEETING_REF)
+        .description(
+            "The review rows: each item as the window shows it, in the order listen asks, with its question as parts, its choices with confidence and who decided it"
+        )
+        .option("--all", "also the open questions below playback.listen.minPriority")
+        .option("--json", "print JSON")
+        .action(rows);
 
     program
         .command("items")

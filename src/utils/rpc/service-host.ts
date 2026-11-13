@@ -54,6 +54,13 @@ export const serviceEntrySchema = z.object({
     codeStamp: z.number(),
     /** The code the service runs (a hash of its checkout), which a client compares before it connects. */
     code: z.string().optional(),
+    /**
+     * The checkout the service runs from, as a decoded absolute path with a trailing separator (`/…/GenesisTools/`),
+     * as Bun loaded the code (symlinks already resolved: `/tmp/…` reads `/private/tmp/…`). A client that runs no
+     * TypeScript (the Meetings window) compares it with the checkout of the `tools` it calls, both resolved, and reads
+     * through the command on a mismatch.
+     */
+    sourceRoot: z.string().optional(),
 });
 export type ServiceEntry = z.infer<typeof serviceEntrySchema>;
 
@@ -103,6 +110,8 @@ export interface ServiceHostOptions<S> {
     onStopped?: (reason: string) => void;
     /** How long a second start waits for a rival start's service.json (tests shorten it). */
     rivalWaitMs?: number;
+    /** A method whose newer call on a connection cancels its older ones (`RpcPeerOptions.supersedes`). */
+    supersedes?: (method: string) => string | undefined;
 }
 
 export interface ServiceHost<S> {
@@ -178,6 +187,7 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
         startedAt: new Date(startedAt).toISOString(),
         codeStamp: startedAt,
         ...(options.code ? { code: options.code } : {}),
+        ...(options.sourceRoot ? { sourceRoot: options.sourceRoot } : {}),
     };
     let lastBusy = Date.now();
     /** Calls answered now: a code change waits for them, so a call never loses its service halfway. */
@@ -263,6 +273,7 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
             },
             logScope: options.logScope,
             label,
+            ...(options.supersedes ? { supersedes: options.supersedes } : {}),
         });
         // Only the owner may connect, also where the folder's mode is not checked on the way in.
         chmodSync(socket, 0o600);
@@ -368,4 +379,42 @@ export async function launchService(options: {
     const reason = `the ${label} did not start within ${(timeoutMs + START_GRACE_MS) / 1000} s (${outcome.status}); run ${toolCommand(options.command.join(" "))} in a terminal to see why`;
     log.warn({ status: outcome.status, ms: Date.now() - startedAt }, reason);
     return { status: "failed", reason };
+}
+
+/** A stop of the service a folder names: it stopped, none ran, its pid could not be told from another process, or it did not exit in time. */
+export type ServiceStop =
+    | { status: "stopped"; entry: ServiceEntry }
+    | { status: "none" }
+    | { status: "unverified"; entry: ServiceEntry }
+    | { status: "timeout"; entry: ServiceEntry };
+
+/**
+ * Stops the running service of `dir` with SIGTERM (it stops like on Ctrl-C: answers already written go out, its files
+ * go) and waits until its process is gone. Only a pid whose command line still matches the one service.json recorded
+ * is signalled, so a recycled pid is never killed; without that proof it answers `unverified` and signals nothing.
+ */
+export async function stopService(dir: string, options: { timeoutMs?: number } = {}): Promise<ServiceStop> {
+    const entry = readLiveServiceEntry(dir);
+
+    if (!entry) {
+        return { status: "none" };
+    }
+
+    if (classifyPid(entry.pid, entry.pidCommand).status !== "live") {
+        return { status: "unverified", entry };
+    }
+
+    // pid-verified: classifyPid confirmed the pid runs the command line the service wrote into service.json
+    process.kill(entry.pid, "SIGTERM");
+    const deadline = Date.now() + (options.timeoutMs ?? 5_000);
+
+    while (classifyPid(entry.pid, entry.pidCommand).status === "live") {
+        if (Date.now() >= deadline) {
+            return { status: "timeout", entry };
+        }
+
+        await Bun.sleep(Math.min(100, deadline - Date.now()));
+    }
+
+    return { status: "stopped", entry };
 }

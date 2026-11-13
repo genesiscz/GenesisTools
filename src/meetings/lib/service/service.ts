@@ -1,4 +1,7 @@
+import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
 import { type ServiceEntry, type ServiceHost, startServiceHost } from "@genesiscz/utils/rpc/service-host";
 import type { RpcConnection } from "@genesiscz/utils/rpc/socket-server";
 import {
@@ -11,6 +14,7 @@ import {
     subscribeParamsSchema,
 } from "./api";
 import { helloAnswer, meetingsServiceDir } from "./client";
+import { MeetingsFolderWatch } from "./folder-watch";
 import { asRefusal, type MeetingsHandlerDeps, meetingsTable, refusal } from "./handlers";
 
 const { log } = logger.scoped("meetings-service");
@@ -38,6 +42,11 @@ export interface MeetingsServiceOptions extends MeetingsHandlerDeps {
     code?: string;
     rivalWaitMs?: number;
     onStopped?: (reason: string) => void;
+    /**
+     * The watch on the meetings folder that tells `meeting.changed` for writes outside the service; on by default,
+     * `false` for none (a test that writes its own files), or a fake event source and coalescing time.
+     */
+    watch?: false | { subscribe?: WatcherOptions["subscribe"]; coalesceMs?: number };
 }
 
 /** One connected caller, as the service knows it. */
@@ -72,6 +81,21 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
     let lastId = 0;
     // `host` is set once it listens; no call reaches `hello` before.
     let host: ServiceHost<ConnectionState> | undefined;
+    let watch: MeetingsFolderWatch | undefined;
+
+    /** A notification to every connection subscribed to the event and to its meeting (or to every meeting). */
+    const emit = <E extends MeetingsEvent>(event: E, params: MeetingsNotification<E>): void => {
+        // A decision wrote the record: the watch leaves that write out, since `decision.applied` tells it already.
+        if (event === "decision.applied" || event === "decision.reverted") {
+            watch?.ownWrite(params.meeting);
+        }
+
+        host?.emit(
+            event,
+            { ...params },
+            (connection) => !connection.state.meeting || connection.state.meeting === params.meeting
+        );
+    };
 
     const greet = (connection: RpcConnection<ConnectionState>, hello: MeetingsHello) => {
         if (hello.protocol !== MEETINGS_PROTOCOL) {
@@ -112,6 +136,8 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
                     ...(connection.state.hello ? { caller: connection.state.hello } : {}),
                     signal: context.signal,
                     hello: (hello) => greet(connection, hello),
+                    emit: (event, notification) => emit(event, notification),
+                    progress: (update) => context.progress(update),
                 });
             } catch (error) {
                 throw asRefusal(error);
@@ -119,13 +145,25 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
         },
         onSubscribe: (connection, params) => {
             const parsed = subscribeParamsSchema.safeParse(params ?? {});
-            connection.state.meeting = parsed.success ? parsed.data.meeting : undefined;
+
+            // An invalid meeting filter would widen the subscription to every meeting; it is refused instead.
+            if (!parsed.success) {
+                const issue = parsed.error.issues[0];
+                throw new RpcError(
+                    JSON_RPC_ERRORS.invalidParams,
+                    `subscribe: ${issue?.path.join(".") || "params"}: ${issue?.message}`
+                );
+            }
+
+            connection.state.meeting = parsed.data.meeting;
         },
         idleMs: options.idleMs ?? MEETINGS_SERVICE_IDLE_MS,
         checkEveryMs: options.checkEveryMs,
         sourceRoot: options.sourceRoot,
         rivalWaitMs: options.rivalWaitMs,
         onStopped: options.onStopped,
+        // The next row's click cuts its Moment; the older cut it replaces stops at once (G-PLAY-10).
+        supersedes: (method) => (method === "moment.clip" ? method : undefined),
     });
 
     if (start.status === "running") {
@@ -134,6 +172,24 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
 
     host = start.host;
     const listening = start.host;
+
+    if (options.watch !== false) {
+        const folderWatch = new MeetingsFolderWatch({
+            root: (options.store?.() ?? new MeetingStore()).root,
+            emit: (meeting, parts) => emit("meeting.changed", { meeting, parts }),
+            ...(options.watch?.subscribe ? { subscribe: options.watch.subscribe } : {}),
+            ...(options.watch?.coalesceMs !== undefined ? { coalesceMs: options.watch.coalesceMs } : {}),
+        });
+
+        // A folder that cannot be watched leaves the service without `meeting.changed`, never without the service.
+        try {
+            await folderWatch.start();
+            watch = folderWatch;
+            void listening.stopped.then(() => folderWatch.stop());
+        } catch (error) {
+            log.warn({ error }, "the meetings folder is not watched; outside writes tell no meeting.changed");
+        }
+    }
 
     return {
         status: "started",
@@ -153,12 +209,7 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
                           ]
                         : [];
                 }),
-            emit: (event, params) =>
-                listening.emit(
-                    event,
-                    { ...params },
-                    (connection) => !connection.state.meeting || connection.state.meeting === params.meeting
-                ),
+            emit,
             stop: listening.stop,
             stopped: listening.stopped,
         },

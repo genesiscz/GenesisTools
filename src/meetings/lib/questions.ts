@@ -1,5 +1,6 @@
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import { voiceRuns } from "@genesiscz/utils/meetings/energy";
+import { nameKey } from "@genesiscz/utils/meetings/people";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { importanceOf } from "@genesiscz/utils/transcribe/importance";
@@ -552,16 +553,20 @@ export function skipQuestion(record: MeetingRecord, id: string, now: string): vo
     question.decidedAt = now;
 }
 
-/** The names and words an answer may be: the attendees, the participants, the calendar and the dictionary. */
-export function answerVocabulary(record: MeetingRecord, dictionaryValues: string[]): string[] {
-    return [
-        ...new Set([
-            ...(record.attendance?.people.map((person) => person.name) ?? []),
-            ...record.participants.map((person) => person.name),
-            ...(record.calendar?.attendees ?? []),
-            ...dictionaryValues,
-        ]),
-    ].filter((value) => value.trim().length > 0);
+/**
+ * The names and words an answer may be: the attendees, the participants, the calendar, then the people the people
+ * directory knows for the meeting (`known`, ranked: its people first, then everyone else it knows), then the
+ * dictionary. A name the record holds keeps its place, so the terminal's choices only gain names (R10, G3).
+ */
+export function answerVocabulary(record: MeetingRecord, dictionaryValues: string[], known: string[] = []): string[] {
+    const values = [
+        ...(record.attendance?.people.map((person) => person.name) ?? []),
+        ...record.participants.map((person) => person.name),
+        ...(record.calendar?.attendees ?? []),
+    ];
+    const keys = new Set(values.map((value) => nameKey(value)));
+    const others = known.filter((name) => !keys.has(nameKey(name)));
+    return [...new Set([...values, ...others, ...dictionaryValues])].filter((value) => value.trim().length > 0);
 }
 
 /** The `occurrence`-th whole-word occurrence of a word question's heard words in its range. */

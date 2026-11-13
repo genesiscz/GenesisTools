@@ -90,7 +90,11 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    `listen --item`, `confirm` and `reject`; `tools meetings items` shows it in the `Q` column. To relay an answer the
    user gives in chat: `tools meetings listen <meeting> --item Q12 --answer "<text>"`. At the same time run `tools meetings listen <meeting> --subscribe-answers` under your Monitor tool (or as a
    background command): it prints each answer as one JSON line the moment it is given and exits when the round ends,
-   so you act on each answer while the user is still listening. Do not poll the record.
+   so you act on each answer while the user is still listening. Do not poll the record. When the user reviews in the
+   Meetings window, add `--with-comments --follow`: the comments the user sends from a transcript selection arrive on
+   the same stream (`"type": "comment"`, with the text, the selected words and the transcript `target`; answer lines
+   then carry `"type": "answer"`), and the window names you as the listener while the command runs. Read each comment
+   as an instruction for that passage. `tools meetings rows <meeting> --json` shows the questions as the window does.
 5. **The agent finishes.** Take the answers from the subscription (or `tools meetings items <meeting> --kind
    question`) and carry each one to the other lines with the same evidence. Ask what is still open in rounds (the `grilling` style): numbered questions
    with concrete quotes and timestamps, one recommendation each. Never settle a person's identity or a business term

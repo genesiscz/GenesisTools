@@ -151,6 +151,9 @@ struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
     let startSec: Double?
     let speaker: String
     let text: String
+    /// When the line stops being heard: the next timed line's start (G-TR-1). `meeting.transcript` sends it; the
+    /// command `transcript --format json` leaves it out, and the transcript blocks compute it then.
+    var endSec: Double? = nil
     var rowID: String { id ?? "\(startSec ?? -1)-\(speaker)-\(text.prefix(24))" }
 }
 
@@ -173,6 +176,14 @@ struct SpeakerStat: Decodable, Equatable, Hashable, Identifiable {
     var id: String { label }
 }
 
+extension SpeakerStat {
+    /// One label of `meeting.speakers` as a speaker row shows it (its spans go to the talk-time lanes instead).
+    init(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker) {
+        self.init(label: speaker.label, origin: speaker.origin, turns: speaker.turns, lines: speaker.lines,
+                  words: speaker.words, spokenSec: speaker.spokenSec, firstSec: speaker.firstSec, lastSec: speaker.lastSec)
+    }
+}
+
 struct SpeakerStats: Decodable, Equatable {
     let speakers: [SpeakerStat]
     /// Signs about single labels (`several-people`, `label-drift`); nil from a CLI older than them.
@@ -182,8 +193,14 @@ struct SpeakerStats: Decodable, Equatable {
 /// A sign about one label from `speakers stats`, with how strong it is ("weak", "normal", "strong"). The fields after
 /// `strength` belong to some kinds only (`SpeakerHint` in src/utils/transcribe/speakers.ts).
 struct SpeakerHint: Decodable, Equatable, Hashable {
-    /// Lines in a row that break an attendance rule (`absent-speaker`, `sole-attendee`).
-    struct Range: Decodable, Equatable, Hashable { let lines: Int }
+    /// Lines in a row that break an attendance rule (`absent-speaker`, `sole-attendee`): where they are, and who was in
+    /// the call meanwhile (the candidates for the voice, on `absent-speaker` ranges).
+    struct Range: Decodable, Equatable, Hashable {
+        let lines: Int
+        var fromSec: Double? = nil
+        var toSec: Double? = nil
+        var present: [String]? = nil
+    }
     /// A goodbye after which the label speaks again (`leave-then-continues`).
     struct Leave: Decodable, Equatable, Hashable { let atSec: Double }
 
@@ -605,11 +622,32 @@ enum MeetingsFormat {
         return out.string(from: date)
     }
 
-    /// "1:05:09" or "5:09".
+    /// "Today 18:32", "Yesterday 09:05", "Mon 2 Nov 14:00": when a journal entry was made, in local time.
+    static func dayTime(_ text: String?, now: Date = Date(), calendar: Calendar = .current) -> String {
+        guard let date = date(text) else { return "" }
+        let day = DateFormatter()
+        day.calendar = calendar
+        day.timeZone = calendar.timeZone
+        day.locale = Locale(identifier: "en_US_POSIX")
+        day.dateFormat = "yyyy-MM-dd"
+        let clock = DateFormatter()
+        clock.locale = Locale(identifier: "en_GB")
+        clock.timeZone = calendar.timeZone
+        clock.dateFormat = "HH:mm"
+        return "\(dayTitle(day.string(from: date), now: now, calendar: calendar)) \(clock.string(from: date))"
+    }
+
+    /// "1:49:48" or "05:09": the same text the CLI and the review rows print (`formatClock`, src/utils/transcribe/
+    /// render.ts; candidate 7 of the architecture review), so a time reads the same in the terminal and the window.
     static func clock(_ seconds: Double) -> String {
         let total = max(0, Int(seconds.rounded(.down)))
         let h = total / 3600, m = (total % 3600) / 60, s = total % 60
-        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%02d:%02d", m, s)
+    }
+
+    /// "1 s", "0.5 s": a short setting's seconds.
+    static func seconds(_ value: Double) -> String {
+        value == value.rounded() ? "\(Int(value)) s" : String(format: "%.1f s", value)
     }
 
     /// "1 h 05 min", "42 min", "50 s".

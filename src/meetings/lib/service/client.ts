@@ -1,6 +1,6 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { RpcError } from "@genesiscz/utils/rpc/errors";
+import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
 import { readLiveServiceEntry, type ServiceEntry } from "@genesiscz/utils/rpc/service-host";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -19,6 +19,7 @@ import {
     meetingsProtocolVersion,
     SUBSCRIBE,
     subscribeParamsSchema,
+    UNSUBSCRIBE,
 } from "./api";
 import {
     asRefusal,
@@ -40,11 +41,14 @@ const { log } = logger.scoped("meetings-client");
 export interface MeetingsClient {
     /** Which adapter answers. */
     readonly kind: "socket" | "in-process";
-    /** One call; a refusal rejects with the error `clientError` makes (a conflict keeps its class and code). */
+    /**
+     * One call; a refusal rejects with the error `clientError` makes (a conflict keeps its class and code). `signal`
+     * cancels it (`$/cancel`); `onProgress` hears a long call's progress (a Moment's cut).
+     */
     call<M extends MeetingsMethod>(
         method: M,
         params: MeetingsParams<M>,
-        options?: { signal?: AbortSignal; timeoutMs?: number }
+        options?: MeetingsCallOptions
     ): Promise<MeetingsResult<M>>;
     /** Hears the events of one meeting (or every meeting) until the returned function stops it. */
     subscribe(
@@ -52,6 +56,12 @@ export interface MeetingsClient {
         listener: (event: MeetingsEventMessage) => void
     ): Promise<() => void>;
     close(): void;
+}
+
+export interface MeetingsCallOptions {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    onProgress?: (update: { fraction?: number; label?: string }) => void;
 }
 
 /** One notification as a listener gets it. */
@@ -85,6 +95,27 @@ export function subscriptionHears(
 ): boolean {
     const events = filter.events ?? [];
     return (events.length === 0 || events.includes(event)) && (!filter.meeting || filter.meeting === meetingOf(params));
+}
+
+/**
+ * The filter as both adapters accept it: an empty or non-string meeting would widen the subscription to every meeting,
+ * so it is refused as invalid params (-32602), as the service refuses it.
+ */
+function checkedFilter<F extends { meeting?: string; events?: readonly string[] }>(filter: F): F {
+    const parsed = subscribeParamsSchema.safeParse({
+        ...filter,
+        ...(filter.events ? { events: [...filter.events] } : {}),
+    });
+
+    if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        throw new RpcError(
+            JSON_RPC_ERRORS.invalidParams,
+            `subscribe: ${issue?.path.join(".") || "params"}: ${issue?.message}`
+        );
+    }
+
+    return filter;
 }
 
 /**
@@ -150,15 +181,18 @@ export class InProcessMeetingsClient implements MeetingsClient {
     async call<M extends MeetingsMethod>(
         method: M,
         params: MeetingsParams<M>,
-        options: { signal?: AbortSignal } = {}
+        options: MeetingsCallOptions = {}
     ): Promise<MeetingsResult<M>> {
         const context: MeetingsCallContext = {
             ...(this.caller ? { caller: this.caller } : {}),
             ...(options.signal ? { signal: options.signal } : {}),
+            ...(options.onProgress ? { progress: options.onProgress } : {}),
             hello: (hello) => {
                 this.caller = hello;
                 return helloAnswer();
             },
+            local: true,
+            emit: (event, params) => (this.options.events ?? localMeetingsEvents).emit(event, params),
         };
 
         try {
@@ -174,7 +208,7 @@ export class InProcessMeetingsClient implements MeetingsClient {
         filter: { meeting?: string; events?: readonly MeetingsEvent[] },
         listener: (event: MeetingsEventMessage) => void
     ): Promise<() => void> {
-        const stop = (this.options.events ?? localMeetingsEvents).listen(filter, listener);
+        const stop = (this.options.events ?? localMeetingsEvents).listen(checkedFilter(filter), listener);
         this.stops.add(stop);
         return () => {
             this.stops.delete(stop);
@@ -234,28 +268,39 @@ export class SocketMeetingsClient implements MeetingsClient {
     async call<M extends MeetingsMethod>(
         method: M,
         params: MeetingsParams<M>,
-        options: { signal?: AbortSignal; timeoutMs?: number } = {}
+        options: MeetingsCallOptions = {}
     ): Promise<MeetingsResult<M>> {
+        // The service went before this call left (it stopped for a code change while a listen round waited): nothing
+        // reached it, so any call, a decision included, answers in this process.
+        if (this.client.closed) {
+            log.debug({ method }, "the meetings service went before this call; answering in-process");
+            return this.inProcess().call(method, params, options);
+        }
+
         try {
             return await this.client.call<MeetingsResult<M>>(method, params, options);
         } catch (error) {
             // The connection went (the service stopped for a code change between the hello and this call): a read
-            // answers in this process, as it would have with no service.
+            // answers in this process, as it would have with no service. A write may have reached it, so it throws.
             if (!(error instanceof RpcError) && meetingsMethod(method).effect === "read") {
                 log.debug({ error, method }, "the meetings service went during a read; answering in-process");
-                this.fallback ??= new InProcessMeetingsClient({ hello: this.hello });
-                return this.fallback.call(method, params, options);
+                return this.inProcess().call(method, params, options);
             }
 
             throw clientError(error);
         }
     }
 
+    private inProcess(): InProcessMeetingsClient {
+        this.fallback ??= new InProcessMeetingsClient({ hello: this.hello });
+        return this.fallback;
+    }
+
     async subscribe(
         filter: { meeting?: string; events?: readonly MeetingsEvent[] },
         listener: (event: MeetingsEventMessage) => void
     ): Promise<() => void> {
-        const entry = { filter, listener };
+        const entry = { filter: checkedFilter(filter), listener };
         this.listeners.add(entry);
         // One subscription per connection on the service: the union of the listeners' events and meetings.
         await this.resubscribe();
@@ -275,12 +320,11 @@ export class SocketMeetingsClient implements MeetingsClient {
 
     /**
      * The service's filter of this connection: every listener's events, and one meeting only when all name it. With no
-     * listener left it subscribes to `NO_EVENT` alone: the transport has no unsubscribe, and an empty event list
-     * would read as every event of every meeting.
+     * listener left it unsubscribes: an empty event list would read as every event.
      */
     private async resubscribe(): Promise<void> {
         if (this.listeners.size === 0) {
-            await this.client.call(SUBSCRIBE, subscribeParamsSchema.parse({ events: [NO_EVENT] }));
+            await this.client.call(UNSUBSCRIBE, {});
             return;
         }
 

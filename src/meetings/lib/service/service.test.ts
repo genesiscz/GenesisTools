@@ -1,17 +1,21 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
+import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import * as serviceHost from "@genesiscz/utils/rpc/service-host";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { Command } from "commander";
+import { z } from "zod";
 import { registerServeCommand } from "../../commands/serve";
+import { MeetingComments } from "../comments";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
 import fixture from "./__fixtures__/meetings-protocol.json";
@@ -26,18 +30,18 @@ import {
     SUBSCRIBE,
     subscribeParamsSchema,
     subscribeResultSchema,
+    UNSUBSCRIBE,
 } from "./api";
 import {
     InProcessMeetingsClient,
     LocalMeetingsEvents,
     type MeetingsClient,
     type MeetingsEventMessage,
-    NO_EVENT,
     openMeetingsClient,
     SocketMeetingsClient,
 } from "./client";
-import { MeetingsServiceError } from "./handlers";
-import { startMeetingsService } from "./service";
+import { type MeetingsHandlerDeps, MeetingsServiceError } from "./handlers";
+import { type MeetingsServiceOptions, startMeetingsService } from "./service";
 
 /** The code stamp of the tests' service and callers, so the fixture's hello does not name a checkout's path. */
 const CODE = "0123456789ab";
@@ -101,6 +105,10 @@ const RETRO = {
     history: [{ at: "2026-11-03T13:00:00.000Z", command: "new", change: "created" }],
 };
 
+/** The recording the fake source keeps: a real file, since the clip cache keys a clip by the file's time and size. */
+const RECORDING = join(mkdtempSync(join(tmpdir(), "mtg-audio-")), "upload.ogg");
+writeFileSync(RECORDING, "a recording");
+
 function fakeSource(): TranscriptSource {
     const meeting: SourceMeeting = {
         sourceMeetingId: "wf-2041",
@@ -123,7 +131,7 @@ function fakeSource(): TranscriptSource {
         describe: () => ({ meetingId: "wf-2041" }),
         dictionary: async () => [],
         recordingClock: async () => ({ startedAt: "2026-11-03T09:00:00.000Z" }),
-        evidence: async () => null,
+        evidence: async () => ({ audioPath: RECORDING, segments: [], speaking: [], files: [] }),
         liveRecording: async () => null,
         calendarEntries: async () => ({ ok: true, from: "wisprflow", entries: [] }),
         folders: async () => [],
@@ -151,6 +159,58 @@ function scratchStore(): { store: MeetingStore; linkedSource: (record: { id: str
     };
 }
 
+/** A stand-in for @parcel/watcher: `raise` hands the folder watch the events a write of these paths would raise. */
+function fakeFolderEvents(): {
+    subscribe: NonNullable<WatcherOptions["subscribe"]>;
+    raise: (...paths: string[]) => void;
+} {
+    let deliver: ((paths: string[]) => void) | undefined;
+    return {
+        subscribe: async (_dir, callback) => {
+            deliver = (paths) =>
+                callback(
+                    null,
+                    paths.map((path) => ({ type: "update", path }))
+                );
+            return { unsubscribe: async () => {} };
+        },
+        raise: (...paths) => deliver?.(paths),
+    };
+}
+
+/** The events a subscription hears, in order: `next` waits for the next one (2 s at most), `left` lists the unread. */
+function eventQueue() {
+    const unread: MeetingsEventMessage[] = [];
+    const waiting: Array<(event: MeetingsEventMessage) => void> = [];
+    return {
+        push: (event: MeetingsEventMessage) => {
+            const resolve = waiting.shift();
+
+            if (resolve) {
+                resolve(event);
+            } else {
+                unread.push(event);
+            }
+        },
+        next: (): Promise<MeetingsEventMessage> => {
+            const first = unread.shift();
+
+            if (first) {
+                return Promise.resolve(first);
+            }
+
+            return new Promise((resolve, reject) => {
+                const timer = setTimeout(() => reject(new Error("no meetings event within 2 s")), 2000);
+                waiting.push((event) => {
+                    clearTimeout(timer);
+                    resolve(event);
+                });
+            });
+        },
+        left: () => [...unread],
+    };
+}
+
 /** A service dir short enough for a Unix socket path. */
 function serviceDir(): string {
     return mkdtempSync(join(tmpdir(), "mtg-"));
@@ -158,10 +218,60 @@ function serviceDir(): string {
 
 const hello: MeetingsHello = { role: "cli", protocol: MEETINGS_PROTOCOL, code: CODE, pid: 4242 };
 
-async function startService(options: { dir?: string } = {}) {
+/** The time every decision in these tests is made at, so the fixture's entries read the same each run. */
+const NOW = new Date("2026-11-03T10:00:00.000Z");
+/** A cut that writes a stand-in WAV, as ffmpeg would; it reports half way once. */
+const fakeCut: NonNullable<MeetingsHandlerDeps["cut"]> = async (options) => {
+    options.onProgress?.(0.5);
+    writeFileSync(options.outPath, "RIFF");
+};
+/** The one contact of the tests' address book. */
+const SKY = {
+    given_name: "Sky",
+    family_name: "Example",
+    organization_name: "Harbor Works",
+    email_addresses: [{ value: "sky@example.com" }],
+};
+/** The pid of a `listen --subscribe-answers --with-comments` the tests say runs; every other pid is gone. */
+const LISTENER_PID = 4343;
+const quietDeps: MeetingsHandlerDeps = {
+    now: () => NOW,
+    listenerAlive: (pid) => pid === LISTENER_PID,
+    ledger: () => undefined,
+    readLedger: () => [],
+    cut: fakeCut,
+    probe: async () => ({ tracks: 1, channels: 2, durationSec: 45 }),
+    hasFfmpeg: () => true,
+    tone: async (_sound, path) => {
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, "RIFF");
+    },
+    // An address book with one invented contact, so a people answer never reads this Mac's Contacts.
+    contacts: () =>
+        new ContactsPeopleSource({
+            authorized: async () => ({ status: "authorized", authorized: true }),
+            search: async (query) => (query.toLowerCase().startsWith("sk") ? [SKY] : []),
+            list: async () => [SKY],
+        }),
+    // Ten seconds of 100 ms blocks: quiet, then the left channel loud from 4 s to 5 s.
+    energy: async () => ({
+        left: Float32Array.from({ length: 100 }, (_, block) => (block >= 40 && block < 50 ? 800 : 100)),
+        right: Float32Array.from({ length: 100 }, () => 200),
+    }),
+};
+
+async function startService(options: { dir?: string; watch?: MeetingsServiceOptions["watch"] } = {}) {
     const { store, linkedSource } = scratchStore();
     const dir = options.dir ?? serviceDir();
-    const start = await startMeetingsService({ dir, store: () => store, linkedSource, idleMs: 0, code: CODE });
+    const start = await startMeetingsService({
+        dir,
+        store: () => store,
+        linkedSource,
+        idleMs: 0,
+        code: CODE,
+        watch: options.watch ?? false,
+        ...quietDeps,
+    });
 
     if (start.status !== "started") {
         throw new Error("the meetings service did not start");
@@ -174,22 +284,36 @@ async function startService(options: { dir?: string } = {}) {
 interface Adapter {
     client: MeetingsClient;
     emit: (event: "meeting.changed", params: { meeting: string; parts: Array<"show" | "transcript"> }) => void;
+    store: MeetingStore;
 }
 
-const ADAPTERS: Record<"socket" | "in-process", () => Promise<Adapter>> = {
-    socket: async () => {
-        const { service } = await startService();
-        const client = await SocketMeetingsClient.connect(service.entry, hello);
+const ADAPTERS: Record<"socket" | "in-process", (caller?: MeetingsHello) => Promise<Adapter>> = {
+    socket: async (caller = hello) => {
+        const { service, store } = await startService();
+        const client = await SocketMeetingsClient.connect(service.entry, caller);
         closing.push(() => client.close());
-        return { client, emit: (event, params) => service.emit(event, params) };
+        return { client, store, emit: (event, params) => service.emit(event, params) };
     },
-    "in-process": async () => {
+    "in-process": async (caller = hello) => {
         const { store, linkedSource } = scratchStore();
         const events = new LocalMeetingsEvents();
-        const client = new InProcessMeetingsClient({ hello, deps: { store: () => store, linkedSource }, events });
+        const client = new InProcessMeetingsClient({
+            hello: caller,
+            deps: { store: () => store, linkedSource, ...quietDeps },
+            events,
+        });
         closing.push(() => client.close());
-        return { client, emit: (event, params) => events.emit(event, params) };
+        return { client, store, emit: (event, params) => events.emit(event, params) };
     },
+};
+
+/** An agent's hello: its decisions name its harness and session. */
+const agentHello: MeetingsHello = {
+    role: "agent",
+    harness: "claude-code",
+    session: "11111111-2222-4333-8444-555555555555",
+    protocol: MEETINGS_PROTOCOL,
+    code: CODE,
 };
 
 /** The error a call rejects with. */
@@ -299,32 +423,276 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             { method: "meeting.changed", params: { meeting: REVIEW.id, parts: ["show", "transcript"] } },
         ]);
     });
+
+    test("decision.apply decides as the hello's actor, tells decision.applied, and decision.revert undoes it", async () => {
+        const { client, store } = await ADAPTERS[kind](agentHello);
+        const heard: MeetingsEventMessage[] = [];
+        await client.subscribe({ meeting: REVIEW.id, events: ["decision.applied", "decision.reverted"] }, (event) =>
+            heard.push(event)
+        );
+        const applied = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+            reason: "the calendar says so",
+        });
+
+        const agent = { kind: "agent", harness: "claude-code", session: agentHello.session };
+        expect(applied.entry).toMatchObject({ actor: agent, reason: "the calendar says so", decided: ["i1"] });
+        expect(store.read(REVIEW.id)?.items[0]).toMatchObject({ status: "confirmed", decision: { actor: agent } });
+        const reverted = await client.call("decision.revert", { meeting: REVIEW.id, token: applied.entry!.token });
+        expect(reverted.entry?.action).toEqual({ kind: "revert", token: applied.entry!.token });
+        expect(store.read(REVIEW.id)?.items[0]?.status).toBe("suggested");
+        const journal = await client.call("journal.read", { meeting: REVIEW.id });
+        expect(journal.entries.map((entry) => [entry.action.kind, entry.revertedBy])).toEqual([
+            ["revert", undefined],
+            ["confirm", reverted.entry!.token],
+        ]);
+        await client.call("meetings.list", { limit: 1 });
+
+        expect(heard.map((event) => event.method)).toEqual(["decision.applied", "decision.reverted"]);
+        expect(heard[0]?.params).toEqual({ meeting: REVIEW.id, entry: applied.entry });
+        expect(heard[1]?.params).toEqual({ meeting: REVIEW.id, token: applied.entry!.token, entry: reverted.entry });
+    });
+
+    test("decision.plan answers the entry and its reach and writes nothing", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const before = store.read(REVIEW.id);
+        const planned = await client.call("decision.plan", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+        });
+
+        expect(planned.entry?.decided).toEqual(["i1"]);
+        expect(planned.reach).toEqual({ items: [], dictionary: [] });
+        expect(store.read(REVIEW.id)).toEqual(before);
+        expect((await client.call("journal.read", { meeting: REVIEW.id })).entries).toEqual([]);
+    });
+
+    test("onDecided refuse: an item decided since is refused with already-decided and the entry that decided it", async () => {
+        const { client } = await ADAPTERS[kind](agentHello);
+        const first = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+        });
+        const again = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "confirm", items: ["i1"] },
+        });
+        const refused = await failure(
+            client.call("decision.apply", {
+                meeting: REVIEW.id,
+                action: { kind: "reject", items: ["i1"] },
+                onDecided: "refuse",
+            })
+        );
+
+        expect(again).toEqual({ skipped: [{ id: "i1", reason: "it is confirmed already", needs: "nothing" }] });
+        expect(refused).toBeInstanceOf(MeetingsServiceError);
+        expect(refused).toMatchObject({ code: "already-decided" });
+        expect(refused.message).toBe(
+            "i1 is confirmed already by an agent (Claude Code, session 11111111); nothing was decided"
+        );
+        expect((refused as MeetingsServiceError).data).toMatchObject({
+            code: "already-decided",
+            items: ["i1"],
+            entry: { token: first.entry!.token },
+        });
+    });
+
+    test("moment.plan answers the Moment, or the target's refusal; moment.clip cuts it into the cache once", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const missing = await client.call("moment.plan", { meeting: REVIEW.id, target: { kind: "item", id: "i9" } });
+        const planned = await client.call("moment.plan", { meeting: REVIEW.id, target: { kind: "item", id: "i1" } });
+        const progress: number[] = [];
+        // A time of each adapter's own: the two adapters share the sandbox home's clip cache.
+        const target = { kind: "time" as const, atSec: kind === "socket" ? 2 : 3 };
+        const cut = await client.call(
+            "moment.clip",
+            { meeting: REVIEW.id, target },
+            { onProgress: (update) => progress.push(update.fraction ?? -1) }
+        );
+        const again = await client.call("moment.clip", { meeting: REVIEW.id, target });
+        const plannedCut = await client.call("moment.plan", { meeting: REVIEW.id, target });
+
+        expect(missing).toEqual({ cannot: { code: "unknown-item", message: `No item i9 in ${REVIEW.id}.` } });
+        expect(planned.cannot).toBeUndefined();
+        expect(planned.moment).toMatchObject({ meeting: REVIEW.id, label: "i1", fromSec: 12, spotSec: 12 });
+        expect(again.path).toBe(cut.path);
+        expect(cut.path).toContain("meetings-cache/moments/");
+        expect({ ...cut, path: "" }).toEqual({ ...plannedCut.moment!, path: "" });
+        expect(progress).toEqual([0.5]);
+        expect(await client.call("meeting.audio", { meeting: REVIEW.id })).toEqual({
+            path: RECORDING,
+            tracks: 1,
+            channels: 2,
+            durationSec: 45,
+        });
+        const tone = await client.call("tone.preview", { sound: { hz: 440, sec: 0.2, volume: 0.5 } });
+        expect(tone.sound).toEqual({ hz: 440, sec: 0.2, volume: 0.5 });
+        expect(tone.path).toContain("meetings-cache/tones/tone-");
+        const none = await failure(client.call("meeting.audio", { meeting: RETRO.id }));
+        expect(none).toMatchObject({ code: "unplayable", data: { code: "unplayable", reason: "no-audio" } });
+    });
+
+    test("comments: staged until sent, sent to the listeners with a journal entry and comment.sent, and never taken back", async () => {
+        const { client, store } = await ADAPTERS[kind](agentHello);
+        const heard: MeetingsEventMessage[] = [];
+        await client.subscribe({ meeting: REVIEW.id, events: ["comment.sent"] }, (event) => heard.push(event));
+        const selection = { kind: "selection" as const, from: { atSec: 2, line: 0 }, to: { atSec: 9, line: 1 } };
+        const staged = await client.call("comment.stage", {
+            meeting: REVIEW.id,
+            target: selection,
+            text: "The button is the checkout button",
+            quote: "The button moved",
+        });
+        await client.call("comment.stage", { meeting: REVIEW.id, target: { kind: "time", atSec: 4 }, text: "Drop it" });
+        const unstaged = await client.call("comment.unstage", { meeting: REVIEW.id, id: "c2" });
+        MeetingComments.of(store, REVIEW.id, { now: () => NOW }).join({ pid: LISTENER_PID, actor: { kind: "listen" } });
+        const listed = await client.call("comment.list", { meeting: REVIEW.id });
+        const sent = await client.call("comment.send", { meeting: REVIEW.id, reason: "for the next round" });
+        const nothing = await client.call("comment.send", { meeting: REVIEW.id });
+
+        const agent = { kind: "agent" as const, harness: "claude-code", session: agentHello.session ?? null };
+        const listener = { pid: LISTENER_PID, at: NOW.toISOString(), actor: { kind: "listen" as const } };
+        expect(staged).toEqual({
+            id: "c1",
+            at: NOW.toISOString(),
+            target: selection,
+            text: "The button is the checkout button",
+            quote: "The button moved",
+            actor: agent,
+            state: "staged",
+        });
+        expect(unstaged).toMatchObject({ id: "c2", text: "Drop it", state: "staged" });
+        expect(listed.comments.map((comment) => comment.id)).toEqual(["c1"]);
+        expect(listed.listeners).toEqual([listener]);
+        expect(sent.sent).toEqual([{ ...staged, state: "sent", sentAt: NOW.toISOString(), token: sent.entry!.token }]);
+        expect(sent.listeners).toEqual([listener]);
+        expect(sent.entry).toMatchObject({
+            actor: agent,
+            reason: "for the next round",
+            action: {
+                kind: "comment",
+                comments: [{ id: "c1", target: selection, text: staged.text, quote: staged.quote }],
+            },
+            changes: [],
+        });
+        expect(nothing).toEqual({ sent: [], listeners: [listener] });
+        expect(heard).toEqual([
+            {
+                method: "comment.sent",
+                params: { meeting: REVIEW.id, token: sent.entry!.token, comments: sent.sent, listeners: [listener] },
+            },
+        ]);
+        expect((await client.call("journal.read", { meeting: REVIEW.id })).entries[0]?.action.kind).toBe("comment");
+        const again = await failure(client.call("comment.unstage", { meeting: REVIEW.id, id: "c1" }));
+        expect(again).toMatchObject({ code: "already-sent" });
+        const unknown = await failure(client.call("comment.send", { meeting: REVIEW.id, ids: ["c7"] }));
+        expect(unknown).toMatchObject({ code: "unknown-comment" });
+        const undo = await failure(client.call("decision.revert", { meeting: REVIEW.id, token: sent.entry!.token }));
+        expect(undo.message).toContain("a sent comment cannot be taken back");
+    });
+
+    test("meeting.rows answers the review rows, with the transcript line from the meeting's source", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const rows = await client.call("meeting.rows", { meeting: REVIEW.id });
+
+        expect(rows.meeting).toBe(REVIEW.id);
+        expect(rows.hidden).toEqual({ lowPriority: 0, minPriority: 0.5 });
+        expect(rows.rows.map((row) => [row.label, row.edit, row.needs])).toEqual([["i1", "person", undefined]]);
+        expect(rows.rows[0]?.parts).toEqual([
+            { kind: "who", text: "Speaker 3 → Alex Example" },
+            {
+                kind: "when",
+                from: { sec: 12, text: "00:12" },
+                to: { sec: 30, text: "00:30" },
+                target: { kind: "item", id: "i1" },
+            },
+        ]);
+        expect(rows.rows[0]?.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
+            ["suggested", "Alex Example", 0.82],
+            ["candidate", "Dana Example", undefined],
+            ["none", "none of these", undefined],
+        ]);
+        // No line starts in 0:12 to 0:30, so the row says no words; its source is the line it falls in.
+        expect(rows.rows[0]?.sources).toEqual([
+            { kind: "line", at: { sec: 9, text: "00:09" }, text: "The button moved to the right." },
+        ]);
+    });
+
+    test("Clip 5s: a Moment of a selection with lengthSec ends that long after the selection's start", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const selection = { kind: "selection" as const, from: { atSec: 2, line: 0 }, to: { atSec: 9, line: 1 } };
+        const whole = await client.call("moment.plan", { meeting: REVIEW.id, target: selection, padSec: 0 });
+        const clip = await client.call("moment.plan", {
+            meeting: REVIEW.id,
+            target: selection,
+            padSec: 0,
+            lengthSec: 5,
+        });
+
+        expect(whole.moment).toMatchObject({ fromSec: 2 });
+        expect(whole.moment!.toSec).toBeGreaterThan(7);
+        expect(clip.moment).toMatchObject({ fromSec: 2, toSec: 7, startSec: 2, endSec: 7 });
+    });
+
+    test("the timeline reads: line ends, speakers, screen, waveform; and the overview", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const transcript = await client.call("meeting.transcript", { ref: REVIEW.id });
+        const speakers = await client.call("meeting.speakers", { meeting: REVIEW.id });
+        const screen = await client.call("meeting.screen", { meeting: REVIEW.id });
+        const waveform = await client.call("meeting.waveform", {
+            meeting: REVIEW.id,
+            fromSec: 0,
+            toSec: 10,
+            buckets: 5,
+        });
+        const overview = await client.call("meetings.overview", { days: 3650 });
+
+        expect(transcript.entries.map((entry) => [entry.startSec, entry.endSec])).toEqual([
+            [2, 9],
+            [9, expect.any(Number)],
+        ]);
+        expect(speakers).toMatchObject({ meeting: REVIEW.id, timed: true });
+        expect(speakers.speakers.map((one) => one.label).sort()).toEqual(["Dana Example", "Speaker 2"]);
+        expect(screen).toEqual({ meeting: REVIEW.id, recorded: false, displays: [], frames: [] });
+        expect(waveform).toEqual({ meeting: REVIEW.id, fromSec: 0, toSec: 10, peaks: [0.25, 0.25, 1, 0.25, 0.25] });
+        expect(overview.meetings.map((one) => one.id)).toEqual([RETRO.id, REVIEW.id]);
+    });
+
+    test("a subscription with an empty meeting is refused as invalid params instead of hearing every meeting", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const refused = await failure(client.subscribe({ meeting: "" }, () => undefined));
+
+        expect(refused).toMatchObject({ code: -32602 });
+        expect(refused.message).toStartWith("subscribe: meeting:");
+    });
 });
 
 describe("the socket client's subscription", () => {
-    // The transport has no unsubscribe, and an empty event list means every event: the last listener's stop sent
-    // `subscribe { events: [] }`, so a long-lived client heard every meeting's events and dropped them itself.
+    // The dedicated service now supports unsubscribe. Stopping the last listener must stop events on the wire;
+    // an empty subscribe would still hear every meeting.
     test("the last listener's stop leaves the connection subscribed to nothing, not to every event", async () => {
         const { service } = await startService();
         const sent = spyOn(RpcSocketClient.prototype, "call");
-        let lastSubscribe: unknown;
+        let unsubscribe: unknown;
 
         try {
             const client = await SocketMeetingsClient.connect(service.entry, hello);
             closing.push(() => client.close());
             const stop = await client.subscribe({ meeting: REVIEW.id, events: ["meeting.changed"] }, () => {});
             stop();
-            // The socket answers in order: the stop's subscribe went out before this call.
+            // The socket answers in order: the stop's unsubscribe went out before this call.
             await client.call("meetings.list", { limit: 1 });
-            lastSubscribe = sent.mock.calls.filter(([method]) => method === "subscribe").at(-1)?.[1];
+            unsubscribe = sent.mock.calls.filter(([method]) => method === UNSUBSCRIBE).at(-1)?.[1];
         } finally {
             sent.mockRestore();
         }
 
-        expect(lastSubscribe).toEqual({ events: [NO_EVENT] });
+        expect(unsubscribe).toEqual({});
 
-        // What that subscription hears on the wire, beside what the old one (an empty list) heard.
-        const heard = async (params: unknown): Promise<number> => {
+        // What unsubscribe hears on the wire, beside what the old empty subscription heard.
+        const heard = async (stop: boolean): Promise<number> => {
             const raw = await RpcSocketClient.connect({
                 socket: service.entry.socket,
                 logScope: "test",
@@ -336,14 +704,17 @@ describe("the socket client's subscription", () => {
                 count += 1;
             });
             await raw.call("hello", hello);
-            await raw.call("subscribe", params);
+            await raw.call("subscribe", { events: [] });
+            if (stop) {
+                await raw.call(UNSUBSCRIBE, {});
+            }
             service.emit("meeting.changed", { meeting: RETRO.id, parts: ["show"] });
             await raw.call("meetings.list", { limit: 1 });
             return count;
         };
 
-        expect(await heard({ events: [] })).toBe(1);
-        expect(await heard(lastSubscribe)).toBe(0);
+        expect(await heard(false)).toBe(1);
+        expect(await heard(true)).toBe(0);
     });
 });
 
@@ -372,11 +743,74 @@ describe("the Meetings service's connections", () => {
         expect(otherCode.message).toBe(`the meetings service runs the code of another checkout (${CODE})`);
     });
 
+    test("the service refuses a meeting filter that does not read, and after unsubscribe a connection hears nothing", async () => {
+        const { service } = await startService();
+        const raw = await rawConnection(service.entry.socket);
+        await raw.request("hello", { role: "window", protocol: MEETINGS_PROTOCOL });
+        await raw.request(SUBSCRIBE, { meeting: REVIEW.id, events: ["meeting.changed"] });
+        const refused = await raw.request(SUBSCRIBE, { meeting: 42 });
+        service.emit("meeting.changed", { meeting: RETRO.id, parts: ["show"] });
+        service.emit("meeting.changed", { meeting: REVIEW.id, parts: ["show"] });
+        await raw.request(UNSUBSCRIBE, {});
+        service.emit("meeting.changed", { meeting: REVIEW.id, parts: ["transcript"] });
+        await raw.request("meetings.list", { limit: 1 });
+
+        expect(refused.reply.error).toMatchObject({ code: -32602 });
+        expect(raw.lines.filter((line) => line.method === "meeting.changed")).toEqual([
+            { jsonrpc: "2.0", method: "meeting.changed", params: { meeting: REVIEW.id, parts: ["show"] } },
+        ]);
+    });
+
     test("a second start in the folder answers the running service", async () => {
         const { dir, service } = await startService();
-        const second = await startMeetingsService({ dir, idleMs: 0, code: CODE, rivalWaitMs: 500 });
+        const second = await startMeetingsService({ dir, idleMs: 0, code: CODE, rivalWaitMs: 500, watch: false });
 
         expect(second).toMatchObject({ status: "running", entry: { pid: service.entry.pid, code: CODE } });
+    });
+
+    test("the folder watch tells meeting.changed for a write outside the service, once per meeting and burst, and never for its own decisions, clips or journal lines", async () => {
+        const folder = fakeFolderEvents();
+        const { service, store } = await startService({ watch: { subscribe: folder.subscribe, coalesceMs: 0 } });
+        const client = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => client.close());
+        const heard = eventQueue();
+        await client.subscribe({ events: ["meeting.changed", "decision.applied"] }, heard.push);
+        const file = (meeting: string, ...path: string[]) => join(store.folder(meeting), ...path);
+        const handEdit = (meeting: string) =>
+            writeFileSync(file(meeting, MEETING_FILE), `${SafeJSON.stringify(store.read(meeting), null, 4)}\n`);
+        const every = ["show", "transcript", "speakers", "timeline"];
+
+        // A hand edit of the record and the recorder's OCR line in one burst: one event, every part.
+        handEdit(REVIEW.id);
+        folder.raise(file(REVIEW.id, MEETING_FILE), file(REVIEW.id, "ocr.jsonl"));
+        expect(await heard.next()).toEqual({ method: "meeting.changed", params: { meeting: REVIEW.id, parts: every } });
+        // A frame changes the timeline; a clip in an old moments folder, the journal and the energy change nothing.
+        folder.raise(
+            file(RETRO.id, "moments", "clip.wav"),
+            file(RETRO.id, "decisions.ndjson"),
+            file(RETRO.id, "evidence", "energy.bin"),
+            file(REVIEW.id, "frames", "0001.png")
+        );
+        expect(await heard.next()).toEqual({
+            method: "meeting.changed",
+            params: { meeting: REVIEW.id, parts: ["timeline"] },
+        });
+        // The service's own decision tells decision.applied, and its record write no meeting.changed.
+        await client.call("decision.apply", { meeting: REVIEW.id, action: { kind: "confirm", items: ["i1"] } });
+        expect(await heard.next()).toMatchObject({ method: "decision.applied", params: { meeting: REVIEW.id } });
+        // Its record write raised with another meeting's frame: only the frame tells.
+        folder.raise(file(REVIEW.id, MEETING_FILE), file(RETRO.id, "frames", "0001.png"));
+        expect(await heard.next()).toEqual({
+            method: "meeting.changed",
+            params: { meeting: RETRO.id, parts: ["timeline"] },
+        });
+        // A hand edit after it is outside again.
+        handEdit(REVIEW.id);
+        folder.raise(file(REVIEW.id, MEETING_FILE));
+        expect(await heard.next()).toEqual({ method: "meeting.changed", params: { meeting: REVIEW.id, parts: every } });
+        await client.call("meetings.list", { limit: 1 });
+
+        expect(heard.left()).toEqual([]);
     });
 
     test("openMeetingsClient answers in-process with no service, and for a service of another checkout", async () => {
@@ -394,7 +828,7 @@ describe("the Meetings service's connections", () => {
     test("openMeetingsClient connects to a service of this checkout's code", async () => {
         const { store, linkedSource } = scratchStore();
         const dir = serviceDir();
-        const start = await startMeetingsService({ dir, store: () => store, linkedSource, idleMs: 0 });
+        const start = await startMeetingsService({ dir, store: () => store, linkedSource, idleMs: 0, watch: false });
 
         if (start.status !== "started") {
             throw new Error("the meetings service did not start");
@@ -424,6 +858,7 @@ describe("the Meetings service's connections", () => {
             linkedSource,
             idleMs: 0,
             sourceRoot: root,
+            watch: false,
         });
 
         if (start.status !== "started") {
@@ -451,7 +886,7 @@ describe("the Meetings service's connections", () => {
     test("a read whose service went during the call answers in-process", async () => {
         const { store, linkedSource } = scratchStore();
         const dir = serviceDir();
-        const start = await startMeetingsService({ dir, store: () => store, linkedSource, idleMs: 0 });
+        const start = await startMeetingsService({ dir, store: () => store, linkedSource, idleMs: 0, watch: false });
 
         if (start.status !== "started") {
             throw new Error("the meetings service did not start");
@@ -527,7 +962,7 @@ interface Example {
 
 /** Every example of the fixture, from a live service on a scratch store over raw sockets. */
 async function captureExamples(): Promise<Example[]> {
-    const { service } = await startService();
+    const { service, store } = await startService();
     const examples: Example[] = [];
     const ask = async (
         connection: Awaited<ReturnType<typeof rawConnection>>,
@@ -565,6 +1000,175 @@ async function captureExamples(): Promise<Example[]> {
         direction: "service→client",
         ...(notification ? { notification } : {}),
     });
+    await ask(
+        window,
+        SUBSCRIBE,
+        { meeting: "" },
+        "A meeting filter that does not read: -32602, and the subscription before stays."
+    );
+    await ask(window, UNSUBSCRIBE, {}, "The end of the subscription: no event reaches it until it subscribes again.");
+
+    const agent = await rawConnection(service.entry.socket);
+    await ask(
+        agent,
+        "hello",
+        { ...agentHello, role: "agent" },
+        "An agent (the REPL, an MCP door): its decisions name its harness and session."
+    );
+    await ask(
+        window,
+        SUBSCRIBE,
+        { meeting: REVIEW.id, events: ["decision.applied", "decision.reverted", "comment.sent"] },
+        "The window hears every decision on the open meeting, with its journal entry, and each send of its comments."
+    );
+    await ask(
+        agent,
+        "decision.plan",
+        { meeting: REVIEW.id, action: { kind: "confirm", items: ["i1"] } },
+        "What a confirm would do and reach; nothing is written."
+    );
+    const applied = await agent.request("decision.apply", {
+        meeting: REVIEW.id,
+        action: { kind: "confirm", items: ["i1"] },
+        reason: "the calendar says so",
+    });
+    examples.push({
+        method: "decision.apply",
+        direction: "client→service",
+        note: "The actor comes from the connection's hello; the reason is kept on the entry and the item.",
+        ...applied,
+    });
+    const { token } = z.object({ entry: z.object({ token: z.string() }) }).parse(applied.reply.result).entry;
+    await ask(
+        agent,
+        "decision.revert",
+        { meeting: REVIEW.id, token },
+        "The Undo of one entry, whole; items: [...] undoes only those."
+    );
+    await ask(agent, "decision.apply", { meeting: REVIEW.id, action: { kind: "confirm", items: ["i1"] } });
+    await ask(
+        window,
+        "decision.apply",
+        { meeting: REVIEW.id, action: { kind: "reject", items: ["i1"] }, onDecided: "refuse" },
+        "The window's click on an item decided since: already-decided, with the entry that decided it."
+    );
+    await ask(window, "journal.read", { meeting: REVIEW.id, limit: 2 }, "Newest first; revertedBy names the Undo.");
+    await ask(
+        window,
+        "moment.plan",
+        { meeting: REVIEW.id, target: { kind: "item", id: "i1" } },
+        "The Moment of a row: its span, pad, asked spot (spotSec) and tone (tone.atSec)."
+    );
+    await ask(
+        window,
+        "moment.plan",
+        { meeting: REVIEW.id, target: { kind: "item", id: "i9" } },
+        "A target the meeting does not have: cannot, and no Moment."
+    );
+    await ask(
+        window,
+        "moment.clip",
+        { meeting: REVIEW.id, target: { kind: "time", atSec: 9 } },
+        "Cut into the clip cache."
+    );
+    await ask(window, "meeting.audio", { meeting: REVIEW.id }, "One track: the window plays the file itself.");
+    await ask(
+        window,
+        "meeting.audio",
+        { meeting: RETRO.id },
+        "No source keeps the recording: unplayable with reason no-audio."
+    );
+    await ask(
+        window,
+        "tone.preview",
+        { sound: { hz: 880, sec: 0.15, volume: 0.6 } },
+        "The tone alone, for a Play button."
+    );
+    await ask(window, "meeting.speakers", { meeting: REVIEW.id }, "Talk time per label, its spans, and the hints.");
+    await ask(window, "meeting.screen", { meeting: REVIEW.id }, "No screen recording: no frames, no pane.");
+    await ask(
+        window,
+        "meeting.waveform",
+        { meeting: REVIEW.id, fromSec: 0, toSec: 10, buckets: 5 },
+        "Peaks for the strip, 0 to 1 of the loudest 100 ms."
+    );
+    await ask(window, "meetings.overview", { days: 3650 }, "The meetings with what each waits for.");
+    await ask(window, "config.read", { path: "global.playback.listen.longestClipSec" });
+    await ask(window, "config.set", { path: "global.playback.listen.longestClipSec", value: 25 });
+    await ask(window, "config.unset", { path: "global.playback.listen.longestClipSec" }, "Back to its default.");
+    await ask(window, "meeting.rows", { meeting: REVIEW.id }, "The review rows, in the order listen asks.");
+    const selection = { kind: "selection", from: { atSec: 2, line: 0 }, to: { atSec: 9, line: 1 } };
+    await ask(
+        window,
+        "moment.plan",
+        { meeting: REVIEW.id, target: selection, lengthSec: 5 },
+        "Clip 5s: the selection's Moment, 5 s from its start."
+    );
+    await ask(
+        window,
+        "comment.stage",
+        { meeting: REVIEW.id, target: selection, text: "The button is the checkout button", quote: "The button moved" },
+        "A comment on the selected words, for the listening agent."
+    );
+    await ask(window, "comment.stage", { meeting: REVIEW.id, target: { kind: "time", atSec: 4 }, text: "Drop it" });
+    await ask(window, "comment.unstage", { meeting: REVIEW.id, id: "c2" }, "Taken back before it was sent.");
+    MeetingComments.of(store, REVIEW.id, { now: () => NOW }).join({ pid: LISTENER_PID, actor: { kind: "listen" } });
+    await ask(window, "comment.list", { meeting: REVIEW.id }, "Who listens now: a send names them, or keeps them.");
+    await ask(window, "comment.send", { meeting: REVIEW.id }, "Every staged comment; the journal keeps the entry.");
+    await ask(window, "comment.unstage", { meeting: REVIEW.id, id: "c1" }, "A sent comment: already-sent.");
+    await ask(window, "comment.send", { meeting: REVIEW.id, ids: ["c7"] }, "No such comment: unknown-comment.");
+    await ask(
+        window,
+        "people.known",
+        { query: "ex", meeting: REVIEW.id, atSec: 9 },
+        "The person picker's list: ranked for the meeting and the moment, with each source's state; nothing preselected."
+    );
+    await ask(
+        window,
+        "people.add",
+        { name: "Robin Example", email: "robin@example.com", note: "from the board" },
+        "The picker's Add 'Robin Example' as new speaker: a person in the people book."
+    );
+    await ask(
+        window,
+        "people.hide",
+        { person: "robin@example.com" },
+        "Left out of every list; hidden: false shows them."
+    );
+    await ask(window, "people.hide", { person: "Nobody Example" }, "Nobody known by that name: unknown-person.");
+    await ask(
+        window,
+        "people.planMerge",
+        { a: "Alex Example", b: "robin@example.com" },
+        "What a merge links (meetings, renamed labels); nothing is written and no meeting record changes on a merge."
+    );
+    const merged = await window.request("people.merge", { a: "Alex Example", b: "robin@example.com" });
+    examples.push({
+        method: "people.merge",
+        direction: "client→service",
+        note: "An alias in the people book; its token splits it again.",
+        ...merged,
+    });
+    const mergeToken = z.object({ merge: z.object({ token: z.string() }) }).parse(merged.reply.result).merge.token;
+    await ask(window, "people.unmerge", { token: mergeToken }, "The merge split again.");
+    await ask(window, "people.unmerge", { token: "nope" }, "No merge has that token: unknown-merge.");
+    await ask(window, "people.add", { name: "Robin Example", email: "robin.two@example.com" }, "A second Robin.");
+    await ask(
+        window,
+        "people.hide",
+        { person: "Robin Example" },
+        "A name two people share: ambiguous-person, with the candidates to pick from."
+    );
+    await ask(
+        window,
+        "decision.plan",
+        { meeting: REVIEW.id, action: { kind: "assign", person: "Dana Example", lines: [{ atSec: 9, line: 1 }] } },
+        "One line given to a person: the assignment, and the stretches of the same label it may also reach."
+    );
+    for (const method of ["decision.applied", "decision.reverted", "comment.sent"]) {
+        const heard = window.lines.find((line) => line.method === method);
+        examples.push({ method, direction: "service→client", ...(heard ? { notification: heard } : {}) });
+    }
 
     const cli = await rawConnection(service.entry.socket);
     await ask(
@@ -591,13 +1195,20 @@ async function captureExamples(): Promise<Example[]> {
     return examples;
 }
 
-/** Revision tokens hash file identities (inode, times), so they differ each run; everything else is fixed. */
+/**
+ * Revision tokens hash file identities (inode, times), and a decision's token is a fresh UUID, so they differ each run;
+ * everything else is fixed (the decisions' clock is `NOW`).
+ */
 function normalized(examples: Example[]): unknown {
     return SafeJSON.parse(
-        SafeJSON.stringify(examples, { strict: true }).replace(
-            /"(show|transcript|speakers|timeline)":"[0-9a-z]+"/g,
-            '"$1":"<token>"'
-        ),
+        SafeJSON.stringify(examples, { strict: true })
+            .replace(/"(show|transcript|speakers|timeline)":"[0-9a-z]+"/g, '"$1":"<token>"')
+            .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>")
+            // Paths under the run's sandbox home and temp folders, and a clip's key (it hashes the recording's path).
+            .replace(/"(path)":"[^"]*?(\/meetings-cache\/[^"]*?)-[0-9a-z]+\.wav"/g, '"$1":"<home>$2-<key>.wav"')
+            .replace(/"path":"[^"]*\/upload\.ogg"/g, '"path":"<recording>"')
+            .replace(/"path":"[^"]*\/meetings\/config\.json"/g, '"path":"<config>"')
+            .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"'),
         { strict: true }
     );
 }
@@ -666,9 +1277,10 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
         const examples = fixture.examples as Example[];
 
         for (const example of examples) {
-            if (example.method === SUBSCRIBE) {
-                expect(subscribeParamsSchema.safeParse(example.request?.params).success).toBe(true);
-                expect(subscribeResultSchema.safeParse(example.reply?.result).success).toBe(true);
+            if (example.method === SUBSCRIBE || example.method === UNSUBSCRIBE) {
+                const refused = (example.reply?.error as { code?: number } | undefined)?.code === -32602;
+                expect(subscribeParamsSchema.safeParse(example.request?.params).success).toBe(!refused);
+                expect(subscribeResultSchema.safeParse(example.reply?.result).success).toBe(!refused);
                 continue;
             }
 
@@ -697,7 +1309,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
 
         const named = new Set(examples.map((example) => example.method));
         expect(
-            [...meetingsApi.methods.map((method) => method.name), SUBSCRIBE, ...MEETINGS_EVENTS].filter(
+            [...meetingsApi.methods.map((method) => method.name), SUBSCRIBE, UNSUBSCRIBE, ...MEETINGS_EVENTS].filter(
                 (method) => !named.has(method)
             )
         ).toEqual([]);
@@ -707,6 +1319,13 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
         });
         expect([...new Set(codes)].sort()).toEqual(
             [
+                "already-decided",
+                "ambiguous-person",
+                "unplayable",
+                "unknown-comment",
+                "already-sent",
+                "unknown-person",
+                "unknown-merge",
                 "code-mismatch",
                 "meeting-not-found",
                 "meeting-ref",

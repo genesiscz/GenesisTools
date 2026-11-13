@@ -67,6 +67,8 @@ final class MeetingsWindowModel {
         case needs
         case all
         case project(String)
+        /// Every person the directory knows (R24, G-PPL-5): a view of the window, not of a meeting.
+        case contacts
     }
 
     var place: Place
@@ -76,42 +78,99 @@ final class MeetingsWindowModel {
     /// (the perf tests read this).
     @ObservationIgnored private(set) var overviewSets = 0
     private(set) var settings: Loadable<MeetingsSettings> = .idle
+    /// The same config read as JSON: the side panel's engine rows and the Contacts view's source switches read their
+    /// values here, and each write names the value it replaces (`expect`).
+    private(set) var settingsRaw: JSONValue?
     private(set) var detail: MeetingDetailModel?
     var days: Int
-    /// The edge of a pane its notices float at (`meetings.notices.place`): an observed value, so the open pane moves its
-    /// stack when it changes. The Settings page runs in another process; its change lands when this window becomes key
-    /// again (`refreshAfterReturn`).
+    /// The settings side panel is open in the meeting's trailing pane slot (it replaces the transcript pane there). The
+    /// open state is remembered, not a setting (G55).
+    var sidePanelOpen = false {
+        didSet { if remembersPanel, oldValue != sidePanelOpen { defaults.set(sidePanelOpen, forKey: Self.sidePanelOpenKey) } }
+    }
+    /// The side panel's folded sections by id, remembered the same way.
+    var sidePanelFolded: Set<String> = [] {
+        didSet { if remembersPanel, oldValue != sidePanelFolded { defaults.set(sidePanelFolded.sorted(), forKey: Self.sidePanelFoldedKey) } }
+    }
+    /// False in a snapshot run: opening the panel for a picture must not change what the real window opens with.
+    @ObservationIgnored var remembersPanel = true
+    /// The window's people: the Contacts view and an assignment's reach sheet.
+    @ObservationIgnored private(set) lazy var people = MeetingsPeopleModel(window: self)
+    static let sidePanelOpenKey = "meetings.window.sidePanelOpen"
+    static let sidePanelFoldedKey = "meetings.window.sidePanelFolded"
+    /// The edge of a pane its notices float at (`meetings.notices.place`): an observed value, so a change in the side
+    /// panel moves the stack at once. The Settings page runs in another process; its change lands when this window
+    /// becomes key again (`refreshAfterReturn`).
     private(set) var noticePlace: MeetingsPreferences.NoticePlace
-    /// The meeting audio that plays from a transcript time, shown and stopped by the bar under the window.
-    var playback = MeetingsPlayback()
+    /// The Moment player: every Moment of the window plays here, one at a time, with its context stack (F1b).
+    var player = MomentPlayer()
+    /// The window's one notice stack (R31): every meeting's notices, so a notice of a meeting that is not open stays on
+    /// screen and names it (G34).
+    @ObservationIgnored let notices: NoticeStackModel
+    /// Events arrive: the window's subscription to the Meetings service is live. False while it is lost or was never
+    /// made (no service runs); the panes then read again when the window becomes key.
+    private(set) var liveUpdates = false
+    /// The subscription was lost (or never came up) for longer than `liveLostGrace`: the detail says "Live updates off".
+    private(set) var liveUpdatesOff = false
     private var overviewGeneration = 0
     private let loadDetail: @MainActor (MeetingDetailModel) -> Void
-    private let refreshLive: @MainActor (MeetingDetailModel) -> Void
-    @ObservationIgnored private let defaults: UserDefaults
+    /// The app defaults the window settings live in (`.standard` in the app; a test passes its own suite).
+    @ObservationIgnored let defaults: UserDefaults
     /// The clock the panes' notices count on; nil is the real one (a test passes a `ManualNoticeClock`).
     @ObservationIgnored private let noticeClock: NoticeClock?
+    /// The window's Meetings service; nil in the preview build, under XCTest and when it is turned off.
+    @ObservationIgnored let service: MeetingsService?
+    @ObservationIgnored private var listening: MeetingsService.Listening?
+    @ObservationIgnored private var liveLostTask: Task<Void, Never>?
+    @ObservationIgnored private var overviewRefresh: Task<Void, Never>?
+    /// The notices of other actors' decisions, merged per actor and meeting within `burstSeconds` (G38).
+    @ObservationIgnored private var bursts: [String: Burst] = [:]
 
-    init(defaults: UserDefaults = .standard, noticeClock: NoticeClock? = nil,
-         loadDetail: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.load() },
-         refreshLive: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.refreshLoaded(proposals: false) }) {
+    /// How long a lost subscription may take to come back before the detail says so.
+    static let liveLostGrace: Duration = .seconds(5)
+    /// One actor's decisions within this many seconds share one notice with one Undo (G38).
+    static let burstSeconds: TimeInterval = 5
+
+    /// `service` nil is the window's shared service (`MeetingsService.shared`, itself nil under XCTest and in the preview).
+    init(defaults: UserDefaults = .standard, noticeClock: NoticeClock? = nil, service: MeetingsService? = nil,
+         loadDetail: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.load() }) {
         self.loadDetail = loadDetail
-        self.refreshLive = refreshLive
         self.defaults = defaults
         self.noticeClock = noticeClock
+        self.service = service ?? MeetingsService.shared
         MeetingsPreferences.migrate(defaults)
         place = MeetingsPreferences.openOn(defaults) == .needs ? .needs : .all
         days = MeetingsPreferences.days(defaults)
         noticePlace = MeetingsPreferences.noticePlace(defaults)
+        sidePanelOpen = defaults.bool(forKey: Self.sidePanelOpenKey)
+        sidePanelFolded = Set(defaults.stringArray(forKey: Self.sidePanelFoldedKey) ?? [])
+        notices = NoticeStackModel(clock: noticeClock, timing: { [defaults] in MeetingsPreferences.noticeTiming(defaults) },
+                                   maxVisible: { [defaults] in MeetingsPreferences.Notices.maxVisible.value(defaults) })
     }
 
-    /// A notice stack for one meeting's pane, with the window's notice times (Settings → Meetings → Window), read at
-    /// each notice.
-    func makeNoticeStack() -> NoticeStackModel {
-        NoticeStackModel(clock: noticeClock, timing: { [defaults] in MeetingsPreferences.noticeTiming(defaults) })
+    /// The window's notice stack; every pane pushes into it.
+    func makeNoticeStack() -> NoticeStackModel { notices }
+
+    /// The newest notice with an Undo that still waits for a press: what ⌘Z takes back (its text, for the menu item).
+    var newestUndo: String? { newestUndoNotice?.notice.text }
+
+    private var newestUndoNotice: (notice: StackedNotice, action: StackedNotice.Action)? {
+        for notice in notices.notices.reversed() where notices.waiting[notice.id] == nil {
+            if let undo = notice.actions.first(where: { $0.label == "Undo" }) { return (notice, undo) }
+        }
+        return nil
     }
 
-    /// A window setting changed (the window came back after the Settings page): the values the window model holds read
-    /// again. The views read every other window setting from the defaults themselves.
+    /// ⌘Z with no text field in focus: presses the newest notice's Undo (G39). False when none waits.
+    @discardableResult
+    func undoNewest() -> Bool {
+        guard let newest = newestUndoNotice else { return false }
+        notices.press(newest.action, of: newest.notice.id)
+        return true
+    }
+
+    /// A window setting changed (the side panel wrote one, or the window came back after the Settings page): the values
+    /// the window model holds read again. The views read every other window setting from the defaults themselves.
     func windowSettingsChanged() {
         let place = MeetingsPreferences.noticePlace(defaults)
         if place != noticePlace { noticePlace = place }
@@ -122,6 +181,7 @@ final class MeetingsWindowModel {
         guard let overview = overview.value else { return [] }
         switch place {
         case .all: return overview.meetings
+        case .contacts: return []
         case .project(let name): return overview.meetings.filter { $0.project == name }
         case .needs:
             let waiting = Set(overview.needsYou.noProject + overview.needsYou.questions.map(\.id) + overview.needsYou.suggestions.map(\.id))
@@ -149,9 +209,18 @@ final class MeetingsWindowModel {
     func load() {
         loadOverview()
         loadSettings()
+        startLiveUpdates()
     }
 
-    /// `quiet` (a return to the window): the list keeps what it shows until the answer lands.
+    /// The list: the Meetings service's `meetings.overview`, or `overview --days <n> --json` when no service answers.
+    static func overviewRead(days: Int) -> MeetingsRead<MeetingsOverview> {
+        .service(MeetingsAPI.Overview.self, .init(days: days), orRun: ["overview", "--days", String(days), "--json"])
+    }
+
+    /// The whole meetings config: `config.read`, or `config show --json`.
+    static let settingsRead: MeetingsRead<ConfigShow> = .service(MeetingsAPI.ConfigShowRead.self, .init(), orRun: ["config", "show", "--json"])
+
+    /// `quiet` (a return to the window, an event): the list keeps what it shows until the answer lands.
     func loadOverview(quiet: Bool = false) {
         overviewGeneration += 1
         let generation = overviewGeneration
@@ -159,7 +228,7 @@ final class MeetingsWindowModel {
         let days = days
         Task {
             do {
-                let value = try await MeetingsCLI.json(MeetingsOverview.self, ["overview", "--days", String(days), "--json"])
+                let value = try await Self.overviewRead(days: days).run(service: service)
                 guard generation == overviewGeneration else { return }
                 receive(value)
             } catch {
@@ -187,7 +256,6 @@ final class MeetingsWindowModel {
             select(visibleMeetings.first?.id)
         }
         detail?.listResolved()
-        updateLiveRefresh()
     }
 
     func loadSettings(quiet: Bool = false) {
@@ -195,11 +263,49 @@ final class MeetingsWindowModel {
         Task {
             let next: Loadable<MeetingsSettings>
             do {
-                next = .loaded(try await MeetingsCLI.json(ConfigShow.self, ["config", "show", "--json"]).value)
+                let shown = try await Self.settingsRead.run(service: service)
+                if settingsRaw != shown.raw { settingsRaw = shown.raw }
+                next = .loaded(shown.value)
             } catch {
                 next = .failed(asFailure(error), previous: settings.value)
             }
             if settings != next { settings = next }
+        }
+    }
+
+    // MARK: Config writes from the window (the side panel's engine rows, the Contacts view's sources)
+
+    /// Sets one meetings config value, or puts it back to its default when `value` is nil (`config.set`, `config.unset`,
+    /// else the command), naming the value the window read there, then reads the config again. A refusal is a notice
+    /// with Retry; the control shows the saved value again after the read.
+    func setConfig(_ path: [String], _ value: JSONValue?, done: String? = nil) {
+        let write: MeetingsConfigWrite = value.map { .set(path, $0, readFrom: settingsRaw) } ?? .unset(path, readFrom: settingsRaw)
+        Task {
+            do {
+                try await write.run(service: service)
+                // The next write at this path names this value, not the one before it, even before the read lands.
+                if let value { settingsRaw = settingsRaw?.setting(path, to: value) }
+                if let done { notices.push(StackedNotice(text: done)) }
+            } catch let failure as MeetingsCLI.Failure where failure.code == "config-stale" {
+                notices.push(MeetingsSettingsModel.staleNotice(failure))
+            } catch {
+                notices.push(.meetingsFailure(error) { [weak self] in self?.setConfig(path, value, done: done) })
+            }
+            loadSettings(quiet: true)
+        }
+    }
+
+    /// Plays the tone alone with `sound` (`tone.preview` cuts it; the side panel's Play button). Only the service cuts a
+    /// preview; without one a notice says so, since a second tone maker would be a second engine (R7).
+    func previewTone(_ sound: ToneSound) {
+        Task {
+            do {
+                try await TonePreviewPlayer.play(sound, service: service)
+            } catch is MeetingsService.Unavailable {
+                notices.push(StackedNotice(text: TonePreviewPlayer.unavailableText))
+            } catch {
+                notices.push(.meetingsFailure(error) { [weak self] in self?.previewTone(sound) })
+            }
         }
     }
 
@@ -210,6 +316,11 @@ final class MeetingsWindowModel {
 
     func go(_ place: Place) {
         self.place = place
+        // The Contacts view lists people, not meetings: the open meeting stays open for the way back.
+        if place == .contacts {
+            people.ensure()
+            return
+        }
         if let id = selectedMeetingID, visibleMeetings.contains(where: { $0.id == id }) { return }
         select(visibleMeetings.first?.id)
     }
@@ -221,7 +332,6 @@ final class MeetingsWindowModel {
         if place == .needs, id.map({ needsSelection?.hasSuffix($0) != true }) ?? true {
             needsSelection = id
         }
-        defer { updateLiveRefresh() }
         guard let id else {
             detail?.cancelReads()
             detail = nil
@@ -262,71 +372,169 @@ final class MeetingsWindowModel {
         select(ids[min(max(index + offset, 0), ids.count - 1)])
     }
 
-    /// The window became key again: what changed outside it (a confirm in a terminal, a new meeting) shows. The reads
-    /// are quiet: what is on screen stays until an answer differs.
+    /// Set by the face: the window is on screen and not covered, hidden or minimized. A row plays by itself only then.
+    @ObservationIgnored var windowVisible = true
+
+    /// The window became key again. While the subscription is live the events already showed every change, so
+    /// nothing reads; without it (no service, a lost subscription) what changed outside the window (a confirm in a
+    /// terminal, a new meeting) reads now, quietly: what is on screen stays until an answer differs.
     func refreshAfterReturn() {
         windowSettingsChanged()
+        guard !liveUpdates else { return }
         HubMainBusy.measure("meetings.refresh", window: 1.5)
         loadOverview(quiet: true)
         loadSettings(quiet: true)
         detail?.refreshLoaded()
     }
 
-    // MARK: A live meeting
+    // MARK: Live updates (R36)
 
-    /// While the open meeting records and the window can be seen, its parts refresh every few seconds: a window kept in
-    /// front showed a live meeting as it was when the window last became key. A round asks the revisions (one server
-    /// call of a few ms) and reads again only the parts whose token changed. It skips the proposals (a process of about
-    /// 400 ms that reads the Calendar) and the list (its render costs 120 to 180 ms of main thread); the list reads
-    /// again once the recording ends.
-    static let liveRefreshInterval: Duration = .seconds(5)
-    @ObservationIgnored private var liveRefresh: Task<Void, Never>?
-
-    /// Set by the face: the window is on screen and not covered, hidden or minimized.
-    @ObservationIgnored var windowVisible = true {
-        didSet {
-            guard windowVisible != oldValue else { return }
-            updateLiveRefresh()
-            if windowVisible, liveRefreshRuns { liveRound() }
-        }
-    }
-
-    var liveRefreshRuns: Bool { liveRefresh != nil }
-
-    static func isLiveStatus(_ status: String?) -> Bool { status == "recording" || status == "paused" }
-
-    /// The open record decides once it is read, so a refresh sees the recording end; before that, its list row.
-    private var selectedMeetingIsLive: Bool {
-        guard let id = selectedMeetingID else { return false }
-        if detail?.id == id, let recording = detail?.record.value?.recording {
-            return Self.isLiveStatus(recording.status)
-        }
-        return meeting(id)?.live == true
-    }
-
-    private func updateLiveRefresh() {
-        guard selectedMeetingIsLive, windowVisible else {
-            liveRefresh?.cancel()
-            liveRefresh = nil
-            return
-        }
-        guard liveRefresh == nil else { return }
-        liveRefresh = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: Self.liveRefreshInterval)
-                guard !Task.isCancelled, let self else { return }
-                self.liveRound()
+    /// Subscribes the window to every meeting's events once: the open meeting updates its rows in place on a decision,
+    /// a meeting changed outside the service reads its changed parts, and the sidebar's counts follow (G50). Subscribing
+    /// to all meetings, not only the open one, is what lets the counts and a notice of another meeting follow too.
+    func startLiveUpdates() {
+        guard let service, listening == nil else { return }
+        listening = service.listen { [weak self] signal in self?.receive(signal) }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await service.subscribe(events: MeetingsAPI.windowEvents)
+                self.setLive(true)
+            } catch {
+                // No service yet: the kept subscription connects by itself once one runs (`.resumed`).
+                self.setLive(false)
             }
         }
     }
 
-    private func liveRound() {
-        guard selectedMeetingIsLive else {
-            liveRefresh?.cancel()
-            liveRefresh = nil
+    /// Stops the events (the window closes).
+    func stopLiveUpdates() {
+        listening?.cancel()
+        listening = nil
+        service?.unsubscribe()
+        setLive(false)
+    }
+
+    /// One signal of the subscription.
+    func receive(_ signal: MeetingsServiceSignal) {
+        switch signal {
+        case .event(let event):
+            detail?.receive(event)
+            receive(event)
+        case .resumed:
+            setLive(true)
+            // Events between the two connections were not heard: what the window shows reads again once.
             loadOverview(quiet: true)
+            detail?.refreshLoaded()
+        case .lost:
+            setLive(false)
+        }
+    }
+
+    private func setLive(_ live: Bool) {
+        if liveUpdates != live { liveUpdates = live }
+        liveLostTask?.cancel()
+        if live {
+            if liveUpdatesOff { liveUpdatesOff = false }
             return
         }
-        if let detail { refreshLive(detail) }
+        // A reconnect usually takes about a second: the detail says "Live updates off" only when it takes longer.
+        liveLostTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.liveLostGrace)
+            guard let self, !Task.isCancelled, !self.liveUpdates else { return }
+            self.liveUpdatesOff = true
+        }
+    }
+
+    /// The menu's and the banner's Reload: the subscription again, and every part read again.
+    func reloadAll() {
+        load()
+        detail?.refreshLoaded(force: true)
+    }
+
+    /// An event the window itself answers: the sidebar's counts, and a notice for a decision someone else made.
+    private func receive(_ event: MeetingsEvent) {
+        scheduleOverviewRefresh()
+        guard let entry = event.entry, entry.actor.kind != DecisionActor.window.kind else { return }
+        noteDecision(entry, meeting: event.meeting)
+    }
+
+    /// The sidebar reads the overview again once per burst of events, not once per event.
+    private func scheduleOverviewRefresh() {
+        overviewRefresh?.cancel()
+        overviewRefresh = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let self, !Task.isCancelled else { return }
+            self.loadOverview(quiet: true)
+        }
+    }
+
+    // MARK: Notices of other actors' decisions (G34, G38)
+
+    private struct Burst {
+        let notice: StackedNotice.ID
+        var tokens: [String]
+        var items: Set<String>
+        var at: Date
+    }
+
+    /// A decision an agent, the terminal or a rule made: one notice per actor and meeting within `burstSeconds`, with one
+    /// Undo for all of it; a meeting that is not open is named.
+    func noteDecision(_ entry: JournalEntry, meeting: String, now: Date = Date()) {
+        guard entry.action.kind != "comment", entry.action.kind != "revert" || !entry.changes.isEmpty else { return }
+        let key = "\(meeting)|\(MeetingsWords.actor(entry.actor))"
+        var burst = bursts[key]
+        if let current = burst, now.timeIntervalSince(current.at) > Self.burstSeconds || !notices.contains(current.notice) {
+            burst = nil
+        }
+        let items = entry.touched
+        var next = burst ?? Burst(notice: StackedNotice.ID(), tokens: [], items: [], at: now)
+        next.tokens.append(entry.token)
+        next.items.formUnion(items)
+        next.at = now
+        bursts[key] = next
+        let text = Self.decisionNotice(entry, items: next.items.count, decisions: next.tokens.count,
+                                       meetingTitle: meeting == selectedMeetingID ? nil : self.meeting(meeting)?.displayTitle ?? meeting)
+        let tokens = next.tokens
+        let notice = StackedNotice(id: next.notice, text: text, detail: entry.reason.map { "Why: \($0)" },
+                                   actions: [.undo { [weak self] id in self?.revert(tokens, in: meeting, replacing: id) }])
+        notices.push(notice, replacing: burst == nil ? nil : next.notice)
+    }
+
+    /// "An agent (Claude Code, session 3f98b772) confirmed i3", or for a burst "… decided 7 items", with the meeting
+    /// named when it is not the open one.
+    static func decisionNotice(_ entry: JournalEntry, items: Int, decisions: Int, meetingTitle: String?) -> String {
+        let who = MeetingsWords.actor(entry.actor)
+        let what: String
+        if decisions > 1 {
+            what = "decided \(Plural.count(items, "item"))"
+        } else {
+            what = MeetingsWords.entryAction(entry)
+        }
+        let sentence = who.prefix(1).uppercased() + who.dropFirst() + " " + what
+        return meetingTitle.map { "\($0): \(sentence)" } ?? sentence
+    }
+
+    /// The Undo of a burst: each decision taken back, newest first.
+    func revert(_ tokens: [String], in meeting: String, replacing: StackedNotice.ID?) {
+        Task { [weak self] in
+            guard let self else { return }
+            var failed: MeetingsCLI.Failure?
+            for token in tokens.reversed() {
+                do {
+                    _ = try await MeetingDetailModel.revertDecision(meeting: meeting, token: token, items: nil, service: self.service)
+                } catch {
+                    failed = asFailure(error)
+                }
+            }
+            if let failed {
+                self.notices.push(StackedNotice(text: "Not every decision was undone: \(failed.sentence)", more: failed.detail,
+                                                tone: .error), replacing: replacing)
+            } else {
+                self.notices.push(StackedNotice(text: "Undone"), replacing: replacing)
+            }
+            if self.detail?.id == meeting { self.detail?.refreshAfterDecision() }
+            self.loadOverview(quiet: true)
+        }
     }
 }

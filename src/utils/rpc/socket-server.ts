@@ -1,6 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import type { Socket } from "bun";
 import { z } from "zod";
+import { JSON_RPC_ERRORS, RpcError } from "./errors";
 import { type RpcCallContext, RpcPeer, type RpcProgress, type RpcRequestOptions } from "./peer";
 
 /** One client of the server, with the state the service keeps for it (the role its `hello` named). */
@@ -30,7 +31,10 @@ export interface RpcSocketServerOptions<S> {
     state: () => S;
     /** Answers every method but `subscribe`, which the server answers itself; throw an RpcError to refuse. */
     call: (call: RpcCall<S>) => Promise<unknown>;
-    /** A connection subscribed: `params` as it sent them, for a service's own filters beside `events`. */
+    /**
+     * A connection subscribes: `params` as it sent them, for a service's own filters beside `events`. Throw an
+     * RpcError to refuse the subscription (an invalid filter); the connection's earlier subscription then stays.
+     */
     onSubscribe?: (connection: RpcConnection<S>, params: unknown) => void;
     onOpen?: (connection: RpcConnection<S>) => void;
     onClose?: (connection: RpcConnection<S>) => void;
@@ -38,6 +42,8 @@ export interface RpcSocketServerOptions<S> {
     logScope: string;
     label: string;
     logFields?: Record<string, unknown>;
+    /** A method whose newer call on a connection cancels its older ones (`RpcPeerOptions.supersedes`). */
+    supersedes?: (method: string) => string | undefined;
 }
 
 class Connection<S> implements RpcConnection<S> {
@@ -52,9 +58,11 @@ class Connection<S> implements RpcConnection<S> {
             label: string;
             logFields?: Record<string, unknown>;
             call: (connection: Connection<S>, call: Omit<RpcCall<S>, "connection">) => Promise<unknown>;
+            supersedes?: (method: string) => string | undefined;
         }
     ) {
         this.peer = new RpcPeer({
+            ...(options.supersedes ? { supersedes: options.supersedes } : {}),
             write: (bytes) => socket.write(bytes),
             // A subscriber that stopped reading is disconnected; the recording or service it watched goes on.
             onBacklogFull: () => socket.end(),
@@ -104,6 +112,7 @@ export class RpcSocketServer<S> {
             label: options.label,
             logFields: options.logFields,
             call: (connection: Connection<S>, call: Omit<RpcCall<S>, "connection">) => this.answer(connection, call),
+            ...(options.supersedes ? { supersedes: options.supersedes } : {}),
         };
         this.listener = Bun.listen<Connection<S>>({
             unix: options.socket,
@@ -179,9 +188,21 @@ export class RpcSocketServer<S> {
     private async answer(connection: Connection<S>, call: Omit<RpcCall<S>, "connection">): Promise<unknown> {
         if (call.method === "subscribe") {
             const events = subscribeParams.safeParse(call.params ?? {});
-            connection.events = new Set(events.success ? (events.data.events ?? []) : []);
+
+            // A filter that does not read would widen to every event; it is refused instead.
+            if (!events.success) {
+                throw new RpcError(JSON_RPC_ERRORS.invalidParams, `subscribe: ${events.error.issues[0]?.message}`);
+            }
+
             this.options.onSubscribe?.(connection, call.params);
+            connection.events = new Set(events.data.events ?? []);
             return { events: [...connection.events] };
+        }
+
+        // The end of the subscription: no event reaches the connection until it subscribes again.
+        if (call.method === "unsubscribe") {
+            connection.events = undefined;
+            return { events: [] };
         }
 
         return this.options.call({ ...call, connection });

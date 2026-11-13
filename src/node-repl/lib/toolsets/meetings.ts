@@ -4,13 +4,12 @@ import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/li
 import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { callerActor, DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { testPhrase } from "@app/meetings/lib/dictionary-test";
-import { itemWhat } from "@app/meetings/lib/item-text";
 import { matchPreview } from "@app/meetings/lib/match-preview";
 import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-fields";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
-import { questionLabel } from "@app/meetings/lib/questions";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
+import { reviewRow } from "@app/meetings/lib/review-rows";
 import {
     add,
     assignApply,
@@ -22,6 +21,7 @@ import {
     editorProject,
     exportMethod,
     itemsList,
+    itemsRows,
     lines,
     list,
     meetingsToolsetApi,
@@ -45,6 +45,7 @@ import {
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
+import { rowsRead } from "@app/meetings/lib/window-reads";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -79,14 +80,16 @@ function describe(record: MeetingRecord) {
     };
 }
 
+/** An item as `items.list` answers it: the review row's label and text, so it reads as `items` and the window do. */
 function itemRow(record: MeetingRecord, item: MeetingItem) {
+    const row = reviewRow(record, item);
     return {
         id: item.id,
-        ...(item.kind === "question" ? { question: questionLabel(record, item.id) } : {}),
+        ...(item.kind === "question" ? { question: row.label } : {}),
         kind: item.kind,
         status: item.status,
         confidence: item.confidence ?? null,
-        what: itemWhat(item),
+        what: row.what,
         rules: item.rules,
     };
 }
@@ -305,6 +308,10 @@ export class MeetingsToolset extends ReplToolset {
                     return record.items
                         .filter((item) => (!status || item.status === status) && (!kind || item.kind === kind))
                         .map((item) => itemRow(record, item));
+                },
+                rows: async (input: z.input<typeof itemsRows.params> = {}) => {
+                    const { lowPriority } = itemsRows.params.parse(input);
+                    return rowsRead({ store, record: current(), ...(lowPriority ? { lowPriority } : {}) });
                 },
                 add: async (input: z.input<typeof add.params>) => {
                     const { findings } = add.params.parse(input);

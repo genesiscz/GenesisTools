@@ -32,14 +32,16 @@ public protocol NoticeClock: AnyObject {
     func schedule(after seconds: TimeInterval, _ action: @escaping @MainActor () -> Void) -> NoticeTimer
 }
 
-/// The real clock: uptime, and a main-actor task per timer.
+/// The real clock: seconds that keep counting while the Mac sleeps (`CLOCK_MONOTONIC`, which on macOS counts sleep),
+/// and a main-actor task per timer on the continuous clock, which counts sleep too. A notice shown before a sleep has
+/// its time used up after it; uptime stopped during sleep, so a paused notice's remaining time came back whole.
 @MainActor
 public final class SystemNoticeClock: NoticeClock {
     public static let shared = SystemNoticeClock()
 
     public init() {}
 
-    public var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+    public var now: TimeInterval { Double(clock_gettime_nsec_np(CLOCK_MONOTONIC)) / 1_000_000_000 }
 
     public func schedule(after seconds: TimeInterval, _ action: @escaping @MainActor () -> Void) -> NoticeTimer {
         let task = Task { @MainActor in
@@ -203,16 +205,29 @@ public final class NoticeStackModel {
 
     @ObservationIgnored private let clock: NoticeClock
     @ObservationIgnored private let timing: @MainActor () -> NoticeStackTiming
+    @ObservationIgnored private let maxVisible: @MainActor () -> Int?
     @ObservationIgnored private let announces: Bool
     @ObservationIgnored private var runs: [StackedNotice.ID: Run] = [:]
 
     /// `clock` defaults to `SystemNoticeClock.shared`. `timing` is read at each push, so a changed setting applies to
-    /// the next notice. `announces` posts each new notice to VoiceOver.
+    /// the next notice. `maxVisible` is how many notices the stack draws before the older ones fold into "+N more"
+    /// (nil: all; read at each draw). `announces` posts each new notice to VoiceOver.
     public init(clock: NoticeClock? = nil,
-                timing: @escaping @MainActor () -> NoticeStackTiming = { .standard }, announces: Bool = true) {
+                timing: @escaping @MainActor () -> NoticeStackTiming = { .standard },
+                maxVisible: @escaping @MainActor () -> Int? = { nil }, announces: Bool = true) {
         self.clock = clock ?? SystemNoticeClock.shared
         self.timing = timing
+        self.maxVisible = maxVisible
         self.announces = announces
+    }
+
+    /// How many notices the stack draws; the older ones fold into "+N more". Nil draws all of them.
+    public var visibleLimit: Int? { maxVisible() }
+
+    /// The newest `max` notices, and the older ones that fold into "+N more" (oldest first in both).
+    public static func split(_ notices: [StackedNotice], max: Int?) -> (shown: [StackedNotice], folded: [StackedNotice]) {
+        guard let max, max > 0, notices.count > max else { return (notices, []) }
+        return (Array(notices.suffix(max)), Array(notices.prefix(notices.count - max)))
     }
 
     public func notice(_ id: StackedNotice.ID) -> StackedNotice? {
@@ -238,6 +253,8 @@ public final class NoticeStackModel {
             if let index = notices.firstIndex(where: { $0.id == notice.id }) {
                 stopClock(notice.id)
                 notices.remove(at: index)
+                // A new notice under a waiting one's id is that wait's answer: its buttons and its clock come back.
+                waiting[notice.id] = nil
             }
             notices.append(notice)
         }
@@ -349,6 +366,8 @@ public struct NoticeStackView: View {
     var edge: VerticalEdge
     @GenReduceMotion private var reduceMotion
     @State private var contentHeight: CGFloat = 0
+    /// "+N more" was pressed: every notice shows until none is folded again.
+    @State private var showsAll = false
 
     /// `pinnedTo` is the edge of its host the stack sits at (`.noticeStack(_:alignment:)` passes it).
     public init(_ model: NoticeStackModel, maxWidth: CGFloat = 520, maxHeight: CGFloat = 360,
@@ -367,14 +386,18 @@ public struct NoticeStackView: View {
     public var body: some View {
         let notices = model.notices
         if !notices.isEmpty {
+            let split = NoticeStackModel.split(notices, max: showsAll ? nil : model.visibleLimit)
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Self.drawOrder(notices, pinnedTo: edge)) { notice in
+                    // The folded notices are the oldest: their chip sits where they would, at the pinned edge.
+                    if edge == .top { moreChip(split.folded.count) }
+                    ForEach(Self.drawOrder(split.shown, pinnedTo: edge)) { notice in
                         pill(notice)
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .offset(y: 6)),
                                 removal: .opacity.animation(.easeOut(duration: GenMotion.removalFadeDuration))))
                     }
+                    if edge == .bottom { moreChip(split.folded.count) }
                 }
                 .padding(8)
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { contentHeight = $0 }
@@ -392,6 +415,28 @@ public struct NoticeStackView: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Notices")
             .accessibilityIdentifier("notice-stack")
+            .onChange(of: split.folded.isEmpty) { _, none in if none { showsAll = false } }
+        }
+    }
+
+    /// "+N more": the older notices folded past `maxVisible`; a click shows them all until none is folded again.
+    @ViewBuilder
+    func moreChip(_ count: Int) -> some View {
+        if count > 0 {
+            // lint-rules-ignore: short list (one "+N more" chip beside at most maxVisible notices)
+            Button {
+                showsAll = true
+            } label: {
+                Text(verbatim: "+\(count) more")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(.regularMaterial, in: Capsule())
+            }
+            // The shared hover: a brighter chip and the pointing hand (a plain style showed neither).
+            .buttonStyle(.genHoverPlain())
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("Show \(count) more \(count == 1 ? "notice" : "notices")")
+            .accessibilityIdentifier("notice-stack-more")
         }
     }
 

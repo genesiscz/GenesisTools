@@ -1,0 +1,259 @@
+import Foundation
+import XCTest
+@testable import GenesisToolsMeetings
+
+/// The review rows of F6 and the layout around them: the trailing pane beside the rows, the window settings the rows
+/// read, and the rows from `meeting.rows` with their decisions through the journal.
+@MainActor
+final class MeetingsReviewRowTests: XCTestCase {
+    private func defaults() throws -> (UserDefaults, String) {
+        let suite = "meetings.rows.tests.\(UUID().uuidString)"
+        return (try XCTUnwrap(UserDefaults(suiteName: suite)), suite)
+    }
+
+    // MARK: The trailing pane (decision 2)
+
+    func testTheTranscriptPaneShowsBesideTheRowsOnlyWhenTheColumnIsWideEnough() {
+        let wide = MeetingDetailView.transcriptPaneMinWidth
+        XCTAssertEqual(MeetingDetailView.trailingPane(tab: .items, width: wide, setting: .auto, sidePanelOpen: false), .transcript)
+        XCTAssertNil(MeetingDetailView.trailingPane(tab: .items, width: wide - 1, setting: .auto, sidePanelOpen: false),
+                     "a narrow column keeps the Transcript tab as today")
+        XCTAssertNil(MeetingDetailView.trailingPane(tab: .transcript, width: 2000, setting: .always, sidePanelOpen: false),
+                     "only the rows get the pane")
+        XCTAssertEqual(MeetingDetailView.trailingPane(tab: .items, width: 400, setting: .always, sidePanelOpen: false), .transcript)
+        XCTAssertNil(MeetingDetailView.trailingPane(tab: .items, width: 2000, setting: .never, sidePanelOpen: false))
+        XCTAssertEqual(MeetingDetailView.trailingPane(tab: .screen, width: 400, setting: .never, sidePanelOpen: true), .settings,
+                       "the open side panel replaces the pane on every tab")
+    }
+
+    // MARK: Window settings
+
+    func testTheTypedAnswerKeyMovesToTheRowsAndKeepsItsValue() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("noChoices", forKey: MeetingsPreferences.legacyTypedAnswerKey)
+        MeetingsPreferences.migrate(defaults)
+        XCTAssertNil(defaults.object(forKey: MeetingsPreferences.legacyTypedAnswerKey))
+        XCTAssertEqual(MeetingsPreferences.Rows.typedAnswer.value(defaults), .noChoices)
+        XCTAssertEqual(MeetingsPreferences.typedAnswer(defaults), .noChoices)
+    }
+
+    func testEveryWindowSettingHasItsDefaultAndOffersIt() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        typealias Rows = MeetingsPreferences.Rows
+        typealias Playback = MeetingsPreferences.Playback
+        typealias Panes = MeetingsPreferences.Panes
+        XCTAssertEqual(Rows.returnKey.value(defaults), .edit)
+        XCTAssertEqual(Rows.choiceKeys.value(defaults), .on)
+        XCTAssertEqual(Rows.decided.value(defaults), .inPlace)
+        XCTAssertEqual(Rows.order.value(defaults), .priority)
+        XCTAssertEqual(Rows.lowPriority.value(defaults), .hide)
+        XCTAssertEqual(Rows.askReach.value(defaults), .always)
+        XCTAssertEqual(Rows.autoplayNext.value(defaults), .afterAnswer)
+        XCTAssertEqual(Rows.autoplayDelaySec.value(defaults), 1)
+        XCTAssertEqual(MeetingsPreferences.Notices.maxVisible.value(defaults), 3)
+        XCTAssertEqual(Playback.view.value(defaults), .moment)
+        XCTAssertEqual(Playback.speed.value(defaults), 1)
+        XCTAssertEqual(Playback.repeatClip.value(defaults), .off)
+        XCTAssertEqual(Playback.afterClip.value(defaults), .offerMore)
+        XCTAssertEqual(Playback.moreSec.value(defaults), 30)
+        XCTAssertEqual(Playback.contextSec.value(defaults), 120)
+        XCTAssertEqual(Playback.rewindSec.value(defaults), 1)
+        XCTAssertEqual(Playback.clickInQuestion.value(defaults), .push)
+        XCTAssertEqual(Playback.onTopEnd.value(defaults), .return)
+        XCTAssertEqual(Playback.stackDepth.value(defaults), 3)
+        XCTAssertTrue(Panes.timelineShown.value(defaults))
+        XCTAssertEqual(Panes.hoverDelayMs.value(defaults), 300)
+        XCTAssertTrue(Panes.followPlayback.value(defaults))
+        XCTAssertTrue(Panes.screenBesidePlayback.value(defaults))
+        XCTAssertEqual(Panes.transcriptPane.value(defaults), .auto)
+
+        XCTAssertTrue(Rows.autoplayDelaySec.choices.contains(Rows.autoplayDelaySec.defaultValue))
+        XCTAssertTrue(Playback.speed.choices.contains(Playback.speed.defaultValue))
+        XCTAssertTrue(Playback.stackDepth.choices.contains(Playback.stackDepth.defaultValue))
+        XCTAssertTrue(Panes.hoverDelayMs.choices.contains(Panes.hoverDelayMs.defaultValue))
+
+        defaults.set(false, forKey: Panes.followPlayback.key)
+        defaults.set("confirm", forKey: Rows.returnKey.key)
+        defaults.set(1.5, forKey: Playback.speed.key)
+        XCTAssertFalse(Panes.followPlayback.value(defaults))
+        XCTAssertEqual(Rows.returnKey.value(defaults), .confirm)
+        XCTAssertEqual(Playback.speed.value(defaults), 1.5)
+    }
+
+    // MARK: F6 rows
+
+    /// Three rows as `meeting.rows` answers them: an open question at 20:00, an open term at 05:09, and a confirmed
+    /// speaker range at 00:12 that an agent decided.
+    static let rowsJSON = Data("""
+    {"meeting":"m","hidden":{"lowPriority":2,"minPriority":0.5},"rows":[
+     {"id":"q1","label":"Q1","kind":"question","status":"suggested","what":"Who says this?","edit":"answer","sources":[],
+      "parts":[{"kind":"when","from":{"sec":1200,"text":"20:00"},"target":{"kind":"item","id":"q1"}},
+               {"kind":"asks","pieces":[{"text":"Who speaks at "},{"text":"20:10","target":{"kind":"time","atSec":1210}}]}],
+      "choices":[{"value":"Dana Example","label":"Dana Example","role":"suggested","action":{"kind":"answer","answer":"Dana Example"}},
+                 {"value":"none of these","label":"None of these","role":"none","action":{"kind":"answer","answer":"none of these"}}],
+      "target":{"kind":"item","id":"q1"}},
+     {"id":"i2","label":"i2","kind":"term","status":"suggested","confidence":0.82,"what":"OMP → EMP","edit":"spelling","sources":[],
+      "parts":[{"kind":"when","from":{"sec":309,"text":"05:09"},"target":{"kind":"item","id":"i2"}}],
+      "choices":[{"value":"EMP","label":"EMP","role":"suggested","action":{"kind":"confirm"},"confidence":0.82},
+                 {"value":"OMP","label":"OMP","role":"heard","action":{"kind":"reject"}}],
+      "target":{"kind":"item","id":"i2"}},
+     {"id":"i3","label":"i3","kind":"speaker-range","status":"confirmed","what":"Speaker 3 00:12–00:30 → Alex Example","edit":"person",
+      "sources":[],"parts":[{"kind":"when","from":{"sec":12,"text":"00:12"},"to":{"sec":30,"text":"00:30"},"target":{"kind":"item","id":"i3"}}],
+      "choices":[],"target":{"kind":"item","id":"i3"},
+      "decision":{"token":"t-agent","actor":{"kind":"agent","harness":"claude-code","session":"11111111-2222-4333-8444-555555555555"},
+                  "by":"an agent (Claude Code, session 11111111)","action":"confirm","reason":"the calendar says so"}}]}
+    """.utf8)
+
+    private func rows() throws -> ReviewRows { try JSONDecoder().decode(ReviewRows.self, from: Self.rowsJSON) }
+
+    /// A journal entry as the service sends it, for `items` with the status after.
+    private func entry(token: String, actor: String = #"{"kind":"window"}"#, action: String, changes: [(String, String, String)]) throws -> JournalEntry {
+        let items = changes.map { id, before, after in
+            #"{"id":"\#(id)","before":{"id":"\#(id)","kind":"term","status":"\#(before)"},"after":{"id":"\#(id)","kind":"term","status":"\#(after)"}}"#
+        }.joined(separator: ",")
+        let json = #"{"token":"\#(token)","at":"2026-11-09T17:32:38.000Z","meeting":"m","actor":\#(actor),"action":\#(action),"decided":[\#(changes.map { "\"\($0.0)\"" }.joined(separator: ","))],"changes":[\#(items)]}"#
+        return try JSONDecoder().decode(JournalEntry.self, from: Data(json.utf8))
+    }
+
+    func testRowsKeepTheEnginesOrderOrGoByTimeAndDecidedRowsFoldOrLeave() throws {
+        let rows = try rows().rows
+        XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .priority, decided: .inPlace).map(\.id), ["q1", "i2", "i3"],
+                       "priority is the engine's order, the one listen asks in")
+        XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .time, decided: .inPlace).map(\.id), ["i3", "i2", "q1"])
+        XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .priority, decided: .hidden).map(\.id), ["q1", "i2"])
+        XCTAssertEqual(rows[1].whenText, "05:09")
+        XCTAssertEqual(rows[2].whenText, "00:12–00:30")
+        XCTAssertEqual(ReviewRowView.decidedWords(rows[2]), "Confirmed by an agent (Claude Code, session 11111111): the calendar says so",
+                       "R35: who decided it and why")
+    }
+
+    func testTheNextOpenRowWrapsAndTheQueueEndsWhenNoneIsLeft() throws {
+        let rows = try rows().rows
+        XCTAssertEqual(MeetingDetailModel.nextOpenRow(after: "q1", in: rows)?.id, "i2")
+        XCTAssertEqual(MeetingDetailModel.nextOpenRow(after: "i2", in: rows)?.id, "q1", "past the last open row it wraps")
+        let one = rows.filter { $0.id != "i2" }
+        XCTAssertNil(MeetingDetailModel.nextOpenRow(after: "q1", in: one), "G24: no other open row is the queue's end")
+    }
+
+    func testReturnEditsOrConfirmsAndNumberedChoicesCarryTheirDecision() throws {
+        let rows = try rows().rows
+        XCTAssertEqual(ItemsTab.returnAction(for: rows[1], key: .edit), .edit, "R11: Return opens the editor")
+        XCTAssertEqual(ItemsTab.returnAction(for: rows[1], key: .confirm), .choose(rows[1].choices[0]), "or takes the suggestion")
+        XCTAssertEqual(rows[1].choices[0].action.decision(on: rows[1]), .confirm(["i2"]))
+        XCTAssertEqual(rows[1].choices[1].action.decision(on: rows[1]), .reject(["i2"]))
+        XCTAssertEqual(rows[0].choices[0].action.decision(on: rows[0]), .answer("q1", "Dana Example"))
+        XCTAssertEqual(rows[1].choices[0].confidence, 0.82, "R49: the suggestion's confidence")
+        XCTAssertNil(rows[1].choices[1].confidence)
+    }
+
+    func testADraftDecidesByTheRowsEditKind() throws {
+        let rows = try rows().rows
+        XCTAssertEqual(MeetingDetailModel.draftDecision("  EMP ", on: rows[1]), .respell("i2", to: "EMP"), "a spelling is a respell")
+        XCTAssertEqual(MeetingDetailModel.draftDecision("Dana Example", on: rows[0]), .answer("q1", "Dana Example"))
+        XCTAssertEqual(MeetingDetailModel.draftDecision("Bob", on: rows[2]), .respell("i3", to: "Bob"), "a person is a respell")
+        XCTAssertNil(MeetingDetailModel.draftDecision("   ", on: rows[1]))
+        XCTAssertTrue(MeetingDetailModel.mayReach(.answer("q1", "x")))
+        XCTAssertFalse(MeetingDetailModel.mayReach(.reject(["i2"])))
+    }
+
+    func testWithoutAServiceTheCommandMakesTheDecisionsItHas() {
+        XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: .confirm(["i2"], speaker: "Dana Example"), reason: "heard it"),
+                       ["confirm", "m", "i2", "--speaker", "Dana Example", "--reason", "heard it", "--json"])
+        XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: .reject(["i2"]), reason: nil), ["reject", "m", "i2", "--json"])
+        XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: .answer("Q1", "JSON"), reason: nil),
+                       ["listen", "m", "--item", "Q1", "--answer", "JSON", "--json"])
+        var bulk = DecisionAction.confirm([])
+        bulk.minConfidence = 0.8
+        XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: bulk, reason: nil), ["confirm", "m", "--min-confidence", "0.8", "--json"])
+        XCTAssertNil(MeetingDetailModel.commandArgs(meeting: "m", action: .respell("i2", to: "EMP"), reason: nil),
+                     "a respell needs the service")
+    }
+
+    func testTheActorAndTheActionReadAsTheEnginesWords() throws {
+        XCTAssertEqual(MeetingsWords.actor(.window), "you")
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "listen")), "you in the terminal")
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "agent", harness: "claude-code", session: "3f98b772-aaaa")),
+                       "an agent (Claude Code, session 3f98b772)")
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "agent", harness: "grok")), "an agent (Grok)")
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "agent", harness: "other-agent")), "an agent (other-agent)")
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "rule", rule: "E2")), "rule E2")
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "unknown")), "someone, before the history existed")
+        let confirm = try entry(token: "t1", action: #"{"kind":"confirm","items":["i2","i4"]}"#,
+                                changes: [("i2", "suggested", "confirmed"), ("i4", "suggested", "confirmed")])
+        XCTAssertEqual(MeetingsWords.entryAction(confirm), "confirmed i2 and i4")
+        let answer = try entry(token: "t2", action: #"{"kind":"answer","question":"Q1","answer":"JSON"}"#, changes: [])
+        XCTAssertEqual(MeetingsWords.entryAction(answer), "answered Q1: JSON")
+    }
+
+    func testAnEventFromElsewhereFoldsTheRowAndKeepsAnOpenDraftWithUseMine() throws {
+        let window = MeetingsWindowModel(defaults: try XCTUnwrap(UserDefaults(suiteName: "meetings.rows.tests.\(UUID().uuidString)")),
+                                         noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let detail = MeetingDetailModel(id: "m", window: window)
+        detail.rows = .loaded(try rows())
+        let row = try XCTUnwrap(detail.rows.value?.rows.first { $0.id == "i2" })
+        detail.edit(row)
+        XCTAssertEqual(detail.drafts["i2"], "EMP", "the editor starts with the suggestion")
+        detail.drafts["i2"] = "EMPs"
+        let theirs = try entry(token: "t-agent-2", actor: #"{"kind":"agent","harness":"codex","session":"22222222-3333"}"#,
+                               action: #"{"kind":"confirm","items":["i2"]}"#, changes: [("i2", "suggested", "confirmed")])
+        detail.receive(.decisionApplied(MeetingsAPI.DecisionApplied(meeting: "m", entry: theirs)))
+        detail.cancelReads()
+        XCTAssertEqual(detail.rows.value?.rows.first { $0.id == "i2" }?.status, "confirmed", "the row folds in place at once")
+        XCTAssertEqual(detail.drafts["i2"], "EMPs", "the draft stays (G47)")
+        XCTAssertEqual(detail.decidedMeanwhile["i2"]?.token, "t-agent-2", "and the row offers Use mine instead (G48)")
+        XCTAssertEqual(MeetingDetailModel.draftDecision(detail.drafts["i2"], on: row), .respell("i2", to: "EMPs"))
+    }
+
+    func testOneActorsDecisionsWithinFiveSecondsShareOneNoticeThatNamesAnotherMeeting() throws {
+        let suite = "meetings.rows.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        window.receive(try JSONDecoder().decode(MeetingsOverview.self, from: MeetingsUXTests.overviewJSON()))
+        XCTAssertEqual(window.selectedMeetingID, "a")
+        let agent = #"{"kind":"agent","harness":"claude-code","session":"11111111-2222"}"#
+        let now = Date()
+        window.noteDecision(try entry(token: "t1", actor: agent, action: #"{"kind":"confirm","items":["i1"]}"#,
+                                      changes: [("i1", "suggested", "confirmed")]), meeting: "b", now: now)
+        window.noteDecision(try entry(token: "t2", actor: agent, action: #"{"kind":"confirm","items":["i2"]}"#,
+                                      changes: [("i2", "suggested", "confirmed")]), meeting: "b", now: now.addingTimeInterval(2))
+        XCTAssertEqual(window.notices.notices.map(\.text), ["Screen only: An agent (Claude Code, session 11111111) decided 2 items"],
+                       "G38: one notice for the burst; G34: it names the meeting that is not open")
+        XCTAssertEqual(window.notices.notices.first?.actions.map(\.label), ["Undo"])
+        window.noteDecision(try entry(token: "t3", actor: agent, action: #"{"kind":"reject","items":["i9"]}"#,
+                                      changes: [("i9", "suggested", "rejected")]), meeting: "a", now: now.addingTimeInterval(3))
+        XCTAssertEqual(window.notices.notices.last?.text, "An agent (Claude Code, session 11111111) rejected i9",
+                       "the open meeting is not named, and another meeting is another burst")
+        XCTAssertEqual(window.newestUndo, "An agent (Claude Code, session 11111111) rejected i9", "⌘Z takes back the newest (G39)")
+    }
+
+    /// G39: with no text field in focus, ⌘Z presses the newest notice's Undo, and the menu item names it.
+    func testCommandZPressesTheNewestNoticesUndo() throws {
+        let suite = "meetings.rows.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
+        let undo = MeetingsUndoManager(model: window)
+        XCTAssertFalse(undo.canUndo, "no notice, nothing to undo")
+        var undone: [String] = []
+        window.notices.push(StackedNotice(text: "Confirmed i1", actions: [.undo { _ in undone.append("i1") }]))
+        window.notices.push(StackedNotice(text: "Label Launch added"))
+        window.notices.push(StackedNotice(text: "Answered Q2: JSON", actions: [.undo { _ in undone.append("Q2") }]))
+        XCTAssertTrue(undo.canUndo)
+        XCTAssertEqual(undo.undoMenuItemTitle, "Undo Answered Q2: JSON")
+        undo.undo()
+        XCTAssertEqual(undone, ["Q2"], "the newest notice with an Undo")
+        XCTAssertEqual(undo.undoMenuItemTitle, "Undo Confirmed i1", "a notice that waits for its Undo is not offered again")
+        undo.undo()
+        XCTAssertEqual(undone, ["Q2", "i1"])
+    }
+
+    func testClockTextIsTheTerminals() {
+        XCTAssertEqual(MeetingsFormat.clock(309), "05:09")
+        XCTAssertEqual(MeetingsFormat.clock(6588), "1:49:48")
+        XCTAssertEqual(MeetingsFormat.clock(0), "00:00")
+    }
+}
+

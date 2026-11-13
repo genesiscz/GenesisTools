@@ -125,10 +125,139 @@ enum MeetingsAPI {
 
     /// `meeting.changed`: a meeting's files changed; `parts` are the window parts whose revision token would differ
     /// now (`show`, `transcript`, `speakers`, `timeline`). Kept as text, so a part the service adds later still arrives.
+    /// A decision through the service sends `decision.applied` instead; a write outside it (the recorder, an import, a
+    /// hand edit) sends this one, at most once per meeting per 300 ms.
     struct MeetingChanged: Codable, Equatable {
         static let name = "meeting.changed"
         let meeting: String
         let parts: [String]
+    }
+
+    /// `meetings.overview`: the meetings of the last days with what each waits for, as `overview --json` prints it.
+    enum Overview: MeetingsServiceMethod {
+        static let name = "meetings.overview"
+
+        struct Params: Codable, Equatable { var days: Int? }
+
+        typealias Result = MeetingsOverview
+    }
+
+    /// `config.read`: the meetings config file's path and the value at a dotted path (the whole config without one).
+    enum ConfigRead: MeetingsServiceMethod {
+        static let name = "config.read"
+
+        struct Params: Codable, Equatable { var path: String? }
+
+        struct Result: Decodable, Equatable {
+            let path: String
+            let value: JSONValue
+        }
+    }
+
+    /// `config.read` without a path, as the window's settings read it: the whole config, the `config show --json` shape.
+    enum ConfigShowRead: MeetingsServiceMethod {
+        static let name = "config.read"
+        typealias Params = ConfigRead.Params
+        typealias Result = ConfigShow
+    }
+
+    /// `meeting.speakers` as the Speakers tab reads it: the `speakers stats --json` shape (the spans are TL's).
+    enum SpeakerStatsRead: MeetingsServiceMethod {
+        static let name = "meeting.speakers"
+        typealias Params = MeetingSpeakers.Params
+        typealias Result = SpeakerStats
+    }
+
+    /// What `config.set` and `config.unset` answer: the path as segments and the value now.
+    struct ConfigChange: Decodable, Equatable {
+        let path: [String]
+        let value: JSONValue
+    }
+
+    /// `config.set`: one meetings config value; `expect` refuses it with `config-stale` when another editor changed it.
+    enum ConfigSet: MeetingsServiceMethod {
+        static let name = "config.set"
+
+        struct Params: Codable, Equatable {
+            var path: String
+            var value: JSONValue
+            var expect: JSONValue?
+        }
+
+        typealias Result = ConfigChange
+    }
+
+    /// `config.unset`: one meetings config value back to its default.
+    enum ConfigUnset: MeetingsServiceMethod {
+        static let name = "config.unset"
+
+        struct Params: Codable, Equatable {
+            var path: String
+            var expect: JSONValue?
+        }
+
+        typealias Result = ConfigChange
+    }
+
+    /// Every event the window hears, decoded by name. A name this table does not know is dropped.
+    static let eventDecoders: [String: (Any?) throws -> MeetingsEvent] = [
+        MeetingChanged.name: { .meetingChanged(try MeetingsService.decode(MeetingChanged.self, $0)) },
+        DecisionApplied.name: { .decisionApplied(try MeetingsService.decode(DecisionApplied.self, $0)) },
+        DecisionReverted.name: { .decisionReverted(try MeetingsService.decode(DecisionReverted.self, $0)) },
+        CommentSent.name: { .commentSent(try MeetingsService.decode(CommentSent.self, $0)) },
+    ]
+
+    /// The events the window subscribes to.
+    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name]
+}
+
+/// One event of the Meetings service, as the window hears it.
+enum MeetingsEvent: Equatable {
+    case meetingChanged(MeetingsAPI.MeetingChanged)
+    case decisionApplied(MeetingsAPI.DecisionApplied)
+    case decisionReverted(MeetingsAPI.DecisionReverted)
+    case commentSent(MeetingsAPI.CommentSent)
+
+    /// The meeting the event is about.
+    var meeting: String {
+        switch self {
+        case .meetingChanged(let event): return event.meeting
+        case .decisionApplied(let event): return event.meeting
+        case .decisionReverted(let event): return event.meeting
+        case .commentSent(let event): return event.meeting
+        }
+    }
+
+    /// The journal entry of a decision event.
+    var entry: JournalEntry? {
+        switch self {
+        case .decisionApplied(let event): return event.entry
+        case .decisionReverted(let event): return event.entry
+        case .meetingChanged, .commentSent: return nil
+        }
+    }
+}
+
+/// What a listener of the service hears: an event, the kept subscription sent again on a new connection (events between
+/// the connections were not heard: read again), or the connection of a kept subscription lost (no event arrives until
+/// it resumes).
+enum MeetingsServiceSignal: Equatable {
+    case event(MeetingsEvent)
+    case resumed
+    case lost
+}
+
+extension JSONValue: Encodable {
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let text): try container.encode(text)
+        case .number(let number): try container.encode(number)
+        case .bool(let flag): try container.encode(flag)
+        case .array(let values): try container.encode(values)
+        case .object(let fields): try container.encode(fields)
+        case .null: try container.encodeNil()
+        }
     }
 }
 
@@ -166,19 +295,48 @@ struct MeetingListRow: Decodable, Equatable {
 /// by itself (`resumeSubscription`).
 @MainActor
 final class MeetingsService {
-    /// The window's service: nil in the preview build and under XCTest, for a sandbox home (`GENESIS_TOOLS_HOME`) and
-    /// a worktree's `tools` (`GENESIS_TOOLS_BIN`), whose reads must not reach a service of the main checkout (the same
-    /// rule as the hub server's meetings door, `MeetingsCLI.server`), and when it is turned off with
+    /// The window's service: nil in the preview build and under XCTest, and when it is turned off with
     /// `GENESIS_MEETINGS_SERVICE=0` or `defaults write com.genesiscz.genesistools meetings.service -bool NO`. Every
-    /// read then runs as a command, as before.
+    /// read then runs as a command, as before. The service folder is under `genesisHome()`, so a sandbox home
+    /// (`GENESIS_TOOLS_HOME`) has its own service; a service answers only when its `sourceRoot` is the checkout of the
+    /// `tools` the window runs (`GENESIS_TOOLS_BIN` for a worktree's), so a worktree's window never reads through the
+    /// main checkout's service, and a service that names no checkout (an older one) is used only with neither variable
+    /// set.
     static let shared: MeetingsService? = {
         let environment = ProcessInfo.processInfo.environment
         guard !NativePreview.enabled, NSClassFromString("XCTestCase") == nil,
               environment["GENESIS_MEETINGS_SERVICE"] != "0",
-              environment["GENESIS_TOOLS_HOME"] == nil, environment["GENESIS_TOOLS_BIN"] == nil,
               UserDefaults.standard.object(forKey: "meetings.service") as? Bool ?? true else { return nil }
-        return MeetingsService(folder: URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/meetings-service"))
+        let overridden = environment["GENESIS_TOOLS_HOME"] != nil || environment["GENESIS_TOOLS_BIN"] != nil
+        return MeetingsService(folder: URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/meetings-service"),
+                               checkout: .init(root: { ToolsBridge.workingDirectory(forBinary: ToolsBridge.defaultBinaryPath()).path },
+                                               acceptsUnnamed: !overridden))
     }()
+
+    /// Which service this window may use: the one whose `sourceRoot` (service.json, the checkout its code runs from) is
+    /// `root()`, the checkout of the `tools` the window runs. A service of another checkout answers with other code
+    /// (finding 5 of the Wave A review); the window reads through its own command then.
+    struct Checkout {
+        /// The checkout of the window's `tools`, symlinks resolved; asked at each connect, so a moved binary applies.
+        var root: () -> String
+        /// A service.json without `sourceRoot` (a service older than the rule) is used: true for the app on the real
+        /// home with the default `tools`, false under `GENESIS_TOOLS_HOME` or `GENESIS_TOOLS_BIN`.
+        var acceptsUnnamed: Bool
+
+        /// Whether a service that names `sourceRoot` (nil: names none) is this window's.
+        func accepts(_ sourceRoot: String?) -> Bool {
+            guard let sourceRoot, !sourceRoot.isEmpty else { return acceptsUnnamed }
+            return Self.same(sourceRoot, root())
+        }
+
+        /// Two checkout paths name one folder: symlinks resolved, a trailing `/` ignored.
+        static func same(_ left: String, _ right: String) -> Bool {
+            func normal(_ path: String) -> String {
+                URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+            }
+            return normal(left) == normal(right)
+        }
+    }
 
     struct Timing {
         var helloTimeout: TimeInterval = 3
@@ -217,6 +375,8 @@ final class MeetingsService {
     private let timing: Timing
     private let pid: Int32
     private let startService: ServiceStarter
+    /// nil: any live service in `folder` is used (the tests).
+    private let checkout: Checkout?
     /// Every answer and notification is decoded here, off the main thread: a transcript can be long.
     private let callbackQueue = DispatchQueue(label: "genesis.meetings.service")
 
@@ -235,18 +395,48 @@ final class MeetingsService {
     private var callsInFlight = 0
     private var idleGeneration = 0
 
-    /// A `meeting.changed` the subscription hears, on the main actor.
-    var onMeetingChanged: ((MeetingsAPI.MeetingChanged) -> Void)?
-    /// The kept subscription was sent again on a new connection, on the main actor. Events between the two connections
-    /// were not heard, so the subscriber reads what it shows again (its revisions).
-    var onSubscriptionResumed: (() -> Void)?
+    /// Who hears the subscription's events and its state, on the main actor (`listen`).
+    private var listeners: [UUID: @MainActor (MeetingsServiceSignal) -> Void] = [:]
+    /// A kept subscription has a connection that heard its subscribe: events arrive.
+    private(set) var isSubscribed = false
 
     init(folder: URL, timing: Timing = Timing(), pid: Int32 = ProcessInfo.processInfo.processIdentifier,
+         checkout: Checkout? = nil,
          startService: @escaping ServiceStarter = { _ = try await MeetingsCLI.run(["serve", "--detach"], timeoutSeconds: 60) }) {
         self.folder = folder
         self.timing = timing
         self.pid = pid
+        self.checkout = checkout
         self.startService = startService
+    }
+
+    /// Hears every event of the subscription and its state changes until the returned `Listening` is cancelled or
+    /// released. Several models listen to one subscription (the window's list, the open meeting).
+    func listen(_ handler: @escaping @MainActor (MeetingsServiceSignal) -> Void) -> Listening {
+        let id = UUID()
+        listeners[id] = handler
+        return Listening { [weak self] in self?.listeners[id] = nil }
+    }
+
+    /// A listener's hold: `cancel()` or its release stops the events.
+    final class Listening {
+        private var stop: (@MainActor () -> Void)?
+
+        init(_ stop: @escaping @MainActor () -> Void) { self.stop = stop }
+
+        @MainActor func cancel() {
+            stop?()
+            stop = nil
+        }
+
+        deinit {
+            guard let stop else { return }
+            Task { @MainActor in stop() }
+        }
+    }
+
+    private func signal(_ signal: MeetingsServiceSignal) {
+        for handler in listeners.values { handler(signal) }
     }
 
     /// Calls one method. Throws `Unavailable` when the service does not answer it or answers a shape this app cannot
@@ -274,9 +464,9 @@ final class MeetingsService {
         }
     }
 
-    /// From now on the connection hears these events (on `onMeetingChanged`). The subscription is kept: while no
-    /// connection is open (the service hung up, exited on a code change, was not running yet), this side connects
-    /// again by itself and sends it, then calls `onSubscriptionResumed`. Throws `Unavailable` while no service answers.
+    /// From now on the connection hears these events (each listener hears them, `listen`). The subscription is kept:
+    /// while no connection is open (the service hung up, exited on a code change, was not running yet), this side
+    /// connects again by itself and sends it, then signals `.resumed`. Throws `Unavailable` while no service answers.
     @discardableResult
     func subscribe(meeting: String? = nil, events: [String]? = nil) async throws -> [String] {
         let params = MeetingsAPI.Subscribe.Params(meeting: meeting, events: events)
@@ -288,12 +478,15 @@ final class MeetingsService {
             resumeSubscription()
             throw Unavailable(reason: "no Meetings service answers; the next connection subscribes")
         }
-        return try await call(MeetingsAPI.Subscribe.self, params, timeout: timing.helloTimeout).events
+        let heard = try await call(MeetingsAPI.Subscribe.self, params, timeout: timing.helloTimeout).events
+        isSubscribed = true
+        return heard
     }
 
-    /// Forgets the subscription and closes the connection: the transport has no unsubscribe.
+    /// Forgets the subscription and closes the connection, so the service can go idle.
     func unsubscribe() {
         subscription = nil
+        isSubscribed = false
         resuming?.cancel()
         resuming = nil
         disconnect()
@@ -325,7 +518,8 @@ final class MeetingsService {
                 return Unavailable(reason: "[\(code)] \(remote.message)")
             }
             return MeetingsCLI.Failure(sentence: MeetingsCLI.sentence(fromStderr: remote.message) ?? "The Meetings service refused it.",
-                                       detail: "The Meetings service refused \(method) [\(code)]:\n\(remote.message)", code: code)
+                                       detail: "The Meetings service refused \(method) [\(code)]:\n\(remote.message)", code: code,
+                                       data: remote.data)
         case let failure as JSONRPCSocketClient.Failure:
             // A service that does not answer in time may hang: the next call opens a new connection.
             if case .timeout = failure { drop(client) }
@@ -353,13 +547,30 @@ final class MeetingsService {
 
     private var discovery: URL { folder.appendingPathComponent("service.json") }
 
-    /// The socket `service.json` names, when its process still lives; nil when there is no live service.
-    func discoveredSocket() -> String? {
+    /// What `service.json` says now.
+    enum Discovery: Equatable {
+        /// No live service: none wrote the file, or its process is gone.
+        case none
+        /// A live service of another checkout (`sourceRoot`): the window does not use it, and does not start another.
+        case otherCheckout(String?)
+        case socket(String)
+    }
+
+    /// The socket `service.json` names, when its process still lives and its checkout is this window's.
+    func discover() -> Discovery {
         guard let data = try? Data(contentsOf: discovery),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let socket = object["socket"] as? String, !socket.isEmpty else { return nil }
-        if let pid = (object["pid"] as? NSNumber)?.int32Value, pid > 0, kill(pid, 0) != 0, errno == ESRCH { return nil }
-        return socket
+              let socket = object["socket"] as? String, !socket.isEmpty else { return .none }
+        if let pid = (object["pid"] as? NSNumber)?.int32Value, pid > 0, kill(pid, 0) != 0, errno == ESRCH { return .none }
+        let sourceRoot = object["sourceRoot"] as? String
+        if let checkout, !checkout.accepts(sourceRoot) { return .otherCheckout(sourceRoot) }
+        return .socket(socket)
+    }
+
+    /// The socket of a live service this window may use; nil otherwise.
+    func discoveredSocket() -> String? {
+        if case .socket(let socket) = discover() { return socket }
+        return nil
     }
 
     /// The connection, after its hello; nil when no service answers now. Calls that arrive while it opens wait for it.
@@ -376,12 +587,27 @@ final class MeetingsService {
 
     private func connect() async -> JSONRPCSocketClient? {
         state = .connecting
-        guard let socket = discoveredSocket() else {
+        let socket: String
+        switch discover() {
+        case .none:
             state = .idle
             startInBackground(because: "no live service in \(discovery.path)")
             return nil
+        case .otherCheckout(let root):
+            // Its code is another checkout's: the command of this window's `tools` answers. Starting one here would
+            // only find it running; look again after the backoff (it may exit idle, and then this window starts its own).
+            HubPerf.log("meetings.service: the live service runs \(root ?? "a checkout it does not name"), not "
+                + "\(checkout?.root() ?? "?"); the command answers")
+            refusedUntil = Date().addingTimeInterval(timing.refusedBackoff)
+            state = .idle
+            return nil
+        case .socket(let found):
+            socket = found
         }
         let candidate = JSONRPCSocketClient(path: socket, callbackQueue: callbackQueue)
+        // The handlers are set before the connection opens, so no notification or close reaches a client whose
+        // handlers are being set on another thread (Wave A review, Unproven list).
+        install(on: candidate)
         do {
             try candidate.connect()
         } catch {
@@ -413,38 +639,53 @@ final class MeetingsService {
         }
     }
 
-    /// The connection answered its hello: its notifications and its close reach this side, and a kept subscription is
-    /// sent again.
-    private func attach(_ connected: JSONRPCSocketClient, hello: MeetingsAPI.Hello.Result) {
-        client = connected
-        refusedUntil = nil
-        state = .connected(methods: hello.methods, events: hello.events)
-        connected.onClose = { [weak self, weak connected] in
+    /// A connection's close and notifications reach this side; both act only once the connection is the attached one.
+    private func install(on connection: JSONRPCSocketClient) {
+        connection.onClose = { [weak self, weak connection] in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard let self, let connected, self.client === connected else { return }
+                    guard let self, let connection, self.client === connection else { return }
                     HubPerf.log("meetings.service: the service closed the connection")
                     self.client = nil
                     self.state = .idle
+                    self.subscriptionLost()
                     self.resumeSubscription()
                 }
             }
         }
-        connected.onNotification = { [weak self] method, params in
+        connection.onNotification = { [weak self, weak connection] method, params in
             // On the callback queue: decode here, deliver on the main actor.
-            guard method == MeetingsAPI.MeetingChanged.name,
-                  let changed = try? Self.decode(MeetingsAPI.MeetingChanged.self, params) else { return }
+            guard let decoder = MeetingsAPI.eventDecoders[method] else { return }
+            let event: MeetingsEvent
+            do {
+                event = try decoder(params)
+            } catch {
+                HubPerf.log("meetings.service: the event \(method) does not decode: \(error)")
+                return
+            }
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.onMeetingChanged?(changed) }
+                MainActor.assumeIsolated {
+                    guard let self, let connection, self.client === connection else { return }
+                    self.signal(.event(event))
+                }
             }
         }
+    }
+
+    /// The connection answered its hello: a kept subscription is sent again.
+    private func attach(_ connected: JSONRPCSocketClient, hello: MeetingsAPI.Hello.Result) {
+        client = connected
+        refusedUntil = nil
+        state = .connected(methods: hello.methods, events: hello.events)
         HubPerf.log("meetings.service: connected (service \(hello.version), \(hello.methods.count) methods)")
         if let subscription {
             Task {
                 do {
                     _ = try await Self.send(MeetingsAPI.Subscribe.self, subscription, on: connected, timeout: timing.helloTimeout)
+                    guard self.subscription != nil, self.client === connected else { return }
                     restoreFailures = 0
-                    onSubscriptionResumed?()
+                    isSubscribed = true
+                    signal(.resumed)
                 } catch {
                     // A connection without the kept subscription hears no event, and a kept subscription keeps it from
                     // closing when idle: drop it, so `resumeSubscription` connects again, each failure waiting twice
@@ -460,6 +701,13 @@ final class MeetingsService {
         scheduleIdleClose()
     }
 
+    /// A kept subscription has no connection now: its listeners hear `.lost` once, until it resumes.
+    private func subscriptionLost() {
+        guard subscription != nil, isSubscribed else { return }
+        isSubscribed = false
+        signal(.lost)
+    }
+
     private func drop(_ dropped: JSONRPCSocketClient, backoff: TimeInterval? = nil) {
         dropped.onClose = nil
         dropped.onNotification = nil
@@ -467,6 +715,7 @@ final class MeetingsService {
         if client === dropped {
             client = nil
             state = .idle
+            subscriptionLost()
         }
         if let backoff { refusedUntil = Date().addingTimeInterval(backoff) }
         resumeSubscription()
@@ -660,9 +909,20 @@ struct MeetingsRead<Value: Decodable> {
                 return try await viaService(service)
             } catch is MeetingsService.Unavailable {
                 try Task.checkCancellation()
+            } catch let failure as MeetingsCLI.Failure where Self.runsCommand(after: failure) {
+                // A generic `failed` refusal names no state the pane can show (the service threw); the command may read
+                // it, and shows its own error when it cannot. A write never comes here: it shows the refusal.
+                HubPerf.log("meetings.service: \(method ?? "read") refused [failed]; the command answers it")
+                try Task.checkCancellation()
             }
         }
         if let command { return try await command(args, timeoutSeconds) }
         return try await viaCommand()
+    }
+
+    /// A read the service refused runs as the command only for the generic `failed` code; a named refusal
+    /// (`meeting-not-found`, `no-transcript-source`) is the answer, the same the command would give.
+    static func runsCommand(after failure: MeetingsCLI.Failure) -> Bool {
+        failure.code == "failed"
     }
 }

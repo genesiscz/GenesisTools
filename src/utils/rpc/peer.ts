@@ -249,6 +249,11 @@ export interface RpcPeerOptions {
     dialect?: Partial<RpcDialect>;
     /** The other side stopped reading and its unsent messages reached `OUTBOX_LIMIT_BYTES`: end the socket here. */
     onBacklogFull?: () => void;
+    /**
+     * The lane of a method whose newer call replaces the older (a Moment's cut: the next row's click): a request in a
+     * lane cancels every earlier request of the same lane that runs or waits, as a `$/cancel` would. Undefined: none.
+     */
+    supersedes?: (method: string) => string | undefined;
 }
 
 /**
@@ -274,11 +279,20 @@ function parseOrNull(text: string, log: RpcLog, label: string): unknown {
     }
 }
 
+/** Stops a call that runs or waits: its signal aborts and it is answered with `RPC_CANCELLED`. */
+function cancel(running: Running, message: string): void {
+    const error = new RpcError(RPC_CANCELLED, message);
+    running.controller.abort(error);
+    running.cancelled.reject(error);
+}
+
 export class RpcPeer {
     private readonly lines: LineBuffer;
     private readonly outbox: Outbox;
     private readonly outgoing = new Map<number, Outgoing>();
     private readonly running = new Map<string | number, Running>();
+    /** The requests of each supersede lane that run or wait, so a newer one cancels them. */
+    private readonly lanes = new Map<string, Set<Running>>();
     private readonly dialect: RpcDialect;
     private readonly schemas: (typeof schemas)[keyof typeof schemas];
     private nextId = 1;
@@ -513,9 +527,7 @@ export class RpcPeer {
             return;
         }
 
-        const error = new RpcError(RPC_CANCELLED, "cancelled");
-        running.controller.abort(error);
-        running.cancelled.reject(error);
+        cancel(running, "cancelled");
     }
 
     private enqueue(incoming: RpcIncoming): void {
@@ -528,6 +540,20 @@ export class RpcPeer {
             this.running.set(key, running);
         }
 
+        // A newer call of a supersede lane cancels the older ones at once, before it waits for its own turn.
+        const lane = key === undefined ? undefined : this.options.supersedes?.(incoming.method);
+        const peers = lane === undefined ? undefined : (this.lanes.get(lane) ?? new Set<Running>());
+
+        if (lane !== undefined && peers) {
+            for (const older of peers) {
+                cancel(older, `a newer ${incoming.method} replaced this call`);
+            }
+
+            peers.clear();
+            peers.add(running);
+            this.lanes.set(lane, peers);
+        }
+
         const run = async () => {
             try {
                 await this.answer(incoming, running);
@@ -535,6 +561,8 @@ export class RpcPeer {
                 if (key !== undefined && this.running.get(key) === running) {
                     this.running.delete(key);
                 }
+
+                peers?.delete(running);
             }
         };
 

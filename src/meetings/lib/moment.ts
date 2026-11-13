@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, utimesSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -10,11 +10,12 @@ import {
     type MeetingStore,
     MOMENTS_FOLDER,
 } from "@genesiscz/utils/meetings/record";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
-import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
+import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
-import { z } from "zod";
-import { type ClipPlan, cutClip } from "./audio";
+import { type ClipPlan, type CutControl, cutClip, probeAudio } from "./audio";
+import type { LinePoint, MomentErrorCode, MomentTarget } from "./moment-schema";
 import { OpenedMeeting } from "./opened-meeting";
 import { PAST_END_GRACE_SEC } from "./players";
 import {
@@ -27,6 +28,16 @@ import {
 } from "./questions";
 
 const { log } = logger.scoped("meetings-moment");
+
+export {
+    type LinePoint,
+    MOMENT_ERROR_CODES,
+    type MomentErrorCode,
+    type MomentMention,
+    type MomentTarget,
+    momentsInText,
+    momentTargetSchema,
+} from "./moment-schema";
 
 /**
  * The Moment engine: what a meeting plays for one target. A Moment is a bounded span of the meeting's audio with its
@@ -49,31 +60,6 @@ const TERM_SPAN_SEC = 4;
 /** A single time hears the rest of the line it falls in, at least `min` and at most `max` seconds. */
 const TIME_SPAN_SEC = { min: 4, max: 15 } as const;
 
-/** A point in a transcript line: the line's start (its address), its index as a hint, and how far into its text. */
-const linePointSchema = z.object({
-    /** When the line starts on the transcript clock; it finds the line again when indexes differ. */
-    atSec: z.number().min(0),
-    /** The line's index in the source transcript, when the caller knows it. */
-    line: z.number().int().min(0).optional(),
-    /** How far into the line's text, 0 (its start) to 1 (its end); the line's time is spread over its text. */
-    fraction: z.number().min(0).max(1).optional(),
-});
-export type LinePoint = z.infer<typeof linePointSchema>;
-
-/**
- * What a Moment is of. `item` takes any item id (`i42`) or a question's number (`Q12`, `12`); a question plays what
- * `listen` plays. `selection` is words picked in the transcript (R43: "Clip 5s"). `stretch` is one speaker's turn
- * around a time (R20, R21); with `speaker`, that speaker's turn at or after the time.
- */
-export const momentTargetSchema = z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("item"), id: z.string().trim().min(1) }),
-    z.object({ kind: z.literal("time"), atSec: z.number().min(0) }),
-    z.object({ kind: z.literal("range"), fromSec: z.number().min(0), toSec: z.number().min(0) }),
-    z.object({ kind: z.literal("selection"), from: linePointSchema, to: linePointSchema }),
-    z.object({ kind: z.literal("stretch"), atSec: z.number().min(0), speaker: z.string().trim().min(1).optional() }),
-]);
-export type MomentTarget = z.infer<typeof momentTargetSchema>;
-
 /** The frame on one display at a Moment's spot (R41): the screen as it was while those words were said. */
 export interface MomentFrame {
     /** Relative to the meeting folder (`frames/16-32-42-232-d4.jpg`). */
@@ -84,6 +70,11 @@ export interface MomentFrame {
     /** Seconds on the transcript clock. */
     meetingSec: number;
     displayId?: number;
+    /**
+     * Where the Moment's words show on this frame (G-SCR-4): the OCR block's text and its box, normalized 0 to 1 with
+     * the origin at the bottom left as Vision gives it. The frame with a hit comes first (G-SCR-1).
+     */
+    hit?: { text: string; box: { x: number; y: number; width: number; height: number } };
 }
 
 export interface Moment {
@@ -110,17 +101,6 @@ export interface Moment {
     /** The frame on each recorded display at the spot; absent without a screen recording there. */
     screen?: MomentFrame[];
 }
-
-/** Why a target has no Moment. The code lets a client tell a wrong target from a broken meeting. */
-export const MOMENT_ERROR_CODES = [
-    "unknown-item",
-    "no-time",
-    "bad-range",
-    "unknown-line",
-    "no-speech",
-    "past-the-end",
-] as const;
-export type MomentErrorCode = (typeof MOMENT_ERROR_CODES)[number];
 
 export class MomentError extends Error {
     readonly code: MomentErrorCode;
@@ -217,56 +197,6 @@ export function speakerStretches(transcript: readonly TranscriptEntry[] | Transc
     });
 
     return stretches;
-}
-
-/** A time or a range named in a text, with where it stands in the text (UTF-16 offsets, end exclusive). */
-export interface MomentMention {
-    start: number;
-    end: number;
-    text: string;
-    target: Extract<MomentTarget, { kind: "time" | "range" }>;
-}
-
-const CLOCK_IN_TEXT = /(?<![\d:.])\d{1,2}:\d{2}(?::\d{2})?(?![\d:])/g;
-/** What joins two times into one range: a dash, or "to", "and", "until" (and the Czech "do", "a", "až"). */
-const RANGE_JOIN = /^\s*(?:[-–—]|to|and|until|till|do|a|až)\s*$/iu;
-
-/**
- * The times a text names, in order: "from 05:09 to 05:31", "between 1:02:10 and 1:02:40" and "05:09–05:31" are ranges,
- * a lone "1:49:48" is a time. A question's text is how it names the moments that settle it (R17: every time in it
- * plays; R38: "This answers 12:10–12:30" is a Moment the window pushes on its context stack, above the one playing).
- */
-export function momentsInText(text: string): MomentMention[] {
-    const clocks = [...text.matchAll(CLOCK_IN_TEXT)].flatMap((match) => {
-        const sec = parseClock(match[0]);
-        return sec === undefined ? [] : [{ start: match.index, end: match.index + match[0].length, sec }];
-    });
-    const mentions: MomentMention[] = [];
-
-    for (let index = 0; index < clocks.length; index++) {
-        const from = clocks[index]!;
-        const to = clocks[index + 1];
-
-        if (to && to.sec > from.sec && RANGE_JOIN.test(text.slice(from.end, to.start))) {
-            mentions.push({
-                start: from.start,
-                end: to.end,
-                text: text.slice(from.start, to.end),
-                target: { kind: "range", fromSec: from.sec, toSec: to.sec },
-            });
-            index++;
-            continue;
-        }
-
-        mentions.push({
-            start: from.start,
-            end: from.end,
-            text: text.slice(from.start, from.end),
-            target: { kind: "time", atSec: from.sec },
-        });
-    }
-
-    return mentions;
 }
 
 /**
@@ -448,6 +378,8 @@ export interface MomentInput {
     listen: ListenSettings;
     /** Audio around an `around` span; else `listen.padSec`, else `DEFAULT_PAD_SEC`. */
     padSec?: number;
+    /** At most this long from the span's start (the window's "Clip 5s" on a selection: 5); the pad stays. */
+    lengthSec?: number;
 }
 
 function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment {
@@ -484,7 +416,31 @@ function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment 
 
 /** The Moment of one target. Throws a `MomentError` for a target the meeting does not have. Reads nothing. */
 export function planMoment(input: MomentInput & { target: MomentTarget }): Moment {
-    return momentOf(input, input.target, targetSpan(input.record, input.target, linesOf(input.transcript)));
+    const whole = targetSpan(input.record, input.target, linesOf(input.transcript));
+    const span =
+        input.lengthSec === undefined
+            ? whole
+            : { ...whole, toSec: Math.min(whole.toSec, whole.fromSec + input.lengthSec) };
+    refuseTooLong(input.record, input.target, span, input.listen.longestClipSec);
+    return momentOf(input, input.target, span);
+}
+
+/**
+ * A stretch the data names (an item, a speaker's turn) longer than `longestSec` is refused: a 51-minute hint range is
+ * a thing to look at, not a clip. A question plays its own clip, and a range or a selection is bounded by the caller.
+ */
+function refuseTooLong(record: MeetingRecord, target: MomentTarget, span: Span, longestSec: number): void {
+    const capped =
+        target.kind === "stretch" ||
+        (target.kind === "item" &&
+            record.items.find((item) => item.id === questionIdOf(record, target.id))?.kind !== "question");
+
+    if (capped && span.toSec - span.fromSec > longestSec) {
+        throw new MomentError(
+            "too-long",
+            `${span.label} lasts ${formatClock(span.toSec - span.fromSec)}, longer than the ${longestSec} s a Moment plays (playback.listen.longestClipSec); show it instead.`
+        );
+    }
 }
 
 /**
@@ -514,18 +470,123 @@ export async function cutMoment(
     await (options.cut ?? cutClip)({ audioPath: options.audioPath, outPath: options.outPath, ...clipPlan(moment) });
 }
 
-/**
- * Where a Moment's clip goes in its meeting folder: `moments/<label>-<key>.wav`. The key comes from what the clip
- * holds, so the same Moment always writes the same file and a different one never overwrites it.
- */
-export function momentClipPath(folder: string, moment: Moment): string {
-    const name = moment.label.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "moment";
-    const key = Bun.hash(SafeJSON.stringify([moment.startSec, moment.endSec, moment.tone ?? null])).toString(36);
-    return join(folder, MOMENTS_FOLDER, `${name}-${key}.wav`);
+function clipName(moment: Moment): string {
+    return moment.label.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "moment";
 }
 
-/** The frame on each display at `atSec`; none without a screen recording at that time. Never throws. */
-export async function momentFrames(store: MeetingStore, record: MeetingRecord, atSec: number): Promise<MomentFrame[]> {
+function clipKey(moment: Moment, extra: unknown[] = []): string {
+    return Bun.hash(SafeJSON.stringify([moment.startSec, moment.endSec, moment.tone ?? null, ...extra])).toString(36);
+}
+
+/**
+ * Where a Moment's clip went in its meeting folder before the clip cache: `moments/<label>-<key>.wav`. An old meeting
+ * folder may still hold such clips; the window's revision tokens ignore the folder (`MOMENTS_FOLDER`).
+ */
+export function momentClipPath(folder: string, moment: Moment): string {
+    return join(folder, MOMENTS_FOLDER, `${clipName(moment)}-${clipKey(moment)}.wav`);
+}
+
+/** The recording a clip is cut from, as its cache key names it: a changed file is a new key. */
+export interface ClipSource {
+    path: string;
+    mtimeMs: number;
+    size: number;
+}
+
+/** The clip cache (WaveB-Plan decision 10): `<genesis-tools>/meetings-cache/moments/<meeting>/`, size-capped. */
+export function momentCacheDir(meeting?: string): string {
+    return meeting ? toolDataDir("meetings-cache", "moments", meeting) : toolDataDir("meetings-cache", "moments");
+}
+
+/** The cache holds at most this much; the clips used longest ago go first. */
+export const MOMENT_CACHE_BYTES = 500 * 1024 * 1024;
+
+/**
+ * Where a Moment's clip goes in the clip cache: `<label>-<key>.wav`, the key from what the clip holds (its span, its
+ * tone) and the recording (its path, time and size), so the same Moment of the same recording is cut once (G16, G-PLAY-10).
+ */
+export function momentCachePath(moment: Moment, source: ClipSource): string {
+    const key = clipKey(moment, [source.path, source.mtimeMs, source.size]);
+    return join(momentCacheDir(moment.meeting), `${clipName(moment)}-${key}.wav`);
+}
+
+/** Removes the clips used longest ago until the cache holds at most `capBytes`; returns how many went. Never throws. */
+export function trimMomentCache(capBytes = MOMENT_CACHE_BYTES, root = momentCacheDir()): number {
+    if (!existsSync(root)) {
+        return 0;
+    }
+
+    const clips = readdirSync(root, { withFileTypes: true }).flatMap((folder) => {
+        if (!folder.isDirectory()) {
+            return [];
+        }
+
+        const dir = join(root, folder.name);
+        return readdirSync(dir).flatMap((name) => {
+            // A cut still in progress is a hidden partial file: never counted, never removed here.
+            if (!name.endsWith(".wav") || name.startsWith(".")) {
+                return [];
+            }
+
+            try {
+                const stat = statSync(join(dir, name));
+                return [{ path: join(dir, name), size: stat.size, usedMs: stat.mtimeMs }];
+            } catch (error) {
+                log.debug({ error, name }, "a cached clip went before it was counted");
+                return [];
+            }
+        });
+    });
+    let total = clips.reduce((sum, clip) => sum + clip.size, 0);
+    let removed = 0;
+
+    for (const clip of clips.sort((a, b) => a.usedMs - b.usedMs)) {
+        if (total <= capBytes) {
+            break;
+        }
+
+        try {
+            // A cache file the next play cuts again: no trash, no undo needed.
+            unlinkSync(clip.path);
+            total -= clip.size;
+            removed += 1;
+        } catch (error) {
+            log.debug({ error, path: clip.path }, "a cached clip could not be removed");
+        }
+    }
+
+    if (removed > 0) {
+        log.debug({ removed, total, capBytes }, "clip cache trimmed");
+    }
+
+    return removed;
+}
+
+/** The words a target shows on screen, to find its frame: a term's heard and fixed words, a question's heard words. */
+function hitWords(record: MeetingRecord, target: MomentTarget): string[] {
+    if (target.kind !== "item") {
+        return [];
+    }
+
+    const item = record.items.find((one) => one.id === questionIdOf(record, target.id));
+
+    if (item?.kind === "term") {
+        return [item.proposed, item.heard].filter((word): word is string => Boolean(word));
+    }
+
+    return item?.kind === "question" && item.heard ? [item.heard] : [];
+}
+
+/**
+ * The frame on each display at `atSec`; none without a screen recording at that time. With `words`, the frame whose
+ * OCR text shows one of them comes first and carries the block it shows it in (G-SCR-1, G-SCR-4). Never throws.
+ */
+export async function momentFrames(
+    store: MeetingStore,
+    record: MeetingRecord,
+    atSec: number,
+    words: string[] = []
+): Promise<MomentFrame[]> {
     const folder = store.folder(record.id);
 
     if (!existsSync(join(folder, "ocr.jsonl"))) {
@@ -534,9 +595,10 @@ export async function momentFrames(store: MeetingStore, record: MeetingRecord, a
 
     try {
         // Loaded here: listen asks for Moments without a screen and should not load the OCR readers.
-        const { meetingScreen } = await import("./screen-boxes");
+        const { meetingScreen, readOcrRows } = await import("./screen-boxes");
+        const { foldText } = await import("@genesiscz/utils/macos/ocr-boxes");
         const screen = await meetingScreen({ store, record, atSec, windowSec: 0 });
-        return screen.displays.flatMap((display) => {
+        const frames: MomentFrame[] = screen.displays.flatMap((display) => {
             const frame = display.frames.at(-1);
             return frame
                 ? [
@@ -550,6 +612,34 @@ export async function momentFrames(store: MeetingStore, record: MeetingRecord, a
                   ]
                 : [];
         });
+        const wanted = words.map(foldText).filter(Boolean);
+
+        if (wanted.length === 0 || frames.length === 0) {
+            return frames;
+        }
+
+        const files = new Set(frames.map((frame) => frame.file));
+        const rows = readOcrRows(join(folder, "ocr.jsonl")).filter((row) => files.has(row.file));
+        const hits = frames.map((frame) => {
+            const block = rows
+                .find((row) => row.file === frame.file)
+                ?.blocks.find((one) => wanted.some((word) => foldText(one.text).includes(word)));
+            return block
+                ? {
+                      ...frame,
+                      hit: {
+                          text: block.text,
+                          box: {
+                              x: Number(block.bounds.x),
+                              y: Number(block.bounds.y),
+                              width: Number(block.bounds.width),
+                              height: Number(block.bounds.height),
+                          },
+                      },
+                  }
+                : frame;
+        });
+        return [...hits.filter((frame) => frame.hit), ...hits.filter((frame) => !frame.hit)];
     } catch (err) {
         log.debug({ err, meeting: record.id }, "no screen frame for the moment");
         return [];
@@ -569,6 +659,8 @@ export interface OpenMomentOptions {
     record: MeetingRecord;
     target: MomentTarget;
     padSec?: number;
+    /** At most this long from the span's start (`MomentInput.lengthSec`). */
+    lengthSec?: number;
     screen?: boolean;
     /** The meeting already opened by the caller (a service that holds it, a test with its own source). */
     opened?: OpenedMeeting;
@@ -583,33 +675,61 @@ async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Prom
         listen: config.global.playback.listen,
         target: options.target,
         ...(options.padSec === undefined ? {} : { padSec: options.padSec }),
+        ...(options.lengthSec === undefined ? {} : { lengthSec: options.lengthSec }),
     });
 
     if (options.screen === false) {
         return moment;
     }
 
-    const screen = await momentFrames(store, record, moment.spotSec);
+    const screen = await momentFrames(store, record, moment.spotSec, hitWords(record, options.target));
     return screen.length > 0 ? { ...moment, screen } : moment;
 }
 
-/** A Moment cut to its WAV in the meeting folder (`momentClipPath`): what `play --clip` prints and the window plays. */
+/**
+ * A Moment cut to its WAV in the clip cache (`momentCachePath`): what `play --clip` prints and the window plays. A
+ * clip cut before for the same recording is used again (its time is touched, so the cache keeps it longest). A
+ * recording with several audio streams is mixed (`probe`); `control` reports the cut's progress and cancels it.
+ */
 export async function clipMoment(
-    options: OpenMomentOptions & { cut?: typeof cutClip }
+    options: OpenMomentOptions & {
+        cut?: typeof cutClip;
+        control?: Pick<CutControl, "signal" | "onProgress">;
+        /** The recording's audio streams; ffprobe reads them when absent. */
+        probe?: (path: string) => Promise<{ tracks: number }>;
+    }
 ): Promise<Moment & { path: string }> {
     const { store, record } = options;
     const opened = options.opened ?? OpenedMeeting.of(store, record);
     const moment = await momentIn(opened, options);
-    const path = momentClipPath(store.folder(record.id), moment);
+    const audioPath = await opened.audioPath();
+    const stat = statSync(audioPath);
+    const path = momentCachePath(moment, { path: audioPath, mtimeMs: stat.mtimeMs, size: stat.size });
+
+    if (existsSync(path)) {
+        const now = new Date();
+        utimesSync(path, now, now);
+        log.debug({ path }, "moment clip from the cache");
+        return { ...moment, path };
+    }
+
     // Cut beside the clip and rename it over the clip: a player that reads the clip (the window, a second play) never
     // gets it half written, and two cuts of one Moment at once each publish a whole file.
     const partial = join(dirname(path), `.${basename(path, ".wav")}-${randomUUID()}.wav`);
+    mkdirSync(dirname(path), { recursive: true });
 
     try {
-        await cutMoment(moment, {
-            audioPath: await opened.audioPath(),
+        const { tracks } = await (options.probe ?? probeAudio)(audioPath).catch((error: unknown) => {
+            log.debug({ error, audioPath }, "the recording's tracks do not read; it is cut as one track");
+            return { tracks: 1 };
+        });
+        await (options.cut ?? cutClip)({
+            audioPath,
             outPath: partial,
-            ...(options.cut ? { cut: options.cut } : {}),
+            ...clipPlan(moment),
+            tracks,
+            ...(options.control?.signal ? { signal: options.control.signal } : {}),
+            ...(options.control?.onProgress ? { onProgress: options.control.onProgress } : {}),
         });
         renameSync(partial, path);
     } catch (error) {
@@ -617,6 +737,7 @@ export async function clipMoment(
         throw error;
     }
 
+    trimMomentCache();
     return { ...moment, path };
 }
 

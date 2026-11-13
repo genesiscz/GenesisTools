@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -19,7 +20,10 @@ import {
     clipMoment,
     clipPlan,
     cutMoment,
+    MomentError,
     type MomentTarget,
+    momentCacheDir,
+    momentCachePath,
     momentClipPath,
     momentFrames,
     momentsInText,
@@ -27,6 +31,7 @@ import {
     planMoment,
     SPEAKER_PAD_SEC,
     speakerStretches,
+    trimMomentCache,
 } from "./moment";
 import { OpenedMeeting } from "./opened-meeting";
 import { askedSpotSec, heardClip, type QuestionItem } from "./questions";
@@ -265,6 +270,23 @@ describe("times named in a text (R17, R38)", () => {
         expect(momentsInText("5:31 to 5:09").map((one) => one.target.kind)).toEqual(["time", "time"]);
         expect(momentsInText("version 1.2, ratio 3:2:1:4")).toEqual([]);
     });
+
+    test('"at 10:00 and 10:30" names two times; "between 10:00 and 10:30" names a range', () => {
+        expect(momentsInText("said at 10:00 and 10:30").map((one) => one.target)).toEqual([
+            { kind: "time", atSec: 600 },
+            { kind: "time", atSec: 630 },
+        ]);
+        expect(momentsInText("between 10:00 and 10:30").map((one) => one.target)).toEqual([
+            { kind: "range", fromSec: 600, toSec: 630 },
+        ]);
+    });
+
+    // A known limit (WaveA-Handoff): a time of day reads as a transcript time, so a row offers it as one.
+    test("a wall-clock time in a question reads as a transcript time", () => {
+        expect(momentsInText("Was this decided at the 14:30 standup?").map((one) => one.target)).toEqual([
+            { kind: "time", atSec: 870 },
+        ]);
+    });
 });
 
 describe("cutting a Moment", () => {
@@ -292,7 +314,7 @@ describe("cutting a Moment", () => {
         ]);
     });
 
-    test("the same Moment writes the same file in the meeting folder; another span or tone writes another", () => {
+    test("an old clip's place in the meeting folder: the same Moment one file, another span or tone another", () => {
         const one = plan({ kind: "item", id: "i1" });
         const path = momentClipPath("/m/planning", one);
 
@@ -402,113 +424,179 @@ function fakeSource(audioPath: string): TranscriptSource {
     };
 }
 
+/** A recording file of its own per test: the clip cache keys a clip by the recording's path, time and size. */
+function recording(name: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "moment-audio-"));
+    const path = join(dir, `${name}.ogg`);
+    writeFileSync(path, `audio of ${name}`);
+    return path;
+}
+
+async function savedMeeting(storage: string, audioPath: string) {
+    const store = new MeetingStore(new Storage(storage));
+    const saved = await store.create(
+        {
+            title: "Planning",
+            start: now,
+            createdBy: "new",
+            sources: { wisprflow: { meetingId: "abc" } },
+            items: meeting.items,
+        },
+        { command: "new", change: "test" }
+    );
+    const opened = OpenedMeeting.of(store, saved, { source: fakeSource(audioPath), sourceMeetingId: "abc" });
+    return { store, saved, opened };
+}
+
+const oneTrack = async () => ({ tracks: 1 });
+
 describe("a Moment of a saved meeting", () => {
-    test("its source transcript and the saved settings make the Moment, and the clip goes to moments/ in its folder", async () => {
-        const store = new MeetingStore(new Storage("meetings-moment-saved"));
-        const saved = await store.create(
-            {
-                title: "Planning",
-                start: now,
-                createdBy: "new",
-                sources: { wisprflow: { meetingId: "abc" } },
-                items: meeting.items,
-            },
-            { command: "new", change: "test" }
-        );
-        const opened = OpenedMeeting.of(store, saved, {
-            source: fakeSource("/clips/call.ogg"),
-            sourceMeetingId: "abc",
-        });
+    test("its source transcript and the saved settings make the Moment, its clip goes to the cache once", async () => {
+        const audioPath = recording("saved");
+        const { store, saved, opened } = await savedMeeting("meetings-moment-saved", audioPath);
         const target: MomentTarget = { kind: "item", id: "Q1" };
         const cuts: Array<Parameters<typeof cutClip>[0]> = [];
-        const cut = await clipMoment({
-            store,
-            record: saved,
-            target,
-            opened,
-            cut: async (options) => {
-                cuts.push(options);
-                mkdirSync(dirname(options.outPath), { recursive: true });
-                writeFileSync(options.outPath, "RIFF");
-            },
-        });
+        const cutter = async (options: Parameters<typeof cutClip>[0]) => {
+            cuts.push(options);
+            mkdirSync(dirname(options.outPath), { recursive: true });
+            writeFileSync(options.outPath, "RIFF");
+        };
+        const cut = await clipMoment({ store, record: saved, target, opened, cut: cutter, probe: oneTrack });
+        const again = await clipMoment({ store, record: saved, target, opened, cut: cutter, probe: oneTrack });
         const planned = planMoment({ record: saved, transcript, listen, target });
 
         expect(await openMoment({ store, record: saved, target, opened })).toEqual({ ...planned, meeting: saved.id });
-        expect(cut).toEqual({ ...planned, meeting: saved.id, path: momentClipPath(store.folder(saved.id), planned) });
-        expect(cut.path).toStartWith(join(store.folder(saved.id), "moments", "Q1-"));
-        // The cut writes beside the clip, and the clip takes its place once it is whole.
-        expect(cuts).toEqual([{ audioPath: "/clips/call.ogg", outPath: expect.any(String), ...clipPlan(planned) }]);
+        expect(cut.path).toStartWith(join(momentCacheDir(saved.id), "Q1-"));
+        expect(again).toEqual(cut);
+        // The cut writes beside the clip, and the clip takes its place once it is whole; the second play cuts nothing.
+        expect(cuts).toEqual([{ audioPath, outPath: expect.any(String), ...clipPlan(planned), tracks: 1 }]);
         expect(dirname(cuts[0]!.outPath)).toBe(dirname(cut.path));
         expect(cuts[0]!.outPath).not.toBe(cut.path);
         expect(readFileSync(cut.path, "utf8")).toBe("RIFF");
     });
 
-    // The window plays the clip at its path while a second play, or an agent's `play --clip`, cuts the same Moment.
-    test("a second cut of the same Moment never leaves a half-written clip where a player reads it", async () => {
-        const store = new MeetingStore(new Storage("meetings-moment-recut"));
-        const saved = await store.create(
-            {
-                title: "Planning",
-                start: now,
-                createdBy: "new",
-                sources: { wisprflow: { meetingId: "abc" } },
-                items: meeting.items,
-            },
-            { command: "new", change: "test" }
-        );
-        const opened = OpenedMeeting.of(store, saved, {
-            source: fakeSource("/clips/call.ogg"),
-            sourceMeetingId: "abc",
-        });
-        const target: MomentTarget = { kind: "item", id: "Q1" };
-        let halfWritten = (): void => {};
-        const half = new Promise<void>((resolve) => {
-            halfWritten = resolve;
-        });
-        let release = (): void => {};
-        const gate = new Promise<void>((resolve) => {
-            release = resolve;
-        });
-        // Writes the clip as ffmpeg does: the header first, the samples later.
-        const writer =
-            (samples: string, wait?: Promise<void>) =>
-            async (options: { outPath: string }): Promise<void> => {
-                mkdirSync(dirname(options.outPath), { recursive: true });
+    test("a recording with two tracks is cut with both, and another recording file is another clip", async () => {
+        const { store, saved, opened } = await savedMeeting("meetings-moment-tracks", recording("tracks"));
+        const cuts: Array<Parameters<typeof cutClip>[0]> = [];
+        const cut = await clipMoment({
+            store,
+            record: saved,
+            target: { kind: "item", id: "Q2" },
+            opened,
+            probe: async () => ({ tracks: 2 }),
+            cut: async (options) => {
+                cuts.push(options);
                 writeFileSync(options.outPath, "RIFF");
+            },
+        });
+        const other = momentCachePath(cut, { path: "/elsewhere/call.ogg", mtimeMs: 1, size: 2 });
 
-                if (wait) {
-                    halfWritten();
-                    await wait;
-                }
+        expect(cuts.map((one) => one.tracks)).toEqual([2]);
+        expect(other).not.toBe(cut.path);
+        expect(dirname(other)).toBe(dirname(cut.path));
+    });
 
-                appendFileSync(options.outPath, samples);
-            };
+    // The window plays the clip at its path while a second play, or an agent's `play --clip`, cuts the same Moment.
+    test("two cuts of one Moment at once never leave a half-written clip where a player reads it", async () => {
+        const { store, saved, opened } = await savedMeeting("meetings-moment-recut", recording("recut"));
+        const target: MomentTarget = { kind: "item", id: "Q1" };
+        const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+        const started = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+        // Writes the clip as ffmpeg does: the header first, the samples once its gate opens.
+        const writer = (n: number) => async (options: { outPath: string }) => {
+            mkdirSync(dirname(options.outPath), { recursive: true });
+            writeFileSync(options.outPath, "RIFF");
+            started[n]!.resolve();
+            await gates[n]!.promise;
+            appendFileSync(options.outPath, `-${n}`);
+        };
+        const first = clipMoment({ store, record: saved, target, opened, cut: writer(0), probe: oneTrack });
+        const second = clipMoment({ store, record: saved, target, opened, cut: writer(1), probe: oneTrack });
+        await Promise.all(started.map((one) => one.promise));
+        gates[0]!.resolve();
+        const path = (await first).path;
+        expect(readFileSync(path, "utf8")).toBe("RIFF-0");
+        gates[1]!.resolve();
+        expect((await second).path).toBe(path);
+        expect(readFileSync(path, "utf8")).toBe("RIFF-1");
 
-        const first = await clipMoment({ store, record: saved, target, opened, cut: writer("-first") });
-        expect(readFileSync(first.path, "utf8")).toBe("RIFF-first");
-
-        const second = clipMoment({ store, record: saved, target, opened, cut: writer("-second", gate) });
-        await half;
-        // A player that opens the clip now gets the whole first clip, never a header alone.
-        expect(readFileSync(first.path, "utf8")).toBe("RIFF-first");
-        release();
-        expect(readFileSync((await second).path, "utf8")).toBe("RIFF-second");
-
-        // A cut that fails leaves the last whole clip and no partial file beside it.
+        // A cut that fails leaves no partial file beside the clips.
         const failing = clipMoment({
             store,
             record: saved,
-            target,
+            target: { kind: "item", id: "Q2" },
             opened,
+            probe: oneTrack,
             cut: async (options) => {
                 writeFileSync(options.outPath, "RIFF");
                 throw new Error("ffmpeg failed");
             },
         });
         await expect(failing).rejects.toThrow("ffmpeg failed");
-        expect(readFileSync(first.path, "utf8")).toBe("RIFF-second");
-        expect(readdirSync(dirname(first.path))).toEqual([basename(first.path)]);
+        // The cache folder is the meeting's, which other tests' clips share: no hidden partial file is left in it.
+        expect(readdirSync(dirname(path)).filter((name) => name.startsWith("."))).toEqual([]);
+        expect(readdirSync(dirname(path))).toContain(basename(path));
+    });
+
+    test("the cache keeps at most its cap, removing the clips used longest ago and never a cut in progress", () => {
+        const root = mkdtempSync(join(tmpdir(), "moment-cache-"));
+        mkdirSync(join(root, "m1"));
+        const write = (name: string, bytes: number, ageSec: number) => {
+            const path = join(root, "m1", name);
+            writeFileSync(path, "x".repeat(bytes));
+            const when = new Date(Date.now() - ageSec * 1000);
+            utimesSync(path, when, when);
+        };
+        write("old.wav", 400, 300);
+        write("mid.wav", 400, 200);
+        write("new.wav", 400, 100);
+        write(".cutting-1.wav", 400, 400);
+
+        expect(trimMomentCache(900, root)).toBe(1);
+        expect(readdirSync(join(root, "m1")).sort()).toEqual([".cutting-1.wav", "mid.wav", "new.wav"]);
+    });
+});
+
+describe("a Moment that is too long, and the frame that shows its words", () => {
+    test("an item or a speaker turn longer than longestClipSec is refused as too-long; a range is the caller's", () => {
+        const short = meetingsConfigSchema.parse({ global: { playback: { listen: { longestClipSec: 5 } } } });
+        const long = record([{ id: "i9", kind: "speaker-range", label: "Speaker 2", fromSec: 30, toSec: 50 }]);
+        const planLong = (target: MomentTarget) =>
+            planMoment({ record: long, transcript, listen: short.global.playback.listen, target });
+
+        expect(() => planLong({ kind: "item", id: "i9" })).toThrow("longer than the 5 s a Moment plays");
+        expect(() => planLong({ kind: "stretch", atSec: 30 })).toThrow(MomentError);
+        expect(planLong({ kind: "range", fromSec: 30, toSec: 50 }).toSec).toBe(50);
+        expect(listen.longestClipSec).toBe(30);
+    });
+
+    test("the frame whose OCR text shows a term's words comes first, with the block's text and box", async () => {
+        const store = new MeetingStore(new Storage("meetings-moment-hit"));
+        const at = (sec: number) => new Date(Date.parse(now) + sec * 1000).toISOString();
+        const recorded = meetingRecordSchema.parse({
+            ...meeting,
+            recording: { status: "stopped", spans: [{ from: at(0), to: at(120) }] },
+        });
+        const folder = store.folder(recorded.id);
+        mkdirSync(folder, { recursive: true });
+        const box = { x: 0.1, y: 0.2, width: 0.3, height: 0.05 };
+        const rows = [
+            { file: "frames/a.jpg", at: at(5), displayId: 1, text: "Agenda", blocks: [] },
+            {
+                file: "frames/b.jpg",
+                at: at(8),
+                displayId: 2,
+                text: "ADA notes",
+                blocks: [{ text: "ADA notes", confidence: 1, bounds: box }],
+            },
+        ];
+        writeFileSync(join(folder, "ocr.jsonl"), rows.map((row) => SafeJSON.stringify(row)).join("\n"));
+
+        const frames = await momentFrames(store, recorded, 30, ["ADA"]);
+        expect(frames.map((frame) => [frame.file, frame.hit])).toEqual([
+            ["frames/b.jpg", { text: "ADA notes", box }],
+            ["frames/a.jpg", undefined],
+        ]);
     });
 });
 

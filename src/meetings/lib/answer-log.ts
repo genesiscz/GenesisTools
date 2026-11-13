@@ -1,9 +1,9 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { classifyPid } from "@genesiscz/utils/process-identity";
+import { appendLines, parseJsonLine } from "./ndjson-lines";
 
 /**
  * The file in a meeting's folder that `listen` appends one event per line to, and `--subscribe-answers` follows. Its
@@ -40,8 +40,15 @@ export type AnswerEvent =
     | { event: "round-end"; at: string; reason: RoundEndReason; asked: number; open: number };
 
 export function appendAnswerEvent(path: string, event: AnswerEvent): void {
-    mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, `${SafeJSON.stringify(event, { jsonl: true })}\n`);
+    appendAnswerEvents(path, [event]);
+}
+
+/** Several events in one append, so a reader that follows the file sees them together. */
+export function appendAnswerEvents(path: string, events: AnswerEvent[]): void {
+    appendLines(
+        path,
+        events.map((event) => SafeJSON.stringify(event, { jsonl: true }))
+    );
 }
 
 function isAnswerEvent(value: unknown): value is AnswerEvent {
@@ -54,8 +61,7 @@ export function readAnswerEvents(path: string): AnswerEvent[] {
     }
 
     return Array.from(readLinesSync(path))
-        .filter((line) => line.trim())
-        .map((line) => SafeJSON.parse(line, { jsonl: true }))
+        .map((line) => parseJsonLine(line, path))
         .filter(isAnswerEvent);
 }
 
@@ -77,7 +83,7 @@ export function runningRound(events: AnswerEvent[]): AnswerEvent[] {
 }
 
 /** The pid a round recorded still runs `meetings listen`: a recycled pid is no listener. */
-function listenerAlive(pid: number): boolean {
+export function listenerAlive(pid: number): boolean {
     const { status } = classifyPid(pid, (command) => /\bmeetings\b/.test(command) && /\blisten\b/.test(command));
     return status === "live" || status === "unverified";
 }
@@ -106,6 +112,8 @@ export async function subscribeAnswers(options: {
      * subscribes again after each one misses an answer given in between (the window answers one question per round).
      */
     follow?: boolean;
+    /** `--with-comments`: each answer line starts with `type: "answer"`, so a reader tells it from a comment line. */
+    typed?: boolean;
 }): Promise<number> {
     const alive = options.alive ?? listenerAlive;
     const snapshot = existsSync(options.path) ? readFileSync(options.path) : Buffer.alloc(0);
@@ -114,15 +122,14 @@ export async function subscribeAnswers(options: {
         .subarray(0, replayEnd)
         .toString("utf8")
         .split("\n")
-        .filter((line) => line.trim())
-        .map((line) => SafeJSON.parse(line, { jsonl: true }))
+        .map((line) => parseJsonLine(line, options.path))
         .filter(isAnswerEvent);
     const running = runningRound(backlog);
     let roundPid = running[0]?.event === "round-start" ? running[0].pid : undefined;
     let asked = 0;
 
     const track = (event: AnswerEvent): void => {
-        options.write(SafeJSON.stringify(event, { jsonl: true }));
+        options.write(SafeJSON.stringify(options.typed ? { type: "answer", ...event } : event, { jsonl: true }));
 
         if (event.event === "round-start") {
             roundPid = event.pid;

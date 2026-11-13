@@ -1,12 +1,18 @@
 import { type RpcHandlers, type RpcTable, toRpcTable } from "@genesiscz/utils/api-descriptor";
+import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import {
     MEETINGS_CONFLICT_CODES,
     MEETINGS_STATE_CODES,
     MeetingsConflictError,
     MeetingsStateError,
 } from "@genesiscz/utils/meetings/conflict";
+import type { Correction } from "@genesiscz/utils/meetings/corrections";
+import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
+import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { RpcError } from "@genesiscz/utils/rpc/errors";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import { TOOL } from "../shared";
 import type { LinkedSource } from "../sources";
@@ -14,7 +20,9 @@ import { correctedTranscriptRead, revisionsRead, transcriptJsonView } from "../w
 import {
     MEETINGS_REFUSED,
     type MeetingsErrorCode,
+    type MeetingsEvent,
     type MeetingsHello,
+    type MeetingsNotification,
     type MeetingsResult,
     meetingsApi,
     meetingsErrorDataSchema,
@@ -33,6 +41,15 @@ export interface MeetingsCallContext {
     signal?: AbortSignal;
     /** `hello` answers through the adapter that owns the connection. */
     hello: (hello: MeetingsHello) => MeetingsResult<"hello">;
+    /**
+     * True when the handler runs in the caller's own process (the in-process adapter): a caller without a harness in
+     * its hello is then this process, whose agent identity a decision reads itself.
+     */
+    local?: boolean;
+    /** Tells the subscribers (the service's connections, or this process's listeners) what a write did. */
+    emit?: <E extends MeetingsEvent>(event: E, params: MeetingsNotification<E>) => void;
+    /** Sends the caller `$/progress` for this call (a cut's fraction). */
+    progress?: (update: { fraction?: number; label?: string }) => void;
 }
 
 export interface MeetingsHandlerDeps {
@@ -40,11 +57,36 @@ export interface MeetingsHandlerDeps {
     store?: () => MeetingStore;
     /** The transcript source of a record; tests pass a fake one, production asks the record's linked source. */
     linkedSource?: (record: MeetingRecord) => LinkedSource | undefined;
+    /** Where a decision's corrections go (tests keep them); the corrections ledger by default. */
+    ledger?: (corrections: Correction[]) => void;
+    /** The corrections ledger a plan's dictionary reach reads (tests pass lines); the ledger file by default. */
+    readLedger?: () => Correction[];
+    /** The meetings config (tests pass one); the config file by default. */
+    config?: () => Promise<MeetingsConfig>;
+    /** The clock of a decision's time (tests fix it). */
+    now?: () => Date;
+    /** Cuts a clip (tests pass a fake); ffmpeg by default. */
+    cut?: typeof cutClip;
+    /** Reads a recording's tracks and length (tests pass a fake); ffprobe by default. */
+    probe?: typeof probeAudio;
+    /** Whether ffmpeg can cut here (tests answer); `Bun.which("ffmpeg")` by default. */
+    hasFfmpeg?: () => boolean;
+    /** Makes a tone preview (tests pass a fake); ffmpeg by default. */
+    tone?: typeof cutTone;
+    /** The channel energy of a recording (tests pass a table); ffmpeg with the meeting folder's cache by default. */
+    energy?: typeof channelEnergy;
+    /** Whether a comment listener's pid still runs `meetings listen` (tests answer); the process table by default. */
+    listenerAlive?: (pid: number) => boolean;
+    /** The people directory's Contacts source (tests pass a fake, or none); darwinkit's Contacts by default. */
+    contacts?: () => PeopleSource | undefined;
 }
 
-/** A refusal: JSON-RPC error 1100 with `data.code`, the same through the socket and in-process. */
-export function refusal(code: MeetingsErrorCode, message: string): RpcError {
-    return new RpcError(MEETINGS_REFUSED, message, { code });
+/**
+ * A refusal: JSON-RPC error 1100 with `data.code`, the same through the socket and in-process. `data` adds what the
+ * code names (`already-decided`'s entry, `unplayable`'s reason).
+ */
+export function refusal(code: MeetingsErrorCode, message: string, data: Record<string, unknown> = {}): RpcError {
+    return new RpcError(MEETINGS_REFUSED, message, { ...data, code });
 }
 
 /**
@@ -73,11 +115,12 @@ export function refusalCode(error: RpcError): MeetingsErrorCode | undefined {
     return data.success ? data.data.code : undefined;
 }
 
-/** A refusal the service did not class as a conflict or a meeting state; `code` names it. */
+/** A refusal the service did not class as a conflict or a meeting state; `code` names it, `data` is its error data. */
 export class MeetingsServiceError extends Error {
     constructor(
         readonly code: MeetingsErrorCode,
-        message: string
+        message: string,
+        readonly data?: unknown
     ) {
         super(message);
         this.name = "MeetingsServiceError";
@@ -109,11 +152,11 @@ export function clientError(error: unknown): Error {
         return new MeetingsStateError(code, error.message);
     }
 
-    return new MeetingsServiceError(code, error.message);
+    return new MeetingsServiceError(code, error.message, error.data);
 }
 
 /** The record a command names, or the refusal the CLI printed for it before the service. */
-function recordOf(store: MeetingStore, ref: string): MeetingRecord {
+export function recordOf(store: MeetingStore, ref: string): MeetingRecord {
     let record: MeetingRecord | undefined;
 
     try {
@@ -128,6 +171,12 @@ function recordOf(store: MeetingStore, ref: string): MeetingRecord {
 
     return record;
 }
+
+const decisions = () => import("./decision-handlers");
+const moments = () => import("./moment-handlers");
+const reads = () => import("./reads-handlers");
+const comments = () => import("./comment-handlers");
+const people = () => import("./people-handlers");
 
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
@@ -155,13 +204,57 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 },
                 linked: deps.linkedSource?.(record),
             });
-            return transcriptJsonView(record, applied);
+            return withLineEnds(transcriptJsonView(record, applied));
         },
         "meeting.revisions": (params) => {
             const store = storeOf();
             const record = recordOf(store, params.ref);
             return revisionsRead({ store, record, linked: deps.linkedSource?.(record) });
         },
+        // The decisions load the journal and its rules (about 40 ms) only when a call decides.
+        "decision.plan": async (params, context) => (await decisions()).planDecision(params, context, storeOf(), deps),
+        "decision.apply": async (params, context) =>
+            (await decisions()).applyDecision(params, context, storeOf(), deps),
+        "decision.revert": async (params, context) =>
+            (await decisions()).revertDecision(params, context, storeOf(), deps),
+        "journal.read": async (params) => (await decisions()).readJournal(params, storeOf()),
+        // The Moments load the engine and the OCR readers only when a call plays.
+        "moment.plan": async (params) => (await moments()).planMomentCall(params, storeOf(), deps),
+        "moment.clip": async (params, context) => (await moments()).clipMomentCall(params, context, storeOf(), deps),
+        "tone.preview": async (params) => (await moments()).previewTone(params, deps),
+        "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
+        "meeting.speakers": async (params) => (await reads()).readSpeakers(params, storeOf(), deps),
+        "meeting.screen": async (params) => (await reads()).readScreen(params, storeOf()),
+        "meeting.waveform": async (params) => (await reads()).readWaveform(params, storeOf(), deps),
+        "meetings.overview": async (params) => (await reads()).readOverview(params, storeOf()),
+        "config.read": async (params) => (await reads()).readConfig(params),
+        "config.set": async (params) => (await reads()).setConfig(params),
+        "config.unset": async (params) => (await reads()).unsetConfig(params),
+        "meeting.rows": async (params) => (await reads()).readRows(params, storeOf(), deps),
+        "comment.stage": async (params, context) => (await comments()).stageComment(params, context, storeOf(), deps),
+        "comment.list": async (params) => (await comments()).listComments(params, storeOf(), deps),
+        "comment.unstage": async (params, context) =>
+            (await comments()).unstageComment(params, context, storeOf(), deps),
+        "comment.send": async (params, context) => (await comments()).sendComments(params, context, storeOf(), deps),
+        // The people directory loads Contacts (darwinkit) only when a call asks for people.
+        "people.known": async (params) => (await people()).knownPeople(params, storeOf(), deps),
+        "people.add": async (params) => (await people()).addPerson(params, storeOf(), deps),
+        "people.hide": async (params) => (await people()).hidePerson(params, storeOf(), deps),
+        "people.planMerge": async (params) => (await people()).planPeopleMerge(params, storeOf(), deps),
+        "people.merge": async (params) => (await people()).mergePeople(params, storeOf(), deps),
+        "people.unmerge": async (params) => (await people()).unmergePeople(params, storeOf(), deps),
+    };
+}
+
+/** The corrected lines, each with its end (the next timed line's start), which `transcript --format json` leaves out. */
+function withLineEnds(view: ReturnType<typeof transcriptJsonView>) {
+    const lines = new TranscriptLines(view.entries);
+    return {
+        ...view,
+        entries: view.entries.map((entry, index) => {
+            const endSec = lines.end(index);
+            return endSec === undefined ? entry : { ...entry, endSec };
+        }),
     };
 }
 

@@ -339,3 +339,232 @@ describe("config get is config show (R2-NR-X4)", () => {
         expect(printed).toEqual(["1"]);
     });
 });
+
+describe("rows --json: the review rows (F3)", () => {
+    const at = "2026-11-05T10:00:00.000Z";
+    const question = (id: string, fields: Record<string, unknown>) => ({
+        id,
+        kind: "question",
+        status: "suggested",
+        about: "term",
+        fromSec: 600,
+        toSec: 604,
+        choices: [],
+        decides: [],
+        suggestedAt: at,
+        rules: [],
+        ...fields,
+    });
+    const record = meetingRecordSchema.parse({
+        id: "2026-11-05-planning",
+        title: "Planning",
+        start: at,
+        createdAt: at,
+        createdBy: "new",
+        items: [
+            {
+                id: "i1",
+                kind: "term",
+                status: "suggested",
+                atSec: 600,
+                heard: "OMP",
+                proposed: "EMP",
+                confidence: 0.7,
+                suggestedAt: at,
+                rules: ["phonetic-term"],
+                // A saved record's strings; a newer one has evidence.candidateScores.
+                evidence: { candidates: ["EMP 70 %", "AMP 82 %", "OMP 40 %"], transcriptLine: 3 },
+            },
+            {
+                id: "i2",
+                kind: "speaker-range",
+                status: "suggested",
+                label: "Speaker 2",
+                fromSec: 120,
+                toSec: 180,
+                speaker: "Alice Example",
+                candidates: ["Alice Example", "Bob Example"],
+                confidence: 0.6,
+                suggestedAt: at,
+                rules: [],
+                evidence: { reason: "Twice (1:08:24, 1:08:55), see commit 196fbf15 and ADO 312655" },
+            },
+            question("i3", {
+                question: 'Is "OMP" at 10:00 really "EMP"?',
+                heard: "OMP",
+                choices: ["EMP", "OMP"],
+                decides: ["i1"],
+                priority: 0.4,
+            }),
+            question("i4", {
+                about: "speaker",
+                fromSec: 120,
+                toSec: 180,
+                question: 'Who speaks under "Speaker 2" from 02:00 to 03:00?',
+                choices: ["Alice Example", "Bob Example"],
+                decides: ["i2"],
+                priority: 0.9,
+            }),
+            question("i5", {
+                question: "Was it said at 10:00 and 10:30?",
+                priority: 0.1,
+            }),
+            question("i6", {
+                status: "confirmed",
+                fromSec: 30,
+                toSec: 32,
+                heard: "OMP",
+                question: 'What is "OMP" at 00:30?',
+                answer: "EMP",
+                priority: 0.4,
+                decidedAt: at,
+                decision: {
+                    token: "tok-6",
+                    previous: { status: "suggested" },
+                    actor: { kind: "agent", harness: "claude-code", session: "3f98b772-0000-4000-8000-000000000000" },
+                    entry: { action: "answer", reason: "the calendar says so" },
+                },
+            }),
+        ],
+    });
+
+    test("one order: questions by priority then time (a decided one keeps its place), then the rest by time; low priority is counted", async () => {
+        const { reviewRows } = await import("./review-rows");
+        const rows = reviewRows(record, { minPriority: 0.2 });
+        const all = reviewRows(record, { minPriority: 0.2, lowPriority: "show" });
+
+        expect(rows.rows.map((row) => row.label)).toEqual(["Q2", "Q4", "Q1", "i2", "i1"]);
+        expect(rows.hidden).toEqual({ lowPriority: 1, minPriority: 0.2 });
+        expect(all.rows.map((row) => row.label)).toEqual(["Q2", "Q4", "Q1", "Q3", "i2", "i1"]);
+        expect(all.hidden.lowPriority).toBe(0);
+    });
+
+    test("a question reads as parts: who, when, what it asks without the baked time, what it settles", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const speaker = reviewRow(record, record.items[3]!);
+        const agent = reviewRow(record, record.items[4]!);
+
+        expect(speaker.parts).toEqual([
+            { kind: "who", text: "Speaker 2" },
+            {
+                kind: "when",
+                from: { sec: 120, text: "02:00" },
+                to: { sec: 180, text: "03:00" },
+                target: { kind: "item", id: "i4" },
+            },
+            { kind: "asks", pieces: [{ text: 'Who speaks under "Speaker 2"?' }] },
+            { kind: "settles", text: "It settles 1 item", items: ["i2"] },
+        ]);
+        expect(agent.parts.find((part) => part.kind === "asks")).toEqual({
+            kind: "asks",
+            pieces: [
+                { text: "Was it said at " },
+                { text: "10:00", target: { kind: "time", atSec: 600 } },
+                { text: " and " },
+                { text: "10:30", target: { kind: "time", atSec: 630 } },
+                { text: "?" },
+            ],
+        });
+        expect([speaker.edit, speaker.needs, speaker.target]).toEqual(["answer", "listen", { kind: "item", id: "i4" }]);
+    });
+
+    test("choices are typed with confidence: the earlier answer first, then scored ones, then the rest, then the actions", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const term = reviewRow(record, record.items[2]!);
+        const speaker = reviewRow(record, record.items[3]!);
+
+        expect(term.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
+            ["earlier", "EMP", 0.7],
+            ["presumed", "AMP", 0.82],
+            ["heard", "OMP", 0.4],
+            ["none", "none of these", undefined],
+            ["skip", "skip", undefined],
+        ]);
+        expect(term.choices[0]).toMatchObject({ hint: "as at 00:30", action: { kind: "answer", answer: "EMP" } });
+        expect(speaker.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
+            ["suggested", "Alice Example", 0.6],
+            ["candidate", "Bob Example", undefined],
+            ["none", "none of these", undefined],
+            ["split", "split", undefined],
+            ["skip", "skip", undefined],
+        ]);
+    });
+
+    test("typed candidate scores win over the saved strings, best first, and a score that does not read is left out", async () => {
+        const { candidateScores } = await import("./review-rows");
+        const typed = structuredClone(record.items[0]!);
+        typed.evidence = {
+            candidates: ["EMP 70 %"],
+            candidateScores: [
+                { term: "AMP", confidence: 0.82 },
+                { term: "EMP", confidence: 0.7, extra: true },
+                { term: 3, confidence: 0.9 },
+                "OMP 40 %",
+            ],
+        };
+
+        expect(candidateScores(typed)).toEqual([
+            { term: "AMP", confidence: 0.82 },
+            { term: "EMP", confidence: 0.7 },
+        ]);
+        expect(candidateScores(record.items[0]!)).toEqual([
+            { term: "AMP", confidence: 0.82 },
+            { term: "EMP", confidence: 0.7 },
+            { term: "OMP", confidence: 0.4 },
+        ]);
+    });
+
+    test("an item row: its choices act on it, its reason is pieces and sources, and a decision names who made it", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const term = reviewRow(record, record.items[0]!);
+        const range = reviewRow(record, record.items[1]!);
+        const answered = reviewRow(record, record.items[5]!);
+
+        expect(term.choices).toEqual([
+            {
+                value: "AMP",
+                label: "AMP",
+                role: "presumed",
+                action: { kind: "respell", text: "AMP" },
+                confidence: 0.82,
+            },
+            { value: "EMP", label: "EMP", role: "suggested", action: { kind: "confirm" }, confidence: 0.7 },
+            { value: "OMP", label: "Keep as heard", role: "heard", action: { kind: "reject" } },
+        ]);
+        expect([term.edit, range.edit, term.sources]).toEqual([
+            "spelling",
+            "person",
+            [{ kind: "line", at: { sec: 600, text: "10:00" }, line: 3 }],
+        ]);
+        expect(range.choices.map((choice) => [choice.role, choice.action])).toEqual([
+            ["suggested", { kind: "confirm" }],
+            ["candidate", { kind: "confirm", speaker: "Bob Example" }],
+            ["none", { kind: "reject" }],
+        ]);
+        expect(range.parts.find((part) => part.kind === "reason")).toEqual({
+            kind: "reason",
+            pieces: [
+                { text: "Twice (" },
+                { text: "1:08:24", target: { kind: "time", atSec: 4104 } },
+                { text: ", " },
+                { text: "1:08:55", target: { kind: "time", atSec: 4135 } },
+                { text: "), see " },
+                { text: "commit 196fbf15", commit: "196fbf15" },
+                { text: " and " },
+                { text: "ADO 312655", workItem: "312655" },
+            ],
+        });
+        expect(range.sources).toEqual([
+            { kind: "commit", sha: "196fbf15" },
+            { kind: "workItem", id: "312655" },
+        ]);
+        expect(answered.decision).toEqual({
+            token: "tok-6",
+            actor: { kind: "agent", harness: "claude-code", session: "3f98b772-0000-4000-8000-000000000000" },
+            by: "an agent (Claude Code, session 3f98b772)",
+            action: "answer",
+            reason: "the calendar says so",
+            at,
+        });
+    });
+});

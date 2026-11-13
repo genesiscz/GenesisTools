@@ -29,6 +29,23 @@ A meeting argument is a meeting id, a unique prefix of it, `last`, or a source r
 `wisprflow:1a2b3c4d`. A time is `1:23:50`, `23:50` or seconds, on the transcript's clock. Commands that print data take
 `--json` where the list names it; [For agents](#for-agents) lists them all.
 
+### Service and review additions
+
+| Command | What it does |
+|---|---|
+| `people [query] [--meeting <meeting> [--at <time>]] [--limit <n>] [--hidden] [--json]` | The people directory: everyone the meetings, the projects, Contacts and the people book name, one row per person, matched with case and accents ignored and ranked (see [People](#people)). `--json` prints `{ query, people, total, sources }`; a source that is off or refused says why in `sources` |
+| `people add <name> [--email <address>] [--note <text>]`, `people hide <person> [--show]` | Add a person to the people book, or give one it has an email or a note; hide a person from every list, or show them again |
+| `people merge <a> <b> [--name <name>] [--yes]`, `people unmerge <token>` | Show two people as one. Without `--yes` it prints the meetings that name either of them and the speaker labels renamed to them, and writes nothing; with `--yes` it writes the merge and prints its token, which `unmerge` takes. No meeting record changes |
+| `people assign <meeting> <person> --from <time> [--to <time>] [--label <label>] [--line <time>]… [--plan]`, `people unassign <meeting> <token>` | Give lines of one meeting to a person without renaming the whole label: a stretch (one label's lines with `--label`, every voice's without it) or single lines by their start. The corrected transcript, `show` and `speakers stats` show them as that person. `--plan` prints what it would give and the other stretches it may reach, and saves nothing. `unassign` undoes it by the token it printed |
+| `rows <meeting> [--all] [--json]` | The review rows, as the Meetings window shows them: questions first in the order `listen` asks (priority, then time), then the other items by time; a decided row keeps its place. Each row has its question as parts (who, what was said, when, what it asks, what it settles, the reason), its choices with their role (suggested, presumed, candidate, heard, earlier answer, none of these, several voices, skip) and the engine's confidence where it has one, its edit kind, what it needs, its sources and who decided it last. Open questions below `playback.listen.minPriority` are counted, and `--all` shows them. `--json` prints `{ meeting, rows, hidden }` (REPL: `meetings.open(id).items.rows()`; the Meetings service: `meeting.rows`) |
+| `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>] [--reason <text>] [--json]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker`. An item confirmed already is left as it is (`needs: "nothing"` in `--json`, exit 0), so its first Undo token still works; a skip that needs a value or an answer exits 1. `--reason` is kept in the decision journal and on each item it decided. `--json` prints `{ decided, token, skipped, entry }`; `entry` is the journal entry, with who decided (the actor), the reason and every item before and after |
+| `reject <meeting> <ids…> [--reason <text>] [--json]`, `--min-confidence 0.9` | Reject items; they are never suggested again. `--json` prints `{ decided, token, skipped, entry }`, as `confirm --json` does; the token is what `reopen --token` takes |
+| `journal <meeting> [--item i42\|Q12] [--limit <n>] [--json]` | Who decided what in the meeting, when and why, newest first: one entry per decision (a person in the window, a person in `listen`, a person at the command line, an agent with its harness and session, a rule), with its reason and the items it changed. An Undo names the entry it undid. Comments sent to the listening agent are entries too (kind `comment`). `--json` prints `{ meeting, entries }` |
+| `serve [--detach] [--status] [--stop] [--no-idle]` | The Meetings service: the one owner of the meetings store while it runs, which the window, the CLI and agents reach over `<genesis-tools>/meetings-service/service.sock` (`service.json` beside it names its pid and checkout). A command finds it by itself and answers in its own process when none runs, with the same output. It exits after 10 minutes with no connection and when its code changes. `--stop` stops it (none running is no failure) |
+| `reopen <meeting> <ids…> [--token <token>] [--reason <text>] [--json]` | Put confirmed or rejected items back to suggested (the Undo of confirm and reject). `--token` undoes one decision, by the token that `confirm --json` or `reject --json` printed; when another decision changed one of its items since, it is refused with `[item-changed]`. A question is reopened only by `listen`, and a confirm's line in the corrections ledger stays |
+| `listen <meeting> [--item Q12] [--reason <text>]` | Answer the open questions by ear, one at a time: each range is cut with ffmpeg (padding `playback.listen.padSec`, asked on the first run), with a short tone just before the asked words (`playback.listen.tone`: `enabled`, `leadSec`, and its `sound` as `{ hz, sec, volume }`), and played `delaySec` (2) after the question shows, then again after each `repeatGapSec` (1) pause until the question is answered (`repeat`, on by default), also while a "Something else…" answer is typed. A word question shows the line its heard words are in, with the words marked and the lines before and after it. When the round already answered the same heard words at another time, that answer is the first choice and the question says when it was given. Esc goes back one step: from the comment to the choices, from the choices to the previous question, whose answer is undone. "Enough for now", or Esc on the first question, ends the round; the next `listen` goes on from there. Undo reverts only what that answer changed, so an item added meanwhile stays. `--item Q12` (or `12`, or the id `i42`) asks only that question and, after "Several voices", its parts. `--item Q12 --answer "<text>"` answers without audio, in a round of its own, or inside the round a person is listening to. `--reason` is kept in the decision journal with each answer |
+| `listen <meeting> --subscribe-answers [--follow] [--from-start] [--timeout 120]` | For an agent: prints the running round's events as JSON lines (`round-start`, `answered`, `skipped`, `split`, `reopened`, `round-end`) while the person answers, from `questions.ndjson` in the meeting folder, and exits 0 at the round's end (an aborted round when the listener is gone), 2 on the timeout in minutes. `--follow` stays up across rounds (the Meetings window answers one question per round) and exits 0 when a round ends with no open question. `--with-comments` adds the comments the person sends from the window to the same stream: one line per comment with `"type": "comment"` (`id`, `text`, `quote`, the transcript `target`, the journal `token`), and every answer line then starts with `"type": "answer"`. Without the flag the stream is unchanged. While it runs, the window names it as the listener a send reaches. An `answered` line names the items it confirmed or rejected in `decided`; `settled` lists the other questions the same answer closed. Run it under a Monitor, so each answer wakes the agent |
+
 ### Meeting records
 
 - `new [title] [--at <time>] [--project <name>] [--yes]`: create a meeting record by hand. `--at` defaults to now;
@@ -807,6 +824,32 @@ budget, each decision as per-item changes with their inverse, look-alikes, the a
 `ListenAdapter` asks the person: the terminal (clack and audio, in `commands/listen.ts`) or `GivenAnswerAdapter` for
 `--answer`.
 
+## People
+
+The people directory answers "who do we know" from every place a person is named: a meeting's participants,
+attendance, calendar attendees, speaker renames and assignments; the projects' paired people (`projects.<p>.match.people`);
+Contacts (`contacts.search`, under GenesisTools.app's Contacts grant); and the people book,
+`~/.genesis-tools/meetings/people.json` (`{ version: 1, entries, merges, hidden }`: people added by hand, merges,
+hidden people). One person is the same email, or, when either side has no email, the same name tokens (`nameKey`:
+"Dana Exámple" and "dana example" are one person). A record is read again only when its file changed.
+
+- **Ranking** for a meeting and a moment (`people --meeting <m> --at <time>`, the Meetings service's `people.known`):
+  the people in the call at that moment, then that meeting's people, then other meetings by count and recency, then
+  Contacts, then the people book. Nothing is preselected.
+- **Merges** are aliases in the people book. No meeting record changes, so `unmerge` undoes a merge fully.
+- **Assignments** (`people assign`, the decision journal's `assign`) live in the record as `speakers.assignments`,
+  one per source label and stretch. A later assignment over the same lines wins over an earlier one and over a
+  confirmed speaker range. The journal keeps each one's before and after, so its token undoes it; one changed since is
+  refused with `[item-changed]`. Its plan names the other stretches it may reach: the same label inside the hint range
+  around it, or in the sections with the same people present, never "sounds the same".
+- A rename to a name another label holds already is planned with the warning that both labels become one person.
+- `listen`'s typed answer completes from the record's people, then the directory's people for the meeting, then the
+  dictionary. It never reads Contacts.
+- Settings: `global.people.sources.contacts` and `global.people.sources.calendar` (both `true`). A refused Contacts
+  grant is a reason in `sources`, never an empty list.
+- A `people.json` that is not JSON reads as empty, and the next write moves it aside to `people.json.broken-<time>`.
+  A value this build cannot read (a newer build's) is kept and written back.
+
 ### The dictionary
 
 Entry types:
@@ -848,7 +891,8 @@ it was. A key that varies by recorder, source or language sits under that axis:
             "ask": true, "lookbackHours": 48, "maxProposals": 5, "calendarSlackMin": 15,
             "calendarLookbehindHours": 3, "folderWaitDays": 14, "retryFailedMin": 10
         },
-        "export": { "ifEdited": "beside" }
+        "export": { "ifEdited": "beside" },
+        "people": { "sources": { "contacts": true, "calendar": true } }
     },
     "projects": {
         "work": {

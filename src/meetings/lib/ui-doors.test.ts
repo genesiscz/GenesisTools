@@ -2,8 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { HUB_SERVER_DOORS } from "@app/hub/server/doors";
-import { MEETINGS_DOORS, meetingsScreenTimelineDoor } from "@app/hub/server/doors/meetings";
-import { DoorUnsupported } from "@app/hub/server/doors/types";
+import { doorlessPrefix } from "@app/hub/server/doors/types";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -384,29 +383,17 @@ describe("screen timeline", () => {
     });
 });
 
-describe("screen timeline door", () => {
-    test("the hub server answers every meetings door", () => {
-        for (const door of MEETINGS_DOORS) {
-            expect(HUB_SERVER_DOORS).toContain(door);
-        }
+describe("Meetings service boundary", () => {
+    test("the resident hub has no Meetings door; the dedicated service owns those reads", () => {
+        expect(HUB_SERVER_DOORS.filter((door) => door.command[0] === "meetings")).toEqual([]);
     });
 
-    test("a meeting linked to a source the server cannot read locally goes to the process", async () => {
-        const store = new MeetingStore();
-        const signal = new AbortController().signal;
-        const build = async (sources: Record<string, { meetingId: string }>) => {
-            const created = await store.create(
-                { title: "Timeline", start: "2026-11-05T08:00:00.000Z", createdBy: "record", sources },
-                { command: "test", change: "fixture" }
-            );
-            const row = { file: "frames/gone-d1.png", at: "2026-11-05T08:00:10.000Z", displayId: 1, text: "x" };
-            writeFileSync(join(store.folder(created.id), "ocr.jsonl"), `${SafeJSON.stringify(row)}\n`);
-            return meetingsScreenTimelineDoor.run({ ref: created.id, all: false }, { signal });
-        };
-
-        await expect(build({ remote: { meetingId: "call-1" } })).rejects.toBeInstanceOf(DoorUnsupported);
-        // No source: the stored clock needs nothing remote, so the server still builds it.
-        expect(await build({})).toMatchObject({ exit: 0 });
+    test("a screen read always goes to the process, so a remote source cannot run inside the resident hub", () => {
+        for (const ref of ["last", "fixture-record", "wisprflow:fixture-call"]) {
+            expect(doorlessPrefix(["meetings", "screen", ref, "--timeline", "--json"], HUB_SERVER_DOORS)).toEqual([
+                "meetings",
+            ]);
+        }
     });
 });
 

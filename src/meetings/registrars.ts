@@ -11,7 +11,7 @@ export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
         load: async () => (await import("./commands/meeting")).registerMeetingCommands,
     },
     {
-        names: ["suggest", "items", "confirm", "reject", "reopen", "speakers", "transcript"],
+        names: ["suggest", "rows", "items", "confirm", "reject", "reopen", "speakers", "transcript"],
         load: async () => (await import("./commands/items")).registerItemCommands,
     },
     { names: ["journal"], load: async () => (await import("./commands/journal")).registerJournalCommand },
@@ -23,6 +23,7 @@ export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
     { names: ["listen"], load: async () => (await import("./commands/listen")).registerListenCommand },
     { names: ["watch", "autostart"], load: async () => (await import("./commands/watch")).registerWatchCommands },
     { names: ["projects"], load: async () => (await import("./commands/projects")).registerProjectsCommand },
+    { names: ["people"], load: async () => (await import("./commands/people")).registerPeopleCommand },
     { names: ["assign"], load: async () => (await import("./commands/assign")).registerAssignCommands },
     { names: ["dictionary"], load: async () => (await import("./commands/dictionary")).registerDictionaryCommand },
     {

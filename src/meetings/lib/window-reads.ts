@@ -5,7 +5,13 @@ import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
-import { MEETING_FILE, type MeetingRecord, MeetingStore, MOMENTS_FOLDER } from "@genesiscz/utils/meetings/record";
+import {
+    MEETING_FILE,
+    type MeetingRecord,
+    MeetingStore,
+    MOMENTS_FOLDER,
+    type SpeakerAssignment,
+} from "@genesiscz/utils/meetings/record";
 import type { TranscriptFormat } from "@genesiscz/utils/transcribe/render";
 import { type SpeakerStats, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { type AssignDeps, type AssignView, skipReason, viewProposals } from "./assign";
@@ -15,6 +21,7 @@ import { transcriptMarkdown } from "./export";
 import { type MatchDraft, type MatchPreviewRow, matchDraftSchema, matchPreview } from "./match-preview";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingsOverview, meetingsOverview } from "./overview";
+import type { ReviewRows } from "./review-row-schema";
 import { type LinkedSource, meetingSource, sourceRefOf } from "./sources";
 import { type CorrectedTranscript, correctTranscript } from "./transcript-corrections";
 
@@ -31,9 +38,15 @@ export function windowJson(value: unknown): string {
 }
 
 /** `meetings overview --days <n>`: the meetings of the last `days`, with what needs the user. */
-export async function overviewRead(options: { days: number; now: Date }): Promise<MeetingsOverview> {
+export async function overviewRead(options: {
+    days: number;
+    now: Date;
+    store?: MeetingStore;
+}): Promise<MeetingsOverview> {
     const { days, now } = options;
-    const bounded = new MeetingStore().listBounded({ since: new Date(now.getTime() - days * 86_400_000) });
+    const bounded = (options.store ?? new MeetingStore()).listBounded({
+        since: new Date(now.getTime() - days * 86_400_000),
+    });
     const view = meetingsOverview({
         records: bounded.records,
         config: await new MeetingsConfigStore().read(),
@@ -186,7 +199,7 @@ export function dictionaryShowRead(config: MeetingsConfig, project?: string): Di
     return { project: project ?? null, abbrExpansion: merged.abbrExpansion, entries: rows };
 }
 
-export type SpeakerStatsView = { meeting: string; gapSec: number } & SpeakerStats;
+export type SpeakerStatsView = { meeting: string; gapSec: number; assignments?: SpeakerAssignment[] } & SpeakerStats;
 
 /** `meetings speakers stats <id>`: per label its turns, spoken time and spans, on the stays the record keeps. */
 export async function speakerStatsRead(options: {
@@ -194,16 +207,49 @@ export async function speakerStatsRead(options: {
     record: MeetingRecord;
     gapSec: number;
     attendance?: string;
+    /** The record's source, when the caller holds it already (a test's fake one); else its linked source. */
+    linked?: LinkedSource;
 }): Promise<SpeakerStatsView> {
     const { store, record, gapSec } = options;
-    const opened = OpenedMeeting.of(store, record);
+    const opened = OpenedMeeting.of(store, record, options.linked);
     const meeting = await opened.meeting();
     const stats = speakerStats(meeting.transcript, {
         gapSec,
         participants: meeting.speakers,
         presence: await opened.presence(options.attendance),
     });
-    return { meeting: record.id, gapSec, ...stats };
+    const assignments = record.speakers.assignments ?? [];
+    return { meeting: record.id, gapSec, ...stats, ...(assignments.length > 0 ? { assignments } : {}) };
+}
+
+/**
+ * The review rows of a meeting (`meetings rows --json`, `meeting.rows`). A meeting without a readable transcript still
+ * has rows, without the words said. `minPriority`: the config's `playback.listen.minPriority` when absent.
+ */
+export async function rowsRead(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    linked?: LinkedSource;
+    minPriority?: number;
+    lowPriority?: "hide" | "show";
+}): Promise<ReviewRows> {
+    const { store, record } = options;
+    const opened = OpenedMeeting.of(store, record, options.linked);
+    const transcript = await opened
+        .meeting()
+        .then((meeting) => meeting.transcript)
+        .catch((error: unknown) => {
+            log.debug({ error, meeting: record.id }, "rows without the words said: the transcript does not read");
+            return undefined;
+        });
+    const minPriority = options.minPriority ?? (await opened.config()).global.playback.listen.minPriority;
+    // Loaded here: the row builder reads the decision journal's actor words, which no other window read needs.
+    const { reviewRows } = await import("./review-rows");
+    return reviewRows(record, {
+        ...(transcript ? { transcript } : {}),
+        minPriority,
+        ...(options.lowPriority ? { lowPriority: options.lowPriority } : {}),
+    });
 }
 
 /** The transcript flags that change what `meetings transcript` applies or prints. */

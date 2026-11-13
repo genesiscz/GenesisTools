@@ -6,8 +6,10 @@ import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/reco
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { meetingAudio } from "../lib/audio";
-import { clipMoment, type Moment, MomentError, type MomentTarget, momentTargetSchema, openMoment } from "../lib/moment";
+import { MOMENT_ERROR_CODES, type Moment, MomentError, type MomentTarget, momentTargetSchema } from "../lib/moment";
 import { choosePlayer, PLAYERS, pastTheEnd, pickPlayer, playbackPlan } from "../lib/players";
+import { withMeetingsClient } from "../lib/service/client";
+import { MeetingsServiceError } from "../lib/service/handlers";
 import { errorText, fail, TOOL } from "../lib/shared";
 
 const { log } = logger.scoped("meetings-play");
@@ -18,6 +20,7 @@ interface PlayOptions {
     item?: string;
     target?: string;
     clip?: boolean;
+    moment?: boolean;
     before?: string;
     player?: string;
     json?: boolean;
@@ -78,7 +81,7 @@ function wanted(opts: PlayOptions): { target: MomentTarget } | { atSec: number }
     }
 
     if (opts.to === undefined) {
-        return opts.clip ? { target: { kind: "time", atSec } } : { atSec };
+        return opts.clip || opts.moment ? { target: { kind: "time", atSec } } : { atSec };
     }
 
     const toSec = parseClock(opts.to);
@@ -98,21 +101,23 @@ function momentLine(moment: Moment): string {
 }
 
 /** A Moment target: planned (`--no-start`), cut (`--clip`), or cut and played once in the clip player. */
-async function playMoment(
-    store: MeetingStore,
-    record: MeetingRecord,
-    target: MomentTarget,
-    opts: PlayOptions
-): Promise<void> {
+async function playMoment(record: MeetingRecord, target: MomentTarget, opts: PlayOptions): Promise<void> {
     if (opts.before !== undefined) {
         fail("--before sets the lead-in of an open-ended --at play; a Moment pads by playback.listen.padSec.");
         return;
     }
 
-    // `--no-start` stays side-effect free even beside `--clip`: it plans the Moment and writes no clip.
     if (opts.start === false) {
-        const moment = await openMoment({ store, record, target });
-        opts.json ? out.result(SafeJSON.stringify(moment, null, 2)) : out.println(momentLine(moment));
+        const planned = await withMeetingsClient((client) =>
+            client.call("moment.plan", { meeting: record.id, target })
+        );
+
+        if (!planned.moment) {
+            fail(`[${planned.cannot?.code}] ${planned.cannot?.message}`);
+            return;
+        }
+
+        opts.json ? out.result(SafeJSON.stringify(planned.moment, null, 2)) : out.println(momentLine(planned.moment));
         return;
     }
 
@@ -141,7 +146,7 @@ async function playMoment(
         }
     }
 
-    const cut = await clipMoment({ store, record, target });
+    const cut = await withMeetingsClient((client) => client.call("moment.clip", { meeting: record.id, target }));
 
     if (!player) {
         opts.json ? out.result(SafeJSON.stringify(cut, null, 2)) : ui.ok(`Cut ${momentLine(cut)}: ${cut.path}`);
@@ -182,7 +187,7 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
         }
 
         if ("target" in what) {
-            await playMoment(store, record, what.target, opts);
+            await playMoment(record, what.target, opts);
             return;
         }
 
@@ -228,9 +233,22 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
             ? out.result(SafeJSON.stringify({ ...shown, pid: child.pid }, null, 2))
             : ui.ok(`Playing ${record.id} from ${formatClock(plan.startSec)} in ${plan.player}.`);
     } catch (err) {
-        // A target the meeting does not have leads with its code, as a conflict does: `[unknown-item] …`.
-        fail(err instanceof MomentError ? `[${err.code}] ${err.message}` : errorText(err));
+        fail(momentFailure(err));
     }
+}
+
+/**
+ * A failed play in words: a target the meeting does not have leads with its code, as a conflict does
+ * (`[unknown-item] …`); a state of this Mac (no audio, no ffmpeg) is its sentence alone, as before the service.
+ */
+function momentFailure(err: unknown): string {
+    if (err instanceof MeetingsServiceError && err.code === "unplayable") {
+        const reason = typeof err.data === "object" && err.data !== null ? Reflect.get(err.data, "reason") : undefined;
+        const coded = MOMENT_ERROR_CODES.find((code) => code === reason);
+        return coded ? `[${coded}] ${err.message}` : err.message;
+    }
+
+    return err instanceof MomentError ? `[${err.code}] ${err.message}` : errorText(err);
 }
 
 export function registerPlayCommand(program: Command): void {
@@ -247,7 +265,11 @@ export function registerPlayCommand(program: Command): void {
             "--target <json>",
             'any Moment target as JSON: {"kind":"selection","from":{"atSec":60,"fraction":0.5},"to":{"atSec":70}}, {"kind":"stretch","atSec":60}'
         )
-        .option("--clip", "cut the Moment to a WAV in the meeting folder and print it; plays nothing")
+        .option("--clip", "cut the Moment to a WAV in the clip cache and print it; plays nothing")
+        .option(
+            "--moment",
+            "with --at alone: play the Moment at that time (a bounded clip with the tone), not on from there"
+        )
         .option("--before <sec>", "start this many seconds earlier (default: playback.beforeSec, 5); --at alone only")
         .option(
             "--player <id>",

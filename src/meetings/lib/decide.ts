@@ -1,4 +1,5 @@
 import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { DecisionAction } from "./decision-actions";
 import { callerActor, type Decided, DecisionJournal, type DecisionSkip } from "./decision-journal";
 
 /**
@@ -73,23 +74,36 @@ export async function decideItems(options: DecideOptions): Promise<DecideResult>
 
 /** `decideItems` with its journal entry, for `confirm --json` and `reject --json`. */
 export async function decideEntry(options: DecideOptions): Promise<Decided> {
-    const { store, record, status, ids, minConfidence, speaker, proposed } = options;
-    const journal = new DecisionJournal({ store });
+    const journal = new DecisionJournal({ store: options.store });
     return journal.apply({
-        meeting: record.id,
-        action:
-            status === "confirmed"
-                ? {
-                      kind: "confirm",
-                      items: ids,
-                      ...(minConfidence !== undefined ? { minConfidence } : {}),
-                      ...(speaker !== undefined ? { speaker } : {}),
-                      ...(proposed !== undefined ? { proposed } : {}),
-                  }
-                : { kind: "reject", items: ids, ...(minConfidence !== undefined ? { minConfidence } : {}) },
+        meeting: options.record.id,
+        action: decisionOf(options),
         actor: options.actor ?? callerActor(),
         ...(options.reason ? { reason: options.reason } : {}),
     });
+}
+
+/**
+ * The journal action of a confirm or a reject, its keys in the action schema's order: the service parses the action,
+ * and a `confirm --json` entry prints it, so the bytes stay the same with the service up or down.
+ */
+export function decisionOf(options: {
+    status: "confirmed" | "rejected";
+    ids: string[];
+    minConfidence?: number;
+    speaker?: string;
+    proposed?: string;
+}): DecisionAction {
+    const { status, ids, minConfidence, speaker, proposed } = options;
+    return status === "confirmed"
+        ? {
+              kind: "confirm",
+              items: ids,
+              ...(minConfidence !== undefined ? { minConfidence } : {}),
+              ...(speaker !== undefined ? { speaker } : {}),
+              ...(proposed !== undefined ? { proposed } : {}),
+          }
+        : { kind: "reject", items: ids, ...(minConfidence !== undefined ? { minConfidence } : {}) };
 }
 
 /**

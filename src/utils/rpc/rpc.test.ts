@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import { CHILD_STDIN_HIGH_WATER_BYTES, connectChildStdio } from "./child-stdio";
 import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
 import { failedCallLevel, LineBuffer, Outbox, RpcPeer, type RpcProgress } from "./peer";
@@ -11,8 +12,10 @@ import {
     readLiveServiceEntry,
     type ServiceHost,
     type ServiceHostOptions,
+    serviceEntryPath,
     serviceSocketPath,
     startServiceHost,
+    stopService,
 } from "./service-host";
 import { RpcSocketClient, type RpcSocketClientOptions } from "./socket-client";
 import { type RpcConnection, RpcSocketServer } from "./socket-server";
@@ -29,13 +32,17 @@ afterEach(() => {
     }
 });
 
-function serve(call: ConstructorParameters<typeof RpcSocketServer<Role>>[0]["call"]) {
+function serve(
+    call: ConstructorParameters<typeof RpcSocketServer<Role>>[0]["call"],
+    supersedes?: (method: string) => string | undefined
+) {
     const socket = join(mkdtempSync(join(tmpdir(), "rpc-")), "s.sock");
     const connections: RpcConnection<Role>[] = [];
     const server = new RpcSocketServer<Role>({
         socket,
         state: () => ({}),
         call,
+        ...(supersedes ? { supersedes } : {}),
         onOpen: (connection) => connections.push(connection),
         logScope: "rpc-test",
         label: "rpc test",
@@ -151,6 +158,37 @@ describe("the JSON-RPC socket server, both directions", () => {
 
         await expect(exporting).rejects.toMatchObject({ code: RPC_CANCELLED });
         expect(await client.call<unknown>("status")).toEqual({ method: "status" });
+    });
+
+    test("a newer call of a supersede lane cancels the older one that runs and the one that waits", async () => {
+        const started: number[] = [];
+        const { socket } = serve(
+            async ({ method, params, context }) => {
+                const n = Number(Reflect.get(Object(params), "n"));
+                started.push(n);
+
+                if (method === "cut" && n < 3) {
+                    await new Promise((resolve) => context.signal.addEventListener("abort", resolve, { once: true }));
+                }
+
+                return { n };
+            },
+            (method) => (method === "cut" ? "cut" : undefined)
+        );
+        const client = await connect(socket);
+        const first = client.call("cut", { n: 1 });
+        await Bun.sleep(10);
+        const second = client.call("cut", { n: 2 });
+        const third = client.call("cut", { n: 3 });
+
+        const outcomes = await Promise.allSettled([first, second, third]);
+        const status = await client.call<unknown>("status", { n: 4 });
+
+        expect(
+            outcomes.map((one) => (one.status === "fulfilled" ? one.value : Reflect.get(one.reason, "code")))
+        ).toEqual([RPC_CANCELLED, RPC_CANCELLED, { n: 3 }]);
+        expect(status).toEqual({ n: 4 });
+        expect(started).toEqual([1, 3, 4]);
     });
 
     test("a client that goes rejects the server's waiting request", async () => {
@@ -634,6 +672,87 @@ describe("the service host (service-host.ts)", () => {
 
         expect(seen).toEqual([{ events: ["thing.changed"], meeting: "m1" }]);
         expect(heard).toEqual([{ method: "thing.changed", params: { n: 2 } }]);
+    });
+
+    test("unsubscribe ends the subscription; a filter that does not read is refused and keeps the one before", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const start = await host(dir, {
+            onSubscribe: (_connection, params) => {
+                if (typeof params === "object" && params !== null && Reflect.get(params, "meeting") === "") {
+                    throw new RpcError(JSON_RPC_ERRORS.invalidParams, "subscribe: meeting: too small");
+                }
+            },
+        });
+
+        if (start.status !== "started") {
+            throw new Error("the host did not start");
+        }
+
+        const client = await connect(serviceSocketPath(dir));
+        const heard: unknown[] = [];
+        client.onNotification((notification) => heard.push(notification));
+        await client.call("subscribe", { events: ["thing.changed"] });
+        await expect(client.call("subscribe", { events: "thing.changed" })).rejects.toMatchObject({ code: -32602 });
+        await expect(client.call("subscribe", { meeting: "" })).rejects.toMatchObject({ code: -32602 });
+        start.host.emit("thing.changed", { n: 1 });
+        start.host.emit("other.changed", { n: 2 });
+        expect(await client.call<{ events: string[] }>("unsubscribe", {})).toEqual({ events: [] });
+        start.host.emit("thing.changed", { n: 3 });
+        await client.call("hello", { role: "client" });
+
+        expect(heard).toEqual([{ method: "thing.changed", params: { n: 1 } }]);
+    });
+
+    test("service.json names the source root it was given", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        await host(dir, { sourceRoot: "/checkouts/genesis tools/" });
+
+        expect(readLiveServiceEntry(dir)?.sourceRoot).toBe("/checkouts/genesis tools/");
+    });
+
+    test("a service.json whose pid now runs another command reads as no service, and stop signals nothing", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const entry = {
+            version: 1,
+            protocol: 7,
+            pid: process.pid,
+            pidCommand: "bun meetings serve (a process this pid ran before)",
+            socket: serviceSocketPath(dir),
+            startedAt: "2026-11-09T20:00:00.000Z",
+            codeStamp: 0,
+        };
+        writeFileSync(serviceEntryPath(dir), SafeJSON.stringify(entry, { strict: true }));
+
+        expect(readLiveServiceEntry(dir)).toBeUndefined();
+        expect(await stopService(dir)).toEqual({ status: "none" });
+        writeFileSync(
+            serviceEntryPath(dir),
+            SafeJSON.stringify({ ...entry, pidCommand: readProcessCommand(process.pid) }, { strict: true })
+        );
+        expect(readLiveServiceEntry(dir)?.pid).toBe(process.pid);
+    });
+
+    test("stop signals the verified service process and waits until it is gone", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const child = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore", env: process.env });
+        opened.push({ close: () => child.kill() });
+        const pidCommand = readProcessCommand(child.pid);
+        const entry = {
+            version: 1,
+            protocol: 7,
+            pid: child.pid,
+            ...(pidCommand ? { pidCommand } : {}),
+            socket: serviceSocketPath(dir),
+            startedAt: "2026-11-09T20:00:00.000Z",
+            codeStamp: 0,
+        };
+        writeFileSync(serviceEntryPath(dir), SafeJSON.stringify(entry, { strict: true }));
+
+        expect(await stopService(dir, { timeoutMs: 3_000 })).toMatchObject({
+            status: "stopped",
+            entry: { pid: child.pid },
+        });
+        expect(await child.exited).not.toBe(0);
     });
 
     test("an idle service with no connection stops and removes its files", async () => {

@@ -10,6 +10,7 @@ import {
     MeetingsConfigStore,
     resolveDictionary,
 } from "@genesiscz/utils/meetings/config";
+import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
 import { type DecisionActor, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { type ChoiceRow, choiceChip, choiceSelect, heardMark } from "@genesiscz/utils/prompts/clack/choice-select";
 import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
@@ -19,6 +20,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } from "../lib/answer-log";
 import { clipPlayer, cutClip, playClip } from "../lib/audio";
+import { MeetingComments } from "../lib/comments";
 import { callerActor } from "../lib/decision-journal";
 import { type ListenSettings, questionClip, writeQuestionClips } from "../lib/listen-clips";
 import {
@@ -40,6 +42,7 @@ import {
     questionLabel,
     questionView,
 } from "../lib/questions";
+import { openMeetingsClient } from "../lib/service/client";
 import { errorText, fail, TOOL } from "../lib/shared";
 
 const PAD_CHOICES = [5, 10] as const;
@@ -249,7 +252,8 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
     const path = join(store.folder(meeting.id), ANSWER_LOG_FILE);
     const roundRunning = runningRound(readAnswerEvents(path)).length > 0;
 
-    if (!roundRunning && !opts.fromStart && openQuestions(meeting).length === 0) {
+    // A listener for comments waits for them even with no question open.
+    if (!roundRunning && !opts.fromStart && !opts.withComments && openQuestions(meeting).length === 0) {
         process.stderr.write(`No open questions in ${meeting.id} and no listen round running.\n`);
         return;
     }
@@ -261,13 +265,25 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
         return;
     }
 
-    process.exitCode = await subscribeAnswers({
-        path,
-        fromStart: opts.fromStart === true,
-        timeoutMs: minutes * 60_000,
-        write: (line) => out.print(`${line}\n`),
-        follow: opts.follow === true,
-    });
+    const write = (line: string): void => out.print(`${line}\n`);
+    // `--with-comments`: this process counts as a listener while it runs (a sender names it), and prints each comment.
+    const comments = opts.withComments ? MeetingComments.of(store, meeting.id) : undefined;
+    comments?.join({ pid: process.pid, actor: callerActor() });
+    const following = comments?.follow({ fromStart: opts.fromStart === true, write });
+
+    try {
+        process.exitCode = await subscribeAnswers({
+            path,
+            fromStart: opts.fromStart === true,
+            timeoutMs: minutes * 60_000,
+            write,
+            follow: opts.follow === true,
+            ...(comments ? { typed: true } : {}),
+        });
+    } finally {
+        following?.stop();
+        comments?.leave(process.pid);
+    }
 }
 
 interface ListenOptions {
@@ -276,6 +292,7 @@ interface ListenOptions {
     comment?: string;
     reason?: string;
     subscribeAnswers?: boolean;
+    withComments?: boolean;
     follow?: boolean;
     fromStart?: boolean;
     timeout?: string;
@@ -484,7 +501,8 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
             player,
             vocabulary: answerVocabulary(
                 meeting,
-                dictionary.entries.map((entry) => entry.value)
+                dictionary.entries.map((entry) => entry.value),
+                await meetingPeopleNames({ store, config: settings, meeting: meeting.id })
             ),
             transcript: new TranscriptLines((await opened.meeting()).transcript),
             padSec,
@@ -560,6 +578,9 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             return;
         }
 
+        // The round decides through the Meetings service when one runs (the window hears each answer as it lands),
+        // else in this process: the person in this terminal as `listen`, an `--answer` as whoever runs it.
+        const client = await openMeetingsClient({ role: opts.answer === undefined ? "listen" : "cli" });
         const session = new ListenSession({
             store,
             meeting,
@@ -572,6 +593,10 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             ...(chosen.joinRunningRound ? { joinRunningRound: true } : {}),
             actor: chosen.actor,
             ...(opts.reason ? { reason: opts.reason } : {}),
+            decisions: {
+                apply: (request) => client.call("decision.apply", request),
+                revert: (request) => client.call("decision.revert", request),
+            },
             split: {
                 transcript: async () => (await opened.meeting()).transcript,
                 micShare: async () => (await opened.energy()).share,
@@ -588,6 +613,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         } finally {
             process.off("exit", onExit);
             process.off("SIGINT", onSigint);
+            client.close();
         }
 
         // `--answer --json`: the decision journal entry of the answer, for the agent that relayed it.
@@ -595,8 +621,9 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             const entry = session.applied().at(-1);
 
             if (!entry) {
+                const why = session.skippedLast()[0]?.reason ?? `${opts.item} is not open any more`;
                 fail(
-                    `${opts.item} was decided elsewhere meanwhile; nothing was answered (${TOOL} journal ${meeting.id})`
+                    `${why}; nothing was answered (who decided it: ${TOOL} journal ${meeting.id} --item ${opts.item})`
                 );
                 return;
             }
@@ -622,6 +649,10 @@ export function registerListenCommand(program: Command): void {
         .option(
             "--subscribe-answers",
             "for an agent: print each answer as one JSON line while the person answers; exit when the round ends"
+        )
+        .option(
+            "--with-comments",
+            'with --subscribe-answers: also print each comment the person sends from the window, one JSON line with type "comment" (every line then has a type)'
         )
         .option("--from-start", "with --subscribe-answers: print every earlier round first")
         .option(

@@ -95,6 +95,16 @@ export function meetingsPlayCommand(): string {
     return toolCommand("meetings play");
 }
 
+/** Lists the people the meetings know; a search text or `--json` follows it. */
+export function meetingsPeopleCommand(): string {
+    return toolCommand("meetings people");
+}
+
+/** Sets one key of the meetings config; the key and its value follow it. */
+export function meetingsConfigSetCommand(): string {
+    return toolCommand("meetings config set");
+}
+
 /** Shows what macOS granted for Calendar access. */
 export function macosCalendarDoctorCommand(): string {
     return toolCommand("macos calendar doctor");

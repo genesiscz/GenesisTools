@@ -209,6 +209,11 @@ const listenSchema = z.object({
     repeat: z.boolean().default(true),
     /** The pause between two plays of a repeated clip. */
     repeatGapSec: z.number().min(0).max(10).default(1),
+    /**
+     * The longest stretch a Moment of an item or a speaker's turn plays (a 51-minute hint range is shown, not played):
+     * a longer one is refused with `too-long`. A range or a selection the caller bounds itself is not capped.
+     */
+    longestClipSec: z.number().min(1).max(600).default(30),
 });
 
 const playbackSchema = z.object({
@@ -370,6 +375,20 @@ const storedConfigSchema = z
                     })
                     .prefault({}),
                 assign: assignSchema.prefault({}),
+                people: z
+                    .object({
+                        /**
+                         * Where the people directory looks besides the meetings, the projects and the people book:
+                         * Contacts (GenesisTools.app's Contacts grant), and the meetings' calendar attendees.
+                         */
+                        sources: z
+                            .object({
+                                contacts: z.boolean().default(true),
+                                calendar: z.boolean().default(true),
+                            })
+                            .prefault({}),
+                    })
+                    .prefault({}),
                 export: z
                     .object({
                         /**

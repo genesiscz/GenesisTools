@@ -27,12 +27,42 @@
             "meeting.show",
             "meeting.transcript",
             "meeting.revisions",
-            "subscribe"
+            "decision.plan",
+            "decision.apply",
+            "decision.revert",
+            "journal.read",
+            "moment.plan",
+            "moment.clip",
+            "tone.preview",
+            "meeting.audio",
+            "meeting.speakers",
+            "meeting.screen",
+            "meeting.waveform",
+            "meetings.overview",
+            "config.read",
+            "config.set",
+            "config.unset",
+            "meeting.rows",
+            "comment.stage",
+            "comment.list",
+            "comment.unstage",
+            "comment.send",
+            "people.known",
+            "people.add",
+            "people.hide",
+            "people.planMerge",
+            "people.merge",
+            "people.unmerge",
+            "subscribe",
+            "unsubscribe"
           ],
           "events": [
-            "meeting.changed"
+            "meeting.changed",
+            "decision.applied",
+            "decision.reverted",
+            "comment.sent"
           ],
-          "version": "e06d18be0224"
+          "version": "7ddd26c23e59"
         }
       }
     },
@@ -322,14 +352,16 @@
               "startSec": 2,
               "speakerId": 1,
               "speaker": "Dana Example",
-              "text": "Let us start with the checkout."
+              "text": "Let us start with the checkout.",
+              "endSec": 9
             },
             {
               "id": "l2",
               "startSec": 9,
               "speakerId": 2,
               "speaker": "Alex Example",
-              "text": "The button moved to the right."
+              "text": "The button moved to the right.",
+              "endSec": 14
             }
           ]
         }
@@ -475,6 +507,2595 @@
       }
     },
     {
+      "method": "subscribe",
+      "direction": "client→service",
+      "note": "A meeting filter that does not read: -32602, and the subscription before stays.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "method": "subscribe",
+        "params": {
+          "meeting": ""
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "error": {
+          "code": -32602,
+          "message": "subscribe: meeting: Too small: expected string to have >=1 characters"
+        }
+      }
+    },
+    {
+      "method": "unsubscribe",
+      "direction": "client→service",
+      "note": "The end of the subscription: no event reaches it until it subscribes again.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 14,
+        "method": "unsubscribe",
+        "params": {}
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 14,
+        "result": {
+          "events": []
+        }
+      }
+    },
+    {
+      "method": "hello",
+      "direction": "client→service",
+      "note": "An agent (the REPL, an MCP door): its decisions name its harness and session.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "hello",
+        "params": {
+          "role": "agent",
+          "harness": "claude-code",
+          "session": "11111111-2222-4333-8444-555555555555",
+          "protocol": 1,
+          "code": "0123456789ab"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocol": 1,
+          "code": "0123456789ab",
+          "methods": [
+            "hello",
+            "meetings.list",
+            "meeting.show",
+            "meeting.transcript",
+            "meeting.revisions",
+            "decision.plan",
+            "decision.apply",
+            "decision.revert",
+            "journal.read",
+            "moment.plan",
+            "moment.clip",
+            "tone.preview",
+            "meeting.audio",
+            "meeting.speakers",
+            "meeting.screen",
+            "meeting.waveform",
+            "meetings.overview",
+            "config.read",
+            "config.set",
+            "config.unset",
+            "meeting.rows",
+            "comment.stage",
+            "comment.list",
+            "comment.unstage",
+            "comment.send",
+            "people.known",
+            "people.add",
+            "people.hide",
+            "people.planMerge",
+            "people.merge",
+            "people.unmerge",
+            "subscribe",
+            "unsubscribe"
+          ],
+          "events": [
+            "meeting.changed",
+            "decision.applied",
+            "decision.reverted",
+            "comment.sent"
+          ],
+          "version": "7ddd26c23e59"
+        }
+      }
+    },
+    {
+      "method": "subscribe",
+      "direction": "client→service",
+      "note": "The window hears every decision on the open meeting, with its journal entry, and each send of its comments.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 15,
+        "method": "subscribe",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "events": [
+            "decision.applied",
+            "decision.reverted",
+            "comment.sent"
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 15,
+        "result": {
+          "events": [
+            "decision.applied",
+            "decision.reverted",
+            "comment.sent"
+          ]
+        }
+      }
+    },
+    {
+      "method": "decision.plan",
+      "direction": "client→service",
+      "note": "What a confirm would do and reach; nothing is written.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "decision.plan",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": {
+            "kind": "confirm",
+            "items": [
+              "i1"
+            ]
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "entry": {
+            "token": "7ebf05df-180f-4937-b6f9-724e0f87a35a",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "action": {
+              "kind": "confirm",
+              "items": [
+                "i1"
+              ]
+            },
+            "decided": [
+              "i1"
+            ],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "7ebf05df-180f-4937-b6f9-724e0f87a35a",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm"
+                    }
+                  }
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          },
+          "skipped": [],
+          "reach": {
+            "items": [],
+            "dictionary": []
+          }
+        }
+      }
+    },
+    {
+      "method": "decision.apply",
+      "direction": "client→service",
+      "note": "The actor comes from the connection's hello; the reason is kept on the entry and the item.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "decision.apply",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": {
+            "kind": "confirm",
+            "items": [
+              "i1"
+            ]
+          },
+          "reason": "the calendar says so"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "entry": {
+            "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "reason": "the calendar says so",
+            "action": {
+              "kind": "confirm",
+              "items": [
+                "i1"
+              ]
+            },
+            "decided": [
+              "i1"
+            ],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm",
+                      "reason": "the calendar says so"
+                    }
+                  }
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          },
+          "skipped": []
+        }
+      }
+    },
+    {
+      "method": "decision.revert",
+      "direction": "client→service",
+      "note": "The Undo of one entry, whole; items: [...] undoes only those.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "decision.revert",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "entry": {
+            "token": "60f62199-f908-4b66-acfc-c5531b68ed4b",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "action": {
+              "kind": "revert",
+              "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f"
+            },
+            "decided": [],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm",
+                      "reason": "the calendar says so"
+                    }
+                  }
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          },
+          "skipped": []
+        }
+      }
+    },
+    {
+      "method": "decision.apply",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "decision.apply",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": {
+            "kind": "confirm",
+            "items": [
+              "i1"
+            ]
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "entry": {
+            "token": "f3bdc117-288e-4c99-b1cb-0106e2c3f87e",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "action": {
+              "kind": "confirm",
+              "items": [
+                "i1"
+              ]
+            },
+            "decided": [
+              "i1"
+            ],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "f3bdc117-288e-4c99-b1cb-0106e2c3f87e",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm"
+                    }
+                  }
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          },
+          "skipped": []
+        }
+      }
+    },
+    {
+      "method": "decision.apply",
+      "direction": "client→service",
+      "note": "The window's click on an item decided since: already-decided, with the entry that decided it.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 16,
+        "method": "decision.apply",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": {
+            "kind": "reject",
+            "items": [
+              "i1"
+            ]
+          },
+          "onDecided": "refuse"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 16,
+        "error": {
+          "code": 1100,
+          "message": "i1 is confirmed already by an agent (Claude Code, session 11111111); nothing was decided",
+          "data": {
+            "items": [
+              "i1"
+            ],
+            "entry": {
+              "token": "f3bdc117-288e-4c99-b1cb-0106e2c3f87e",
+              "at": "2026-11-03T10:00:00.000Z",
+              "meeting": "2026-11-03-1000-design-review",
+              "actor": {
+                "kind": "agent",
+                "harness": "claude-code",
+                "session": "11111111-2222-4333-8444-555555555555"
+              },
+              "action": {
+                "kind": "confirm",
+                "items": [
+                  "i1"
+                ]
+              },
+              "decided": [
+                "i1"
+              ],
+              "settled": [],
+              "skipped": [],
+              "changes": [
+                {
+                  "id": "i1",
+                  "before": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "suggested",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z"
+                  },
+                  "after": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "confirmed",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z",
+                    "decidedAt": "2026-11-03T10:00:00.000Z",
+                    "decision": {
+                      "token": "f3bdc117-288e-4c99-b1cb-0106e2c3f87e",
+                      "previous": {
+                        "status": "suggested",
+                        "speaker": "Alex Example"
+                      },
+                      "actor": {
+                        "kind": "agent",
+                        "harness": "claude-code",
+                        "session": "11111111-2222-4333-8444-555555555555"
+                      },
+                      "entry": {
+                        "action": "confirm"
+                      }
+                    }
+                  }
+                }
+              ],
+              "labels": [],
+              "corrections": []
+            },
+            "code": "already-decided"
+          }
+        }
+      }
+    },
+    {
+      "method": "journal.read",
+      "direction": "client→service",
+      "note": "Newest first; revertedBy names the Undo.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 17,
+        "method": "journal.read",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "limit": 2
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 17,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "entries": [
+            {
+              "token": "f3bdc117-288e-4c99-b1cb-0106e2c3f87e",
+              "at": "2026-11-03T10:00:00.000Z",
+              "meeting": "2026-11-03-1000-design-review",
+              "actor": {
+                "kind": "agent",
+                "harness": "claude-code",
+                "session": "11111111-2222-4333-8444-555555555555"
+              },
+              "action": {
+                "kind": "confirm",
+                "items": [
+                  "i1"
+                ]
+              },
+              "decided": [
+                "i1"
+              ],
+              "settled": [],
+              "skipped": [],
+              "changes": [
+                {
+                  "id": "i1",
+                  "before": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "suggested",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z"
+                  },
+                  "after": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "confirmed",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z",
+                    "decidedAt": "2026-11-03T10:00:00.000Z",
+                    "decision": {
+                      "token": "f3bdc117-288e-4c99-b1cb-0106e2c3f87e",
+                      "previous": {
+                        "status": "suggested",
+                        "speaker": "Alex Example"
+                      },
+                      "actor": {
+                        "kind": "agent",
+                        "harness": "claude-code",
+                        "session": "11111111-2222-4333-8444-555555555555"
+                      },
+                      "entry": {
+                        "action": "confirm"
+                      }
+                    }
+                  }
+                }
+              ],
+              "labels": [],
+              "corrections": []
+            },
+            {
+              "token": "60f62199-f908-4b66-acfc-c5531b68ed4b",
+              "at": "2026-11-03T10:00:00.000Z",
+              "meeting": "2026-11-03-1000-design-review",
+              "actor": {
+                "kind": "agent",
+                "harness": "claude-code",
+                "session": "11111111-2222-4333-8444-555555555555"
+              },
+              "action": {
+                "kind": "revert",
+                "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f"
+              },
+              "decided": [],
+              "settled": [],
+              "skipped": [],
+              "changes": [
+                {
+                  "id": "i1",
+                  "before": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "confirmed",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z",
+                    "decidedAt": "2026-11-03T10:00:00.000Z",
+                    "decision": {
+                      "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f",
+                      "previous": {
+                        "status": "suggested",
+                        "speaker": "Alex Example"
+                      },
+                      "actor": {
+                        "kind": "agent",
+                        "harness": "claude-code",
+                        "session": "11111111-2222-4333-8444-555555555555"
+                      },
+                      "entry": {
+                        "action": "confirm",
+                        "reason": "the calendar says so"
+                      }
+                    }
+                  },
+                  "after": {
+                    "kind": "speaker-range",
+                    "label": "Speaker 3",
+                    "fromSec": 12,
+                    "toSec": 30,
+                    "speaker": "Alex Example",
+                    "candidates": [
+                      "Alex Example",
+                      "Dana Example"
+                    ],
+                    "id": "i1",
+                    "status": "suggested",
+                    "confidence": 0.82,
+                    "rules": [
+                      "presence"
+                    ],
+                    "suggestedAt": "2026-11-03T09:47:00.000Z"
+                  }
+                }
+              ],
+              "labels": [],
+              "corrections": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "moment.plan",
+      "direction": "client→service",
+      "note": "The Moment of a row: its span, pad, asked spot (spotSec) and tone (tone.atSec).",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 18,
+        "method": "moment.plan",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "item",
+            "id": "i1"
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 18,
+        "result": {
+          "moment": {
+            "meeting": "2026-11-03-1000-design-review",
+            "target": {
+              "kind": "item",
+              "id": "i1"
+            },
+            "label": "i1",
+            "fromSec": 12,
+            "toSec": 30,
+            "padSec": 0.7,
+            "startSec": 11.3,
+            "endSec": 30.7,
+            "spotSec": 12,
+            "tone": {
+              "atSec": 11.6,
+              "sound": {
+                "hz": 880,
+                "sec": 0.15,
+                "volume": 0.6
+              }
+            },
+            "delaySec": 2,
+            "repeatGapSec": 1
+          }
+        }
+      }
+    },
+    {
+      "method": "moment.plan",
+      "direction": "client→service",
+      "note": "A target the meeting does not have: cannot, and no Moment.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 19,
+        "method": "moment.plan",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "item",
+            "id": "i9"
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 19,
+        "result": {
+          "cannot": {
+            "code": "unknown-item",
+            "message": "No item i9 in 2026-11-03-1000-design-review."
+          }
+        }
+      }
+    },
+    {
+      "method": "moment.clip",
+      "direction": "client→service",
+      "note": "Cut into the clip cache.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 20,
+        "method": "moment.clip",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "time",
+            "atSec": 9
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 20,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "time",
+            "atSec": 9
+          },
+          "label": "00:09",
+          "fromSec": 9,
+          "toSec": 14,
+          "padSec": 5,
+          "startSec": 4,
+          "endSec": 19,
+          "spotSec": 9,
+          "tone": {
+            "atSec": 8.6,
+            "sound": {
+              "hz": 880,
+              "sec": 0.15,
+              "volume": 0.6
+            }
+          },
+          "delaySec": 2,
+          "repeatGapSec": 1,
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Kft1G8/gt-test-home-e2qaq2/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-3jv1z22o1vm0i.wav"
+        }
+      }
+    },
+    {
+      "method": "meeting.audio",
+      "direction": "client→service",
+      "note": "One track: the window plays the file itself.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 21,
+        "method": "meeting.audio",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 21,
+        "result": {
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Kft1G8/mtg-audio-rlnSmt/upload.ogg",
+          "tracks": 1,
+          "channels": 2,
+          "durationSec": 45
+        }
+      }
+    },
+    {
+      "method": "meeting.audio",
+      "direction": "client→service",
+      "note": "No source keeps the recording: unplayable with reason no-audio.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 22,
+        "method": "meeting.audio",
+        "params": {
+          "meeting": "2026-11-03-1400-retro"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 22,
+        "error": {
+          "code": 1100,
+          "message": "2026-11-03-1400-retro has no source with a transcript. Link one: tools meetings link 2026-11-03-1400-retro 'wisprflow:<id>'",
+          "data": {
+            "reason": "no-audio",
+            "code": "unplayable"
+          }
+        }
+      }
+    },
+    {
+      "method": "tone.preview",
+      "direction": "client→service",
+      "note": "The tone alone, for a Play button.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 23,
+        "method": "tone.preview",
+        "params": {
+          "sound": {
+            "hz": 880,
+            "sec": 0.15,
+            "volume": 0.6
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 23,
+        "result": {
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Kft1G8/gt-test-home-e2qaq2/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
+          "sound": {
+            "hz": 880,
+            "sec": 0.15,
+            "volume": 0.6
+          }
+        }
+      }
+    },
+    {
+      "method": "meeting.speakers",
+      "direction": "client→service",
+      "note": "Talk time per label, its spans, and the hints.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 24,
+        "method": "meeting.speakers",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 24,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "gapSec": 120,
+          "timed": true,
+          "speakers": [
+            {
+              "label": "Dana Example",
+              "speakerId": 1,
+              "origin": "unknown",
+              "turns": 1,
+              "lines": 1,
+              "words": 6,
+              "spokenSec": 4.800000000000001,
+              "spans": [
+                {
+                  "fromSec": 2,
+                  "toSec": 6.800000000000001,
+                  "turns": 1
+                }
+              ],
+              "leaves": [],
+              "firstSec": 2,
+              "lastSec": 6.800000000000001
+            },
+            {
+              "label": "Speaker 2",
+              "speakerId": 2,
+              "origin": "unknown",
+              "turns": 1,
+              "lines": 1,
+              "words": 6,
+              "spokenSec": 2.4000000000000004,
+              "spans": [
+                {
+                  "fromSec": 9,
+                  "toSec": 11.4,
+                  "turns": 1
+                }
+              ],
+              "leaves": [],
+              "firstSec": 9,
+              "lastSec": 11.4
+            }
+          ],
+          "hints": [
+            {
+              "kind": "split-voice",
+              "label": "Dana Example",
+              "strength": "normal",
+              "neighbour": "Speaker 2",
+              "turns": 1,
+              "spokenSec": 4.800000000000001,
+              "atSec": 2
+            },
+            {
+              "kind": "split-voice",
+              "label": "Speaker 2",
+              "strength": "normal",
+              "neighbour": "Dana Example",
+              "turns": 1,
+              "spokenSec": 2.4000000000000004,
+              "atSec": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "meeting.screen",
+      "direction": "client→service",
+      "note": "No screen recording: no frames, no pane.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 25,
+        "method": "meeting.screen",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 25,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "recorded": false,
+          "displays": [],
+          "frames": []
+        }
+      }
+    },
+    {
+      "method": "meeting.waveform",
+      "direction": "client→service",
+      "note": "Peaks for the strip, 0 to 1 of the loudest 100 ms.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 26,
+        "method": "meeting.waveform",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "fromSec": 0,
+          "toSec": 10,
+          "buckets": 5
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 26,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "fromSec": 0,
+          "toSec": 10,
+          "peaks": [
+            0.25,
+            0.25,
+            1,
+            0.25,
+            0.25
+          ]
+        }
+      }
+    },
+    {
+      "method": "meetings.overview",
+      "direction": "client→service",
+      "note": "The meetings with what each waits for.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 27,
+        "method": "meetings.overview",
+        "params": {
+          "days": 3650
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 27,
+        "result": {
+          "generatedAt": "2026-11-09T23:51:48.932Z",
+          "days": 3650,
+          "applyAbove": 0.5,
+          "meetings": [
+            {
+              "id": "2026-11-03-1400-retro",
+              "title": "Retro",
+              "start": "2026-11-03T13:00:00.000Z",
+              "day": "2026-11-03",
+              "labels": [],
+              "hasTranscript": false,
+              "hasRecording": false,
+              "live": false,
+              "frames": 0,
+              "contextCount": 0,
+              "badges": {
+                "noProject": true,
+                "openQuestions": 0,
+                "unclearSpeakers": 0,
+                "recordingOnly": false,
+                "transcriptOnly": false,
+                "suggestedAboveApply": 0,
+                "suggested": 0
+              }
+            },
+            {
+              "id": "2026-11-03-1000-design-review",
+              "title": "Design review",
+              "start": "2026-11-03T09:00:00.000Z",
+              "end": "2026-11-03T09:45:00.000Z",
+              "durationSec": 2700,
+              "day": "2026-11-03",
+              "project": "Atlas",
+              "labels": [
+                "Checkout"
+              ],
+              "hasTranscript": true,
+              "hasRecording": false,
+              "live": false,
+              "frames": 0,
+              "contextCount": 0,
+              "badges": {
+                "noProject": false,
+                "openQuestions": 0,
+                "unclearSpeakers": 0,
+                "recordingOnly": false,
+                "transcriptOnly": true,
+                "suggestedAboveApply": 0,
+                "suggested": 0
+              }
+            }
+          ],
+          "olderMeetings": 0,
+          "projects": [],
+          "needsYou": {
+            "noProject": [
+              "2026-11-03-1400-retro"
+            ],
+            "questions": [],
+            "suggestions": [],
+            "total": 1
+          }
+        }
+      }
+    },
+    {
+      "method": "config.read",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 28,
+        "method": "config.read",
+        "params": {
+          "path": "global.playback.listen.longestClipSec"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 28,
+        "result": {
+          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-Kft1G8/gt-test-home-e2qaq2/.genesis-tools/meetings/config.json",
+          "value": 30
+        }
+      }
+    },
+    {
+      "method": "config.set",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 29,
+        "method": "config.set",
+        "params": {
+          "path": "global.playback.listen.longestClipSec",
+          "value": 25
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 29,
+        "result": {
+          "path": [
+            "global",
+            "playback",
+            "listen",
+            "longestClipSec"
+          ],
+          "value": 25
+        }
+      }
+    },
+    {
+      "method": "config.unset",
+      "direction": "client→service",
+      "note": "Back to its default.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 30,
+        "method": "config.unset",
+        "params": {
+          "path": "global.playback.listen.longestClipSec"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 30,
+        "result": {
+          "path": [
+            "global",
+            "playback",
+            "listen",
+            "longestClipSec"
+          ],
+          "value": 30
+        }
+      }
+    },
+    {
+      "method": "meeting.rows",
+      "direction": "client→service",
+      "note": "The review rows, in the order listen asks.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "method": "meeting.rows",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "rows": [
+            {
+              "id": "i1",
+              "label": "i1",
+              "kind": "speaker-range",
+              "status": "confirmed",
+              "confidence": 0.82,
+              "what": "Speaker 3 00:12–00:30 → Alex Example",
+              "parts": [
+                {
+                  "kind": "who",
+                  "text": "Speaker 3 → Alex Example"
+                },
+                {
+                  "kind": "when",
+                  "from": {
+                    "sec": 12,
+                    "text": "00:12"
+                  },
+                  "to": {
+                    "sec": 30,
+                    "text": "00:30"
+                  },
+                  "target": {
+                    "kind": "item",
+                    "id": "i1"
+                  }
+                }
+              ],
+              "choices": [
+                {
+                  "value": "Alex Example",
+                  "label": "Alex Example",
+                  "role": "suggested",
+                  "action": {
+                    "kind": "confirm"
+                  },
+                  "confidence": 0.82
+                },
+                {
+                  "value": "Dana Example",
+                  "label": "Dana Example",
+                  "role": "candidate",
+                  "action": {
+                    "kind": "confirm",
+                    "speaker": "Dana Example"
+                  }
+                },
+                {
+                  "value": "none of these",
+                  "label": "None of these",
+                  "role": "none",
+                  "action": {
+                    "kind": "reject"
+                  }
+                }
+              ],
+              "edit": "person",
+              "sources": [
+                {
+                  "kind": "line",
+                  "at": {
+                    "sec": 9,
+                    "text": "00:09"
+                  },
+                  "text": "The button moved to the right."
+                }
+              ],
+              "target": {
+                "kind": "item",
+                "id": "i1"
+              },
+              "decision": {
+                "token": "f3bdc117-288e-4c99-b1cb-0106e2c3f87e",
+                "actor": {
+                  "kind": "agent",
+                  "harness": "claude-code",
+                  "session": "11111111-2222-4333-8444-555555555555"
+                },
+                "by": "an agent (Claude Code, session 11111111)",
+                "action": "confirm",
+                "at": "2026-11-03T10:00:00.000Z"
+              }
+            }
+          ],
+          "hidden": {
+            "lowPriority": 0,
+            "minPriority": 0.5
+          }
+        }
+      }
+    },
+    {
+      "method": "moment.plan",
+      "direction": "client→service",
+      "note": "Clip 5s: the selection's Moment, 5 s from its start.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 32,
+        "method": "moment.plan",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "selection",
+            "from": {
+              "atSec": 2,
+              "line": 0
+            },
+            "to": {
+              "atSec": 9,
+              "line": 1
+            }
+          },
+          "lengthSec": 5
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 32,
+        "result": {
+          "moment": {
+            "meeting": "2026-11-03-1000-design-review",
+            "target": {
+              "kind": "selection",
+              "from": {
+                "atSec": 2,
+                "line": 0
+              },
+              "to": {
+                "atSec": 9,
+                "line": 1
+              }
+            },
+            "label": "00:02–00:14",
+            "fromSec": 2,
+            "toSec": 7,
+            "padSec": 5,
+            "startSec": 0,
+            "endSec": 12,
+            "spotSec": 2,
+            "tone": {
+              "atSec": 1.6,
+              "sound": {
+                "hz": 880,
+                "sec": 0.15,
+                "volume": 0.6
+              }
+            },
+            "delaySec": 2,
+            "repeatGapSec": 1
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.stage",
+      "direction": "client→service",
+      "note": "A comment on the selected words, for the listening agent.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 33,
+        "method": "comment.stage",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "selection",
+            "from": {
+              "atSec": 2,
+              "line": 0
+            },
+            "to": {
+              "atSec": 9,
+              "line": 1
+            }
+          },
+          "text": "The button is the checkout button",
+          "quote": "The button moved"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 33,
+        "result": {
+          "id": "c1",
+          "at": "2026-11-03T10:00:00.000Z",
+          "target": {
+            "kind": "selection",
+            "from": {
+              "atSec": 2,
+              "line": 0
+            },
+            "to": {
+              "atSec": 9,
+              "line": 1
+            }
+          },
+          "text": "The button is the checkout button",
+          "quote": "The button moved",
+          "actor": {
+            "kind": "window"
+          },
+          "state": "staged"
+        }
+      }
+    },
+    {
+      "method": "comment.stage",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 34,
+        "method": "comment.stage",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "target": {
+            "kind": "time",
+            "atSec": 4
+          },
+          "text": "Drop it"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 34,
+        "result": {
+          "id": "c2",
+          "at": "2026-11-03T10:00:00.000Z",
+          "target": {
+            "kind": "time",
+            "atSec": 4
+          },
+          "text": "Drop it",
+          "actor": {
+            "kind": "window"
+          },
+          "state": "staged"
+        }
+      }
+    },
+    {
+      "method": "comment.unstage",
+      "direction": "client→service",
+      "note": "Taken back before it was sent.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 35,
+        "method": "comment.unstage",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "id": "c2"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 35,
+        "result": {
+          "id": "c2",
+          "at": "2026-11-03T10:00:00.000Z",
+          "target": {
+            "kind": "time",
+            "atSec": 4
+          },
+          "text": "Drop it",
+          "actor": {
+            "kind": "window"
+          },
+          "state": "staged"
+        }
+      }
+    },
+    {
+      "method": "comment.list",
+      "direction": "client→service",
+      "note": "Who listens now: a send names them, or keeps them.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 36,
+        "method": "comment.list",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 36,
+        "result": {
+          "meeting": "2026-11-03-1000-design-review",
+          "comments": [
+            {
+              "id": "c1",
+              "at": "2026-11-03T10:00:00.000Z",
+              "target": {
+                "kind": "selection",
+                "from": {
+                  "atSec": 2,
+                  "line": 0
+                },
+                "to": {
+                  "atSec": 9,
+                  "line": 1
+                }
+              },
+              "text": "The button is the checkout button",
+              "quote": "The button moved",
+              "actor": {
+                "kind": "window"
+              },
+              "state": "staged"
+            }
+          ],
+          "listeners": [
+            {
+              "pid": 4343,
+              "at": "2026-11-03T10:00:00.000Z",
+              "actor": {
+                "kind": "listen"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "comment.send",
+      "direction": "client→service",
+      "note": "Every staged comment; the journal keeps the entry.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 37,
+        "method": "comment.send",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 37,
+        "result": {
+          "sent": [
+            {
+              "id": "c1",
+              "at": "2026-11-03T10:00:00.000Z",
+              "target": {
+                "kind": "selection",
+                "from": {
+                  "atSec": 2,
+                  "line": 0
+                },
+                "to": {
+                  "atSec": 9,
+                  "line": 1
+                }
+              },
+              "text": "The button is the checkout button",
+              "quote": "The button moved",
+              "actor": {
+                "kind": "window"
+              },
+              "state": "sent",
+              "sentAt": "2026-11-03T10:00:00.000Z",
+              "token": "a5e0f331-d2d5-4255-bafd-94d8410024cf"
+            }
+          ],
+          "listeners": [
+            {
+              "pid": 4343,
+              "at": "2026-11-03T10:00:00.000Z",
+              "actor": {
+                "kind": "listen"
+              }
+            }
+          ],
+          "entry": {
+            "token": "a5e0f331-d2d5-4255-bafd-94d8410024cf",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "window"
+            },
+            "action": {
+              "kind": "comment",
+              "comments": [
+                {
+                  "id": "c1",
+                  "target": {
+                    "kind": "selection",
+                    "from": {
+                      "atSec": 2,
+                      "line": 0
+                    },
+                    "to": {
+                      "atSec": 9,
+                      "line": 1
+                    }
+                  },
+                  "text": "The button is the checkout button",
+                  "quote": "The button moved"
+                }
+              ]
+            },
+            "decided": [],
+            "settled": [],
+            "skipped": [],
+            "changes": [],
+            "labels": [],
+            "corrections": []
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.unstage",
+      "direction": "client→service",
+      "note": "A sent comment: already-sent.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 38,
+        "method": "comment.unstage",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "id": "c1"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 38,
+        "error": {
+          "code": 1100,
+          "message": "Comment c1 was sent at 2026-11-03T10:00:00.000Z; it cannot change.",
+          "data": {
+            "code": "already-sent"
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.send",
+      "direction": "client→service",
+      "note": "No such comment: unknown-comment.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 39,
+        "method": "comment.send",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "ids": [
+            "c7"
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 39,
+        "error": {
+          "code": 1100,
+          "message": "No staged comment c7.",
+          "data": {
+            "code": "unknown-comment"
+          }
+        }
+      }
+    },
+    {
+      "method": "people.known",
+      "direction": "client→service",
+      "note": "The person picker's list: ranked for the meeting and the moment, with each source's state; nothing preselected.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 40,
+        "method": "people.known",
+        "params": {
+          "query": "ex",
+          "meeting": "2026-11-03-1000-design-review",
+          "atSec": 9
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 40,
+        "result": {
+          "query": "ex",
+          "people": [
+            {
+              "id": "name:alex example",
+              "name": "Alex Example",
+              "aliases": [],
+              "sources": [
+                "meetings"
+              ],
+              "rank": "meeting",
+              "meetings": 1,
+              "lastSeen": "2026-11-03T09:00:00.000Z",
+              "projects": []
+            },
+            {
+              "id": "name:dana example",
+              "name": "Dana Example",
+              "self": true,
+              "aliases": [],
+              "sources": [
+                "meetings"
+              ],
+              "rank": "meeting",
+              "meetings": 1,
+              "lastSeen": "2026-11-03T09:00:00.000Z",
+              "projects": []
+            }
+          ],
+          "total": 2,
+          "sources": [
+            {
+              "kind": "meetings",
+              "state": "ok"
+            },
+            {
+              "kind": "projects",
+              "state": "ok"
+            },
+            {
+              "kind": "own",
+              "state": "ok"
+            },
+            {
+              "kind": "contacts",
+              "state": "ok"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "people.add",
+      "direction": "client→service",
+      "note": "The picker's Add 'Robin Example' as new speaker: a person in the people book.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 41,
+        "method": "people.add",
+        "params": {
+          "name": "Robin Example",
+          "email": "robin@example.com",
+          "note": "from the board"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 41,
+        "result": {
+          "entry": {
+            "name": "Robin Example",
+            "email": "robin@example.com",
+            "note": "from the board",
+            "addedAt": "2026-11-03T10:00:00.000Z"
+          },
+          "added": true,
+          "shown": false,
+          "person": {
+            "id": "email:robin@example.com",
+            "name": "Robin Example",
+            "email": "robin@example.com",
+            "aliases": [],
+            "sources": [
+              "own"
+            ],
+            "rank": "own",
+            "meetings": 0,
+            "projects": [],
+            "note": "from the board"
+          }
+        }
+      }
+    },
+    {
+      "method": "people.hide",
+      "direction": "client→service",
+      "note": "Left out of every list; hidden: false shows them.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 42,
+        "method": "people.hide",
+        "params": {
+          "person": "robin@example.com"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 42,
+        "result": {
+          "person": {
+            "id": "email:robin@example.com",
+            "name": "Robin Example",
+            "email": "robin@example.com",
+            "aliases": [],
+            "sources": [
+              "own"
+            ],
+            "rank": "own",
+            "meetings": 0,
+            "projects": [],
+            "note": "from the board",
+            "hidden": true
+          },
+          "changed": true
+        }
+      }
+    },
+    {
+      "method": "people.hide",
+      "direction": "client→service",
+      "note": "Nobody known by that name: unknown-person.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 43,
+        "method": "people.hide",
+        "params": {
+          "person": "Nobody Example"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 43,
+        "error": {
+          "code": 1100,
+          "message": "Nobody known is \"Nobody Example\". Search: tools meetings people <text>",
+          "data": {
+            "code": "unknown-person"
+          }
+        }
+      }
+    },
+    {
+      "method": "people.planMerge",
+      "direction": "client→service",
+      "note": "What a merge links (meetings, renamed labels); nothing is written and no meeting record changes on a merge.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 44,
+        "method": "people.planMerge",
+        "params": {
+          "a": "Alex Example",
+          "b": "robin@example.com"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 44,
+        "result": {
+          "people": [
+            {
+              "id": "name:alex example",
+              "name": "Alex Example",
+              "aliases": [],
+              "sources": [
+                "meetings"
+              ],
+              "rank": "meetings",
+              "meetings": 1,
+              "lastSeen": "2026-11-03T09:00:00.000Z",
+              "projects": []
+            },
+            {
+              "id": "email:robin@example.com",
+              "name": "Robin Example",
+              "email": "robin@example.com",
+              "aliases": [],
+              "sources": [
+                "own"
+              ],
+              "rank": "own",
+              "meetings": 0,
+              "projects": [],
+              "note": "from the board",
+              "hidden": true
+            }
+          ],
+          "name": "Alex Example",
+          "meetings": [
+            {
+              "id": "2026-11-03-1000-design-review",
+              "title": "Design review",
+              "start": "2026-11-03T09:00:00.000Z",
+              "people": [
+                0
+              ],
+              "as": [
+                "participant",
+                "speaker"
+              ]
+            }
+          ],
+          "labels": [
+            {
+              "meeting": "2026-11-03-1000-design-review",
+              "label": "Speaker 2",
+              "name": "Alex Example"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "people.merge",
+      "direction": "client→service",
+      "note": "An alias in the people book; its token splits it again.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 45,
+        "method": "people.merge",
+        "params": {
+          "a": "Alex Example",
+          "b": "robin@example.com"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 45,
+        "result": {
+          "merge": {
+            "token": "e93004ba-0c28-473b-b57a-9ef5d3f4b16e",
+            "people": [
+              {
+                "name": "Alex Example"
+              },
+              {
+                "name": "Robin Example",
+                "email": "robin@example.com"
+              }
+            ],
+            "name": "Alex Example",
+            "at": "2026-11-03T10:00:00.000Z"
+          },
+          "plan": {
+            "people": [
+              {
+                "id": "name:alex example",
+                "name": "Alex Example",
+                "aliases": [],
+                "sources": [
+                  "meetings"
+                ],
+                "rank": "meetings",
+                "meetings": 1,
+                "lastSeen": "2026-11-03T09:00:00.000Z",
+                "projects": []
+              },
+              {
+                "id": "email:robin@example.com",
+                "name": "Robin Example",
+                "email": "robin@example.com",
+                "aliases": [],
+                "sources": [
+                  "own"
+                ],
+                "rank": "own",
+                "meetings": 0,
+                "projects": [],
+                "note": "from the board",
+                "hidden": true
+              }
+            ],
+            "name": "Alex Example",
+            "meetings": [
+              {
+                "id": "2026-11-03-1000-design-review",
+                "title": "Design review",
+                "start": "2026-11-03T09:00:00.000Z",
+                "people": [
+                  0
+                ],
+                "as": [
+                  "participant",
+                  "speaker"
+                ]
+              }
+            ],
+            "labels": [
+              {
+                "meeting": "2026-11-03-1000-design-review",
+                "label": "Speaker 2",
+                "name": "Alex Example"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "method": "people.unmerge",
+      "direction": "client→service",
+      "note": "The merge split again.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 46,
+        "method": "people.unmerge",
+        "params": {
+          "token": "e93004ba-0c28-473b-b57a-9ef5d3f4b16e"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 46,
+        "result": {
+          "merge": {
+            "token": "e93004ba-0c28-473b-b57a-9ef5d3f4b16e",
+            "people": [
+              {
+                "name": "Alex Example"
+              },
+              {
+                "name": "Robin Example",
+                "email": "robin@example.com"
+              }
+            ],
+            "name": "Alex Example",
+            "at": "2026-11-03T10:00:00.000Z"
+          }
+        }
+      }
+    },
+    {
+      "method": "people.unmerge",
+      "direction": "client→service",
+      "note": "No merge has that token: unknown-merge.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 47,
+        "method": "people.unmerge",
+        "params": {
+          "token": "nope"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 47,
+        "error": {
+          "code": 1100,
+          "message": "No merge has the token nope. See them: tools meetings people --json",
+          "data": {
+            "code": "unknown-merge"
+          }
+        }
+      }
+    },
+    {
+      "method": "people.add",
+      "direction": "client→service",
+      "note": "A second Robin.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 48,
+        "method": "people.add",
+        "params": {
+          "name": "Robin Example",
+          "email": "robin.two@example.com"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 48,
+        "result": {
+          "entry": {
+            "name": "Robin Example",
+            "email": "robin.two@example.com",
+            "addedAt": "2026-11-03T10:00:00.000Z"
+          },
+          "added": true,
+          "shown": false,
+          "person": {
+            "id": "email:robin.two@example.com",
+            "name": "Robin Example",
+            "email": "robin.two@example.com",
+            "aliases": [],
+            "sources": [
+              "own"
+            ],
+            "rank": "own",
+            "meetings": 0,
+            "projects": []
+          }
+        }
+      }
+    },
+    {
+      "method": "people.hide",
+      "direction": "client→service",
+      "note": "A name two people share: ambiguous-person, with the candidates to pick from.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 49,
+        "method": "people.hide",
+        "params": {
+          "person": "Robin Example"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 49,
+        "error": {
+          "code": 1100,
+          "message": "\"Robin Example\" names 2 people: Robin Example <robin@example.com>, Robin Example <robin.two@example.com>. Name one by email or id.",
+          "data": {
+            "candidates": [
+              {
+                "id": "email:robin@example.com",
+                "name": "Robin Example",
+                "email": "robin@example.com",
+                "aliases": [],
+                "sources": [
+                  "own"
+                ],
+                "rank": "own",
+                "meetings": 0,
+                "projects": [],
+                "note": "from the board",
+                "hidden": true
+              },
+              {
+                "id": "email:robin.two@example.com",
+                "name": "Robin Example",
+                "email": "robin.two@example.com",
+                "aliases": [],
+                "sources": [
+                  "own"
+                ],
+                "rank": "own",
+                "meetings": 0,
+                "projects": []
+              }
+            ],
+            "code": "ambiguous-person"
+          }
+        }
+      }
+    },
+    {
+      "method": "decision.plan",
+      "direction": "client→service",
+      "note": "One line given to a person: the assignment, and the stretches of the same label it may also reach.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 50,
+        "method": "decision.plan",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": {
+            "kind": "assign",
+            "person": "Dana Example",
+            "lines": [
+              {
+                "atSec": 9,
+                "line": 1
+              }
+            ]
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 50,
+        "result": {
+          "entry": {
+            "token": "8ab9ff2f-0851-4c21-a2c2-f9ed134483cc",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "window"
+            },
+            "action": {
+              "kind": "assign",
+              "person": "Dana Example",
+              "lines": [
+                {
+                  "atSec": 9,
+                  "line": 1
+                }
+              ]
+            },
+            "decided": [],
+            "settled": [],
+            "skipped": [],
+            "changes": [],
+            "labels": [],
+            "assignments": [
+              {
+                "id": "a1",
+                "after": {
+                  "id": "a1",
+                  "label": "Speaker 2",
+                  "fromSec": 9,
+                  "toSec": 9,
+                  "person": "Dana Example",
+                  "at": "2026-11-03T10:00:00.000Z"
+                }
+              }
+            ],
+            "corrections": []
+          },
+          "skipped": [],
+          "reach": {
+            "items": [],
+            "dictionary": [],
+            "stretches": []
+          }
+        }
+      }
+    },
+    {
+      "method": "decision.applied",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "decision.applied",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "entry": {
+            "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "reason": "the calendar says so",
+            "action": {
+              "kind": "confirm",
+              "items": [
+                "i1"
+              ]
+            },
+            "decided": [
+              "i1"
+            ],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm",
+                      "reason": "the calendar says so"
+                    }
+                  }
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          }
+        }
+      }
+    },
+    {
+      "method": "decision.reverted",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "decision.reverted",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f",
+          "entry": {
+            "token": "60f62199-f908-4b66-acfc-c5531b68ed4b",
+            "at": "2026-11-03T10:00:00.000Z",
+            "meeting": "2026-11-03-1000-design-review",
+            "actor": {
+              "kind": "agent",
+              "harness": "claude-code",
+              "session": "11111111-2222-4333-8444-555555555555"
+            },
+            "action": {
+              "kind": "revert",
+              "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f"
+            },
+            "decided": [],
+            "settled": [],
+            "skipped": [],
+            "changes": [
+              {
+                "id": "i1",
+                "before": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "confirmed",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z",
+                  "decidedAt": "2026-11-03T10:00:00.000Z",
+                  "decision": {
+                    "token": "5520aa05-5f07-4b5d-8ef6-32fe550cb54f",
+                    "previous": {
+                      "status": "suggested",
+                      "speaker": "Alex Example"
+                    },
+                    "actor": {
+                      "kind": "agent",
+                      "harness": "claude-code",
+                      "session": "11111111-2222-4333-8444-555555555555"
+                    },
+                    "entry": {
+                      "action": "confirm",
+                      "reason": "the calendar says so"
+                    }
+                  }
+                },
+                "after": {
+                  "kind": "speaker-range",
+                  "label": "Speaker 3",
+                  "fromSec": 12,
+                  "toSec": 30,
+                  "speaker": "Alex Example",
+                  "candidates": [
+                    "Alex Example",
+                    "Dana Example"
+                  ],
+                  "id": "i1",
+                  "status": "suggested",
+                  "confidence": 0.82,
+                  "rules": [
+                    "presence"
+                  ],
+                  "suggestedAt": "2026-11-03T09:47:00.000Z"
+                }
+              }
+            ],
+            "labels": [],
+            "corrections": []
+          }
+        }
+      }
+    },
+    {
+      "method": "comment.sent",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "comment.sent",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "token": "a5e0f331-d2d5-4255-bafd-94d8410024cf",
+          "comments": [
+            {
+              "id": "c1",
+              "at": "2026-11-03T10:00:00.000Z",
+              "target": {
+                "kind": "selection",
+                "from": {
+                  "atSec": 2,
+                  "line": 0
+                },
+                "to": {
+                  "atSec": 9,
+                  "line": 1
+                }
+              },
+              "text": "The button is the checkout button",
+              "quote": "The button moved",
+              "actor": {
+                "kind": "window"
+              },
+              "state": "sent",
+              "sentAt": "2026-11-03T10:00:00.000Z",
+              "token": "a5e0f331-d2d5-4255-bafd-94d8410024cf"
+            }
+          ],
+          "listeners": [
+            {
+              "pid": 4343,
+              "at": "2026-11-03T10:00:00.000Z",
+              "actor": {
+                "kind": "listen"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
       "method": "hello",
       "direction": "client→service",
       "note": "A CLI in an agent session: the harness and session come from whoIsCalling.",
@@ -502,12 +3123,42 @@
             "meeting.show",
             "meeting.transcript",
             "meeting.revisions",
-            "subscribe"
+            "decision.plan",
+            "decision.apply",
+            "decision.revert",
+            "journal.read",
+            "moment.plan",
+            "moment.clip",
+            "tone.preview",
+            "meeting.audio",
+            "meeting.speakers",
+            "meeting.screen",
+            "meeting.waveform",
+            "meetings.overview",
+            "config.read",
+            "config.set",
+            "config.unset",
+            "meeting.rows",
+            "comment.stage",
+            "comment.list",
+            "comment.unstage",
+            "comment.send",
+            "people.known",
+            "people.add",
+            "people.hide",
+            "people.planMerge",
+            "people.merge",
+            "people.unmerge",
+            "subscribe",
+            "unsubscribe"
           ],
           "events": [
-            "meeting.changed"
+            "meeting.changed",
+            "decision.applied",
+            "decision.reverted",
+            "comment.sent"
           ],
-          "version": "e06d18be0224"
+          "version": "7ddd26c23e59"
         }
       }
     },
