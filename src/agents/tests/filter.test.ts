@@ -8,6 +8,7 @@ import { filterForAgent, isVisibleToAgent, presenceModeFor } from "../lib/filter
 import {
     announceLapses,
     announceLeave,
+    foldRearms,
     leaveReasonOf,
     logInAndAnnounceJoin,
     notListening,
@@ -578,6 +579,54 @@ describe("agent_left", () => {
 
             expect(await announceLapses(paths, now + REARM_GRACE_MS)).toEqual([]);
             expect((await readFeed(paths)).filter((event) => event.type === "agent_left")).toHaveLength(1);
+        });
+    });
+
+    test("a late logout of an older login does not take the current login's re-arm away", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-rearm-late-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("rearm-late");
+            ensureSessionDir(paths);
+            const now = Date.now();
+            const killed = (loginId: string) =>
+                appendFeed(paths, {
+                    type: "logged_out",
+                    agent_id: "agt_beta",
+                    reason: "signal",
+                    mode: "stream",
+                    login_id: loginId,
+                    rearm_until: new Date(now).toISOString(),
+                });
+            const login = (loginId: string) =>
+                logInAndAnnounceJoin(paths, {
+                    agent_id: "agt_beta",
+                    agent_name: "beta",
+                    mode: "stream",
+                    login_id: loginId,
+                });
+
+            // Login A released its slot before writing its logout, so B logged in and out first.
+            await login("beta-a");
+            await login("beta-b");
+            await killed("beta-b");
+            await killed("beta-a");
+            // A leave that names the older login does not end B either.
+            await appendFeed(paths, {
+                type: "agent_left",
+                agent_id: "agt_beta",
+                agent_name: "beta",
+                reason: "ended",
+                remaining: [],
+                login_id: "beta-a",
+            });
+
+            const feed = await readFeed(paths);
+            expect(foldRearms(feed).pending.get("agt_beta")?.loginId).toBe("beta-b");
+            expect(pendingRearms(feed).get("agt_beta")?.loginId).toBe("beta-b");
+            expect(await announceLapses(paths, now + REARM_GRACE_MS)).toMatchObject([
+                { type: "agent_left", agent_id: "agt_beta", reason: "lapsed", login_id: "beta-b" },
+            ]);
         });
     });
 });

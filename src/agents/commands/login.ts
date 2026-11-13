@@ -27,11 +27,11 @@ import {
     announceLapses,
     announceLeave,
     endsInRearm,
+    foldRearms,
     hasDueRearm,
     leaveReasonOf,
     logInAndAnnounceJoin,
-    type PendingRearm,
-    pendingRearms,
+    type RearmFold,
     rearmUntil,
     trackRearm,
 } from "../lib/leave";
@@ -103,7 +103,7 @@ interface ActiveLogin {
     /** The `--presence` flag; absent means the agent's default (`presenceModeFor`). */
     presence: PresenceMode | undefined;
     /** Logins that ended with a `rearm_until`, kept from every event read; a due one is announced as lapsed. */
-    rearms: Map<string, PendingRearm>;
+    rearms: RearmFold;
     /** True while a lapse check holds the feed lock, so the timer never stacks two. */
     lapseCheckRunning: boolean;
 }
@@ -413,7 +413,7 @@ async function drainPending(active: ActiveLogin): Promise<number> {
  * decides under the feed lock, so the watchers never write one lapse twice.
  */
 async function checkLapses(active: ActiveLogin): Promise<void> {
-    if (active.lapseCheckRunning || !hasDueRearm(active.rearms)) {
+    if (active.lapseCheckRunning || !hasDueRearm(active.rearms.pending)) {
         return;
     }
 
@@ -425,9 +425,9 @@ async function checkLapses(active: ActiveLogin): Promise<void> {
 
         // Drop what was due: a lapse this login lost the race to write is in the feed already, and the agent_left
         // it reads next would drop it anyway.
-        for (const [agentId, entry] of active.rearms) {
+        for (const [agentId, entry] of active.rearms.pending) {
             if (Date.parse(entry.until) <= now) {
-                active.rearms.delete(agentId);
+                active.rearms.pending.delete(agentId);
             }
         }
     } catch (err) {
@@ -669,7 +669,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             }),
             presence,
             // Seeded from the whole feed: a re-arm that started before this login's cursor can still lapse.
-            rearms: new Map(pendingRearms(feedAtLogin)),
+            rearms: foldRearms(feedAtLogin),
             lapseCheckRunning: false,
         };
 
