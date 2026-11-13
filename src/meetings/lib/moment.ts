@@ -287,12 +287,45 @@ function timeSpan(lines: TranscriptLines, atSec: number, label: string): Span {
 }
 
 /**
+ * Where one voice asked at `atSec` stops: a single time's reach, but never into a later line of another speaker. The
+ * time span's minimum must not play the next voice after a short line (a line 30–32 s and another speaker at 32 s).
+ */
+function voiceReachSec(lines: TranscriptLines, atSec: number): number {
+    const reach = lineReachSec(lines, atSec);
+    const index = lineAt(lines, atSec);
+
+    if (index === undefined) {
+        return reach;
+    }
+
+    const speaker = lines.entries[index]?.speaker;
+
+    for (let next = index + 1; next < lines.entries.length; next++) {
+        const span = lines.span(next);
+
+        if (!span) {
+            continue;
+        }
+
+        if (span.fromSec >= reach) {
+            break;
+        }
+
+        if (lines.entries[next]?.speaker !== speaker) {
+            return Math.max(atSec, span.fromSec);
+        }
+    }
+
+    return reach;
+}
+
+/**
  * Where a voice's stretch ends. A stretch asked at one instant (a "who says this?" with one time, a range of one
- * line with no known end) reaches the end of its line, as a single time does: its own 0 s played only the two pads
- * of a voice, a 1.4 s clip nobody can name a speaker from.
+ * line with no known end, an automatic removal at its line's start) reaches the end of its line, as a single time
+ * does: its own 0 s played only the two pads of a voice, a 1.4 s clip nobody can name a speaker from.
  */
 function voiceEnd(lines: TranscriptLines, fromSec: number, toSec: number): number {
-    return toSec - fromSec < INSTANT_SEC ? Math.max(toSec, lineReachSec(lines, fromSec)) : toSec;
+    return toSec - fromSec < INSTANT_SEC ? Math.max(toSec, voiceReachSec(lines, fromSec)) : toSec;
 }
 
 function itemSpan(record: MeetingRecord, item: MeetingItem, lines: TranscriptLines): Span {
