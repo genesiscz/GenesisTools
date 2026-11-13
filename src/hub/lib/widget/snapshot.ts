@@ -1377,6 +1377,18 @@ export async function widgetSnapshot({
             group.newest = form;
         }
     }
+    // The full forms stop at the cards' limit; the heads do not. A listed session's count is its counted heads, so it
+    // agrees with `waiting.total`, and the newest full form still stands for the group's details.
+    const headCounts = new Map<WidgetSession, number>();
+    for (const head of formHeads ?? []) {
+        const session = formSessions.get(head.id) ?? (head.sessionHint ? findSession(head.sessionHint) : undefined);
+        if (session && formGroups.has(session) && countedKeys.has(`form:${head.id}`)) {
+            headCounts.set(session, (headCounts.get(session) ?? 0) + 1);
+        }
+    }
+    for (const [session, group] of formGroups) {
+        group.count = Math.max(group.count, headCounts.get(session) ?? 0);
+    }
     for (const [session, { newest, count }] of formGroups) {
         const title = widgetTitle(newest.items[0]?.promptMarkdown);
         putInbox(
