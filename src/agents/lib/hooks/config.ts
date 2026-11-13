@@ -305,6 +305,16 @@ export interface ModsConfig {
          * those diffs are other people's work arriving, often hundreds of lines.
          */
         collapseGitSync: boolean;
+        /**
+         * Under an open diff, a second row of buttons: an arrow that jumps to the top of the block, and the fold
+         * buttons again, so a long diff folds from where the reading ended. The fold scrolls to the block first.
+         */
+        bottomRow: boolean;
+        /**
+         * Start every diff block as its file names. The `files only (everywhere)` button sets the same for one
+         * session, for the blocks already drawn and the ones drawn later.
+         */
+        filesOnly: boolean;
     };
     /**
      * Compact an idle Claude session `minutes` after its last turn, before the 1-hour prompt cache expires, when

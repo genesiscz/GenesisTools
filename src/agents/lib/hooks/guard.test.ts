@@ -219,6 +219,21 @@ describe("the guard explains a rule once per loop", () => {
         expect(repeat.userMessage).toContain("wrong:");
     });
 
+    it("the user's text carries only the corrected part of a long command, never the whole command again", () => {
+        const body = Array.from({ length: 240 }, (_, index) => `HEREDOC-LINE-${index}`).join("\n");
+        const long = `cat > /tmp/out.txt <<'EOF'\n${body}\nEOF\nmake build 2>&1 | tail -20; echo "exit=\${PIPESTATUS[0]}"`;
+        const verdict = evaluateCommand(long, DEFAULT_HOOKS_CONFIG);
+
+        expect(verdict.tags).toContain("pipestatus-under-zsh");
+        expect(verdict.userMessage).toContain("corrected part (the rest stays as you wrote it):");
+        expect(verdict.userMessage).toContain("pipestatus[1]");
+        expect(verdict.userMessage).not.toContain("HEREDOC-LINE-120");
+        expect(verdict.userMessage).not.toContain("your command, corrected:");
+        // Still every rule in full for the person, on a repeat too.
+        expect(verdict.userMessage).toContain("wrong:");
+        expect(verdict.userMessage.length).toBeLessThan(2_500);
+    });
+
     it("is compact on the second firing in a loop, long in another loop, and long again after a compaction", async () => {
         const { dir, transcript } = fixture();
         const sessionId = "sess-explained-loop";
