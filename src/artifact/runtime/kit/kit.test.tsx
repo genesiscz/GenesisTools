@@ -5,7 +5,7 @@ import { parsePatch } from "diff";
 import { act, useState } from "react";
 import { THEME_PREPAINT_SCRIPT } from "../../lib/templates";
 import { SERIES_COLOR } from "./charts";
-import { contrastRatio, parseCssColor, readableTextOn } from "./color";
+import { contrastRatio, parseCssColor, readableInlineInk, readableTextOn } from "./color";
 import { DataTable, type DataTableCell, Tabs, Timeline, tabHash, tabIdFromHash } from "./data";
 import { Mermaid } from "./diagrams";
 import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
@@ -644,6 +644,30 @@ describe("colour maths", () => {
         expect(Math.round(contrastRatio("#000", "#ffffff"))).toBe(21);
         expect(readableTextOn("#eda100")).toBe("#111318");
         expect(readableTextOn("rgb(40, 40, 120)")).toBe("#ffffff");
+    });
+    test("computed oklch, oklab, lab, lch and wide-gamut fills convert to sRGB", () => {
+        const near = (value: string, [r, g, b]: [number, number, number]) => {
+            const rgb = parseCssColor(value);
+            expect(rgb).not.toBeNull();
+            expect(
+                Math.abs((rgb?.r ?? -9) - r) + Math.abs((rgb?.g ?? -9) - g) + Math.abs((rgb?.b ?? -9) - b)
+            ).toBeLessThan(3);
+        };
+        near("oklch(0.628 0.2577 29.23)", [255, 0, 0]);
+        near("oklch(95% 0 0)", [238, 238, 238]);
+        near("oklch(1 0 none / 0.5)", [255, 255, 255]);
+        near("oklab(0.5 0 0)", [99, 99, 99]);
+        near("lab(50 0 0)", [119, 119, 119]);
+        near("lch(50% 0 120deg)", [119, 119, 119]);
+        near("color(display-p3 1 0 0)", [255, 0, 0]);
+        near("color(srgb-linear 0.5 0.5 0.5)", [188, 188, 188]);
+        expect(parseCssColor("color(rec2020 1 0 0)")).toBeNull();
+        expect(readableTextOn("oklch(95% 0 0)")).toBe("#111318");
+        expect(readableTextOn("oklch(0.25 0.05 260)")).toBe("#ffffff");
+    });
+    test("inline ink keeps the stylesheet's ink for a fill it cannot read", () => {
+        expect(readableInlineInk("oklch(95% 0 0)")).toBe("#111318");
+        expect(readableInlineInk("color(rec2020 0.9 0.9 0.9)")).toBe("");
     });
 });
 

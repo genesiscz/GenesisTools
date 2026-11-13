@@ -313,7 +313,9 @@ bodies render as markdown.
 - Theme: `ThemeToggle`/`useTheme` (override for the `auto` and `paper` templates; TopNav shows a toggle by default,
   opt out with `theme={false}`; `variant="cycle"` is one
   pill button), `SERIES_COLOR` (8 lane colours from the shared `--series-*` tokens),
-  `contrastRatio`/`readableTextOn`.
+  `contrastRatio`/`readableTextOn`/`readableInlineInk` (`parseCssColor` reads hex, `rgb()` and the computed `oklch()`,
+  `oklab()`, `lab()`, `lch()` and `color(srgb | srgb-linear | display-p3 …)`; `readableInlineInk` answers "" for any other
+  colour, so the stylesheet ink stays).
 
 ### Decision controls
 

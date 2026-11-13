@@ -456,6 +456,9 @@ describe("filled visualization contrast", () => {
                 "color(srgb 0.17 0.533 0.7)",
                 "rgb(245, 243, 238)",
                 "rgb(15, 18, 24)",
+                "oklch(95% 0 0)",
+                "oklch(0.3 0.06 250)",
+                "color(display-p3 0.95 0.92 0.6)",
             ]) {
                 fill = background;
                 await dom.render(view());
@@ -463,6 +466,12 @@ describe("filled visualization contrast", () => {
                 expect(cells).toHaveLength(3);
                 expect(cells.every((cell) => contrastRatio(cell.style.color, fill) >= 4.5)).toBe(true);
             }
+
+            // A fill the colour maths cannot read keeps the stylesheet's ink instead of a guessed white.
+            fill = "color(rec2020 0.9 0.9 0.9)";
+            await dom.render(view());
+            const unread = [...dom.container.querySelectorAll<HTMLElement>("[data-readable-fill]")];
+            expect(unread.map((cell) => cell.style.color)).toEqual(["", "", ""]);
 
             expect(dom.container.querySelector('[data-status="over"]')?.getAttribute("style")).toContain("outline");
             expect(dom.container.querySelector("small")?.className).not.toContain("opacity");

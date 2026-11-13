@@ -1,6 +1,6 @@
 import { type CSSProperties, useId, useLayoutEffect, useRef } from "react";
 import { TONE_COLOR } from "./charts";
-import { readableTextOn } from "./color";
+import { readableInlineInk } from "./color";
 import { TONE_DOT, TONE_TEXT, type Tone } from "./primitives";
 import { useColorSchemeTick } from "./theme";
 import { useTooltip } from "./tooltip";
@@ -16,7 +16,7 @@ function useReadableFills() {
 
         cells.forEach((cell, i) => {
             const fill = fills[i];
-            const color = colors.get(fill) ?? readableTextOn(fill);
+            const color = colors.get(fill) ?? readableInlineInk(fill);
             colors.set(fill, color);
             cell.style.color = color;
         });

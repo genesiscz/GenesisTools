@@ -9,7 +9,7 @@ import {
     useState,
 } from "react";
 import { SERIES_COLOR } from "./charts";
-import { readableTextOn } from "./color";
+import { readableInlineInk } from "./color";
 import { TONE_TEXT, TONE_VAR, type Tone } from "./primitives";
 import { useColorSchemeTick } from "./theme";
 import { type TooltipContent, useTooltip } from "./tooltip";
@@ -1069,7 +1069,7 @@ function BarRow({
     // In-bar text colour by contrast against the RESOLVED bar colour, so a light series stays readable.
     useLayoutEffect(() => {
         if (textRef.current && barRef.current) {
-            textRef.current.style.color = readableTextOn(getComputedStyle(barRef.current).backgroundColor);
+            textRef.current.style.color = readableInlineInk(getComputedStyle(barRef.current).backgroundColor);
         }
     });
 
