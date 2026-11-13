@@ -48,6 +48,7 @@ import {
     ownSessionDirs,
     recentOpenFiles,
 } from "./tmp-reclaim";
+import { behindReport, behindUnified, lacksChanges } from "./unified-behind";
 import {
     conflictedFiles,
     higherVersionSide,
@@ -220,6 +221,52 @@ describe("safe restack helpers", () => {
         expect(unpickedCommits({ cwd, upstream, head: spacesDiffer })).toEqual([spacesDiffer]);
         expect(unpickedCommits({ cwd, upstream, head: sameChange })).toEqual([]);
         expect(unpickedCommits({ cwd, upstream, head: spacesDiffer, limit: base })).toEqual([spacesDiffer]);
+    });
+
+    test("a fix that is only on a PR branch is named as missing from the integration branch, a picked one is not", () => {
+        const { cwd, git } = verifyRepo();
+        const commit = (from: string, text: string, message: string) => {
+            git("checkout", "-q", "--detach", from);
+            fs.writeFileSync(join(cwd, "f.ts"), `export const s = "${text}";\n`);
+            git("commit", "-qam", message);
+            return git("rev-parse", "HEAD");
+        };
+        fs.writeFileSync(join(cwd, "f.ts"), 'export const s = "x";\n');
+        git("add", "f.ts");
+        git("commit", "-qm", "base");
+        const base = git("rev-parse", "HEAD");
+        const fixOnPr = commit(base, "fixed", "fix(x): #1 followup - the fix a worker pushed");
+        git("branch", "unified-without", base);
+        git("branch", "unified-with", commit(base, "fixed", "fix(x): #1 followup - the fix, picked"));
+
+        const missing = behindUnified({ cwd, branch: "unified-without", refs: [fixOnPr] });
+        expect(missing).toEqual([
+            {
+                ref: fixOnPr,
+                lacking: ["f.ts"],
+                conflicted: [],
+                commits: [{ sha: fixOnPr, subject: "fix(x): #1 followup - the fix a worker pushed" }],
+            },
+        ]);
+        expect(behindReport("unified-without", missing).at(-1)).toContain(
+            `pick-unified.ts --branch unified-without ${fixOnPr.slice(0, 10)}`
+        );
+        expect(behindUnified({ cwd, branch: "unified-with", refs: [fixOnPr] })).toEqual([]);
+        // A recomposed branch: unified made the same change in two commits, so no patch id matches, yet it holds it.
+        git("branch", "unified-in-two-steps", commit(commit(base, "fi", "step one"), "fixed", "step two"));
+        expect(git("cherry", "unified-in-two-steps", fixOnPr)).toStartWith("+");
+        expect(behindUnified({ cwd, branch: "unified-in-two-steps", refs: [fixOnPr] })).toEqual([]);
+        // Unified changed the same line another way: the merge cannot say which side holds the other.
+        git("branch", "unified-other-way", commit(base, "other", "another change of the line"));
+        expect(behindUnified({ cwd, branch: "unified-other-way", refs: [fixOnPr] })[0]).toMatchObject({
+            lacking: [],
+            conflicted: ["f.ts"],
+        });
+        expect(
+            behindReport("unified-without", behindUnified({ cwd, branch: "unified-without", refs: [fixOnPr] })).at(-1)
+        ).toContain(`pick-unified.ts --branch unified-without ${fixOnPr.slice(0, 10)}`);
+        expect(lacksChanges(missing)).toBe(true);
+        expect(lacksChanges(behindUnified({ cwd, branch: "unified-other-way", refs: [fixOnPr] }))).toBe(false);
     });
 
     test("the verifier calls a patch CHANGED when only the spaces inside a string literal changed", () => {
