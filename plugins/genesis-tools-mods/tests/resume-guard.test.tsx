@@ -275,6 +275,63 @@ test("resume guard: an unknown size passes and is logged; the transcript's last 
     });
 });
 
+test("resume guard: a compaction in the transcript replaces the usage before it, and a capped read that found none says so", async () => {
+    const { host, agents, files, lines } = fixture();
+    agents.push(agent("packed"), agent("blank"), agent("huge"));
+    ranBefore(host, "packed", 20);
+    ranBefore(host, "blank", 20);
+    ranBefore(host, "huge", 20);
+    const large = {
+        input_tokens: 4,
+        cache_read_input_tokens: 240_000,
+        cache_creation_input_tokens: 0,
+        output_tokens: 0,
+    };
+    const usageRow = JSON.stringify({ message: { role: "assistant", usage: large } });
+    const boundary = (postTokens?: number) =>
+        JSON.stringify({ type: "system", subtype: "compact_boundary", compactMetadata: { postTokens } });
+    files.set(`${SESSION_DIR}/subagents/agent-packed.jsonl`, {
+        text: `${usageRow}\n${boundary(12_000)}\n{"type":"user","message":{}}\n`,
+        mtimeMs: Date.now() - 20 * MINUTE,
+    });
+    files.set(`${SESSION_DIR}/subagents/agent-blank.jsonl`, {
+        text: `${usageRow}\n${boundary()}\n`,
+        mtimeMs: Date.now() - 20 * MINUTE,
+    });
+
+    // The agent holds the compacted context now: small, so the send passes.
+    expect(await guardResume(host, send("packed"))).toBeUndefined();
+    expect(guardLog(lines).at(-1)).toMatchObject({ reason: "small", tokens: 12_000, tokensFrom: "transcript" });
+
+    // A boundary without its size leaves the size unknown, never the old usage before it.
+    expect(await guardResume(host, send("blank"))).toBeUndefined();
+    expect(guardLog(lines).at(-1)).toMatchObject({ reason: "size-unknown", tokens: null });
+
+    // A transcript longer than the searched end, with no usage in that end: the log names the cap and the size.
+    files.set(`${SESSION_DIR}/subagents/agent-huge.jsonl`, {
+        text: `{"type":"user","message":{}}\n${"x".repeat(1_048_600)}\n`,
+        mtimeMs: Date.now() - 20 * MINUTE,
+    });
+    expect(await guardResume(host, send("huge"))).toBeUndefined();
+    expect(guardLog(lines).at(-1)).toMatchObject({
+        reason: "size-unknown",
+        tail: "read-capped",
+        searched: { capBytes: 1_048_576, isCapped: true },
+    });
+    expect(lastContextOf(`${usageRow}\n${boundary(9_000)}\n${usageRow}`)).toBe(240_004);
+});
+
+test("resume guard: two sends at once to the same cold agent refuse once, and the second goes through", async () => {
+    const { host, agents } = fixture();
+    agents.push(agent("scout"));
+    ranBefore(host, "scout", 7, 240_000);
+
+    const both = await Promise.all([guardResume(host, send("scout")), guardResume(host, send("scout"))]);
+    expect(both.filter((answer) => answer !== undefined)).toHaveLength(1);
+    expect(both[0]).toContain("Not sent (resume guard, once)");
+    expect(both[1]).toBeUndefined();
+});
+
 test("resume guard: a finished agent the engine no longer lists is found by its transcript and refused once", async () => {
     const { host, files, lines } = fixture();
     files.set(`${SESSION_DIR}/subagents/agent-a1b2c3d4e5f60789.jsonl`, {

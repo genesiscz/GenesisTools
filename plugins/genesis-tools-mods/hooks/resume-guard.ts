@@ -104,12 +104,27 @@ function countOf(value: unknown): number {
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-/** The context of the last model call in a transcript's end, or undefined when that end holds none. */
+/**
+ * The context of the last model call in a transcript's end, or undefined when that end holds none. A compaction after
+ * that call ends the search: the agent holds the compacted context now, which the boundary row states
+ * (`compactMetadata.postTokens`, as the readers' `claude-tail-usage.ts` reads it), else it is unknown. The usage
+ * before the boundary is the old, larger context and would refuse an agent that is small now.
+ */
 export function lastContextOf(tail: string): number | undefined {
     const lines = tail.split("\n");
 
     for (let index = lines.length - 1; index >= 0; index--) {
         const line = lines[index] ?? "";
+
+        if (line.includes('"compact_boundary"')) {
+            const boundary = jsonOf(line);
+
+            if (isRecord(boundary) && boundary.subtype === "compact_boundary") {
+                const post = isRecord(boundary.compactMetadata) ? boundary.compactMetadata.postTokens : undefined;
+
+                return typeof post === "number" && post > 0 ? post : undefined;
+            }
+        }
 
         if (!line.includes('"usage"')) {
             continue;
@@ -306,22 +321,33 @@ async function readTranscript(
     host: Host,
     agentId: string,
     want: { idle: boolean; tokens: boolean }
-): Promise<{ path: string | undefined; mtimeMs?: number; tokens?: number; tail?: string }> {
+): Promise<{
+    path: string | undefined;
+    mtimeMs?: number;
+    tokens?: number;
+    tail?: string;
+    /** The bytes searched for the last usage, and the transcript's size when the cap left its start unread. */
+    searched?: { capBytes: number; sizeBytes: number | null; isCapped: boolean };
+}> {
     const path = await transcriptOf(host, agentId);
 
     if (!path) {
         return { path };
     }
 
-    const stat = want.idle ? await host.stat(path).catch(() => undefined) : undefined;
+    const stat = want.idle || want.tokens ? await host.stat(path).catch(() => undefined) : undefined;
     const done = want.tokens
         ? await host.run(["tail", "-c", String(TAIL_BYTES), path], { timeoutMs: 5_000 }).catch(() => undefined)
         : undefined;
     const tail =
         done === undefined ? undefined : done.exitCode !== 0 ? "failed" : done.isStdoutTruncated ? "cut" : "read";
     const tokens = tail === "read" && done ? lastContextOf(done.stdout) : undefined;
+    const sizeBytes = stat?.size ?? null;
+    // `tail -c` read the last TAIL_BYTES only: a usage row before them, or cut at their start, is not seen.
+    const isCapped = sizeBytes === null || sizeBytes > TAIL_BYTES;
+    const searched = done === undefined ? undefined : { capBytes: TAIL_BYTES, sizeBytes, isCapped };
 
-    return { path, mtimeMs: stat?.mtimeMs, tokens, tail };
+    return { path, mtimeMs: stat?.mtimeMs, tokens, tail: tail === "read" && isCapped ? "read-capped" : tail, searched };
 }
 
 /** One event of `definition` in the `tools metrics` spool. */
@@ -456,6 +482,45 @@ export async function guardResume(host: Host, e: ToolCallInput): Promise<string 
         return undefined;
     }
 
+    return oneAtATime(agent.id, () => decideFor(host, { agent, to, settings, log }));
+}
+
+/** Each agent's decision still running: a second send to the same agent waits for it, so it sees that refusal. */
+const deciding = new Map<string, Promise<unknown>>();
+
+/**
+ * Runs `decide` after the decision before it for the same agent. The refusal is published after several awaits (the
+ * transcript, the log, the report); two sends at once both read no refusal and both refused, and a retry made while
+ * the first refusal was still being written was refused again.
+ */
+function oneAtATime<T>(agentId: string, decide: () => Promise<T>): Promise<T> {
+    const result = (deciding.get(agentId) ?? Promise.resolve()).then(decide);
+    const tail = result.catch(() => undefined);
+    deciding.set(agentId, tail);
+    void tail.then(() => {
+        if (deciding.get(agentId) === tail) {
+            deciding.delete(agentId);
+        }
+    });
+
+    return result;
+}
+
+/** The decision on one send to `agent`: the refusal text, or undefined to let it through. */
+async function decideFor(
+    host: Host,
+    {
+        agent,
+        to,
+        settings,
+        log,
+    }: {
+        agent: ResumeTarget;
+        to: string | undefined;
+        settings: ResumeSettings;
+        log: (record: Record<string, unknown>) => Promise<unknown>;
+    }
+): Promise<string | undefined> {
     const now = agentClockTime.now();
     const activeAt = agentActiveAt(agent.id);
     const held = refusals.get(agent.id);
@@ -492,6 +557,12 @@ export async function guardResume(host: Host, e: ToolCallInput): Promise<string 
         sources.tokensFrom ??= read.tokens === undefined ? null : "transcript";
         sources.transcript = read.path ?? null;
         sources.tail = read.tail ?? null;
+
+        // A capped read that found no usage may have missed it: the log says how much was searched of how much.
+        if (read.searched && read.tokens === undefined && facts.tokens === undefined) {
+            sources.searched = read.searched;
+        }
+
         decision = decideResume(settings, facts);
     }
 
@@ -560,4 +631,5 @@ export function forgetResumeGuard(): void {
     contexts.clear();
     refusals.clear();
     passed.clear();
+    deciding.clear();
 }
