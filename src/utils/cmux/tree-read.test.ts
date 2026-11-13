@@ -161,6 +161,19 @@ describe("readCmuxTree", () => {
         expect(cmuxDidNotAnswer(read)).toBe(false);
     });
 
+    test("a probe that never settles is bounded, the command's error stands, and the next read is not stuck", async () => {
+        const started = performance.now();
+        const options = { run: failing, probe: () => new Promise<unknown>(() => {}), probeTimeoutMs: 30 };
+
+        expect(await readCmuxTree(options)).toEqual({
+            ok: false,
+            reason: "failed",
+            error: "cmux tree --all failed (1): timed out",
+        });
+        expect(await readCmuxTree(options)).toMatchObject({ ok: false, reason: "failed" });
+        expect(performance.now() - started).toBeLessThan(1_000);
+    });
+
     test("callers in flight at the same moment share one cmux call", async () => {
         let calls = 0;
         let answer: (value: unknown) => void = () => {};
