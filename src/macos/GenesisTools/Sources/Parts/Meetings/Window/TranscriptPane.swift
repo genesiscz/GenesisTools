@@ -119,7 +119,7 @@ struct TranscriptBlocksPane: View {
 
     @ViewBuilder
     private var header: some View {
-        HStack(spacing: 8) {
+        WrapLayout(spacing: 8, lineSpacing: 6) {
             Picker("Apply above", selection: $applyAbove) {
                 ForEach([50, 60, 70, 80, 90], id: \.self) { value in Text("\(value) %").tag(value) }
             }.frame(width: 140)
@@ -140,9 +140,7 @@ struct TranscriptBlocksPane: View {
                 Text("Transcript").font(.system(size: 12, weight: .semibold))
             }
             if let headerField {
-                headerField.frame(maxWidth: .infinity)
-            } else {
-                Spacer(minLength: 6)
+                headerField.frame(minWidth: 160, idealWidth: 220, maxWidth: 320)
             }
             if detail.busy.contains("word-timings") {
                 ProgressView().controlSize(.small)
