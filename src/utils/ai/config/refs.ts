@@ -48,6 +48,11 @@ export interface Referrer {
     /** Dotted location inside the config, e.g. `defaults.app.youtube.chat.model`. */
     path: string;
     ref: AccountRef;
+    /**
+     * The keys from the config root to the ref, set for a ref in this config. A record key may hold a dot (an alias
+     * named `work.fast`), so code that edits the config walks these, never a split of `path`.
+     */
+    segments?: readonly (string | number)[];
 }
 
 type ExternalScanner = () => Promise<Referrer[]>;
@@ -67,11 +72,13 @@ export function _clearExternalRefScanners(): void {
     externalScanners.clear();
 }
 
-function walk(value: unknown, path: string, out: Referrer[]): void {
+function walk(value: unknown, at: { path: string; segments: readonly (string | number)[] }, out: Referrer[]): void {
+    const { path, segments } = at;
+
     if (typeof value === "string") {
         const ref = accountRefIn(value);
         if (ref) {
-            out.push({ path, ref });
+            out.push({ path, ref, segments });
         }
 
         return;
@@ -79,14 +86,14 @@ function walk(value: unknown, path: string, out: Referrer[]): void {
 
     if (Array.isArray(value)) {
         value.forEach((item, index) => {
-            walk(item, `${path}[${index}]`, out);
+            walk(item, { path: `${path}[${index}]`, segments: [...segments, index] }, out);
         });
         return;
     }
 
     if (value && typeof value === "object") {
         for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-            walk(child, path ? `${path}.${key}` : key, out);
+            walk(child, { path: path ? `${path}.${key}` : key, segments: [...segments, key] }, out);
         }
     }
 }
@@ -99,8 +106,8 @@ function walk(value: unknown, path: string, out: Referrer[]): void {
 export async function allReferrers(config: AiConfigData): Promise<Referrer[]> {
     const found: Referrer[] = [];
 
-    walk(config.defaults, "defaults", found);
-    walk(config.models ?? {}, "models", found);
+    walk(config.defaults, { path: "defaults", segments: ["defaults"] }, found);
+    walk(config.models ?? {}, { path: "models", segments: ["models"] }, found);
 
     for (const [name, scan] of externalScanners) {
         const external = await scan();

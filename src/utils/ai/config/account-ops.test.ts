@@ -279,6 +279,19 @@ describe("removeAccount", () => {
         expect(await (await secrets()).get("ai/acc_used/apiKey")).toBeUndefined();
     });
 
+    test("--force clears a ref under a record key that holds a dot", async () => {
+        const created = await addAccount({ provider: "fake", name: "dotted" });
+        const store = await AiConfigStore.load();
+        await store.mutate((data) => {
+            data.models = { ...data.models, aliases: { "work.fast": `@account/${created.id}:opus`, keep: "opus" } };
+        });
+
+        const result = await removeAccount("dotted", { force: true });
+
+        expect(result.refsCleared).toEqual(["models.aliases.work.fast"]);
+        expect(readRawConfig().models?.aliases).toEqual({ keep: "opus" });
+    });
+
     test("an unreferenced account needs no force", async () => {
         await addAccount({ provider: "fake", name: "lonely" });
 
