@@ -58,6 +58,28 @@ test("service comment refusals keep their code in human and JSON errors", () => 
     });
 });
 
+test("listen --spot-check prepares through the Meetings service, which caps the sample count", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Quality round", start: "2026-11-09T10:00:00Z", createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const human = spyOn(ui, "err").mockImplementation(() => {});
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+        await program.parseAsync(["listen", record.id, "--spot-check", "600", "--prepare-only"], { from: "user" });
+        expect(process.exitCode).toBe(1);
+        expect(String(human.mock.calls.at(-1)?.[0])).toContain("500");
+        expect(store.read(record.id)?.items).toEqual([]);
+    } finally {
+        human.mockRestore();
+        raw.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 test("standalone subscription flags fail before resolving or reading a meeting", async () => {
     const raw = spyOn(ui, "raw").mockImplementation(() => {});
     const human = spyOn(ui, "err").mockImplementation(() => {});

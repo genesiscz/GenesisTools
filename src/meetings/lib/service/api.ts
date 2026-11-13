@@ -191,6 +191,8 @@ export const listenPrepare = defineMethod({
             group: z.enum(["spot-check", "long-stretch"]),
             count: z.number().int().min(1).max(500).optional(),
             words: z.number().int().min(1).optional(),
+            /** long-stretch: a line below this confidence (0 to 1) is unsure enough to ask about; 0.7 by default. */
+            below: z.number().min(0).max(1).optional(),
         })
         .strict(),
     result: z.object({ meeting: z.string(), questions: z.array(z.string()) }),

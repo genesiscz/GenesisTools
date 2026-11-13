@@ -37,7 +37,7 @@ import {
     writeQuestionClips,
 } from "../lib/listen-clips";
 import { listenQuestionFindings, roundQuestionIds, selectedQuestionIds } from "../lib/listen-input";
-import { addQualityQuestions, clipProgress, qualityVoiceFeatures } from "../lib/listen-quality";
+import { clipProgress } from "../lib/listen-quality";
 import {
     type AskedQuestion,
     type ListenAdapter,
@@ -60,7 +60,6 @@ import {
 import { speakerAnswerScores } from "../lib/review-rows";
 import { openMeetingsClient } from "../lib/service/client";
 import { fail, TOOL } from "../lib/shared";
-import { enrolMeetingVoices } from "../lib/voice-enrolment";
 
 const PAD_CHOICES = [5, 10] as const;
 const AGAIN = "\u0000again";
@@ -704,8 +703,15 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
     if (opts.enrolVoices) {
-        const result = await enrolMeetingVoices({ opened: OpenedMeeting.of(store, meeting), store });
-        out.result(SafeJSON.stringify(result));
+        // Through the Meetings service when one runs, so an open window hears the change.
+        const client = await openMeetingsClient({ role: "cli" });
+        try {
+            out.result(SafeJSON.stringify(await client.call("meeting.voice.enrol", { meeting: meeting.id })));
+        } catch (error) {
+            fail(error);
+        } finally {
+            client.close();
+        }
         return;
     }
     const group = opts.group ?? (opts.spotCheck ? "spot-check" : opts.longStretchWords ? "long-stretch" : "all");
@@ -714,7 +720,6 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
     if (opts.spotCheck || opts.longStretchWords) {
-        const entries = (await OpenedMeeting.of(store, meeting).meeting()).transcript;
         const spotCheck = opts.spotCheck === undefined ? undefined : Number(opts.spotCheck);
         const longStretchWords = opts.longStretchWords === undefined ? undefined : Number(opts.longStretchWords);
         if (
@@ -725,19 +730,33 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             fail("Spot-check count and long-stretch word count must be positive integers");
             return;
         }
-        const opened = OpenedMeeting.of(store, meeting);
-        const features = opts.longStretchWords ? await qualityVoiceFeatures(opened) : undefined;
-        meeting = await store.update(meeting.id, { command: "listen", change: "quality question groups" }, (record) => {
-            addQualityQuestions({
-                record,
-                entries,
-                spotCheck,
-                longStretchWords,
-                features,
-                channel: record.evidence?.channels?.layout === "right-mic" ? 0 : 1,
-                below: opts.applyAbove ? Number(opts.applyAbove) / 100 : undefined,
-            });
-        });
+        // Through the Meetings service when one runs (it validates the sizes and tells an open window), one group a call.
+        const client = await openMeetingsClient({ role: "cli" });
+        try {
+            if (spotCheck !== undefined) {
+                await client.call("meeting.listen.prepare", {
+                    meeting: meeting.id,
+                    group: "spot-check",
+                    count: spotCheck,
+                });
+            }
+
+            if (longStretchWords !== undefined) {
+                await client.call("meeting.listen.prepare", {
+                    meeting: meeting.id,
+                    group: "long-stretch",
+                    words: longStretchWords,
+                    ...(applyAbove === undefined ? {} : { below: applyAbove }),
+                });
+            }
+        } catch (error) {
+            fail(error);
+            return;
+        } finally {
+            client.close();
+        }
+
+        meeting = store.read(meeting.id) ?? meeting;
     }
     if (opts.prepareOnly) {
         out.result(
