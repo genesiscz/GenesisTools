@@ -4,7 +4,8 @@ import {
     ENDPOINTS,
     type EndpointMethod,
     type EventSourceLike,
-
+    type LiveChannel,
+    type LiveFrameOf,
     pathMatches,
     paths,
     QA_STREAM_PATH,
@@ -55,6 +56,7 @@ import { MOCK_TIMESHEET } from "@/api/fixtures/timesheet";
 import { MOCK_HEALTH, MOCK_WAKE } from "@/api/fixtures/wake";
 import { MOCK_WATCHING } from "@/api/fixtures/watching";
 import { fixtureAnswerForm, fixtureDraft, fixtureQueue, fixtureSendDrafts } from "@/api/fixtures/queue";
+import { LIVE_CACHE_TABLE } from "@/live/cache-table";
 
 /**
  * The fixture wire: the third adapter at the client's fetch seam, beside the plain wire (expo fetch) and the sealed
@@ -132,7 +134,13 @@ const ROUTES: FixtureRoute[] = [
     {
         method: "POST",
         path: paths.liveSubscribe(),
-        handle: ({ body }) => ({ ok: true, channels: Array.isArray(body.channels) ? body.channels : [] }),
+        handle: ({ body }) => {
+            const channels = Array.isArray(body.channels)
+                ? body.channels.filter((channel): channel is string => typeof channel === "string")
+                : [];
+            FIXTURE_LIVE.get(text(body.connId))?.(channels);
+            return { ok: true, channels };
+        },
     },
     {
         method: "GET",
@@ -568,10 +576,119 @@ function replay(frames: { delayMs: number; data: unknown }[]): EventSourceLike {
 }
 
 /**
+ * What the fixture live stream sends on one channel, in place of the Mac's producer: a frame when the channel joins,
+ * after `firstMs`, and again at the poll interval the channel replaces when the frame is a value that changes. A live
+ * channel turns its screen's poll off, so a channel that went quiet after its first frame would freeze that screen.
+ */
+interface FixtureFeed<C extends LiveChannel> {
+    firstMs: number;
+    repeats: boolean;
+    frame: () => LiveFrameOf<C>;
+}
+
+/** One row per channel; a channel added to the contract fails to compile until it has one. */
+const FIXTURE_FEEDS: { [C in LiveChannel]: FixtureFeed<C> | null } = {
+    ports: { firstMs: 50, repeats: true, frame: () => ({ v: 1, channel: "ports", type: "snapshot", payload: MOCK_PORTS }) },
+    pulse: { firstMs: 50, repeats: true, frame: () => ({ v: 1, channel: "pulse", type: "snapshot", payload: mockPulse() }) },
+    "ai-usage": {
+        firstMs: 50,
+        repeats: true,
+        frame: () => ({
+            v: 1,
+            channel: "ai-usage",
+            type: "snapshot",
+            payload: { fetchedAt: new Date().toISOString(), snapshots: [] },
+        }),
+    },
+    qa: { firstMs: 800, repeats: false, frame: () => ({ v: 1, channel: "qa", type: "entry", payload: MOCK_QA[0] }) },
+    // Notices of a change: fixture data changes only through the phone's own writes, which refetch what they touch.
+    decisions: null,
+    pending: null,
+    handoffs: null,
+    agents: {
+        firstMs: 50,
+        repeats: true,
+        frame: () => ({ v: 1, channel: "agents", type: "snapshot", payload: { sessions: MOCK_BOARD.sessions } }),
+    },
+};
+
+function isLiveChannel(name: string): name is LiveChannel {
+    return Object.hasOwn(FIXTURE_FEEDS, name);
+}
+
+/** The open fixture live streams by connection id, so a `POST /api/live/subscribe` reaches its stream. */
+const FIXTURE_LIVE = new Map<string, (channels: readonly string[]) => void>();
+let fixtureLiveCount = 0;
+
+/**
+ * One fixture `/api/live` stream: a hello like the Mac's, then each asked channel's feed, and the feeds follow a
+ * subscription change for this connection. Closing the stream clears every timer.
+ */
+function liveStream(channels: readonly string[], everyMs: number | undefined): EventSourceLike {
+    fixtureLiveCount++;
+    const connId = `fixture-${fixtureLiveCount}`;
+    const source: EventSourceLike = { onmessage: null, onopen: null, onerror: null, close: () => undefined };
+    const send = (data: unknown) => source.onmessage?.({ data: SafeJSON.stringify(data) });
+    const feeds = new Map<LiveChannel, () => void>();
+
+    const setChannels = (next: readonly string[]) => {
+        const wanted = next.filter(isLiveChannel);
+
+        for (const [channel, stop] of feeds) {
+            if (!wanted.includes(channel)) {
+                stop();
+                feeds.delete(channel);
+            }
+        }
+
+        for (const channel of wanted) {
+            const feed = FIXTURE_FEEDS[channel];
+
+            if (!feed || feeds.has(channel)) {
+                continue;
+            }
+
+            const period = everyMs ?? LIVE_CACHE_TABLE[channel].fallbackMs;
+            let repeat: ReturnType<typeof setInterval> | undefined;
+            const first = setTimeout(() => {
+                send(feed.frame());
+
+                if (feed.repeats && period !== null) {
+                    repeat = setInterval(() => send(feed.frame()), period);
+                }
+            }, feed.firstMs);
+            feeds.set(channel, () => {
+                clearTimeout(first);
+                clearInterval(repeat);
+            });
+        }
+    };
+
+    const opened = setTimeout(() => {
+        source.onopen?.({});
+        send({ v: 1, channel: "system", type: "hello", payload: { connId, channels: channels.filter(isLiveChannel) } });
+        setChannels(channels);
+    }, 0);
+    FIXTURE_LIVE.set(connId, setChannels);
+    source.close = () => {
+        clearTimeout(opened);
+        FIXTURE_LIVE.delete(connId);
+
+        for (const stop of feeds.values()) {
+            stop();
+        }
+
+        feeds.clear();
+    };
+
+    return source;
+}
+
+/**
  * The streams of the fixture wire. The QA stream sends a tagged `qa` frame (and a `pending` frame the real demux must
  * drop), so the client's demux runs under fixtures too; the build-log tail replays its lines.
  */
-export function fixtureEventSource(url: string): EventSourceLike {
+export function fixtureEventSource(url: string, options: FixtureClientOptions = {}): EventSourceLike {
     const { pathname } = new URL(url);
 
     if (pathname === QA_STREAM_PATH) {
@@ -582,17 +699,8 @@ export function fixtureEventSource(url: string): EventSourceLike {
     }
 
     if (pathname === paths.live()) {
-        // The live stream says hello like the Mac's, then sends the pulse fixture and a QA entry when asked for.
         const channels = (new URL(url).searchParams.get("channels") ?? "").split(",").filter(Boolean);
-        return replay([
-            { delayMs: 0, data: { v: 1, channel: "system", type: "hello", payload: { connId: "fixture", channels } } },
-            ...(channels.includes("pulse")
-                ? [{ delayMs: 50, data: { v: 1, channel: "pulse", type: "snapshot", payload: mockPulse() } }]
-                : []),
-            ...(channels.includes("qa")
-                ? [{ delayMs: 800, data: { v: 1, channel: "qa", type: "entry", payload: MOCK_QA[0] } }]
-                : []),
-        ]);
+        return liveStream(channels, options.liveEveryMs);
     }
 
     if (pathname === "/api/daemon/runs/tail") {
@@ -602,12 +710,17 @@ export function fixtureEventSource(url: string): EventSourceLike {
     return replay([]);
 }
 
+export interface FixtureClientOptions {
+    /** How often a live channel repeats its frame; default the poll interval the channel stands in for. Tests shorten it. */
+    liveEveryMs?: number;
+}
+
 /** The real contract client over the fixture wire: what the app uses while no Mac is connected. */
-export function createFixtureClient(): DashboardClient {
+export function createFixtureClient(options: FixtureClientOptions = {}): DashboardClient {
     return createDashboardClient({
         baseUrl: FIXTURE_BASE_URL,
         fetch: fixtureFetch,
-        eventSourceFactory: fixtureEventSource,
+        eventSourceFactory: (url) => fixtureEventSource(url, options),
     });
 }
 

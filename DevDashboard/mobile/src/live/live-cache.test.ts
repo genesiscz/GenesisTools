@@ -10,6 +10,7 @@ import {
     type QaRow,
 } from "@dd/contract";
 import { QueryClient } from "@tanstack/react-query";
+import { createFixtureClient, setFixtureLatency } from "@/api/fixture-wire";
 import { mockPulse } from "@/api/fixtures/data";
 import { MOCK_BOARD } from "@/api/fixtures/agents";
 import { agentsKeys } from "@/features/agents/queries";
@@ -385,6 +386,53 @@ describe("createLiveCache", () => {
 
         expect(cache.status()).toBe("down");
         expect(cache.isLive("pulse")).toBe(false);
+    });
+});
+
+describe("the fixture live stream", () => {
+    async function until(done: () => boolean, what: string): Promise<void> {
+        const deadline = Date.now() + 3_000;
+
+        while (!done()) {
+            if (Date.now() > deadline) {
+                throw new Error(`timed out waiting for ${what}`);
+            }
+
+            await Bun.sleep(20);
+        }
+    }
+
+    it("keeps a channel updating after hello, feeds a channel added later, and stops one removed", async () => {
+        setFixtureLatency(0);
+        const client = createFixtureClient({ liveEveryMs: 100 });
+        const pulses: unknown[] = [];
+        let connected = false;
+        const subscription = client.live.subscribe(["qa"], {
+            onFrame: (frame) => {
+                if (frame.channel === "pulse") {
+                    pulses.push(frame.payload);
+                }
+            },
+            onConnect: () => {
+                connected = true;
+            },
+        });
+
+        try {
+            await until(() => connected, "the hello frame");
+            subscription.setChannels(["qa", "pulse"]);
+            // The first frame on join, then repeats: the poll the channel replaced is off, so it must keep coming.
+            await until(() => pulses.length >= 3, "three pulse frames after pulse joined");
+
+            subscription.setChannels(["qa"]);
+            await Bun.sleep(50);
+            const afterLeave = pulses.length;
+            await Bun.sleep(250);
+            expect(pulses.length).toBe(afterLeave);
+        } finally {
+            subscription.close();
+            setFixtureLatency(120);
+        }
     });
 });
 
