@@ -544,6 +544,11 @@
             "types": "./transclude/index.ts",
             "default": "./transclude/index.ts"
         },
+        "./transclude/redact": {
+            "bun": "./transclude/redact.ts",
+            "types": "./transclude/redact.ts",
+            "default": "./transclude/redact.ts"
+        },
         "./ts/ast": {
             "bun": "./ts/ast/index.ts",
             "types": "./ts/ast/index.ts",
