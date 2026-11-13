@@ -1,16 +1,17 @@
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { claudeTurnPromptProbe } from "@genesiscz/utils/agent-sessions/readers/claude-changes-parse";
+import { canonicalClaudeTranscriptSync } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
+import { type ChangeLogRow, walkChangeLogs } from "@genesiscz/utils/agents/change-log";
 import { OBJECT_RETENTION_DAYS } from "@genesiscz/utils/agents/objects/maintain";
 import { listWorktrees } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { findClaudeTranscript } from "@genesiscz/utils/session-changes";
 import { Storage } from "@genesiscz/utils/storage";
 import { diffArrays } from "diff";
 import { harnessHookFacts } from "../hooks/payload";
 import { readBlobs } from "./diff";
-import { type ChangeEvent, sessionChangesPath } from "./log";
 
 const log = logger.child({ component: "agents/blame" });
 
@@ -174,7 +175,7 @@ export function blameText({
     text,
 }: {
     current: string;
-    events: readonly ChangeEvent[];
+    events: readonly ChangeLogRow[];
     /** A blob's text by oid; a missing blob skips its event. */
     text: (oid: string) => string | null;
 }): Array<number | null> {
@@ -256,76 +257,48 @@ export function toRanges(perLine: ReadonlyArray<number | null>): BlameRange[] {
 export function changeEventsFor({
     paths,
     since,
-    dir = dirname(dirname(sessionChangesPath("probe"))),
+    dir,
 }: {
     paths: ReadonlySet<string>;
     since: Date;
+    /** The folder of session folders; the agents folder by default. */
     dir?: string;
-}): { events: ChangeEvent[]; logs: number } {
-    let names: string[];
-
-    try {
-        names = readdirSync(dir).filter((name) => !name.startsWith("_"));
-    } catch (error) {
-        log.debug({ error, dir }, "blame: no change logs");
-        return { events: [], logs: 0 };
-    }
-
-    const logs: { path: string; mtime: number }[] = [];
-
-    for (const name of names) {
-        const path = join(dir, name, "changes.jsonl");
-
-        try {
-            const mtime = statSync(path).mtimeMs;
-
-            if (mtime >= since.getTime()) {
-                logs.push({ path, mtime });
-            }
-        } catch (error) {
-            log.trace({ error, path }, "blame: no change log");
-        }
-    }
-
-    const chosen = logs.sort((a, b) => b.mtime - a.mtime).slice(0, MAX_CHANGE_LOGS);
-    const events: ChangeEvent[] = [];
-
-    for (const { path: logPath } of chosen) {
-        let body: string;
-
-        try {
-            body = readFileSync(logPath, "utf8");
-        } catch (error) {
-            log.debug({ error, logPath }, "blame: change log unreadable");
-            continue;
-        }
-
-        for (const line of body.split("\n")) {
-            // Cheap gate before parsing: most rows are about other files. One set lookup per row; a
-            // `line.includes` per wanted path cost 13.8 s for 348 files across the worktrees.
+}): { events: ChangeLogRow[]; logs: number } {
+    const sinceIso = since.toISOString();
+    const events: ChangeLogRow[] = [];
+    let logs = 0;
+    const walk = walkChangeLogs({
+        since: since.getTime(),
+        maxSessions: MAX_CHANGE_LOGS,
+        dir,
+        // Cheap gate before parsing: most rows are about other files. One set lookup per row; a
+        // `line.includes` per wanted path cost 13.8 s for 348 files across the worktrees.
+        keepLine: (line) => {
             const path = PATH_FIELD.exec(line)?.[1];
+            return path !== undefined && paths.has(path.replaceAll("\\\\", "\\").replaceAll('\\"', '"'));
+        },
+    });
 
-            if (!path || !paths.has(path.replaceAll("\\\\", "\\").replaceAll('\\"', '"'))) {
-                continue;
-            }
+    for (const { rows } of walk) {
+        logs++;
 
-            try {
-                const row: ChangeEvent = SafeJSON.parse(line, { strict: true });
-
-                if (paths.has(row.path) && row.ts >= since.toISOString()) {
-                    events.push(row);
-                }
-            } catch (error) {
-                log.debug({ error, logPath }, "blame: bad change-log row");
+        for (const row of rows) {
+            if (paths.has(row.path) && row.ts >= sinceIso) {
+                events.push(row);
             }
         }
     }
 
-    return { events, logs: chosen.length };
+    return { events, logs };
+}
+
+/** The session's Claude transcript, the copy the Claude locator ranks first (never a title-only stub). */
+function claudeTranscriptOf(session: string): string | null {
+    return canonicalClaudeTranscriptSync(session) ?? null;
 }
 
 /** The prompts of these turns (user message uuids), from the session's Claude transcript, read once. */
-export function turnPrompts(session: string, turns: string[], find = findClaudeTranscript): Map<string, string> {
+export function turnPrompts(session: string, turns: string[], find = claudeTranscriptOf): Map<string, string> {
     const found = new Map<string, string>();
     const file = find(session);
 
@@ -342,7 +315,7 @@ export function turnPrompts(session: string, turns: string[], find = findClaudeT
             // The change log's turn is the prompt's `promptId`; its first row is the prompt itself.
             // The search stops there, where a JS read would load the whole transcript (often 100 MB+).
             // rg, when installed: macOS's BSD grep took 674 ms for one late turn in a 134 MB file, rg 40 ms.
-            const grep = spawnSync(SEARCH[0], [...SEARCH.slice(1), `"promptId":"${turn}"`, file], {
+            const grep = spawnSync(SEARCH[0], [...SEARCH.slice(1), claudeTurnPromptProbe(turn), file], {
                 timeout: GREP_TIMEOUT_MS,
                 maxBuffer: 16 * 1024 * 1024,
                 encoding: "utf8",
@@ -456,7 +429,7 @@ async function cachedTurnPrompts(session: string, turns: string[]): Promise<Map<
 
 export interface BlameDeps {
     checkouts: (repo: string) => Promise<string[]>;
-    events: (paths: ReadonlySet<string>, since: Date) => { events: ChangeEvent[]; logs: number };
+    events: (paths: ReadonlySet<string>, since: Date) => { events: ChangeLogRow[]; logs: number };
     blobs: (oids: string[]) => Map<string, Buffer>;
     read: (path: string) => string | null;
     prompts: (session: string, turns: string[]) => Promise<Map<string, string>>;
@@ -489,7 +462,7 @@ export async function blameFiles(
     const blobs = oids.length ? deps.blobs(oids) : new Map<string, Buffer>();
     const text = (oid: string) => blobs.get(oid)?.toString("utf8") ?? null;
     const sources: BlameSource[] = [];
-    const sourceIndex = new Map<ChangeEvent, number>();
+    const sourceIndex = new Map<ChangeLogRow, number>();
     const result: FileBlame[] = [];
 
     for (const file of files) {

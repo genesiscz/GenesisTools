@@ -12,7 +12,7 @@ import { grokTurnUsage, parseTurnLog } from "@genesiscz/utils/grok/stream";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isToolCall } from "@genesiscz/utils/worker/events";
-import { buildWorkerCostRow, type WorkerCostRow, workerCostRowKey } from "./ledger";
+import { buildWorkerCostRow, type WorkerCostRow, workerCostRowKey } from "@genesiscz/utils/worker/spend-ledger";
 import { loadWorkerSessionEvents } from "./stats";
 
 const log = logger.child({ component: "ai-spend:worker-backfill" });

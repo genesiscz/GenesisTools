@@ -2,8 +2,8 @@ import { homedir } from "node:os";
 import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { capture } from "@genesiscz/utils/process/capture";
 import { argvWithChildDeadline as wrapArgvWithChildDeadline } from "@genesiscz/utils/process/child-deadline";
-import { capture } from "@genesiscz/utils/process/ps";
 import { profiler } from "@genesiscz/utils/profile";
 import { buildTerminalSpawnEnv, stripTestSandboxEnv } from "@genesiscz/utils/terminal/locale";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
@@ -19,7 +19,11 @@ export interface TmuxSpawnResult {
  * Injection seam for tests. Sync-returning impls remain valid (the core awaits
  * whatever comes back), so existing test doubles don't need to change.
  */
-export type TmuxSpawnSync = (cmd: string[], opts?: { cwd?: string }) => TmuxSpawnResult | Promise<TmuxSpawnResult>;
+/** `timeoutMs` replaces the default child deadline (`TMUX_CHILD_DEADLINE_MS`) for one call. */
+export type TmuxSpawnSync = (
+    cmd: string[],
+    opts?: { cwd?: string; timeoutMs?: number }
+) => TmuxSpawnResult | Promise<TmuxSpawnResult>;
 
 export function buildTmuxSpawnEnv(): NodeJS.ProcessEnv {
     return buildTerminalSpawnEnv();
@@ -189,14 +193,16 @@ export function argvWithChildDeadline(cmd: string[]): string[] {
 }
 
 const defaultSpawn: TmuxSpawnSync = async (cmd, opts) => {
-    const [binary, ...args] = argvWithChildDeadline(cmd);
+    const deadlineMs = opts?.timeoutMs ?? TMUX_CHILD_DEADLINE_MS;
+    const [binary, ...args] = wrapArgvWithChildDeadline(cmd, deadlineMs);
 
     if (!binary) {
         return { exitCode: 127, stdout: "", stderr: "empty argv" };
     }
 
     const result = await capture(binary, args, {
-        timeoutMs: TMUX_SPAWN_GUARD.timeout,
+        // The parent waits a little longer than the child's own deadline, in case the watchdog itself is stuck.
+        timeoutMs: deadlineMs + (TMUX_SPAWN_GUARD.timeout - TMUX_CHILD_DEADLINE_MS),
         cwd: opts?.cwd,
         env: buildTmuxSpawnEnv(),
     });
@@ -206,7 +212,8 @@ const defaultSpawn: TmuxSpawnSync = async (cmd, opts) => {
 
 let spawnImpl: TmuxSpawnSync = defaultSpawn;
 
-async function runTmux(cmd: string[], opts?: { cwd?: string }): Promise<TmuxSpawnResult> {
+/** One bounded tmux call through the spawn seam tests replace (`setTmuxSpawnSyncForTests`). */
+export async function runTmux(cmd: string[], opts?: { cwd?: string; timeoutMs?: number }): Promise<TmuxSpawnResult> {
     const end = prof.start(cmd[1] ?? "tmux");
 
     try {

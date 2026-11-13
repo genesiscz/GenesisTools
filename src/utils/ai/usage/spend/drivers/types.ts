@@ -89,8 +89,8 @@ export interface MonitorDriver {
     /**
      * What a cost the agent's transcript records means. `list-price`: it IS the API list price (ccusage's semantics),
      * so it stands as recorded. `metering`: the agent's own plan metering, not a list price, so the catalog prices the
-     * call and the recorded figure only stands in for a model the catalog cannot price. `chooseCost` in
-     * `reports/cost.ts` applies it, for the spend reports and the session analysis alike.
+     * call and the recorded figure only stands in for a model the catalog cannot price. `priceUsage` in
+     * `priced-usage.ts` applies it, for the spend reports and the session analysis alike.
      */
     recordedCost: RecordedCostMeaning;
     /**

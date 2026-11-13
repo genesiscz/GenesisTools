@@ -77,6 +77,14 @@ final class ReviewKeysTests: XCTestCase {
         XCTAssertEqual(cards.map(\.id), ["draft:b2", "draft:b9", "draft:late"])
     }
 
+    func testNavigationKeepsThePagesKindForIDsItCannotResolveLocally() {
+        let thread = card("unknown:thread", file: "f1", line: 1)
+        let draft = card("unknown:draft", file: "f1", line: 2, kind: "draft", live: false)
+        let unknown = card("thread:unknown-kind", file: "f1", line: 3, kind: "unknown")
+        XCTAssertEqual(ReviewKeyNav.threadCards([thread, draft, unknown], files: files).map(\.id), [thread.id])
+        XCTAssertEqual(ReviewKeyNav.draftCards([thread, draft, unknown], files: files).map(\.id), [draft.id])
+    }
+
     func testJAndKWrapAroundFromTheMarkedCard() {
         let cards = ReviewKeyNav.threadCards([card("live:1", file: "f1", line: 1), card("live:2", file: "f2", line: 1), card("live:3", file: "f3", line: 1)], files: files)
         XCTAssertEqual(ReviewKeyNav.step(cards, from: "live:2", by: 1, files: files, selectedFile: nil), "live:3")

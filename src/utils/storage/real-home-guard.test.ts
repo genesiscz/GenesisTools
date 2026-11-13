@@ -59,10 +59,11 @@ describe("assertTestSafePath", () => {
 
 describe("Storage integration: the actual 2026-08-29 incident", () => {
     /**
-     * The regression test for the real event. A `Storage` built with no
-     * GENESIS_TOOLS_HOME resolves to the user's real store — exactly what a
-     * singleton that outlived its sandbox teardown holds. Every data-destroying
-     * entry point must refuse it.
+     * The regression test for the real event. A `Storage` built inside the
+     * sandbox and used after GENESIS_TOOLS_HOME is gone resolves to the user's
+     * real store: exactly what a singleton that outlived its sandbox teardown
+     * holds. `Storage` resolves its root on every use, so the write happens while
+     * the variable is unset. Every data-destroying entry point must refuse it.
      *
      * The tool name is a THROWAWAY, never "ai" or any real tool. These tests
      * exist to be mutation-checked, and a mutation check disables the very guard
@@ -81,42 +82,45 @@ describe("Storage integration: the actual 2026-08-29 incident", () => {
     beforeEach(clearProbe);
     afterEach(clearProbe);
 
-    const unsandboxed = () => {
+    /** Builds the instance under the current (sandbox) home, then runs `use` with the variable unset. */
+    const afterTeardown = async <T>(use: (storage: Storage) => Promise<T> | T): Promise<T> => {
+        const storage = new Storage(PROBE_TOOL);
         const prev = env.get("GENESIS_TOOLS_HOME");
         env.testing.unset("GENESIS_TOOLS_HOME");
-        const storage = new Storage(PROBE_TOOL);
 
-        if (prev !== undefined) {
-            env.testing.set("GENESIS_TOOLS_HOME", prev);
+        try {
+            return await use(storage);
+        } finally {
+            if (prev !== undefined) {
+                env.testing.set("GENESIS_TOOLS_HOME", prev);
+            }
         }
-
-        return storage;
     };
 
-    test("the probe really does resolve to the real store", () => {
+    test("the probe really does resolve to the real store", async () => {
         // Without this the suite could pass while testing a sandbox path, which
         // would make every assertion below vacuous.
-        expect(isInside(realGenesisToolsRoot(), unsandboxed().getConfigPath())).toBe(true);
+        expect(isInside(realGenesisToolsRoot(), await afterTeardown((storage) => storage.getConfigPath()))).toBe(true);
     });
 
     test("setConfig on the real store throws instead of writing", async () => {
-        await expect(unsandboxed().setConfig({ accounts: [] })).rejects.toThrow(/REAL ~\/\.genesis-tools/);
+        await expect(afterTeardown((storage) => storage.setConfig({ accounts: [] }))).rejects.toThrow(
+            /REAL ~\/\.genesis-tools/
+        );
     });
 
     test("clearConfig on the real store throws", async () => {
-        await expect(unsandboxed().clearConfig()).rejects.toThrow(/REAL ~\/\.genesis-tools/);
+        await expect(afterTeardown((storage) => storage.clearConfig())).rejects.toThrow(/REAL ~\/\.genesis-tools/);
     });
 
     test("ensureDirs on the real store throws", async () => {
-        await expect(unsandboxed().ensureDirs()).rejects.toThrow(/REAL ~\/\.genesis-tools/);
+        await expect(afterTeardown((storage) => storage.ensureDirs())).rejects.toThrow(/REAL ~\/\.genesis-tools/);
     });
 
     test("nothing is left behind on disk", async () => {
-        await unsandboxed()
-            .setConfig({ accounts: [] })
-            .catch(() => undefined);
+        await afterTeardown((storage) => storage.setConfig({ accounts: [] }).catch(() => undefined));
 
-        expect(existsSync(unsandboxed().getBaseDir())).toBe(false);
+        expect(existsSync(probeDir)).toBe(false);
     });
 });
 

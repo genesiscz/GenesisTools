@@ -741,6 +741,55 @@ export class MeetingStore {
         return this.locked(id, (current) => (mutate(current) ? this.commit(current, change) : undefined));
     }
 
+    /**
+     * Holds all selected record locks in ID order, then reads their current versions. Use the supplied update
+     * inside `fn`: ordinary `update` would acquire the same non-reentrant lock again. Locks stay held until `fn`
+     * finishes, including file moves. Updates to an ID outside this selection are refused.
+     */
+    async withRecords<T>({
+        ids,
+        fn,
+    }: {
+        ids: readonly string[];
+        fn: (records: ReadonlyMap<string, MeetingRecord>, update: MeetingStore["update"]) => Promise<T>;
+    }): Promise<T> {
+        const ordered = [...new Set(ids)].sort();
+        const run = async (index: number): Promise<T> => {
+            const id = ordered[index];
+
+            if (id !== undefined) {
+                return this.storage.withFileLock({ file: this.path(id), fn: () => run(index + 1) });
+            }
+
+            const records = new Map<string, MeetingRecord>();
+            for (const selected of ordered) {
+                const current = this.read(selected);
+
+                if (!current) {
+                    throw new Error(
+                        `No meeting ${selected} (or its ${MEETING_FILE} does not validate): ${this.path(selected)}`
+                    );
+                }
+
+                records.set(selected, current);
+            }
+
+            return fn(records, async (selected, change, mutate, beside) => {
+                const current = records.get(selected);
+
+                if (!current) {
+                    throw new Error(`Meeting ${selected} is not locked by this operation.`);
+                }
+
+                const result = mutate(current) === MEETING_UNCHANGED ? current : this.commit(current, change, beside);
+                records.set(selected, result);
+                return result;
+            });
+        };
+
+        return run(0);
+    }
+
     /** Runs `fn` on the record as it is on disk, under its lock. */
     private locked<T>(id: string, fn: (current: MeetingRecord) => T): Promise<T> {
         return this.storage.withFileLock({

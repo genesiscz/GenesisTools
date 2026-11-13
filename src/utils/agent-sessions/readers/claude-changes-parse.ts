@@ -1,0 +1,604 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, isAbsolute, join } from "node:path";
+import { CLAUDE_DIR } from "@genesiscz/utils/claude/projects";
+import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { applyReplacement, fileToolVia, isShellTool } from "@genesiscz/utils/session-changes/tool-calls";
+import type { SessionToolCall, SessionTranscript, SessionTurn } from "@genesiscz/utils/session-changes/types";
+import { claudeSubagentFiles, claudeSubagentIdOf, claudeSubagentsDir } from "./claude-paths";
+
+const { log } = logger.scoped("session-changes");
+
+/**
+ * The line of a Claude transcript where the turn `promptId` starts, as a fixed string to search the raw file for: the
+ * prompt row is the first line that carries it (`tools agents blame` reads a turn's prompt this way).
+ */
+export function claudeTurnPromptProbe(promptId: string): string {
+    return `"promptId":"${promptId}"`;
+}
+
+type Json = Record<string, unknown>;
+
+function record(value: unknown): Json | null {
+    return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Json) : null;
+}
+
+function text(value: unknown): string | null {
+    return typeof value === "string" ? value : null;
+}
+
+function epoch(value: unknown): number | null {
+    if (typeof value !== "string") {
+        return null;
+    }
+
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? null : ms;
+}
+
+interface EditSpec {
+    old: string;
+    next: string;
+    all: boolean;
+}
+
+function editsOf(input: Json): EditSpec[] {
+    const list = Array.isArray(input.edits) ? input.edits : [input];
+    const specs: EditSpec[] = [];
+
+    for (const item of list) {
+        const edit = record(item);
+        const old = text(edit?.old_string);
+        const next = text(edit?.new_string);
+
+        if (edit && old !== null && next !== null) {
+            specs.push({ old, next, all: edit.replace_all === true });
+        }
+    }
+
+    return specs;
+}
+
+function applyEdits(source: string, input: Json): string | undefined {
+    let after: string | null = source;
+
+    for (const edit of editsOf(input)) {
+        after = after === null ? null : applyReplacement(after, edit.old, edit.next, edit.all);
+    }
+
+    return after ?? undefined;
+}
+
+/**
+ * Before and after text of a successful Edit/MultiEdit/Write, from the harness's own result
+ * record. Claude writes `originalFile: null` for a file too large to echo, so null means
+ * "created" only for a Write whose result says `type: "create"`; an Edit always had a file.
+ */
+function fileToolBytes(
+    via: "edit" | "write" | "notebook",
+    input: Json,
+    result: Json | null
+): { before?: string | null; after?: string | null } {
+    if (!result || via === "notebook") {
+        return {};
+    }
+
+    const original = text(result.originalFile);
+
+    if (via === "write") {
+        const content = text(input.content) ?? text(result.content) ?? undefined;
+        const before = original ?? (result.type === "create" ? null : undefined);
+        return { before, after: content };
+    }
+
+    return original === null ? {} : { before: original, after: applyEdits(original, input) };
+}
+
+function harnessDetected(result: Json | null): { path: string; created: boolean }[] | undefined {
+    const diff = record(result?.bashEditDiff);
+
+    if (!diff || !Array.isArray(diff.files)) {
+        return undefined;
+    }
+
+    const found: { path: string; created: boolean }[] = [];
+
+    for (const item of diff.files) {
+        const file = record(item);
+        const path = text(file?.filePath);
+
+        if (!file || !path) {
+            continue;
+        }
+
+        const hunks = Array.isArray(file.hunks) ? file.hunks.map(record) : [];
+        const created =
+            hunks.length === 1 &&
+            hunks[0]?.oldStart === 0 &&
+            (hunks[0]?.oldLines === 0 || hunks[0]?.oldLines === undefined);
+        found.push({ path, created });
+    }
+
+    return found;
+}
+
+function promptText(content: unknown): string | null {
+    if (typeof content === "string") {
+        return content;
+    }
+
+    if (!Array.isArray(content)) {
+        return null;
+    }
+
+    if (content.some((block) => record(block)?.type === "tool_result")) {
+        return null;
+    }
+
+    const parts = content.map((block) => text(record(block)?.text)).filter((part): part is string => part !== null);
+    return parts.length > 0 ? parts.join("\n") : null;
+}
+
+/**
+ * Claude's checkpoint backup of a file (`~/.claude/file-history/<session>/<name>`).
+ * - `snapshot`: from the snapshot taken when the user message `messageId` arrived: the file as
+ *   it was at the start of that turn (a file already tracked by an earlier edit).
+ * - `first-edit`: a file edited for the first time in the session; the backup is taken right
+ *   before that edit, under the turn whose snapshot is `messageId`.
+ */
+interface HistoryBackup {
+    kind: "snapshot" | "first-edit";
+    messageId: string | null;
+    path: string;
+    /** File name of the backup, or null when the file did not exist. */
+    backup: string | null;
+    /** When Claude wrote the backup. A later entry with the same file name overwrote its bytes. */
+    backupTime: number | null;
+}
+
+export interface ParseState {
+    calls: Map<string, SessionToolCall>;
+    inputs: Map<string, Json>;
+    turns: Map<string, SessionTurn>;
+    cwds: Set<string>;
+    /** User message uuid to its prompt id, to place a checkpoint backup in its turn. */
+    promptOfMessage: Map<string, string>;
+    backups: HistoryBackup[];
+}
+
+function backupOf(
+    kind: HistoryBackup["kind"],
+    messageId: string | null,
+    tracking: string,
+    value: unknown
+): HistoryBackup | null {
+    const backup = record(value);
+
+    if (!backup) {
+        return null;
+    }
+
+    const parent = text(backup.realParentDir);
+    const path = isAbsolute(tracking) ? tracking : parent ? join(parent, basename(tracking)) : null;
+
+    return path
+        ? { kind, messageId, path, backup: text(backup.backupFileName), backupTime: epoch(backup.backupTime) }
+        : null;
+}
+
+/** Every backup a `file-history-delta` or `file-history-snapshot` entry names. */
+function historyBackups(entry: Json): HistoryBackup[] {
+    if (entry.type === "file-history-delta") {
+        const tracking = text(entry.trackingPath);
+        const found = tracking ? backupOf("first-edit", text(entry.snapshotMessageId), tracking, entry.backup) : null;
+        return found ? [found] : [];
+    }
+
+    const snapshot = record(entry.snapshot);
+    const tracked = record(snapshot?.trackedFileBackups) ?? {};
+    const messageId = text(entry.messageId) ?? text(snapshot?.messageId);
+
+    return Object.entries(tracked)
+        .map(([tracking, value]) => backupOf("snapshot", messageId, tracking, value))
+        .filter((backup): backup is HistoryBackup => backup !== null);
+}
+
+/** A tool result whose call was not in the state when its line was read (a sub-agent answering a call of another file). */
+export interface UnmatchedResult {
+    toolUseId: string;
+    promptId: string | null;
+    at: string | null;
+    block: Json;
+    entry: Json;
+}
+
+/**
+ * What one file's lines leave for the merge to repeat (`claude-changes.ts`): a full parse reads the main file and
+ * every sub-agent file into one state, and a file folded on its own cannot see the others.
+ */
+export interface ParseHooks {
+    /** A sub-agent line's prompt: the full parse fills a main turn with it while that turn's prompt is empty. */
+    prompt?: (promptId: string, prompt: string) => void;
+    unmatched?: (result: UnmatchedResult) => void;
+}
+
+/** Where `parseLines` stopped in a file: the turn its next lines belong to until another prompt starts. */
+export interface ParseCursor {
+    currentTurn: string | null;
+}
+
+/** A tool result applied to its call, as the full parse applies it. */
+export function applyToolResult(
+    state: ParseState,
+    call: SessionToolCall,
+    result: Omit<UnmatchedResult, "toolUseId">
+): void {
+    const { promptId, at, block, entry } = result;
+    // The result carries the prompt it answered, which is authoritative over "the last prompt seen".
+    call.turnId = promptId ?? call.turnId;
+    call.finishedAt = epoch(at);
+    call.isError = block.is_error === true;
+    const toolResult = record(entry.toolUseResult);
+    const via = fileToolVia(call.name);
+
+    if (via && !call.isError) {
+        Object.assign(call, fileToolBytes(via, state.inputs.get(call.id) ?? {}, toolResult));
+    }
+
+    if (call.command !== null) {
+        call.harnessDetected = harnessDetected(toolResult);
+    }
+}
+
+/**
+ * A line `parseLines` reads holds one of these; it skips every other line before parsing. Most bytes of a transcript
+ * are lines no rule reads (attachments, snapshots, titles). All ASCII, so a byte search finds them as a string search
+ * does (the fold looks for them in the raw bytes and decodes only the lines that hold one).
+ */
+export const PARSED_LINE_MARKERS = ['"promptId"', '"tool_use"', '"file-history-'] as const;
+
+/** True when `parseLines` reads this line at all. */
+export function isParsedLine(line: string): boolean {
+    return PARSED_LINE_MARKERS.some((marker) => line.includes(marker));
+}
+
+export function parseLines(
+    content: string | Iterable<string>,
+    agentId: string | null,
+    state: ParseState,
+    cursor: ParseCursor = { currentTurn: null },
+    hooks: ParseHooks = {}
+): void {
+    for (const line of typeof content === "string" ? content.split("\n") : content) {
+        if (line.length === 0 || !isParsedLine(line)) {
+            continue;
+        }
+
+        let entry: Json | null;
+
+        try {
+            entry = record(SafeJSON.parse(line, { strict: true }));
+        } catch (error) {
+            // A transcript that is being written ends in a partial line.
+            log.debug({ error, agentId }, "skipped an unreadable transcript line");
+            continue;
+        }
+
+        if (!entry) {
+            continue;
+        }
+
+        if (entry.type === "file-history-delta" || entry.type === "file-history-snapshot") {
+            if (agentId === null) {
+                state.backups.push(...historyBackups(entry));
+            }
+
+            continue;
+        }
+
+        const cwd = text(entry.cwd);
+
+        if (cwd) {
+            state.cwds.add(cwd);
+        }
+
+        const at = text(entry.timestamp);
+        const promptId = text(entry.promptId);
+        const message = record(entry.message);
+
+        if (entry.type === "user" && promptId) {
+            cursor.currentTurn = promptId;
+            const uuid = text(entry.uuid);
+
+            if (uuid && agentId === null) {
+                state.promptOfMessage.set(uuid, promptId);
+            }
+
+            if (agentId === null && !state.turns.has(promptId)) {
+                state.turns.set(promptId, { turnId: promptId, index: state.turns.size, at, prompt: "" });
+            }
+
+            const turn = state.turns.get(promptId);
+            const prompt = promptText(message?.content);
+
+            if (turn && turn.prompt === "" && prompt) {
+                turn.prompt = prompt;
+            }
+
+            if (agentId !== null && prompt) {
+                hooks.prompt?.(promptId, prompt);
+            }
+        }
+
+        const blocks = Array.isArray(message?.content) ? message.content : [];
+
+        for (const raw of blocks) {
+            const block = record(raw);
+
+            if (block?.type === "tool_use" && entry.type === "assistant") {
+                const id = text(block.id);
+                const name = text(block.name);
+                const input = record(block.input) ?? {};
+
+                if (!id || !name) {
+                    continue;
+                }
+
+                // Only a file tool's input is read again (its edits rebuild the after state); a resident fold keeps
+                // what is set here for as long as it keeps the session.
+                if (fileToolVia(name) !== null) {
+                    state.inputs.set(id, input);
+                }
+
+                state.calls.set(id, {
+                    id,
+                    turnId: cursor.currentTurn ?? "",
+                    name,
+                    startedAt: epoch(at),
+                    finishedAt: null,
+                    cwd,
+                    agentId,
+                    isError: false,
+                    filePath: text(input.file_path) ?? text(input.notebook_path),
+                    command: isShellTool(name) ? text(input.command) : null,
+                });
+                continue;
+            }
+
+            if (block?.type !== "tool_result") {
+                continue;
+            }
+
+            const toolUseId = text(block.tool_use_id) ?? "";
+            const call = state.calls.get(toolUseId);
+
+            if (!call) {
+                hooks.unmatched?.({ toolUseId, promptId, at, block, entry });
+                continue;
+            }
+
+            applyToolResult(state, call, { promptId, at, block, entry });
+        }
+    }
+}
+
+/** The subagent transcripts of a Claude session (`<session>/subagents/agent-<id>.jsonl`) and the call that launched each. */
+export function subagentFiles(
+    transcriptPath: string
+): { path: string; agentId: string; parentToolUseId: string | null }[] {
+    const dir = claudeSubagentsDir(transcriptPath);
+
+    if (!existsSync(dir)) {
+        return [];
+    }
+
+    const files: { path: string; agentId: string; parentToolUseId: string | null }[] = [];
+
+    for (const name of readdirSync(dir)) {
+        const agentId = claudeSubagentIdOf(name);
+
+        if (!agentId) {
+            continue;
+        }
+
+        let parent: string | null = null;
+        const { transcript, meta } = claudeSubagentFiles(dir, agentId);
+
+        if (existsSync(meta)) {
+            try {
+                parent = text(record(SafeJSON.parse(readFileSync(meta, "utf8"), { strict: true }))?.toolUseId);
+            } catch (error) {
+                log.debug({ error, meta }, "unreadable subagent meta");
+            }
+        }
+
+        files.push({ path: transcript, agentId, parentToolUseId: parent });
+    }
+
+    return files;
+}
+
+export interface TranscriptSource {
+    /** The main transcript's text, or its lines (a large file read in chunks, `readLinesSync`). */
+    main: string | Iterable<string>;
+    /** Subagent transcripts, each with the tool call that launched it. */
+    subagents?: { agentId: string; content: string | Iterable<string>; parentToolUseId: string | null }[];
+    /** Reads one of Claude's checkpoint backups by file name, or returns null. */
+    readBackup?: (name: string) => string | null;
+}
+
+/**
+ * Fill the before/after text a file tool's own result left out (Claude often omits
+ * `originalFile`). Each (turn, path) chain starts from Claude's checkpoint of that path for the
+ * turn (the turn-start snapshot, else the backup taken before the session's first edit to
+ * it), then follows the calls in order: a call's before is the previous call's after, and its
+ * after is its edits applied to that. A chain with no checkpoint stays unknown.
+ */
+function fillFromBackups(state: ParseState, readBackup: (name: string) => string | null): void {
+    const seeds = new Map<string, HistoryBackup>();
+    // Claude restarts a file's versions at `@v1` after a resume and writes over the old backup,
+    // so only the newest entry naming a backup file still describes the bytes on disk.
+    const newest = new Map<string, number>();
+
+    for (const backup of state.backups) {
+        if (backup.backup !== null && backup.backupTime !== null) {
+            newest.set(backup.backup, Math.max(newest.get(backup.backup) ?? 0, backup.backupTime));
+        }
+    }
+
+    for (const backup of state.backups) {
+        if (
+            backup.backup !== null &&
+            backup.backupTime !== null &&
+            backup.backupTime < (newest.get(backup.backup) ?? 0)
+        ) {
+            log.debug({ path: backup.path, backup: backup.backup }, "checkpoint backup overwritten by a later one");
+            continue;
+        }
+
+        const turn = state.promptOfMessage.get(backup.messageId ?? "");
+        const key = `${turn}\0${backup.path}`;
+        const existing = seeds.get(key);
+
+        // The turn-start snapshot wins over a first-edit backup: it is the older state of the two.
+        if (turn && (!existing || (existing.kind === "first-edit" && backup.kind === "snapshot"))) {
+            seeds.set(key, backup);
+        }
+    }
+
+    const chains = new Map<string, SessionToolCall[]>();
+
+    for (const call of state.calls.values()) {
+        if (
+            call.isError ||
+            !call.filePath ||
+            fileToolVia(call.name) === null ||
+            fileToolVia(call.name) === "notebook"
+        ) {
+            continue;
+        }
+
+        const key = `${call.turnId}\0${call.filePath}`;
+        const list = chains.get(key) ?? [];
+        list.push(call);
+        chains.set(key, list);
+    }
+
+    for (const [key, calls] of chains) {
+        if (calls.every((call) => call.before !== undefined && call.after !== undefined)) {
+            continue;
+        }
+
+        calls.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
+        const seed = seeds.get(key);
+        let current: string | null | undefined;
+
+        if (seed) {
+            current = seed.backup === null ? null : (readBackup(seed.backup) ?? undefined);
+        }
+
+        for (const call of calls) {
+            const chained = call.before === undefined && current !== undefined;
+
+            if (chained) {
+                call.before = current;
+            }
+
+            if (call.after === undefined && typeof call.before === "string" && fileToolVia(call.name) === "edit") {
+                call.after = applyEdits(call.before, state.inputs.get(call.id) ?? {});
+
+                // The harness applied this edit, so a state it does not apply to was never the file.
+                if (call.after === undefined && chained) {
+                    call.before = undefined;
+                }
+            }
+
+            current = call.after;
+        }
+    }
+}
+
+export function emptyParseState(): ParseState {
+    return {
+        calls: new Map(),
+        inputs: new Map(),
+        turns: new Map(),
+        cwds: new Set(),
+        promptOfMessage: new Map(),
+        backups: [],
+    };
+}
+
+/** The transcript a parsed state stands for: checkpoint backups fill the before and after text file tools left out. */
+export function finishTranscript(
+    sessionId: string,
+    state: ParseState,
+    readBackup?: (name: string) => string | null
+): SessionTranscript {
+    if (readBackup) {
+        fillFromBackups(state, readBackup);
+    }
+
+    return {
+        sessionId,
+        turns: [...state.turns.values()],
+        calls: [...state.calls.values()],
+        cwds: [...state.cwds],
+    };
+}
+
+/** Parse a Claude session transcript (main thread plus subagents) into turns and tool calls. */
+export function parseClaudeTranscript(sessionId: string, source: TranscriptSource): SessionTranscript {
+    const state = emptyParseState();
+    parseLines(source.main, null, state);
+
+    for (const agent of source.subagents ?? []) {
+        const before = new Set(state.calls.keys());
+        parseLines(agent.content, agent.agentId, state);
+        const parentTurn = agent.parentToolUseId ? state.calls.get(agent.parentToolUseId)?.turnId : undefined;
+
+        for (const [id, call] of state.calls) {
+            // A subagent's prompt id is its own; its work belongs to the turn that launched it.
+            if (!before.has(id) && parentTurn && !state.turns.has(call.turnId)) {
+                call.turnId = parentTurn;
+            }
+        }
+    }
+
+    return finishTranscript(sessionId, state, source.readBackup);
+}
+
+/** Read a Claude session's main and subagent transcripts from disk. */
+export function readClaudeTranscript(transcriptPath: string): SessionTranscript {
+    const sessionId = basename(transcriptPath).replace(/\.jsonl$/, "");
+    const subagents = subagentFiles(transcriptPath).map((file) => ({
+        agentId: file.agentId,
+        parentToolUseId: file.parentToolUseId,
+        // A generator: each file is read only while it is parsed, never all at once (365 MB for one session).
+        content: readLinesSync(file.path, { containing: PARSED_LINE_MARKERS }),
+    }));
+    log.debug({ transcriptPath, subagents: subagents.length }, "reading session transcript");
+
+    // In chunks: the whole text of a 218 MB transcript was a 640 MB string before parsing began.
+    return parseClaudeTranscript(sessionId, {
+        main: readLinesSync(transcriptPath, { containing: PARSED_LINE_MARKERS }),
+        subagents,
+        readBackup: backupReader(sessionId),
+    });
+}
+
+/** Reads one of Claude's checkpoint backups of a session by file name, or returns null. */
+export function backupReader(sessionId: string): (name: string) => string | null {
+    const backups = join(CLAUDE_DIR, "file-history", sessionId);
+    return (name) => {
+        const path = join(backups, basename(name));
+
+        try {
+            return readFileSync(path, "utf8");
+        } catch (error) {
+            log.debug({ error, path }, "checkpoint backup not readable");
+            return null;
+        }
+    };
+}

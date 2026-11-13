@@ -24,7 +24,7 @@ import { codexCurrentModel } from "@genesiscz/utils/agent-sessions/readers/codex
 import { grokCurrentModel } from "@genesiscz/utils/agent-sessions/readers/grok-model";
 import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/utils/agents/hooks/config-section";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { RmRequest } from "@genesiscz/utils/rm";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
@@ -77,7 +77,7 @@ import {
     withModsWatch,
 } from "./mods";
 import { nativeDiffState } from "./native-diff";
-import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
+import { callDir, hookDataRoot, safeSegment, sessionDir, unpushedRoot } from "./paths";
 import {
     detectHarness,
     detectHookCaller,
@@ -96,7 +96,7 @@ import {
     readContextCounts,
     readHookState,
 } from "./state";
-import { unpushedReminders, unpushedState } from "./unpushed";
+import { reminderLine, unpushedReminders, unpushedState } from "./unpushed";
 import { writeJsonFile } from "./write-json";
 
 describe("DEFAULT_HOOKS_CONFIG", () => {
@@ -2515,7 +2515,7 @@ describe("the unpushed reminder", () => {
             }
         };
 
-        Bun.spawnSync(["git", "init", "-q", "--bare", origin], { env: process.env });
+        Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "master", origin], { env: process.env });
         Bun.spawnSync(["git", "clone", "-q", origin, work], { env: process.env });
         run(["config", "user.email", "alice@example.com"]);
         run(["config", "user.name", "alice"]);
@@ -2575,6 +2575,206 @@ describe("the unpushed reminder", () => {
 
         run(["checkout", "-q", "-b", "local-only"]);
         expect(unpushedReminders([work], config)).toEqual([]);
+    });
+
+    function mergeRemote(run: (args: string[], extra?: Record<string, string>) => void): void {
+        run(["branch", "topic"]);
+        commit(run, 7, new Date(Date.now() - 2 * hour));
+        run(["push", "-q", "origin", "HEAD:refs/heads/shared"]);
+        run(["checkout", "-q", "topic"]);
+        run(["branch", "--set-upstream-to=origin/master"]);
+        run(["merge", "-q", "--no-ff", "-m", "Integrate shared changes", "origin/shared"]);
+    }
+
+    it("counts a merge once and names the remote work it brings", () => {
+        const { work, run } = pushedClone();
+        mergeRemote(run);
+        const state = unpushedState(work);
+        expect(state?.count).toBe(1);
+        expect(state?.oldestMs).toBeGreaterThan(Date.now() - 60_000);
+        expect(unpushedReminders([work], config)).toEqual([]);
+        expect(reminderLine(state!, Date.now())).toMatch(
+            /merge [a-f0-9]{7}.*Integrate shared changes.*brings.*origin\/shared/
+        );
+        commit(run, 3);
+        expect(unpushedState(work)?.count).toBe(4);
+    });
+
+    it("invalidates the cache when only another remote ref moves", async () => {
+        const { work, run } = pushedClone();
+        commit(run, 2);
+        expect(unpushedState(work)?.count).toBe(2);
+        run(["update-ref", "refs/remotes/other/published", "HEAD"]);
+        const refreshed = await withSpawnCounter(async () => unpushedState(work));
+        expect(refreshed.result?.count).toBe(0);
+        expect(refreshed.count).toBe(2);
+        expect((await withSpawnCounter(async () => unpushedState(work))).count).toBe(1);
+    });
+
+    it("distinguishes a recorded rebase from ordinary divergence", () => {
+        const { work, run } = pushedClone();
+        commit(run, 1);
+        run(["push", "-q"]);
+        run(["branch", "old-topic"]);
+        run(["checkout", "-q", "-b", "new-base", "HEAD~1"]);
+        run(["commit", "-q", "--allow-empty", "-m", "new base one"]);
+        run(["commit", "-q", "--allow-empty", "-m", "new base two"]);
+        run(["update-ref", "refs/remotes/origin/shared", "HEAD"]);
+        run(["checkout", "-q", "master"]);
+        run(["rebase", "--reapply-cherry-picks", "--empty=keep", "--onto", "new-base", "HEAD~1"]);
+        const rebased = unpushedState(work);
+        expect(rebased?.count).toBe(1);
+        expect(reminderLine(rebased!, Date.now())).toContain("rebased, push with --force-with-lease");
+
+        const divergent = pushedClone();
+        divergent.run(["checkout", "-q", "-b", "remote-work"]);
+        divergent.run(["commit", "-q", "--allow-empty", "-m", "remote-only"]);
+        divergent.run(["push", "-q", "origin", "HEAD:master"]);
+        divergent.run(["checkout", "-q", "master"]);
+        commit(divergent.run, 1);
+        const state = unpushedState(divergent.work);
+        expect(state?.count).toBe(1);
+        expect(reminderLine(state!, Date.now())).toContain("diverged");
+        expect(reminderLine(state!, Date.now())).not.toContain("rebased");
+    });
+
+    it("recognizes a rebase after unpublished commits without guessing when the reflog is absent", () => {
+        const { work, run } = pushedClone();
+        run(["commit", "-q", "--allow-empty", "-m", "published change"]);
+        run(["push", "-q"]);
+        run(["commit", "-q", "--allow-empty", "-m", "local change"]);
+        run(["checkout", "-q", "-b", "new-base", "HEAD~2"]);
+        run(["commit", "-q", "--allow-empty", "-m", "shared change"]);
+        run(["update-ref", "refs/remotes/origin/shared", "HEAD"]);
+        run(["checkout", "-q", "master"]);
+        run(["rebase", "--reapply-cherry-picks", "--empty=keep", "--onto", "new-base", "HEAD~2"]);
+        expect(reminderLine(unpushedState(work)!, Date.now())).toContain("rebased, push with --force-with-lease");
+        const reflog = join(work, ".git", "logs", "refs", "heads", "master");
+        renameSync(reflog, `${reflog}.saved`);
+        // A new HEAD invalidates the cached evidence while keeping the branch divergent.
+        run(["commit", "-q", "--allow-empty", "-m", "after expired reflog"]);
+        const state = unpushedState(work);
+        expect(state?.count).toBe(3);
+        expect(reminderLine(state!, Date.now())).toContain("diverged");
+        expect(reminderLine(state!, Date.now())).not.toContain("--force-with-lease");
+    });
+
+    it.each(["amend", "repeated rebase"])("keeps rebase evidence after %s", (change) => {
+        const { work, run } = pushedClone();
+        run(["commit", "-q", "--allow-empty", "-m", "published change"]);
+        run(["push", "-q"]);
+        run(["commit", "-q", "--allow-empty", "-m", "local change"]);
+        if (change === "amend") {
+            run(["commit", "-q", "--amend", "--allow-empty", "-m", "amended local change"]);
+        }
+
+        run(["checkout", "-q", "-b", "first-base", "HEAD~2"]);
+        run(["commit", "-q", "--allow-empty", "-m", "first shared change"]);
+        run(["update-ref", "refs/remotes/origin/shared", "HEAD"]);
+        run(["checkout", "-q", "master"]);
+        run(["rebase", "--reapply-cherry-picks", "--empty=keep", "--onto", "first-base", "HEAD~2"]);
+        if (change === "repeated rebase") {
+            run(["checkout", "-q", "-b", "second-base", "first-base"]);
+            run(["commit", "-q", "--allow-empty", "-m", "second shared change"]);
+            run(["update-ref", "refs/remotes/origin/shared", "HEAD"]);
+            run(["checkout", "-q", "master"]);
+            run(["rebase", "--reapply-cherry-picks", "--empty=keep", "--onto", "second-base", "first-base"]);
+        }
+
+        const state = unpushedState(work);
+        expect(state?.count).toBe(2);
+        expect(reminderLine(state!, Date.now())).toContain("rebased, push with --force-with-lease");
+    });
+
+    it("keeps synced, behind, detached and missing-upstream checkouts quiet", () => {
+        const { work, run } = pushedClone();
+        expect(unpushedState(work)?.count).toBe(0);
+        run(["checkout", "-q", "-b", "remote-work"]);
+        commit(run, 1);
+        run(["push", "-q", "origin", "HEAD:master"]);
+        run(["checkout", "-q", "master"]);
+        expect(unpushedReminders([work], config)).toEqual([]);
+        run(["checkout", "-q", "--detach"]);
+        expect(unpushedState(work)).toBeNull();
+        run(["checkout", "-q", "-b", "local-only"]);
+        commit(run, 5);
+        expect(unpushedState(work)).toBeNull();
+    });
+
+    it("recomputes old cache records and persists the new count on disk", async () => {
+        const { work, run } = pushedClone();
+        mergeRemote(run);
+        unpushedState(work);
+        const file = join(unpushedRoot(), `${Bun.hash(work).toString(36)}.json`);
+        const head = readFileSync(join(work, ".git", "refs", "heads", "topic"), "utf8").trim();
+        const upstream = readFileSync(join(work, ".git", "refs", "remotes", "origin", "master"), "utf8").trim();
+        writeFileSync(file, SafeJSON.stringify({ key: `${head}:${upstream}`, count: 8, oldestMs: 1 }));
+        const fresh = await withSpawnCounter(async () => unpushedState(work));
+        expect(fresh.result?.count).toBe(1);
+        expect(fresh.count).toBe(2);
+        const saved = SafeJSON.parse(readFileSync(file, "utf8"));
+        expect(saved).toMatchObject({ count: 1, history: { diverged: false, rebased: false } });
+        expect((await withSpawnCounter(async () => unpushedState(work))).count).toBe(1);
+    });
+
+    it.each(["history", "count", "revisions"])("recomputes an incomplete cache missing %s", async (field) => {
+        const { work, run } = pushedClone();
+        commit(run, 1);
+        unpushedState(work);
+        const file = join(unpushedRoot(), `${Bun.hash(work).toString(36)}.json`);
+        const partial: unknown = SafeJSON.parse(readFileSync(file, "utf8"));
+        if (!isJsonObject(partial)) {
+            throw new Error("The fixture cache must be an object");
+        }
+
+        delete partial[field];
+        writeFileSync(file, SafeJSON.stringify(partial));
+        const refreshed = await withSpawnCounter(async () => unpushedState(work));
+        expect(refreshed.result?.count).toBe(1);
+        expect(refreshed.count).toBe(2);
+        const persisted = SafeJSON.parse(readFileSync(file, "utf8"));
+        expect(persisted).toMatchObject({ count: 1, history: { diverged: false, rebased: false } });
+        expect((await withSpawnCounter(async () => unpushedState(work))).count).toBe(1);
+    });
+
+    it("uses packed refs for the cheap ancestry preflight and notices a new HEAD", async () => {
+        const { work, run } = pushedClone();
+        commit(run, 1);
+        unpushedState(work);
+        run(["pack-refs", "--all"]);
+        const packed = await withSpawnCounter(async () => unpushedState(work));
+        expect(packed.result?.count).toBe(1);
+        expect(packed.count).toBe(1);
+        expect(packed.spawns[0].cmd).not.toContain("HEAD...@{u}");
+        commit(run, 1);
+        const changed = await withSpawnCounter(async () => unpushedState(work));
+        expect(changed.result?.count).toBe(2);
+        expect(changed.count).toBe(2);
+        expect(changed.spawns[0].cmd).toContain("HEAD...@{u}");
+    });
+
+    it("fails quiet if HEAD races the ancestry preflight, then recomputes next turn", () => {
+        const { work, run } = pushedClone();
+        commit(run, 1);
+        unpushedState(work);
+        const ref = join(work, ".git", "refs", "heads", "master");
+        const oldOid = readFileSync(ref, "utf8");
+        commit(run, 1);
+        const newOid = readFileSync(ref, "utf8");
+        writeFileSync(ref, oldOid);
+        const original = Bun.spawnSync;
+        const spy = spyOn(Bun, "spawnSync").mockImplementationOnce((...args) => {
+            writeFileSync(ref, newOid);
+            return Reflect.apply(original, Bun, args);
+        });
+
+        try {
+            expect(unpushedState(work)).toBeNull();
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(unpushedState(work)?.count).toBe(2);
     });
 
     it("spends two git processes on a new HEAD and one once it is cached", async () => {

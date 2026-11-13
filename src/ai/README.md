@@ -35,9 +35,13 @@ tools ai image "a red bicycle in the rain" -o bike.png
 ```
 
 - `translate [text]`: `--to <lang>` (required), `--from <lang>` (detected when omitted),
-  `--provider local-hf|cloud|darwinkit`, `-c, --clipboard` (copy the result).
-- `summarize [file]`: `--max-length <n>`, `--provider`, `-c, --clipboard`. The file `-` reads stdin. With no file
-  it reads piped stdin, or the clipboard when stdin is a terminal.
+  `--provider <id>`, `--model <id>`, `-c, --clipboard` (copy the result).
+- `summarize [file]`: `--max-length <n>`, `--provider <id>`, `--model <id>`, `-c, --clipboard`. The file `-` reads
+  stdin. With no file it reads piped stdin, or the clipboard when stdin is a terminal.
+- `translate` and `summarize` call the AI task facade (`ai.translate`, `ai.summarize`). `--provider` and `--model`
+  choose for that call only and are never saved; a lone `--provider` uses that provider's default model for the task.
+  Change the saved default with `tools ai config default set <task> <model-ref>`. A transient failure is retried up
+  to three times.
 - `classify [text]`: `--categories <list>` (required, comma-separated, at least two; fewer exits 1), `--provider`.
 - `image <prompt>`: `-o, --output <path>` (required), `--model <id>`.
 - `translate` and `classify` read stdin when no text is given.
@@ -46,20 +50,9 @@ tools ai image "a red bicycle in the rain" -o bike.png
 - `classify` uses the macOS classification helper (semantic similarity against your categories).
 - `image` defaults to `stabilityai/stable-diffusion-xl-base-1.0` and installs `@huggingface/inference` on first use.
 
-⚠️ **`summarize` and `classify` register `--provider`, but ignore it.** `summarize` calls
-`AI.summarize(input, { maxLength })` and `classify` calls `classifyText(input, categories)`; neither receives the flag
-(`src/ai/index.ts:167` and `:288`). Passing it silently gets you the default implementation, so do not rely on it to
-steer either verb. `translate` does honour `--provider`, and it also saves that provider as the `translate` task
-default before it translates, even when the translation then fails: later translations without the flag use it too.
-That save normally also clears the task's saved model, so note the current default first
-(`tools ai config default list`). One case saves nothing: when the task default is a model with no provider and you
-pass the default provider (`--provider local-hf`), the default stays, and the translation can use that saved model
-instead of the provider you asked for.
-`tools ai config default set translate <model-ref>` sets the default back. Give it a ref that names a model
-(`@account/<id>:<model>`), or a bare `@account/<id>` together with `--provider <id>`: a bare account ref alone goes to
-`defaults.account.translate`, and the provider that `--provider` left in `defaults.task.translate` comes first. When
-the old default had its own provider and a bare model, pass that provider again with `--provider`, or the one
-`translate --provider` saved stays beside the model.
+⚠️ **`classify` registers `--provider`, but ignores it.** It calls `classifyText(input, categories)`, which does not
+receive the flag. Passing it silently gets you the default implementation. It is documented here rather than omitted
+so nobody assumes the flag works.
 
 ### Local models
 
@@ -696,8 +689,7 @@ site. `doctor --live` and `account test --live` add the plugin's health probe, w
 
 ## Troubleshooting
 
-- **`--provider` on `summarize` or `classify` changes nothing.** The flag is ignored (see Text verbs). For
-  `summarize`, set a task default with `tools ai config default set summarize <model-ref>` instead. `classify` has no
+- **`--provider` on `classify` changes nothing.** The flag is ignored (see Text verbs). `classify` has no
   workaround: it always runs the macOS classification helper, and it reads no task default, account or model.
 - **`image` says "Hugging Face token required".** Export `HUGGINGFACE_TOKEN` (or `HF_TOKEN`).
 - **`tokens --method claude-api` fails at once.** It needs `ANTHROPIC_API_KEY`; it never borrows a subscription

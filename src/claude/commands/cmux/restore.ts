@@ -7,12 +7,12 @@ import { listCandidates } from "@app/claude/lib/cmux/sessions";
 import { type RestoreSettings, type TuneAction, tuneOptions } from "@app/claude/lib/cmux/settings";
 import { loadSnapshot, snapshotCandidates } from "@app/claude/lib/cmux/snapshot";
 import type { LayoutMode, RestoreCandidate, RestorePlan } from "@app/claude/lib/cmux/types";
-import * as p from "@clack/prompts";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { resolveProjectFilter } from "@genesiscz/utils/claude";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { cancelSymbol, searchMultiselect } from "@genesiscz/utils/prompts/clack/search-multiselect";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 export interface RestoreOptions {
@@ -84,6 +84,7 @@ export async function restoreCommand(snapshotName: string | undefined, opts: Res
             message: `Restore ${picked.length} session${picked.length === 1 ? "" : "s"}?`,
             initialValue: "go" as TuneAction,
             options: tuneOptions(settings, plan, picked.length),
+            cancel: "back",
         });
 
         if (p.isCancel(action) || action === "cancel") {
@@ -169,6 +170,7 @@ async function tune(action: TuneAction, settings: RestoreSettings): Promise<Rest
                 { value: "grid" as LayoutMode, label: "One workspace", hint: "every session becomes a pane" },
                 { value: "tabs" as LayoutMode, label: "Capped grid, tabs", hint: "extra sessions become tabs" },
             ],
+            cancel: "back",
         });
 
         return p.isCancel(layout) ? settings : { ...settings, layout };
@@ -183,6 +185,7 @@ async function tune(action: TuneAction, settings: RestoreSettings): Promise<Rest
 
                 return Number.isFinite(n) && n > 0 ? undefined : "A positive number, please.";
             },
+            cancel: "back",
         });
 
         return p.isCancel(value) ? settings : { ...settings, perWorkspace: Number.parseInt(value, 10) };
@@ -220,6 +223,7 @@ async function tuneAccounts(settings: RestoreSettings): Promise<RestoreSettings>
                 ? [{ value: "force", label: "Force one account", hint: "every pane, pins ignored" }]
                 : []),
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {
@@ -234,6 +238,7 @@ async function tuneAccounts(settings: RestoreSettings): Promise<RestoreSettings>
         message: "Which account?",
         initialValue: settings.forceAccount ?? accounts[0],
         options: accounts.map((name) => ({ value: name, label: name })),
+        cancel: "back",
     });
 
     return p.isCancel(account) ? settings : { ...settings, forceAccount: account, autopick: false };
@@ -242,11 +247,11 @@ async function tuneAccounts(settings: RestoreSettings): Promise<RestoreSettings>
 /** Accounts `tools claude start <name>` can actually launch: those with a saved token. */
 async function launchableAccounts(): Promise<string[]> {
     try {
-        const config = await AIConfig.load();
+        const store = await AiConfigStore.load();
 
-        return config
-            .getAccountsByProvider("anthropic-sub")
-            .filter((account) => account.tokens?.longLivedToken)
+        return store
+            .accounts({ provider: "anthropic-sub" })
+            .filter((account) => account.credentials.longLivedToken)
             .map((account) => account.name);
     } catch (error) {
         logger.debug({ error }, "[claude-cmux] could not list accounts for the force-account menu");
@@ -286,6 +291,7 @@ export async function resolveScope(opts: RestoreOptions, fromSnapshot: boolean):
                 hint: "faster: it indexes one project's transcripts",
             },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {

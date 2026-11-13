@@ -10,7 +10,7 @@ import { azLoginSuggestionBlock, extractTenantFromStderr } from "@app/azure-devo
 import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 
-const SSL_PROXY_GUIDE = `
+export const SSL_PROXY_GUIDE = `
 🔐 SSL Certificate Error (Proxy Detected)
 
 Azure CLI cannot verify SSL certificates - likely due to a corporate proxy
@@ -31,7 +31,7 @@ Quick fixes:
 More info: https://learn.microsoft.com/cli/azure/use-cli-effectively#work-behind-a-proxy
 `;
 
-function authGuide(): string {
+export function authGuide(): string {
     return `
 🔐 Azure CLI Authentication Required
 
@@ -99,6 +99,26 @@ export class AzAuthError extends Error {
 }
 
 /**
+ * A non-2xx answer from Azure DevOps (`Api.send`, `Api.fetchBinary`). A caller reads `status` to tell a missing
+ * item (404) from a failure, instead of matching the message text.
+ */
+export class AdoHttpError extends Error {
+    readonly method: string;
+    readonly url: string;
+    readonly status: number;
+    readonly body: string;
+
+    constructor(input: { method: string; url: string; status: number; body: string }) {
+        super(`API Error ${input.status}: ${input.body}`);
+        this.name = "AdoHttpError";
+        this.method = input.method;
+        this.url = input.url;
+        this.status = input.status;
+        this.body = input.body;
+    }
+}
+
+/**
  * Build a working `az login` suggestion from auth-error stderr.
  *
  * Delegates to `azLoginSuggestionBlock` so the actual command strings live in
@@ -123,20 +143,6 @@ export function extractAzLoginSuggestion(stderr: string): string | null {
     }
 
     return null;
-}
-
-/**
- * Print SSL/proxy certificate guide and exit
- */
-export function exitWithSslGuide(error?: unknown): never {
-    out.println(SSL_PROXY_GUIDE);
-
-    if (error instanceof Error && error.stack && env.log.isDebugEnabled()) {
-        out.error("\nStacktrace:\n");
-        out.error(error.stack);
-    }
-
-    process.exit(1);
 }
 
 /**

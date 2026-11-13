@@ -4,11 +4,9 @@ import path from "node:path";
 import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
-import chalk from "chalk";
 import type { GeminiGenericConfig, GeminiMCPServerConfig } from "./gemini.types.js";
 import type { MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
-import { MCPProvider, WriteResult } from "./types.js";
+import { MCPProvider, type WriteResult } from "./types.js";
 
 /**
  * Gemini Code Assist MCP provider.
@@ -25,10 +23,6 @@ export class GeminiProvider extends MCPProvider {
         return existsSync(this.configPath);
     }
 
-    supportsDisabledState(): boolean {
-        return true; // Gemini has mcp.excluded list
-    }
-
     async readConfig(): Promise<GeminiGenericConfig> {
         if (!(await this.configExists())) {
             return { mcpServers: {} };
@@ -38,29 +32,14 @@ export class GeminiProvider extends MCPProvider {
         return SafeJSON.parse(content) as GeminiGenericConfig;
     }
 
-    async writeConfig(config: unknown): Promise<WriteResult> {
-        const newContent = SafeJSON.stringify(config, { strict: true }, 2);
-
-        // Read old content (empty string if file doesn't exist)
-        const oldContent = (await this.configExists()) ? await readFile(this.configPath, "utf-8") : "";
-
-        // Early exit if no changes
-        if (oldContent === newContent) {
-            return WriteResult.NoChanges;
-        }
-
-        // Show diff and ask for confirmation
-        await this.backupManager.showDiff(oldContent, newContent, this.configPath);
-        const confirmed = await this.backupManager.askConfirmation();
-
-        if (!confirmed) {
-            return WriteResult.Rejected;
-        }
-
-        // Only now write to file (with backup)
-        await this.writeFileWithBackup(newContent);
-        logger.info(chalk.green(`✓ Configuration written to ${this.configPath}`));
-        return WriteResult.Applied;
+    private update(change: (config: GeminiGenericConfig) => GeminiGenericConfig | null): Promise<WriteResult> {
+        return this.writeCycle({
+            read: () => this.readConfig(),
+            change,
+            serialize: (next) => SafeJSON.stringify(next, { strict: true }, 2),
+            path: this.configPath,
+            describe: "Gemini MCP servers",
+        });
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -89,138 +68,102 @@ export class GeminiProvider extends MCPProvider {
         return serverConfig ? this.geminiToUnified(serverConfig) : null;
     }
 
-    async enableServer(serverName: string, _projectPath?: string | null): Promise<void> {
-        const config = await this.readConfig();
-
-        // Remove from excluded list
-        if (config.mcp?.excluded) {
-            config.mcp.excluded = config.mcp.excluded.filter((name) => name !== serverName);
-        }
-
-        await this.writeConfig(config);
-    }
-
-    async disableServer(serverName: string, _projectPath?: string | null): Promise<void> {
-        const config = await this.readConfig();
-
-        // Add to excluded list
-        if (!config.mcp) {
-            config.mcp = {};
-        }
-        if (!config.mcp.excluded) {
-            config.mcp.excluded = [];
-        }
-        if (!config.mcp.excluded.includes(serverName)) {
-            config.mcp.excluded.push(serverName);
-        }
-
-        await this.writeConfig(config);
-    }
-
-    async disableServerForAllProjects(serverName: string): Promise<void> {
-        // Gemini doesn't have project-specific configs, so same as disableServer
-        await this.disableServer(serverName);
-    }
-
     async enableServers(serverNames: string[], _projectPath?: string | null): Promise<WriteResult> {
-        const config = await this.readConfig();
+        return this.update((config) => {
+            if (config.mcp?.excluded) {
+                config.mcp.excluded = config.mcp.excluded.filter((name) => !serverNames.includes(name));
+            }
 
-        if (config.mcp?.excluded) {
-            config.mcp.excluded = config.mcp.excluded.filter((name) => !serverNames.includes(name));
-        }
-
-        return this.writeConfig(config);
+            return config;
+        });
     }
 
     async disableServers(serverNames: string[], _projectPath?: string | null): Promise<WriteResult> {
-        const config = await this.readConfig();
-
-        if (!config.mcp) {
-            config.mcp = {};
-        }
-        if (!config.mcp.excluded) {
-            config.mcp.excluded = [];
-        }
-        for (const serverName of serverNames) {
-            if (!config.mcp.excluded.includes(serverName)) {
-                config.mcp.excluded.push(serverName);
+        return this.update((config) => {
+            if (!config.mcp) {
+                config.mcp = {};
             }
-        }
+            if (!config.mcp.excluded) {
+                config.mcp.excluded = [];
+            }
+            for (const serverName of serverNames) {
+                if (!config.mcp.excluded.includes(serverName)) {
+                    config.mcp.excluded.push(serverName);
+                }
+            }
 
-        return this.writeConfig(config);
+            return config;
+        });
     }
 
     async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<WriteResult> {
         // Strip _meta before processing (unified utility ensures _meta never reaches providers)
         const cleanConfig = stripMeta(config);
-        const geminiConfig = await this.readConfig();
 
-        if (!geminiConfig.mcpServers) {
-            geminiConfig.mcpServers = {};
-        }
+        return this.update((geminiConfig) => {
+            if (!geminiConfig.mcpServers) {
+                geminiConfig.mcpServers = {};
+            }
 
-        geminiConfig.mcpServers[serverName] = this.unifiedToGemini(cleanConfig);
+            geminiConfig.mcpServers[serverName] = this.unifiedToGemini(cleanConfig);
 
-        // Ensure it's enabled by removing from excluded list
-        if (geminiConfig.mcp?.excluded) {
-            geminiConfig.mcp.excluded = geminiConfig.mcp.excluded.filter((name) => name !== serverName);
-        }
+            // Ensure it's enabled by removing from excluded list
+            if (geminiConfig.mcp?.excluded) {
+                geminiConfig.mcp.excluded = geminiConfig.mcp.excluded.filter((name) => name !== serverName);
+            }
 
-        return this.writeConfig(geminiConfig);
+            return geminiConfig;
+        });
     }
 
     async removeServers(serverNames: string[]): Promise<WriteResult> {
-        const config = await this.readConfig();
-        let changed = false;
+        return this.update((config) => {
+            let changed = false;
 
-        for (const serverName of serverNames) {
-            if (config.mcpServers?.[serverName]) {
-                delete config.mcpServers[serverName];
-                changed = true;
-            }
-            if (config.mcp?.excluded) {
-                const filtered = config.mcp.excluded.filter((name) => name !== serverName);
-
-                if (filtered.length !== config.mcp.excluded.length) {
-                    config.mcp.excluded = filtered;
+            for (const serverName of serverNames) {
+                if (config.mcpServers?.[serverName]) {
+                    delete config.mcpServers[serverName];
                     changed = true;
                 }
+                if (config.mcp?.excluded) {
+                    const filtered = config.mcp.excluded.filter((name) => name !== serverName);
+
+                    if (filtered.length !== config.mcp.excluded.length) {
+                        config.mcp.excluded = filtered;
+                        changed = true;
+                    }
+                }
             }
-        }
 
-        if (!changed) {
-            return WriteResult.NoChanges;
-        }
-
-        return this.writeConfig(config);
+            return changed ? config : null;
+        });
     }
 
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
-        const config = await this.readConfig();
-
-        if (!config.mcpServers) {
-            config.mcpServers = {};
-        }
-        if (!config.mcp) {
-            config.mcp = {};
-        }
-        if (!config.mcp.excluded) {
-            config.mcp.excluded = [];
-        }
-
-        for (const [name, serverConfig] of Object.entries(servers)) {
-            const isEnabled = this.isServerEnabledInMeta(serverConfig);
-            const cleanConfig = stripMeta(serverConfig);
-            config.mcpServers[name] = this.unifiedToGemini(cleanConfig);
-
-            if (isEnabled) {
-                config.mcp.excluded = config.mcp.excluded.filter((n) => n !== name);
-            } else if (!config.mcp.excluded.includes(name)) {
-                config.mcp.excluded.push(name);
+        return this.update((config) => {
+            if (!config.mcpServers) {
+                config.mcpServers = {};
             }
-        }
+            if (!config.mcp) {
+                config.mcp = {};
+            }
+            if (!config.mcp.excluded) {
+                config.mcp.excluded = [];
+            }
 
-        return this.writeConfig(config);
+            for (const [name, serverConfig] of Object.entries(servers)) {
+                const isEnabled = this.isServerEnabledInMeta(serverConfig);
+                config.mcpServers[name] = this.unifiedToGemini(stripMeta(serverConfig));
+
+                if (isEnabled) {
+                    config.mcp.excluded = config.mcp.excluded.filter((n) => n !== name);
+                } else if (!config.mcp.excluded.includes(name)) {
+                    config.mcp.excluded.push(name);
+                }
+            }
+
+            return config;
+        });
     }
 
     toUnifiedConfig(config: unknown): Record<string, UnifiedMCPServerConfig> {
@@ -244,28 +187,6 @@ export class GeminiProvider extends MCPProvider {
         const config = await this.readConfig();
         const excluded = new Set(config.mcp?.excluded || []);
         return !excluded.has(serverName);
-    }
-
-    fromUnifiedConfig(servers: Record<string, UnifiedMCPServerConfig>): unknown {
-        const config: GeminiGenericConfig = {
-            mcpServers: {},
-            mcp: { excluded: [] },
-        };
-
-        for (const [name, unified] of Object.entries(servers)) {
-            // Read enabled state using utility method
-            const isEnabled = this.isServerEnabledInMeta(unified);
-
-            // Strip _meta before converting
-            const cleanConfig = stripMeta(unified);
-            config.mcpServers![name] = this.unifiedToGemini(cleanConfig);
-
-            if (!isEnabled) {
-                config.mcp?.excluded?.push(name);
-            }
-        }
-
-        return config;
     }
 
     private geminiToUnified(gemini: GeminiMCPServerConfig): UnifiedMCPServerConfig {

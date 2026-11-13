@@ -25,7 +25,6 @@ import { captureProfile, getCmuxVersion } from "@app/cmux/lib/snapshot";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
 import { loadSurfaceSessions } from "@app/cmux/lib/surface-sessions";
 import type { Profile } from "@app/cmux/lib/types";
-import * as p from "@clack/prompts";
 import { harnessLabel } from "@genesiscz/utils/ai/providers/harness-index";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -33,6 +32,7 @@ import { describeJournalJoin } from "@genesiscz/utils/cmux/journal-coverage";
 import { ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -142,6 +142,7 @@ async function resolveSource(
                     { value: "profile", label: "a named saved profile" },
                 ],
                 initialValue: "previous",
+                cancel: "back",
             })
         );
     }
@@ -169,6 +170,7 @@ async function resolveSource(
             p.select({
                 message: "Which profile?",
                 options: names.map((name) => ({ value: name, label: name })),
+                cancel: "back",
             })
         );
     }
@@ -266,13 +268,16 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
                 options: ALL_RESTORE_AGENTS.map((value) => ({ value, label: harnessLabel(value) })),
                 initialValues: [...ALL_RESTORE_AGENTS],
                 required: true,
+                cancel: "back",
             })
         );
     }
 
     let enter = Boolean(flags.enter);
     if (isInteractive() && flags.enter === undefined && !flags.yes && !flags.list && !flags.dryRun) {
-        enter = await withCancel(p.confirm({ message: "Execute resume commands now (--enter)?", initialValue: false }));
+        enter = await withCancel(
+            p.confirm({ message: "Execute resume commands now (--enter)?", initialValue: false, cancel: "back" })
+        );
     }
 
     const { profile: raw, beforeMs } = await loadProfile(source, profileName);
@@ -336,7 +341,7 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
         }
 
         const proceed = await withCancel(
-            p.confirm({ message: `Create ${plan.workspaces.length} workspace(s)?`, initialValue: true })
+            p.confirm({ message: `Create ${plan.workspaces.length} workspace(s)?`, initialValue: true, cancel: "back" })
         );
         if (!proceed) {
             p.cancel("Aborted.");
@@ -421,6 +426,7 @@ async function runInPlace(
             p.confirm({
                 message: `Restore ${planned.length} tab(s) in place${flags.enter ? " and run the agent resumes" : ""}?`,
                 initialValue: true,
+                cancel: "back",
             })
         );
         if (!proceed) {

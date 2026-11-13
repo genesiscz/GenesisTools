@@ -5,7 +5,7 @@ import { HistoryDatabase, openHistoryReadOnly } from "./database";
 import { fileListingFreshness } from "./listing-freshness";
 import { initializeCompactHistorySchema } from "./migrations";
 import { type HistoryProvider, resolveHistoryProvider } from "./provider";
-import { HistoryService } from "./service";
+import { type CatalogRefreshOptions, HistoryService } from "./service";
 import { HistoryStatisticsRepository } from "./statistics-repository";
 import { HistorySyncRepository } from "./sync-repository";
 import type { AgentSearchFilters } from "./types";
@@ -79,6 +79,14 @@ export function openHistoryCached(options: {
     };
 }
 
+interface CatalogHistoryOptions {
+    provider: string;
+    roots?: string[];
+    filters?: AgentSearchFilters;
+    maxDiscoveryAgeMs?: number;
+    refresh?: boolean;
+}
+
 /**
  * The listing catalog of one provider. `refresh: false` lists through a read-only connection: no schema
  * initialization, no migration, no discovery and no database creation. With nothing indexed yet, or an index
@@ -86,17 +94,25 @@ export function openHistoryCached(options: {
  * in-memory index (the second with a warning), so the answer has the usual shape and nothing is written. A diagnostic (`tools hub rules test`) lists this way; every
  * other caller refreshes as before.
  */
-export async function catalogHistory(options: {
-    provider: string;
-    roots?: string[];
-    filters?: AgentSearchFilters;
-    maxDiscoveryAgeMs?: number;
-    refresh?: boolean;
-}): ReturnType<HistoryService["catalog"]> {
+export async function catalogHistory(options: CatalogHistoryOptions): ReturnType<HistoryService["catalog"]> {
+    return onCatalogService(options, (service, filters, refresh) => service.catalog(filters, refresh));
+}
+
+/** `HistoryService.catalogCounts` of one provider, opened and read the way `catalogHistory` opens and reads. */
+export async function catalogHistoryCounts(
+    options: CatalogHistoryOptions
+): ReturnType<HistoryService["catalogCounts"]> {
+    return onCatalogService(options, (service, filters, refresh) => service.catalogCounts(filters, refresh));
+}
+
+async function onCatalogService<T>(
+    options: CatalogHistoryOptions,
+    run: (service: HistoryService, filters: AgentSearchFilters, refresh: CatalogRefreshOptions) => Promise<T>
+): Promise<T> {
     const { provider, roots, filters = {}, maxDiscoveryAgeMs } = options;
 
     if (options.refresh !== false) {
-        return openHistoryService({ provider, roots }).catalog(filters, { maxDiscoveryAgeMs });
+        return run(openHistoryService({ provider, roots }), filters, { maxDiscoveryAgeMs });
     }
 
     const db = openHistoryReadOnly();
@@ -104,7 +120,7 @@ export async function catalogHistory(options: {
     if (db) {
         try {
             const service = buildHistoryService(resolveHistoryProvider(provider), db, { roots, defaultIndex: true });
-            return await service.catalog(filters, { refresh: false });
+            return await run(service, filters, { refresh: false });
         } catch (error) {
             log.warn(
                 { error, provider },
@@ -118,7 +134,7 @@ export async function catalogHistory(options: {
     const empty = emptyHistory(provider, roots);
 
     try {
-        return await empty.service.catalog(filters, { refresh: false });
+        return await run(empty.service, filters, { refresh: false });
     } finally {
         empty.close();
     }

@@ -1,7 +1,7 @@
 import { playBuffer, playStream } from "@genesiscz/utils/audio/playback";
 import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
-import { AIConfig } from "../AIConfig";
+import { AiConfigStore } from "../config/AiConfigStore";
 import type { ModelRef } from "../core/model-ref";
 import { registerBuiltInPlugins } from "../providers/plugins";
 import { pluginsByCapability } from "../providers/registry";
@@ -145,8 +145,8 @@ export class Synthesizer {
         });
 
         if (options?.persist) {
-            const config = await AIConfig.load();
-            await config.setTask("tts", { provider: provider.type as AIProviderType });
+            const store = await AiConfigStore.load();
+            await store.setTaskDefault("tts", { provider: provider.type });
         }
 
         return new Synthesizer(provider, selector);

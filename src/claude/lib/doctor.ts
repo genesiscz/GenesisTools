@@ -4,7 +4,6 @@ import { fableStatusForAccount, weeklyStatusForAccount } from "@app/claude/lib/u
 import type { Cached } from "@app/claude/lib/usage/shared-cache";
 import { accountEnvVar, psEnvValue } from "@genesiscz/utils/ai/account-env";
 import type { TokenVerdict } from "@genesiscz/utils/claude/token-verify";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 
 /**
  * `tools claude doctor` — find pinned sessions that SILENTLY bill the wrong
@@ -145,7 +144,7 @@ export function groupSessions(processes: PinnedProcess[]): SessionGroup[] {
  */
 export function diagnoseGroup(
     group: SessionGroup,
-    accounts: AIAccountEntry[],
+    accounts: ReadonlyArray<{ name: string; tokens: { longLivedToken?: string } }>,
     cached: Cached<AccountUsage> | null,
     tokenVerdict: TokenVerdict,
     now: Date = new Date()
@@ -233,7 +232,10 @@ export async function resolveKeychainIdentity(deps: {
  * account that has no secondary login, so an unmanaged keychain would be
  * attributed to whichever account happens to sit first in the config.
  */
-export function accountOwningKeychain(accounts: AIAccountEntry[], uuid: string | undefined): string | undefined {
+export function accountOwningKeychain(
+    accounts: ReadonlyArray<{ name: string; secondary?: { accountUuid?: string } }>,
+    uuid: string | undefined
+): string | undefined {
     if (!uuid) {
         return undefined;
     }

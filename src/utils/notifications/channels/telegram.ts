@@ -1,11 +1,28 @@
 import { logger } from "@genesiscz/utils/logger";
+import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import type { ChannelDefinition, NotificationEvent, TelegramChannelConfig } from "../types";
+import { isLoopbackUrl } from "./webhook";
 
-/** True when Telegram accepted the message (or there was nothing to send). Never throws. */
+const TELEGRAM_SURFACE = "The Telegram notification channel";
+
+/** A test may point the bot at an API root it serves on loopback; any other root is the real Telegram. */
+function refuseRealTelegramInTest(apiRoot: string | undefined, remedy: string): void {
+    if (!apiRoot || !isLoopbackUrl(apiRoot)) {
+        refuseHostEffectInTest(TELEGRAM_SURFACE, remedy);
+    }
+}
+
+/**
+ * True when Telegram accepted the message (or there was nothing to send). Never throws, except that it rejects in a
+ * test process (and a child a test spawns) when it would post to the real Telegram: a message in a real chat cannot
+ * be taken back.
+ */
 export async function dispatchTelegram(event: NotificationEvent, config: TelegramChannelConfig): Promise<boolean> {
     if (!config.enabled || !config.botToken || !config.chatId) {
         return true;
     }
+
+    refuseRealTelegramInTest(config.apiRoot, "Assert the event instead of posting it to a real chat.");
 
     try {
         const { createApi } = await import("@genesiscz/utils/telegram-bot/lib/api");
@@ -69,8 +86,12 @@ export const telegramChannel: ChannelDefinition<"telegram"> = {
                 return false;
             }
 
+            const apiRoot = config.apiRoot ?? bot?.apiRoot;
+            // Caught below like any other failure: a retraction never throws.
+            refuseRealTelegramInTest(apiRoot, "Assert the retraction instead of editing a real message.");
+
             return await retractTelegramNotice({
-                api: createApi(token, config.apiRoot ?? bot?.apiRoot),
+                api: createApi(token, apiRoot),
                 noticeId,
                 edit: (original) => `${original ?? noticeId}\n\n${TELEGRAM_CLOSED_ELSEWHERE}`,
             });

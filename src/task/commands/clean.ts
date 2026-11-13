@@ -1,7 +1,7 @@
 import { TaskSessionStore } from "@app/task/lib/session-store";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 
 export function registerCleanCommand(program: Command): void {
@@ -25,6 +25,7 @@ export function registerCleanCommand(program: Command): void {
                 if (isInteractive()) {
                     const confirmed = await p.confirm({
                         message: `Delete all ${names.length} task sessions?`,
+                        cancel: "back",
                     });
 
                     if (p.isCancel(confirmed) || !confirmed) {
@@ -58,6 +59,7 @@ export function registerCleanCommand(program: Command): void {
                 const picked = await p.select({
                     message: "Select session to clean",
                     options: names.map((n) => ({ value: n, label: n })),
+                    cancel: "back",
                 });
 
                 if (p.isCancel(picked)) {

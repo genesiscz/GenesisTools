@@ -1,7 +1,7 @@
 import { curlAuthDriver } from "@app/clarity/lib/auth/curl-driver";
 import { extraAuthDrivers } from "@app/clarity/lib/auth/extra-drivers";
 import type { ClarityAuthDriver } from "@app/clarity/lib/auth/types";
-import * as clack from "@clack/prompts";
+import * as clack from "@genesiscz/utils/prompts/p";
 
 export const DEFAULT_AUTH_DRIVER = curlAuthDriver.id;
 
@@ -49,6 +49,7 @@ export async function chooseAuthDriver(
         message: "How do you want to sign in to Clarity?",
         options: drivers.map((d) => ({ value: d.id, label: d.label })),
         initialValue: savedAuthDriver(saved)?.id ?? DEFAULT_AUTH_DRIVER,
+        cancel: "back",
     });
 
     return clack.isCancel(picked) ? null : findAuthDriver(picked);

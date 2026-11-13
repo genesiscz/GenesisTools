@@ -2,7 +2,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { z } from "zod";
-import { CdpDeadlineError, Conn, localDebuggerUrl, type Target } from "../cdp";
+import { CdpDeadlineError, type Conn, connect, type Target } from "../cdp";
 import {
     type DomAction,
     type DomPrepared,
@@ -171,7 +171,7 @@ export class DomPage {
     /** Attaches to one page target the caller has already chosen; choosing is a policy, not ours. */
     static async attach(options: { port: number; target: Target }): Promise<DomPage> {
         const { target } = options;
-        const conn = new Conn(localDebuggerUrl(target, options.port));
+        const conn = connect(target, options.port);
         const page = new DomPage(conn, target, options.port);
         try {
             await conn.send("Page.enable");

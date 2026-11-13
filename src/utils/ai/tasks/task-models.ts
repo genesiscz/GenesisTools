@@ -1,3 +1,4 @@
+import { defaultModelIdFor } from "../catalog";
 import { byTaskAndProvider } from "../local/descriptors";
 import { ELEVENLABS_DEFAULT_STT_MODEL_ID } from "../providers/elevenlabs/AIElevenLabsTranscriptionProvider";
 import type { Capability } from "../providers/plugin-types";
@@ -76,6 +77,12 @@ export function taskModelDefault(providerId: string, capability: Capability): st
  * Deepgram for a model of that name. Filling the model half from this table is
  * what `--provider deepgram` has always meant — the same default
  * `TranscriptionManager.getDefaultModelForProvider` picked.
+ *
+ * A text task (summarize, translate) has no row in that table, so a lone
+ * `--provider anthropic` falls back to the provider's first catalog model for
+ * the capability. That is the model the resolver picks for a configured
+ * `{ provider }` default (`defaultModelIdFor` in catalog/defaults.ts), so a
+ * per-call flag lands on the same model a saved default would, without saving.
  */
 export function taskModelRef(
     options: { provider?: string; model?: string } | undefined,
@@ -88,7 +95,7 @@ export function taskModelRef(
     }
 
     if (provider) {
-        const fallback = taskModelDefault(provider, capability);
+        const fallback = taskModelDefault(provider, capability) ?? defaultModelIdFor(provider, capability);
         if (!fallback) {
             throw new Error(`No default ${capability} model is defined for provider "${provider}".`);
         }

@@ -3,8 +3,8 @@ import * as agentReplay from "@app/cmux/lib/agent-replay";
 import * as offline from "@app/cmux/lib/offline-snapshot";
 import { ProfileStore } from "@app/cmux/lib/store";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
-import * as prompts from "@clack/prompts";
 import * as health from "@genesiscz/utils/cmux/lib/health";
+import * as prompts from "@genesiscz/utils/prompts/p";
 import { runRescue } from "./rescue";
 
 /**
@@ -22,7 +22,7 @@ import { runRescue } from "./rescue";
  */
 
 let interactive = true;
-let confirmAnswer: boolean | symbol = true;
+let confirmAnswer = true;
 let realIsTty: boolean | undefined;
 
 let killed: number[] = [];

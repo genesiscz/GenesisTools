@@ -162,7 +162,4 @@ for (const sub of cloudApp.commanderCommand.commands) {
     program.addCommand(sub);
 }
 
-await runTool(program, { tool: "dev-dashboard-cloud" }).catch((err: unknown) => {
-    logger.error({ err }, "dev-dashboard-cloud launcher failed");
-    process.exit(1);
-});
+await runTool(program, { tool: "dev-dashboard-cloud" });

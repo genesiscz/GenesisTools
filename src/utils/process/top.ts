@@ -1,5 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
-import { capture } from "./ps";
+import { capture } from "./capture";
 
 const log = logger.child({ component: "process:top" });
 

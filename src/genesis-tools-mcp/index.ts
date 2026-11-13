@@ -25,13 +25,7 @@ program
 registerMcpInstallCommand(program);
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "genesis-tools-mcp" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(message);
-        process.exit(1);
-    }
+    await runTool(program, { tool: "genesis-tools-mcp" });
 }
 
 main().catch((err) => {

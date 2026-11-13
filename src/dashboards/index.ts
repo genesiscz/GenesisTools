@@ -151,7 +151,4 @@ program
         out.println(lines.join("\n"));
     });
 
-await runTool(program, { tool: "dashboards" }).catch((err: unknown) => {
-    logger.error({ err }, "dashboards orchestration failed");
-    process.exit(1);
-});
+await runTool(program, { tool: "dashboards" });

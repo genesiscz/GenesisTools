@@ -3,12 +3,10 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { setupInquirerMock } from "./inquirer-mock.js";
 
 // Setup prompt mock + storage sandbox BEFORE importing modules under test
 setupInquirerMock();
-setupStorageSandbox();
 
 const { ClaudeProvider } = await import("@app/mcp-manager/utils/providers/claude.js");
 const { CodexProvider } = await import("@app/mcp-manager/utils/providers/codex.js");
@@ -120,7 +118,7 @@ describe("claude provider TRUE global disable", () => {
         rmSync(homeDir, { recursive: true, force: true });
     });
 
-    describe("disableServer(name, null) — global", () => {
+    describe("disableServers([name], null) — global", () => {
         // Intended change 2026-10-13: a global disable no longer sweeps the name into every
         // project's disabledMcpServers list. Global means the global switch only.
         it("removes the entry from mcpServers, keeps the top-level marker, leaves every project alone", async () => {
@@ -128,7 +126,7 @@ describe("claude provider TRUE global disable", () => {
             await writeUnified(unifiedFixture());
 
             const provider = new ClaudeProvider();
-            await provider.disableServer("serena", null);
+            await provider.disableServers(["serena"], null);
 
             const claude = readClaudeJson();
             expect(claude.mcpServers?.serena).toBeUndefined(); // TRUE global disable
@@ -152,7 +150,7 @@ describe("claude provider TRUE global disable", () => {
             await writeUnified({ mcpServers: {} });
 
             const provider = new ClaudeProvider();
-            await provider.disableServer("serena", null);
+            await provider.disableServers(["serena"], null);
 
             const unified = await readUnified();
             expect(unified.mcpServers.serena).toBeDefined();
@@ -171,7 +169,7 @@ describe("claude provider TRUE global disable", () => {
             spyOn(configUtils, "writeUnifiedConfig").mockResolvedValue(false);
 
             const provider = new ClaudeProvider();
-            await provider.disableServer("serena", null);
+            await provider.disableServers(["serena"], null);
 
             const claude = readClaudeJson();
             expect(claude.mcpServers?.serena).toBeDefined(); // kept — no data loss
@@ -182,13 +180,13 @@ describe("claude provider TRUE global disable", () => {
         });
     });
 
-    describe("disableServer(name, '/project') — per-project unchanged", () => {
+    describe("disableServers([name], '/project') — per-project unchanged", () => {
         it("keeps the entry in mcpServers and only updates the project's disabled list", async () => {
             writeClaudeJson(claudeFixture());
             await writeUnified(unifiedFixture());
 
             const provider = new ClaudeProvider();
-            await provider.disableServer("serena", "/proj/a");
+            await provider.disableServers(["serena"], "/proj/a");
 
             const claude = readClaudeJson();
             expect(claude.mcpServers?.serena).toBeDefined(); // still installed
@@ -201,7 +199,7 @@ describe("claude provider TRUE global disable", () => {
         });
     });
 
-    describe("enableServer(name, null) — global", () => {
+    describe("enableServers([name], null) — global", () => {
         /**
          * serena globally disabled (absent) and still on three project lists, one of them a project
          * with a project-scope entry: the list switches it off there too, so it counts.
@@ -229,7 +227,7 @@ describe("claude provider TRUE global disable", () => {
             const projects = await listedEverywhere();
 
             const provider = new ClaudeProvider();
-            await provider.enableServer("serena", null);
+            await provider.enableServers(["serena"], null);
 
             const result = readClaudeJson();
             expect(result.mcpServers?.serena).toBeDefined(); // restored
@@ -288,7 +286,7 @@ describe("claude provider TRUE global disable", () => {
             unified.mcpServers.serena._meta = { enabled: { claude: false } };
             await writeUnified(unified);
 
-            await new ClaudeProvider().enableServer("serena", null);
+            await new ClaudeProvider().enableServers(["serena"], null);
 
             expect(readClaudeJson().mcpServers?.serena).toBeDefined();
             expect(logger.warn).not.toHaveBeenCalled();

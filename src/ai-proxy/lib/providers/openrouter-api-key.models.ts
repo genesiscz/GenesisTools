@@ -1,5 +1,5 @@
-import { OPENROUTER_API_BASE_URL } from "@app/ai-proxy/lib/providers/openrouter-api-key";
-import { providerKey } from "@app/ai-proxy/lib/providers/registry";
+import { OPENROUTER_API_BASE_URL } from "@app/ai-proxy/lib/providers/endpoints";
+import { providerKey } from "@app/ai-proxy/lib/providers/provider-key";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import {
     DEFAULT_OPENROUTER_EXCLUDE,

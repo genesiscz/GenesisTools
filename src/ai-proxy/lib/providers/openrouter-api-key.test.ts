@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+import type { ExchangeFetch } from "@app/ai-proxy/lib/providers/http-relay";
 import { OpenRouterApiKeyProvider } from "@app/ai-proxy/lib/providers/openrouter-api-key";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { AiProxyAccountConfig, AiProxyOpenRouterAccountConfig } from "@app/ai-proxy/lib/types";
@@ -6,8 +7,8 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
- * `fetchDirect` is a one-line wrapper over the global `fetch`, so swapping the
- * global captures exactly the request the upstream would have received.
+ * The provider sends through the fetch it was built with, so the fake below
+ * captures exactly the request the upstream would have received.
  */
 
 interface Captured {
@@ -17,7 +18,16 @@ interface Captured {
 }
 
 const captured: Captured[] = [];
-const realFetch = globalThis.fetch;
+
+const captureFetch: ExchangeFetch = async (input, init) => {
+    captured.push({
+        url: String(input),
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+        body: SafeJSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+    });
+
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+};
 
 function account(openrouter?: AiProxyOpenRouterAccountConfig): AiProxyAccountConfig {
     return {
@@ -35,7 +45,7 @@ async function relay(
     body: Record<string, unknown>,
     upstreamModel = "anthropic/claude-sonnet-5"
 ): Promise<Captured> {
-    const provider = await OpenRouterApiKeyProvider.create(config);
+    const provider = await OpenRouterApiKeyProvider.create(config, captureFetch);
     const request = new Request("http://localhost/v1/chat/completions", { method: "POST" });
 
     await provider.chatCompletions(request, upstreamModel, SafeJSON.stringify(body) ?? "{}");
@@ -45,19 +55,6 @@ async function relay(
 
 beforeEach(() => {
     captured.length = 0;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-        captured.push({
-            url: String(input),
-            headers: Object.fromEntries(new Headers(init?.headers).entries()),
-            body: SafeJSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
-        });
-
-        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    }) as unknown as typeof fetch;
-});
-
-afterEach(() => {
-    globalThis.fetch = realFetch;
 });
 
 describe("the openrouter relay body", () => {
@@ -258,16 +255,16 @@ describe("the openrouter provider surface", () => {
     });
 
     test("getUsage reads the key-scoped endpoint", async () => {
-        globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const usageFetch: ExchangeFetch = async (input) => {
             captured.push({ url: String(input), headers: {}, body: {} });
 
             return new Response(SafeJSON.stringify({ data: { usage: 1.2345, limit: 10, limit_remaining: 8.7655 } }), {
                 status: 200,
                 headers: { "content-type": "application/json" },
             });
-        }) as unknown as typeof fetch;
+        };
 
-        const provider = await OpenRouterApiKeyProvider.create(account());
+        const provider = await OpenRouterApiKeyProvider.create(account(), usageFetch);
         const usage = await provider.getUsage();
 
         expect(captured[0].url).toBe("https://openrouter.ai/api/v1/key");
@@ -278,11 +275,9 @@ describe("the openrouter provider surface", () => {
 
     /** A failed usage lookup must report, never throw into the CLI. */
     test("getUsage survives a failing endpoint", async () => {
-        globalThis.fetch = (async () => {
+        const provider = await OpenRouterApiKeyProvider.create(account(), async () => {
             throw new Error("offline");
-        }) as unknown as typeof fetch;
-
-        const provider = await OpenRouterApiKeyProvider.create(account());
+        });
         const usage = await provider.getUsage();
 
         expect(usage.summary).toContain("usage lookup failed");

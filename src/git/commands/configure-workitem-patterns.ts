@@ -18,9 +18,9 @@ import {
     validatePattern,
     type WorkitemPattern,
 } from "@app/git/workitem-patterns";
-import * as p from "@clack/prompts";
 import { createGit } from "@genesiscz/utils/git";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -75,6 +75,7 @@ async function handleSuggest(storage: Storage, repoPath: string): Promise<void> 
             label: `"${s.pattern.regex}" - ${s.matchCount} matches (${s.pattern.source})`,
             hint: `e.g. ${s.sampleMatches.join(", ")}`,
         })),
+        cancel: "back",
     });
 
     if (p.isCancel(selected)) {
@@ -193,6 +194,7 @@ async function handleInteractive(storage: Storage): Promise<void> {
                 { value: "suggest", label: "Suggest patterns from repository" },
                 { value: "done", label: "Done" },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(action)) {
@@ -212,6 +214,7 @@ async function handleInteractive(storage: Storage): Promise<void> {
                             return result.error ?? "Invalid pattern";
                         }
                     },
+                    cancel: "back",
                 });
 
                 if (p.isCancel(regex)) {
@@ -225,6 +228,7 @@ async function handleInteractive(storage: Storage): Promise<void> {
                         { value: "branch-name", label: "Branch names" },
                         { value: "both", label: "Both" },
                     ],
+                    cancel: "back",
                 });
 
                 if (p.isCancel(source)) {
@@ -234,6 +238,7 @@ async function handleInteractive(storage: Storage): Promise<void> {
                 const description = await p.text({
                     message: "Description (optional):",
                     placeholder: "My pattern",
+                    cancel: "back",
                 });
 
                 if (p.isCancel(description)) {
@@ -266,6 +271,7 @@ async function handleInteractive(storage: Storage): Promise<void> {
                         label: `${pat.regex} (${pat.source})`,
                         hint: pat.description,
                     })),
+                    cancel: "back",
                 });
 
                 if (p.isCancel(toRemove)) {
@@ -283,6 +289,7 @@ async function handleInteractive(storage: Storage): Promise<void> {
                     message: "Repository path:",
                     defaultValue: process.cwd(),
                     placeholder: process.cwd(),
+                    cancel: "back",
                 });
 
                 if (p.isCancel(repoPath)) {

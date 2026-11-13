@@ -10,7 +10,6 @@ import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
 import { directReads } from "@genesiscz/utils/ai/transcripts/resolve";
 import { env } from "@genesiscz/utils/env";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
-import { HARNESS_PLUGIN_PATH, renderHarnessPlugin } from "../../../scripts/gen-harness-plugin";
 import { HARNESS_SWIFT_PATH, renderHarnessSwift } from "../../../scripts/gen-harness-swift";
 import { HARNESS_WEB_PATH, renderHarnessWeb } from "../../../scripts/gen-harness-web";
 import { toolPartsComplete, toolPartsRegistered } from "./tool-parts";
@@ -188,10 +187,6 @@ describe("locate: the deferred finders of every harness", () => {
 describe("the Swift mirror of the drivers", () => {
     test("Harness.swift is what scripts/gen-harness-swift.ts writes from today's drivers", () => {
         expect(readFileSync(HARNESS_SWIFT_PATH, "utf8")).toBe(renderHarnessSwift());
-    });
-
-    test("the plugin's Generated/harness-facts.ts is what scripts/gen-harness-plugin.ts writes from today's drivers", () => {
-        expect(readFileSync(HARNESS_PLUGIN_PATH, "utf8")).toBe(renderHarnessPlugin());
     });
 
     test("the dashboard's harness-meta.generated.ts is what scripts/gen-harness-web.ts writes from today's drivers", () => {

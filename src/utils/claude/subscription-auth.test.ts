@@ -1,15 +1,24 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    _resetMasterKeyProviders,
+    _resetSecretsForTest,
+    _setMasterKeyProvidersForTest,
+    resolveSecret,
+} from "@genesiscz/utils/security";
 import { NETWORKED_LOCK_WAIT_MS } from "@genesiscz/utils/storage/file-lock";
 import { claudeOAuth, TOKEN_REQUEST_TIMEOUT_MS } from "./auth";
 import {
     clearInvalidGrant,
     readJournalRecovery,
     recoverInferenceToken,
+    resolveAccountToken,
     resolveInferenceToken,
 } from "./subscription-auth";
 
@@ -196,43 +205,63 @@ describe("claudeOAuth.refresh runs inside the config lock, so it must be bounded
     });
 });
 
+const KEY = Buffer.alloc(32, 9);
+
+/** A temp home whose v4 config holds these accounts, read through the real store and vault. */
+function seedStore(accounts: AccountEntry[]): void {
+    mkdirSync(join(HOME, ".genesis-tools", "ai"), { recursive: true });
+    env.testing.set("GENESIS_TOOLS_HOME", HOME);
+    _setMasterKeyProvidersForTest([
+        { id: "env", available: async () => true, get: async () => KEY, getSync: () => KEY, set: async () => {} },
+    ]);
+    _resetSecretsForTest();
+    const data: AiConfigData = { version: CONFIG_VERSION, accounts, defaults: {} };
+    writeFileSync(join(HOME, ".genesis-tools", "ai", "config.json"), SafeJSON.stringify(data, null, 2));
+    AiConfigStore.invalidate();
+}
+
+function unseedStore(): void {
+    AiConfigStore.invalidate();
+    _resetMasterKeyProviders();
+    _resetSecretsForTest();
+    env.testing.unset("GENESIS_TOOLS_HOME");
+    rmSync(HOME, { recursive: true, force: true });
+}
+
+function subAccount(name: string, credentials: AccountEntry["credentials"]): AccountEntry {
+    return {
+        id: `acc_${name.replace(/[^a-z0-9]/g, "_")}`,
+        name,
+        provider: "anthropic-sub",
+        enabled: true,
+        billing: { mode: "subscription" },
+        credentials,
+        useEnvApiKey: false,
+    };
+}
+
 describe("the token a model request uses", () => {
     const LONG = `sk-ant-oat01-${"x".repeat(100)}`;
     const HOUR = 3_600_000;
-    const accounts: Record<string, { name: string; tokens: Record<string, unknown> }> = {
-        both: {
-            name: "both",
-            tokens: { longLivedToken: LONG, accessToken: "at-expired", refreshToken: "rt", expiresAt: 1 },
-        },
-        "no-long": {
-            name: "no-long",
-            tokens: { accessToken: "at-fresh", refreshToken: "rt", expiresAt: Date.now() + HOUR },
-        },
-        "long-expired": {
-            name: "long-expired",
-            tokens: {
+    const realRefresh = claudeOAuth.refresh;
+
+    beforeEach(() => {
+        seedStore([
+            subAccount("both", { longLivedToken: LONG, accessToken: "at-expired", refreshToken: "rt", expiresAt: 1 }),
+            subAccount("no-long", { accessToken: "at-fresh", refreshToken: "rt", expiresAt: Date.now() + HOUR }),
+            subAccount("long-expired", {
                 longLivedToken: LONG,
                 longLivedTokenExpiresAt: 1,
                 accessToken: "at-fresh",
                 expiresAt: Date.now() + HOUR,
-            },
-        },
-        "nothing-fresh": {
-            name: "nothing-fresh",
-            tokens: { accessToken: "at-expired", refreshToken: "rt", expiresAt: 1 },
-        },
-    };
-    const realRefresh = claudeOAuth.refresh;
-
-    beforeEach(() => {
-        mock.module("@genesiscz/utils/ai/AIConfig", () => ({
-            AIConfig: {
-                load: async () => ({
-                    getDefaultAccount: () => undefined,
-                    getAccount: (name: string) => accounts[name],
-                }),
-            },
-        }));
+            }),
+            subAccount("long-unexpiring", {
+                longLivedToken: LONG,
+                accessToken: "at-fresh",
+                expiresAt: Date.now() + HOUR,
+            }),
+            subAccount("nothing-fresh", { accessToken: "at-expired", refreshToken: "rt", expiresAt: 1 }),
+        ]);
         claudeOAuth.refresh = async () => {
             throw new Error("a model request with a usable long-lived token must not spend the refresh token");
         };
@@ -240,6 +269,7 @@ describe("the token a model request uses", () => {
 
     afterEach(() => {
         claudeOAuth.refresh = realRefresh;
+        unseedStore();
     });
 
     it("takes the long-lived token even when the OAuth access token has expired, without a refresh", async () => {
@@ -258,14 +288,52 @@ describe("the token a model request uses", () => {
     });
 
     it("drops a long-lived token Anthropic rejected and uses the OAuth pair from then on", async () => {
-        const rejected = { token: LONG, kind: "long-lived" as const, accountName: "long-expired" };
-        accounts["long-expired"].tokens.longLivedTokenExpiresAt = undefined;
+        const rejected = { token: LONG, kind: "long-lived" as const, accountName: "long-unexpiring" };
 
-        expect(await resolveInferenceToken("long-expired")).toMatchObject({ kind: "long-lived" });
-        expect(await recoverInferenceToken("long-expired", rejected)).toMatchObject({
+        expect(await resolveInferenceToken("long-unexpiring")).toMatchObject({ kind: "long-lived" });
+        expect(await recoverInferenceToken("long-unexpiring", rejected)).toMatchObject({
             token: "at-fresh",
             kind: "access",
         });
-        expect(await resolveInferenceToken("long-expired")).toMatchObject({ token: "at-fresh", kind: "access" });
+        expect(await resolveInferenceToken("long-unexpiring")).toMatchObject({ token: "at-fresh", kind: "access" });
+    });
+});
+
+describe("two processes refreshing one account at once", () => {
+    const originalFetch = globalThis.fetch;
+    let upstreamCalls: string[];
+
+    beforeEach(() => {
+        seedStore([subAccount("work", { accessToken: "at-1", refreshToken: "rt-1", expiresAt: 1 })]);
+        upstreamCalls = [];
+        globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+            const body = SafeJSON.parse(String(init?.body ?? "{}"), { strict: true }) as { refresh_token?: string };
+            upstreamCalls.push(body.refresh_token ?? "");
+            // Slow enough that the second caller is waiting on the lock while the first spends the grant.
+            await Bun.sleep(50);
+
+            return new Response(SafeJSON.stringify({ access_token: "at-2", refresh_token: "rt-2", expires_in: 3600 }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+    });
+
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        unseedStore();
+    });
+
+    it("spends the single-use refresh token once, and both callers get the rotated pair", async () => {
+        const [first, second] = await Promise.all([resolveAccountToken("work"), resolveAccountToken("work")]);
+
+        expect(upstreamCalls).toEqual(["rt-1"]);
+        expect(first.token).toBe("at-2");
+        expect(second.token).toBe("at-2");
+
+        AiConfigStore.invalidate();
+        const stored = (await AiConfigStore.load()).account("acc_work");
+        expect(await resolveSecret(stored?.credentials.refreshToken)).toBe("rt-2");
+        expect(SafeJSON.stringify(stored?.credentials)).not.toContain("rt-2");
     });
 });

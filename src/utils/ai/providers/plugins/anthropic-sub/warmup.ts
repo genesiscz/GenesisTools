@@ -1,4 +1,4 @@
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import {
     snapshotOfAccount,
@@ -16,6 +16,7 @@ import {
 } from "@genesiscz/utils/claude/token-verify";
 import { claudeLoginCommand, claudeLoginLongCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
+import { resolveSecret } from "@genesiscz/utils/security";
 import { ANTHROPIC_SUB, type UsageResponse } from "./api";
 import { describeAnthropicFailure } from "./failure";
 import { fiveHourState } from "./limits";
@@ -28,7 +29,7 @@ export interface LongLivedTokens {
 
 export interface AnthropicWarmupDeps {
     /** Plaintext long-lived token for the account (the vault read), or nothing. */
-    loadLongLived?: (accountName: string) => Promise<LongLivedTokens | undefined>;
+    loadLongLived?: (accountId: string) => Promise<LongLivedTokens | undefined>;
     sendLongLived?: (token: string) => Promise<TokenVerdict>;
     /** The account's last cached reading (read-only), to skip a warmup that has nothing to start. */
     lastUsage?: (account: AccountEntry) => Promise<UsageResponse | undefined>;
@@ -93,9 +94,16 @@ function explainRefusal(err: unknown): WarmupOutcome {
     throw new WarmupFailure(failure.message, failure.action);
 }
 
-async function defaultLoadLongLived(accountName: string): Promise<LongLivedTokens | undefined> {
-    const config = await AIConfig.load();
-    return config.getAccount(accountName)?.tokens;
+async function defaultLoadLongLived(accountId: string): Promise<LongLivedTokens | undefined> {
+    const credentials = (await AiConfigStore.load()).account(accountId)?.credentials;
+    if (!credentials) {
+        return undefined;
+    }
+
+    return {
+        longLivedToken: await resolveSecret(credentials.longLivedToken),
+        longLivedTokenExpiresAt: credentials.longLivedTokenExpiresAt,
+    };
 }
 
 async function pingLongLived(
@@ -140,7 +148,7 @@ export async function anthropicWarmup(
         return { via: "none", skipped: idle };
     }
 
-    const tokens = await loadLongLived(account.name);
+    const tokens = await loadLongLived(account.id);
     const longLived = tokens?.longLivedToken && longLivedTokenUsable(tokens) ? tokens.longLivedToken : undefined;
 
     if (!hasOAuthPair(account)) {

@@ -1,11 +1,11 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { ensureExtensionCapableSQLite, loadSqliteVec } from "@genesiscz/utils/search/stores/sqlite-vec-loader";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -43,6 +43,7 @@ export function registerMigrateVecCommand(program: Command): void {
                     const selected = await p.select({
                         message: "Select index to migrate",
                         options: names.map((n) => ({ value: n, label: n })),
+                        cancel: "back",
                     });
 
                     if (p.isCancel(selected)) {
@@ -130,6 +131,7 @@ export function registerMigrateVecCommand(program: Command): void {
                 if (isInteractive()) {
                     const confirmed = await p.confirm({
                         message: `Migrate ${embCount.toLocaleString()} vectors to sqlite-vec?`,
+                        cancel: "back",
                     });
 
                     if (p.isCancel(confirmed) || !confirmed) {

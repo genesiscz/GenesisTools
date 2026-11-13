@@ -91,6 +91,23 @@ describe("parseItems", () => {
         expect(parsed.fields).toEqual({ source: "test" });
     });
 
+    test("a piped payload keeps sourceMessage, wait, waitTimeoutMs and transclude, each checked for its type", () => {
+        const items = '[{"promptMarkdown":"Ship?"}]';
+        const parsed = parseItems({
+            json: `{"items":${items},"sourceMessage":{"messageId":"m1"},"wait":true,"waitTimeoutMs":50,"transclude":false}`,
+        });
+
+        expect(parsed.fields).toEqual({
+            sourceMessage: { messageId: "m1" },
+            wait: true,
+            waitTimeoutMs: 50,
+            transclude: false,
+        });
+        expect(() => parseItems({ json: `{"items":${items},"wait":"yes"}` })).toThrow(/wait must be true or false/);
+        expect(() => parseItems({ json: `{"items":${items},"sourceMessage":{"id":"m1"}}` })).toThrow(/sourceMessage/);
+        expect(() => parseItems({ json: `{"items":${items},"waitTimeoutMs":-1}` })).toThrow(/waitTimeoutMs/);
+    });
+
     test("--help lists the item fields and an example", () => {
         const program = new Command();
         registerAskCommand(program);

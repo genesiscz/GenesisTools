@@ -1,7 +1,7 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 export async function confirmDestructive(opts: {
@@ -22,7 +22,7 @@ export async function confirmDestructive(opts: {
         return false;
     }
 
-    const answer = await p.confirm({ message: opts.message });
+    const answer = await p.confirm({ message: opts.message, cancel: "back" });
 
     return !p.isCancel(answer) && Boolean(answer);
 }

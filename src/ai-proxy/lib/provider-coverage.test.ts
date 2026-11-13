@@ -4,9 +4,9 @@ import { describeAccountCredential } from "@app/ai-proxy/lib/account-config";
 import { providerTitleFor, suggestedModelFor } from "@app/ai-proxy/lib/detect-report";
 import { PROVIDER_ACCOUNT_COMMANDS } from "@app/ai-proxy/lib/providers/account-commands";
 import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
+import { createProvider } from "@app/ai-proxy/lib/providers/pool";
 import {
     configureModelFacts,
-    createProvider,
     isProviderImplemented,
     PROVIDER_DEFINITIONS,
     providerTypes,

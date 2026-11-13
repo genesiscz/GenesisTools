@@ -10,8 +10,9 @@ import { createRateLimiter } from "@app/telegram-bot/lib/security";
 import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type SecretStore, secureRef } from "@genesiscz/utils/security";
+import { describeApiError, maskToken } from "@genesiscz/utils/telegram-bot/lib/api";
 import type { Update } from "grammy/types";
-import { createTelegramApi, describeApiError, maskToken } from "./api";
+import { createTelegramApi } from "./api";
 import {
     createWebhookHandler,
     MAX_WEBHOOK_BODY_BYTES,

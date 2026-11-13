@@ -1,9 +1,10 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import type { ProcessesRes } from "@app/dev-dashboard/contract/endpoints";
 import type { ProcessInfo, ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ProcessesTable } from "@/components/process-monitor/ProcessesTable";
-import { processesApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 export function ProcessMonitorRoute() {
     const [sort, setSort] = useState<ProcessSort>("rss");
@@ -11,7 +12,7 @@ export function ProcessMonitorRoute() {
 
     const { data } = useQuery<ProcessesRes>({
         queryKey: ["processes", sort],
-        queryFn: () => processesApi.list(sort),
+        queryFn: () => dashboard.call(ENDPOINTS.processes, { sort }),
         refetchInterval: 5000,
     });
 
@@ -20,7 +21,8 @@ export function ProcessMonitorRoute() {
         // user takes as long as they like over the confirm dialog, so the pid can
         // belong to a different process by the time this fires; the server
         // compares against the live command and refuses a mismatch.
-        mutationFn: ({ pid, command }: { pid: number; command: string }) => processesApi.kill(pid, command),
+        mutationFn: ({ pid, command }: { pid: number; command: string }) =>
+            dashboard.call(ENDPOINTS.processesKill, { pid, command }),
         onSettled: () => {
             queryClient.invalidateQueries({ queryKey: ["processes"] });
         },

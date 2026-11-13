@@ -15,14 +15,14 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DETACHED_ENV } from "@genesiscz/utils/cli/detached";
+import { logger } from "@genesiscz/utils/logger";
 import {
     installLaunchd,
     isLaunchdInstalled,
     plistPath,
     startLaunchd,
     uninstallLaunchd,
-} from "@genesiscz/utils/DashboardApp/launchd";
-import { logger } from "@genesiscz/utils/logger";
+} from "@genesiscz/utils/process/launchd-agent";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { gatewayHealth } from "./health.ts";
 export const GATEWAY_LAUNCHD_LABEL = "com.genesis-tools.mcp-gateway";

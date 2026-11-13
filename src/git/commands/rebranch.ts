@@ -1,7 +1,6 @@
 import { registerRebranchSplitCommands } from "@app/git/commands/rebranch-split";
 import { groupCommits, parseCommit } from "@app/git/lib/rebranch/grouping";
 import type { BranchResult, CommitGroup } from "@app/git/lib/rebranch/types";
-import * as p from "@clack/prompts";
 import { isInteractive, isVerbose } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { DetailedCommitInfo } from "@genesiscz/utils/git";
@@ -9,6 +8,7 @@ import { createGit } from "@genesiscz/utils/git";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import { cancelSymbol, searchMultiselect } from "@genesiscz/utils/prompts/clack/search-multiselect";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -108,6 +108,7 @@ async function rebranch(opts: Options): Promise<void> {
             message: `Which branch to split? (current: ${pc.cyan(currentBranch)})`,
             options: branchOptions,
             initialValue: currentBranch,
+            cancel: "back",
         })
     )) as string;
 
@@ -154,6 +155,7 @@ async function rebranch(opts: Options): Promise<void> {
                 },
             ],
             initialValue: false as const,
+            cancel: "back",
         })
     );
 
@@ -181,6 +183,7 @@ async function rebranch(opts: Options): Promise<void> {
     const confirmed = await withCancel(
         p.confirm({
             message: "Create these branches?",
+            cancel: "back",
         })
     );
     if (!confirmed) {
@@ -255,6 +258,7 @@ async function detectForkPoint(
         p.confirm({
             message: `Use ${pc.cyan(bestBase)} as the base branch?`,
             initialValue: true,
+            cancel: "back",
         })
     );
 
@@ -263,6 +267,7 @@ async function detectForkPoint(
             p.select({
                 message: "Select base branch:",
                 options: candidates.map((c) => ({ value: c, label: c })),
+                cancel: "back",
             })
         );
         const newForkSha = await git.mergeBase(sourceBranch, selectedBase);
@@ -385,6 +390,7 @@ async function nameGroups(git: GitInstance, groups: CommitGroup[], sourceBranch:
                     }
                     return undefined;
                 },
+                cancel: "back",
             })
         );
 

@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseVariadic } from "@genesiscz/utils/cli/variadic";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { EmbeddingSetupError } from "../lib/indexer";
@@ -52,6 +52,7 @@ async function ensureOllamaModel(model: string): Promise<boolean> {
         const pull = await p.confirm({
             message: `Model "${model}" not found in Ollama. Download it now?`,
             initialValue: true,
+            cancel: "back",
         });
 
         if (p.isCancel(pull) || !pull) {
@@ -98,6 +99,7 @@ async function runInteractiveFlow(): Promise<IndexConfig | null> {
                 return "Path does not exist";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(indexPath)) {
@@ -116,6 +118,7 @@ async function runInteractiveFlow(): Promise<IndexConfig | null> {
                 return "Name is required";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(indexName)) {
@@ -132,6 +135,7 @@ async function runInteractiveFlow(): Promise<IndexConfig | null> {
             { value: "mail" as const, label: "mail", hint: "Email messages" },
             { value: "chat" as const, label: "chat", hint: "Chat history" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(indexType)) {
@@ -142,6 +146,7 @@ async function runInteractiveFlow(): Promise<IndexConfig | null> {
     const enableEmbed = await p.confirm({
         message: "Enable semantic embeddings?",
         initialValue: true,
+        cancel: "back",
     });
 
     if (p.isCancel(enableEmbed)) {
@@ -164,6 +169,7 @@ async function runInteractiveFlow(): Promise<IndexConfig | null> {
                 })),
                 { value: "__none__", label: "No embeddings (fulltext-only)" },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(modelChoice)) {
@@ -192,6 +198,7 @@ async function runInteractiveFlow(): Promise<IndexConfig | null> {
     const confirmed = await p.confirm({
         message: "Create this index?",
         initialValue: true,
+        cancel: "back",
     });
 
     if (p.isCancel(confirmed) || !confirmed) {
@@ -276,6 +283,7 @@ export function registerAddCommand(program: Command): void {
                                 })),
                                 { value: "__none__", label: "No embeddings (fulltext-only)" },
                             ],
+                            cancel: "back",
                         });
 
                         if (p.isCancel(selected)) {

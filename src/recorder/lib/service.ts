@@ -14,8 +14,8 @@ import { callTimeoutFor } from "@genesiscz/utils/screen-recorder/live";
 import { RECORDING_EVENT, RECORDINGS_CHANGED } from "@genesiscz/utils/screen-recorder/service-link";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
-import { editPathOf, editProject, redoEdit, setEditOwner, undoEdit, withEditCancel } from "./edit";
-import { type EditSession, EditSessions, type ProjectChanged } from "./edit-session";
+import { editPathOf, editProject, setEditOwner, withEditCancel } from "./edit";
+import { type EditSession, EditSessions, type ProjectChanged, withEditSession } from "./edit-session";
 import { ConnectedAppHost, type HeadlessDeps, HeadlessHost, type HostCallContext, type RecorderHost } from "./host";
 import { listLibrary } from "./library";
 import { searchLibrary } from "./moments";
@@ -460,25 +460,23 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
                 return answer;
             }
 
-            const undone = await undoEdit(params.path);
-
-            if (undone.saved) {
-                fileChanged(undone, connection, "undo");
-            }
-
-            return { revision: undone.project.revision, project: undone.project, undone: undone.undone ?? [] };
+            const undone = await withEditSession(
+                editPathOf(params.path),
+                (held) => held.undo({ by: byOf(connection) }),
+                { onChange: (change) => server?.emit("project.changed", { ...change }) }
+            );
+            return { revision: undone.project.revision, project: undone.project, undone: undone.undone };
         },
         "edit.redo": async (params, { connection }: HandlerContext) => {
             const session = editableSessionOf(params.path);
 
             if (!session) {
-                const redone = await redoEdit(params.path);
-
-                if (redone.saved) {
-                    fileChanged(redone, connection, "redo");
-                }
-
-                return { revision: redone.project.revision, project: redone.project, redone: redone.redone ?? [] };
+                const redone = await withEditSession(
+                    editPathOf(params.path),
+                    (held) => held.redo({ by: byOf(connection) }),
+                    { onChange: (change) => server?.emit("project.changed", { ...change }) }
+                );
+                return { revision: redone.project.revision, project: redone.project, redone: redone.redone };
             }
 
             const answer = await session.redo({ by: byOf(connection) });

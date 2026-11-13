@@ -8,11 +8,11 @@ import { buildPayloadFromFlat, flattenMemories } from "@app/timely/utils/flatten
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
 import { applyPlan, validatePlan } from "@app/timely/utils/plan-apply";
 import { buildPlan } from "@app/timely/utils/plan-build";
-import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -73,6 +73,7 @@ async function pickProject(
         const picked = await p.select({
             message: `${date} — pick project`,
             options: projects.slice(0, 50).map((pr) => ({ value: pr.id, label: pr.name })),
+            cancel: "back",
         });
         if (p.isCancel(picked)) {
             return null;
@@ -91,6 +92,7 @@ async function pickProject(
             })),
             { value: -1, label: "Pick another...", hint: "browse all projects" },
         ],
+        cancel: "back",
     });
     if (p.isCancel(picked)) {
         return null;
@@ -101,6 +103,7 @@ async function pickProject(
         const browsed = await p.select({
             message: "Pick project",
             options: projects.slice(0, 50).map((pr) => ({ value: pr.id, label: pr.name })),
+            cancel: "back",
         });
         if (p.isCancel(browsed)) {
             return null;
@@ -180,6 +183,7 @@ async function runCreate(storage: Storage, service: TimelyService, options: Crea
                 message: "Note",
                 initialValue: note,
                 defaultValue: note,
+                cancel: "back",
             });
             if (p.isCancel(editedNote)) {
                 p.cancel("Cancelled.");
@@ -213,6 +217,7 @@ async function runCreate(storage: Storage, service: TimelyService, options: Crea
             const ok = await p.confirm({
                 message: `Post ${fmtDuration(totalSeconds)} to project ${projectId}?`,
                 initialValue: true,
+                cancel: "back",
             });
             if (p.isCancel(ok) || !ok) {
                 p.log.warn(`${date} skipped`);
@@ -353,7 +358,11 @@ async function runApply(storage: Storage, service: TimelyService, options: Creat
 
     const interactive = isInteractive();
     if (warnings > 0 && interactive && !options.yes) {
-        const ok = await p.confirm({ message: `${warnings} warning(s). Proceed?`, initialValue: false });
+        const ok = await p.confirm({
+            message: `${warnings} warning(s). Proceed?`,
+            initialValue: false,
+            cancel: "back",
+        });
         if (p.isCancel(ok) || !ok) {
             logger.info("Cancelled.");
             return;

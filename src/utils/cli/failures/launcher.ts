@@ -102,7 +102,8 @@ export function childRecorded({
     dir: string;
 }): boolean {
     for (const failure of readFailures({ fromDay: formatLocalDate(since), toDay: formatLocalDate(now), dir })) {
-        if (failure.runId === runId) {
+        // A deadline killed a child of the run, which is not the run's end (deadline.ts writes no runId on it anyway).
+        if (failure.runId === runId && failure.kind !== "deadline") {
             return true;
         }
     }

@@ -15,6 +15,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, dirname, resolve, sep } from "node:path";
+import { canonicalClaudeTranscript } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { estimateTokens } from "@genesiscz/utils/tokens";
 import { discoverSessionFiles } from "./discovery";
@@ -138,83 +139,27 @@ export class ClaudeSession {
     }
 
     /**
-     * Load a session by its session ID (full UUID or 8-char prefix).
-     * Scans the project directory for a matching filename.
-     * When no explicit projectDir is given, falls back to scanning all projects.
+     * Load a session by its session ID (full UUID or a prefix of at least 8 characters, any letter case). The lookup is
+     * the Claude locator's (`canonicalClaudeTranscript`): of several copies of one id, the conversation wins over a
+     * title-only stub, whatever the folder order. Sub-agent transcripts (`subagents/`) answer too.
      *
      * @param sessionId Full UUID or prefix (minimum 8 characters).
-     * @param projectDir Encoded project directory name. Defaults to the current cwd encoding.
+     * @param projectDir Encoded project directory name. When given, only that folder is searched; else every project.
      * @throws {Error} If no matching session file is found.
      */
     static async fromSessionId(sessionId: string, projectDir?: string): Promise<ClaudeSession> {
-        const dir = projectDir ? resolve(PROJECTS_DIR, projectDir) : resolve(PROJECTS_DIR, encodedProjectDir());
+        const found = await canonicalClaudeTranscript(
+            sessionId,
+            { native: [PROJECTS_DIR] },
+            { projectFolder: projectDir, includeSubagents: true }
+        );
 
-        if (existsSync(dir)) {
-            const found = ClaudeSession.findSessionFileInDir(dir, sessionId);
-            if (found) {
-                return ClaudeSession.fromFile(found);
-            }
+        if (found) {
+            return ClaudeSession.fromFile(found);
         }
 
-        // Fallback: scan all project directories (only when no explicit projectDir was given)
-        if (!projectDir) {
-            let projectDirs: string[];
-            try {
-                projectDirs = readdirSync(PROJECTS_DIR);
-            } catch {
-                projectDirs = [];
-            }
-
-            const currentEncoded = existsSync(dir) ? basename(dir) : null;
-            for (const entry of projectDirs) {
-                if (entry === currentEncoded) {
-                    continue;
-                }
-
-                const candidateDir = resolve(PROJECTS_DIR, entry);
-                const found = ClaudeSession.findSessionFileInDir(candidateDir, sessionId);
-                if (found) {
-                    return ClaudeSession.fromFile(found);
-                }
-            }
-        }
-
-        throw new Error(`No session file found for ID prefix "${sessionId}" in ${dir} (also searched all projects)`);
-    }
-
-    /**
-     * Search a single project directory (and its subagents/) for a session file
-     * matching the given ID (exact or prefix).
-     */
-    private static findSessionFileInDir(dir: string, sessionId: string): string | null {
-        const exactPath = resolve(dir, `${sessionId}.jsonl`);
-        if (existsSync(exactPath)) {
-            return exactPath;
-        }
-
-        const dirsToSearch = [dir];
-        const subagentsDir = resolve(dir, "subagents");
-        if (existsSync(subagentsDir)) {
-            dirsToSearch.push(subagentsDir);
-        }
-
-        const lowerPrefix = sessionId.toLowerCase();
-        for (const searchDir of dirsToSearch) {
-            let entries: string[];
-            try {
-                entries = readdirSync(searchDir);
-            } catch {
-                continue;
-            }
-
-            for (const entry of entries) {
-                if (entry.endsWith(".jsonl") && entry.toLowerCase().startsWith(lowerPrefix)) {
-                    return resolve(searchDir, entry);
-                }
-            }
-        }
-
-        return null;
+        const where = projectDir ? resolve(PROJECTS_DIR, projectDir) : `${PROJECTS_DIR} (also searched all projects)`;
+        throw new Error(`No session file found for ID prefix "${sessionId}" in ${where}`);
     }
 
     /**

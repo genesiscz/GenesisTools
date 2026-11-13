@@ -311,6 +311,7 @@ async function resolveMethod(given: string | true | undefined): Promise<Recommen
     const picked = await p.select({
         message: "How should I pick?",
         options: RECOMMEND_METHODS.map((m) => ({ value: m.id, label: m.title, hint: m.description })),
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {

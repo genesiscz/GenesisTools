@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { _overrideRealHomeWriteForTest } from "@genesiscz/utils/config/real-home-write";
 import { env } from "@genesiscz/utils/env";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
@@ -123,6 +124,37 @@ describe("loadDashboardConfig", () => {
             notifications: {},
             alerts: { rules: { threshold: { weekly: [50] } } },
         });
+    });
+
+    test("a process the real-home check refuses migrates in memory and writes nothing back", async () => {
+        useTempHome();
+        const storage = new Storage("ai-usage-dashboard");
+        await storage.setConfig({ notifications: { thresholds: { weekly: [50] } } });
+        await new Storage("claude-usage-dashboard").setConfig({ refreshInterval: 15 });
+        _overrideRealHomeWriteForTest({ sandbox: false });
+
+        try {
+            const config = await loadDashboardConfig();
+            expect(config.alerts.rules.threshold.weekly).toEqual([50]);
+        } finally {
+            _overrideRealHomeWriteForTest(undefined);
+        }
+
+        expect(await storage.getConfig()).toEqual({ notifications: { thresholds: { weekly: [50] } } });
+    });
+
+    test("a refused process does not make the one-time copy of the claude-era preferences", async () => {
+        useTempHome();
+        await new Storage("claude-usage-dashboard").setConfig({ refreshInterval: 15 });
+        _overrideRealHomeWriteForTest({ sandbox: false });
+
+        try {
+            expect((await loadDashboardConfig()).refreshInterval).toBe(15);
+        } finally {
+            _overrideRealHomeWriteForTest(undefined);
+        }
+
+        expect(await new Storage("ai-usage-dashboard").getConfig()).toBeNull();
     });
 
     test("migrateDashboardConfig: the new place wins, the old fills gaps, and a second run changes nothing", () => {

@@ -14,14 +14,18 @@ import { isTestProcess, testProcessReason } from "@genesiscz/utils/test-process"
  * entry (the vault survived, so nothing was unrecoverable, but the metadata had
  * to be rebuilt by hand).
  *
- * The mechanism both times: `Storage` resolves its base directory ONCE, in the
+ * The mechanism both times: `Storage` resolved its base directory ONCE, in the
  * constructor. A cached instance or a module-level singleton built while a
- * sandbox `GENESIS_TOOLS_HOME` was set outlives the `afterEach` that restores the
- * real home, and its next write lands on the real path. `AIConfig` is exactly
- * this shape: a process-wide singleton with an `invalidate()` that no test calls.
+ * sandbox `GENESIS_TOOLS_HOME` was set outlived the `afterEach` that restored the
+ * real home, and its next write landed on the real path. `Storage` now resolves
+ * the root on every use and `AiConfigStore` rebinds when it moves, but a path
+ * captured outside them (a module-level constant built from `genesisToolsDir`)
+ * still freezes the home at import, and an unset variable still means the real
+ * home. So this guard stays.
  *
- * `test-sandbox.ts` already guards this, but only for test files that opt in, and
- * neither incident was in a file that had. So this check is ALWAYS ON, and it is
+ * An opt-in per-file sandbox (`setupStorageSandbox`, retired 2026-11-10) guarded
+ * this only for the files that installed it, and neither incident was in one. So
+ * this check is ALWAYS ON, and it is
  * checked at WRITE time against the resolved path rather than at construction
  * time — the whole failure is that the path was resolved too early.
  *
@@ -71,7 +75,7 @@ export { isTestProcess };
  * definition the bug this file exists to catch: a path resolved before the sandbox existed.
  * Asking "is this a test?" is a proxy for that question, and a proxy can be wrong. This cannot.
  */
-function sandboxInstalled(): boolean {
+export function sandboxInstalled(): boolean {
     if (!env.tools.hasExplicitHome()) {
         return false;
     }
@@ -151,10 +155,10 @@ export function assertTestSafePath(targetPath: string, operation: string): void 
     throw new Error(
         `Refusing to ${operation} "${targetPath}" from a test: that is the REAL ~/.genesis-tools, not a sandbox.\n` +
             `Guard armed by: ${reason}.\n` +
-            `A Storage instance or a cached singleton (AIConfig, AiConfigStore) resolved its path before the test\n` +
-            `sandbox was installed, or outlived the teardown that removed it.\n` +
-            `Fix the test: set GENESIS_TOOLS_HOME to a mkdtemp dir BEFORE the module under test is imported, and\n` +
-            `invalidate any singleton in afterEach. See utils/storage/test-sandbox.ts.\n` +
+            `GENESIS_TOOLS_HOME was unset when this path was built, or a path was captured at import (a module-level\n` +
+            `constant) before the test sandbox was installed.\n` +
+            `Fix the test: keep GENESIS_TOOLS_HOME set (the test preload sets it; set your own mkdtemp dir BEFORE the\n` +
+            `module under test is imported), and build paths at use time. See utils/bun/preload-test-sandbox.ts.\n` +
             `If this write is genuinely intended, set ${ESCAPE_HATCH}=1.`
     );
 }
