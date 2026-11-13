@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -487,6 +488,14 @@ final class HubInboxModel: ObservableObject {
     /// Images attached to a question form and not sent yet, by form id, then question id. Here, not in the lazy card:
     /// a card scrolled out of view deleted them (F11). Dropped with their files once the form is no longer listed.
     fileprivate var formImages: [String: [String: [QaAttachedImage]]] = [:]
+    private var formDrafts: [String: InboxFormDraft] = [:]
+
+    func formDraft(for id: String) -> InboxFormDraft {
+        if let draft = formDrafts[id] { return draft }
+        let draft = InboxFormDraft()
+        formDrafts[id] = draft
+        return draft
+    }
     /// The decision card the number keys act on (1 to 9 pick its options), moved by Up and Down in the list (F8).
     @Published var keyCardID: String?
     /// Return on the key card puts the keyboard into its note: the card whose id this names, once per count.
@@ -660,6 +669,7 @@ final class HubInboxModel: ObservableObject {
     /// Form images whose form is no longer listed (answered, withdrawn, gone) are deleted with their files.
     private func pruneFormImages() {
         let listed = Set(sessions.flatMap { $0.items.filter(\.isForm).map(\.id) })
+        formDrafts = formDrafts.filter { listed.contains($0.key) || sending.contains($0.key) }
         for (formId, images) in formImages where !listed.contains(formId) && !sending.contains(formId) {
             images.values.flatMap { $0 }.forEach { QaAttachedImage.remove($0.path) }
             formImages[formId] = nil
@@ -1334,6 +1344,7 @@ final class HubInboxModel: ObservableObject {
                     if !delivery.isError {
                         // The answering process read the images; the form leaves the list on this load.
                         self.formImages[item.id] = nil
+                        self.formDrafts[item.id] = nil
                         self.load()
                     }
                 }
@@ -3085,12 +3096,30 @@ private struct QaAttachedImage: Identifiable {
     }
 }
 
-private struct InboxFormCard: View {
+/// Drafts belong to a form, so navigating, scrolling or changing layouts cannot discard or cross-send them.
+@MainActor @Observable
+final class InboxFormDraft {
+    var picked: [String: Set<String>] = [:]
+    var texts: [String: String] = [:]
+    var fileTagsText: [String: String] = [:]
+}
+
+struct InboxFormCard: View {
     @ObservedObject var inbox: HubInboxModel
     let item: InboxItem
-    @State private var picked: [String: Set<String>] = [:]
-    @State private var texts: [String: String] = [:]
-    @State private var fileTagsText: [String: String] = [:]
+    private var draft: InboxFormDraft { inbox.formDraft(for: item.id) }
+    private var picked: [String: Set<String>] {
+        get { draft.picked }
+        nonmutating set { draft.picked = newValue }
+    }
+    private var texts: [String: String] {
+        get { draft.texts }
+        nonmutating set { draft.texts = newValue }
+    }
+    private var fileTagsText: [String: String] {
+        get { draft.fileTagsText }
+        nonmutating set { draft.fileTagsText = newValue }
+    }
     @State private var attachedImages: [String: [QaAttachedImage]] = [:]
     @State private var fieldError: [String: String] = [:]
 

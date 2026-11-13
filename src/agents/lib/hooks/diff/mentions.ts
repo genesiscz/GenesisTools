@@ -3,14 +3,17 @@ import {
     closeSync,
     fstatSync,
     openSync,
+    readdirSync,
     readFileSync,
     readSync,
     realpathSync,
+    statSync,
     writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nonEmptyString as text } from "@genesiscz/utils/string";
 import { hookDiag } from "../log";
 import { mentionsRoot, safeSegment } from "../paths";
 import { gitDirReadings } from "./command-paths";
@@ -57,16 +60,17 @@ export interface ToolMention {
     tool: string;
     input: unknown;
     cwd: string;
+    /** When the transcript says the call was made (epoch ms); absent for a harness whose rows carry no time. */
+    at?: number;
 }
+
+/** Tools whose input names files by search or by command text: no proof that the session worked on ONE file. */
+const NOT_FILE_TOOLS = new Set(["Bash", "shell", "run_terminal_command", "Glob", "Grep"]);
 
 function field(value: unknown, key: string): unknown {
     return typeof value === "object" && value !== null && key in value
         ? (value as Record<string, unknown>)[key]
         : undefined;
-}
-
-function text(value: unknown): string | null {
-    return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function expandHome(value: string): string {
@@ -336,6 +340,110 @@ function statePath(session: string): string {
     return join(mentionsRoot(), `${session}.json`);
 }
 
+/** `<epoch ms>\t<path>` per line: when a file tool of the session (Read, Edit, Write) last named a file. */
+function fileTimesPath(session: string): string {
+    return join(mentionsRoot(), `${session}.files.tsv`);
+}
+
+/**
+ * When a file tool of the session last named each file. This is the proof for "the session read the
+ * file ten minutes ago and a script changes it now": the mention index has no times, so it cannot say
+ * whether that Read came before or after another session's write. Never throws.
+ */
+export function loadFileTimes(sessionId: string | undefined): Map<string, number> {
+    const times = new Map<string, number>();
+    const session = safeSegment(sessionId);
+
+    if (session === null) {
+        return times;
+    }
+
+    let raw: string;
+
+    try {
+        raw = readFileSync(fileTimesPath(session), "utf8");
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+            hookDiag("Could not read the session's file-tool times", { err, session });
+        }
+
+        return times;
+    }
+
+    for (const line of raw.split("\n")) {
+        const tab = line.indexOf("\t");
+        const at = Number(line.slice(0, tab));
+
+        if (tab > 0 && Number.isFinite(at) && at > (times.get(line.slice(tab + 1)) ?? 0)) {
+            times.set(line.slice(tab + 1), at);
+        }
+    }
+
+    return times;
+}
+
+/** The newest time per file among `uses`, for the file tools only. */
+export function fileTimesOf(uses: ToolMention[]): Map<string, number> {
+    const times = new Map<string, number>();
+
+    for (const use of uses) {
+        if (use.at === undefined || NOT_FILE_TOOLS.has(use.tool)) {
+            continue;
+        }
+
+        for (const path of mentionsOf(use)) {
+            if (!path.startsWith(GLOB_PREFIX) && use.at > (times.get(path) ?? 0)) {
+                times.set(path, use.at);
+            }
+        }
+    }
+
+    return times;
+}
+
+/**
+ * Other sessions that began a Bash call at or after `since`, with the roots they work in. A state
+ * file is rewritten by every pre phase, so its mtime is that session's last one. Never throws.
+ */
+export function activeSessions({ since, root = mentionsRoot() }: { since: number; root?: string }): Array<{
+    session: string;
+    roots: string[];
+}> {
+    const out: Array<{ session: string; roots: string[] }> = [];
+    let names: string[];
+
+    try {
+        names = readdirSync(root);
+    } catch {
+        // No session has run a Bash call on this machine since the temp folder was cleared.
+        return out;
+    }
+
+    for (const name of names) {
+        if (!name.endsWith(".json")) {
+            continue;
+        }
+
+        try {
+            if (statSync(join(root, name)).mtimeMs < since) {
+                continue;
+            }
+
+            const parsed: unknown = SafeJSON.parse(readFileSync(join(root, name), "utf8"), { strict: true });
+            const roots = field(parsed, "roots");
+
+            out.push({
+                session: name.slice(0, -".json".length),
+                roots: Array.isArray(roots) ? roots.filter((item): item is string => typeof item === "string") : [],
+            });
+        } catch {
+            // A state file being rewritten right now: its session shows up on the next call.
+        }
+    }
+
+    return out;
+}
+
 /** The index of one session, or an empty one. Never throws. */
 export function loadMentions(sessionId: string | undefined): Mentions {
     const session = safeSegment(sessionId);
@@ -527,11 +635,14 @@ function collectLine(line: string, into: ToolMention[]): void {
         return;
     }
 
+    const stamp = Date.parse(text(field(parsed, "timestamp")) ?? "");
+    const at = Number.isFinite(stamp) ? { at: stamp } : {};
+
     for (const block of content) {
         const name = text(field(block, "name"));
 
         if (field(block, "type") === "tool_use" && name) {
-            into.push({ tool: name, input: field(block, "input"), cwd });
+            into.push({ tool: name, input: field(block, "input"), cwd, ...at });
         }
     }
 }
@@ -575,6 +686,22 @@ export function refreshMentions(options: {
 
             for (const use of uses) {
                 entries.push(...mentionsOf(use));
+            }
+
+            const times = fileTimesOf(uses);
+
+            if (times.size > 0) {
+                const refusedTimes = makePrivateDir(mentionsRoot());
+
+                if (refusedTimes) {
+                    throw new Error(refusedTimes);
+                }
+
+                appendFileSync(
+                    fileTimesPath(session),
+                    `${[...times].map(([path, at]) => `${at}\t${path}`).join("\n")}\n`,
+                    { mode: FILE_MODE }
+                );
             }
 
             next.transcript = options.transcript;

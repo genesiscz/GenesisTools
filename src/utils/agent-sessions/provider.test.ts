@@ -32,6 +32,7 @@ import {
     noSessionChanges,
     noSpawnLink,
     noStatistics,
+    noWorkflows,
 } from "./testing/no-backward-read";
 
 afterEach(() => {
@@ -74,6 +75,7 @@ test("a registered fourth history provider can be resolved without an account al
             scan: noRecordScan,
             readRecords: noRecordRead,
             readStatistics: noStatistics,
+            workflows: noWorkflows,
             readTurnBoundary: async () => null,
             readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
             roots: () => [],

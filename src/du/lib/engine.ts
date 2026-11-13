@@ -433,6 +433,8 @@ export interface BigFileEntry {
     /** APFS mtime in nanoseconds; past 2^53, so it travels as a string in the JSON. */
     mtimeNs: bigint;
     nlink: number;
+    flags: number;
+    cloneId: string;
 }
 
 export interface BigFilesResult {
@@ -458,7 +460,16 @@ interface BigFilesJson {
     threads: number;
     denied_dirs: number;
     read_errors?: number;
-    files: { path: string; size: number; alloc: number; fileid: number; mtime_ns: string; nlink: number }[];
+    files: {
+        path: string;
+        size: number;
+        alloc: number;
+        fileid: number;
+        mtime_ns: string;
+        nlink: number;
+        flags: number;
+        clone_id: string;
+    }[];
 }
 
 interface BigFilesProgress {
@@ -562,6 +573,8 @@ export async function listBigFiles(opts: ListBigFilesOptions): Promise<BigFilesR
                 fileid: f.fileid,
                 mtimeNs: BigInt(f.mtime_ns),
                 nlink: f.nlink,
+                flags: f.flags,
+                cloneId: f.clone_id,
             })),
         };
     } catch (err) {
@@ -574,4 +587,38 @@ export async function listBigFiles(opts: ListBigFilesOptions): Promise<BigFilesR
         opts.signal?.removeEventListener("abort", onAbort);
         end();
     }
+}
+
+/** Metadata contract for transparent compression. The CLI injects these records
+ * into the shared engine, keeping @genesiscz/utils independent of @app/du. */
+export interface CompressionFileEntry {
+    path: string;
+    size: number;
+    allocated: number;
+    flags: number;
+    ino: number;
+    mtimeMs: number;
+    nlink: number;
+    mtimeNs?: string;
+    cloneId: string;
+}
+
+export async function listCompressionFiles(root: string): Promise<CompressionFileEntry[]> {
+    const result = await listBigFiles({ roots: [root], minBytes: 0 });
+
+    if (result.deniedDirs > 0 || result.readErrors > 0) {
+        throw new Error("Compression listing is incomplete: unreadable directories");
+    }
+
+    return result.files.map((file) => ({
+        path: file.path,
+        size: file.size,
+        allocated: file.alloc,
+        flags: file.flags,
+        ino: file.fileid,
+        mtimeMs: Number(file.mtimeNs) / 1e6,
+        mtimeNs: file.mtimeNs.toString(),
+        nlink: file.nlink,
+        cloneId: file.cloneId === "0" ? "" : file.cloneId,
+    }));
 }

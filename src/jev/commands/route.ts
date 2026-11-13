@@ -83,7 +83,10 @@ async function executeDecision(decision: RouteDecision, options: RouteOptions): 
         ...(interactive && !options.yes
             ? {
                   confirm: async () =>
-                      (await p.confirm({ message: `Run the destructive command ${decision.printed}?` })) === true,
+                      (await p.confirm({
+                          message: `Run the destructive command ${decision.printed}?`,
+                          cancel: "back",
+                      })) === true,
               }
             : {}),
     });

@@ -134,4 +134,50 @@ describe("search/editor/number backend routing", () => {
 
         expect(() => backend.number({ message: "hi" })).toThrow("does not support");
     });
+
+    it("opentuiBackend answers promptCancelSymbol when the task is cancelled", async () => {
+        const { opentuiBackend, cancelTask } = await import("../opentui-backend");
+        const { usePromptStore } = await import("@genesiscz/utils/tui/prompt-store");
+        const { promptCancelSymbol } = await import("@genesiscz/utils/prompts/cancel");
+        // biome-ignore lint/suspicious/noExplicitAny: test stub
+        const backend = opentuiBackend({} as any);
+
+        const pending = backend.confirm({ message: "Go on?" });
+        const task = usePromptStore.getState().tasks.at(-1);
+        expect(task?.type).toBe("confirm");
+        cancelTask(task?.id ?? "");
+
+        expect(await pending).toBe(promptCancelSymbol);
+        expect(usePromptStore.getState().tasks.find((queued) => queued.id === task?.id)).toBeUndefined();
+    });
+
+    it("opentuiBackend select returns an option whose value is undefined", async () => {
+        const { opentuiBackend, completeTask } = await import("../opentui-backend");
+        const { usePromptStore } = await import("@genesiscz/utils/tui/prompt-store");
+        // biome-ignore lint/suspicious/noExplicitAny: test stub
+        const backend = opentuiBackend({} as any);
+
+        const pending = backend.select<string | undefined>({
+            message: "Pick",
+            options: [
+                { value: undefined, label: "Default" },
+                { value: "x", label: "X" },
+            ],
+        });
+        completeTask(usePromptStore.getState().tasks.at(-1)?.id ?? "", 0);
+
+        expect(await pending).toBeUndefined();
+    });
+
+    it("opentuiBackend rejects the prompt when the answer maps to no option", async () => {
+        const { opentuiBackend, completeTask } = await import("../opentui-backend");
+        const { usePromptStore } = await import("@genesiscz/utils/tui/prompt-store");
+        // biome-ignore lint/suspicious/noExplicitAny: test stub
+        const backend = opentuiBackend({} as any);
+
+        const pending = backend.select({ message: "Pick", options: [{ value: "a", label: "A" }] });
+        completeTask(usePromptStore.getState().tasks.at(-1)?.id ?? "", 5);
+
+        await expect(pending).rejects.toThrow("no option");
+    });
 });

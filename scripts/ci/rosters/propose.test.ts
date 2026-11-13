@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Lang, parse } from "@ast-grep/napi";
+import { SafeJSON } from "@genesiscz/utils/json";
+import type { RosterDefinition } from "./define";
 import { collectShapes, rankCandidates, scaffold, shadowedCandidates, shapesOf } from "./propose";
 import { census } from "./propose-census";
 import { collectPairs, rankPairs } from "./propose-pairs";
+import type { Shape } from "./propose-shapes";
 
 describe("shapesOf", () => {
     test("reads calls, imports, constructors and argv heads, and skips the noise", () => {
@@ -53,6 +60,30 @@ describe("collectShapes and rankCandidates", () => {
 
         expect(keys).not.toContain("call:loadThroughStore");
     });
+
+    test("a deleted file's removed lines count under its old path, a new file's added lines under its new path", () => {
+        const stats = collectShapes(
+            [
+                "diff --git a/src/old.ts b/src/old.ts",
+                "deleted file mode 100644",
+                "--- a/src/old.ts",
+                "+++ /dev/null",
+                "@@ -1 +0,0 @@",
+                "-    await legacyLoad(path);",
+                "diff --git a/src/new.ts b/src/new.ts",
+                "new file mode 100644",
+                "--- /dev/null",
+                "+++ b/src/new.ts",
+                "@@ -0,0 +1 @@",
+                "+    return legacyLoad(inner);",
+            ].join("\n"),
+            (file) => !file.startsWith("src/")
+        );
+        const found = stats.get("call:legacyLoad");
+
+        expect([...(found?.removedFiles ?? [])]).toEqual(["src/old.ts"]);
+        expect([...(found?.addedFiles.keys() ?? [])]).toEqual(["src/new.ts"]);
+    });
 });
 
 describe("shadowedCandidates", () => {
@@ -74,6 +105,115 @@ describe("shadowedCandidates", () => {
         expect(candidates).toEqual([
             expect.objectContaining({ key: "declare:isRecord", addedIn: ["src/utils/object.ts"], remaining: 2 }),
         ]);
+    });
+
+    test("most private copies rank first, whatever order the analyser gave", () => {
+        const recommendation = (name: string, copies: number) => ({
+            title: name,
+            sites: [
+                { file: `src/utils/${name}.ts`, name, canonical: true },
+                ...Array.from({ length: copies }, (_, index) => ({ file: `src/tool${index}/x.ts`, name })),
+            ],
+        });
+        const candidates = shadowedCandidates({
+            recommendations: [
+                recommendation("oneCopy", 1),
+                recommendation("threeCopies", 3),
+                recommendation("twoCopies", 2),
+            ],
+        });
+
+        expect(candidates.map((candidate) => [candidate.value, candidate.score])).toEqual([
+            ["threeCopies", 3],
+            ["twoCopies", 2],
+            ["oneCopy", 1],
+        ]);
+    });
+});
+
+describe("a scaffolded definition matches its shape", () => {
+    /** Each shape, source that holds it (one match per line) and look-alikes that must not match. */
+    const cases: { shape: Shape; hits: string[]; misses: string[] }[] = [
+        {
+            shape: { kind: "import", value: "@clack/prompts" },
+            hits: [
+                'import { select } from "@clack/prompts";',
+                'export { text } from "@clack/prompts";',
+                'const prompts = await import("@clack/prompts");',
+                'import { group } from "@clack/prompts/group";',
+            ],
+            misses: [
+                'import extra from "@clack/prompts-extra";',
+                'import local from "./clack/prompts";',
+                'load("@clack/prompts");',
+            ],
+        },
+        {
+            shape: { kind: "declare", value: "formatDuration" },
+            hits: [
+                "function formatDuration(ms: number) { return `${ms} ms`; }",
+                "const formatDuration = (ms: number) => `${ms} ms`;",
+                "class formatDuration {}",
+                "class Clock { formatDuration(ms: number) { return ms; } }",
+            ],
+            misses: [
+                'import { formatDuration } from "@genesiscz/utils/format";',
+                "formatDuration(5);",
+                "const formatDurationLabel = 1;",
+                "const { formatDuration: format } = helpers;",
+            ],
+        },
+        {
+            shape: { kind: "call", value: "fs.unlinkSync" },
+            hits: ["fs.unlinkSync(lock);"],
+            misses: ["unlinkSyncLater(lock);"],
+        },
+        {
+            shape: { kind: "new", value: "Conn" },
+            hits: ["const conn = new Conn(url);"],
+            misses: ["new Connection(url);"],
+        },
+        {
+            shape: { kind: "argv", value: "launchctl" },
+            hits: ['spawn(["launchctl", "load", plist]);'],
+            misses: ['const label = "launchctl";'],
+        },
+        {
+            shape: { kind: "literal", value: "radio-queue.jsonl" },
+            hits: ['const file = "radio-queue.jsonl";'],
+            misses: ['const file = "radio-queue.json";'],
+        },
+    ];
+
+    test("each kind's generated matcher finds the shape and passes its look-alikes", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "roster-scaffold-"));
+        const count = (definition: RosterDefinition, lines: string[]) =>
+            parse(Lang.TypeScript, lines.join("\n")).root().findAll(definition.matcher).length;
+
+        try {
+            // The scaffold imports "./define": point it at the real helpers.
+            writeFileSync(
+                join(dir, "define.ts"),
+                `export * from ${SafeJSON.stringify(join(import.meta.dir, "define.ts"))};\n`
+            );
+
+            const path = (shape: Shape) => join(dir, `example-${shape.kind}.definition.ts`);
+
+            // Every file before the first import: Bun's resolver keeps the folder listing it read first.
+            for (const { shape } of cases) {
+                const name = `example-${shape.kind}`;
+                writeFileSync(path(shape), scaffold({ shape, name, candidate: "C99", allowedIn: "src/owner.ts" }));
+            }
+
+            for (const { shape, hits, misses } of cases) {
+                const definition: RosterDefinition = (await import(path(shape))).default;
+
+                expect([shape.kind, count(definition, hits)]).toEqual([shape.kind, hits.length]);
+                expect([shape.kind, count(definition, misses)]).toEqual([shape.kind, 0]);
+            }
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 

@@ -32,6 +32,63 @@ tools compress ledger --since 2026-10-01           # every compression and resto
 
 Every command takes `-v` (`--verbose`) for debug lines. `tools compress --readme` prints this page.
 
+### Transparent APFS compression
+
+`transparent plan` reads native file metadata and prints candidates without changing them. `transparent apply`
+keeps each file at the same path and size, verifies its bytes with `cmp`, preserves nanosecond mtime, and uses
+kernel decmpfs compression. A later append works through the normal filesystem API and stores that file plain.
+
+```bash
+tools compress transparent --help
+tools compress transparent plan --preset agents --json
+tools compress transparent plan ~/Archive/transcripts --older 7d
+tools compress transparent apply ~/Archive/transcripts
+tools compress transparent apply ~/Archive/transcripts --algorithm lzfse --mirror ~/Archive=~/ArchiveBackup
+```
+
+The measured default is `afsctool -c -T LZFSE` when installed, with a verified maximum input size of
+2,147,188,457 bytes. `--algorithm [zlib|lzvn|lzfse]` selects another supported codec. Without afsctool, the fallback
+is `ditto --noclone --hfsCompression`, which emits LZVN on the measured macOS 27.2 and supports at most 512 MiB.
+The stored decmpfs type is checked before replacement; a writer producing another algorithm is refused.
+Oversized files remain untouched and appear in `skips.too-big` and `tooBigBytes`. Transcripts are never split.
+
+The plan uses the native `tools du` walker for size, allocation, flags, link count, inode, exact mtime and clone ID.
+It skips young files, files below the minimum, hard links, sparse and compressed files, placeholders and open files.
+A failed or empty `lsof` pass, or one that writes to stderr, stops apply. Apply skips battery power unless `--on-battery` is explicit.
+
+Clone partners come from the existing clone metadata index, the current native listing, and explicit mirror hints.
+Every partner is byte-compared before a compressed clone replaces it. Partners with different permissions, owner,
+flags, ACLs or extended attributes are left untouched and earn no saving. Originals are held under `.cold-old-*` until
+a final open-inode check, exact mtime/ctime checks and a stable byte comparison establish whether to retire or restore them. Descriptor appends
+restore the original inode; when both versions changed, both are kept with a unique `.cold-conflict-*` name.
+A later apply recovers a dead run's transaction files through the same preservation rules.
+
+`sourceBytes` and `targetBytes` describe per-file allocation. `savedBytes` is conservative: each old aside's kernel
+private bytes are read immediately before retirement, then the new clone family's allocation is subtracted.
+An unknown external plain clone therefore earns zero saving even when a known partner was refreshed. The existing
+ledger stores `format: "apfs-decmpfs-1"`, actual `algorithm`, `writer`, `releasedBytes` and `savedBytes`.
+
+Configuration lives in the GenesisTools configuration under `du.compress`:
+
+```jsonc
+{
+  "du": {
+    "compress": {
+      "defaults": { "olderThan": "3d", "minKb": 64, "exts": ["jsonl", "json", "txt", "log", "md"] },
+      "harnesses": {
+        "claude": { "roots": ["/path/to/claude/projects"], "mirrors": [{ "from": "/path/to/claude", "to": "/path/to/claude.bkp" }] }
+      }
+    }
+  }
+}
+```
+
+An absent configuration loads the existing Claude roots and mirror as defaults in memory. Other harness roots are
+opt-in after writer evidence; SQLite is excluded by the extension filter. `tools du compressed`,
+`tools du clonesize --compressed` and `tools du compressible` are read-only consumers. The optional daily
+`du-cold-compress` task registers disabled through `tools du compression-schedule` and requires explicit operator
+approval before it is enabled.
+
 ### pack
 
 ```bash

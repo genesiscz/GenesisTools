@@ -23,30 +23,36 @@ export interface TopNavProps {
  * button, on a blurred strip of the canvas. Pass it to `Page nav`, which puts
  * it above the content and lines its row up with the content width.
  */
-export function TopNav({ brand, links = [], theme = false }: TopNavProps) {
+export function TopNav({ brand, links = [], theme = true }: TopNavProps) {
     const width = useContext(PageWidthContext);
 
     return (
         <nav
+            data-artifact-topnav=""
             aria-label="Page sections"
             className={`sticky top-0 z-10 border-b border-line backdrop-blur-[14px] ${DOCUMENT_GUTTER}`}
             style={{ background: "color-mix(in srgb, var(--bg) 78%, transparent)" }}
         >
-            <div className={`${width} mx-auto flex h-[60px] items-center gap-[18px] overflow-x-auto`}>
-                <span className="whitespace-nowrap font-display text-base font-semibold leading-[normal] tracking-[0.01em] text-ink [&_strong]:text-accent!">
+            <div className={`${width} mx-auto flex min-h-[60px] items-center gap-[18px]`}>
+                <span className="max-w-[55%] shrink-0 overflow-hidden text-ellipsis whitespace-nowrap font-display text-base font-semibold leading-[normal] tracking-[0.01em] text-ink [&_strong]:text-accent!">
                     <MdInline>{brand}</MdInline>
                 </span>
-                {links.map((link) => (
-                    <a
-                        key={link.href}
-                        href={link.href}
-                        className="whitespace-nowrap rounded-lg px-2.5 py-1.5 font-mono text-[15px] font-medium leading-[normal] text-ink-2 no-underline transition-colors duration-200 hover:bg-panel-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-info"
-                    >
-                        {link.label}
-                    </a>
-                ))}
-                <span className="flex-1" />
-                {theme ? <ThemeToggle variant="cycle" /> : null}
+                <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+                    {links.map((link) => (
+                        <a
+                            key={link.href}
+                            href={link.href}
+                            className="whitespace-nowrap rounded-lg px-2.5 py-1.5 font-mono text-[15px] font-medium leading-[normal] text-ink-2 no-underline transition-colors duration-200 hover:bg-panel-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-info"
+                        >
+                            {link.label}
+                        </a>
+                    ))}
+                </div>
+                {theme ? (
+                    <span className="shrink-0">
+                        <ThemeToggle variant="cycle" />
+                    </span>
+                ) : null}
             </div>
         </nav>
     );

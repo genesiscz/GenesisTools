@@ -1065,6 +1065,31 @@ describe("a command deadline record", () => {
         expect(record.runId).toBeUndefined();
     });
 
+    it("stores the child and the message with URL credentials and the value of -u user:password hidden", async () => {
+        deadlineCaller.lookup = async () => null;
+        const marker = `marker-${process.pid}-e`;
+        const url = "https://alice:example123@example.com/repo";
+
+        await expect(
+            new Executor({ timeout: 200 }).exec(["sh", "-c", "sleep 5", marker, url, "-u", "alice:example123"])
+        ).rejects.toThrow("-u ***");
+
+        const [record] = deadlines(marker);
+        expect(record?.child?.command).toEqual([
+            "sh",
+            "-c",
+            "sleep 5",
+            marker,
+            "https://alice:[redacted]@example.com/repo",
+            "-u",
+            "***",
+        ]);
+        expect(record?.message).toBe(
+            `Command timed out after 200ms (its Executor's bound): sh -c sleep 5 ${marker} https://alice:[redacted]@example.com/repo -u ***`
+        );
+        expect(SafeJSON.stringify(record)).not.toContain("example123");
+    });
+
     it("keeps the reason of an explicit { ms, reason } and the caller the lookup gives", async () => {
         deadlineCaller.lookup = async () => failureCallerOf(whoIsCalling({ origin: "local", env: {} }));
         const marker = `marker-${process.pid}-b`;

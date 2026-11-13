@@ -1,4 +1,16 @@
-import { Badge, Callout, Chips, Claim, CodeBlock, FileMark, Note, Quote, Superseded } from "@artifact/kit";
+import {
+    Badge,
+    Callout,
+    Card,
+    Chips,
+    Claim,
+    ClaimList,
+    CodeBlock,
+    FileMark,
+    Note,
+    Quote,
+    Superseded,
+} from "@artifact/kit";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
@@ -6,7 +18,18 @@ export const meta: GalleryMeta = {
     title: "Claims, code and callouts",
     summary:
         "The pieces of a findings report: code with marked lines, file references, claims with confidence, quotes, callouts, badges, chips, notes and retracted text.",
-    components: ["CodeBlock", "FileMark", "Claim", "Quote", "Callout", "Badge", "Chips", "Note", "Superseded"],
+    components: [
+        "CodeBlock",
+        "FileMark",
+        "Claim",
+        "ClaimList",
+        "Quote",
+        "Callout",
+        "Badge",
+        "Chips",
+        "Note",
+        "Superseded",
+    ],
 };
 
 const SNIPPET = `export function retryDelay(attempt: number): number {
@@ -27,6 +50,19 @@ export default function EvidencePage() {
                     {SNIPPET}
                 </CodeBlock>
             </Demo>
+            <Demo
+                title="JSON strings"
+                note="maxString shortens values; hover shows the full value, copy keeps the original"
+            >
+                <Card kicker="Generated output" title="Published record">
+                    <CodeBlock lang="json" wrap maxString={42} label="Auto surface inside Card">
+                        {`{\n  "title": "Release notes",\n  "body": "A long sentence retained in full for copying, while the visible value stays short enough to scan."\n}`}
+                    </CodeBlock>
+                </Card>
+                <CodeBlock lang="json" wrap maxString={42} surface="framed" label="Framed surface">
+                    {`{\n  "body": "The framed option keeps the original border and canvas fill even when placed inside a Card."\n}`}
+                </CodeBlock>
+            </Demo>
             <Demo title="FileMark" note="file and line chips">
                 <div className="flex flex-wrap gap-2">
                     <FileMark path="src/retry.ts" lines="1-5" />
@@ -38,13 +74,32 @@ export default function EvidencePage() {
                 <Claim
                     confidence={90}
                     tone="ok"
-                    proof="The delay is `200 * 2 ** attempt` with no cap (src/retry.ts:4)."
+                    proof="The delay is **unbounded**: `200 * 2 ** attempt`."
+                    marks={[{ path: "src/retry.ts", lines: "4" }]}
                 >
                     The long waits come from the retry delay, not from the network.
                 </Claim>
                 <Claim confidence={40} tone="warn">
                     The second spike on Friday has the same cause.
                 </Claim>
+            </Demo>
+            <Demo title="ClaimList" note="facts with inline markdown proof and source chips">
+                <ClaimList
+                    facts={[
+                        {
+                            text: "The queue drained after the cap was applied.",
+                            confidence: 95,
+                            proof: "Depth fell from **400** to **0**.",
+                            marks: [{ path: "logs/queue.log", lines: "22-30" }],
+                        },
+                        {
+                            text: "Another worker still uses the old helper.",
+                            confidence: 75,
+                            tone: "warn",
+                            marks: [{ path: "src/worker.ts", lines: "18" }],
+                        },
+                    ]}
+                />
             </Demo>
             <Demo title="Quote">
                 <Quote cite="On-call engineer, incident channel">

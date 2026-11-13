@@ -230,9 +230,10 @@ async function confirmSelectedActions(findings: Finding[]): Promise<SelectedActi
             const confirmed = await p.confirm({
                 message: `${action.label} - ${finding.title}?`,
                 danger: finding.severity === "dangerous",
+                cancel: "back",
             });
 
-            if (confirmed) {
+            if (confirmed === true) {
                 toExecute.push({ finding, action });
             }
 
@@ -243,9 +244,10 @@ async function confirmSelectedActions(findings: Finding[]): Promise<SelectedActi
             message: action.label,
             phrase: action.confirmPhrase ?? "DELETE",
             caseSensitive: true,
+            cancel: "back",
         });
 
-        if (confirmed) {
+        if (confirmed === true) {
             toExecute.push({ finding, action });
         }
     }
@@ -304,9 +306,10 @@ async function commitTrash(opts: CommitTrashOpts): Promise<void> {
         message: "Empty the Trash to permanently remove staged items?",
         phrase: "DELETE",
         caseSensitive: true,
+        cancel: "back",
     });
 
-    if (!confirmed) {
+    if (confirmed !== true) {
         return;
     }
 

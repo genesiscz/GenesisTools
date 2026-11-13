@@ -27,6 +27,11 @@
       "dir_mtime_ms": 1759622400000,
       "flags": 0,
       "scan_id": 42,
+      "compressed": {
+        "files": 0,
+        "logical_bytes": 0,
+        "allocated_bytes": 0
+      },
       "stored_children": 41,
       "local_alloc_bytes": 9663676416
     },
@@ -45,6 +50,11 @@
       "dir_mtime_ms": 1759536000000,
       "flags": 0,
       "scan_id": 43,
+      "compressed": {
+        "files": 0,
+        "logical_bytes": 0,
+        "allocated_bytes": 0
+      },
       "stored_children": 37,
       "local_alloc_bytes": 4294967296
     }

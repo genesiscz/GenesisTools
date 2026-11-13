@@ -53,8 +53,18 @@ export interface DiffLogEntry {
     elided?: number;
     dropped?: number;
     fullDiff?: string;
-    /** Why each printed file counted as the call's (logged since 2026-10-15): named, named folder, mentioned, runner, writer. */
+    /**
+     * The rule that made each printed file the call's. Since 2026-11-12 a `Rule` of `diff/attribution.ts` (named,
+     * named-folder, scripted, own-file, own-root) or writer; older rows: named, named folder, mentioned, runner.
+     */
     attributed?: Record<string, string>;
+    /** The rule that kept each file of `others` out (logged since 2026-11-12). */
+    declined?: Record<string, string>;
+    /** When the pre phase stamped the call, and the git roots it captured: the call's window, for `diff audit`. */
+    began?: string;
+    roots?: string[];
+    /** The folder the call ran in, from the transcript. */
+    cwd?: string;
     /** A background task's id, when this row is the diff printed at the end of that task. */
     task?: string;
     /** The call whose post phase printed it: that call's message holds this task's blocks. */
@@ -153,6 +163,8 @@ export function readDiffLog(options: { logPath: string; since: number; session?:
             dropped: typeof record.dropped === "number" ? record.dropped : undefined,
             fullDiff: typeof record.fullDiff === "string" ? record.fullDiff : undefined,
             attributed: attributedOf(record.attributed),
+            declined: attributedOf(record.declined),
+            ...(before ? { began: text(before.at), roots: strings(before.roots) } : {}),
             ...(typeof record.background === "string" ? { task: record.background } : {}),
             ...(typeof record.flushedBy === "string" ? { flushedBy: record.flushedBy } : {}),
         });
@@ -181,7 +193,8 @@ export function readDiffLog(options: { logPath: string; since: number; session?:
 }
 
 const HEADER = /^(Updated|Added|Deleted) (.+) \(\+(\d+) -(\d+)\)(?: · \w+)?$/;
-const NOTE = /^(\d+ file\(s\) changed by others|\d+ dirty file\(s\) changed with no captured|git \w+ moved HEAD)/;
+const NOTE =
+    /^(\d+ file\(s\) changed by others|\d+ file\(s\) changed while the command ran|\d+ dirty file\(s\) changed with no captured|git \w+ moved HEAD)/;
 /** The marker column of a body row: six columns of line number, then a space. */
 const MARKER = 7;
 
@@ -605,6 +618,7 @@ function readRow({
             if (entry) {
                 entry.command = text(field(field(item, "input"), "command"));
                 entry.agent = agent;
+                entry.cwd = text(field(row, "cwd")) || undefined;
             }
         } else if (type === "tool_result") {
             const entry = calls.get(text(field(item, "tool_use_id")));
@@ -790,6 +804,20 @@ function attributedOf(value: unknown): Record<string, string> | undefined {
     );
 }
 
+/** One line per rule of `diff/attribution.ts`, for a printed file and for a declined one. */
+export const RULE_MEANING: Record<string, string> = {
+    "read-only": "the command cannot write",
+    named: "named by the command",
+    "other-named": "another call named it while this one ran",
+    "other-wrote": "another session wrote it while this command ran",
+    "named-folder": "inside a folder the command names",
+    scripted: "a script the command runs names it",
+    "foreign-owned": "another session wrote it in the hour before, this session did not after that",
+    "own-file": "this session wrote or read this file before",
+    "own-root": "changed while it ran, in a root only this session works in",
+    unproven: "changed while it ran, no proof it was this session",
+};
+
 /** What the post record says made a printed file the call's, or a guess from the command text for older records. */
 function attributionNote(entry: DiffLogEntry, path: string, colours: LogColours): string {
     const label = path.replace(/^…/, "");
@@ -800,6 +828,7 @@ function attributionNote(entry: DiffLogEntry, path: string, colours: LogColours)
         mentioned: "mentioned earlier in the session",
         runner: "changed while it ran, no other writer known",
         writer: "reported by a writer's journal",
+        ...RULE_MEANING,
     };
 
     if (recorded) {
@@ -906,7 +935,21 @@ export function formatEntry(entry: DiffLogEntry, options: FormatOptions): string
         lines.push(`  -> ${colours.dim("note:")} ${note}`);
     }
 
-    if (entry.others.length > 0 && !(entry.notes ?? []).some((note) => note.includes("changed by others"))) {
+    if (entry.declined && Object.keys(entry.declined).length > 0) {
+        // Grouped by rule: a call that changed 400 files another session owns is one line, not 400.
+        const byRule = new Map<string, string[]>();
+
+        for (const [path, rule] of Object.entries(entry.declined)) {
+            byRule.set(rule, [...(byRule.get(rule) ?? []), basename(path)]);
+        }
+
+        for (const [rule, names] of byRule) {
+            const more = names.length > 6 ? ` and ${names.length - 6} more` : "";
+            lines.push(
+                `  -> ${colours.dim("not shown:")} ${names.slice(0, 6).join(", ")}${more} ${colours.yellow(`(${RULE_MEANING[rule] ?? rule})`)}`
+            );
+        }
+    } else if (entry.others.length > 0 && !(entry.notes ?? []).some((note) => note.includes("changed by others"))) {
         lines.push(`  -> ${colours.dim("left to others:")} ${entry.others.map((path) => basename(path)).join(", ")}`);
     }
 
