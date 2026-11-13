@@ -96,7 +96,33 @@ export async function renderScore(options: {
         const raw = join(folder, "raw.wav");
         await writeFile(midi, encodeMidi(score));
         await runAudio(["fluidsynth", ...fluidSynthArgs({ soundfont, midi, raw })]);
-        const measured = await measureAudio(raw);
+        // FluidSynth renders the release tail past the score's end. The gain is measured on what ships, the trimmed
+        // audio: measured on the whole render, the trim then moves the integrated loudness off the target.
+        const trimmed = join(folder, "trimmed.wav");
+        await runAudio([
+            "ffmpeg",
+            "-hide_banner",
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            raw,
+            "-af",
+            `atrim=duration=${score.seconds}`,
+            "-c:a",
+            "pcm_f32le",
+            "-map_metadata",
+            "-1",
+            "-fflags",
+            "+bitexact",
+            "-flags:a",
+            "+bitexact",
+            "-threads",
+            "1",
+            trimmed,
+        ]);
+        const measured = await measureAudio(trimmed);
         const gainDb = targetLufs - measured.lufs;
 
         if (measured.truePeakDb + gainDb > peakDb) {
@@ -115,9 +141,9 @@ export async function renderScore(options: {
                     "error",
                     "-y",
                     "-i",
-                    raw,
+                    trimmed,
                     "-af",
-                    `atrim=duration=${score.seconds},volume=${gainDb.toFixed(6)}dB`,
+                    `volume=${gainDb.toFixed(6)}dB`,
                     "-ar",
                     "48000",
                     "-ac",

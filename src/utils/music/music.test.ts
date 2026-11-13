@@ -4,13 +4,16 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Executor } from "@genesiscz/utils/cli/executor";
+import { env } from "@genesiscz/utils/env";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
+import { optIn } from "@genesiscz/utils/test/skip";
 import { parseLoudness, probeMedia } from "./measure";
 import { encodeMidi } from "./midi";
 import { mixMusic, musicFilterGraph, placeMusic } from "./mix";
 import { publishAudio, runAudio, withMusicSignal } from "./process";
 import { fluidSynthArgs, renderScore } from "./render";
 import { builtinScore, TRACK_KEYS } from "./scores";
+import { PINNED_SOUNDFONT } from "./soundfont";
 import { TAPS, tapAudio, tapAudition } from "./taps";
 import { type Score, scoreSchema } from "./types";
 
@@ -428,4 +431,36 @@ describe("measurement, effects and publishing", () => {
             await rm(folder, { recursive: true, force: true });
         }
     });
+});
+
+/**
+ * The whole render on the real tools: FluidSynth with the pinned GeneralUser GS, then the ffmpeg mastering and the
+ * measurement. It needs native tools and a 32 MB asset, so it runs only where they are: RUN_INTEGRATION=1 and
+ * MUSIC_TEST_SOUNDFONT naming the pinned .sf2 (`tools music soundfont install` puts it under ~/.genesis-tools/music).
+ */
+const renderSoundfont = env.get("MUSIC_TEST_SOUNDFONT");
+const canRender =
+    optIn.integration &&
+    renderSoundfont !== undefined &&
+    ["fluidsynth", "ffmpeg", "ffprobe"].every((tool) => Bun.which(tool) !== null);
+
+describe.skipIf(!canRender)("a real FluidSynth render", () => {
+    test("renders the minimal score to its length and loudness, and the same bytes again", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "music-render-"));
+        const render = (name: string) =>
+            renderScore({ score: minimal, output: join(dir, name), soundfont: renderSoundfont });
+
+        try {
+            const first = await render("first.wav");
+            const second = await render("second.wav");
+
+            expect(first.soundfontSha256).toBe(PINNED_SOUNDFONT.sha256);
+            expect(first.measurement.seconds).toBeCloseTo(minimal.seconds, 1);
+            expect(Math.abs(first.measurement.lufs - first.targetLufs)).toBeLessThan(1.5);
+            expect(first.measurement.truePeakDb).toBeLessThanOrEqual(-2);
+            expect(second.measurement.sha256).toBe(first.measurement.sha256);
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    }, 120_000);
 });
