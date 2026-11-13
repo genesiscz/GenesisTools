@@ -22,8 +22,17 @@ export interface PhraseTest {
  * What a project's dictionary (with the global one under it) does to one phrase. Each entry is also tried alone, so
  * the answer names the entries that fired. Reads only.
  */
-export function testPhrase(config: MeetingsConfig, options: { phrase: string; project?: string }): PhraseTest {
+export function testPhrase(
+    config: MeetingsConfig,
+    options: { phrase: string; project?: string; entry?: DictionaryEntry }
+): PhraseTest {
     const dictionary = resolveDictionary(config, options.project ? { project: options.project } : {});
+    if (options.entry) {
+        dictionary.entries = [
+            ...dictionary.entries.filter((entry) => entry.value !== options.entry!.value),
+            options.entry,
+        ];
+    }
     const line = [{ speaker: "", text: options.phrase }];
     const applied = applyDictionary(line, dictionary);
     const alone = (entry: DictionaryEntry): ResolvedDictionary => ({ ...dictionary, entries: [entry] });

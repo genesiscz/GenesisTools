@@ -27,7 +27,7 @@ export async function toFloat32Audio(input: Buffer | string): Promise<Float32Arr
 /** Decode a short source-clock window directly into memory, without temporary audio files. */
 export async function toFloat32AudioWindow(
     inputPath: string,
-    options: { fromSec: number; toSec: number; tracks?: number; signal?: AbortSignal }
+    options: { fromSec: number; toSec: number; tracks?: number; channel?: 0 | 1; signal?: AbortSignal }
 ): Promise<Float32Array> {
     const duration = options.toSec - options.fromSec;
     const tracks = options.tracks ?? 1;
@@ -48,7 +48,7 @@ export async function toFloat32AudioWindow(
     filters.push(
         Array.from({ length: tracks }, (_, index) => `[a${index}]`).join("") +
             (tracks === 1 ? "anull" : `amix=inputs=${tracks}:duration=longest:normalize=0`) +
-            "[out]"
+            (options.channel === undefined ? "[out]" : `[mixed];[mixed]pan=mono|c0=c${options.channel}[out]`)
     );
     const proc = Bun.spawn(
         [

@@ -730,3 +730,25 @@ test("completed successful Contacts reads do not close another reader's native l
     expect(created).toBe(2);
     expect(first.calls.filter((call) => call === "close")).toHaveLength(1);
 });
+
+import { activeSeatPeople, meetingSeatsSchema } from "./seats";
+
+test("microphone devices group room or remote people, never mixed or unknown", () => {
+    const seats = { room: ["Alice", "Bob"], remote: [{ name: "Carol", fromSec: 10, toSec: 20 }, { name: "Dan" }] };
+    expect(
+        meetingSeatsSchema.parse({
+            ...seats,
+            microphones: [
+                { id: "self", people: ["Alice", "Bob"] },
+                { id: "call", deviceId: "Carol", people: ["Carol", "Dan"] },
+            ],
+        }).microphones
+    ).toHaveLength(2);
+    expect(() =>
+        meetingSeatsSchema.parse({ ...seats, microphones: [{ id: "mixed", people: ["Alice", "Carol"] }] })
+    ).toThrow();
+    expect(() => meetingSeatsSchema.parse({ ...seats, microphones: [{ id: "unknown", people: ["Erin"] }] })).toThrow();
+    const parsed = meetingSeatsSchema.parse(seats);
+    expect(activeSeatPeople({ seats: parsed, atSec: 10 }).remote.map((p) => p.name)).toEqual(["Carol", "Dan"]);
+    expect(activeSeatPeople({ seats: parsed, atSec: 20 }).remote.map((p) => p.name)).toEqual(["Dan"]);
+});

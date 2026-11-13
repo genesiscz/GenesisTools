@@ -11,6 +11,7 @@ import { calendarEntrySchema, calendarPersonSchema } from "./calendar-entry";
 import { projectNameSchema } from "./config";
 import { CHANNEL_LAYOUTS } from "./energy";
 import { MEETING_PLATFORM_IDS } from "./platform";
+import { meetingSeatsSchema } from "./seats";
 
 const { log } = logger.scoped("meetings-record");
 
@@ -52,6 +53,26 @@ const isoTime = z.string().min(1);
 const participantSchema = z.object({
     name: z.string().min(1),
     self: z.boolean().optional(),
+    firstSeenSec: z.number().nonnegative().optional(),
+    stays: z
+        .array(
+            z.object({
+                fromSec: z.number().nonnegative(),
+                toSec: z.number().nonnegative().optional(),
+                source: z.enum([
+                    "attendance",
+                    "indicator",
+                    "platform-roster",
+                    "greeting",
+                    "goodbye",
+                    "silence",
+                    "phone",
+                    "hand",
+                ]),
+                confidence: z.number().min(0).max(1).optional(),
+            })
+        )
+        .optional(),
     /** Where the name came from: a source id, "calendar", or "user". */
     from: z.array(z.string()).default([]),
 });
@@ -75,8 +96,14 @@ export const CONTEXT_KINDS = ["file", "url", "note"] as const;
 const contextSchema = z.object({
     id: z.string().regex(/^c\d+$/),
     kind: z.enum(CONTEXT_KINDS),
-    /** An absolute path, a URL, or the note text itself. A file is referenced, never copied. */
+    /** An absolute path, a URL, or the note text itself. */
     ref: z.string().min(1),
+    /** Explicit file revision selection. Absent on legacy and ordinary path references. */
+    file: z
+        .object({
+            revision: z.object({ commit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/), text: z.string() }),
+        })
+        .optional(),
     title: z.string().optional(),
     note: z.string().optional(),
     addedAt: isoTime,
@@ -208,6 +235,10 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         toSec: z.number(),
         /** Whose voice it is. Empty until a rule or a person knows; confirming needs it. */
         speaker: z.string().optional(),
+        segments: z
+            .array(z.object({ fromWord: z.number().int().nonnegative(), speaker: z.string().min(1) }))
+            .optional(),
+        voices: z.array(z.string()).optional(),
         /** Who could it be: the people in the call during the range. */
         candidates: z.array(z.string()).optional(),
         ...itemBase,
@@ -238,6 +269,8 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         kind: z.literal("term"),
         atSec: z.number().optional(),
         heard: z.string(),
+        heardStem: z.string().min(1).optional(),
+        proposedStem: z.string().min(1).optional(),
         /** The right spelling. Absent for a word no dictionary layer accepts and no term resembles: asked by ear. */
         proposed: z.string().optional(),
         /** `line`: the spelling fixes only the line at `atSec`. Absent, it fixes the words wherever they are heard. */
@@ -411,6 +444,7 @@ export const meetingRecordSchema = z.object({
     audio: z.object({ sources: z.record(z.string().min(1), preservedSourceAudioSchema) }).optional(),
     calendar: calendarSchema.optional(),
     participants: z.array(participantSchema).default([]),
+    seats: meetingSeatsSchema.optional(),
     context: z.array(contextSchema).default([]),
     /**
      * Renames for this meeting, and stretches given to a person (the decision journal's `assign`). Both are a
@@ -793,6 +827,55 @@ export class MeetingStore {
         mutate: (record: MeetingRecord) => boolean
     ): Promise<MeetingRecord | undefined> {
         return this.locked(id, (current) => (mutate(current) ? this.commit(current, change) : undefined));
+    }
+
+    /**
+     * Holds all selected record locks in ID order, then reads their current versions. Use the supplied update
+     * inside `fn`: ordinary `update` would acquire the same non-reentrant lock again. Locks stay held until `fn`
+     * finishes, including file moves. Updates to an ID outside this selection are refused.
+     */
+    async withRecords<T>({
+        ids,
+        fn,
+    }: {
+        ids: readonly string[];
+        fn: (records: ReadonlyMap<string, MeetingRecord>, update: MeetingStore["update"]) => Promise<T>;
+    }): Promise<T> {
+        const ordered = [...new Set(ids)].sort();
+        const run = async (index: number): Promise<T> => {
+            const id = ordered[index];
+
+            if (id !== undefined) {
+                return this.storage.withFileLock({ file: this.path(id), fn: () => run(index + 1) });
+            }
+
+            const records = new Map<string, MeetingRecord>();
+            for (const selected of ordered) {
+                const current = this.read(selected);
+
+                if (!current) {
+                    throw new Error(
+                        `No meeting ${selected} (or its ${MEETING_FILE} does not validate): ${this.path(selected)}`
+                    );
+                }
+
+                records.set(selected, current);
+            }
+
+            return fn(records, async (selected, change, mutate, beside) => {
+                const current = records.get(selected);
+
+                if (!current) {
+                    throw new Error(`Meeting ${selected} is not locked by this operation.`);
+                }
+
+                const result = mutate(current) === MEETING_UNCHANGED ? current : this.commit(current, change, beside);
+                records.set(selected, result);
+                return result;
+            });
+        };
+
+        return run(0);
     }
 
     /** Runs `fn` on the record as it is on disk, under its lock. */

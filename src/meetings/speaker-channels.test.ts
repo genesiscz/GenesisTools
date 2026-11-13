@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { correlateEcho } from "@genesiscz/utils/meetings/echo";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { identifiedDepartures } from "./lib/departure";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
+import { assessIndicator } from "./lib/speaker-indicator";
 import { suggestItems } from "./lib/suggest";
 import { clearLanguage, lineLanguages } from "./lib/word-languages";
 
@@ -99,7 +103,11 @@ describe("a call channel that stays silent (the call played through the room)", 
             rules: ["R19"],
             confidence: 0.5,
         });
-        expect(found.find((item) => item.fromSec === 600)).toMatchObject({ speaker: USER, rules: ["E1", "energy"] });
+        expect(found.find((item) => item.fromSec === 600)).toMatchObject({
+            speaker: USER,
+            rules: ["E1", "R18"],
+            confidence: 0.7,
+        });
     });
 });
 
@@ -118,15 +126,12 @@ describe("a second person in the room on the user's microphone (R18)", () => {
     }));
     const found = ranges(suggestItems({ ...base, meeting, evidence, energyMicShare: share, presence }));
 
-    test("the other label's microphone lines are not the user's: the people in the call are asked for", () => {
-        const carol = found.filter((item) => item.label === "Carol Example");
+    test("a platform label's microphone lines offer the user, never remote label owners", () => {
+        const carol = found.filter((item) => item.label === "Carol Example" && item.rules.includes("R18"));
 
         expect(carol.length).toBeGreaterThan(0);
-        expect(carol.every((item) => item.speaker === undefined && item.rules.includes("R18"))).toBe(true);
-        expect(carol[0]).toMatchObject({
-            confidence: 0.4,
-            candidates: ["Bob Example", "Carol Example", "Dan Example"],
-        });
+        expect(carol.every((item) => item.speaker === USER && item.rules.includes("R18"))).toBe(true);
+        expect(carol[0]).toMatchObject({ confidence: 0.7, candidates: [USER] });
     });
 
     test("the larger microphone voice stays the user's, at most 0.7", () => {
@@ -145,28 +150,15 @@ describe("the recorder swapped the user's label and another person's for a stret
         index % 2 === 0 ? { label: USER, mic: 0.05 } : { label: "Bob Example", mic: 0.95 }
     );
 
-    test("both labels of the stretch get one item each, and no per-line rule speaks there", () => {
+    test("each agreeing line gets a swap, and no competing per-line rule speaks there", () => {
         const { meeting, evidence, share } = scene([...normal, ...swapped]);
         const found = ranges(suggestItems({ ...base, meeting, evidence, energyMicShare: share }));
 
-        expect(found.filter((item) => item.rules.includes("R20"))).toMatchObject([
-            {
-                label: "Bob Example",
-                speaker: USER,
-                fromSec: 600,
-                toSec: 1190,
-                confidence: 0.9,
-                rules: ["R20", "energy"],
-            },
-            {
-                label: USER,
-                speaker: "Bob Example",
-                fromSec: 600,
-                toSec: 1190,
-                confidence: 0.9,
-                rules: ["R20", "energy"],
-            },
-        ]);
+        const swaps = found.filter((item) => item.rules.includes("R20"));
+        expect(swaps).toHaveLength(60);
+        expect(swaps.every((item) => item.fromSec === item.toSec && item.confidence === 0.9)).toBe(true);
+        expect(swaps.filter((item) => item.speaker === USER)).toHaveLength(30);
+        expect(swaps.filter((item) => item.speaker === "Bob Example")).toHaveLength(30);
         expect(found.filter((item) => item.fromSec >= 600 && !item.rules.includes("R20"))).toEqual([]);
     });
 
@@ -202,7 +194,7 @@ describe("the recorder swapped the user's label and another person's for a stret
             suggestItems({ ...base, meeting, evidence: { ...evidence, speaking }, energyMicShare: share, presence })
         );
 
-        expect(found.filter((item) => item.rules.includes("R20"))).toHaveLength(2);
+        expect(found.filter((item) => item.rules.includes("R20"))).toHaveLength(60);
         expect(found.filter((item) => item.rules.includes("R16"))).toEqual([]);
         expect(found.filter((item) => item.fromSec >= 600 && !item.rules.includes("R20"))).toEqual([]);
     });
@@ -266,4 +258,185 @@ describe("the language of a line", () => {
             ]).slice(-3)
         ).toEqual([["cs", "sk"], ["cs", "sk"], ["cs"]]);
     });
+});
+
+describe("Workshop regression boundaries", () => {
+    test("a platform label cannot name its remote owner on a microphone lean", () => {
+        const sample = scene([{ label: "Bob Example", mic: 0.68 }]);
+        const found = ranges(suggestItems({ ...base, ...sample, energyMicShare: sample.share }));
+        expect(found).toHaveLength(1);
+        expect(found[0]?.speaker).toBe(USER);
+        expect(found[0]?.confidence).toBeLessThanOrEqual(0.7);
+        expect(found[0]?.candidates?.[0]).toBe(USER);
+        expect(found[0]?.candidates).not.toContain("Bob Example");
+    });
+
+    test("R1 never opens later microphone lines of the recording user", () => {
+        const sample = scene(
+            Array.from({ length: 12 }, (_, index) => ({ label: USER, mic: index === 2 ? 0.15 : 0.98 }))
+        );
+        sample.meeting.transcript[2]!.text = "Dík, já vám mizím.";
+        sample.meeting.transcript[3]!.text = "Ahoj, měj se.";
+        const found = ranges(
+            suggestItems({ ...base, ...sample, rules: ["speakers", "evidence"], energyMicShare: sample.share })
+        );
+        expect(found.filter((item) => item.label === USER && item.rules.includes("R1"))).toEqual([]);
+    });
+
+    test("R20 leaves correctly labelled lines inside a swapped stretch untouched", () => {
+        const slots = Array.from({ length: 180 }, (_, index) => {
+            const wrong = index >= 60 && index < 140;
+            const self = index % 2 === 0;
+            const correctException = index === 92 || index === 93;
+            return { label: self ? USER : "Bob Example", mic: (wrong && !correctException) !== self ? 0.95 : 0.05 };
+        });
+        const sample = scene(slots);
+        const found = ranges(suggestItems({ ...base, ...sample, energyMicShare: sample.share }));
+        const swaps = found.filter((item) => item.rules.includes("R20"));
+        expect(swaps.length).toBeGreaterThan(0);
+        for (const index of [92, 93]) {
+            expect(
+                swaps.some(
+                    (item) =>
+                        item.label === slots[index]!.label && index * 10 >= item.fromSec && index * 10 <= item.toSec
+                )
+            ).toBe(false);
+        }
+        expect(swaps.some((item) => item.fromSec === 900)).toBe(true);
+    });
+});
+
+describe("shared indicator and departure APIs", () => {
+    test("a late remote join starts a new assessment stretch; one rare hit still supplies a candidate", () => {
+        const sample = scene(Array.from({ length: 100 }, () => ({ label: USER, mic: 0.02 })));
+        const lines: LineEvidence[] = lineEvidence(
+            sample.meeting.transcript,
+            sample.evidence,
+            undefined,
+            sample.share
+        ).map(
+            (line): LineEvidence => ({
+                ...line,
+                speaking: line.index < 20 ? {} : line.index === 40 ? { "Carol Example": 1 } : { "Bob Example": 1 },
+                present: line.index < 40 ? ["Bob Example"] : ["Bob Example", "Carol Example"],
+            })
+        );
+        const assessment = assessIndicator({ lines, selfName: USER });
+        expect(assessment.candidates.map((person) => person.name)).toContain("Carol Example");
+        expect(assessment.ignored.has(20)).toBe(false);
+        expect(assessment.ignored.has(70)).toBe(true);
+        const gaps = lines.map((line) => ({
+            ...line,
+            speaking: line.index > 41 && line.index < 99 ? {} : line.speaking,
+        }));
+        expect(assessIndicator({ lines: gaps, selfName: USER }).ignored.size).toBe(0);
+    });
+
+    test("a remote goodbye under the user label identifies only independently known identity", () => {
+        const sample = scene([{ label: USER, mic: 0.15 }]);
+        const lines = lineEvidence(sample.meeting.transcript, sample.evidence, undefined, sample.share);
+        const hints = [
+            {
+                kind: "leave-then-continues" as const,
+                label: USER,
+                strength: "normal" as const,
+                leaves: [{ atSec: 0, continuesAtSec: 40, text: "Já vám mizím." }],
+            },
+        ];
+        const presence = ["Bob Example", "Carol Example"].map((name) => ({
+            name,
+            fromSec: 0,
+            toSec: 120,
+            leftAtExact: false,
+        }));
+        expect(identifiedDepartures({ hints, lines, selfName: USER, presence })).toEqual([]);
+        const shown = [{ ...lines[0]!, speaking: { "Carol Example": 1 } }];
+        expect(identifiedDepartures({ hints, lines: shown, selfName: USER, presence })).toEqual([
+            { name: "Carol Example", atSec: 0, reason: "indicator" },
+        ]);
+        expect(
+            identifiedDepartures({ hints, lines: shown, selfName: USER, presence, ignoredIndicator: new Set([0]) })
+        ).toEqual([]);
+    });
+});
+
+test("meeting-wide indicator dominance counts all transcript lines, with a strict 80 percent boundary", () => {
+    const sample = scene(Array.from({ length: 100 }, () => ({ label: USER, mic: 0.02 })));
+    const lines = lineEvidence(sample.meeting.transcript, sample.evidence, undefined, sample.share);
+    const readings = (count: number): LineEvidence[] =>
+        lines.map((line): LineEvidence => ({ ...line, speaking: line.index < count ? { "Bob Example": 1 } : {} }));
+    const assessment = assessIndicator({ lines: readings(87), selfName: USER });
+    expect(assessment.dominant).toEqual({ name: "Bob Example", share: 0.87 });
+    expect(assessment.reasons.get(0)).toBe("meeting-dominance");
+    expect(assessment.ignored.size).toBe(100);
+    expect(assessIndicator({ lines: readings(80), selfName: USER }).dominant).toBeUndefined();
+});
+
+test("explicit shared microphone seats survive schema parsing and offer every room person", () => {
+    const sample = scene([{ label: "Bob Example", mic: 0.95 }]);
+    const parsed = meetingRecordSchema.parse({
+        ...record,
+        seats: { room: [USER, "Room Example"], remote: [{ name: "Bob Example" }] },
+    });
+    const reopened = meetingRecordSchema.parse(SafeJSON.parse(SafeJSON.stringify(parsed)));
+    const found = ranges(suggestItems({ ...base, record: reopened, ...sample, energyMicShare: sample.share }));
+    expect(found[0]?.speaker).toBeUndefined();
+    expect(found[0]?.candidates).toEqual([USER, "Room Example"]);
+    expect(found[0]?.candidates).not.toContain("Bob Example");
+});
+
+test("an identified remote departure removes that person after a goodbye under the user's label", () => {
+    const sample = scene(
+        Array.from({ length: 12 }, (_, index) => ({
+            label: index === 8 ? "Carol Example" : USER,
+            mic: index === 2 || index === 8 ? 0.15 : 0.98,
+        }))
+    );
+    sample.meeting.transcript[2]!.text = "Dík, já vám mizím.";
+    sample.evidence.speaking = [{ tSec: 20, speaking: ["Carol Example"] }];
+    const presence = [USER, "Bob Example", "Carol Example"].map((name) => ({
+        name,
+        self: name === USER,
+        fromSec: 0,
+        toSec: 120,
+        leftAtExact: false,
+    }));
+    const found = ranges(
+        suggestItems({ ...base, ...sample, rules: ["speakers", "evidence"], presence, energyMicShare: sample.share })
+    );
+    expect(found.some((item) => item.label === USER && item.fromSec > 20 && item.rules.includes("R1"))).toBe(false);
+    expect(found.find((item) => item.fromSec === 20 && item.rules.includes("R1"))?.speaker).toBe("Carol Example");
+    const later = found.find((item) => item.label === "Carol Example" && item.fromSec === 80);
+    expect(later).toBeDefined();
+    expect(later?.speaker).not.toBe("Carol Example");
+    expect(later?.candidates).not.toContain("Carol Example");
+});
+
+test("a linear echo residual does not turn a mixed microphone line into a remote identity", () => {
+    const sample = scene([{ label: "Bob Example", mic: 0.02 }]);
+    const audio = Float32Array.from({ length: 1000 }, (_, i) => Math.sin(i / 12));
+    const acoustic = correlateEcho({ mic: audio, call: audio, rate: 1000 });
+    const share = Object.assign(sample.share, { acoustic: () => acoustic });
+    const found = ranges(suggestItems({ ...base, ...sample, energyMicShare: share }));
+    expect(found).toHaveLength(1);
+    expect(found[0]?.speaker).toBeUndefined();
+    expect(found[0]?.candidates?.[0]).toBe(USER);
+    expect(found[0]?.rules).toContain("R18");
+});
+
+test("R20 does not override a line when tagged channel and calibrated energy disagree", () => {
+    const slots = Array.from({ length: 180 }, (_, index) => ({
+        label: index % 2 === 0 ? USER : "Bob Example",
+        mic: (index >= 60 && index < 140) !== (index % 2 === 0) ? 0.95 : 0.05,
+    }));
+    slots[94]!.mic = 0.95;
+    const sample = scene(slots);
+    sample.evidence.segments[94]!.channel = "system";
+    const found = ranges(suggestItems({ ...base, ...sample, energyMicShare: sample.share }));
+    expect(found.some((item) => item.rules.includes("R20"))).toBe(true);
+    expect(
+        found.some(
+            (item) => item.rules.includes("R20") && item.label === USER && item.fromSec <= 940 && item.toSec >= 940
+        )
+    ).toBe(false);
 });

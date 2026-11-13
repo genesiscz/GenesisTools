@@ -278,6 +278,7 @@ extension MeetingsAPI {
         static let name = "dictionary.test"
 
         struct Params: Codable, Equatable {
+            var entry: SavedDictionaryEntry? = nil
             var phrase: String
             var project: String?
         }

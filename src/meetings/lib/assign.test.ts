@@ -39,6 +39,7 @@ const ALICE = { name: "Alice Novak", email: "alice@example.com" };
 const BOB = { name: "Bob Smith", email: "bob@example.com" };
 const ME = { name: "Owner Example", email: "owner@example.com", self: true };
 
+import { duplicateMeeting } from "./duplicate";
 import { meetingPairingSource, projectMeetingPeople } from "./project-people";
 import { frequentTitleWords } from "./project-suggestions";
 
@@ -587,6 +588,42 @@ describe("ask each time", () => {
         const ended = await create("Ended", "2026-11-04T15:00:00.000Z");
         expect((await askAtMeetingEnd(store, ended.id, deps)).outcome).toBe("ask each time is off");
         expect(inbox.posted).toHaveLength(0);
+    });
+
+    test("copies never ask for a project after reopening, including originals without a project", async () => {
+        const { store, inbox, deps, create } = setup();
+        const original = await create("Planning", "2026-11-04T14:00:00.000Z");
+        const copy = await duplicateMeeting({ store, ref: original.id });
+        await assignSweep(new MeetingStore(store.storage), deps);
+        expect(inbox.posted.map((form) => form.projectPath)).toEqual([store.folder(original.id)]);
+        expect(new MeetingStore(store.storage).read(copy.id)?.assign).toBeUndefined();
+        await store.update(original.id, { command: "test", change: "project" }, (record) => {
+            record.project = "work";
+        });
+        const assignedCopy = await duplicateMeeting({ store, ref: original.id });
+        expect(new MeetingStore(store.storage).read(assignedCopy.id)?.project).toBe("work");
+    });
+
+    test("sweep does not repost a legacy copy's pending project question", async () => {
+        const { store, inbox, deps, create } = setup();
+        const original = await create("Planning", "2026-11-04T14:00:00.000Z", { project: "work" });
+        const copy = await duplicateMeeting({ store, ref: original.id });
+        await store.update(copy.id, { command: "test", change: "legacy question" }, (record) => {
+            delete record.project;
+            record.assign = {
+                ask: {
+                    formId: "legacy-copy-question",
+                    askedAt: "2026-11-04T15:00:00.000Z",
+                    outcome: "pending",
+                    proposals: [],
+                    calendars: [],
+                },
+            };
+        });
+        writeFileSync(join(store.root, "assign-open.json"), SafeJSON.stringify({ open: { [copy.id]: "ask" } }));
+        await assignSweep(new MeetingStore(store.storage), deps);
+        expect(inbox.posted).toEqual([]);
+        expect(hasOpenAssignSteps(new MeetingStore(store.storage))).toBe(false);
     });
 
     test("the first sweep marks its start and asks only about meetings that end after it", async () => {

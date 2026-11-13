@@ -918,11 +918,13 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             const { added, warnings } = prepareFindings({
                 findings: action.findings,
                 items: record.items,
+                allowDuplicates: action.allowDuplicates,
+                force: action.force,
                 ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
             });
             record.items.push(...added);
             return {
-                history: { command: "items add", change: `${action.findings.length} findings` },
+                history: { command: "items add", change: `${added.length} finding${added.length === 1 ? "" : "s"}` },
                 warnings,
                 stamps: false,
             };
@@ -1619,6 +1621,11 @@ export class DecisionJournal {
 
                 known ??= new Map(this.entries(meeting).map((entry) => [entry.token, entry]));
                 const entry = known.get(wanted);
+                if (entry && entry.meeting !== meeting) {
+                    throw new Error(
+                        `Journal entry ${entry.token} belongs to ${entry.meeting}, not ${meeting}; refusing cross-record Undo.`
+                    );
+                }
                 if (entry?.action.kind === "unsupported") {
                     throw new Error(
                         `This decision was made by a newer build (${entry.action.name}). Open it in that build to undo it; nothing was changed.`

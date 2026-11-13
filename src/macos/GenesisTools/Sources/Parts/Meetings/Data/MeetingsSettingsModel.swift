@@ -430,7 +430,7 @@ final class MeetingsSettingsModel {
     }
 
     /// What the scope's dictionary does to the phrase; asks again 300 ms after the last key.
-    func testPhrase(_ text: String) {
+    func testPhrase(_ text: String, entry: SavedDictionaryEntry? = nil) {
         phrase = text
         phraseTask?.cancel()
         let trimmed = text.trimmingCharacters(in: .whitespaces)
@@ -444,8 +444,9 @@ final class MeetingsSettingsModel {
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
             do {
-                let result = try await readLibrary(MeetingsAPI.DictionaryTest.self, .init(phrase: trimmed, project: scope),
-                                                   orRun: ["dictionary", "test", trimmed, "--json"] + (scope.map { ["--project", $0] } ?? []))
+                let draftArgs = try entry.map { ["--entry", String(decoding: try JSONEncoder().encode($0), as: UTF8.self)] } ?? []
+                let result = try await readLibrary(MeetingsAPI.DictionaryTest.self, .init(entry: entry, phrase: trimmed, project: scope),
+                                                   orRun: ["dictionary", "test", trimmed, "--json"] + (scope.map { ["--project", $0] } ?? []) + draftArgs)
                 guard !Task.isCancelled else { return }
                 phraseResult = result
                 notices.dismiss(phraseFailureID)

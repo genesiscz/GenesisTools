@@ -452,6 +452,56 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         ]);
     });
 
+    test("service insertion preserves explicit duplicates and counts only new findings in mixed batches", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const finding = {
+            kind: "speaker-range" as const,
+            from: 0,
+            to: 10,
+            label: "Speaker 1",
+            speaker: "Alex Example",
+            confidence: 0.8,
+            reason: "invented voice evidence",
+        };
+        const before = store.read(REVIEW.id)!.items.length;
+        await client.call("decision.apply", { meeting: REVIEW.id, action: { kind: "add", findings: [finding] } });
+        const retry = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "add", findings: [finding] },
+        });
+        expect(retry.entry).toBeUndefined();
+        expect(new MeetingStore(store.storage).read(REVIEW.id)!.items).toHaveLength(before + 1);
+        await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "add", findings: [finding], allowDuplicates: true },
+        });
+        expect(new MeetingStore(store.storage).read(REVIEW.id)!.items).toHaveLength(before + 2);
+        const mixed = await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "add", findings: [finding, { ...finding, speaker: "Dana Example" }] },
+        });
+        expect(mixed.entry?.changes).toHaveLength(1);
+        expect(new MeetingStore(store.storage).read(REVIEW.id)!.history.at(-1)?.change).toBe("1 finding");
+    });
+
+    test("service journal reads retain the copied meeting's provenance", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const { duplicateMeeting } = await import("../duplicate");
+        await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "set", title: "Original fixture title" },
+        });
+        const copied = await duplicateMeeting({ store, ref: REVIEW.id, title: "Copied fixture title" });
+        const rows = await client.call("journal.read", { meeting: copied.id });
+        expect(rows.entries).toHaveLength(1);
+        expect(rows.entries[0]).toMatchObject({ meeting: copied.id, copiedFrom: REVIEW.id });
+        const { journalEntrySchema } = await import("../decision-actions");
+        expect(journalEntrySchema.parse(rows.entries[0])).toHaveProperty("copiedFrom", REVIEW.id);
+        const original = await client.call("journal.read", { meeting: REVIEW.id });
+        expect(original.entries[0]).not.toHaveProperty("copiedFrom");
+        expect(original.entries[0]?.meeting).toBe(REVIEW.id);
+    });
+
     test("decision.apply decides as the hello's actor, tells decision.applied, and decision.revert undoes it", async () => {
         const { client, store } = await ADAPTERS[kind](agentHello);
         const heard: MeetingsEventMessage[] = [];
@@ -1023,6 +1073,7 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
                 to: { sec: 30, text: "00:30" },
                 target: { kind: "item", id: "i1" },
             },
+            { kind: "reason", pieces: [{ text: "Rules: presence" }] },
         ]);
         expect(rows.rows[0]?.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
             ["suggested", "Alex Example", 0.82],
@@ -1763,6 +1814,8 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meetings.list", {});
     await ask(window, "meetings.list", { project: "Atlas", full: true }, "full: the whole records.");
     await ask(window, "meeting.show", { ref: REVIEW.id });
+    await ask(window, "meeting.people.edit", { meeting: "nope", action: "add", name: "Dana Example" });
+    await ask(window, "meeting.voice", { meeting: "nope" });
     await ask(window, "meeting.show", { ref: "nope" }, "No meeting: meeting-not-found.");
     await ask(window, "meeting.show", { ref: "2026-11-03" }, "A prefix of two meetings: meeting-ref.");
     await ask(window, "meeting.transcript", { ref: REVIEW.id });

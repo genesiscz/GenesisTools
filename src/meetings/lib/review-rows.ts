@@ -524,6 +524,38 @@ function partsOf(record: MeetingRecord, item: MeetingItem, lines: TranscriptLine
         parts.push(whenPart(item));
     }
 
+    if (item.rules.length > 0) {
+        parts.push({ kind: "reason", pieces: textPieces(`Rules: ${item.rules.join(", ")}`) });
+    }
+    if (typeof item.evidence?.indicatorIgnored === "string") {
+        parts.push({
+            kind: "reason",
+            pieces: textPieces(`Speaking indicator ignored: ${item.evidence.indicatorIgnored}`),
+        });
+    }
+    const swap = item.evidence?.swap;
+    if (typeof swap === "object" && swap !== null && "skipped" in swap && Array.isArray(swap.skipped)) {
+        parts.push({
+            kind: "reason",
+            pieces: textPieces(`Swap applies to this line; ${swap.skipped.length} contradictory lines skipped`),
+        });
+    }
+    const candidateSources = item.evidence?.candidateSources;
+    if (Array.isArray(candidateSources)) {
+        const sources = candidateSources.flatMap((value) =>
+            typeof value === "object" &&
+            value !== null &&
+            "term" in value &&
+            "source" in value &&
+            typeof value.term === "string" &&
+            typeof value.source === "string"
+                ? [`${value.term}: ${value.source}`]
+                : []
+        );
+        if (sources.length > 0) {
+            parts.push({ kind: "reason", pieces: textPieces(`Vocabulary sources: ${sources.join("; ")}`) });
+        }
+    }
     const reason = item.evidence?.reason;
 
     if (typeof reason === "string" && reason.trim()) {

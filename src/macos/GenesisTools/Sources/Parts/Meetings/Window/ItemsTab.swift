@@ -78,6 +78,12 @@ struct ItemsTab: View {
             }
         }
         .onChange(of: lowPriority) { _, _ in detail.readRows(quiet: true) }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+                FindingComposerButton(detail: detail)
+                Spacer()
+            }.padding(.horizontal, 16).padding(.vertical, 6)
+        }
     }
 
     private func list(_ rows: ReviewRows) -> some View {

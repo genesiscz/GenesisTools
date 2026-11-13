@@ -131,7 +131,17 @@ export class OpenedMeeting {
             return (await this.timeline()).named(attendance.people);
         }
 
-        return undefined;
+        const duration = (await this.meeting()).transcript.reduce(
+            (end, line) => Math.max(end, (line.startSec ?? 0) + 5),
+            0
+        );
+        const roster = this.current.participants.flatMap((person) => {
+            const stays =
+                person.stays ??
+                (person.firstSeenSec === undefined ? [] : [{ fromSec: person.firstSeenSec, toSec: undefined }]);
+            return stays.map((stay) => ({ name: person.name, fromSec: stay.fromSec, toSec: stay.toSec ?? duration }));
+        });
+        return roster.length > 0 ? roster : undefined;
     }
 
     /** The microphone's energy share per time range, with the calibration it was read with. Writes nothing. */

@@ -29,6 +29,23 @@ struct DecisionActor: Codable, Equatable, Hashable {
 /// each kind fills its own members and leaves the rest nil, which the encoder leaves out, so the strict schemas take it.
 /// Item references take an id (`i42`) or `Q12`.
 struct DecisionAction: Codable, Equatable, Hashable {
+    struct Finding: Codable, Equatable, Hashable {
+        var kind: String
+        var from: Double?
+        var to: Double?
+        var at: Double?
+        var question: String?
+        var choices: [String]?
+        var decides: [String]?
+        var about: String?
+        var heard: String?
+        var proposed: String?
+        var scope: String?
+        var confidence: Double?
+        var reason: String?
+    }
+    var findings: [Finding]? = nil
+    var force: Bool? = nil
     /// confirm, reject, respell, answer, skip, split, rename, reopen, add, set, revert, comment (or a newer kind).
     var kind: String
     /// confirm, reject, reopen; revert: only these of the entry's items.

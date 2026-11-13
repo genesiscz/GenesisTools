@@ -611,6 +611,30 @@ A recorded meeting keeps images in `frames/`, their times and displays in `frame
 `decisions.ndjson`, and listen/answer events are in `questions.ndjson`. Keep these files with the record when making
 a backup. Merge and project-change backups are kept under `~/.genesis-tools/backups/meetings/`.
 
+## Speaker evidence and review
+
+Speaker labels are source labels, not person identities. Sure microphone lines offer the recording user and the
+explicitly listed people sharing that microphone. The user is capped at 70% for a platform label. Shared microphone
+membership stays uncertain until another source identifies the voice. A remote goodbye never closes the recording
+user's later lines, and an ambiguous goodbye leaves the departing person unresolved.
+
+Speaking observations expire after at most ten seconds and at the next read. Failed or occluded reads are unknown,
+not silence and not a repeated speaker. One assessment ignores an indicator that dominates more than 80% of all
+lines with at least twenty samples, or at least 90% of call lines in a long stretch with competing remote speakers.
+Raw evidence keeps its observations and reports why the indicator was ignored. A label swap applies only to lines
+whose own channel agrees; the review row and transcript selection detail report skipped contradictory lines.
+
+Suggestion collection retains raw and estimated cleaned microphone metrics separately. Linear echo subtraction is
+an estimate, so a mixed raw microphone line does not become a remote identity just because its residual is small.
+Term candidates come from the meeting dictionary, context, people, user vocabulary and stronger acronym spellings
+observed in the same meeting. Vocabulary sources appear on term review rows. No developer-tool glossary is added
+implicitly, and a known Czech word form is not rewritten by a phonetic guess.
+
+The Meetings window offers a clean-copy action, shows copy provenance, displays shared microphone groups and lets
+you edit their members. Selected transcript lines show the applied rules and ignored indicator metadata. Context
+files can be pinned with `context add <meeting> <file> --rev <commit>` or `--before-meeting`. Short listen rounds accept
+`listen <meeting> --questions <refs>`; the CLI help describes the question file and item-reference forms.
+
 ## Troubleshooting
 
 - If the service is unavailable, use `tools meetings serve --status`. Start it with `tools meetings serve --detach`;

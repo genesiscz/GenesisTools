@@ -13,6 +13,7 @@ import {
     PERSON_SOURCE_KINDS,
 } from "@genesiscz/utils/meetings/people-directory";
 import { meetingContextSchema, meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
+import { lineVoiceSchema } from "@genesiscz/utils/meetings/voice-features";
 import {
     alignedWordSchema,
     wordTimingGenerateResultSchema,
@@ -1196,10 +1197,45 @@ const dictionaryRemove = defineMethod({
 
 const dictionaryTest = defineMethod({
     name: "dictionary.test",
-    params: z.object({ phrase: z.string(), project: dictionaryProject }).strict(),
+    params: z
+        .object({ phrase: z.string(), project: dictionaryProject, entry: dictionaryEntrySchema.optional() })
+        .strict(),
     result: phraseTestSchema,
     resultName: "{ phrase, text, fired, suggestions, counts }",
     doc: "What the scope's dictionary does to one phrase, with each entry that fired, as `dictionary test --json` prints it. Reads only.",
+    effect: "read",
+});
+
+export const meetingPeopleEdit = defineMethod({
+    name: "meeting.people.edit",
+    params: z
+        .object({
+            meeting: meetingRef,
+            name: z.string().trim().min(1),
+            action: z.enum(["add", "remove"]),
+            fromSec: z.number().finite().nonnegative().optional(),
+            toSec: z.number().finite().nonnegative().optional(),
+            atMic: z.boolean().optional(),
+            via: z.string().trim().min(1).optional(),
+        })
+        .strict(),
+    result: meetingRecordSchema,
+    resultName: "MeetingRecord",
+    doc: "Add/update or remove a meeting-local person, finite stay and canonical microphone/device group. Bounds are half-open. Does not edit the people book.",
+    effect: "reversible",
+});
+export const meetingVoice = defineMethod({
+    name: "meeting.voice",
+    params: z
+        .object({
+            meeting: meetingRef,
+            voices: z.number().int().min(1).max(16).optional(),
+            channel: z.number().int().min(0).max(1).optional(),
+        })
+        .strict(),
+    result: z.array(lineVoiceSchema),
+    resultName: "LineVoice[]",
+    doc: "Read-only stereo RMS, low-band share, tilt and pitch per line; optional anchored N-voice clustering. One bounded streaming decode, no durable cache or downloads.",
     effect: "read",
 });
 
@@ -1213,6 +1249,8 @@ export const meetingsApi = defineApi({
         hello,
         list,
         show,
+        meetingPeopleEdit,
+        meetingVoice,
         transcript,
         wordTimingsGenerate,
         revisions,

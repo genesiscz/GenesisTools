@@ -71,6 +71,8 @@ export interface ListenSessionOptions {
     adapter: ListenAdapter;
     /** Ask only this question (an item id), and the parts it is split into. */
     only?: string;
+    /** An explicit short round, including any parts split from these questions. */
+    selected?: readonly string[];
     budget: number;
     minPriority: number;
     listenBelow: number;
@@ -284,6 +286,10 @@ export class ListenSession {
 
         if (only) {
             return question.id === only;
+        }
+
+        if (this.options.selected) {
+            return this.options.selected.includes(question.id);
         }
 
         return (question.priority ?? minPriority) >= minPriority;

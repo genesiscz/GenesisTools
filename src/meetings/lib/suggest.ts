@@ -2,6 +2,7 @@ import { basename, extname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { median, silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
+import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
@@ -14,7 +15,6 @@ import {
 } from "@genesiscz/utils/transcribe/doc-match";
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
-import { formatClock } from "@genesiscz/utils/transcribe/render";
 import {
     PRESENCE_TOLERANCE_SEC,
     type Presence,
@@ -24,21 +24,22 @@ import {
 } from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import {
-    buildVocabulary,
-    DEV_GLOSSARY,
     findSuspectTerms,
     findUnknownWords,
     isEnglishWord,
     keepsHeardWords,
     type RawTermEvidence,
     rawTermEvidence,
+    scopedVocabulary,
     termsFromText,
     type VocabTerm,
 } from "@genesiscz/utils/transcribe/terms";
 import { arrivalItems } from "./arrival";
-import { contextFileText, contextMoment } from "./context-file";
+import { contextEntryText } from "./context-file";
+import { identifiedDepartures } from "./departure";
 import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
+import { assessIndicator } from "./speaker-indicator";
 import {
     addPolish,
     anchorScores,
@@ -286,6 +287,9 @@ function speakerItems(options: {
                 });
             }
         } else if (hint.kind === "leave-then-continues") {
+            if (selfName && sameName(hint.label, selfName)) {
+                continue;
+            }
             hint.leaves.forEach((leave, index) => {
                 const until = hint.leaves[index + 1]?.atSec ?? lastSecOf.get(hint.label) ?? leave.continuesAtSec;
                 const answered = Boolean(leave.confirmedBy || leave.echoOf);
@@ -382,7 +386,7 @@ function contextDocuments(record: MeetingRecord): { name: string; text: string }
             return [{ name: entry.title ?? entry.id, text: entry.ref }];
         }
 
-        const file = entry.kind === "file" ? contextFileText(entry.ref, contextMoment(record)) : undefined;
+        const file = entry.kind === "file" ? contextEntryText(entry, record) : undefined;
         return file ? [{ name: entry.title ?? basename(entry.ref, extname(entry.ref)), text: file.text }] : [];
     });
 }
@@ -462,7 +466,7 @@ function termVocabulary(options: TermSources): VocabTerm[] {
             return termsFromText(entry.ref, "context");
         }
 
-        const file = entry.kind === "file" ? contextFileText(entry.ref, contextMoment(record)) : undefined;
+        const file = entry.kind === "file" ? contextEntryText(entry, record) : undefined;
         return file ? termsFromText(file.text, "context") : [];
     });
     const dictionaryTerms = dictionary.entries.flatMap((entry) => {
@@ -473,16 +477,12 @@ function termVocabulary(options: TermSources): VocabTerm[] {
         return entry.type === "fix" ? [{ term: entry.substitution, source: "dictionary" }] : [];
     });
 
-    return buildVocabulary([
-        DEV_GLOSSARY.map((term) => ({ term, source: "glossary" })),
-        options.sourceWords.map((word) => ({ term: word.replacement ?? word.value, source: "source" })),
-        dictionaryTerms,
-        // People's names, whole and by part, so "Tomášem" is a name and not an unknown word.
-        record.participants.flatMap((person) =>
-            [person.name, ...person.name.split(/\s+/)].map((term) => ({ term, source: "participant" }))
-        ),
-        ...contextTexts,
-    ]);
+    return scopedVocabulary({
+        dictionary: dictionaryTerms,
+        context: contextTexts.flat(),
+        user: options.sourceWords.map((word) => ({ term: word.replacement ?? word.value, source: "source" })),
+        people: record.participants.flatMap((person) => [person.name, ...person.name.split(/\s+/)]),
+    });
 }
 
 /** The term part of `evidence --raw`: the same vocabulary as the term rules, with no threshold of their own. */
@@ -675,6 +675,10 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
                     rules: [MeetingRule.PhoneticTerm, ...(suspect.needsConfirmation ? [MeetingRule.SummaryName] : [])],
                     evidence: {
                         source: best.source,
+                        candidateSources: suspect.candidates.map((candidate) => ({
+                            term: candidate.term,
+                            source: candidate.source,
+                        })),
                         occurrences: suspect.occurrences,
                         examples: suspect.examples,
                         match: suspect.kind,
@@ -688,10 +692,12 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
         }),
         // Its candidates are all below the suspect threshold ("namokovat" scored "Nomic"): evidence, never a proposal.
         ...unknown.map((word): NewItem => {
+            const best = word.candidates.find((candidate) => candidate.confidence >= 80);
             return {
                 kind: "term",
                 status: "suggested",
                 heard: word.heard,
+                ...(best ? { proposed: best.term } : {}),
                 ...(word.examples[0]?.atSec !== undefined ? { atSec: word.examples[0].atSec } : {}),
                 confidence: CONFIDENCE.unknownWord,
                 rules: [MeetingRule.UnknownWord],
@@ -700,6 +706,10 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
                     examples: word.examples,
                     verdict: word.verdict,
                     wordCheck: wordCheck?.provider,
+                    candidateSources: word.candidates.map((candidate) => ({
+                        term: candidate.term,
+                        source: candidate.source,
+                    })),
                     candidates: word.candidates.map((candidate) => `${candidate.term} ${candidate.confidence} %`),
                     candidateScores: candidateScoresOf(word.candidates),
                 },
@@ -978,6 +988,9 @@ function findingFor(options: {
         };
     }
 
+    if (labelAbsent && present) {
+        return { candidates: present, rules: [channel, MeetingRule.Attendance], confidence: 0.4, listen: true };
+    }
     return undefined;
 }
 
@@ -994,16 +1007,6 @@ const OWNER_WITH_LOCAL_VOICE_MAX = 0.7;
 /** The label with the most microphone lines leads the next one by this factor before it may stand for the user. */
 const LABEL_VOICE_MARGIN = 1.25;
 const LABEL_VOICE_CONFIDENCE = 0.5;
-/**
- * E3 showing one remote person for this long while this share of the lines is the microphone's is stuck: a live
- * indicator lets go while the user talks. Measured: 6.7 and 30 min stuck on 2026-11-03 (62 % and 46 % microphone
- * lines), and at most 5.4 min with 25 % on a meeting where it worked.
- */
-const STUCK_MIN_SEC = 360;
-const STUCK_MIN_LINES = 20;
-const STUCK_MIC_SHARE = 0.35;
-const STUCK_CALL_LINES = 5;
-
 interface Span {
     fromSec: number;
     toSec: number;
@@ -1033,6 +1036,7 @@ interface SwapStretch extends Span {
     otherMedian: number;
     selfLines: number;
     otherLines: number;
+    skipped?: number[];
 }
 
 type SwapWindowState = "normal" | "swapped" | "unclear";
@@ -1153,26 +1157,37 @@ function swappedStretches(lines: LineEvidence[], selfName: string, platformLabel
 }
 
 /** The two items of a swapped stretch: the other label's lines are the user's, the user's label's are the other's. */
-function swapItems(swap: SwapStretch, selfName: string): NewItem[] {
+function swapItems(swap: SwapStretch, selfName: string, lines: LineEvidence[]): NewItem[] {
     const confidence =
         Math.round(Math.min(SWAP_MAX_CONFIDENCE, 0.5 + (swap.otherMedian - swap.selfMedian) / 2) * 100) / 100;
-    const note = `labels swapped from ${formatClock(swap.fromSec)}: the microphone's voice is under "${swap.otherLabel}" and the call's under "${swap.selfLabel}"`;
-    const item = (label: string, speaker: string, channel: "mic" | "system", lines: number): NewItem => ({
+    const inside = lines.filter(
+        (line) =>
+            (line.label === swap.selfLabel || line.label === swap.otherLabel) &&
+            line.startSec >= swap.fromSec &&
+            line.startSec <= swap.toSec
+    );
+    const agrees = (line: LineEvidence) => {
+        const shares = [line.micShare, line.energyMic].filter((share) => share !== undefined);
+        return shares.length > 0 && shares.every((mic) => (line.label === swap.otherLabel ? mic >= 0.75 : mic <= 0.25));
+    };
+    swap.skipped = inside.filter((line) => !agrees(line)).map((line) => line.startSec);
+    return inside.filter(agrees).map((line) => ({
         kind: "speaker-range",
         status: "suggested",
-        label,
-        fromSec: swap.fromSec,
-        toSec: swap.toSec,
-        speaker,
+        label: line.label,
+        fromSec: line.startSec,
+        toSec: line.startSec,
+        speaker: line.label === swap.otherLabel ? selfName : swap.otherLabel,
         confidence,
         rules: [MeetingRule.LabelSwap, MeetingRule.Energy],
-        evidence: { channel, lines, note },
-    });
-
-    return [
-        item(swap.otherLabel, selfName, "mic", swap.otherLines),
-        item(swap.selfLabel, swap.otherLabel, "system", swap.selfLines),
-    ];
+        evidence: {
+            channel: line.label === swap.otherLabel ? "mic" : "system",
+            lines: 1,
+            endSec: line.endSec,
+            swap: { fromSec: swap.fromSec, toSec: swap.toSec, skipped: swap.skipped },
+            note: "label swap agrees with this line's own channel",
+        },
+    }));
 }
 
 interface MicrophoneVoices {
@@ -1230,44 +1245,6 @@ function unusableChannelSpans(
     });
 }
 
-/** The lines whose E3 reading is stuck: one remote person shown through a long stretch with many microphone lines. */
-function stuckIndicator(lines: LineEvidence[], selfName: string): Set<number> {
-    const stuck = new Set<number>();
-    const shownKey = (line: LineEvidence) =>
-        Object.keys(line.speaking)
-            .filter((name) => !sameName(name, selfName))
-            .sort()
-            .join("|");
-    let start = 0;
-
-    while (start < lines.length) {
-        const key = shownKey(lines[start]!);
-        let end = start;
-
-        while (end + 1 < lines.length && shownKey(lines[end + 1]!) === key) {
-            end += 1;
-        }
-
-        const run = lines.slice(start, end + 1);
-        const long = run.length >= STUCK_MIN_LINES && run.at(-1)!.endSec - run[0]!.startSec >= STUCK_MIN_SEC;
-
-        if (key && !key.includes("|") && long) {
-            const mic = run.filter(micSure).length;
-            const call = run.filter(callSure).length;
-
-            if (mic >= STUCK_MIC_SHARE * run.length && call >= STUCK_CALL_LINES) {
-                for (const line of run) {
-                    stuck.add(line.index);
-                }
-            }
-        }
-
-        start = end + 1;
-    }
-
-    return stuck;
-}
-
 /**
  * Who the microphone's labels are where the channels work. `owner`: the label with the most sure microphone lines
  * (the user's voice), and whether it leads clearly enough to stand for the user where the channels fail. `others`:
@@ -1319,8 +1296,50 @@ function localVoiceFinding(options: {
     voices: MicrophoneVoices;
     unusable: boolean;
     found: EvidenceFinding | undefined;
+    platformLabel: boolean;
+    indicatorIgnored: boolean;
+    remoteCandidates: string[];
+    roomPeople: string[];
 }): EvidenceFinding | undefined {
     const { line, selfName, voices, found } = options;
+
+    const room = [selfName, ...options.roomPeople.filter((name) => !sameName(name, selfName))];
+    if (
+        options.platformLabel &&
+        !options.isSelfLabel &&
+        (line.acoustic?.rawMicShare ?? 0) >= 0.35 &&
+        (line.acoustic?.cleanMicShare ?? 1) < 0.65
+    ) {
+        return {
+            candidates: [...new Set([...room, ...options.remoteCandidates])],
+            rules: [MeetingRule.Channel, MeetingRule.LocalVoice],
+            confidence: 0.4,
+            listen: true,
+            echo: true,
+        };
+    }
+    if (room.length > 1 && (line.energyMic ?? line.micShare ?? 0) >= 0.65 && (line.echo ?? 0) < ECHO_SIMILARITY) {
+        return {
+            candidates: room,
+            rules: [MeetingRule.Channel, MeetingRule.LocalVoice],
+            confidence: 0.4,
+            listen: true,
+        };
+    }
+    if (
+        (options.indicatorIgnored ||
+            (line.speakingUnknown &&
+                Object.keys(line.speaking).length === 0 &&
+                options.remoteCandidates.length >= 2)) &&
+        (line.energyMic ?? line.micShare ?? 1) <= 0.35
+    ) {
+        return {
+            candidates: options.remoteCandidates.filter((name) => !sameName(name, selfName)),
+            rules: [MeetingRule.Channel],
+            confidence: 0.4,
+            listen: true,
+        };
+    }
 
     if (options.unusable) {
         return !options.isSelfLabel && voices.ownerLeads && line.label === voices.owner
@@ -1328,13 +1347,25 @@ function localVoiceFinding(options: {
             : undefined;
     }
 
-    if (voices.others.has(line.label) && micSure(line)) {
-        const present = line.present?.filter((name) => !sameName(name, selfName));
+    const mic = line.energyMic ?? line.micShare;
+    if (
+        options.platformLabel &&
+        !options.isSelfLabel &&
+        mic !== undefined &&
+        mic >= 0.65 &&
+        (line.echo ?? 0) < ECHO_SIMILARITY
+    ) {
         return {
-            candidates: shownFirst(
-                present,
-                speakingNames(line).filter((name) => !sameName(name, selfName))
-            ),
+            speaker: selfName,
+            candidates: [selfName],
+            rules: [MeetingRule.Channel, MeetingRule.LocalVoice],
+            confidence: Math.min(0.7, found?.confidence ?? 0.55),
+            listen: true,
+        };
+    }
+    if (voices.others.has(line.label) && micSure(line)) {
+        return {
+            candidates: [selfName],
             rules: [MeetingRule.Channel, MeetingRule.LocalVoice],
             confidence: LOCAL_VOICE_CONFIDENCE,
             listen: true,
@@ -1361,7 +1392,11 @@ function localVoiceFinding(options: {
 /** A line of `label` at `sec` inside a swapped stretch under one of its two labels: R20 already said who it is. */
 function inSwap(swaps: SwapStretch[], label: string, sec: number): boolean {
     return swaps.some(
-        (swap) => (label === swap.selfLabel || label === swap.otherLabel) && sec >= swap.fromSec && sec <= swap.toSec
+        (swap) =>
+            (label === swap.selfLabel || label === swap.otherLabel) &&
+            sec >= swap.fromSec &&
+            sec <= swap.toSec &&
+            !swap.skipped?.includes(sec)
     );
 }
 
@@ -1374,6 +1409,7 @@ function evidenceItems(options: {
     /** The record's items: an agent's speaker ranges over the same lines score their speaker (the polish). */
     items?: readonly MeetingItem[];
     samePerson?: SamePerson;
+    record: MeetingRecord;
 }): { items: NewItem[]; swaps: SwapStretch[] } {
     const selfName = options.evidence.selfName;
 
@@ -1386,9 +1422,10 @@ function evidenceItems(options: {
     const presence = options.presence?.map((stay) => (stay.self ? { ...stay, name: selfName } : stay));
     const measured = lineEvidence(options.meeting.transcript, options.evidence, presence, options.energyMicShare);
     const unusable = unusableChannelSpans(measured, options.energyMicShare, selfName);
-    const stuck = stuckIndicator(measured, selfName);
+    const assessment = assessIndicator({ lines: measured, selfName, roomPeople: options.record.seats?.room });
+    const stuck = assessment.ignored;
     const lines = measured.map((line) => {
-        const shown = stuck.has(line.index) ? { ...line, speaking: {} } : line;
+        const shown = stuck.has(line.index) ? { ...line, speaking: {}, liveName: undefined } : line;
 
         return within(unusable, line.startSec)
             ? {
@@ -1446,7 +1483,16 @@ function evidenceItems(options: {
                 lines: open.shares.length,
                 endSec: open.endSec,
                 ...(open.echoLines > 0 ? { echoLines: open.echoLines } : {}),
-                ...(candidateScores.length > 0 ? { candidateScores } : {}),
+                ...(candidateScores.length > 0
+                    ? {
+                          candidateScores:
+                              open.item.rules.includes(MeetingRule.LocalVoice) && open.item.candidates
+                                  ? candidateScores.filter((score) =>
+                                        open!.item.candidates!.some((name) => sameName(name, score.speaker))
+                                    )
+                                  : candidateScores,
+                      }
+                    : {}),
             };
             items.push(open.item);
             open = undefined;
@@ -1455,11 +1501,25 @@ function evidenceItems(options: {
     const platformLabels = new Set(
         options.meeting.speakers.filter((speaker) => speaker.origin === "platform").map((speaker) => speaker.name)
     );
-    const swaps = swappedStretches(lines, selfName, platformLabels);
+    const swapLines = lines.map((line) =>
+        line.energyMicRaw === undefined ? line : { ...line, energyMic: line.energyMicRaw }
+    );
+    const swaps = swappedStretches(swapLines, selfName, platformLabels);
     const swapped = (line: LineEvidence) => inSwap(swaps, line.label, line.startSec);
 
     for (const swap of swaps) {
-        items.push(...swapItems(swap, selfName));
+        const findings = swapItems(swap, selfName, swapLines);
+        for (const item of findings) {
+            if (item.kind === "speaker-range" && item.speaker === selfName) {
+                const room = microphoneCandidates(options.record, item.fromSec);
+                if (room.length > 1) {
+                    delete item.speaker;
+                    item.candidates = [selfName, ...room.filter((name) => !sameName(name, selfName))];
+                    item.confidence = 0.4;
+                }
+            }
+        }
+        items.push(...findings);
     }
 
     const voices = microphoneVoices(
@@ -1510,6 +1570,15 @@ function evidenceItems(options: {
         const isSelfLabel = sameName(label, selfName);
 
         for (const line of labelLines) {
+            const skippedSwap = swaps.some(
+                (swap) =>
+                    (line.label === swap.selfLabel || line.label === swap.otherLabel) &&
+                    swap.skipped?.includes(line.startSec)
+            );
+            if (skippedSwap) {
+                close();
+                continue;
+            }
             // R20 already said who the line is.
             if (swapped(line)) {
                 close();
@@ -1529,6 +1598,19 @@ function evidenceItems(options: {
                 selfName,
                 isSelfLabel,
                 voices,
+                platformLabel: platformLabels.has(label),
+                roomPeople: microphoneCandidates(options.record, line.startSec),
+                indicatorIgnored: stuck.has(line.index),
+                remoteCandidates: (
+                    line.present ??
+                    assessment.candidates
+                        .filter((person) => person.fromSec <= line.startSec)
+                        .map((person) => person.name)
+                ).filter(
+                    (name) =>
+                        !sameName(name, selfName) &&
+                        !options.record.seats?.room.some((person) => sameName(name, person))
+                ),
                 unusable: within(unusable, line.startSec),
                 found,
             });
@@ -1571,6 +1653,7 @@ function evidenceItems(options: {
                     rules: finding.rules,
                     evidence: {
                         channel: finding.speaker === selfName ? "mic" : "system",
+                        ...(stuck.has(line.index) ? { indicatorIgnored: assessment.reasons.get(line.index) } : {}),
                         ...(finding.listen
                             ? { listen: true, note: "both channels in these lines: confirm by listening" }
                             : {}),
@@ -1680,6 +1763,60 @@ export function suggestItems(options: {
     const meeting = unlabeled.meeting;
     const found: NewItem[] = [];
 
+    const selfNameForDeparture = record.participants.find((person) => person.self)?.name ?? options.evidence?.selfName;
+    const departureLines = options.evidence
+        ? lineEvidence(meeting.transcript, options.evidence, options.presence, options.energyMicShare)
+        : [];
+    const departureHints = speakerStats(meeting.transcript, {
+        participants: meeting.speakers,
+        presence: options.presence,
+    }).hints;
+    const departures = selfNameForDeparture
+        ? identifiedDepartures({
+              hints: departureHints,
+              lines: departureLines,
+              selfName: selfNameForDeparture,
+              presence: options.presence,
+              ignoredIndicator: assessIndicator({
+                  lines: departureLines,
+                  selfName: selfNameForDeparture,
+                  roomPeople: record.seats?.room,
+              }).ignored,
+          })
+        : [];
+    if (options.rules.includes("speakers") || options.rules.includes("evidence")) {
+        for (const departure of departures) {
+            const line = departureLines.find((line) => line.startSec === departure.atSec);
+            if (line) {
+                found.push({
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label: line.label,
+                    fromSec: line.startSec,
+                    toSec: line.startSec,
+                    speaker: departure.name,
+                    confidence: 0.75,
+                    rules: [MeetingRule.LeavePhrase],
+                    evidence: {
+                        departure,
+                        reason: `${departure.name} says goodbye here; identity from ${departure.reason}`,
+                    },
+                });
+            }
+        }
+    }
+    if (options.presence && departures.length > 0) {
+        options = {
+            ...options,
+            presence: options.presence.map((stay) => {
+                const departure = departures.find(
+                    (event) =>
+                        sameName(event.name, stay.name) && event.atSec >= stay.fromSec && event.atSec < stay.toSec
+                );
+                return departure ? { ...stay, toSec: departure.atSec } : stay;
+            }),
+        };
+    }
     if (options.rules.includes("speakers")) {
         const stats = speakerStats(meeting.transcript, {
             participants: meeting.speakers,
@@ -1687,10 +1824,19 @@ export function suggestItems(options: {
         });
         const lastSecOf = new Map(stats.speakers.map((stat) => [stat.label, stat.lastSec ?? 0]));
         const selfName = record.participants.find((person) => person.self)?.name;
+        const safeHints = stats.hints.flatMap((hint): SpeakerHint[] => {
+            if (hint.kind !== "leave-then-continues") {
+                return [hint];
+            }
+            const leaves = hint.leaves.filter((leave) =>
+                departures.some((departure) => departure.atSec === leave.atSec && departure.label === hint.label)
+            );
+            return leaves.length > 0 ? [{ ...hint, leaves }] : [];
+        });
         const selfAttendee = options.presence?.find((stay) => stay.self)?.name;
         found.push(
             ...speakerItems({
-                hints: stats.hints,
+                hints: safeHints,
                 selfName,
                 selfAttendee,
                 lastSecOf,
@@ -1708,6 +1854,7 @@ export function suggestItems(options: {
             presence: options.presence,
             energyMicShare: options.energyMicShare,
             items: record.items,
+            record,
             samePerson: options.samePerson,
         });
         const arrivals = arrivalItems({
@@ -1757,6 +1904,12 @@ export function suggestItems(options: {
         listenBelow: options.listenBelow ?? DEFAULT_LISTEN_BELOW,
         presence: options.presence,
         transcript: options.meeting.transcript,
+        candidates: [
+            ...record.participants.map((person) => person.name),
+            ...(record.seats?.room ?? []),
+            ...(record.seats?.remote.map((seat) => seat.name) ?? []),
+            ...(options.evidence?.speaking.flatMap((reading) => reading.speaking) ?? []),
+        ],
         points: options.points ?? [],
     };
     const askedItems = new Set(record.items.flatMap((item) => (item.kind === "question" ? item.decides : [])));

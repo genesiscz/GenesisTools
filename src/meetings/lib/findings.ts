@@ -48,6 +48,8 @@ export const findingSchema = z.discriminatedUnion("kind", [
         at: clock,
         line,
         heard: text,
+        heardStem: text.optional(),
+        proposedStem: text.optional(),
         proposed: text.optional(),
         /** `line`: `proposed` fixes only the line at `at`. The default fixes the words wherever they are heard. */
         scope: z.enum(["everywhere", "line"]).optional(),
@@ -217,6 +219,8 @@ function kindFields(finding: Finding, idOfRef: Map<string, string>): Record<stri
             kind: finding.kind,
             atSec: finding.at,
             heard: finding.heard,
+            ...(finding.heardStem ? { heardStem: finding.heardStem } : {}),
+            ...(finding.proposedStem ? { proposedStem: finding.proposedStem, proposed: finding.proposedStem } : {}),
             ...(finding.proposed ? { proposed: finding.proposed } : {}),
             ...(finding.scope === "line" ? { scope: finding.scope } : {}),
             ...(finding.meaning ? { meaning: finding.meaning } : {}),

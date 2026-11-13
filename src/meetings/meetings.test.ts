@@ -196,7 +196,7 @@ describe("suggestItems", () => {
         expect(suggestItems(options)).toEqual([]);
     });
 
-    test("a goodbye another label answered becomes a range, a cut word becomes a join, each with its rules", () => {
+    test("a goodbye without independent identity closes no label, while a cut word still becomes a join", () => {
         const items = suggestItems({
             record,
             meeting,
@@ -206,15 +206,7 @@ describe("suggestItems", () => {
             now: "2026-11-02T15:00:00.000Z",
         });
 
-        expect(items).toContainEqual(
-            expect.objectContaining({
-                kind: "speaker-range",
-                label: "Carol Example",
-                fromSec: 80,
-                rules: ["R1", "R5", "R13"],
-                status: "suggested",
-            })
-        );
+        expect(items.filter((item) => item.kind === "speaker-range" && item.rules.includes("R1"))).toEqual([]);
         expect(items).toContainEqual(
             expect.objectContaining({ kind: "join", atSec: 123.2, joined: "dotáhnu", speaker: "Alice Example" })
         );
@@ -2052,8 +2044,8 @@ describe("questions (R2.3)", () => {
             []
         );
         expect(picked.map((item) => item.decides)).toEqual([["i1"], ["i2"], ["i4"], ["i3"]]);
-        expect(picked[0]).toMatchObject({ priority: 4.8, toSec: 110 });
-        expect(picked[1]).toMatchObject({ priority: 2 });
+        expect(picked[0]).toMatchObject({ priority: 1, toSec: 110 });
+        expect(picked[1]).toMatchObject({ priority: 1 });
         const same = question("i5", 100, ["Bob Example", "Carol Example"], 0.4);
         const passage = { fromSec: 100, toSec: 110 };
         expect(
@@ -2589,7 +2581,7 @@ describe("goodbyes that were only an intention", () => {
         expect(items.filter((item) => item.kind === "speaker-range" && item.label === "Carol Example")).toEqual([]);
     });
 
-    test("an unanswered goodbye is kept as an intention, never as a question", () => {
+    test("an unanswered goodbye with no identity evidence closes no person and asks no question", () => {
         const items = suggestItems({
             ...base,
             meeting: {
@@ -2606,7 +2598,7 @@ describe("goodbyes that were only an intention", () => {
             },
         });
         const range = items.find((item) => item.kind === "speaker-range" && item.label === "Carol Example");
-        expect(range?.evidence).toMatchObject({ intention: true });
+        expect(range).toBeUndefined();
         expect(items.some((item) => item.kind === "question")).toBe(false);
     });
 });

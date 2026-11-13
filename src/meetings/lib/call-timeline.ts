@@ -28,7 +28,8 @@ export class CallTimeline {
     private constructor(
         private readonly record: MeetingRecord,
         readonly clock: TranscriptClock,
-        private readonly end: string | undefined
+        private readonly end: string | undefined,
+        private readonly sourceTitle?: string
     ) {}
 
     /** The clock without asking the source: what the recorder stored from it, else the record's own start. */
@@ -58,7 +59,8 @@ export class CallTimeline {
         return new CallTimeline(
             record,
             { startedAt, from: "source", source: linked.source.id },
-            meeting?.end ?? record.end
+            meeting?.end ?? record.end,
+            meeting?.title
         );
     }
 
@@ -107,7 +109,7 @@ export class CallTimeline {
     /** The call a platform looks up: its title (some find the call by it) and its start on this clock. */
     target(): AttendanceTarget {
         return {
-            title: this.record.calendar?.title ?? this.record.title,
+            title: this.record.calendar?.title ?? this.sourceTitle ?? this.record.title,
             start: this.clock.startedAt,
             ...(this.end ? { end: this.end } : {}),
         };

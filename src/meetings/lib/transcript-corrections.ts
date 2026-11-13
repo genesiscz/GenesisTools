@@ -218,6 +218,8 @@ export function correctionsOf(
                       {
                           heard: item.heard,
                           replacement: item.proposed,
+                          heardStem: item.heardStem,
+                          proposedStem: item.proposedStem,
                           item: item.id,
                           ...(item.reach?.lines
                               ? { lines: item.reach.lines }
