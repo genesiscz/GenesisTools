@@ -2,7 +2,7 @@ import type { RunLoginOptions, RunLoginResult } from "@app/ai/lib/accounts/run-l
 import { runLogin } from "@app/ai/lib/accounts/run-login";
 import { loadAskConfig, saveAskConfig } from "@ask/config";
 import { modelSelector } from "@ask/providers/ModelSelector";
-import { providerManager } from "@ask/providers/ProviderManager";
+import { askChatDefault, chatModelRefWithoutModel, providerManager } from "@ask/providers/ProviderManager";
 import type { AskConfig } from "@ask/types/config";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { applyLoginOutcome, patchAccount, removeAccount } from "@genesiscz/utils/ai/config/account-ops";
@@ -822,9 +822,9 @@ function formatProvider(provider: string): string {
 // ── AI config access ──
 
 /**
- * ask's chat defaults from the v4 store: provider and model of `defaults.app.ask.chat`, plus the
- * generation knobs. A chat model that is an account ref names an account, not a model, so it is
- * not shown as one.
+ * ask's chat defaults from the v4 store, as ask itself reads them (`askChatDefault`): an
+ * `@account/<id>:<model>` ref shows the account's provider and the model after the colon, an
+ * `@account/<id>` ref shows no model. Plus the generation knobs.
  */
 function askAppDefaults(
     store: AiConfigStore
@@ -834,10 +834,10 @@ function askAppDefaults(
         return undefined;
     }
 
-    const model = ask.chat?.model;
+    const chat = askChatDefault(store);
     return {
-        provider: ask.chat?.provider,
-        model: model && !model.startsWith("@account/") ? model : undefined,
+        provider: chat.provider,
+        model: chat.model,
         temperature: ask.temperature,
         maxTokens: ask.maxTokens,
     };
@@ -845,8 +845,8 @@ function askAppDefaults(
 
 /**
  * Set or clear ask's default chat provider and model. A key given as `undefined` is cleared, an
- * omitted key keeps its value. Clearing the model keeps an account ref, which this wizard never
- * showed as a model.
+ * omitted key keeps its value. Clearing the model keeps the account of an account ref
+ * (`chatModelRefWithoutModel`), so ask still bills it.
  */
 async function setAskChatDefaults(store: AiConfigStore, patch: { provider?: string; model?: string }): Promise<void> {
     await store.mutate((config) => {
@@ -862,9 +862,10 @@ async function setAskChatDefaults(store: AiConfigStore, patch: { provider?: stri
         }
 
         if ("model" in patch) {
-            if (patch.model) {
-                chat.model = patch.model;
-            } else if (!chat.model?.startsWith("@account/")) {
+            const kept = patch.model || chatModelRefWithoutModel(chat.model, config);
+            if (kept) {
+                chat.model = kept;
+            } else {
                 delete chat.model;
             }
         }

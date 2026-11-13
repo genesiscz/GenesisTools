@@ -2,8 +2,8 @@ import { askUI } from "@ask/output/AskUILogger";
 import type { DetectedProvider, ModelInfo, ProviderConfig } from "@ask/types";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { ephemeralEnvAccounts } from "@genesiscz/utils/ai/config/migrations/2026-08-seedEnvAccounts";
-import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import { parseModelRef } from "@genesiscz/utils/ai/core/model-ref";
+import type { AccountEntry, AiConfigData } from "@genesiscz/utils/ai/config/schema";
+import { formatModelRef, parseModelRef } from "@genesiscz/utils/ai/core/model-ref";
 import { describeCredential } from "@genesiscz/utils/ai/providers/credentials";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
@@ -90,6 +90,26 @@ export function askChatDefault(store: AiConfigStore): AskChatDefault {
         accountId: account.id,
         ...(parsed.modelId ? { model: parsed.modelId } : {}),
     };
+}
+
+/**
+ * What is left of ask's chat model ref when its model is cleared: an `@account/<id>[:<model>]` ref keeps the account,
+ * so ask still bills it, and drops the model after the colon. Any other ref, or one that does not parse, is cleared.
+ */
+export function chatModelRefWithoutModel(ref: string | undefined, config: AiConfigData): string | undefined {
+    if (!ref) {
+        return undefined;
+    }
+
+    try {
+        const parsed = parseModelRef(ref, config);
+        return parsed.kind === "account" && parsed.accountId
+            ? formatModelRef({ kind: "account", accountId: parsed.accountId })
+            : undefined;
+    } catch (error) {
+        logger.debug({ error, model: ref }, "the cleared ask chat model is not a model ref; it is dropped");
+        return undefined;
+    }
 }
 
 /** Priority from the compat table, so the familiar openai → groq → … order survives. */

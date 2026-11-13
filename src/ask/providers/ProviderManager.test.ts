@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { askChatDefault, ProviderManager } from "@ask/providers/ProviderManager";
+import { askChatDefault, chatModelRefWithoutModel, ProviderManager } from "@ask/providers/ProviderManager";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
@@ -199,6 +199,17 @@ describe("ask's @account/ chat default", () => {
 
         writeAskDefault("xai/grok-4-fast");
         expect(askChatDefault(await AiConfigStore.load())).toEqual({ model: "xai/grok-4-fast" });
+    });
+
+    test("clearing the model keeps the account of an account ref and drops any other ref", async () => {
+        writeAskDefault("@account/acc_side:opus");
+        const config = (await AiConfigStore.load()).data();
+
+        expect(chatModelRefWithoutModel("@account/acc_side:opus", config)).toBe("@account/acc_side");
+        expect(chatModelRefWithoutModel("@account/acc_side", config)).toBe("@account/acc_side");
+        expect(chatModelRefWithoutModel("xai/grok-4-fast", config)).toBeUndefined();
+        expect(chatModelRefWithoutModel("@nowhere/x", config)).toBeUndefined();
+        expect(chatModelRefWithoutModel(undefined, config)).toBeUndefined();
     });
 
     test("the preferred account bills the provider instead of the global chat account", async () => {
