@@ -72,13 +72,14 @@ export function planByChannel(options: {
         remote: input.remote ?? options.seats?.remote ?? [],
     });
     const result: ByChannelPlan = { ranges: [], roomOnly: [], mixed: [], unresolved: [], questions: [] };
-    let open: { kind: "remote" | "room"; run: ChannelRun; confidence: number } | undefined;
+    // `run.to` is the last line's start, as a range endpoint; `endSec` is where that line ends, for the duration check.
+    let open: { kind: "remote" | "room"; run: ChannelRun; confidence: number; endSec: number } | undefined;
     const flush = () => {
         if (!open) {
             return;
         }
 
-        const { run, kind, confidence } = open;
+        const { run, kind, confidence, endSec } = open;
         const speaker = run.candidates.length === 1 ? run.candidates[0] : undefined;
 
         if (speaker) {
@@ -95,7 +96,7 @@ export function planByChannel(options: {
             if (
                 input.askRoom &&
                 run.candidates.length > 1 &&
-                run.to - run.from >= input.askRoom.minSec &&
+                endSec - run.from >= input.askRoom.minSec &&
                 result.questions.length < input.askRoom.max
             ) {
                 result.questions.push({
@@ -159,8 +160,10 @@ export function planByChannel(options: {
             kind,
             confidence,
             run: { from: line.fromSec, to: line.fromSec, label: input.label, lines: [], micShares: [], candidates },
+            endSec: line.fromSec,
         };
         open.run.to = line.fromSec;
+        open.endSec = Math.max(open.endSec, line.toSec ?? line.fromSec);
         open.run.lines.push(line.index);
         open.run.micShares.push(share);
     }
