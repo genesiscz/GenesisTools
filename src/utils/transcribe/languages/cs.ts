@@ -80,6 +80,7 @@ function writtenForms(word: string): string[] {
     for (const [ending, written] of SPOKEN_ENDINGS) {
         if (ending.test(lower)) {
             for (const form of written) {
+                forms.add(word.slice(0, lower.search(ending)) + form);
                 forms.add(lower.replace(ending, form));
             }
         }
@@ -130,7 +131,9 @@ const LOAN_ENDINGS = [
     "nutá",
     "nuté",
     "kového",
+    "kovému",
     "kových",
+    "kovými",
     "kovým",
     "kovou",
     "ková",
