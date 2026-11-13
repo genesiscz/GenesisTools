@@ -61,7 +61,8 @@ struct TranscriptBlocksPane: View {
     @State private var timingTo = ""
     @State private var timingModel = "onnx-community/whisper-large-v3-turbo_timestamped"
     @State private var timingLanguage = "cs"
-    @AppStorage("meetings.transcript.applyAbove") private var applyAbove = 70
+    /// The one transcript threshold (the Transcript tab picks the service's preview by it too).
+    @AppStorage(MeetingsPreferences.Transcript.applyAbove.key) private var applyAbove = MeetingsPreferences.Transcript.applyAbove.defaultValue
     @State private var probing = false
 
     private var filteredEntries: [TranscriptLine] {
