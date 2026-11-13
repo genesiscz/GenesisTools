@@ -363,6 +363,13 @@ describe("Fetcher transports", () => {
                     return new Response("small page");
                 }
 
+                if (path === "/redirect") {
+                    return new Response(new Uint8Array(4096).fill(99), {
+                        status: 302,
+                        headers: { location: "/small", "content-length": "4096" },
+                    });
+                }
+
                 // No length up front: only the streamed count can stop it.
                 return new Response(
                     new ReadableStream({
@@ -390,5 +397,7 @@ describe("Fetcher transports", () => {
         await expect(send("/stream")).rejects.toBeInstanceOf(FetchTooLargeError);
         expect(sentChunks).toBeLessThan(256);
         expect((await send("/small")).body).toBe("small page");
+        // A redirect larger than the limit is followed, not refused: its body is discarded before it is read.
+        expect(await send("/redirect")).toMatchObject({ status: 302, body: "" });
     });
 });

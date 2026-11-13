@@ -58,6 +58,9 @@ const PLAIN_HEADERS = {
     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 };
 
+/** The redirect statuses the fetcher follows. A transport discards such an answer's body instead of buffering it. */
+export const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
+
 /** Bun's fetch: fast, no extra process, and refused by Cloudflare Bot Management (403 challenge). */
 class PlainTransport implements HttpTransport {
     readonly name = "plain" as const;
@@ -73,6 +76,13 @@ class PlainTransport implements HttpTransport {
         response.headers.forEach((value, name) => {
             headers[name.toLowerCase()] = value;
         });
+
+        if (REDIRECT_STATUSES.has(response.status) && headers.location) {
+            // The fetcher follows the Location; the redirect's own body is never read, so its size and a slow stream of
+            // it cost nothing, and the byte limit applies to the page that is finally returned.
+            await response.body?.cancel();
+            return { status: response.status, headers, body: "" };
+        }
 
         return {
             status: response.status,
