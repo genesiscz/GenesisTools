@@ -287,6 +287,19 @@ final class MeetingsTimelineTests: XCTestCase {
             .contextView(contextSec: 60, durationSec: 100), 40...100, "near the end it stays inside the meeting")
     }
 
+    /// A Moment still being cut keeps the last span only when that span is of the same meeting.
+    func testTheHeldSpanBelongsToItsMeeting() {
+        let span = ZoomSpan(startSec: 2, endSec: 8, fromSec: 4, toSec: 6, spotSec: 5, label: "x")
+        let held = TimelineDock.HeldSpan(meeting: "a", span: span)
+        let sameMeeting = MomentLayer(meeting: "a", target: .item("i2"), source: .row, kind: .moment, label: "i2")
+        let otherMeeting = MomentLayer(meeting: "b", target: .item("i2"), source: .row, kind: .moment, label: "i2")
+        let whole = MomentLayer(meeting: "a", target: .time(0), source: .row, kind: .file, label: "a")
+        XCTAssertEqual(TimelineDock.heldSpan(held, for: sameMeeting), span)
+        XCTAssertNil(TimelineDock.heldSpan(held, for: otherMeeting), "meeting b drew meeting a's clip bounds and asked point")
+        XCTAssertNil(TimelineDock.heldSpan(held, for: whole), "the whole meeting has no span")
+        XCTAssertNil(TimelineDock.heldSpan(nil, for: sameMeeting))
+    }
+
 
 
     /// G-CARD-1: the card opens after the hover delay, stays while the pointer travels into it, closes 300 ms after
