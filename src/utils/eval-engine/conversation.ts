@@ -429,7 +429,7 @@ export async function runConversation<TResolved, TSignals, THandle>(
         } else if (!(error instanceof StopConversation)) {
             const systemError = asSystemError(error);
             if (!conversationOutcome(verdicts, false)) {
-                await closeQuietly(connection, handle, "discarded", deps.signal);
+                await closeQuietly({ connection, handle, outcome: "discarded", signal: deps.signal });
                 throw systemError;
             }
             brokenBy = systemError;
@@ -439,7 +439,7 @@ export async function runConversation<TResolved, TSignals, THandle>(
     const fold = conversationOutcome([...verdicts, ...final], completed);
     // A stop without a proven failure cannot happen: every stop follows a gating failure.
     const outcome = fold ?? { outcome: "inconclusive", safetyMiss: false, safetyUnverified: false };
-    const closeError = await closeQuietly(connection, handle, outcome.outcome, deps.signal);
+    const closeError = await closeQuietly({ connection, handle, outcome: outcome.outcome, signal: deps.signal });
     return {
         schema: "eval-conversation/1",
         run: deps.runId,
@@ -465,12 +465,17 @@ export async function runConversation<TResolved, TSignals, THandle>(
     };
 }
 
-async function closeQuietly<THandle>(
-    connection: { close(handle: THandle, outcome: CloseOutcome): Promise<void> },
-    handle: THandle,
-    outcome: CloseOutcome,
-    signal: AbortSignal
-): Promise<string | null> {
+async function closeQuietly<THandle>({
+    connection,
+    handle,
+    outcome,
+    signal,
+}: {
+    connection: { close(handle: THandle, outcome: CloseOutcome): Promise<void> };
+    handle: THandle;
+    outcome: CloseOutcome;
+    signal: AbortSignal;
+}): Promise<string | null> {
     try {
         await new Promise<void>((resolve, reject) => {
             const finish = (error?: unknown) => {

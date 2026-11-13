@@ -93,7 +93,7 @@ export function createLimiter(options: {
             if (wait > 0) {
                 if (!s.waking) {
                     s.waking = true;
-                    void waitOnEvalClock(options.clock, wait, options.signal).then(() => {
+                    void waitOnEvalClock({ clock: options.clock, ms: wait, signal: options.signal }).then(() => {
                         s.waking = false;
                         pump(key);
                     });
@@ -168,7 +168,15 @@ export function createLimiter(options: {
     };
 }
 
-async function waitOnEvalClock(clock: Clock, ms: number, signal?: AbortSignal): Promise<void> {
+async function waitOnEvalClock({
+    clock,
+    ms,
+    signal,
+}: {
+    clock: Clock;
+    ms: number;
+    signal?: AbortSignal;
+}): Promise<void> {
     if (signal?.aborted) {
         return;
     }
@@ -397,11 +405,11 @@ export async function runPlan<TResolved, TSignals, THandle>(
 
                         open.release();
                         held = false;
-                        await waitOnEvalClock(
-                            options.clock,
-                            error.detail.retryAfterMs ?? Math.min(MaxPauseMs, 1000 * 2 ** (attempt - 1)),
-                            signal
-                        );
+                        await waitOnEvalClock({
+                            clock: options.clock,
+                            ms: error.detail.retryAfterMs ?? Math.min(MaxPauseMs, 1000 * 2 ** (attempt - 1)),
+                            signal,
+                        });
                         if (signal.aborted || !(await open.acquire(signal))) {
                             stopped = { reason: "aborted" };
                             return;
