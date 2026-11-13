@@ -879,8 +879,22 @@ export function registerItemCommands(program: Command): void {
         .option("--kind <kind>", "suggested item kind")
         .option("--where <comparison>", "confidence<0.6 or priority>=1")
         .option("--json", "print decision JSON")
-        .action((ref: string, ids: string[], opts: { kind?: RejectFilter["kind"]; where?: string; json?: boolean }) =>
-            decide("rejected", ref, ids, opts)
+        .action(
+            (
+                ref: string,
+                ids: string[],
+                opts: { kind?: RejectFilter["kind"]; where?: string; json?: boolean },
+                command: Command
+            ) => {
+                // The parent `items` has `--kind` and `--json` of its own, and Commander gives a shared flag to the
+                // parent: read them from there when this command did not get them.
+                const shared = command.parent?.opts<{ kind?: RejectFilter["kind"]; json?: boolean }>() ?? {};
+                return decide("rejected", ref, ids, {
+                    ...opts,
+                    kind: opts.kind ?? shared.kind,
+                    json: opts.json ?? shared.json,
+                });
+            }
         );
     itemsCommand
         .command("by-channel")
