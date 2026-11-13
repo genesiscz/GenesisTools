@@ -21,6 +21,8 @@ interface DecisionCardProps {
     decision: WaitingDecisionDto;
     /** Hands the session card this card's flush (save the note, wait for a stage), so Send runs it first. */
     registerFlush: (number: number, flush: (() => Promise<void>) | null) => void;
+    /** Tells the session card whether this card holds a typed note not staged yet, so Send can send it as it is. */
+    reportNote: (number: number, typed: boolean) => void;
     /**
      * True while the session's Send flushes and sends. The answer is taken from the card at that point, so the card
      * takes no pick and no note edit until the send settles: a later edit would show an answer the Mac never got.
@@ -34,7 +36,7 @@ interface DecisionCardProps {
  * message, as the notch widget does. The stage carries the revision shown, so a decision the agent re-posted refuses
  * the stale pick with the Mac's words.
  */
-export function DecisionCard({ session, decision, registerFlush, frozen }: DecisionCardProps) {
+export function DecisionCard({ session, decision, registerFlush, reportNote, frozen }: DecisionCardProps) {
     const c = useThemeColors();
     const stage = useStagePick();
     // Kept by the screen, not the card: the list unmounts a card scrolled far away, and the note must survive that.
@@ -98,6 +100,13 @@ export function DecisionCard({ session, decision, registerFlush, frozen }: Decis
         registerFlush(decision.number, () => flushRef.current());
         return () => registerFlush(decision.number, null);
     }, [decision.number, registerFlush]);
+
+    const typed = noteIsDirty(noteState) && noteState.note.trim() !== "";
+
+    useEffect(() => {
+        reportNote(decision.number, typed);
+        return () => reportNote(decision.number, false);
+    }, [decision.number, typed, reportNote]);
 
     return (
         <View testID={testId} className="gap-2 rounded-lg border border-dd-border p-3">

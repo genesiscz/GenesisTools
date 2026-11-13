@@ -122,6 +122,27 @@ it("freezes every decision from the Send tap until the send settles, and sends t
     expect(card.getByTestId(`${four}-note`).props.editable).toBe(true);
 });
 
+it("offers Send for a note typed with no pick staged, and stages the note before it sends", async () => {
+    const { card } = await mount(parserSession());
+    const four = "answer-queue-decision-s-parser-4";
+    const send = "answer-queue-session-s-parser-send";
+
+    expect(card.queryByTestId(send)).toBeNull();
+    await fireEvent.changeText(card.getByTestId(`${four}-note`), "keep it for a week");
+    expect(card.getByTestId(send).props.accessibilityLabel).toBe("Send 1 staged pick");
+
+    await fireEvent.press(card.getByTestId(send));
+    await settle();
+    expect(calls.map((call) => call.input.text ?? call.path)).toEqual([
+        "keep it for a week",
+        "/api/qa/decisions/send-drafts",
+    ]);
+
+    // A note cleared back to nothing has nothing to send.
+    await fireEvent.changeText(card.getByTestId(`${four}-note`), "");
+    expect(card.queryByTestId(send)).toBeNull();
+});
+
 it("freezes a form's choices and text while its answer is on the way", async () => {
     const session = parserSession();
     const { card } = await mount(session);

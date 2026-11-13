@@ -208,9 +208,17 @@ export function decisionsOf(session: WaitingSessionDto): WaitingDecisionDto[] {
     return session.items.filter((item): item is WaitingDecisionDto => item.kind === "decision");
 }
 
-/** The decisions of a session with a staged pick or note: what one send delivers as one message. */
-export function stagedOf(session: WaitingSessionDto): WaitingDecisionDto[] {
-    return decisionsOf(session).filter((item) => Boolean(item.draftOption) || Boolean(item.draft?.trim()));
+/**
+ * The decisions of a session one send delivers as one message: a staged pick or note, or a note typed on the phone and
+ * not staged yet (`typedNotes`, by number), which Send stages first. A note-only answer can be sent while it is typed.
+ */
+export function stagedOf(
+    session: WaitingSessionDto,
+    typedNotes: ReadonlySet<number> = new Set()
+): WaitingDecisionDto[] {
+    return decisionsOf(session).filter(
+        (item) => Boolean(item.draftOption) || Boolean(item.draft?.trim()) || typedNotes.has(item.number)
+    );
 }
 
 /**
