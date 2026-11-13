@@ -1,11 +1,18 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { spawnGit } from "./versions";
 
 interface PatchComparison {
-    oldPatch: string;
+    /** null: the old range does not change the file, only the restacked range does. */
+    oldPatch: string | null;
+    /** null: the restacked range does not change the file. */
     newPatch: string | null;
     equalsReference: boolean;
+    /** The new base already holds the old patch: the patch applies in reverse to the new base's copy of the file. */
+    absorbed: boolean;
 }
 
 interface Branch {
@@ -16,14 +23,20 @@ interface Branch {
     newBase: string;
 }
 
-export function classifyPatch({ oldPatch, newPatch, equalsReference }: PatchComparison): string {
-    if (newPatch === null) {
-        return "DROPPED";
-    }
+/** The verdicts that fail the run. A verdict with its evidence (ABSORBED, "(equals reference)") passes. */
+export const FAILING_VERDICTS = new Set(["DROPPED", "ADDED", "CHANGED"]);
+
+export function classifyPatch({ oldPatch, newPatch, equalsReference, absorbed }: PatchComparison): string {
     if (oldPatch === newPatch) {
         return "OK";
     }
-    return equalsReference ? "CHANGED (equals reference)" : "CHANGED";
+
+    if (newPatch === null && absorbed) {
+        return "ABSORBED";
+    }
+
+    const verdict = newPatch === null ? "DROPPED" : oldPatch === null ? "ADDED" : "CHANGED";
+    return equalsReference ? `${verdict} (equals reference)` : verdict;
 }
 
 function parseBranches(args: string[]): { branches: Branch[]; reference?: string; json: boolean } {
@@ -122,8 +135,8 @@ function run(args: string[]): number {
         }
         return result.stdout;
     };
-    const patch = (base: string, head: string, file: string): string | null => {
-        const diff = git([
+    const diff = (base: string, head: string, file: string) =>
+        git([
             "--literal-pathspecs",
             "diff",
             "--no-ext-diff",
@@ -135,15 +148,33 @@ function run(args: string[]): number {
             "--",
             file,
         ]);
-        if (!diff.length) {
+    const patchId = (patch: Uint8Array, file: string): string | null => {
+        if (!patch.length) {
             return null;
         }
         // --stable strips every space, so `"a b"` and `"ab"` hash alike; --verbatim keeps them and still ignores line numbers.
-        const id = git(["patch-id", "--verbatim"], diff).toString().trim().split(/\s+/)[0];
+        const id = git(["patch-id", "--verbatim"], patch).toString().trim().split(/\s+/)[0];
         if (!id) {
             throw new Error(`cannot calculate patch id for ${file}`);
         }
         return id;
+    };
+    // A scratch index holds the new base, so the reverse check reads no checkout and touches none.
+    const absorbed = (base: string, patch: Uint8Array): boolean => {
+        const dir = mkdtempSync(join(tmpdir(), "restack-verify-"));
+        const scratch = { ...env.getProcessEnv(), GIT_INDEX_FILE: join(dir, "index") };
+        try {
+            const read = spawnGit(["read-tree", base], { env: scratch });
+            if (read.exitCode !== 0) {
+                throw new Error(`git read-tree: ${read.stderr.toString().trim()}`);
+            }
+
+            return (
+                spawnGit(["apply", "--cached", "--check", "--reverse"], { env: scratch, stdin: patch }).exitCode === 0
+            );
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     };
     const blob = (ref: string, file: string): string | null => {
         const result = spawnGit(["rev-parse", "--verify", `${ref}:${file}`]);
@@ -159,29 +190,29 @@ function run(args: string[]): number {
         ]) {
             git(["rev-parse", "--verify", `${ref}^{commit}`]);
         }
-        const files = git([
-            "diff",
-            "--no-ext-diff",
-            "--no-renames",
-            "--name-only",
-            "-z",
-            branch.oldBase,
-            branch.oldHead,
-            "--",
-        ])
-            .toString()
-            .split("\0")
-            .filter(Boolean);
+        const changed = (base: string, head: string) =>
+            git(["diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", base, head, "--"])
+                .toString()
+                .split("\0")
+                .filter(Boolean);
+        // A resolution can also change a file the old branch never touched: those come from the restacked range only.
+        const files = [
+            ...new Set([...changed(branch.oldBase, branch.oldHead), ...changed(branch.newBase, branch.newHead)]),
+        ];
         const rows = files.map((file) => {
-            const oldPatch = patch(branch.oldBase, branch.oldHead, file);
-            if (!oldPatch) {
-                throw new Error(`missing old patch for ${file}`);
-            }
-            const newPatch = patch(branch.newBase, branch.newHead, file);
+            const oldDiff = diff(branch.oldBase, branch.oldHead, file);
+            const oldPatch = patchId(oldDiff, file);
+            const newPatch = patchId(diff(branch.newBase, branch.newHead, file), file);
             const equalsReference = reference ? blob(branch.newHead, file) === blob(reference, file) : false;
+            const lost = oldPatch !== null && newPatch === null;
             return {
                 file,
-                verdict: classifyPatch({ oldPatch, newPatch, equalsReference }),
+                verdict: classifyPatch({
+                    oldPatch,
+                    newPatch,
+                    equalsReference,
+                    absorbed: lost && absorbed(branch.newBase, oldDiff),
+                }),
                 oldPatch,
                 newPatch,
                 equalsReference,
@@ -203,9 +234,7 @@ function run(args: string[]): number {
             }
         }
     }
-    return results.some((branch) => branch.rows.some((row) => row.verdict === "DROPPED" || row.verdict === "CHANGED"))
-        ? 1
-        : 0;
+    return results.some((branch) => branch.rows.some((row) => FAILING_VERDICTS.has(row.verdict))) ? 1 : 0;
 }
 
 if (import.meta.main) {

@@ -111,62 +111,68 @@ describe("safe restack helpers", () => {
     });
 
     test("classifies per-file patches", () => {
-        expect(classifyPatch({ oldPatch: "a", newPatch: "a", equalsReference: false })).toBe("OK");
-        expect(classifyPatch({ oldPatch: "a", newPatch: null, equalsReference: true })).toBe("DROPPED");
-        expect(classifyPatch({ oldPatch: "a", newPatch: "b", equalsReference: true })).toBe(
+        const kept = { equalsReference: false, absorbed: false };
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: "a" })).toBe("OK");
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: null })).toBe("DROPPED");
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: null, absorbed: true })).toBe("ABSORBED");
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: null, equalsReference: true })).toBe(
+            "DROPPED (equals reference)"
+        );
+        expect(classifyPatch({ ...kept, oldPatch: null, newPatch: "b" })).toBe("ADDED");
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: "b", equalsReference: true })).toBe(
             "CHANGED (equals reference)"
         );
-        expect(classifyPatch({ oldPatch: "a", newPatch: "b", equalsReference: false })).toBe("CHANGED");
+        expect(classifyPatch({ ...kept, oldPatch: "a", newPatch: "b" })).toBe("CHANGED");
     });
 
-    test("the verifier reports an unchanged patch and a dropped change in a real repository", () => {
-        const cwd = fs.mkdtempSync(join(tmpdir(), "restack-verify-"));
-        const git = (...args: string[]) => {
-            const p = Bun.spawnSync(
-                [
-                    "git",
-                    "-c",
-                    "core.hooksPath=/dev/null",
-                    "-c",
-                    "user.name=Test",
-                    "-c",
-                    "user.email=test@example.com",
-                    ...args,
-                ],
-                { cwd, env: process.env, stdout: "pipe", stderr: "pipe" }
-            );
-            expect(p.exitCode, p.stderr.toString()).toBe(0);
-            return p.stdout.toString().trim();
-        };
-        git("init", "-q");
-        fs.writeFileSync(join(cwd, "file.txt"), "before\n");
+    test("the verifier tells a kept, a lost, an absorbed and a new change apart in a real repository", () => {
+        const { cwd, git } = verifyRepo();
+        const lines = Array.from({ length: 12 }, (_, i) => `l${i + 1}`);
+        const write = (file: string, content: string[]) => fs.writeFileSync(join(cwd, file), `${content.join("\n")}\n`);
+        write("file.txt", lines);
         git("add", "file.txt");
         git("commit", "-qm", "base");
-        fs.writeFileSync(join(cwd, "file.txt"), "after\n");
+        const base = git("rev-parse", "HEAD");
+        write("file.txt", lines.with(1, "L2"));
         git("commit", "-qam", "change");
-        const script = join(import.meta.dir, "restack-verify.ts");
-        const run = (newBase: string) =>
-            Bun.spawnSync(
-                [
-                    "bun",
-                    script,
-                    "--branch",
-                    "fixture=HEAD..HEAD",
-                    "--old-base",
-                    "HEAD^",
-                    "--new-base",
-                    newBase,
-                    "--reference",
-                    "HEAD",
-                ],
-                { cwd, env: process.env, stdout: "pipe", stderr: "pipe" }
-            );
-        const same = run("HEAD^");
+        const oldHead = git("rev-parse", "HEAD");
+        write("extra.txt", ["new"]);
+        git("add", "extra.txt");
+        git("commit", "-qm", "an unexplained new file");
+        const withExtra = git("rev-parse", "HEAD");
+        git("checkout", "-q", "--detach", base);
+        // The new base already holds the change, plus a later edit outside the patch's context.
+        write("file.txt", lines.with(1, "L2").with(11, "L12"));
+        git("commit", "-qam", "upstream took the change");
+        const absorbingBase = git("rev-parse", "HEAD");
+        const run = (newHead: string, newBase: string, reference = oldHead) =>
+            verify(cwd, [
+                "--branch",
+                `fixture=${oldHead}..${newHead}`,
+                "--old-base",
+                base,
+                "--new-base",
+                newBase,
+                "--reference",
+                reference,
+            ]);
+
+        const same = run(oldHead, base);
         expect(same.exitCode, same.stderr.toString()).toBe(0);
         expect(same.stdout.toString()).toContain("OK\tfile.txt");
-        const dropped = run("HEAD");
+        const dropped = run(base, base);
         expect(dropped.exitCode, dropped.stderr.toString()).toBe(1);
         expect(dropped.stdout.toString()).toContain("DROPPED\tfile.txt");
+        const droppedLikeReference = run(base, base, base);
+        expect(droppedLikeReference.exitCode, droppedLikeReference.stderr.toString()).toBe(0);
+        expect(droppedLikeReference.stdout.toString()).toContain("DROPPED (equals reference)\tfile.txt");
+        const absorbed = run(absorbingBase, absorbingBase);
+        expect(absorbed.exitCode, absorbed.stderr.toString()).toBe(0);
+        expect(absorbed.stdout.toString()).toContain("ABSORBED\tfile.txt");
+        const added = run(withExtra, base);
+        expect(added.exitCode, added.stderr.toString()).toBe(1);
+        expect(added.stdout.toString()).toContain("OK\tfile.txt");
+        expect(added.stdout.toString()).toContain("ADDED\textra.txt");
     });
 
     test("the verifier calls a patch CHANGED when only the spaces inside a string literal changed", () => {
