@@ -5,6 +5,12 @@ import { hookDiag } from "../log";
 
 /** The extracted copy can hold secrets, exactly like the tar it came from. */
 const FILE_MODE = 0o600;
+/**
+ * One `tar` read of the capture archive. Below the hook's own timeout (15 s, `install.ts`), so a read that stalls ends
+ * as a failed read the hook reports, not as a hook the harness kills with the `tar` still running.
+ */
+const TAR_TIMEOUT_MS = 10_000;
+const TAR_READ = { maxBuffer: 16_000_000, timeout: TAR_TIMEOUT_MS } as const;
 
 /**
  * Where the pre phase put this root's before-state: the clone tree `<n>/` (`cloneTree` in capture.ts), or
@@ -244,10 +250,10 @@ export function beforeCopier({
 
 /** The archive's member names in NFC (bsdtar stores NFD, see `extract`), `null` when `tar -tf` failed. */
 function archiveMembers(tar: string): Set<string> | null {
-    const listed = spawnSync("tar", ["-tf", tar], { encoding: "utf8", maxBuffer: 16_000_000 });
+    const listed = spawnSync("tar", ["-tf", tar], { encoding: "utf8", ...TAR_READ });
 
     if (listed.status !== 0 || typeof listed.stdout !== "string") {
-        hookDiag("Could not list the capture archive", { tar, status: listed.status });
+        hookDiag("Could not list the capture archive", { tar, status: listed.status, signal: listed.signal });
         return null;
     }
 
@@ -269,7 +275,7 @@ function archiveMembers(tar: string): Set<string> | null {
  * would take the backslashes literally, so the raw name is the fallback.
  */
 function extractExact(tar: string, member: string): Buffer | null {
-    const extractOne = (name: string) => spawnSync("tar", ["-xOf", tar, "--", name], { maxBuffer: 16_000_000 });
+    const extractOne = (name: string) => spawnSync("tar", ["-xOf", tar, "--", name], TAR_READ);
     const escaped = member.replace(/[\\*?[\]]/g, "\\$&");
     let run = extractOne(escaped);
 
@@ -324,7 +330,7 @@ function extract(tar: string, member: string): Buffer | null {
     }
 
     // Any other rewriting the archiver may do: match on the listing, comparing in one form.
-    const listed = spawnSync("tar", ["-tf", tar], { encoding: "utf8", maxBuffer: 16_000_000 });
+    const listed = spawnSync("tar", ["-tf", tar], { encoding: "utf8", ...TAR_READ });
 
     if (listed.status !== 0 || typeof listed.stdout !== "string") {
         return null;

@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import {
     parseStatusPorcelainV2Z,
     STATUS_PORCELAIN_ARGS,
@@ -11,28 +11,51 @@ import { hookDiag } from "./log";
 const MAX_BUFFER = 8_000_000;
 
 /**
+ * How long one git process of the hook may run, and the untracked listings of one call together. The harness kills
+ * the whole hook at its own timeout (15 s, `install.ts`), so a git that stalls on a slow or unreachable filesystem
+ * must be stopped first; its answer then counts as a failure, never as the partial output it wrote.
+ */
+export const GIT_TIMEOUT_MS = 5_000;
+
+function errorCode(run: SpawnSyncReturns<string>): string | undefined {
+    return (run.error as NodeJS.ErrnoException | undefined)?.code;
+}
+
+/**
  * One git runner for the whole hook, so a failure is reported in one place.
  *
  * git's own "found differences" exit code is 1, which is not an error, so 0 and 1 both return
  * output. ANYTHING ELSE is a real failure — a missing binary, a broken repository, a
- * `maxBuffer` overflow — and returning "" for those silently turns it into "nothing changed",
- * which the post phase then reports as the reassuring `no change since this command began`.
+ * `maxBuffer` overflow, a run past `GIT_TIMEOUT_MS` — and returning "" for those silently turns
+ * it into "nothing changed", which the post phase then reports as the reassuring
+ * `no change since this command began`.
  *
  * `quiet` is for the ONE call whose failure is expected: asking a directory that is not a
  * repository for its toplevel exits 128 every time, and logging that would bury the failures
- * that matter.
+ * that matter. It hides an exit code only: a git that never finished is always reported.
  */
 export function gitOut(root: string, args: string[], options: { quiet?: boolean } = {}): string {
-    const run = spawnSync("git", ["-C", root, ...args], { encoding: "utf8", maxBuffer: MAX_BUFFER });
+    const run = spawnSync("git", ["-C", root, ...args], {
+        encoding: "utf8",
+        maxBuffer: MAX_BUFFER,
+        timeout: GIT_TIMEOUT_MS,
+    });
 
-    if (run.status !== 0 && run.status !== 1 && !options.quiet) {
-        hookDiag("git failed, so this root reads as unchanged", {
-            root,
-            args,
-            status: run.status,
-            signal: run.signal,
-            stderr: typeof run.stderr === "string" ? run.stderr.slice(0, 400) : undefined,
-        });
+    if (run.error || (run.status !== 0 && run.status !== 1 && !options.quiet)) {
+        const timedOut = errorCode(run) === "ETIMEDOUT";
+        hookDiag(
+            timedOut
+                ? `git did not finish within ${GIT_TIMEOUT_MS} ms, so this root reads as unchanged`
+                : "git failed, so this root reads as unchanged",
+            {
+                root,
+                args,
+                status: run.status,
+                signal: run.signal,
+                error: errorCode(run),
+                stderr: typeof run.stderr === "string" ? run.stderr.slice(0, 400) : undefined,
+            }
+        );
 
         return "";
     }
@@ -160,23 +183,62 @@ const BYTES_PER_LISTED_NAME = 4096;
  * and the names read so far are kept). Reading the whole listing and slicing afterwards made a
  * huge untracked tree cost a full enumeration per hook, and overflowing the shared 8 MB buffer
  * returned "" — an empty directory — so the capture recorded it as neither taken nor left out.
+ *
+ * Time is bounded too: a listing that runs past `GIT_TIMEOUT_MS` (a slow or unreachable
+ * filesystem) is stopped and counts as one git could not make.
  */
 export function untrackedFilesIn(root: string, dir: string, limit: number): string[] | null {
-    const cap = Math.max(0, limit);
-    const run = spawnSync("git", ["-C", root, "ls-files", "--others", "--exclude-standard", "-z", "--", dir], {
+    return untrackedWithin({ root, dir, limit, timeoutMs: GIT_TIMEOUT_MS });
+}
+
+/** One `git ls-files --others` over `dirs`, with a buffer of `cap` names' worth and a deadline. */
+function listOthers({
+    root,
+    dirs,
+    cap,
+    timeoutMs,
+}: {
+    root: string;
+    dirs: readonly string[];
+    cap: number;
+    timeoutMs: number;
+}): SpawnSyncReturns<string> {
+    return spawnSync("git", ["-C", root, "ls-files", "--others", "--exclude-standard", "-z", "--", ...dirs], {
         encoding: "utf8",
         maxBuffer: Math.min(MAX_BUFFER, Math.max(65_536, (cap + 1) * BYTES_PER_LISTED_NAME)),
+        timeout: timeoutMs,
     });
-    const overflowed = (run.error as NodeJS.ErrnoException | undefined)?.code === "ENOBUFS";
+}
+
+function untrackedWithin({
+    root,
+    dir,
+    limit,
+    timeoutMs,
+}: {
+    root: string;
+    dir: string;
+    limit: number;
+    timeoutMs: number;
+}): string[] | null {
+    const cap = Math.max(0, limit);
+    const run = listOthers({ root, dirs: [dir], cap, timeoutMs });
+    const overflowed = errorCode(run) === "ENOBUFS";
 
     if (!overflowed && run.status !== 0) {
-        hookDiag("git could not list an untracked directory", {
-            root,
-            dir,
-            status: run.status,
-            signal: run.signal,
-            stderr: typeof run.stderr === "string" ? run.stderr.slice(0, 400) : undefined,
-        });
+        hookDiag(
+            errorCode(run) === "ETIMEDOUT"
+                ? `git did not list an untracked directory within ${timeoutMs} ms`
+                : "git could not list an untracked directory",
+            {
+                root,
+                dir,
+                status: run.status,
+                signal: run.signal,
+                error: errorCode(run),
+                stderr: typeof run.stderr === "string" ? run.stderr.slice(0, 400) : undefined,
+            }
+        );
 
         return null;
     }
@@ -205,27 +267,50 @@ const DIRS_PER_LISTING = 64;
  * The answer per directory is the one `untrackedFilesIn` gives. The whole batch gets the buffer ONE
  * directory may fill, so the work stays bounded; a batch that outgrows it, or that git refuses, is
  * listed again one directory at a time, with each directory's own bound and its own diagnosis.
+ *
+ * Every listing of one call shares one deadline (`budgetMs`, default `GIT_TIMEOUT_MS`). A batch that
+ * runs out of time is a failed listing for each of its directories and is NOT listed again: the tree
+ * is slow, not big, and one listing per directory would wait the same way. A directory left when the
+ * deadline has passed gets no listing at all (null).
  */
 export function untrackedFilesInEach(
     root: string,
     dirs: readonly string[],
-    limit: number
+    limit: number,
+    options: { budgetMs?: number } = {}
 ): Map<string, string[] | null> {
     const cap = Math.max(0, limit);
+    const budgetMs = options.budgetMs ?? GIT_TIMEOUT_MS;
+    const deadline = Date.now() + budgetMs;
     const listed = new Map<string, string[] | null>();
     const together = [...new Set(dirs)].filter((dir) => dir.endsWith("/") && !PATHSPEC_SPECIAL.test(dir));
 
     for (let start = 0; start < together.length; start += DIRS_PER_LISTING) {
         const batch = together.slice(start, start + DIRS_PER_LISTING);
+        const timeoutMs = deadline - Date.now();
+
+        if (timeoutMs <= 0) {
+            break;
+        }
 
         if (batch.length < 2) {
             continue;
         }
 
-        const run = spawnSync("git", ["-C", root, "ls-files", "--others", "--exclude-standard", "-z", "--", ...batch], {
-            encoding: "utf8",
-            maxBuffer: Math.min(MAX_BUFFER, Math.max(65_536, (cap + 1) * BYTES_PER_LISTED_NAME)),
-        });
+        const run = listOthers({ root, dirs: batch, cap, timeoutMs });
+
+        if (errorCode(run) === "ETIMEDOUT") {
+            hookDiag(`git did not list ${batch.length} untracked directories within ${timeoutMs} ms`, {
+                root,
+                dirs: batch,
+            });
+
+            for (const dir of batch) {
+                listed.set(dir, null);
+            }
+
+            continue;
+        }
 
         if (run.error || run.status !== 0 || typeof run.stdout !== "string") {
             continue;
@@ -246,10 +331,26 @@ export function untrackedFilesInEach(
         }
     }
 
+    const unlisted: string[] = [];
+
     for (const dir of dirs) {
-        if (!listed.has(dir)) {
-            listed.set(dir, untrackedFilesIn(root, dir, limit));
+        if (listed.has(dir)) {
+            continue;
         }
+
+        const timeoutMs = deadline - Date.now();
+
+        if (timeoutMs <= 0) {
+            listed.set(dir, null);
+            unlisted.push(dir);
+            continue;
+        }
+
+        listed.set(dir, untrackedWithin({ root, dir, limit, timeoutMs }));
+    }
+
+    if (unlisted.length > 0) {
+        hookDiag(`no time was left to list ${unlisted.length} untracked directories`, { root, budgetMs, unlisted });
     }
 
     return listed;

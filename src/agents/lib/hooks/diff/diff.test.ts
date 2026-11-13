@@ -3774,6 +3774,16 @@ describe("listing a wide untracked directory", () => {
             expect([...broken.values()]).toEqual([null, null, null]);
             expect(none.count).toBe(0);
         });
+
+        it("stops at its deadline: a listing out of time fails for each directory and is never listed again", async () => {
+            // No git lists a tree within 1 ms, so the batch is stopped (or never starts when the clock already moved).
+            const dirs = [...small, "pat[x]/"];
+            const each = await withSpawnCounter(async () => untrackedFilesInEach(wide, dirs, 5, { budgetMs: 1 }));
+
+            // Without the shared deadline the batch, then each directory by itself: five listings, each unbounded.
+            expect(each.count).toBeLessThanOrEqual(1);
+            expect(dirs.map((dir) => each.result.get(dir))).toEqual([null, null, null, null]);
+        });
     });
 });
 
