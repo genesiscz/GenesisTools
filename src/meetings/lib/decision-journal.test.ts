@@ -1628,6 +1628,19 @@ describe("workshop listen contracts", () => {
         ]);
         expect(sampleLines(lines, 20, () => 0.5)).toHaveLength(1);
         expect(addQualityQuestions({ record, entries, spotCheck: 20 })).toHaveLength(1);
+        const prepared = record.items.find((item) => item.kind === "question" && item.group === "spot-check");
+        expect(prepared).toMatchObject({ priority: 1, confidence: 0.55 });
+        if (prepared?.kind !== "question") {
+            throw new Error("The quality question was not prepared");
+        }
+        delete prepared.priority;
+        delete prepared.confidence;
+        expect(addQualityQuestions({ record, entries, spotCheck: 20 })).toEqual([prepared.id]);
+        expect(prepared).toMatchObject({ priority: 1, confidence: 0.55 });
+        prepared.priority = 2.5;
+        prepared.confidence = 0.6;
+        expect(addQualityQuestions({ record, entries, spotCheck: 20 })).toEqual([prepared.id]);
+        expect(prepared).toMatchObject({ priority: 2.5, confidence: 0.6 });
         const parts = splitVoiceStretch(
             Array.from({ length: 12 }, (_, index) => ({ pitchHz: Math.floor(index / 3) % 2 ? 210 : 120 }))
         );
