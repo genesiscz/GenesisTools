@@ -7,6 +7,7 @@ import { CmuxUnresponsiveError } from "@genesiscz/utils/cmux/lib/health";
 import type { CmuxTreeBackoff } from "@genesiscz/utils/cmux/lib/tree-backoff";
 import type { LiveSurface } from "@genesiscz/utils/cmux/live-layout";
 import type { LiveAgentSurface } from "@genesiscz/utils/cmux/live-surfaces";
+import { SurfaceInputError } from "@genesiscz/utils/cmux/surface-input";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ProcessEntry } from "@genesiscz/utils/process/processes";
 import { fleetEntryOf, readFleetView } from "./fleet";
@@ -406,7 +407,11 @@ describe("sendToSession: the one guarded session input", () => {
         const { calls, deps } = edges({
             run: async (args) => {
                 calls.push(args);
-                return { code: 1, stdout: "", stderr: "the prompt holds text" };
+                return {
+                    code: 1,
+                    stdout: "",
+                    stderr: "Error: paste: the agent prompt in surface:7 holds text someone is typing, so nothing was sent.",
+                };
             },
         });
 
@@ -416,6 +421,33 @@ describe("sendToSession: the one guarded session input", () => {
             mayHaveLanded: false,
         });
         expect(calls).toHaveLength(1);
+    });
+
+    it("a cmux failure its guard does not name is an error, never a draft or dialog refusal", async () => {
+        const failing = (stderr: string) =>
+            edges({
+                run: async (args) => {
+                    if (args[0] === "send-key") {
+                        return { code: 1, stdout: "", stderr };
+                    }
+
+                    return { code: 0, stdout: "", stderr: "" };
+                },
+            }).deps;
+
+        const missing = sendToSession(
+            { sessionId: SESSION_A, text: "hi", keys: ["enter"] },
+            failing("Surface not found")
+        );
+        await expect(missing).rejects.toBeInstanceOf(SurfaceInputError);
+        await expect(missing).rejects.toMatchObject({ mayHaveLanded: true });
+
+        expect(
+            await sendToSession(
+                { sessionId: SESSION_A, keys: ["enter"] },
+                failing("Error: send-key: surface:7 is waiting on a question or dialog, so nothing was sent.")
+            )
+        ).toMatchObject({ delivered: false, reason: "dialog-open", mayHaveLanded: false });
     });
 
     it("timeout: a cmux that does not answer the tree read is a refusal, never not-found", async () => {

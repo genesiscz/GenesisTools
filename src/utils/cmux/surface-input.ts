@@ -19,15 +19,44 @@ export type SurfaceWrite =
           mayHaveLanded: boolean;
       };
 
-/** A forced input cmux still refused: no guard explains it, so it is an error, not a refusal. */
-export class SurfaceInputError extends Error {}
+/**
+ * An input cmux failed for a reason its own draft and dialog guard does not name (a missing surface, a socket error,
+ * an unknown flag), or a forced input it still refused: an error, not a refusal.
+ */
+export class SurfaceInputError extends Error {
+    constructor(
+        message: string,
+        /** An earlier press went in before the failing step: the pane is not as it was. */
+        readonly mayHaveLanded = false
+    ) {
+        super(message);
+    }
+}
+
+/**
+ * The guard refusal cmux names on stderr (`ensureAgentPromptIsFree` in cmux's CLI): "... is waiting on a question or
+ * dialog, so nothing was sent" and "the agent prompt in ... holds text someone is typing, so nothing was sent". Any
+ * other failure is an operational error, never a claim about the person's draft or an open dialog.
+ */
+export function surfaceGuardRefusal(stderr: string): "draft-present" | "dialog-open" | undefined {
+    if (/waiting on a question or dialog/i.test(stderr)) {
+        return "dialog-open";
+    }
+
+    if (/holds text someone is typing/i.test(stderr)) {
+        return "draft-present";
+    }
+
+    return undefined;
+}
 
 /**
  * The one cmux writer for a surface's input: paste the text (never typed, so a backslash, `\n` or a quote arrives as
  * written), then press each key in order. Without `force`, cmux's own checks apply: a paste or typed text refuses
- * while an agent prompt holds a draft or a dialog is open (`draft-present`), a key refuses into an open dialog
- * (`dialog-open`). With `force` (the open dialog is the target), a refusal throws `SurfaceInputError`. A call that
- * times out may have landed, so nothing after it is pressed.
+ * while an agent prompt holds a draft (`draft-present`) or a dialog is open (`dialog-open`), a key refuses into an
+ * open dialog. Only a refusal cmux names as its guard is returned as one; any other failure, and any failure with
+ * `force` (the open dialog is the target), throws `SurfaceInputError`. A call that times out may have landed, so
+ * nothing after it is pressed.
  */
 export async function writeSurfaceInput(input: {
     /** The surface on a cmux command line: `["--surface", <uuid>]`, or `surfaceTargetArgs(…)`. */
@@ -41,28 +70,22 @@ export async function writeSurfaceInput(input: {
 }): Promise<SurfaceWrite> {
     const run = input.run ?? ((args: string[]) => runCmux(args));
     const force = input.force ? ["--force"] : [];
-    const steps: { args: string[]; label: string; refusal: SurfaceWriteRefusal }[] = [];
+    const steps: { args: string[]; label: string }[] = [];
 
     if (input.text !== undefined) {
         steps.push({
             args: ["paste", ...input.where, ...(input.submit ? ["--submit"] : []), ...force, "--", input.text],
             label: `paste (${input.text.length} characters)`,
-            refusal: "draft-present",
         });
     }
 
     for (const key of input.keys ?? []) {
         steps.push(
             typeof key === "string"
-                ? {
-                      args: ["send-key", ...input.where, ...force, key],
-                      label: `send-key ${key}`,
-                      refusal: "dialog-open",
-                  }
+                ? { args: ["send-key", ...input.where, ...force, key], label: `send-key ${key}` }
                 : {
                       args: ["send", ...input.where, ...force, "--", key.text],
                       label: `send (${key.text.length} characters)`,
-                      refusal: "draft-present",
                   }
         );
     }
@@ -80,19 +103,21 @@ export async function writeSurfaceInput(input: {
         }
 
         if (result.code !== 0) {
-            const detail = `cmux ${step.label} refused (${result.code}): ${result.stderr.trim() || "no detail"}`;
+            const stderr = result.stderr.trim();
+            const refusal = input.force ? undefined : surfaceGuardRefusal(stderr);
 
-            if (input.force) {
-                throw new SurfaceInputError(detail);
+            if (!refusal) {
+                const landed = index > 0 ? " An earlier press went in." : "";
+                throw new SurfaceInputError(
+                    `cmux ${step.label} failed (${result.code}): ${stderr || "no detail"}.${landed}`,
+                    index > 0
+                );
             }
 
             return {
                 ok: false,
-                reason: step.refusal,
-                detail:
-                    step.refusal === "draft-present"
-                        ? `${detail}. cmux refuses while the prompt holds a draft or a question or permission dialog is open.`
-                        : `${detail}. cmux refuses a key while a dialog is open.`,
+                reason: refusal,
+                detail: `cmux ${step.label} refused (${result.code}): ${stderr}`,
                 mayHaveLanded: index > 0,
             };
         }
