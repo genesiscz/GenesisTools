@@ -137,7 +137,8 @@ function run(args: string[]): number {
         if (!diff.length) {
             return null;
         }
-        const id = git(["patch-id", "--stable"], diff).toString().trim().split(/\s+/)[0];
+        // --stable strips every space, so `"a b"` and `"ab"` hash alike; --verbatim keeps them and still ignores line numbers.
+        const id = git(["patch-id", "--verbatim"], diff).toString().trim().split(/\s+/)[0];
         if (!id) {
             throw new Error(`cannot calculate patch id for ${file}`);
         }

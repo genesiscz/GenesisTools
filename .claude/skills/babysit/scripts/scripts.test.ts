@@ -60,6 +60,35 @@ import { createTaskLookup, pump } from "./watch-workers";
 
 describe("safe restack helpers", () => {
     const block = (a: string, b: string) => `<<<<<<< HEAD\n${a}\n=======\n${b}\n>>>>>>> change\n`;
+    const verifyRepo = () => {
+        const cwd = fs.mkdtempSync(join(tmpdir(), "restack-verify-"));
+        const git = (...args: string[]) => {
+            const p = Bun.spawnSync(
+                [
+                    "git",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    ...args,
+                ],
+                { cwd, env: process.env, stdout: "pipe", stderr: "pipe" }
+            );
+            expect(p.exitCode, p.stderr.toString()).toBe(0);
+            return p.stdout.toString().trim();
+        };
+        git("init", "-q");
+        return { cwd, git };
+    };
+    const verify = (cwd: string, args: string[]) =>
+        Bun.spawnSync(["bun", join(import.meta.dir, "restack-verify.ts"), ...args], {
+            cwd,
+            env: process.env,
+            stdout: "pipe",
+            stderr: "pipe",
+        });
 
     test("resolves whitespace and trailing commas but preserves real conflicts", () => {
         expect(resolveSameText("a.ts", block("const x = [1, 2];", "const x=[1,2];")).text).toBe("const x = [1, 2];\n");
@@ -137,6 +166,23 @@ describe("safe restack helpers", () => {
         const dropped = run("HEAD");
         expect(dropped.exitCode, dropped.stderr.toString()).toBe(1);
         expect(dropped.stdout.toString()).toContain("DROPPED\tfile.txt");
+    });
+
+    test("the verifier calls a patch CHANGED when only the spaces inside a string literal changed", () => {
+        const { cwd, git } = verifyRepo();
+        fs.writeFileSync(join(cwd, "f.ts"), "export const a = 1;\n");
+        git("add", "f.ts");
+        git("commit", "-qm", "base");
+        const base = git("rev-parse", "HEAD");
+        fs.appendFileSync(join(cwd, "f.ts"), 'export const s = "a b";\n');
+        git("commit", "-qam", "old");
+        const oldHead = git("rev-parse", "HEAD");
+        git("checkout", "-q", "--detach", base);
+        fs.appendFileSync(join(cwd, "f.ts"), 'export const s = "ab";\n');
+        git("commit", "-qam", "restacked");
+        const result = verify(cwd, ["--branch", `fixture=${oldHead}..HEAD`, "--old-base", base, "--new-base", base]);
+        expect(result.exitCode, result.stderr.toString()).toBe(1);
+        expect(result.stdout.toString()).toContain("CHANGED\tf.ts");
     });
 
     test("the resolver completes a rebase even when Git leaves REBASE_HEAD behind", () => {
