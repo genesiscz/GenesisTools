@@ -1307,6 +1307,22 @@ function localVoiceFinding(options: {
     if (
         options.platformLabel &&
         !options.isSelfLabel &&
+        (line.micShare ?? 0) >= 0.65 &&
+        line.energyMic !== undefined &&
+        line.energyMic <= 0.35
+    ) {
+        // Opposing channel measurements do not independently confirm the platform's label.
+        return {
+            candidates: [...new Set([...room, ...options.remoteCandidates, line.label])],
+            rules: [MeetingRule.Channel, MeetingRule.Energy, MeetingRule.LocalVoice],
+            confidence: 0.4,
+            listen: true,
+        };
+    }
+
+    if (
+        options.platformLabel &&
+        !options.isSelfLabel &&
         (line.acoustic?.rawMicShare ?? 0) >= 0.35 &&
         (line.acoustic?.cleanMicShare ?? 1) < 0.65
     ) {
