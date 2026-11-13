@@ -688,3 +688,34 @@ test("an assignment reaches a join's voice within the line tolerance once, never
     expect(joinsAt(9.6)).toBe("Alice Example");
     expect(joinsAt(9.25)).toBe("Speaker 5");
 });
+
+test("a marked term anchors on its literal heard word, as its mark applies", () => {
+    const marked = findingSchema.parse({
+        kind: "term",
+        at: 5,
+        heard: "browser",
+        heardStem: "browser",
+        proposedStem: "viewer",
+        meaning: "the in-app viewer",
+        confidence: 0.9,
+        reason: "a marked stem",
+    });
+    const inflected = [line("Alice", 5, "otevři to v browserem")];
+    expect(() => prepareFindings({ items: [], transcript: inflected, findings: [marked] })).toThrow(/browser/);
+    const prepared = prepareFindings({ items: [], transcript: inflected, findings: [marked], force: true });
+    expect(checkAnchors(prepared.added, inflected).warnings).toEqual([
+        `${prepared.added[0]!.id}: no line with "browser" starts at 00:05`,
+    ]);
+
+    const literal = [line("Alice", 5, "otevři to v browser")];
+    const record = meetingRecordSchema.parse({
+        ...base,
+        items: prepareFindings({ items: [], transcript: literal, findings: [marked] }).added.map((one) => ({
+            ...one,
+            status: "confirmed",
+        })),
+    });
+    expect(
+        correctTranscript({ record, transcript: literal, config, format: "txt", dictionary: false }).outcomes
+    ).toMatchObject([{ status: "applied" }]);
+});
