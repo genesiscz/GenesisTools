@@ -1330,6 +1330,9 @@ export function SegmentedControl({ options, value, onChange, label, ariaLabel }:
     const labelId = useId();
     const enabled = options.filter((option) => option.disabled === undefined);
     const tabStop = enabled.find((option) => option.value === value)?.value ?? enabled[0]?.value;
+    // A disabled button takes no focus, so its `title` is pointer-only: the group's description names each reason.
+    const unavailable = options.filter((option) => option.disabled !== undefined);
+    const reasonsId = `${labelId}-unavailable`;
 
     return (
         <div className="inline-flex min-w-0 max-w-full items-center gap-2">
@@ -1342,6 +1345,7 @@ export function SegmentedControl({ options, value, onChange, label, ariaLabel }:
                 role="radiogroup"
                 aria-labelledby={label ? labelId : undefined}
                 aria-label={label ? undefined : ariaLabel}
+                aria-describedby={unavailable.length > 0 ? reasonsId : undefined}
                 className="inline-flex min-w-0 max-w-full overflow-x-auto rounded-card border border-line"
             >
                 {options.map((option) => (
@@ -1387,6 +1391,11 @@ export function SegmentedControl({ options, value, onChange, label, ariaLabel }:
                     </button>
                 ))}
             </div>
+            {unavailable.length > 0 ? (
+                <span id={reasonsId} className="sr-only">
+                    {unavailable.map((option) => `${option.label} is unavailable: ${option.disabled}.`).join(" ")}
+                </span>
+            ) : null}
         </div>
     );
 }
