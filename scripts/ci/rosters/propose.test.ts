@@ -99,6 +99,29 @@ describe("shadowedCandidates", () => {
             expect.objectContaining({ key: "declare:isRecord", addedIn: ["src/utils/object.ts"], remaining: 2 }),
         ]);
     });
+
+    test("most private copies rank first, whatever order the analyser gave", () => {
+        const recommendation = (name: string, copies: number) => ({
+            title: name,
+            sites: [
+                { file: `src/utils/${name}.ts`, name, canonical: true },
+                ...Array.from({ length: copies }, (_, index) => ({ file: `src/tool${index}/x.ts`, name })),
+            ],
+        });
+        const candidates = shadowedCandidates({
+            recommendations: [
+                recommendation("oneCopy", 1),
+                recommendation("threeCopies", 3),
+                recommendation("twoCopies", 2),
+            ],
+        });
+
+        expect(candidates.map((candidate) => [candidate.value, candidate.score])).toEqual([
+            ["threeCopies", 3],
+            ["twoCopies", 2],
+            ["oneCopy", 1],
+        ]);
+    });
 });
 
 describe("scaffold", () => {
