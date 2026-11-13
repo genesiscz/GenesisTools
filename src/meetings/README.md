@@ -688,6 +688,10 @@ For a meeting-local room person, use `attendance <meeting> --add "Alice Example"
 
 ## Listening with uncertain evidence
 
+Speaker-question selection and the terminal/native queue rank by `(1 - confidence) × words × distinct answer targets`.
+The displayed priority and its minimum filter keep their existing scale. Questions without word counts, including older
+records, retain priority order. Matching candidate names alone never multiply reach or establish one voice identity.
+
 Suggested speaker names under 70% remain explicit guesses by default. `transcript <meeting> --with-suggested
 --apply-above 80` and `rows <meeting> --apply-above 80` change the read's threshold; they do not change saved
 confidences. The Meetings transcript has the same local threshold picker and Probe. Confirmed answers remain applied.

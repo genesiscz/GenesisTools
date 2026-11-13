@@ -6573,3 +6573,58 @@ test("local speech history is read-only and excludes muted, failed and file-only
     expect(readFileSync(file).equals(before)).toBe(true);
     expect(statSync(file).mtimeMs).toBe(mtime);
 });
+
+test("question selection and review order use uncertain words without changing displayed priority", async () => {
+    const { reviewRows } = await import("./lib/review-rows");
+    const entries = [
+        line("Voice", 0, Array(20).fill("design").join(" ")),
+        line("Voice", 100, Array(200).fill("design").join(" ")),
+    ];
+    const pending = meetingRecordSchema.parse({
+        ...record,
+        participants: [{ name: "Alice Example" }, { name: "Bob Example" }],
+        items: [0.1, 0.5].map((confidence, index) => ({
+            id: `i${index + 1}`,
+            kind: "speaker-range",
+            status: "suggested",
+            label: "Voice",
+            fromSec: index * 100,
+            toSec: index * 100,
+            speaker: "Alice Example",
+            confidence,
+            rules: [],
+            suggestedAt: meeting.start,
+        })),
+    });
+    const options = {
+        record: pending,
+        meeting: { ...meeting, transcript: entries },
+        rules: [],
+        dictionary: { entries: [], abbrExpansion: "every" as const },
+        sourceWords: [],
+        listenBelow: 0.8,
+        minPriority: 0,
+        now: meeting.start,
+    };
+    const selected = suggestItems({ ...options, questionBudget: 1 }).filter((item) => item.kind === "question");
+    expect(selected.map((item) => item.decides)).toEqual([["i2"]]);
+    const questions = suggestItems({ ...options, questionBudget: 2 }).filter((item) => item.kind === "question");
+    expect(questions.every((item) => item.priority! >= 1 && item.priority! <= 3)).toBe(true);
+    const roundTripped = meetingRecordSchema.parse(
+        SafeJSON.parse(SafeJSON.stringify({ ...pending, items: questions }))
+    );
+    expect(openQuestions(roundTripped).map((item) => item.decides)).toEqual([["i2"], ["i1"]]);
+    expect(reviewRows(roundTripped, { minPriority: 0 }).rows.map((item) => item.id)).toEqual(
+        openQuestions(roundTripped).map((item) => item.id)
+    );
+    const repeated = meetingRecordSchema.parse({
+        ...pending,
+        items: questions.map((item) => ({ ...item, decides: Array(40).fill(item.decides[0]) })),
+    });
+    expect(openQuestions(repeated).map((item) => item.fromSec)).toEqual([100, 0]);
+    const legacy = meetingRecordSchema.parse({
+        ...pending,
+        items: questions.map((item) => ({ ...item, evidence: undefined, priority: item.fromSec === 0 ? 3 : 1 })),
+    });
+    expect(openQuestions(legacy).map((item) => item.fromSec)).toEqual([0, 100]);
+});

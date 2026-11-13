@@ -1973,3 +1973,70 @@ test("voice source indices survive an earlier multi-voice transcript expansion",
     expect(rendered.entries).toHaveLength(3);
     expect(rendered.entries[2]).toMatchObject({ startSec: 20, sourceIndex: 1 });
 });
+
+test("a forty-line question leads and its answer raises the compatible five-line stretch after reopen", async () => {
+    const { suggestItems } = await import("./suggest");
+    const { openQuestions } = await import("./questions");
+    const ranges = [
+        { id: "i1", fromSec: 0, toSec: 39, label: "Voice", speaker: "Alice Example" },
+        { id: "i2", fromSec: 100, toSec: 104, label: "Voice", speaker: "Alice Example" },
+        { id: "i3", fromSec: 200, toSec: 200, label: "Other", speaker: "Dan Example" },
+    ];
+    const entries = [
+        ...Array.from({ length: 40 }, (_, index) => ({ startSec: index, speaker: "Voice" })),
+        ...Array.from({ length: 5 }, (_, index) => ({ startSec: index + 100, speaker: "Voice" })),
+        { startSec: 200, speaker: "Other" },
+    ].map((entry) => ({ ...entry, text: "We will prepare the design document for the next meeting." }));
+    const fx = await fixture(
+        ranges.map((range) => ({
+            ...range,
+            kind: "speaker-range",
+            status: "suggested",
+            confidence: 0.5,
+            rules: [],
+            suggestedAt: now,
+        }))
+    );
+    await fx.store.update(fx.meeting.id, { command: "test", change: "rank the unasked ranges" }, (record) => {
+        record.participants = [
+            { name: "Alice Example", from: ["hand"] },
+            { name: "Bob Example", from: ["hand"] },
+        ];
+        record.items.push(
+            ...suggestItems({
+                record,
+                meeting: {
+                    sourceMeetingId: "fixture",
+                    title: "Harbor sync",
+                    start: record.start,
+                    folders: [],
+                    speakers: [],
+                    participants: record.participants,
+                    transcript: entries,
+                },
+                rules: [],
+                dictionary: { entries: [], abbrExpansion: "every" },
+                sourceWords: [],
+                listenBelow: 0.6,
+                questionBudget: 1,
+                minPriority: 0,
+                now,
+            })
+        );
+    });
+    const before = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+    const first = openQuestions(before)[0]!;
+    expect(first.decides).toEqual(["i1"]);
+    await fx.journal.apply({
+        meeting: fx.meeting.id,
+        actor: person,
+        action: { kind: "answer", question: first.id, answer: "Bob Example" },
+    });
+    const after = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+    expect(after.items.find((item) => item.id === "i2")).toMatchObject({
+        speaker: "Bob Example",
+        confidence: 0.8,
+        evidence: { propagatedFrom: first.id },
+    });
+    expect(after.items.find((item) => item.id === "i3")).toEqual(before.items.find((item) => item.id === "i3"));
+});
