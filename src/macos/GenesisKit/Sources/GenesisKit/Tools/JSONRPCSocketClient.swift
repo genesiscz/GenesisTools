@@ -209,10 +209,15 @@ public final class JSONRPCSocketClient: @unchecked Sendable {
         for byte in path.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01b3 }
         let link = linkFolder.appendingPathComponent("gt-sock-" + String(hash, radix: 16)).path
         guard link.utf8.count < limit else { return nil }
-        let files = FileManager.default
-        if (try? files.destinationOfSymbolicLink(atPath: link)) != path {
-            try? files.removeItem(atPath: link)
-            guard (try? files.createSymbolicLink(atPath: link, withDestinationPath: path)) != nil else { return nil }
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: link)) == path { return link }
+        // Made under a name of its own and renamed over the link: rename(2) swaps the name at once, so two clients that
+        // make the same link both end with it (a remove then a create left one of them with EEXIST and no link), and
+        // a client connecting meanwhile finds the old link or the new one, never none.
+        let made = link + ".\(getpid()).\(UInt32.random(in: 0 ... .max))"
+        guard symlink(path, made) == 0 else { return nil }
+        guard rename(made, link) == 0 else {
+            unlink(made)
+            return nil
         }
         return link
     }
