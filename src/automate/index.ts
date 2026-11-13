@@ -11,6 +11,7 @@ import { registerStepCommands } from "@app/automate/commands/steps.ts";
 import { registerTaskCommand } from "@app/automate/commands/task.ts";
 import { ensureStorage } from "@app/automate/lib/storage.ts";
 import { runTool } from "@genesiscz/utils/cli";
+import { answerReadmeFlag } from "@genesiscz/utils/cli/readme-flag";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
@@ -45,6 +46,8 @@ const configure = registerConfigureCommand(program);
 registerCredentialsCommand(configure);
 
 async function main(): Promise<void> {
+    // Reading the README must not create the automation folders or copy the bundled presets.
+    await answerReadmeFlag(import.meta.dir);
     await ensureStorage();
 
     if (process.argv.length <= 2) {
