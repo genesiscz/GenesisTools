@@ -186,7 +186,7 @@ function refuseIdsWithStdin(scenarioIds: readonly string[]): void {
 }
 
 /**
- * The command a project mounts (`kalendora eval …`). Commander, with every subcommand printing one JSON document.
+ * The command a project mounts (`<project> eval …`). Commander, with every subcommand printing one JSON document.
  * `io` replaces the process (stdout, stdin, exit code, clock) in tests.
  */
 export function createEvalCommand<TSetup, TSignals, TTool extends string, THandle, TResolved>(
