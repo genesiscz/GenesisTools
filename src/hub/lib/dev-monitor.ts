@@ -614,14 +614,19 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
     const genesisHangs = new FolderWatch(sources.genesisHangs, isHangCaptureName);
     const failures = new TextTail(sources.failuresLog, options.fromStart);
     let stateAt = Number.NEGATIVE_INFINITY;
+    // The watermark is the start of the last completed read: everything written before it was read and emitted. The
+    // time of the save would pass an event appended during the delay that no read has seen yet.
+    let covered = new Date();
     const saveState = () => {
         stateAt = Date.now();
-        writeMonitorState(sources.state, new Date(stateAt));
+        writeMonitorState(sources.state, covered);
     };
     const announced = new Set<string>();
     const batcher = new EventBatcher(options.minDelayMs, options.emit);
 
-    while (!options.signal.aborted) {
+    const readSources = async () => {
+        const startedAt = new Date();
+
         for (const [tail, hangsDir, app] of [
             [perf, sources.hangs, ""],
             [genesisPerf, sources.genesisHangs, "Genesis: "],
@@ -677,6 +682,11 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
         }
 
         batcher.flush(Date.now());
+        covered = startedAt;
+    };
+
+    while (!options.signal.aborted) {
+        await readSources();
 
         if (Date.now() - stateAt >= STATE_EVERY_MS) {
             saveState();
@@ -691,6 +701,8 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
         }
     }
 
+    // One last read drains what was written during the delay, so the saved watermark never passes an unread event.
+    await readSources();
     // Events still waiting out the batch delay go out before the monitor stops.
     batcher.flush(Number.POSITIVE_INFINITY);
     saveState();
