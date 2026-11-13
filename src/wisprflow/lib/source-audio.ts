@@ -93,18 +93,6 @@ function audioMeeting(row: AudioMetadataRow): LocalAudioMeeting {
     };
 }
 
-/** No list cap and no transcript/evidence read. SQLite is opened read-only, including during watcher discovery. */
-export function localAudioCatalog(dir: string): LocalAudioMeeting[] {
-    return readMetadata(dir, (db) =>
-        db
-            .query<AudioMetadataRow, []>(
-                "SELECT id, title, createdAt, endedAt FROM Meetings WHERE isDeleted = 0 ORDER BY createdAt DESC"
-            )
-            .all()
-            .map(audioMeeting)
-    );
-}
-
 /** One meeting's metadata by its id: a single-row read, so linking N recordings reads N rows, not N catalogs. */
 export function localAudioMeeting(dir: string, id: string): LocalAudioMeeting | undefined {
     return readMetadata(dir, (db) => {
@@ -122,18 +110,16 @@ export function wisprAudioAccess(dir: string): LocalSourceAudio {
         id: "wisprflow",
         files: () => audioFilesIn(join(dir, "meetings")),
         legacyFiles: (meetingsRoot) => audioFilesIn(join(dirname(meetingsRoot), "meetings-audio-archive")),
-        catalog: async () => {
+        load: async (id) => {
             try {
                 await lstat(join(dir, "flow.sqlite"));
             } catch (error) {
+                // No Wispr on this machine (its audio folder can outlive the app): the file's meeting is unknown.
                 if (missing(error)) {
-                    return [];
+                    return null;
                 }
                 throw error;
             }
-            return localAudioCatalog(dir);
-        },
-        load: async (id) => {
             const meeting = localAudioMeeting(dir, id);
             return meeting ? { ...meeting, participants: [], speakers: [], transcript: [], folders: [] } : null;
         },

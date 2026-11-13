@@ -1492,7 +1492,7 @@ describe("local source audio reconciliation", () => {
         mkdirSync(provider, { recursive: true });
         mkdirSync(legacy, { recursive: true });
         const ids = Array.from({ length: count }, (_, index) => `source-${index}`);
-        const catalog = ids.map((sourceMeetingId) => ({
+        const meetings = ids.map((sourceMeetingId) => ({
             sourceMeetingId,
             title: "Planning",
             start: "2026-11-01T10:00:00Z",
@@ -1508,9 +1508,8 @@ describe("local source audio reconciliation", () => {
                 ids.map((sourceMeetingId) => ({ sourceMeetingId, path: join(provider, `${sourceMeetingId}.ogg`) })),
             legacyFiles: async () =>
                 ids.map((sourceMeetingId) => ({ sourceMeetingId, path: join(legacy, `${sourceMeetingId}.ogg`) })),
-            catalog: async () => catalog,
             load: async (id) => {
-                const meeting = catalog.find((row) => row.sourceMeetingId === id);
+                const meeting = meetings.find((row) => row.sourceMeetingId === id);
                 return meeting ? { ...meeting, participants: [], speakers: [], transcript: [], folders: [] } : null;
             },
         };
@@ -1608,7 +1607,7 @@ describe("local source audio reconciliation", () => {
             },
             { command: "test", change: "holds source-3, whose provider file is gone" }
         );
-        const catalog = spyOn(f.source, "catalog");
+        const loads = spyOn(f.source, "load");
         const live = async () => "source-0";
         const plan = await planSourceAudio({ store: f.store, sources: [f.source], live });
         expect(Object.fromEntries(plan.entries.map((row) => [row.sourceMeetingId, row.status]))).toEqual({
@@ -1618,12 +1617,12 @@ describe("local source audio reconciliation", () => {
             orphan: "unmatched",
             "source-3": "missing",
         });
-        // The planner asks the provider for one row per file without a record, never for its whole catalog.
-        expect(catalog).not.toHaveBeenCalled();
+        // The planner asks the provider for one row per file without a record (source-2 and orphan), nothing more.
+        expect(loads.mock.calls.map(([id]) => id).sort()).toEqual(["orphan", "source-2"]);
         const result = await applySourceAudioPlan({ store: f.store, sources: [f.source], plan, live });
         expect(result).toHaveLength(1);
         expect(f.store.list().filter((record) => record.id !== held.id)).toHaveLength(1);
-        catalog.mockRestore();
+        loads.mockRestore();
     });
 
     test("parallel discovery creates one record, skips live uploads and performs no metadata load after archiving", async () => {
@@ -1772,9 +1771,9 @@ describe("local source audio reconciliation", () => {
         const adapter = wisprAudioAccess(dir);
         const before = statSync(join(dir, "flow.sqlite")).mtimeMs;
         expect(await adapter.files()).toHaveLength(1);
-        expect(await adapter.catalog()).toHaveLength(1);
         expect((await adapter.load("source-local"))?.transcript).toEqual([]);
         expect(statSync(join(dir, "flow.sqlite")).mtimeMs).toBe(before);
-        expect(await wisprAudioAccess(join(dir, "absent")).catalog()).toEqual([]);
+        // No Wispr database: the meeting is unknown, which plans as unmatched, never as a failed pass.
+        expect(await wisprAudioAccess(join(dir, "absent")).load("source-local")).toBeNull();
     });
 });

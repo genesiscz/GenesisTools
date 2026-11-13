@@ -132,6 +132,6 @@ export interface LocalSourceAudio {
     readonly id: MeetingSourceId;
     files(): Promise<LocalAudioFile[]>;
     legacyFiles(meetingsRoot: string): Promise<LocalAudioFile[]>;
-    catalog(): Promise<LocalAudioMeeting[]>;
+    /** One meeting's metadata by its id, a single-row read; null when the provider does not know it or is absent. */
     load(sourceMeetingId: string): Promise<SourceMeeting | null>;
 }
