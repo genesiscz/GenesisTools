@@ -213,6 +213,8 @@ export const journalEntrySchema = z.object({
     token: z.string().min(1),
     at: z.string().min(1),
     meeting: z.string().min(1),
+    /** The immediate source record of a copied journal entry; older entries have no copy provenance. */
+    copiedFrom: z.string().min(1).optional(),
     /** An actor kind a newer build wrote reads as `unknown`, so its entry still reads and its token still reverts. */
     actor: savedDecisionActorSchema,
     reason: z.string().optional(),

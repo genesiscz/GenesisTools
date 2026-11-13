@@ -1,5 +1,6 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
     MEETING_FILE,
@@ -11,6 +12,7 @@ import { clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/pro
 import { kickDrainer, loadRmConfig, moveToTrash, resolveTarget, rmCallerFromRuntime } from "@genesiscz/utils/rm";
 import { ANSWER_LOG_FILE, appendAnswerEvent, readAnswerEvents, runningRound } from "./answer-log";
 import { COMMENTS_FILE, MeetingComments } from "./comments";
+import { JOURNAL_FILE, journalEntrySchema } from "./decision-journal";
 import { cloneTree } from "./merge";
 import { interruptedRecording } from "./recorder-adapters";
 import { lastRecordingActivity, readRecorderState } from "./recorder-shared";
@@ -23,6 +25,8 @@ export interface DuplicateRequest {
     ref: string;
     /** The copy's title; default: the original's title with " (copy)". */
     title?: string;
+    /** Start an independent automatic run with no items or decision journal. */
+    withoutItems?: boolean;
 }
 
 export interface DuplicateResult {
@@ -171,8 +175,11 @@ async function duplicateLocked(request: DuplicateRequest): Promise<DuplicateResu
     let copy: MeetingRecord;
     try {
         copy = await store.createWithFiles({
-            fields: { ...fields, title },
-            change: { command: "duplicate", change: `duplicated from ${original.id}` },
+            fields: { ...fields, title, ...(request.withoutItems ? { items: [] } : {}) },
+            change: {
+                command: "duplicate",
+                change: `duplicated from ${original.id}${request.withoutItems ? " without items" : ""}`,
+            },
             beside: {
                 write: (record) => {
                     const to = store.folder(record.id);
@@ -182,6 +189,42 @@ async function duplicateLocked(request: DuplicateRequest): Promise<DuplicateResu
                         writePidFile(claim, { exclusive: true });
                         for (const name of readdirSync(from)) {
                             if (name === MEETING_FILE || /(?:\.pid|\.lock)(?:$|\.)/.test(name)) {
+                                continue;
+                            }
+
+                            if (name === JOURNAL_FILE) {
+                                if (!request.withoutItems) {
+                                    const entries = readFileSync(join(from, name), "utf8")
+                                        .split("\n")
+                                        .filter((line) => line.trim())
+                                        .map((line) => {
+                                            const entry = journalEntrySchema.parse(
+                                                SafeJSON.parse(line, { jsonl: true })
+                                            );
+                                            if (entry.meeting !== original.id || entry.action.kind === "unsupported") {
+                                                throw new Error(
+                                                    `Cannot copy incompatible journal entry ${entry.token}; use --without-items for a clean copy.`
+                                                );
+                                            }
+
+                                            return SafeJSON.stringify(
+                                                {
+                                                    ...entry,
+                                                    meeting: record.id,
+                                                    copiedFrom: original.id,
+                                                    corrections: entry.corrections.map((correction) => ({
+                                                        ...correction,
+                                                        meeting: record.id,
+                                                    })),
+                                                },
+                                                { jsonl: true }
+                                            );
+                                        });
+                                    writeFileSync(join(to, name), entries.length ? `${entries.join("\n")}\n` : "", {
+                                        mode: 0o600,
+                                    });
+                                }
+
                                 continue;
                             }
 

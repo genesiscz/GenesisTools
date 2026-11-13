@@ -63,9 +63,13 @@ async function create(
                 createdBy: "new",
                 quiet: opts.yes,
             });
-            ui.ok(
-                `${created ? "Created" : "Already there:"} ${record.id}${record.project ? ` (project ${record.project})` : ""}`
-            );
+            if (!created) {
+                ui.warn(
+                    `Source already belongs to ${record.id}. To create a copy: ${TOOL} duplicate ${record.id} --title "<title>" (add --without-items for a clean copy).`
+                );
+            } else {
+                ui.ok(`Created ${record.id}${record.project ? ` (project ${record.project})` : ""}`);
+            }
             await collectAndReport(store, record);
 
             if (record.end) {
@@ -315,9 +319,17 @@ async function merge(fromRef: string, opts: { into: string; dryRun?: boolean; js
     }
 }
 
-async function duplicate(ref: string, opts: { title?: string; json?: boolean }): Promise<void> {
+async function duplicate(
+    ref: string,
+    opts: { title?: string; json?: boolean; withoutItems?: boolean; items?: boolean }
+): Promise<void> {
     try {
-        const result = await duplicateMeeting({ store: new MeetingStore(), ref, title: opts.title });
+        const result = await duplicateMeeting({
+            store: new MeetingStore(),
+            ref,
+            title: opts.title,
+            withoutItems: opts.withoutItems || opts.items === false,
+        });
 
         if (opts.json) {
             out.result(SafeJSON.stringify(result, null, 2));
@@ -510,6 +522,8 @@ export function registerMeetingCommands(program: Command): void {
         .description("Copy a meeting into a new record: its fields, items, context, frames and sound")
         .option("--title <text>", 'the copy\'s title (default: the title with " (copy)")')
         .option("--json", "print the copy's id and title as JSON")
+        .option("--without-items", "copy without items or the decision journal, ready for an independent suggest run")
+        .option("--no-items", "alias for --without-items")
         .action(duplicate);
 
     const context = program.command("context").description("Reference material for a meeting: notes, files, links");

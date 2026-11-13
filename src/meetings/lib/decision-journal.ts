@@ -1619,6 +1619,11 @@ export class DecisionJournal {
 
                 known ??= new Map(this.entries(meeting).map((entry) => [entry.token, entry]));
                 const entry = known.get(wanted);
+                if (entry && entry.meeting !== meeting) {
+                    throw new Error(
+                        `Journal entry ${entry.token} belongs to ${entry.meeting}, not ${meeting}; refusing cross-record Undo.`
+                    );
+                }
                 if (entry?.action.kind === "unsupported") {
                     throw new Error(
                         `This decision was made by a newer build (${entry.action.name}). Open it in that build to undo it; nothing was changed.`
