@@ -261,6 +261,7 @@ export async function rowsRead(options: {
 
 /** The transcript flags that change what `meetings transcript` applies or prints. */
 export interface TranscriptReadOptions {
+    applyAbove?: number | string;
     withSuggested?: boolean;
     dictionary?: boolean;
     frontmatter?: boolean;
@@ -283,6 +284,13 @@ export async function correctedTranscriptRead(options: {
     const { store, record, format, flags, linked } = options;
     const meeting = await OpenedMeeting.of(store, record, linked).meeting();
     const config = await new MeetingsConfigStore().read();
+    if (flags.applyAbove !== undefined) {
+        const threshold = Number(flags.applyAbove);
+        if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+            throw new Error("--apply-above must be between 0 and 1");
+        }
+        config.global.suggest.applyAbove = threshold;
+    }
     const markdown =
         format === "md"
             ? transcriptMarkdown({

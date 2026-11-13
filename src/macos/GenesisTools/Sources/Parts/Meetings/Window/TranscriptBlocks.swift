@@ -29,6 +29,7 @@ struct TranscriptBlockLine: Equatable, Hashable, Identifiable {
     let text: String
     var marks: Set<TranscriptLineMark> = []
     var words: [TranscriptWord] = []
+    var indicator: TranscriptLine.Indicator? = nil
 
     /// True while `position` is inside the line. A line without an end is heard from its start on.
     func isHeard(at position: Double) -> Bool {
@@ -62,7 +63,7 @@ struct TranscriptBlock: Equatable, Identifiable {
         var blocks: [TranscriptBlock] = []
         for (index, entry) in entries.enumerated() {
             let line = TranscriptBlockLine(id: entry.rowID, index: index, startSec: entry.startSec, endSec: ends[index],
-                                           text: entry.text, marks: marks[entry.rowID] ?? [], words: entry.words ?? [])
+                                           text: entry.text, marks: marks[entry.rowID] ?? [], words: entry.words ?? [], indicator: entry.indicator)
             if var last = blocks.last, last.speaker == entry.speaker, !breaks(after: last.lines.last, before: line, gap: breakAfterGapSec) {
                 last.lines.append(line)
                 blocks[blocks.count - 1] = last
@@ -343,6 +344,12 @@ private struct TranscriptBlockLineView: View {
                     RoundedRectangle(cornerRadius: 4).fill(fill)
                         .animation(animateActivity && !reduceMotion ? .easeOut(duration: 0.16) : nil, value: heard)
                 }
+            if let indicator = line.indicator {
+                Image(systemName: indicator.ignored == nil ? "person.wave.2" : "exclamationmark.triangle")
+                    .font(.system(size: 11)).foregroundStyle(indicator.ignored == nil ? Color.secondary : .orange)
+                    .instantTooltip(indicator.text)
+                    .accessibilityLabel(indicator.text)
+            }
             if line.marks.contains(.unclearSpeaker) {
                 Image(systemName: "questionmark.circle")
                     .font(.system(size: 11)).foregroundStyle(.orange)

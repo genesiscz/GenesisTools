@@ -16,6 +16,7 @@ import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcr
 import { formatClock, type TranscriptFormat } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { openQuestions } from "./questions";
+import { diagnoseTermAddress } from "./term-address";
 
 /**
  * The open questions as passages a transcript marks: a speaker question marks the label of the ranges it decides, a
@@ -285,6 +286,16 @@ export function correctTranscript(options: {
         entries: corrected.entries.map((entry) => ({ ...entry, speaker: entry.speaker.normalize("NFC") })),
     };
     const outcomes = [...applied.outcomes, ...labelOutcomes(record, transcript, applied.outcomes, corrections)];
+    for (const outcome of outcomes) {
+        const item = record.items.find((item) => item.id === outcome.item);
+        if (outcome.status !== "not-found" || item?.kind !== "term") {
+            continue;
+        }
+        const diagnostic = diagnoseTermAddress({ item, transcript });
+        if (diagnostic?.message) {
+            outcome.reason = diagnostic.message;
+        }
+    }
     const unclear = `[${languageSettings(config).render.unclearLabel}:`;
     const sourceLabels = new Set(transcript.map((entry) => entry.speaker.normalize("NFC")));
     const people = new Set(

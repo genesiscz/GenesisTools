@@ -281,7 +281,7 @@ function termChoices(item: TermItem): RowChoice[] {
             : []),
         {
             value: item.heard,
-            label: "Keep as heard",
+            label: "Real word · keep as heard",
             role: "heard" as const,
             action: { kind: "reject" as const },
         },

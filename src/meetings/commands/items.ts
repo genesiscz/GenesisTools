@@ -186,7 +186,7 @@ function readRows(meeting: string, all: boolean) {
 
 async function suggest(
     ref: string,
-    opts: { rules?: string; attendance?: string; wordCheck?: string; json?: boolean }
+    opts: { rules?: string; attendance?: string; attendanceId?: string; wordCheck?: string; json?: boolean }
 ): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
@@ -225,6 +225,7 @@ async function suggest(
             record,
             rules,
             attendance: opts.attendance,
+            attendanceId: opts.attendanceId,
             wordCheck: wordCheckChoice,
         });
 
@@ -688,6 +689,7 @@ async function transcript(
         format?: string | boolean;
         json?: boolean;
         withSuggested?: boolean;
+        applyAbove?: string;
         dictionary?: boolean;
         timestamps?: boolean;
         playLinks?: boolean;
@@ -793,6 +795,10 @@ export function registerItemCommands(program: Command): void {
             `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default: each language's languages.<code>.wordCheck, else ${DEFAULT_WORD_CHECK})`
         )
         .option("--json", "print the new items")
+        .option(
+            "--attendance-id <threadId>",
+            "Exact attendance chat id; requires --attendance with a platform supporting ids"
+        )
         .action(suggest);
 
     program
@@ -948,6 +954,10 @@ export function registerItemCommands(program: Command): void {
         .option("--format [format]", `${TRANSCRIPT_FORMATS.join(" | ")} (default md)`)
         .option("--json", "the same as --format json")
         .option("--with-suggested", "also apply the suggested items")
+        .option(
+            "--apply-above <confidence>",
+            "with --with-suggested: preview at this confidence, 0 to 1; changes no config"
+        )
         .option("--no-dictionary", "do not apply the dictionary")
         .option("--no-frontmatter", "md: omit the frontmatter")
         .option("--timestamps", "show the start time of each paragraph")

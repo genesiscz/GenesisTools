@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import * as clack from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -20,10 +21,12 @@ import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { prepareFindings } from "../lib/add-findings";
 import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } from "../lib/answer-log";
 import { clipPlayer, cutClip, playClip } from "../lib/audio";
 import { MeetingComments } from "../lib/comments";
 import { callerActor } from "../lib/decision-journal";
+import type { Finding } from "../lib/findings";
 import {
     type ClipSettings,
     clipSettings,
@@ -616,6 +619,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     }
 
     let selected: string[] | undefined;
+    let pendingFindings: Finding[] | undefined;
     try {
         if (opts.questions) {
             if (opts.item || opts.answer !== undefined) {
@@ -629,15 +633,20 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                         "Ad-hoc questions are stored when an interactive round starts; --clip-out and noninteractive use require stored question IDs"
                     );
                 }
-                const text = opts.questions === "-" ? await Bun.stdin.text() : await Bun.file(opts.questions).text();
-                const findings = listenQuestionFindings(SafeJSON.parse(text));
-                const client = await openMeetingsClient({ role: "listen" });
-                try {
-                    await client.call("decision.apply", { meeting: meeting.id, action: { kind: "add", findings } });
-                    meeting = store.read(meeting.id) ?? meeting;
-                } finally {
-                    client.close();
+                let text: string;
+                if (opts.questions === "-") {
+                    const input = createInterface({ input: process.stdin, output: process.stderr });
+                    try {
+                        text = await input.question("Questions JSON array: ");
+                    } finally {
+                        input.close();
+                    }
+                } else {
+                    text = await Bun.file(opts.questions).text();
                 }
+                pendingFindings = listenQuestionFindings(SafeJSON.parse(text));
+                const prepared = prepareFindings({ findings: pendingFindings, items: meeting.items });
+                meeting = { ...meeting, items: [...meeting.items, ...prepared.added] };
             }
         }
     } catch (error) {
@@ -692,6 +701,19 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
 
         if (!chosen) {
             return;
+        }
+
+        if (pendingFindings) {
+            const adding = await openMeetingsClient({ role: "listen" });
+            try {
+                await adding.call("decision.apply", {
+                    meeting: meeting.id,
+                    action: { kind: "add", findings: pendingFindings },
+                });
+                meeting = store.read(meeting.id) ?? meeting;
+            } finally {
+                adding.close();
+            }
         }
 
         // The round decides through the Meetings service when one runs (the window hears each answer as it lands),

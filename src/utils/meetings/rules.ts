@@ -5,6 +5,8 @@
  * as a plain string.
  */
 export enum MeetingRule {
+    PlatformPrehistory = "platform-prehistory",
+    LocalSpeech = "local-speech",
     /**
      * RA, attendance. The platform's join and leave times (Teams per person, FaceTime for the whole call) say who was
      * in the call. A label whose person was not in the call during a range cannot be theirs; with one other person

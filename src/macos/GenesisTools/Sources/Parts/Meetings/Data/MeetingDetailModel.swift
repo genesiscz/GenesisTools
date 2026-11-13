@@ -39,6 +39,7 @@ final class MeetingDetailModel {
     /// Item ids with a command in flight: their buttons wait, so a second press cannot run it twice.
     var busyItems: Set<String> = []
     var busy: Set<String> = []
+    var suggestionWarnings: [String] = []
     /// The notices of this pane's actions, floating over its tabs: several at once, each with its own Undo and time.
     @ObservationIgnored let notices: NoticeStackModel
     private var recordGeneration = 0
@@ -250,7 +251,7 @@ final class MeetingDetailModel {
 
     /// The corrected transcript: `meeting.transcript`, or `transcript <id> --format json`.
     static func transcriptRead(_ id: String) -> MeetingsRead<MeetingTranscript> {
-        .service(MeetingsAPI.Transcript.self, .init(ref: id), orRun: ["transcript", id, "--format", "json"], timeoutSeconds: 120)
+        .service(MeetingsAPI.Transcript.self, .init(previewThresholds: [0.5, 0.6, 0.7, 0.8, 0.9, 1], ref: id), orRun: ["transcript", id, "--format", "json"], timeoutSeconds: 120)
     }
 
     /// The revision token per part: `meeting.revisions`, or `revisions <id> --json`.
@@ -1001,7 +1002,20 @@ extension MeetingDetailModel {
 extension MeetingDetailModel {
     /// Runs the rules on the transcript (`tools meetings suggest`), from the Items tab's empty state.
     func suggest() {
-        change("suggest", ["suggest", id], done: "The rules ran on the transcript")
+        guard let service else {
+            change("suggest", ["suggest", id], done: "The rules ran on the transcript")
+            return
+        }
+        guard !busy.contains("suggest") else { return }
+        busy.insert("suggest")
+        Task {
+            defer { busy.remove("suggest") }
+            do {
+                let result = try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: id, attendance: nil))
+                suggestionWarnings = result.warnings
+                readRecordAndRows()
+            } catch { notices.push(.meetingsFailure(error)) }
+        }
     }
 }
 

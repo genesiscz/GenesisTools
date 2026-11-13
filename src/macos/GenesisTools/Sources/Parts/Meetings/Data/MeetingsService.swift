@@ -17,7 +17,11 @@ protocol MeetingsServiceMethod {
 enum MeetingsAPI {
     /// `MEETINGS_PROTOCOL`: a service that speaks another one refuses the hello with `protocol-mismatch`.
     static let protocolVersion = 1
-
+    enum MeetingSuggest: MeetingsServiceMethod {
+        static let name = "meeting.suggest"
+        struct Params: Codable, Equatable { var meeting: String; var attendance: String? }
+        struct Result: Decodable, Equatable { let added: Int; let warnings: [String] }
+    }
     enum MeetingPeopleEdit: MeetingsServiceMethod {
         static let name = "meeting.people.edit"
         struct Params: Codable, Equatable {
@@ -110,6 +114,7 @@ enum MeetingsAPI {
         static let name = "meeting.transcript"
 
         struct Params: Codable, Equatable {
+            var previewThresholds: [Double]? = nil
             var ref: String
             /// Also apply the suggested items at or above the apply bar (a preview).
             var withSuggested: Bool?

@@ -1963,11 +1963,14 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             const { meetings } = (await new MeetingsToolset().load(ctx)) as {
                 meetings: { open(ref: string): { items: { suggest(input?: unknown): Promise<unknown> } } };
             };
-            expect(await meetings.open(record.id).items.suggest()).toEqual({
+            expect(
+                await meetings.open(record.id).items.suggest({ attendance: "teams", attendanceId: "chat-b" })
+            ).toEqual({
                 fresh: [],
                 retired: ["i7"],
                 warnings: [],
             });
+            expect(run.mock.calls[0][0]).toMatchObject({ attendance: "teams", attendanceId: "chat-b" });
         } finally {
             run.mockRestore();
         }

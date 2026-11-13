@@ -37,6 +37,7 @@ import {
 import { arrivalItems } from "./arrival";
 import { contextEntryText } from "./context-file";
 import { identifiedDepartures } from "./departure";
+import { indicatorFacts } from "./indicator-facts";
 import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
 import { assessIndicator } from "./speaker-indicator";
@@ -1670,6 +1671,7 @@ function evidenceItems(options: {
                     evidence: {
                         channel: finding.speaker === selfName ? "mic" : "system",
                         ...(stuck.has(line.index) ? { indicatorIgnored: assessment.reasons.get(line.index) } : {}),
+                        ...(stuck.has(line.index) ? { indicatorReason: assessment.reasons.get(line.index) } : {}),
                         ...(finding.listen
                             ? { listen: true, note: "both channels in these lines: confirm by listening" }
                             : {}),
@@ -1775,9 +1777,47 @@ export function suggestItems(options: {
 }): MeetingItem[] {
     const { record } = options;
     // A label item says the label tracks no one person in its stretch: the speaker rules see those lines unlabeled.
-    const unlabeled = unlabeledView(options.meeting, unlabeledStretches(record.items));
+    const prehistory: NewItem[] = options.rules.some((rule) => rule === "speakers" || rule === "evidence")
+        ? indicatorFacts({
+              meeting: options.meeting,
+              evidence: options.evidence ?? null,
+              presence: options.presence,
+          }).labels.flatMap((label): NewItem[] =>
+              label.fromSec === undefined || label.toSec === undefined
+                  ? []
+                  : [
+                        {
+                            kind: "label",
+                            label: label.label,
+                            fromSec: label.fromSec,
+                            toSec: label.toSec,
+                            meaningless: true,
+                            status: "suggested",
+                            confidence: 0.8,
+                            rules: [MeetingRule.PlatformPrehistory],
+                            evidence: {
+                                reason: "platform label speaks before its first own indicator or join",
+                                ...label,
+                            },
+                        },
+                    ]
+          )
+        : [];
+    const unlabeled = unlabeledView(
+        options.meeting,
+        unlabeledStretches([
+            ...record.items,
+            ...prehistory.map((item, index) =>
+                meetingItemSchema.parse({
+                    ...item,
+                    id: `i${record.items.length + index + 1000000}`,
+                    suggestedAt: options.now,
+                })
+            ),
+        ])
+    );
     const meeting = unlabeled.meeting;
-    const found: NewItem[] = [];
+    const found: NewItem[] = [...prehistory];
 
     const selfNameForDeparture = record.participants.find((person) => person.self)?.name ?? options.evidence?.selfName;
     const departureLines = options.evidence
@@ -1921,10 +1961,14 @@ export function suggestItems(options: {
         presence: options.presence,
         transcript: options.meeting.transcript,
         candidates: [
+            ...options.meeting.participants.map((person) => person.name),
+            ...(options.evidence?.selfName ? [options.evidence.selfName] : []),
             ...record.participants.map((person) => person.name),
             ...(record.seats?.room ?? []),
             ...(record.seats?.remote.map((seat) => seat.name) ?? []),
-            ...(options.evidence?.speaking.flatMap((reading) => reading.speaking) ?? []),
+            ...(options.evidence?.speaking.flatMap((reading) => [...reading.speaking, ...(reading.muted ?? [])]) ?? []),
+            ...(record.attendance?.people.map((person) => person.name) ?? []),
+            ...Object.values(record.speakers.labels),
         ],
         points: options.points ?? [],
     };

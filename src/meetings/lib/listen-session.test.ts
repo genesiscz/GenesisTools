@@ -12,6 +12,7 @@ import { decideItems } from "./decide";
 import { DecisionJournal } from "./decision-journal";
 import { findingItems, findingsFileSchema } from "./findings";
 import { SPEAKER_PAD_SEC, writeQuestionClips } from "./listen-clips";
+import { listenQuestionFindings, selectedQuestionIds } from "./listen-input";
 import {
     type AskedQuestion,
     type ListenAdapter,
@@ -104,7 +105,13 @@ async function fixture(items: Record<string, unknown>[]) {
     const ledger: Correction[] = [];
     const session = (
         adapter: ListenAdapter,
-        extra: { only?: string; budget?: number; join?: boolean; ledger?: (corrections: Correction[]) => void } = {}
+        extra: {
+            only?: string;
+            selected?: string[];
+            budget?: number;
+            join?: boolean;
+            ledger?: (corrections: Correction[]) => void;
+        } = {}
     ) =>
         new ListenSession({
             store,
@@ -112,6 +119,7 @@ async function fixture(items: Record<string, unknown>[]) {
             logPath,
             adapter,
             ...(extra.only ? { only: extra.only } : {}),
+            ...(extra.selected ? { selected: extra.selected } : {}),
             budget: extra.budget ?? 10,
             minPriority: 0,
             listenBelow: 0.6,
@@ -616,4 +624,38 @@ describe("the typed answer's names (answerVocabulary, R10)", () => {
         ]);
         expect(answerVocabulary(here, ["ADA"])).toEqual(["Dana Example", "Alex Example", "ADA"]);
     });
+});
+
+test("ad-hoc questions persist, selected rounds answer and undo through the normal journal", async () => {
+    const fx = await fixture([term("i1", 10), question("i2")]);
+    const journal = new DecisionJournal({ store: fx.store, listenBelow: 0.6, ledger: () => {} });
+    const findings = listenQuestionFindings([
+        { from: "0:10", to: "0:20", kind: "question", question: "Who owns the export?", choices: ["Alice", "Bob"] },
+        { from: 20, to: 25, kind: "question", question: "Who sends it?", choices: ["Alice", "Bob"] },
+    ]);
+    const added = await journal.apply({
+        meeting: fx.meeting.id,
+        action: { kind: "add", findings },
+        actor: { kind: "listen" },
+    });
+    expect(added.entry).toBeDefined();
+    const selected = selectedQuestionIds(fx.read(), ["Q2", "Q3"]);
+    expect(() => selectedQuestionIds(fx.read(), ["Q999"])).toThrow("not an open question");
+    const adapter = new ScriptedAdapter([{ answer: "Alice" }, "back", { answer: "Bob" }, { answer: "Alice" }]);
+    await fx.session(adapter, { selected }).run();
+    expect(adapter.asked.map((asked) => asked.question.id)).toEqual([
+        selected[0],
+        selected[1],
+        selected[0],
+        selected[1],
+    ]);
+    const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+    expect(reopened.items.find((item) => item.id === "i1")?.status).toBe("suggested");
+    expect(reopened.items.find((item) => item.id === "i2")?.status).toBe("suggested");
+    expect(reopened.items.find((item) => item.id === selected[0])).toMatchObject({ answer: "Bob", decides: [] });
+    expect(fx.events()).toContain("answered");
+    expect(fx.events()).toContain("reopened");
+    expect(() =>
+        listenQuestionFindings([{ kind: "term", at: 0, heard: "Ada", confidence: 0.8, reason: "probe" }])
+    ).toThrow("question findings");
 });

@@ -86,7 +86,7 @@ import {
     skipQuestion,
     splitQuestion,
 } from "./lib/questions";
-import { rawMeeting } from "./lib/raw";
+import { compactEvidence, rawMeeting } from "./lib/raw";
 import { runRecorder } from "./lib/recorder";
 import { RecordingRecord } from "./lib/recorder-adapters";
 import {
@@ -2025,7 +2025,7 @@ describe("questions (R2.3)", () => {
         expect(questionFor(unknown("OpenAI", 1), said)).toMatchObject({ about: "term", heard: "OpenAI" });
     });
 
-    test("neighbouring candidate lists do not establish voice identity, while signatures still affect priority", () => {
+    test("neighbouring candidate lists neither establish voice identity nor multiply answer reach", () => {
         const question = (id: string, fromSec: number, choices: string[], confidence: number) => ({
             kind: "question" as const,
             status: "suggested" as const,
@@ -2050,8 +2050,8 @@ describe("questions (R2.3)", () => {
             []
         );
         expect(picked.map((item) => item.decides)).toEqual([["i1"], ["i2"], ["i4"], ["i3"]]);
-        expect(picked[0]).toMatchObject({ priority: 1, toSec: 110 });
-        expect(picked[1]).toMatchObject({ priority: 1 });
+        expect(picked[0]).toMatchObject({ priority: 1, toSec: 110, evidence: { reach: 1 } });
+        expect(picked[1]).toMatchObject({ priority: 1, evidence: { reach: 1 } });
         const same = question("i5", 100, ["Bob Example", "Carol Example"], 0.4);
         const passage = { fromSec: 100, toSec: 110 };
         expect(
@@ -6354,6 +6354,30 @@ describe("capture coverage evidence", () => {
         });
         expect(screenCaptureCoverage({ record, zeroMs: Number.NaN })).toEqual({});
     });
+});
+
+test("raw facts expose indicator gaps, prehistory, indicator-only people and unknown channels", () => {
+    const transcript = Array.from({ length: 12 }, (_, index) => line("Alice Example", index * 10, "A spoken line."));
+    const raw = rawMeeting({
+        record,
+        meeting: { ...meeting, speakers: [{ speakerId: 1, name: "Alice Example", origin: "platform" }], transcript },
+        evidence: {
+            segments: [],
+            speaking: [
+                { tSec: 1, speaking: ["Bob Example"], muted: ["Carol Example"] },
+                { tSec: 120, speaking: ["Alice Example"] },
+            ],
+            files: [],
+        },
+        points: [],
+    });
+    expect(raw.lines.every((line) => line.channel.micShare === null)).toBe(true);
+    expect(raw.meeting.labels?.[0]).toMatchObject({ firstOwnIndicatorSec: 120, fromSec: 0, toSec: 110, lines: 12 });
+    expect(raw.meeting.indicatorGaps?.some((gap) => gap.toSec - gap.fromSec >= 60)).toBe(true);
+    expect(raw.people.find((person) => person.name === "Carol Example")?.origin).toBe("indicator");
+    const compact = compactEvidence(raw);
+    expect(compact.split("\n")).toHaveLength(transcript.length + 1);
+    expect(compact).toContain("|e?|s[");
 });
 
 test("conflicting microphone segments and call energy open a platform label instead of silently retaining it", () => {
