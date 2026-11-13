@@ -296,7 +296,7 @@ function holderIsAlive(holder: LockHolder): boolean {
     }
 }
 
-async function readText(path: string): Promise<string | null> {
+async function readLockFile(path: string): Promise<string | null> {
     try {
         return await readFile(path, "utf8");
     } catch (error) {
@@ -327,7 +327,7 @@ async function claimRun(dir: string): Promise<RunClaim> {
             await writeFile(path, mine, { flag: "wx" });
             return {
                 async release() {
-                    if ((await readText(path)) === mine) {
+                    if ((await readLockFile(path)) === mine) {
                         await unlink(path);
                     }
                 },
@@ -337,7 +337,7 @@ async function claimRun(dir: string): Promise<RunClaim> {
                 throw error;
             }
         }
-        const text = await readText(path);
+        const text = await readLockFile(path);
         if (text === null) {
             continue;
         }
@@ -354,7 +354,7 @@ async function claimRun(dir: string): Promise<RunClaim> {
             }
             throw error;
         }
-        if ((await readText(aside)) === text) {
+        if ((await readLockFile(aside)) === text) {
             await unlink(aside);
             continue;
         }
@@ -363,9 +363,9 @@ async function claimRun(dir: string): Promise<RunClaim> {
         } finally {
             await unlink(aside);
         }
-        throw inUse(parseLockHolder((await readText(path)) ?? ""));
+        throw inUse(parseLockHolder((await readLockFile(path)) ?? ""));
     }
-    throw inUse(parseLockHolder((await readText(path)) ?? ""));
+    throw inUse(parseLockHolder((await readLockFile(path)) ?? ""));
 }
 
 /** "2026-11-10T19-42-07-<label>" in the local time of this computer. */
