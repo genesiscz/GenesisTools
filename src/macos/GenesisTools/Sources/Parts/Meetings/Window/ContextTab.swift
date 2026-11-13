@@ -104,6 +104,8 @@ private struct ContextComposerButton: View {
     @State private var open = false
     @State private var value = ""
     @State private var title = ""
+    /// The value and title an add sent: its answer clears the fields only while they still show them.
+    @State private var pending = SentDraft<[String]>()
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -136,10 +138,15 @@ private struct ContextComposerButton: View {
         kind == .note ? !trimmed.isEmpty : (trimmed.hasPrefix("https://") || trimmed.hasPrefix("http://")) && trimmed.count > 8
     }
 
+    private var draft: [String] { [trimmed, title.trimmingCharacters(in: .whitespaces)] }
+
     private func add() {
         guard valid else { return }
-        let name = title.trimmingCharacters(in: .whitespaces)
-        detail.addContext(kind == .link ? .link(trimmed) : .note(trimmed), title: name.isEmpty ? nil : name) {
+        let sent = draft
+        pending.send(sent)
+        detail.addContext(kind == .link ? .link(trimmed) : .note(trimmed), title: sent[1].isEmpty ? nil : sent[1]) {
+            // Typed on (or sent again) while the add ran: the newer text stays, and so does the popover.
+            guard pending.clears(form: draft, saved: { $0 == sent }) else { return }
             value = ""
             title = ""
             open = false

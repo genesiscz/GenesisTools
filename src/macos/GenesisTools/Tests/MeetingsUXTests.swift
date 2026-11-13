@@ -396,20 +396,62 @@ final class MeetingsUXTests: XCTestCase {
                           meetingsNotificationPrefix(home: "/tmp/two", realHome: "/Users/alice"), "distinct homes stay apart")
     }
 
+    private func dictionaryDraft(_ value: String, _ substitution: String = "Kubernetes", scope: String? = nil) -> DictionaryFormDraft {
+        DictionaryFormDraft(type: "fix", value: value, substitution: substitution, meaning: "", spoken: [],
+                            caseSensitive: false, scope: scope)
+    }
+
+    private func entry(_ value: String, _ substitution: String = "Kubernetes", level: String? = nil) -> DictionaryEntry {
+        DictionaryEntry(type: "fix", value: value, substitution: substitution, spoken: nil, meaning: nil, caseSensitive: nil,
+                        level: level)
+    }
+
     func testDictionaryFormForgetsAValueThatNeverLanded() {
-        var pending = DictionaryFormPending()
-        pending.submitted("Kubernetes")
-        XCTAssertTrue(pending.landed(in: ["Kubernetes"]), "the entry arrived: the form clears once")
-        XCTAssertFalse(pending.landed(in: ["Kubernetes"]))
-        pending.submitted("Kubernetes")
-        pending.typed("Kafka")
-        XCTAssertFalse(pending.landed(in: ["Kubernetes"]), "a refused write: typing another value drops it")
-        pending.submitted("Kafka")
-        pending.typed("Kafka")
-        XCTAssertTrue(pending.landed(in: ["Kafka"]), "the same text in the field keeps it")
-        pending.submitted("Kafka")
+        var pending = SentDraft<DictionaryFormDraft>()
+        let sent = dictionaryDraft("kubernetis")
+        func holds(_ entries: [DictionaryEntry]) -> (DictionaryFormDraft) -> Bool {
+            { draft in entries.contains(where: draft.isSaved(as:)) }
+        }
+
+        pending.send(sent)
+        XCTAssertFalse(pending.clears(form: sent, saved: holds([entry("kubernetis", "Kubernetis")])),
+                       "an older entry with the same value is not the saved one")
+        XCTAssertTrue(pending.clears(form: sent, saved: holds([entry("kubernetis")])), "the entry arrived: the form clears once")
+        XCTAssertFalse(pending.clears(form: sent, saved: holds([entry("kubernetis")])))
+
+        pending.send(sent)
+        XCTAssertFalse(pending.clears(form: dictionaryDraft("kafka"), saved: holds([entry("kubernetis")])),
+                       "the next entry typed while the save ran stays in the form")
+        XCTAssertFalse(pending.clears(form: sent, saved: holds([entry("kubernetis")])), "and the send is forgotten")
+
+        pending.send(sent)
+        XCTAssertFalse(pending.clears(form: dictionaryDraft("kubernetis", "Kubernetes cluster"), saved: holds([entry("kubernetis")])),
+                       "a substitution edited while the save ran stays too")
+
+        pending.send(dictionaryDraft("kubernetis", scope: "work"))
+        XCTAssertFalse(pending.clears(form: dictionaryDraft("kubernetis", scope: "work"),
+                                      saved: holds([entry("kubernetis", level: "global")])), "a global entry is not the project's")
+        XCTAssertTrue(pending.clears(form: dictionaryDraft("kubernetis", scope: "work"),
+                                     saved: holds([entry("kubernetis", level: "project work")])))
+
+        pending.send(sent)
         pending.reset()
-        XCTAssertFalse(pending.landed(in: ["Kafka"]), "Cancel or a new edit drops it")
+        XCTAssertFalse(pending.clears(form: sent, saved: holds([entry("kubernetis")])), "Cancel or a new edit drops it")
+    }
+
+    /// The label field and the context composer stay editable while their add runs: the answer clears only what it sent.
+    func testAnAddAnswerClearsOnlyTheDraftItSent() {
+        var label = SentDraft<String>()
+        label.send("review")
+        XCTAssertFalse(label.clears(form: "demo", saved: { ["review"].contains($0) }), "label B typed while A was added stays")
+        XCTAssertNil(label.sent)
+
+        var context = SentDraft<[String]>()
+        let first = ["note A", ""], second = ["note B", ""]
+        context.send(first)
+        context.send(second)
+        XCTAssertFalse(context.clears(form: second, saved: { $0 == first }), "A's answer leaves B, sent after it, in the composer")
+        XCTAssertTrue(context.clears(form: second, saved: { $0 == second }), "B's own answer clears it")
     }
 
     func testAPreviewSendsNoDraftOfAProjectRenamedOrRemovedSince() {

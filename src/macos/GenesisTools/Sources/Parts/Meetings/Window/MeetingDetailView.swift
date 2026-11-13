@@ -326,13 +326,13 @@ struct MeetingDetailView: View {
 /// "+ Label": a popover with one field; Return adds, Esc closes. A new label joins the project's labels.
 private struct AddLabelButton: View {
     let enabled: Bool
-    /// The meeting's labels: the field clears and the popover closes once the new one is among them, so a refused
-    /// label keeps what was typed.
+    /// The meeting's labels: the field clears and the popover closes once the new one is among them and the field still
+    /// shows it, so a refused label, or one typed while the add ran, keeps what was typed.
     let labels: [String]
     let add: (String) -> Void
     @State private var open = false
     @State private var text = ""
-    @State private var pending: String?
+    @State private var pending = SentDraft<String>()
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -356,13 +356,12 @@ private struct AddLabelButton: View {
             .onAppear { focused = true }
         }
         .onChange(of: labels) { _, now in
-            guard let pending, now.contains(pending) else { return }
-            self.pending = nil
+            guard pending.clears(form: text.trimmingCharacters(in: .whitespaces), saved: { now.contains($0) }) else { return }
             text = ""
             open = false
         }
         .onChange(of: open) { _, isOpen in
-            if !isOpen { pending = nil }
+            if !isOpen { pending.reset() }
         }
     }
 
@@ -371,11 +370,11 @@ private struct AddLabelButton: View {
         case .nothing:
             return
         case .present:
-            pending = nil
+            pending.reset()
             text = ""
             open = false
         case .add(let label):
-            pending = label
+            pending.send(label)
             add(label)
         }
     }
