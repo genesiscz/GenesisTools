@@ -747,6 +747,27 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(holders("session.close"), [opens[1]])
     }
 
+    // Regression test: PR #507 review — two windows of one edit share the app's connection, so the service named both
+    // windows' changes `editor` and each window ignored the other's: it lost the undo or redo and drew a stale edit.
+    func testAnotherWindowsChangeOfTheSameEditIsAnOutsideChange() {
+        let service = FakeServiceLink(project: .whole(video: "/fixture/movie.mp4", durationUs: 1_000_000, width: 1920, height: 1080,
+                                                      cursor: nil, recording: nil))
+        let session = EditorSession(path: "/fixture/rec/edit.json", host: { service })
+        session.start()
+        session.edit("edit.undo", [:]) { _ in }
+        XCTAssertEqual(service.calls.last?.params["holder"] as? String, session.holder, "an edit call names the window")
+
+        func change(by: String, holder: String?) -> RecorderProtocol.ProjectChanged {
+            RecorderProtocol.ProjectChanged(path: "/fixture/rec/edit.json", revision: 2, by: by, holder: holder, action: "undo")
+        }
+        XCTAssertTrue(EditorSession.isOwn(change(by: "editor", holder: session.holder), holder: session.holder))
+        XCTAssertFalse(EditorSession.isOwn(change(by: "editor", holder: "another-window"), holder: session.holder),
+                       "another window's change reaches this window")
+        XCTAssertFalse(EditorSession.isOwn(change(by: "agent", holder: nil), holder: session.holder))
+        XCTAssertTrue(EditorSession.isOwn(change(by: "editor", holder: nil), holder: session.holder),
+                      "a service too old to name the holder: every window's change looks like its own, as before")
+    }
+
     // Regression test: 2026-11-05 review of the editor gaps, R1.1, on the edit path. The undo's answer took the last
     // step off the list, and a drag that ended before the answer was that step: the drag could not be undone and the
     // zoom came back as a redo.

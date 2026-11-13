@@ -9,7 +9,13 @@ import { callTimeoutFor } from "@genesiscz/utils/screen-recorder/live";
 import { RECORDING_EVENT, RECORDINGS_CHANGED } from "@genesiscz/utils/screen-recorder/service-link";
 import { z } from "zod";
 import { editPathOf, editProject, setEditOwner, withEditCancel } from "./edit";
-import { type EditSession, EditSessions, type ProjectChanged, withEditSession } from "./edit-session";
+import {
+    type ChangeWriter,
+    type EditSession,
+    EditSessions,
+    type ProjectChanged,
+    withEditSession,
+} from "./edit-session";
 import { ConnectedAppHost, type HeadlessDeps, HeadlessHost, type HostCallContext, type RecorderHost } from "./host";
 import { listLibrary } from "./library";
 import { searchLibrary } from "./moments";
@@ -103,6 +109,11 @@ const recordingParams = z.object({ recording: z.string().min(1) }).passthrough()
 
 function byOf(connection: Connection): string {
     return connection.state.role === "host" ? "editor" : "agent";
+}
+
+/** Who makes a change through a call: the connection's role, and the editor window's holder when the call names one. */
+function writerOf(connection: Connection, holder: string | undefined): ChangeWriter {
+    return { by: byOf(connection), ...(holder ? { holder } : {}) };
 }
 
 /**
@@ -356,7 +367,7 @@ export async function startRecorderService(options: RecorderServiceOptions = {})
 
             if (session) {
                 const answer = await session.apply(params.ops, {
-                    by: byOf(connection),
+                    ...writerOf(connection, params.holder),
                     baseRevision: params.baseRevision,
                 });
 
@@ -386,7 +397,7 @@ export async function startRecorderService(options: RecorderServiceOptions = {})
             const session = editableSessionOf(params.path);
 
             if (session) {
-                const answer = await session.undo({ by: byOf(connection) });
+                const answer = await session.undo(writerOf(connection, params.holder));
 
                 if (connection.state.role !== "host") {
                     session.flush();
@@ -397,7 +408,7 @@ export async function startRecorderService(options: RecorderServiceOptions = {})
 
             const undone = await withEditSession(
                 editPathOf(params.path),
-                (held) => held.undo({ by: byOf(connection) }),
+                (held) => held.undo(writerOf(connection, params.holder)),
                 { onChange: (change) => server?.emit("project.changed", { ...change }) }
             );
             return { revision: undone.project.revision, project: undone.project, undone: undone.undone };
@@ -408,13 +419,13 @@ export async function startRecorderService(options: RecorderServiceOptions = {})
             if (!session) {
                 const redone = await withEditSession(
                     editPathOf(params.path),
-                    (held) => held.redo({ by: byOf(connection) }),
+                    (held) => held.redo(writerOf(connection, params.holder)),
                     { onChange: (change) => server?.emit("project.changed", { ...change }) }
                 );
                 return { revision: redone.project.revision, project: redone.project, redone: redone.redone };
             }
 
-            const answer = await session.redo({ by: byOf(connection) });
+            const answer = await session.redo(writerOf(connection, params.holder));
 
             if (connection.state.role !== "host") {
                 session.flush();
@@ -433,7 +444,7 @@ export async function startRecorderService(options: RecorderServiceOptions = {})
         "gesture.commit": (params, { connection }: HandlerContext) => {
             const key = gestureKey(connection, params.gesture);
             connection.state.gestures.delete(key);
-            return sessionOf(params.path).commitGesture(key, { by: byOf(connection) });
+            return sessionOf(params.path).commitGesture(key, writerOf(connection, params.holder));
         },
         "gesture.cancel": (params, { connection }: HandlerContext) => {
             const key = gestureKey(connection, params.gesture);

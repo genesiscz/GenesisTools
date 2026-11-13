@@ -41,8 +41,19 @@ export interface ProjectChanged {
     revision: number;
     /** Who made it: `agent` (the REPL, the CLI), `editor` (the window), or the writer named in the file. */
     by: string;
+    /**
+     * The editor window that made it (its `session.open` holder): every window shares the app's one connection, so
+     * `by` says `editor` for each, and a window ignores only the changes that name its own holder.
+     */
+    holder?: string;
     /** The change undid or redid one before it; absent for an edit. */
     action?: "undo" | "redo";
+}
+
+/** Who makes a change: `by` for every subscriber, and the editor window's holder when a window made it. */
+export interface ChangeWriter {
+    by: string;
+    holder?: string;
 }
 
 export interface EditAnswer {
@@ -186,7 +197,7 @@ export class EditSession {
     }
 
     /** Applies ops as one change and one undo step. `baseRevision`: refused when the edit is at another revision. */
-    apply(ops: readonly EditOp[], options: { by: string; baseRevision?: number }): Promise<EditAnswer> {
+    apply(ops: readonly EditOp[], options: ChangeWriter & { baseRevision?: number }): Promise<EditAnswer> {
         return this.exclusive(async () => {
             this.syncWithDisk();
 
@@ -222,7 +233,7 @@ export class EditSession {
 
             this.change({
                 next: edit.project,
-                by: options.by,
+                writer: options,
                 ops: ops.map((op) => op.op),
                 unsaved: { kind: "ops", ops, facts: edit.facts },
             });
@@ -231,7 +242,7 @@ export class EditSession {
     }
 
     /** Puts the edit back as it was before its last change; the revision still rises. */
-    undo(options: { by: string }): Promise<EditAnswer & { undone: string[] }> {
+    undo(options: ChangeWriter): Promise<EditAnswer & { undone: string[] }> {
         return this.exclusive(async () => {
             throwIfEditCancelled();
             this.syncWithDisk();
@@ -244,7 +255,7 @@ export class EditSession {
             const undone = this.project;
             this.undoSteps.pop();
             this.redoSteps.push({ after: undone, ops: step.ops ?? [] });
-            this.replace({ next: step.before, by: options.by, unsaved: { kind: "restore", what: "undo" } });
+            this.replace({ next: step.before, writer: options, unsaved: { kind: "restore", what: "undo" } });
             // The step below now ends at this revision, so the next undo goes one step further back.
             const below = this.undoSteps.at(-1);
 
@@ -257,7 +268,7 @@ export class EditSession {
     }
 
     /** Makes the last undone change again. */
-    redo(options: { by: string }): Promise<EditAnswer & { redone: string[] }> {
+    redo(options: ChangeWriter): Promise<EditAnswer & { redone: string[] }> {
         return this.exclusive(async () => {
             throwIfEditCancelled();
             this.syncWithDisk();
@@ -268,7 +279,7 @@ export class EditSession {
             }
 
             const before = this.project;
-            this.replace({ next: step.after, by: options.by, unsaved: { kind: "restore", what: "redo" } });
+            this.replace({ next: step.after, writer: options, unsaved: { kind: "restore", what: "redo" } });
             this.pushUndo({ before, afterRevision: this.project.revision, ops: step.ops });
             return { revision: this.project.revision, project: this.project, redone: step.ops };
         });
@@ -327,7 +338,7 @@ export class EditSession {
     }
 
     /** Ends a drag: its last preview's ops become one change and one undo step. */
-    async commitGesture(id: string, options: { by: string }): Promise<EditAnswer> {
+    async commitGesture(id: string, options: ChangeWriter): Promise<EditAnswer> {
         const gesture = this.gestures.get(id);
 
         if (!gesture) {
@@ -489,9 +500,19 @@ export class EditSession {
     }
 
     /** A change: the next revision, one undo step, a save soon, a notification. */
-    private change({ next, by, ops, unsaved }: { next: EditProject; by: string; ops: string[]; unsaved: Unsaved }) {
+    private change({
+        next,
+        writer,
+        ops,
+        unsaved,
+    }: {
+        next: EditProject;
+        writer: ChangeWriter;
+        ops: string[];
+        unsaved: Unsaved;
+    }) {
         const before = this.project;
-        this.replace({ next, by, unsaved });
+        this.replace({ next, writer, unsaved });
         this.pushUndo({ before, afterRevision: this.project.revision, ops });
         this.redoSteps = [];
     }
@@ -500,7 +521,8 @@ export class EditSession {
         return new Error(`the edit session of ${this.path} is closed`);
     }
 
-    private replace({ next, by, unsaved }: { next: EditProject; by: string; unsaved: Unsaved }): void {
+    private replace({ next, writer, unsaved }: { next: EditProject; writer: ChangeWriter; unsaved: Unsaved }): void {
+        const { by, holder } = writer;
         // The close saved the session last; a change that finished its computation after it would never be saved.
         if (this.closed) {
             throw this.closedError();
@@ -516,7 +538,13 @@ export class EditSession {
             unsaved.kind === "restore" && (unsaved.what === "undo" || unsaved.what === "redo")
                 ? unsaved.what
                 : undefined;
-        this.options.onChange({ path: this.path, revision: this.project.revision, by, ...(action ? { action } : {}) });
+        this.options.onChange({
+            path: this.path,
+            revision: this.project.revision,
+            by,
+            ...(holder ? { holder } : {}),
+            ...(action ? { action } : {}),
+        });
     }
 
     private scheduleSave(): void {
