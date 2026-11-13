@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { linkNativeFiles } from "./link-native";
-import { flag, loadRun, worktreeFor } from "./run";
+import { flag, launch, loadRun, worktreeFor } from "./run";
 import { ensureConfigHooks, HOOKS_OFF, unpickedCommits } from "./versions";
 
 const run = loadRun();
@@ -36,11 +36,14 @@ const logs = join(run.dir, "logs");
 mkdirSync(logs, { recursive: true });
 const log: string[] = [];
 
-function step(cmd: string[], cwd: string, label: string): void {
-    const p = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: env.getProcessEnv() });
-    log.push(`$ ${cmd.join(" ")} → ${p.exitCode}`, p.stdout.toString(), p.stderr.toString());
+/** A fetch, a worktree add or a `bun install` into a fresh worktree; ten minutes stops only a stuck one. */
+const STEP_DEADLINE_MS = 10 * 60_000;
 
-    if (p.exitCode !== 0) {
+function step(cmd: string[], cwd: string, label: string): void {
+    const p = launch(cmd, { cwd, timeoutMs: STEP_DEADLINE_MS });
+    log.push(`$ ${cmd.join(" ")} → ${p.code}`, p.out);
+
+    if (p.code !== 0) {
         writeFileSync(join(logs, `setup-${pr}.log`), log.join("\n"));
         console.error(`✖ ${label} failed (log: ${join(logs, `setup-${pr}.log`)})`);
         process.exit(1);

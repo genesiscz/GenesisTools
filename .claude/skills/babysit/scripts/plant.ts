@@ -14,6 +14,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { env } from "@genesiscz/utils/env";
+import { launch } from "./run";
 
 function flags(name: string): string[] {
     const found: string[] = [];
@@ -27,9 +28,16 @@ function flags(name: string): string[] {
     return found;
 }
 
-function exec(cmd: string[], cwd: string): { code: number; out: string } {
-    const p = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: env.getProcessEnv() });
-    return { code: p.exitCode ?? 1, out: `${p.stdout.toString()}${p.stderr.toString()}` };
+/** A git call; a test run passes its own deadline. */
+const GIT_DEADLINE_MS = 60_000;
+/** `scripts/test.ts` stops a stalled suite after 15 minutes; this stops a run that never reaches that check. */
+const BUN_TESTS_DEADLINE_MS = 20 * 60_000;
+/** swift-slot waits up to 40 minutes for the slot and runs up to 60 (the flags below), plus a margin. */
+const SWIFT_TESTS_DEADLINE_MS = 105 * 60_000;
+
+function exec(cmd: string[], cwd: string, timeoutMs = GIT_DEADLINE_MS): { code: number; out: string } {
+    const { code, out } = launch(cmd, { cwd, timeoutMs });
+    return { code, out };
 }
 
 function counts(out: string) {
@@ -121,9 +129,10 @@ if (import.meta.main) {
                       "--filter",
                       swiftFilter,
                   ],
-                  join(wt, swiftPackage)
+                  join(wt, swiftPackage),
+                  SWIFT_TESTS_DEADLINE_MS
               )
-            : exec(["bun", "scripts/test.ts", ...tests], wt);
+            : exec(["bun", "scripts/test.ts", ...tests], wt, BUN_TESTS_DEADLINE_MS);
 
     const before = exec(["git", "status", "--short", "--untracked-files=no"], wt).out;
     const backup = mkdtempSync(join(env.get("TMPDIR") ?? "/tmp", "babysit-plant-"));

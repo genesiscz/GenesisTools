@@ -44,9 +44,44 @@ export function has(name: string): boolean {
     return process.argv.includes(name);
 }
 
+/** Exit code a launch reports when its deadline stopped the command, as coreutils `timeout` does. */
+export const DEADLINE_EXIT = 124;
+
+/**
+ * Run one command with a deadline. Every babysit launcher passes one sized for its slowest legitimate call, so a stuck
+ * push, gate or `gh` call stops that script with a message instead of holding it until someone stops it. `out` is
+ * stdout and stderr together; a stopped command ends it with a line that names the deadline.
+ */
+export function launch(
+    cmd: string[],
+    options: { cwd?: string; timeoutMs: number }
+): { code: number; stdout: string; out: string } {
+    const p = Bun.spawnSync(cmd, {
+        cwd: options.cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: env.getProcessEnv(),
+        timeout: options.timeoutMs,
+        killSignal: "SIGKILL",
+    });
+    const stdout = p.stdout.toString();
+    const out = `${stdout}${p.stderr.toString()}`;
+    if (p.exitedDueToTimeout) {
+        const seconds = Math.round(options.timeoutMs / 1000);
+        return {
+            code: DEADLINE_EXIT,
+            stdout,
+            out: `${out}\n✖ ${cmd.join(" ").slice(0, 140)} passed its ${seconds} s deadline and was stopped\n`,
+        };
+    }
+
+    return { code: p.exitCode ?? 1, stdout, out };
+}
+
 function capture(cmd: string[], cwd?: string): string {
-    const p = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: env.getProcessEnv() });
-    return p.exitCode === 0 ? p.stdout.toString().trim() : "";
+    // A rev-parse or a `gh repo view`: a minute is generous.
+    const p = launch(cmd, { cwd, timeoutMs: 60_000 });
+    return p.code === 0 ? p.stdout.trim() : "";
 }
 
 /**

@@ -33,7 +33,7 @@ import { hitsInAddedLines, probeAddedLines } from "./probe";
 import { resolveSameText } from "./resolve-same";
 import { classifyPatch } from "./restack-verify";
 import { reviewBrief, reviewSpawnCommand } from "./review-brief";
-import { loadRun, runPaths } from "./run";
+import { DEADLINE_EXIT, launch, loadRun, runPaths } from "./run";
 import { trySwiftSlot } from "./swift-slot";
 import { parseSwiftTargets, typecheckPackage } from "./swift-typecheck";
 import {
@@ -772,6 +772,17 @@ describe("integrate's gates", () => {
             ["typecheck:all", "bun", "run", "typecheck:all"],
             ...fromHook,
         ]);
+    });
+});
+
+describe("launch deadlines", () => {
+    test("a command past its deadline is stopped and says so, a quick one answers as it is", () => {
+        const stuck = launch(["sleep", "30"], { timeoutMs: 200 });
+        expect(stuck.code).toBe(DEADLINE_EXIT);
+        expect(stuck.out).toContain("sleep 30 passed its 0 s deadline and was stopped");
+
+        const quick = launch(["sh", "-c", "echo out; echo err >&2; exit 3"], { timeoutMs: 10_000 });
+        expect(quick).toEqual({ code: 3, stdout: "out\n", out: "out\nerr\n" });
     });
 });
 
