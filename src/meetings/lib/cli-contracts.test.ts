@@ -8,6 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import type { ChoiceSelectOptions } from "@genesiscz/utils/prompts/clack/choice-select";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
@@ -1209,4 +1210,176 @@ describe("listen answers without a service", () => {
             process.exitCode = 0;
         }
     });
+});
+
+test("terminal listen stops its in-process playback before search and comment prompts, then restarts", async () => {
+    const cli = await import("@genesiscz/utils/cli");
+    const clack = await import("@clack/prompts");
+    const choices = await import("@genesiscz/utils/prompts/clack/choice-select");
+    const search = await import("@genesiscz/utils/prompts/clack/search-select");
+    const audio = await import("./audio");
+    const clients = await import("./service/client");
+    const directory = await import("@genesiscz/utils/meetings/people-directory");
+    const { MeetingsConfigStore } = await import("@genesiscz/utils/meetings/config");
+    const { OpenedMeeting } = await import("./opened-meeting");
+    const at = "2026-11-02T14:00:00.000Z";
+    const store = new MeetingStore();
+    const record = await store.create(
+        {
+            title: "Silent terminal contract",
+            start: at,
+            createdBy: "new",
+            participants: [{ name: "Alice Example", self: true, from: ["manual"] }],
+            items: [
+                {
+                    id: "i1",
+                    kind: "question",
+                    status: "suggested",
+                    question: "Who speaks?",
+                    about: "speaker",
+                    fromSec: 10,
+                    toSec: 10,
+                    choices: ["Alice Example", "Bob Example"],
+                    confidence: 0.4,
+                    priority: 1,
+                    decides: [],
+                    rules: [],
+                    suggestedAt: at,
+                },
+            ],
+        },
+        { command: "test", change: "fixture" }
+    );
+    const settings = meetingsConfigSchema.parse({
+        global: {
+            playback: {
+                listen: {
+                    padBeforeSec: 5,
+                    padAfterSec: 5,
+                    delaySec: 0,
+                    minPriority: 0,
+                    roundCap: 1,
+                    repeat: { enabled: true, gapSec: 1 },
+                },
+            },
+        },
+    });
+    const events: string[] = [];
+    let active = false;
+    let prompts = 0;
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+        throw new Error("Playback test forbids subprocesses");
+    });
+    const spawnSync = spyOn(Bun, "spawnSync").mockImplementation(() => {
+        throw new Error("Playback test forbids subprocesses");
+    });
+    const interactive = spyOn(cli, "isInteractive").mockReturnValue(true);
+    const config = spyOn(MeetingsConfigStore.prototype, "read").mockResolvedValue(settings);
+    const people = spyOn(directory, "meetingPeopleNames").mockResolvedValue(["Alice Example", "Bob Example"]);
+    const source = spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue({
+        sourceMeetingId: "fixture",
+        title: record.title,
+        start: at,
+        participants: [],
+        speakers: [],
+        folders: [],
+        transcript: [{ startSec: 10, speaker: "Voice", text: "A sentence." }],
+    });
+    const path = spyOn(OpenedMeeting.prototype, "audioPath").mockResolvedValue("/fixture-unused.wav");
+    const client = spyOn(clients, "openMeetingsClient").mockImplementation(
+        async () => new InProcessMeetingsClient({ deps: { store: () => store } })
+    );
+    const player = spyOn(audio, "clipPlayer").mockReturnValue("afplay");
+    const cut = spyOn(audio, "cutClip").mockResolvedValue(undefined);
+    const playback = spyOn(audio, "playClip").mockImplementation((_player, _file, options) => {
+        expect(options?.repeatGapMs).toBe(1000);
+        active = true;
+        events.push("start");
+        return {
+            positionSec: 0,
+            pause() {
+                active = false;
+                events.push("pause");
+            },
+            resume() {
+                active = true;
+                events.push("resume");
+            },
+            stop() {
+                active = false;
+                events.push("stop");
+            },
+        };
+    });
+    const select = spyOn(choices, "choiceSelect").mockImplementation(async <T>(options: ChoiceSelectOptions<T>) => {
+        prompts++;
+        expect(active).toBe(true);
+        expect(options.footer).toContain("space pause/resume");
+        if (prompts === 1) {
+            options.onSpace!();
+            expect(active).toBe(false);
+            options.onSpace!();
+            expect(active).toBe(true);
+        }
+        const action = prompts === 1 ? "\u0000other" : prompts === 2 ? "\u0000comment" : "\u0000stop";
+        const row = options.rows.find((row) => String(row.value) === action);
+        if (!row) {
+            throw new Error("Expected terminal action missing");
+        }
+        return row.value;
+    });
+    const searching = spyOn(search, "searchSelect").mockImplementation(async () => {
+        expect(active).toBe(false);
+        events.push("search");
+        return search.searchSelectCancelSymbol;
+    });
+    const text = spyOn(clack, "text").mockImplementation(async () => {
+        expect(active).toBe(false);
+        events.push("comment");
+        return "";
+    });
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+        await program.parseAsync(["listen", record.id, "--item", "Q1"], { from: "user" });
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(prompts).toBe(3);
+        expect(events).toEqual([
+            "start",
+            "pause",
+            "resume",
+            "stop",
+            "search",
+            "start",
+            "stop",
+            "comment",
+            "start",
+            "stop",
+        ]);
+        expect(active).toBe(false);
+        expect(cut).toHaveBeenCalledTimes(1);
+        expect(spawn).not.toHaveBeenCalled();
+        expect(spawnSync).not.toHaveBeenCalled();
+        expect(new MeetingStore(store.storage).read(record.id)!.items[0]!.status).toBe("suggested");
+    } finally {
+        for (const mock of [
+            text,
+            searching,
+            select,
+            playback,
+            cut,
+            player,
+            client,
+            path,
+            source,
+            people,
+            config,
+            interactive,
+            spawnSync,
+            spawn,
+        ]) {
+            mock.mockRestore();
+        }
+        process.exitCode = 0;
+    }
 });
