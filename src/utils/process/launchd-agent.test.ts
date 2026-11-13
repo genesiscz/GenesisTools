@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -13,10 +13,13 @@ import {
     launchdStatus,
     parseLaunchdPid,
     plistPath,
+    refreshLaunchd,
     renderLaunchdPlist,
     runLaunchctlCommand,
+    writeLaunchdPlist,
 } from "@genesiscz/utils/process/launchd-agent";
 import { skip } from "@genesiscz/utils/test/skip";
+import { hostEffectRefusal } from "@genesiscz/utils/test-process";
 
 const LABEL = "com.genesis-tools.test.launchd-agent";
 const ok: LaunchctlResult = { exitCode: 0, stdout: "", stderr: "" };
@@ -181,11 +184,44 @@ describe.skipIf(skip.unlessMac)("launchd agent through the fake runner", () => {
         expect(calls.map((call) => call[0])).toEqual(["unload", "load"]);
     });
 
-    test("a first install with a failed load leaves nothing to restore and throws", async () => {
+    test("a first install with a failed load removes the plist it wrote and throws", async () => {
         runner((args) => (args[0] === "load" ? { exitCode: 5, stdout: "", stderr: "nope" } : ok));
 
         await expect(installLaunchd(baseOptions())).rejects.toThrow("nope");
         expect(calls.map((call) => call[0])).toEqual(["unload", "load"]);
+        expect(existsSync(plistPath(LABEL))).toBe(false);
+    });
+
+    test("a refresh of a loaded job unloads it before the load, so the rewritten plist is what runs", async () => {
+        const path = plistPath(LABEL);
+        writeFileSync(path, "<plist>old</plist>");
+        runner(() => ok);
+
+        await refreshLaunchd({ ...baseOptions(), env: { FIXTURE: "new" } });
+        expect(calls.map((call) => call[0])).toEqual(["unload", "load", "kickstart"]);
+        expect(readFileSync(path, "utf8")).toContain("<string>new</string>");
+    });
+
+    test("a refresh whose load fails throws and puts the previous plist back", async () => {
+        const path = plistPath(LABEL);
+        writeFileSync(path, "<plist>old</plist>");
+        runner((args, index) => (args[0] === "load" && index === 1 ? { exitCode: 5, stdout: "", stderr: "busy" } : ok));
+
+        await expect(refreshLaunchd(baseOptions())).rejects.toThrow("busy");
+        expect(readFileSync(path, "utf8")).toBe("<plist>old</plist>");
+    });
+
+    test("a test that keeps the real launchctl or the real LaunchAgents folder is refused before any effect", async () => {
+        expect(hostEffectRefusal("probe", "fixture")).not.toBeNull();
+
+        // The real runner: the plist goes to the temp folder, the load is refused, and the new plist is removed.
+        await expect(installLaunchd(baseOptions())).rejects.toThrow("refused in a test process");
+        expect(existsSync(plistPath(LABEL))).toBe(false);
+
+        _setLaunchAgentsDirForTests(null);
+        runner(() => ok);
+        expect(() => writeLaunchdPlist(baseOptions())).toThrow("refused in a test process");
+        expect(calls).toEqual([]);
     });
 });
 

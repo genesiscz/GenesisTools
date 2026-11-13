@@ -19,10 +19,24 @@ import { dirname, join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import { boundedCommand } from "./bounded-command";
 
 const realLaunchAgentsDir = (): string => join(homedir(), "Library", "LaunchAgents");
 let launchAgentsDir: () => string = realLaunchAgentsDir;
+
+/**
+ * A plist in the real `~/Library/LaunchAgents` loads at the next login, and the test sandbox covers only
+ * `~/.genesis-tools`: a test that forgot `_setLaunchAgentsDirForTests` is refused right before the write or removal.
+ */
+function refuseRealAgentsDirInTest(action: string): void {
+    if (launchAgentsDir === realLaunchAgentsDir) {
+        refuseHostEffectInTest(
+            `${action} in ~/Library/LaunchAgents`,
+            "Point it at a temp folder with _setLaunchAgentsDirForTests()."
+        );
+    }
+}
 
 export function defaultPlistLabel(key: string): string {
     return `com.genesis-tools.${key}`;
@@ -206,10 +220,13 @@ async function restorePreviousPlist({
     cause: unknown;
 }): Promise<void> {
     if (!previous) {
+        // A first install that failed must not leave its RunAtLoad/KeepAlive plist to start at the next login.
+        removeNewPlist(path, cause);
         return;
     }
 
     try {
+        refuseRealAgentsDirInTest("restoring a launchd plist");
         atomicWriteFileSync(path, previous.bytes, { mode: previous.mode });
         const { exitCode, stderr } = await launchctl(["load", path]);
 
@@ -291,11 +308,32 @@ function logPathsOf(opts: LaunchdInstallOptions): LaunchdLogPaths {
     return { stdout: opts.logFile, stderr: opts.logFile };
 }
 
-/** Rewrite plist on disk — used when refreshing env/cmd/throttle without full reinstall. */
+function removeNewPlist(path: string, cause: unknown): void {
+    try {
+        if (existsSync(path)) {
+            refuseRealAgentsDirInTest("removing a launchd plist");
+            unlinkSync(path);
+        }
+
+        logger.warn(
+            { err: cause, plist: path },
+            "launchd install failed; the new plist was removed, no agent is installed"
+        );
+    } catch (removeError) {
+        logger.error(
+            { err: removeError, cause, plist: path },
+            "launchd install failed AND its new plist could not be removed; it loads at the next login"
+        );
+    }
+}
+
+/** Write the plist on disk only; `refreshLaunchd` and `installLaunchd` also reload the job. */
 export function writeLaunchdPlist(opts: LaunchdInstallOptions): void {
     if (process.platform !== "darwin") {
         throw new Error("Launchd integration is macOS-only.");
     }
+
+    refuseRealAgentsDirInTest("writing a launchd plist");
 
     // EnvironmentVariables can carry provider API keys, so the plist must never be group/world-readable,
     // not even for an instant. The temp file gets exactly 0600 (umask cannot strip it) before it is
@@ -303,16 +341,13 @@ export function writeLaunchdPlist(opts: LaunchdInstallOptions): void {
     atomicWriteFileSync(plistPath(opts.label), renderLaunchdPlist(opts), { mode: 0o600 });
 }
 
+/**
+ * Rewrite the plist (env, command, throttle) and make launchd run it. A loaded job keeps the definition it loaded, so
+ * a bare `load` fails on "already loaded" and a kickstart restarts the old one: this is the install sequence, which
+ * unloads first, reports a failed load and puts the previous plist back.
+ */
 export async function refreshLaunchd(opts: LaunchdInstallOptions): Promise<void> {
-    if (process.platform !== "darwin") {
-        throw new Error("Launchd integration is macOS-only.");
-    }
-
-    writeLaunchdPlist(opts);
-
-    const path = plistPath(opts.label);
-    await launchctl(["load", path]).catch(() => undefined);
-    await kickstartLaunchd(opts.label);
+    await installLaunchd(opts);
 }
 
 export async function kickstartLaunchd(label: string): Promise<void> {
@@ -327,8 +362,8 @@ export async function kickstartLaunchd(label: string): Promise<void> {
     }
 
     try {
-        // launchctl() itself never rejects (always resolves {exitCode, stderr}); this catch
-        // only guards against Bun.spawn throwing synchronously before that (e.g. ENOENT).
+        // launchctl() resolves {exitCode, stderr} for a failed command; this catch guards against a spawn that
+        // throws before that (e.g. ENOENT) and the refusal of a real launchctl in a test process.
         const { exitCode, stderr } = await launchctl(["kickstart", "-k", `gui/${uid}/${label}`]);
 
         if (exitCode !== 0) {
@@ -380,6 +415,7 @@ export async function uninstallLaunchd(label: string): Promise<void> {
 
     if (existsSync(path)) {
         await launchctl(["unload", path]).catch(() => undefined);
+        refuseRealAgentsDirInTest("removing a launchd plist");
         unlinkSync(path);
     }
 }
@@ -481,7 +517,14 @@ export function _setLaunchAgentsDirForTests(dir: string | null): void {
     launchAgentsDir = dir ? () => dir : realLaunchAgentsDir;
 }
 
-function launchctl(args: readonly string[]): Promise<LaunchctlResult> {
+/** The launchctl verbs that only read; every other verb loads, starts, stops or removes a job. */
+const READ_ONLY_LAUNCHCTL_VERBS = new Set(["print", "list", "blame", "version", "help"]);
+
+async function launchctl(args: readonly string[]): Promise<LaunchctlResult> {
+    if (launchctlRunner === spawnLaunchctl && !READ_ONLY_LAUNCHCTL_VERBS.has(args[0] ?? "")) {
+        refuseHostEffectInTest(`launchctl ${args[0] ?? ""}`, "Swap the runner with _setLaunchctlRunnerForTests().");
+    }
+
     return launchctlRunner(args);
 }
 
