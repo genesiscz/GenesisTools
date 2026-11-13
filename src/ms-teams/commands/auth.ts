@@ -24,6 +24,10 @@ const VERDICT_TEXT: Record<AuthVerdict, { status: "ok" | "warn" | "err" | "dim";
         status: "warn",
         text: "The chat tokens renew. Another resource wants a sign-in, so only that feature is affected.",
     },
+    "no-chat-renew": {
+        status: "dim",
+        text: "The log holds no completed chat-token renew yet, so it cannot tell whether the chat tokens renew. Keep Teams open for about an hour, then run this again.",
+    },
     "no-log": {
         status: "dim",
         text: "No web-client log was found. Start Teams and wait a minute, then run this again.",

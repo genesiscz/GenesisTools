@@ -38,6 +38,15 @@ function laterSuccess(at: number): WebLogLine[] {
     }));
 }
 
+/** A renew that failed on a network error, no sign-in error among its codes. */
+function transientFailure(at: number): WebLogLine[] {
+    const head = `{"accountId":"${ACCOUNT}","isSilent":true,"endpointUrl":"${SPACES}"`;
+    return [`[stop][incomplete] [e]${head},"errorCode":"network_timeout","status":"incomplete"}`].map((chunk, i) => ({
+        message: telemetry("abababab-cdcd-4efe-8f0f-101010101010", "acquire_token_in_token_warming", chunk),
+        at: at + i,
+    }));
+}
+
 const leftRailError = (at: number): WebLogLine => ({
     message:
         'resolverUncaughtErrorBoundary__doNotAssignToGraphQLTeam: Uncaught error in a GraphQL resolver for operation "SimpleCollabLeftRailQuery"',
@@ -71,6 +80,24 @@ describe("collectAuthHealth", () => {
         expect(spaces?.lastSuccessAt).toBe(later + 1);
         expect(spaces?.needsSignIn).toBe(false);
         expect(health.verdict).toBe("healthy");
+    });
+
+    test("a sign-in error a later renew got past does not come back with an unrelated failure", () => {
+        const health = collectAuthHealth([
+            ...failedRenew(T0),
+            ...laterSuccess(T0 + 60 * 60_000),
+            ...transientFailure(T0 + 2 * 60 * 60_000),
+        ]);
+        const spaces = health.resources.find((r) => r.resource === SPACES);
+
+        expect(spaces?.errors).toEqual(expect.arrayContaining(["InteractionRequired", "network_timeout"]));
+        expect(spaces?.needsSignIn).toBe(false);
+        expect(health.verdict).not.toBe("needs-sign-in");
+    });
+
+    test("lines with no completed chat-token renew are no evidence, never healthy", () => {
+        const unrelated: WebLogLine = { message: "TelemetryService: flushed 12 events", at: T0 };
+        expect(collectAuthHealth([unrelated]).verdict).toBe("no-chat-renew");
     });
 
     test("an old chat-list error is history, a recent one is a chat error with working tokens", () => {

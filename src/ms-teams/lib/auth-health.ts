@@ -50,7 +50,7 @@ export interface ResourceHealth {
     lastFailureAt: number | null;
     /** Error codes of the failures: `invalid_grant`, `token_expired`, `InteractionRequired`, `AADSTS…`. */
     errors: string[];
-    /** The newest renew failed with a sign-in error and nothing renewed after it. */
+    /** The newest renew failed with a sign-in error of its own and nothing renewed after it. */
     needsSignIn: boolean;
     chatCritical: boolean;
 }
@@ -62,7 +62,7 @@ export interface GraphQlFailure {
     lastAt: number;
 }
 
-export type AuthVerdict = "healthy" | "needs-sign-in" | "chat-errors" | "other-sign-in" | "no-log";
+export type AuthVerdict = "healthy" | "needs-sign-in" | "chat-errors" | "other-sign-in" | "no-chat-renew" | "no-log";
 
 export interface TeamsAuthHealth {
     files: number;
@@ -227,6 +227,8 @@ function errorCodes(text: string): string[] {
 
 function summarizeResources(attempts: RenewAttempt[]): ResourceHealth[] {
     const byResource = new Map<string, ResourceHealth>();
+    // The errors of each resource's newest failure: a sign-in error an earlier renew already got past is history.
+    const latestErrors = new Map<string, string[]>();
 
     for (const attempt of attempts) {
         if (!attempt.resource || !attempt.outcome) {
@@ -250,6 +252,10 @@ function summarizeResources(attempts: RenewAttempt[]): ResourceHealth[] {
             row.lastSuccessAt = Math.max(row.lastSuccessAt ?? 0, attempt.at);
         } else {
             row.failures++;
+            if (attempt.at >= (row.lastFailureAt ?? 0)) {
+                latestErrors.set(attempt.resource, attempt.errors);
+            }
+
             row.lastFailureAt = Math.max(row.lastFailureAt ?? 0, attempt.at);
             row.errors = [...new Set([...row.errors, ...attempt.errors])];
         }
@@ -259,7 +265,7 @@ function summarizeResources(attempts: RenewAttempt[]): ResourceHealth[] {
 
     for (const row of byResource.values()) {
         const failedLast = row.lastFailureAt !== null && row.lastFailureAt > (row.lastSuccessAt ?? 0);
-        row.needsSignIn = failedLast && row.errors.some((code) => SIGN_IN_ERRORS.has(code));
+        row.needsSignIn = failedLast && (latestErrors.get(row.resource) ?? []).some((code) => SIGN_IN_ERRORS.has(code));
     }
 
     return [...byResource.values()].sort(
@@ -295,6 +301,11 @@ function judge(input: {
 
     if (chatListFails || chatsReduced) {
         return "chat-errors";
+    }
+
+    // Lines with no completed chat-token renew prove nothing about the chat tokens: never call that healthy.
+    if (!input.resources.some((r) => r.chatCritical && r.successes > 0)) {
+        return "no-chat-renew";
     }
 
     if (input.resources.some((r) => r.needsSignIn)) {
