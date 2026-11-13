@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { copyNames, type FunctionFact, fingerprint, isDistinctName } from "@app/ts/lib/inventory";
 import { Lang, parse } from "@ast-grep/napi";
 import { maskSwiftNonCode } from "../lint-rules";
@@ -9,8 +13,8 @@ import cmuxTreeOutsideReader from "./cmux-tree-outside-reader.definition";
 import type { RosterDefinition } from "./define";
 import { callTo, importFrom, literal } from "./define";
 import doctorDirectDelete from "./doctor-direct-delete.definition";
-import { planRosters } from "./generate";
-import { ROSTER_DEFINITIONS, rosterGrowth } from "./index";
+import { baseRosters, planRosters } from "./generate";
+import { ROSTER_DEFINITIONS, ROSTERS_FILE, rosterGrowth } from "./index";
 import launchctlOutsideLaunchdAgent from "./launchctl-outside-launchd-agent.definition";
 import lockUnlinkOutsidePidfile from "./lock-unlink-outside-pidfile.definition";
 import mcpProviderWriteOutsideCycle from "./mcp-provider-write-outside-cycle.definition";
@@ -68,6 +72,72 @@ describe("planRosters", () => {
         expect(plan.grown).toEqual(["roster-a: src/three.ts has 1, the roster allows 0"]);
         expect(plan.shrunk).toEqual(["roster-a: src/one.ts 2 → 1", "roster-a: src/two.ts 1 → 0"]);
     });
+});
+
+describe("generate: an input it cannot read stops the run", () => {
+    /** No GIT_DIR or GIT_INDEX_FILE from a hook that runs the tests, and no repository above the fixture. */
+    const gitEnv = (dir: string): Record<string, string> => ({
+        ...Object.fromEntries(
+            Object.entries(process.env).filter(
+                (entry): entry is [string, string] => !entry[0].startsWith("GIT_") && entry[1] !== undefined
+            )
+        ),
+        GIT_CEILING_DIRECTORIES: dirname(dir),
+    });
+
+    test("a base before the manifest is no baseline, a base with it is read, an unknown ref throws", () => {
+        const dir = mkdtempSync(join(tmpdir(), "rosters-base-"));
+        const identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com"];
+        const git = (...args: string[]) => {
+            const run = spawnSync("git", ["-c", "core.hooksPath=/dev/null", ...identity, ...args], {
+                cwd: dir,
+                encoding: "utf8",
+                env: gitEnv(dir),
+            });
+            expect(run.status, run.stderr).toBe(0);
+            return run.stdout.trim();
+        };
+
+        try {
+            git("init", "-q");
+            writeFileSync(join(dir, "README.md"), "fixture\n");
+            git("add", "README.md");
+            git("commit", "-qm", "before the manifest");
+            const before = git("rev-parse", "HEAD");
+            mkdirSync(join(dir, "scripts/ci/rosters"), { recursive: true });
+            writeFileSync(join(dir, ROSTERS_FILE), '{ "roster-a": { "src/one.ts": 2 } }\n');
+            git("add", ROSTERS_FILE);
+            git("commit", "-qm", "the manifest");
+
+            expect(baseRosters(before, { cwd: dir })).toBeNull();
+            expect(baseRosters("HEAD", { cwd: dir })).toEqual({ "roster-a": { "src/one.ts": 2 } });
+            expect(() => baseRosters("origin/not-fetched", { cwd: dir })).toThrow("read --base origin/not-fetched");
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    }, 30_000);
+
+    test("outside a repository the file list fails, the run exits 2 and the manifest keeps its counts", () => {
+        const dir = mkdtempSync(join(tmpdir(), "rosters-nogit-"));
+        const manifest = `{\n    "roster-ado-fetch-outside-api": {\n        "src/one.ts": 1\n    }\n}\n`;
+
+        try {
+            writeFileSync(join(dir, "biome.json"), "{}");
+            mkdirSync(join(dir, "scripts/ci/rosters"), { recursive: true });
+            writeFileSync(join(dir, ROSTERS_FILE), manifest);
+            const run = spawnSync(process.execPath, [join(import.meta.dir, "generate.ts")], {
+                cwd: dir,
+                encoding: "utf8",
+                env: gitEnv(dir),
+            });
+
+            expect(run.status, run.stdout).toBe(2);
+            expect(run.stderr).toContain("git ls-files exited");
+            expect(readFileSync(join(dir, ROSTERS_FILE), "utf8")).toBe(manifest);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    }, 60_000);
 });
 
 describe("rosterGrowth", () => {

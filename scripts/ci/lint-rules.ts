@@ -2583,6 +2583,13 @@ export async function targetFiles(): Promise<string[]> {
         "*.cjs",
         "*.swift",
     ]);
+
+    // A failed listing prints nothing on stdout: read as "no files", it passes every rule and lets the roster
+    // generator drop every count.
+    if (listed.exitCode !== 0) {
+        throw new Error(`lint-rules: git ls-files exited ${listed.exitCode}: ${listed.stderr.toString().trim()}`);
+    }
+
     const files = listed.stdout.toString().split("\0").filter(Boolean);
 
     const included = files.filter(
