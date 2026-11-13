@@ -168,4 +168,22 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         XCTAssertEqual(MeetingsSettingsModel.personIndex(of: PairedPerson(name: "Robin Example", email: nil, pairedBy: []), in: saved), 2)
         XCTAssertNil(MeetingsSettingsModel.personIndex(of: PairedPerson(name: "Alex Example", email: nil, pairedBy: []), in: saved))
     }
+
+    // MARK: The seats editor keeps typed lists until Save (PR 809)
+
+    func testTheSeatsDraftKeepsATypedCommaAndParsesOnSave() {
+        var seats = MeetingSeats()
+        seats.room = ["Alice Example"]
+        var draft = MeetingSeatsDraft(seats)
+        draft.room = "Alice Example, "
+        XCTAssertEqual(draft.room, "Alice Example, ", "the comma stays while the next name is typed")
+        draft.room = "Alice Example, Bob Example"
+        draft.addMicrophone()
+        draft.members[0] = "Carol Example,  Dana Example,"
+        XCTAssertEqual(draft.parsed.room, ["Alice Example", "Bob Example"])
+        XCTAssertEqual(draft.parsed.microphones?.first?.people, ["Carol Example", "Dana Example"])
+        draft.removeMicrophone(at: 0)
+        XCTAssertEqual(draft.members, [])
+        XCTAssertEqual(draft.parsed.microphones, [])
+    }
 }

@@ -115,6 +115,26 @@ final class PeopleSearch {
 // MARK: - The meeting's speakers and people
 
 extension MeetingDetailModel {
+    /// The seats editor's Save: one write the sheet waits for, so a draft the engine refuses (a blank remote name, a
+    /// group of room and remote people) stays open with the reason, instead of a notice whose Retry sends it again.
+    func saveSeats(_ seats: MeetingSeats) async throws {
+        var action = DecisionAction(kind: "set")
+        action.seats = seats
+        let result = try await Self.applyDecision(meeting: id, action: action, reason: nil, service: service)
+        readRecord(quiet: true)
+        window?.loadOverview(quiet: true)
+        guard let entry = result.entry else {
+            if let skipped = result.skipped.first {
+                throw MeetingsCLI.Failure(sentence: skipped.reason, detail: "set seats: \(skipped.id)")
+            }
+            return
+        }
+        ownTokens.insert(entry.token)
+        notices.push(StackedNotice(text: "Updated seats and microphones", actions: [.undo { [weak self] notice in
+            self?.revert(token: entry.token, items: nil, replacing: notice)
+        }]))
+    }
+
     func editMeetingPerson(_ params: MeetingsAPI.MeetingPeopleEdit.Params) async throws {
         var args = ["attendance", id, params.action == "remove" ? "--remove" : "--add", params.name, "--json"]
         if let from = params.fromSec { args += ["--from", String(from)] }
