@@ -210,6 +210,33 @@ describe("sanitizeHar encoded POST credentials", () => {
         );
         expect(clean.log.entries[0].request.postData?.params?.at(-1)).toEqual({ name: "state", value: "a+b" });
         expect(raw.log.entries[0].request.postData?.text).toBe(text);
+
+        // A text/plain form puts one pair on each line; a multipart form puts each value in its own part.
+        raw.log.entries[0].request.postData = { mimeType: "text/plain", text: "user=alice\r\npassword=plain-secret\n" };
+        const plain = SafeJSON.stringify(sanitizeHar(raw));
+        expect(plain).not.toContain("plain-secret");
+        expect(plain).toContain("user=alice");
+
+        const multipart = [
+            "--fixture-boundary",
+            'Content-Disposition: form-data; name="user"',
+            "",
+            "alice",
+            "--fixture-boundary",
+            'Content-Disposition: form-data; name="client_secret"',
+            "Content-Type: text/plain",
+            "",
+            "part-secret",
+            "--fixture-boundary--",
+            "",
+        ].join("\r\n");
+        raw.log.entries[0].request.postData = {
+            mimeType: "multipart/form-data; boundary=fixture-boundary",
+            text: multipart,
+        };
+        const parts = sanitizeHar(raw).log.entries[0].request.postData?.text ?? "";
+        expect(parts).not.toContain("part-secret");
+        expect(parts).toContain("alice");
     });
 });
 

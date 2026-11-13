@@ -276,6 +276,27 @@ function redactUrl(url: string): string {
         .replace(/#.+$/, "#[REDACTED]");
 }
 
+/**
+ * One `name=value` pair of a form body. `&` ends a URL-encoded pair and a line break ends a text/plain one; a
+ * URL-encoded body holds no raw line break, so one pattern reads both without knowing the MIME type.
+ */
+const FORM_PAIR = /(^|[&\r\n])([^=&\r\n]+)=([^&\r\n]*)/g;
+
+/** One multipart/form-data part: its headers (one names the field), a blank line, then its value up to the boundary. */
+const MULTIPART_PART =
+    /(content-disposition:[^\r\n]*\bname="([^"]*)"[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*\r?\n)([\s\S]*?)(?=\r?\n--)/gi;
+
+/** The credentials in a non-JSON POST body: multipart parts, then URL-encoded and text/plain pairs. */
+function redactFormText(text: string): string {
+    return text
+        .replace(MULTIPART_PART, (part, head: string, name: string) =>
+            isSensitiveParam(name) ? `${head}[REDACTED]` : part
+        )
+        .replace(FORM_PAIR, (pair, separator: string, name: string) =>
+            isSensitiveParam(name) ? `${separator}${name}=[REDACTED]` : pair
+        );
+}
+
 export function sanitizeHar(har: HarFile): HarFile {
     const clone = structuredClone(har);
 
@@ -313,7 +334,7 @@ export function sanitizeHar(har: HarFile): HarFile {
         const postData = entry.request.postData;
         if (postData?.text) {
             // JSON bodies get a structural deep-redaction ({"access_token": …});
-            // everything else falls back to the URL-encoded pattern pass.
+            // everything else falls back to the form pattern pass (`redactFormText`).
             let handled = false;
             if (/^\s*[{[]/.test(postData.text)) {
                 try {
@@ -326,11 +347,7 @@ export function sanitizeHar(har: HarFile): HarFile {
             }
 
             if (!handled) {
-                postData.text = postData.text.replace(
-                    /(^|&)([^=&]+)=([^&]*)/g,
-                    (pair, separator: string, name: string) =>
-                        isSensitiveParam(name) ? `${separator}${name}=[REDACTED]` : pair
-                );
+                postData.text = redactFormText(postData.text);
             }
         }
 
