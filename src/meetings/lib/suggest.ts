@@ -846,6 +846,20 @@ function findingFor(options: {
     platformLabel: boolean;
 }): EvidenceFinding | undefined {
     const { line, selfName, isSelfLabel, ownLabelNearby } = options;
+    const voicePerson = line.voice?.quality === "matched" ? line.voice.person : undefined;
+    if (
+        voicePerson &&
+        !sameName(voicePerson, line.label) &&
+        !line.muted?.some((name) => sameName(name, voicePerson)) &&
+        (!line.present || line.present.some((name) => sameName(name, voicePerson)))
+    ) {
+        return {
+            speaker: voicePerson,
+            confidence: 0.9,
+            rules: [MeetingRule.Voice],
+            echo: (line.echoOfCall ?? 0) >= 0.65,
+        };
+    }
 
     // No live segment covers the line, or two tie: only a sure energy share names its channel.
     if (line.micShare === undefined || !line.winner) {
@@ -1495,6 +1509,16 @@ function evidenceItems(options: {
                 lines: open.shares.length,
                 endSec: open.endSec,
                 ...(open.echoLines > 0 ? { echoLines: open.echoLines } : {}),
+                ...(open.item.rules.includes(MeetingRule.Voice)
+                    ? {
+                          voiceEvidence: open.lines.map((line) => ({
+                              index: line.index,
+                              fromSec: line.startSec,
+                              toSec: line.endSec,
+                              ...line.voice,
+                          })),
+                      }
+                    : {}),
                 ...(candidateScores.length > 0
                     ? {
                           candidateScores:
@@ -1636,7 +1660,7 @@ function evidenceItems(options: {
                 continue;
             }
             // R20 already said who the line is.
-            if (swapped(line)) {
+            if (swapped(line) && line.voice?.quality !== "matched") {
                 close();
                 continue;
             }

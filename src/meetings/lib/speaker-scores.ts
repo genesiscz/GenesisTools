@@ -83,6 +83,7 @@ const RULE_KINDS = new Map<string, SpeakerEvidenceKind>([
     [MeetingRule.LiveName, "voice"],
     [MeetingRule.Energy, "voice"],
     [MeetingRule.VoiceEmbedding, "voice"],
+    [MeetingRule.Voice, "voice"],
     [MeetingRule.LocalVoice, "voice"],
     [MeetingRule.LabelVoice, "voice"],
     [MeetingRule.LabelSwap, "voice"],

@@ -58,6 +58,7 @@ export interface RawMeeting {
         energyMicShare?: number;
         rawEnergyMicShare?: number;
         acoustic?: EchoMetric;
+        acousticQuality?: EchoMetric["quality"] | "unknown";
         liveName?: string;
         /** Everyone the platform showed speaking during the line, most often first. */
         speaking: string[];
@@ -211,6 +212,7 @@ export function rawMeeting(options: {
                 ...(line.energyMic !== undefined ? { energyMicShare: Math.round(line.energyMic * 1000) / 1000 } : {}),
                 ...(line.energyMicRaw !== undefined ? { rawEnergyMicShare: line.energyMicRaw } : {}),
                 ...(line.acoustic ? { acoustic: line.acoustic } : {}),
+                acousticQuality: line.acousticQuality ?? "unknown",
                 ...(line.liveName ? { liveName: line.liveName } : {}),
                 speaking: Object.entries(line.speaking)
                     .sort((a, b) => b[1] - a[1])

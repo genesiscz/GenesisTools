@@ -7,6 +7,8 @@
 export enum MeetingRule {
     PlatformPrehistory = "platform-prehistory",
     LocalSpeech = "local-speech",
+    /** Confirmed local voice enrolment passed its cosine threshold and competing-person margin. */
+    Voice = "voice",
     /**
      * RA, attendance. The platform's join and leave times (Teams per person, FaceTime for the whole call) say who was
      * in the call. A label whose person was not in the call during a range cannot be theirs; with one other person

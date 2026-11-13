@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { AcousticShare } from "@genesiscz/utils/meetings/echo";
 import { correlateEcho } from "@genesiscz/utils/meetings/echo";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
@@ -810,4 +811,39 @@ test("pitch identity is stable across gain changes and unnamed clusters remain u
         })[0]!.cluster
     ).toBeUndefined();
     expect(anonymous.every((line) => line.cluster?.speaker === undefined)).toBe(true);
+});
+
+test("confirmed offline voice evidence decides remote lines without inheriting a mic label", () => {
+    const fixture = scene([
+        { label: "Bob Example", mic: 0.1 },
+        { label: "Bob Example", mic: 0.1 },
+    ]);
+    const share: AcousticShare = Object.assign(fixture.share, {
+        voice: () => ({
+            model: "fixture:v1",
+            quality: "matched" as const,
+            person: "Carol Example",
+            candidates: [
+                { person: "Carol Example", score: 0.85 },
+                { person: "Bob Example", score: 0.2 },
+            ],
+            reason: "threshold and margin met",
+        }),
+    });
+    const result = ranges(
+        suggestItems({ ...base, meeting: fixture.meeting, evidence: fixture.evidence, energyMicShare: share })
+    );
+    expect(
+        result.some(
+            (item) => item.speaker === "Carol Example" && item.rules.includes("voice") && (item.confidence ?? 0) >= 0.9
+        )
+    ).toBe(true);
+    const unknown: AcousticShare = Object.assign(fixture.share, {
+        voice: () => ({ model: "fixture:v1", quality: "unknown" as const, candidates: [], reason: "ambiguous" }),
+    });
+    expect(
+        ranges(
+            suggestItems({ ...base, meeting: fixture.meeting, evidence: fixture.evidence, energyMicShare: unknown })
+        ).some((item) => item.rules.includes("voice"))
+    ).toBe(false);
 });

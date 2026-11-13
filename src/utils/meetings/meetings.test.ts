@@ -1220,6 +1220,13 @@ describe("isolated playback echo and speaker enrolment", () => {
         const measured = correlateEcho({ mic: echo, call, rate: 2000 });
         expect(measured.echoOfCall).toBeGreaterThan(0.99);
         expect(measured.lagMs).toBe(42);
+        const captureOffset = correlateEcho({
+            mic: Float32Array.from(call, (_, i) => (call[i + 84] ?? 0) * 0.7),
+            call,
+            rate: 2000,
+        });
+        expect(captureOffset.lagMs).toBe(-42);
+        expect(captureOffset.echoOfCall).toBeGreaterThan(0.99);
         expect(measured.cleanMicShare).toBeLessThan(0.01);
         const mixed = correlateEcho({ mic: Float32Array.from(echo, (n, i) => n + local[i]!), call, rate: 2000 });
         expect(mixed.cleanMicRms).toBeGreaterThan(measured.cleanMicRms + 0.05);

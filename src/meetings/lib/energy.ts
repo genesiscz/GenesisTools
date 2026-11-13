@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -12,6 +13,7 @@ import {
 } from "@genesiscz/utils/meetings/energy";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence } from "@genesiscz/utils/meetings/sources";
+import { voiceEvidenceSchema } from "@genesiscz/utils/meetings/voice";
 
 const { log } = logger.scoped("meetings-energy");
 
@@ -44,21 +46,33 @@ export async function energyMicShareFor(
     const calibration = calibrateChannels(energy, evidence.segments);
     log.debug({ meeting: record.id, ...calibration }, "channel layout calibrated");
     const { layout } = calibration;
-    const echo =
-        layout === "unknown"
-            ? undefined
-            : await readEchoCache({
-                  audioPath: evidence.audioPath,
-                  cachePath: join(store.folder(record.id), "evidence", "echo.json"),
-                  layout,
-              });
-    const share: AcousticShare = (fromSec, toSec) =>
-        (echo ? echoForRange(echo, fromSec, toSec)?.cleanMicShare : undefined) ??
-        micShare(energy, layout, fromSec, toSec);
+    const echo = await readEchoCache({
+        audioPath: evidence.audioPath,
+        cachePath: join(store.folder(record.id), "evidence", "echo.json"),
+        layout,
+    });
+    const folder = join(store.folder(record.id), "evidence");
+    const voicesPath = join(folder, "voice-scores.json"),
+        enrolmentPath = join(folder, "voices.json");
+    const voices = existsSync(voicesPath)
+        ? voiceEvidenceSchema.safeParse(SafeJSON.parse(readFileSync(voicesPath, "utf8")))
+        : undefined;
+    const stat = statSync(evidence.audioPath);
+    const validVoices =
+        voices?.success &&
+        voices.data.source === SafeJSON.stringify([evidence.audioPath, stat.size, stat.mtimeMs]) &&
+        existsSync(enrolmentPath) &&
+        voices.data.enrolment === Bun.hash(readFileSync(enrolmentPath)).toString()
+            ? voices.data.lines
+            : undefined;
+    const share: AcousticShare = Object.assign(
+        (fromSec: number, toSec: number) => (echo ? echoForRange(echo, fromSec, toSec)?.cleanMicShare : undefined),
+        {
+            acoustic: (fromSec: number, toSec: number) => (echo ? echoForRange(echo, fromSec, toSec) : undefined),
+            voice: (fromSec: number, toSec: number) => validVoices?.[`${fromSec}:${toSec}`],
+        }
+    );
     share.raw = (fromSec, toSec) => micShare(energy, layout, fromSec, toSec);
-    if (echo) {
-        share.acoustic = (fromSec, toSec) => echoForRange(echo, fromSec, toSec);
-    }
     return {
         calibration,
         ...(layout === "unknown" ? {} : { share }),

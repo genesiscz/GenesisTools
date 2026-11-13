@@ -43,6 +43,7 @@ const SPEAKING_LEAD_SEC = 1;
 export interface LineEvidence {
     voice?: VoiceMatch;
     acoustic?: EchoMetric;
+    acousticQuality?: EchoMetric["quality"] | "unknown";
     echoOfCall?: number;
     echoLagMs?: number;
     index: number;
@@ -234,6 +235,7 @@ export function lineEvidence(
             ...(energyMic !== undefined ? { energyMic } : {}),
             ...(energyMicRaw !== undefined ? { energyMicRaw } : {}),
             ...(acoustic ? { acoustic, echoOfCall: acoustic.echoOfCall, echoLagMs: acoustic.lagMs } : {}),
+            acousticQuality: acoustic?.quality ?? "unknown",
             ...(voice ? { voice } : {}),
             ...(muted && muted.length > 0 ? { muted } : {}),
         };
