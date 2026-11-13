@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 /**
  * The URL hash is shared by several kit components: `Tabs` owns one plain
  * segment (the tab id) and each `TimeSeries` with an `id` owns a
@@ -44,4 +46,56 @@ export function withPlainSegment(hash: string, encoded: string): string {
     const charts = hashSegments(hash).filter(isNamedSegment);
 
     return composeHash(encoded ? [encoded, ...charts] : charts);
+}
+
+/**
+ * The decoded plain segment when the hash ALSO carries named state (`#layers&d=…` gives "layers"), else "".
+ * A lone `#layers` is left to the browser, which scrolls to it by itself.
+ */
+export function sectionAnchor(hash: string): string {
+    const segments = hashSegments(hash);
+    const plain = segments.find((s) => !isNamedSegment(s));
+
+    if (!plain || !segments.some(isNamedSegment)) {
+        return "";
+    }
+
+    try {
+        return decodeURIComponent(plain);
+    } catch {
+        return plain;
+    }
+}
+
+const revealedOnLoad = new WeakSet<Document>();
+
+/**
+ * Keep section deep links working for a component that stores its state in the hash. The browser looks the WHOLE
+ * fragment up as an element id, so `#layers&d=…` scrolls nowhere. On the first mount in a document, and on every
+ * hash navigation, scroll to the element the plain segment names. Only the first mount scrolls, so a component
+ * that mounts later (inside a tab the reader opens) does not move the page.
+ */
+export function useSectionAnchor(enabled: boolean): void {
+    useEffect(() => {
+        if (!enabled) {
+            return;
+        }
+
+        const reveal = () => {
+            const id = sectionAnchor(window.location.hash);
+
+            if (id) {
+                document.getElementById(id)?.scrollIntoView();
+            }
+        };
+
+        if (!revealedOnLoad.has(document)) {
+            revealedOnLoad.add(document);
+            reveal();
+        }
+
+        window.addEventListener("hashchange", reveal);
+
+        return () => window.removeEventListener("hashchange", reveal);
+    }, [enabled]);
 }

@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useId, useState } from "react";
 import { Button } from "./forms";
+import { useSectionAnchor } from "./hash";
 import {
     Badge,
     type BodyContent,
@@ -213,6 +214,9 @@ export function DecisionBoard({
         window.addEventListener("hashchange", restore);
         return () => window.removeEventListener("hashchange", restore);
     }, [hash, namespace, points, initial, normalize, choices]);
+
+    // The choices ride in the hash beside a section anchor; keep `#layers&d=…` scrolling to #layers.
+    useSectionAnchor(Boolean(hash));
 
     /** Normalize a change, then put every still-locked choice back: `normalize` may not move a locked decision. */
     const applyKeepingLocks = (current: DecisionChoices, next: DecisionChoices) => {

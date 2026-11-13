@@ -11,6 +11,7 @@ import {
     useState,
 } from "react";
 import { TONE_COLOR } from "./charts";
+import { useSectionAnchor } from "./hash";
 import { resolveCssColorValue } from "./mermaid-core";
 import type { Tone } from "./primitives";
 import {
@@ -1106,6 +1107,9 @@ export function TimeSeries({
 
         return () => window.clearTimeout(timer);
     }, [id, saved, view, bounds]);
+
+    // The saved view rides in the hash beside a section anchor; keep `#layers&ts.<id>=…` scrolling to #layers.
+    useSectionAnchor(Boolean(id));
 
     useEffect(() => {
         if (!syncId) {
