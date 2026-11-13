@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import {
     billingAnchor,
     formatCoarseSpan,
@@ -152,5 +153,31 @@ describe("planAllowsClaudeCode: a contradicted reading", () => {
 
     test("a contradiction does not disturb a healthy account", () => {
         expect(planAllowsClaudeCode({ subscriptionPlan: "claude_max", subscriptionStatus: "active" })).toBe(true);
+    });
+});
+
+describe("revalidateStalePlan", () => {
+    test("a vault that cannot be read is an inconclusive probe, never a thrown poll", async () => {
+        const security = await import("@genesiscz/utils/security");
+        mock.module("@genesiscz/utils/security", () => ({
+            ...security,
+            resolveSecret: async () => {
+                throw new Error("fixture: the vault is locked");
+            },
+        }));
+        const { revalidateStalePlan } = await import("./subscription");
+        const account: AccountEntry = {
+            id: "acc_work",
+            name: "work",
+            provider: "anthropic-sub",
+            enabled: true,
+            billing: { mode: "subscription" },
+            credentials: { longLivedToken: { type: "secure", path: "ai/acc_work/longLivedToken" } },
+            useEnvApiKey: false,
+            subscriptionPlan: "claude_free",
+        };
+
+        expect(await revalidateStalePlan(account)).toBe("unknown");
+        expect(account.subscriptionPlan).toBe("claude_free");
     });
 });

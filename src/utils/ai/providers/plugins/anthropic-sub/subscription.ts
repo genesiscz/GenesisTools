@@ -187,8 +187,18 @@ export async function revalidateStalePlan(
     account: AccountEntry,
     now: number = Date.now()
 ): Promise<"alive" | "dead" | "unknown"> {
-    // Resolved here, where the probe spends it.
-    const token = await resolveSecret(account.credentials.longLivedToken);
+    // Resolved here, where the probe spends it. A locked or unreadable vault is an inconclusive probe like any other:
+    // the stored reading stays, and the caller's poll goes on.
+    let token: string | undefined;
+
+    try {
+        token = await resolveSecret(account.credentials.longLivedToken);
+    } catch (err) {
+        logger.warn(
+            `[subscription:${account.name}] could not read the long-lived token to re-check the plan: ${err instanceof Error ? err.message : err}`
+        );
+        return "unknown";
+    }
 
     if (!token) {
         return "unknown";
