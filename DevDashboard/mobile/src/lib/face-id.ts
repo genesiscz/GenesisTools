@@ -16,7 +16,8 @@ async function loadAuthentication(): Promise<AuthenticationModule | null> {
     return import("expo-local-authentication");
 }
 
-export type FaceIdGate = { ok: true; via: "biometrics" | "passcode" | "none" } | { ok: false; reason: string };
+/** A passed gate always names how the user confirmed; there is no unauthenticated pass. */
+export type FaceIdGate = { ok: true; via: "biometrics" | "passcode" } | { ok: false; reason: string };
 
 /**
  * Asks for Face ID (or Touch ID, or the passcode when biometrics fail) before an act that cannot be undone, such as
