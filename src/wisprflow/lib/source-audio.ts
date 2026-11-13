@@ -19,6 +19,18 @@ function missing(error: unknown): boolean {
     return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 
+/** A folder name that is not a valid escape (`source%old`) is skipped alone, so it cannot stop the whole scan. */
+function decodedName(name: string): string | undefined {
+    try {
+        return decodeURIComponent(name);
+    } catch (error) {
+        if (error instanceof URIError) {
+            return undefined;
+        }
+        throw error;
+    }
+}
+
 /** Directory inventory includes audio whose metadata has gone; those entries are reported as unmatched. */
 export async function audioFilesIn(folder: string): Promise<LocalAudioFile[]> {
     let entries: Dirent[];
@@ -36,10 +48,15 @@ export async function audioFilesIn(folder: string): Promise<LocalAudioFile[]> {
             continue;
         }
         const path = join(folder, entry.name, "upload.ogg");
+        const sourceMeetingId = decodedName(entry.name);
+        if (sourceMeetingId === undefined) {
+            log.warn({ folder, name: entry.name }, "audio folder name is not a valid escape; skipped");
+            continue;
+        }
         try {
             const file = await lstat(path);
             if (file.isFile() && file.size > 0) {
-                result.push({ sourceMeetingId: decodeURIComponent(entry.name), path });
+                result.push({ sourceMeetingId, path });
             }
         } catch (error) {
             if (!missing(error)) {
@@ -50,8 +67,7 @@ export async function audioFilesIn(folder: string): Promise<LocalAudioFile[]> {
     return result.sort((a, b) => a.sourceMeetingId.localeCompare(b.sourceMeetingId));
 }
 
-/** No list cap and no transcript/evidence read. SQLite is opened read-only, including during watcher discovery. */
-export function localAudioCatalog(dir: string): LocalAudioMeeting[] {
+function readMetadata<T>(dir: string, read: (db: Database) => T): T {
     const databasePath = join(dir, "flow.sqlite");
     let db: Database;
     try {
@@ -62,20 +78,43 @@ export function localAudioCatalog(dir: string): LocalAudioMeeting[] {
         throw error;
     }
     try {
-        return db
+        return read(db);
+    } finally {
+        db.close();
+    }
+}
+
+function audioMeeting(row: AudioMetadataRow): LocalAudioMeeting {
+    return {
+        sourceMeetingId: row.id,
+        title: row.title,
+        start: toIso(row.createdAt),
+        end: row.endedAt ? new Date(row.endedAt).toISOString() : undefined,
+    };
+}
+
+/** No list cap and no transcript/evidence read. SQLite is opened read-only, including during watcher discovery. */
+export function localAudioCatalog(dir: string): LocalAudioMeeting[] {
+    return readMetadata(dir, (db) =>
+        db
             .query<AudioMetadataRow, []>(
                 "SELECT id, title, createdAt, endedAt FROM Meetings WHERE isDeleted = 0 ORDER BY createdAt DESC"
             )
             .all()
-            .map((row) => ({
-                sourceMeetingId: row.id,
-                title: row.title,
-                start: toIso(row.createdAt),
-                end: row.endedAt ? new Date(row.endedAt).toISOString() : undefined,
-            }));
-    } finally {
-        db.close();
-    }
+            .map(audioMeeting)
+    );
+}
+
+/** One meeting's metadata by its id: a single-row read, so linking N recordings reads N rows, not N catalogs. */
+export function localAudioMeeting(dir: string, id: string): LocalAudioMeeting | undefined {
+    return readMetadata(dir, (db) => {
+        const row = db
+            .query<AudioMetadataRow, [string]>(
+                "SELECT id, title, createdAt, endedAt FROM Meetings WHERE isDeleted = 0 AND id = ? LIMIT 1"
+            )
+            .get(id);
+        return row ? audioMeeting(row) : undefined;
+    });
 }
 
 export function wisprAudioAccess(dir: string): LocalSourceAudio {
@@ -95,7 +134,7 @@ export function wisprAudioAccess(dir: string): LocalSourceAudio {
             return localAudioCatalog(dir);
         },
         load: async (id) => {
-            const meeting = localAudioCatalog(dir).find((candidate) => candidate.sourceMeetingId === id);
+            const meeting = localAudioMeeting(dir, id);
             return meeting ? { ...meeting, participants: [], speakers: [], transcript: [], folders: [] } : null;
         },
     };

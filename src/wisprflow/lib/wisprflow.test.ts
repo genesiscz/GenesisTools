@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
 import {
     existsSync,
@@ -24,6 +25,7 @@ import { pageText, parseMcpTranscript } from "./mcp";
 import { mergeFrontmatter, writeGuarded } from "./output";
 import { renderMarkdown, renderSrt, showMarkdown } from "./render";
 import { loadMeeting } from "./source";
+import { audioFilesIn, localAudioMeeting, wisprAudioAccess } from "./source-audio";
 import { fillSpeakerMentions, resolveSpeakers } from "./speakers";
 import type { Meeting } from "./types";
 
@@ -725,4 +727,34 @@ test("the indicator stops at the next read, including a partial or muted-only re
         { tSec: 300, speaking: [], speakingUnknown: true, muted: ["Alice Example"], validUntilSec: 305 },
         { tSec: 305, speaking: [], validUntilSec: 315 },
     ]);
+});
+
+describe("local Wispr audio", () => {
+    test("a folder name that is not a valid escape is skipped, and the rest of the inventory stays", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "wispr-audio-"));
+
+        for (const name of ["source%old", "meeting%2D1"]) {
+            mkdirSync(join(folder, name));
+            writeFileSync(join(folder, name, "upload.ogg"), "ogg");
+        }
+
+        expect(await audioFilesIn(folder)).toEqual([
+            { sourceMeetingId: "meeting-1", path: join(folder, "meeting%2D1", "upload.ogg") },
+        ]);
+    });
+
+    test("load reads the one meeting by its id, and a deleted or unknown id is null", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "wispr-catalog-"));
+        const db = new Database(join(dir, "flow.sqlite"));
+        db.run("CREATE TABLE Meetings (id TEXT, title TEXT, createdAt TEXT, endedAt INTEGER, isDeleted INTEGER)");
+        db.run("INSERT INTO Meetings VALUES ('m1', 'Fixture standup', '2026-11-02 09:00:00', NULL, 0)");
+        db.run("INSERT INTO Meetings VALUES ('m2', 'Fixture gone', '2026-11-02 10:00:00', NULL, 1)");
+        db.close();
+        const access = wisprAudioAccess(dir);
+
+        expect(localAudioMeeting(dir, "m1")).toMatchObject({ sourceMeetingId: "m1", title: "Fixture standup" });
+        expect(await access.load("m1")).toMatchObject({ sourceMeetingId: "m1", participants: [], transcript: [] });
+        expect(await access.load("m2")).toBeNull();
+        expect(await access.load("m3")).toBeNull();
+    });
 });
