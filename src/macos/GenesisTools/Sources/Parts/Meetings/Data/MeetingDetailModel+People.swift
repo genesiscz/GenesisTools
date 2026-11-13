@@ -63,7 +63,8 @@ final class PeopleSearch {
     @ObservationIgnored let meeting: String?
     @ObservationIgnored var atSec: Double?
     @ObservationIgnored let limit: Int
-    @ObservationIgnored private let service: MeetingsService?
+    /// The service it asks; nil: the command answers.
+    @ObservationIgnored let service: MeetingsService?
     /// The warning for a typed name: a rename's plan. nil asks none.
     @ObservationIgnored private let warningFor: ((String) async -> String?)?
     @ObservationIgnored private var task: Task<Void, Never>?

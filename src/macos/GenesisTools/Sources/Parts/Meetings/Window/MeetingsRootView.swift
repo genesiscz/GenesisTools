@@ -187,7 +187,8 @@ private struct MeetingsContactsPane: View {
                 unmerge: { people.unmerge($0) },
                 setSource: { people.setSource($0, on: $1) },
                 grantContacts: { people.grantContacts() },
-                showMeetings: { people.showMeetings($0) })
+                showMeetings: { people.showMeetings($0) },
+                mergeSearch: { people.mergeSearch() })
                 .overlay {
                     if answer == nil, people.known.failure == nil {
                         VStack(spacing: 8) {

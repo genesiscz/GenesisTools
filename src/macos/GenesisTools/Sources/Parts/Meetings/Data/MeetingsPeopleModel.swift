@@ -52,6 +52,9 @@ final class MeetingsPeopleModel {
 
     private var service: MeetingsService? { window?.service }
 
+    /// The search "Merge with…" asks: the whole directory (`people.known`, 50 at most) on this window's service.
+    func mergeSearch() -> PeopleSearch { PeopleSearch(meeting: nil, limit: 50, service: service) }
+
     /// The directory's source switches as the config holds them (`global.people.sources`, both on by default).
     var switches: PeopleSourceSwitches {
         let raw = window?.settingsRaw
