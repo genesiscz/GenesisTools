@@ -739,6 +739,32 @@ static void scan_shared_file(ThreadOut *t, int fd, off_t size, int group, int no
     }
 }
 
+/**
+ * decmpfs keeps a compressed file's payload in its resource fork, so a compressed file is mapped through that fork
+ * (opening the data fork asks APFS for logical bytes) and a plain one through its data fork. Both phases of the
+ * partner query and the scan use this one choice, so their ranges describe the same blocks. Sets *span to the
+ * bytes to map: 0 when nothing is mapped (an inline compressed file has no fork). Returns the fd, or -1 with errno.
+ */
+static int open_mapped_payload(int dfd, const char *name, uint32_t fflags, off_t dlen, off_t *span) {
+    *span = dlen;
+    if (!(fflags & UF_COMPRESSED)) return openat(dfd, name, O_RDONLY | O_NONBLOCK);
+
+    size_t plen = strlen(name) + sizeof "/..namedfork/rsrc";
+    char *forkname = malloc(plen);
+    if (!forkname) { perror("malloc resource fork"); exit(1); }
+    snprintf(forkname, plen, "%s/..namedfork/rsrc", name);
+    int fd = openat(dfd, forkname, O_RDONLY | O_NONBLOCK);
+    free(forkname);
+    *span = 0;
+    struct stat st;
+    if (fd >= 0 && fstat(fd, &st) == 0 && st.st_size > 0) {
+        // APFS can reserve blocks beyond the resource fork's EOF.
+        // Query those too or an otherwise shared fork loses its tail allocation.
+        *span = st.st_blocks * 512 > st.st_size ? st.st_blocks * 512 : st.st_size;
+    }
+    return fd;
+}
+
 /** Partner mode: same walk, but sum the file's overlap with the target ranges. */
 static uint64_t overlap_shared_file(int fd, off_t size) {
     off_t off = 0;
@@ -909,22 +935,12 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
             // decmpfs keeps its payload outside the data fork. Map the resource
             // fork directly; opening the data fork asks APFS for logical bytes.
             if ((fflags & UF_COMPRESSED) && !g_partner_mode) {
-                size_t plen = strlen(name) + sizeof "/..namedfork/rsrc";
-                char *forkname = malloc(plen);
-                if (!forkname) { perror("malloc resource fork"); exit(1); }
-                snprintf(forkname, plen, "%s/..namedfork/rsrc", name);
-                int rfd = openat(dfd, forkname, O_RDONLY | O_NONBLOCK);
-                free(forkname);
-                struct stat rst;
+                off_t span;
+                int rfd = open_mapped_payload(dfd, name, fflags, dlen, &span);
                 size_t start = t->n;
                 if (rfd >= 0) {
                     t->files_opened++;
-                    if (fstat(rfd, &rst) == 0 && rst.st_size > 0) {
-                        // APFS can reserve blocks beyond the resource fork's EOF.
-                        // Query those too or an otherwise shared fork loses its tail allocation.
-                        off_t span = rst.st_blocks * 512 > rst.st_size ? rst.st_blocks * 512 : rst.st_size;
-                        scan_shared_file(t, rfd, span, g, g_maxdepth >= 0 ? dirnode : -1, next_file_id(t));
-                    }
+                    if (span > 0) scan_shared_file(t, rfd, span, g, g_maxdepth >= 0 ? dirnode : -1, next_file_id(t));
                     close(rfd);
                 }
                 if (t->n == start) {
@@ -949,14 +965,17 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
                 if (!full) { perror("malloc partner path"); exit(1); }
                 memcpy(full, dirpath, pl); full[pl] = '/'; memcpy(full + pl + 1, name, nl + 1);
                 if (under_partner_target(full)) { free(full); continue; }
-                int pfd = openat(dfd, name, O_RDONLY | O_NONBLOCK);
+                // The target's ranges (phase 1) hold a compressed file's resource-fork extents, so a compressed
+                // holder is mapped through its fork here too; its data fork would never meet them.
+                off_t span;
+                int pfd = open_mapped_payload(dfd, name, fflags, dlen, &span);
                 if (pfd < 0) {
                     if (errno == EACCES || errno == EPERM) note_denied(full, 0);
                     free(full);
                     continue;
                 }
                 t->files_opened++;
-                uint64_t ov = overlap_shared_file(pfd, dlen);
+                uint64_t ov = span > 0 ? overlap_shared_file(pfd, span) : 0;
                 close(pfd);
                 if (ov > 0) partner_push(t, full, ov);
                 free(full);

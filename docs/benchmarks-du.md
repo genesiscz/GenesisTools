@@ -1719,3 +1719,20 @@ bytes, max RSS 48.3 MB and 48.6 MB, system CPU 2.51 s and 2.44 s. Bounded as the
 (`--min-bytes 65536 --ext jsonl --ext json --ext txt --ext log --ext md --keep-prefix .cold-`): 121 records, 22812
 JSON bytes, max RSS 4.1 MB and 4.0 MB, system CPU 2.51 s and 2.07 s. The kernel walk dominates the system time in
 both arms; the saving is the records the caller no longer receives, parses and keeps.
+
+## 2026-11-13 23:43 — partner query maps compressed holders through their resource fork
+
+`--partners-of` scanned the target with the scan walk (phase 1), which maps a UF_COMPRESSED file through
+`..namedfork/rsrc`, and then mapped every candidate holder in phase 2 through its data fork. A data fork of a decmpfs
+file never meets the target's fork extents, so two compressed clones were counted as shared by the scan while the
+partner query named no holder. Both phases now choose the mapped payload in one function (`open_mapped_payload`): the
+resource fork, with its reserved tail, for a compressed file, the data fork otherwise, and nothing for an inline
+compressed file. The scan branch only moved into that function, so scan totals must not move.
+
+Semantic control on this worktree (`--json .`, 106172 files, old and new binaries interleaved, two runs each, load
+average 68.77 at start, 67.50 at end): files_scanned 106098, files_opened 93531, naive_bytes 1801003008, unique_bytes
+1360890153, unique_allocated_bytes 1619451904, apparent_bytes 1502120086, shared_bytes 181551104 and every group's
+naive_bytes are identical in both arms. System CPU old 22.42 s and 23.14 s, new 23.33 s and 22.25 s: noise at this
+load. The partner change runs only for compressed files in phase 2, which this tree does not hold.
+Regression: `src/du/lib/clone-controls.test.ts` now asks the partner query for a third compressed clone and expects
+both other clones; on the old engine it returned no partner file.

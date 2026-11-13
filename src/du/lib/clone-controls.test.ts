@@ -18,7 +18,7 @@ import { env } from "@genesiscz/utils/env";
 import { cloneOrCopy } from "@genesiscz/utils/fs/clone";
 import { scanWithBun } from "./bun-scan";
 import { BLK, type CloneFixture, makeCloneFixture } from "./clone-fixture";
-import { scanWithC, scanWithCFfi } from "./engine";
+import { scanPartners, scanWithC, scanWithCFfi } from "./engine";
 import type { ClonesizeResult } from "./types";
 
 const describeOnDarwin = process.platform === "darwin" ? describe : describe.skip;
@@ -238,6 +238,17 @@ describeOnDarwin("transparent compression allocation", () => {
         expect(files.every((file) => (file.flags & 0x20) !== 0 && file.nlink === 1)).toBe(true);
         expect(files[0].cloneId).not.toBe("");
         expect(files[0].cloneId).toBe(files[1].cloneId);
+
+        // The partner query maps both phases through the resource fork, so it names the other compressed clone.
+        const holder = join(root, "holder");
+        mkdirSync(holder);
+        execFileSync("cp", ["-c", "-p", join(pair, "a.txt"), join(holder, "c.txt")], { env: env.getProcessEnv() });
+        const partners = scanPartners({ target: holder, root, threads: 2 });
+        expect(partners.target_shared_bytes).toBeGreaterThan(0);
+        expect(partners.partner_files.map((file) => file.path).sort()).toEqual([
+            join(pair, "a.txt"),
+            join(pair, "b.txt"),
+        ]);
     });
 });
 
