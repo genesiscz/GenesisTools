@@ -80,6 +80,30 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(FrameReviewModel.nearest(in: [first, second], at: 0)?.file, "a.png")
     }
 
+    func testScrubbingPreviewsFramesButSettlesTranscriptDetailsOnlyOnRelease() async {
+        let frames = [0.0, 30.0].enumerated().map { index, time in
+            TimelineFrame(file: "frame-\(index)", path: "/fixture/frame-\(index)", at: "", meetingSec: time,
+                          displayId: 1, width: 800, height: 600, lineCount: 0, changed: [], lines: [])
+        }
+        let transcript = MeetingTranscript(meeting: "m", entries: (0..<5).map { index in
+            TranscriptLine(id: "line-\(index)", startSec: Double(index * 10), speaker: "Alex", text: "Passage \(index)")
+        })
+        let model = FrameReviewModel(meeting: "m", file: frames[0].file, at: 0, player: nil, defaults: .standard,
+            timeline: ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: frames), transcript: transcript)
+        await model.waitForIndex()
+        let heldContext = model.context.map(\.text)
+        model.beginScrub()
+        model.scrub(to: 30, seek: false)
+        XCTAssertEqual(model.time, 30)
+        XCTAssertEqual(model.frame?.file, frames[1].file)
+        XCTAssertEqual(model.detailsFrame?.file, frames[0].file)
+        XCTAssertEqual(model.context.map(\.text), heldContext)
+        model.endScrub(seek: false)
+        XCTAssertEqual(model.detailsFrame?.file, frames[1].file)
+        XCTAssertEqual(model.context.map(\.text), ["Passage 2", "Passage 3", "Passage 4"])
+        model.cancelWork()
+    }
+
     func testAutoDisplayFollowsRecordedFocusAndManualSelectionStaysFixed() throws {
         func frame(_ file: String, _ time: Double, _ display: Int, _ focus: Int) -> TimelineFrame {
             var value = TimelineFrame(file: file, path: "/fixture/\(file)", at: "2026-11-01T10:00:00Z", meetingSec: time,
