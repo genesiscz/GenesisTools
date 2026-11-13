@@ -31,6 +31,11 @@ export function parseCssColor(value: string): Rgb | null {
         };
     }
 
+    const srgb = text.match(/^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/[^)]+)?\)$/);
+    if (srgb) {
+        return { r: Number(srgb[1]) * 255, g: Number(srgb[2]) * 255, b: Number(srgb[3]) * 255 };
+    }
+
     const rgb = text.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/);
 
     if (rgb) {
@@ -69,7 +74,13 @@ export function contrastRatio(a: string, b: string): number {
 export const TEXT_ON_DARK = "#ffffff";
 export const TEXT_ON_LIGHT = "#111318";
 
-/** White or near-black, whichever reads better on `fill`. Unparseable fills get white. */
+/** White or near-black, with black at the narrow midtone range where neither reaches AA. */
 export function readableTextOn(fill: string): string {
-    return contrastRatio(fill, TEXT_ON_LIGHT) > contrastRatio(fill, TEXT_ON_DARK) ? TEXT_ON_LIGHT : TEXT_ON_DARK;
+    const darkRatio = contrastRatio(fill, TEXT_ON_LIGHT);
+    const lightRatio = contrastRatio(fill, TEXT_ON_DARK);
+    if (darkRatio < 4.5 && lightRatio < 4.5 && parseCssColor(fill)) {
+        return "#000000";
+    }
+
+    return darkRatio > lightRatio ? TEXT_ON_LIGHT : TEXT_ON_DARK;
 }

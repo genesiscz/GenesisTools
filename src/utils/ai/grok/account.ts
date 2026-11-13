@@ -13,9 +13,15 @@ import { resolveStoredGrokGrant } from "./stored-grant";
 
 export interface ResolvedGrokSubToken {
     token: string;
-    /** Auth file the token was read from (also usable for reload-on-expiry). Absent for a stored grant. */
+    /**
+     * Auth file the token was read from (also usable for reload-on-expiry). Absent for a token
+     * held in the vault, so nobody reads or refreshes the Grok CLI's default file for it.
+     */
     authPath?: string;
-    /** Set for a grant `tools grok login` stored in the vault: the way to a fresh token, and the fix when that fails. */
+    /**
+     * Set for a token held in the vault (a grant `tools grok login` stored, or a pasted token):
+     * the way to a fresh token, and the fix when that fails.
+     */
     storedGrant?: StoredGrantSource;
     account: { name: string; label?: string };
 }
@@ -152,6 +158,14 @@ export async function resolveGrokSubToken(
     // Resolved here, where it is spent: only the stored-token branch reads the vault.
     const storedToken = credentials.authFile ? undefined : await resolveSecret(credentials.accessToken);
 
+    // A vault pointer whose entry is gone resolves to nothing. That is no credential, the
+    // same as an account without one: falling through to the default file below would serve,
+    // and refresh, whoever the Grok CLI is logged in as.
+    if (!credentials.authFile && !storedToken) {
+        const refusal = grokCredentialRefusal(account.name);
+        throw new Error(`${refusal.message} Run: ${refusal.remedy}`);
+    }
+
     if (storedToken) {
         // A stored token carries no refresh metadata of its own, and `authPath`
         // here is only the CLI's default file — whoever the CLI happens to be
@@ -181,7 +195,18 @@ export async function resolveGrokSubToken(
             throw new GrokAuthExpiredError(authPath);
         }
 
-        return { token: storedToken, authPath, account: pick(account) };
+        // No `authPath`: the default file is not this token's source. The way to a new token
+        // after an upstream 401 is the recovery, which asks the same identity proof first.
+        return {
+            token: storedToken,
+            storedGrant: pastedTokenRecovery({
+                accountName: account.name,
+                storedToken,
+                authPath,
+                ...(options?.noRefresh === undefined ? {} : { noRefresh: options.noRefresh }),
+            }),
+            account: pick(account),
+        };
     }
 
     return { token: await tokenFromAuthFile(authPath, options?.noRefresh), authPath, account: pick(account) };
@@ -213,6 +238,62 @@ async function holdsSameIdentity(storedToken: string, authPath: string): Promise
     }
 
     return decodeJwtClaims(active.key)?.sub === stored || active.user_id === stored;
+}
+
+/**
+ * The way to a new token for a pasted `accessToken`, after the upstream refused it or it
+ * expired in a long-lived client.
+ *
+ * A pasted token carries no grant of its own, and the default auth file holds whoever the
+ * Grok CLI is logged in as. So the file is read, and its grant spent, only when it proves
+ * the same identity as the pasted copy (the rule of the expiry branch above). Without that
+ * proof the refusal is final and names the login that gives the account a grant of its own.
+ */
+function pastedTokenRecovery(options: {
+    accountName: string;
+    storedToken: string;
+    authPath: string;
+    noRefresh?: boolean;
+}): StoredGrantSource {
+    const { accountName, storedToken, authPath, noRefresh } = options;
+    const hint = `Run: ${grokLoginCommand(accountName)}`;
+
+    return {
+        hint,
+        refresh: async (reason, force) => {
+            if (!(await holdsSameIdentity(storedToken, authPath))) {
+                logger.warn(
+                    { account: accountName, authPath, reason },
+                    "grok: the stored accessToken needs a new token and no auth file proves it belongs to this account"
+                );
+
+                throw new GrokAuthExpiredError(undefined, { hint });
+            }
+
+            const live = await tokenFromAuthFile(authPath, noRefresh);
+
+            // A newer token of the same identity is used as is. Only when the file still
+            // holds the very token the upstream refused does a forced grant help.
+            if (!force || live !== storedToken) {
+                return live;
+            }
+
+            // Guard above the consuming call: the grant rotates the Grok CLI's refresh token.
+            if (noRefresh) {
+                throw new Error(
+                    `Refusing to refresh the Grok token in ${authPath} during a diagnosis (${reason}). ${hint}`
+                );
+            }
+
+            return refreshGrokAuthOrThrow({
+                authPath,
+                force: true,
+                context: { account: accountName, reason },
+                onSuccess: "grok: refreshed the default auth file, which proves the stored token's identity",
+                onFailure: "grok: OIDC refresh of the identity-matched default auth file did not yield a usable token",
+            });
+        },
+    };
 }
 
 /**

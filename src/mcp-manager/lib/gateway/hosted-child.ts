@@ -19,8 +19,11 @@ import {
  * calls this: it serves the handler on `--socket` and exits once a module it loaded under `--source-root` changes
  * (the hub server's rule): it stops listening, prints `draining`, lets the requests in flight finish, and the gateway
  * starts the new code for the next call.
+ *
+ * `shutdown` closes what the handler holds (a browser worker, a tab). The child awaits it after the requests in flight
+ * have ended and before it exits, so a hot reload or a lost gateway cleans up as a signal does. It must bound itself.
  */
-export async function runHostedChild(serve: HostedHandler): Promise<void> {
+export async function runHostedChild(serve: HostedHandler, shutdown?: () => Promise<void>): Promise<void> {
     const { values } = parseArgs({
         options: {
             socket: { type: "string" },
@@ -106,6 +109,13 @@ export async function runHostedChild(serve: HostedHandler): Promise<void> {
 
         // Stops listening at once and resolves when the requests in flight have ended.
         await server.stop(false);
+
+        try {
+            await shutdown?.();
+        } catch (error) {
+            log.warn({ error }, "hosted child: shutdown failed");
+        }
+
         process.exit(0);
     };
 

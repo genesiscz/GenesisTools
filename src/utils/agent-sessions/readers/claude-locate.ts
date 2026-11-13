@@ -21,7 +21,7 @@ import {
     nativeSessionRootsForHome,
 } from "@genesiscz/utils/providers/session-paths";
 import { canonicalClaudeCopy, canonicalClaudeCopySync } from "./claude-discovery";
-import { claudeSubagentFiles, claudeSubagentsDir, isClaudeSubagentPath } from "./claude-paths";
+import { claudeSubagentCandidates, isClaudeSubagentPath } from "./claude-paths";
 
 /** The Claude driver's `locate` part: `<project>/<id>.jsonl` with its sub-agent files, and `tools claude worker` turn files. */
 export const claudeLocate: TranscriptLocator = {
@@ -219,8 +219,9 @@ const SUBAGENT_ID = /^a[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * A sub-agent transcript by its exact id: `<project>/<session>/subagents/agent-<id>.jsonl`.
- * Exact only, since every session directory is probed with one `existsSync`.
+ * A sub-agent transcript by its exact id: `<project>/<session>/subagents/agent-<id>.jsonl`, or the same file in one of
+ * the session's Workflow tool run folders. Exact only, since every session directory is probed with one `existsSync`
+ * (and one more per run folder, for the few sessions that have any).
  */
 function findClaudeSubagent(query: string, projectsDir: string, fs: FolderReads): RankedHit[] {
     const agentId = query.replace(/^agent-/, "");
@@ -236,18 +237,19 @@ function findClaudeSubagent(query: string, projectsDir: string, fs: FolderReads)
                 continue;
             }
 
-            const filePath = claudeSubagentFiles(
-                claudeSubagentsDir(join(projectDir, `${session}.jsonl`)),
-                agentId
-            ).transcript;
-            if (fs.exists(filePath)) {
-                hits.push({
-                    provider: "claude",
-                    source: "native",
-                    sessionId: agentId,
-                    filePath,
-                    mtime: fs.mtimeOf(filePath),
-                });
+            const candidates = claudeSubagentCandidates(join(projectDir, `${session}.jsonl`), agentId, (dir) =>
+                fs.listDir(dir)
+            );
+            for (const { transcript: filePath } of candidates) {
+                if (fs.exists(filePath)) {
+                    hits.push({
+                        provider: "claude",
+                        source: "native",
+                        sessionId: agentId,
+                        filePath,
+                        mtime: fs.mtimeOf(filePath),
+                    });
+                }
             }
         }
     }

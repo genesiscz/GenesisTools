@@ -350,6 +350,12 @@ package func runHub(_ args: [String]) -> Never {
         defer: false
     )
     window.title = "Agents"
+    // Hub UX wave 2 (`--sketch transcript=a`): the window's centred title pushes every title bar row into the right
+    // half of the window; the option's subject header needs the row from the sidebar's edge
+    // (Sketches/TranscriptSketchHubA.swift), so the title is not drawn. The window keeps its name for the system.
+    MainActor.assumeIsolated {
+        if HubLayout.option("transcript") == "a" { window.titleVisibility = .hidden }
+    }
     window.titlebarAppearsTransparent = true
     window.appearance = NSAppearance(named: .darkAqua)
     window.backgroundColor = ReviewPalette.background
@@ -2358,6 +2364,7 @@ struct HubRootView: View {
 
     var body: some View {
         let _ = RenderProbe.hit("hub.root.body")
+        let hidesWindowTitle = HubLayout.option("transcript") == "a"
         // The session list gets what the panes leave; with no room left it folds to a rail you can
         // still see (and open as a drawer), instead of pushing the panes out of the window.
         let sidebarRoom = width - mainMinWidth - 1
@@ -2380,8 +2387,13 @@ struct HubRootView: View {
                 InboxFindHost(model: model, inbox: model.inbox)
                     .flexiblePane(neighbourOf: "hub.sidebar")
             } else if model.mode == .timeline {
+                switch HubLayout.option("lists") {
+                case "a": ListsSketchA.ActivityRuns(model: model, timeline: model.timeline).flexiblePane(neighbourOf: "hub.sidebar")
+                case "b": ListsSketchB.ActivityByProject(model: model, timeline: model.timeline).flexiblePane(neighbourOf: "hub.sidebar")
+                default:
                 TimelineMain(model: model, timeline: model.timeline)
                     .flexiblePane(neighbourOf: "hub.sidebar")
+                }
             } else if model.mode == .usage {
                 UsageMain(model: model, usage: model.usage)
                     .flexiblePane(neighbourOf: "hub.sidebar")
@@ -2390,8 +2402,13 @@ struct HubRootView: View {
                 AgentsMain(model: model, agents: model.agents)
             } else if model.mode == .worktrees {
                 if let path = model.selectedWorktree, let worktree = model.worktrees.first(where: { $0.path == path }) {
+                    switch HubLayout.option("lists") {
+                    case "a": ListsSketchA.WorktreeDetail(model: model, worktree: worktree).flexiblePane(neighbourOf: "hub.sidebar")
+                    case "b": ListsSketchB.WorktreeDetail(model: model, worktree: worktree).flexiblePane(neighbourOf: "hub.sidebar")
+                    default:
                     WorktreeDetailView(model: model, worktree: worktree)
                         .flexiblePane(neighbourOf: "hub.sidebar")
+                    }
                 } else if model.selectedWorktree == WorktreeCleanup.selectionID, !model.loadingWorktrees {
                     WorktreeCleanupView(model: model)
                         .flexiblePane(neighbourOf: "hub.sidebar")
@@ -2424,6 +2441,8 @@ struct HubRootView: View {
         .measuredWidth("hub.root", $width)
         .onGeometryChange(for: Int.self, of: { $0.frame(in: .global).minX < -0.5 ? 1 : 0 }) { HubBench.note("hub.root.clipped", $0) }
         .background(HubWindowReader { window in
+            let visibility: NSWindow.TitleVisibility = hidesWindowTitle ? .hidden : .visible
+            if window.titleVisibility != visibility { window.titleVisibility = visibility }
             // The root hosting view no longer derives the window's minimum from SwiftUI (that cost a
             // full layout per pass); the minimum is this, stated once per change.
             if window.contentMinSize.width != windowMinWidth {
@@ -2723,6 +2742,10 @@ private struct SessionListView: View {
         let _ = RenderProbe.hit("sessions.list.body")
         let sections = sections
         VStack(spacing: 0) {
+            // Hub UX wave 2 (`--sketch transcript=b`): the modes in the title bar row; it takes no height here.
+            if HubLayout.option("transcript") == "b" {
+                TranscriptSketchModeBar(model: model, inbox: model.inbox)
+            }
             // Back and forward sit in the band under the title bar, right above the mode switch:
             // the switch row has no room left in a narrow sidebar.
             // The palette and Settings sit here too (the glass switch when asked for): the modes need the whole row below.
@@ -2740,8 +2763,14 @@ private struct SessionListView: View {
             .padding(.horizontal, 12)
             .frame(height: 28)
             .padding(.vertical, 6)
-            HubModePicker(model: model, inbox: model.inbox)
-                .padding(.horizontal, 10)
+            // Hub UX wave 2 (`--sketch transcript=a|b`, Parts/Hub/Sketches/TranscriptSketchHub*.swift).
+            switch HubLayout.option("transcript") {
+            case "a": TranscriptSketchModeList(model: model, inbox: model.inbox)
+            case "b": EmptyView() // the modes moved up into the title bar row (first view of this stack)
+            default:
+                HubModePicker(model: model, inbox: model.inbox)
+                    .padding(.horizontal, 10)
+            }
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundColor(ReviewPalette.dim)
                 TextField(filterPlaceholder, text: $model.filter)
@@ -2776,7 +2805,12 @@ private struct SessionListView: View {
             .padding(.bottom, 8)
 
             if model.mode == .worktrees {
+                switch HubLayout.option("lists") {
+                case "a": ListsSketchA.WorktreeList(model: model)
+                case "b": ListsSketchB.WorktreeList(model: model)
+                default:
                 WorktreeListView(model: model)
+                }
             } else if model.mode == .prs {
                 PRListView(model: model, prs: model.prs)
             } else if model.mode == .inbox {
@@ -2784,11 +2818,37 @@ private struct SessionListView: View {
                 // view does not observe the Inbox.
                 let sort = inboxSort
                 ScrollViewReader { proxy in
+                    Group {
+                        switch HubLayout.option("lists") {
+                        case "a": ListsSketchA.InboxQueue(model: model, inbox: model.inbox)
+                        case "b": ListsSketchB.InboxTriage(model: model, inbox: model.inbox)
+                        default:
                     InboxListView(model: model, inbox: model.inbox)
+                        }
+                    }
                         .modifier(SidebarArrowKeys(
-                            ids: { Self.inboxKeyOrder(model.inbox, sort: sort, filter: model.filter) },
-                            selection: { model.inbox.selectedID },
-                            select: { model.inbox.selectedID = $0 },
+                            ids: {
+                                if HubLayout.option("lists") == "b" {
+                                    return ListsSketchB.InboxTriage.keyRows(ListsSketchB.entries(model.inbox, filter: model.filter)).map(\.id)
+                                }
+                                return Self.inboxKeyOrder(model.inbox, sort: sort, filter: model.filter)
+                            },
+                            selection: {
+                                HubLayout.option("lists") == "b" ? ListsSketchB.InboxPick.shared.railSelection : model.inbox.selectedID
+                            },
+                            select: { id in
+                                if HubLayout.option("lists") == "b" {
+                                    let rows = ListsSketchB.InboxTriage.keyRows(ListsSketchB.entries(model.inbox, filter: model.filter))
+                                    if let row = rows.first(where: { $0.id == id }) { ListsSketchB.InboxPick.shared.select(row) }
+                                    return
+                                }
+                                model.inbox.selectedID = id
+                                if HubLayout.option("lists") == "a",
+                                   let session = model.inbox.sessions.first(where: { $0.id == id }),
+                                   let item = session.items.first(where: { $0.isOpen }) ?? session.items.first {
+                                    model.inbox.keyCardID = item.id
+                                }
+                            },
                             proxy: proxy, focused: $listFocused, focusOnClick: true))
                 }
             } else if model.mode == .timeline {
@@ -2802,7 +2862,12 @@ private struct SessionListView: View {
                             proxy: proxy, focused: $listFocused, focusOnClick: true))
                 }
             } else if model.mode == .usage {
-                UsageListView(usage: model.usage, filter: model.filter)
+                // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current list.
+                switch HubLayout.option("usageSettings") {
+                case "a": UsageSettingsSketchSidebarA(usage: model.usage)
+                case "b": UsageSettingsSketchSidebarB(usage: model.usage, filter: model.filter)
+                default: UsageListView(usage: model.usage, filter: model.filter)
+                }
             } else if model.mode == .agents {
                 AgentsListView(model: model, agents: model.agents)
             } else {
@@ -3170,6 +3235,7 @@ struct SessionDetailView: View {
                 }
             }
         }
+        .environment(\.transcriptSubjectAbove, HubLayout.option("transcript") == "a" && agent?.node == nil)
         // Only the count is state: a resize step that keeps the same panes changes nothing here.
         .onGeometryChange(for: Int.self, of: { Self.fittingCount(visible, width: $0.size.width) }) { count in
             if fitting != count {
@@ -3255,6 +3321,9 @@ struct SessionDetailView: View {
     private var header: some View {
         if let agent, let node = agent.node {
             agentHeader(agent, node: node)
+        } else if HubLayout.option("transcript") == "a" {
+            // Hub UX wave 2: one subject header across every pane (Parts/Hub/Sketches/TranscriptSketchHubA.swift).
+            TranscriptSketchSubjectHeader(model: model, session: session) { paneToggles }
         } else {
             sessionHeader
         }

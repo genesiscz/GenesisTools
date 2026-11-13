@@ -67,6 +67,7 @@ async function maybePromptSameName(args: {
         message: `Bump "${args.existingName}" to a new version with these changes?`,
         active: "yes (write v_next)",
         inactive: "no (abort)",
+        cancel: "back",
     });
 
     return answer === true ? "proceed" : "abort";

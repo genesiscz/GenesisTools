@@ -15,7 +15,14 @@ public enum UsageSettingsPages {
                     id: pageID, title: "Usage charts", symbol: "chart.xyaxis.line", tint: .mint,
                     subtitle: "How the hub's Usage mode draws limits, forecasts and spend."
                 ) {
-                    UsageChartSettings(preferences: preferences)
+                    // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current page.
+                    HubLayoutView(.usageSettings) {
+                        UsageSettingsSketchChartsA(preferences: preferences)
+                    } compact: {
+                        UsageSettingsSketchChartsB(preferences: preferences)
+                    } classic: {
+                        UsageChartSettings(preferences: preferences)
+                    }
                 },
             ], order: 36)
     }

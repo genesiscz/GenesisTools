@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { runTool } from "@genesiscz/utils/cli";
+import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -106,6 +106,13 @@ async function getDirOfInterest(): Promise<string> {
                 throw err;
             }
         }
+    }
+
+    if (!isInteractive()) {
+        logger.error("A directory is required in non-interactive mode.");
+        logger.info(suggestCommand("tools watchman", { add: ["--current"] }));
+        client.end();
+        process.exit(1);
     }
 
     const watchedDirs = (await getWatchedRoots()) ?? [];

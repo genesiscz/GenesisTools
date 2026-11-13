@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { teamsRoot } from "@app/claude/lib/teams/discover";
-import { claudeSubagentFiles, claudeSubagentsDir } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
+import { claudeSubagentCandidates, claudeSubagentsDir } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -130,11 +130,14 @@ export async function agentMail(options: AgentMailOptions): Promise<AgentMail> {
     }
 
     const parent = await resolveTranscript(options.session, {}, "claude");
-    const dir = claudeSubagentsDir(parent.filePath);
-    const { transcript, meta: metaPath } = claudeSubagentFiles(dir, agentId);
-    if (!existsSync(transcript)) {
-        throw new Error(`No agent ${agentId} under session ${parent.sessionId} (${dir})`);
+    const found = claudeSubagentCandidates(parent.filePath, agentId).find((file) => existsSync(file.transcript));
+    if (!found) {
+        throw new Error(
+            `No agent ${agentId} under session ${parent.sessionId} (${claudeSubagentsDir(parent.filePath)})`
+        );
     }
+
+    const { transcript, meta: metaPath } = found;
 
     const meta = readMetaName(metaPath);
     const root = options.teamsRoot ?? teamsRoot();
