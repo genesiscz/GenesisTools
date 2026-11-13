@@ -1,4 +1,5 @@
 import { type RpcHandlers, type RpcTable, toRpcTable } from "@genesiscz/utils/api-descriptor";
+import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import {
     MEETINGS_CONFLICT_CODES,
@@ -12,7 +13,7 @@ import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson } from "@genesiscz/utils/meetings/room-people";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
-import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import { OpenedMeeting } from "../opened-meeting";
@@ -194,6 +195,8 @@ export function recordOf(store: MeetingStore, ref: string): MeetingRecord {
     return record;
 }
 
+const { log } = logger.scoped("meetings-service");
+
 const decisions = () => import("./decision-handlers");
 const moments = () => import("./moment-handlers");
 const reads = () => import("./reads-handlers");
@@ -301,12 +304,41 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             });
             const view = timedTranscriptView(record, applied);
             const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
-            const evidence = await opened.evidence();
-            const measured = evidence
-                ? lineEvidence((await opened.meeting()).transcript, evidence, await opened.presence())
-                : [];
-            const assessed = assessIndicator({ lines: measured, selfName: evidence?.selfName ?? "" });
-            const timed = (deps.wordTimings?.cache ?? meetingWordTimingCache(record.id)).read(view.entries);
+            // The indicator is optional enrichment: evidence that does not read leaves the corrected lines without it.
+            let measured: LineEvidence[] = [];
+            let selfName = "";
+
+            try {
+                const evidence = await opened.evidence();
+                selfName = evidence?.selfName ?? "";
+                measured = evidence
+                    ? lineEvidence((await opened.meeting()).transcript, evidence, await opened.presence())
+                    : [];
+            } catch (error) {
+                log.warn({ error, meeting: record.id }, "speaking indicator not read; the transcript has no indicator");
+            }
+
+            const assessed = assessIndicator({ lines: measured, selfName });
+            // One lookup by start for the main entries and every preview, the first line of a start as before.
+            const byStart = new Map<number, LineEvidence>();
+
+            for (const line of measured) {
+                if (!byStart.has(line.startSec)) {
+                    byStart.set(line.startSec, line);
+                }
+            }
+
+            const withIndicator = <T extends { startSec?: number }>(entry: T) => {
+                const line = entry.startSec === undefined ? undefined : byStart.get(entry.startSec);
+                return line
+                    ? {
+                          ...entry,
+                          indicator: { names: Object.keys(line.speaking), ignored: assessed.reasons.get(line.index) },
+                      }
+                    : entry;
+            };
+            const timingCache = deps.wordTimings?.cache ?? meetingWordTimingCache(record.id);
+            const timed = timingCache.read(view.entries);
             const previews = params.previewThresholds
                 ? await Promise.all(
                       params.previewThresholds.map(async (threshold) => {
@@ -328,18 +360,10 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                           });
                           return {
                               threshold,
-                              entries: timedTranscriptView(record, preview).entries.map((entry) => {
-                                  const line = measured.find((line) => line.startSec === entry.startSec);
-                                  return line
-                                      ? {
-                                            ...entry,
-                                            indicator: {
-                                                names: Object.keys(line.speaking),
-                                                ignored: assessed.reasons.get(line.index),
-                                            },
-                                        }
-                                      : entry;
-                              }),
+                              // The cached word timings follow the preview's own lines, as they do the main ones.
+                              entries: timingCache
+                                  .read(timedTranscriptView(record, preview).entries)
+                                  .entries.map(withIndicator),
                           };
                       })
                   )
@@ -348,18 +372,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 meeting: view.meeting,
                 ...timed,
                 ...(previews ? { previews } : {}),
-                entries: timed.entries.map((entry) => {
-                    const line = measured.find((line) => line.startSec === entry.startSec);
-                    return line
-                        ? {
-                              ...entry,
-                              indicator: {
-                                  names: Object.keys(line.speaking),
-                                  ignored: assessed.reasons.get(line.index),
-                              },
-                          }
-                        : entry;
-                }),
+                entries: timed.entries.map(withIndicator),
             };
         },
         "meeting.wordTimings.generate": async (params, context) => {
