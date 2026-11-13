@@ -86,6 +86,8 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     let speaker: String?
     let candidates: [String]?
     let heard: String?
+    var heardStem: String? = nil
+    var proposedStem: String? = nil
     let proposed: String?
     let meaning: String?
     /// A term read aloud from a document: its exact text replaces the heard words, with the source.

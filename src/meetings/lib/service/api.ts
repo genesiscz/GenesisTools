@@ -537,6 +537,8 @@ const meetingAudio = defineMethod({
     effect: "read",
 });
 
+const indicatorEvidenceSchema = z.object({ summary: z.array(z.string()), lines: z.string() });
+
 const speakerSpanSchema = z.object({ fromSec: z.number(), toSec: z.number(), turns: z.number() });
 
 const meetingSpeakers = defineMethod({
@@ -545,6 +547,7 @@ const meetingSpeakers = defineMethod({
         .object({
             meeting: meetingRef,
             /** A silence this long ends a span (`speakers stats --gap`); 120 s when absent. */
+            evidence: z.boolean().optional(),
             gapSec: z.number().positive().optional(),
             /** The attendance source (`zoom`, `meet`…); the record's when absent. */
             attendance: z.string().min(1).optional(),
@@ -579,6 +582,7 @@ const meetingSpeakers = defineMethod({
         hints: z.array(z.custom<SpeakerHint>((value) => typeof value === "object" && value !== null)),
         /** The stretches given to a person (`assign`), each a label's lines; absent when the meeting has none. */
         assignments: z.array(speakerAssignmentSchema).optional(),
+        evidence: indicatorEvidenceSchema.optional(),
     }),
     resultName: "{ meeting, gapSec, timed, speakers: SpeakerStat[], hints: SpeakerHint[], assignments? }",
     doc: "Per label its turns, spoken time and spans, and the hints against labels with their ranges (fromSec, toSec, present), as `speakers stats --json` prints them: the Speakers tab's talk-time lanes and range chips.",

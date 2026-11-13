@@ -6,6 +6,7 @@ import type { TranscriptEntry } from "./types";
 
 /** Corrections a person confirmed, in the shape a transcript needs. Labels are the source's own labels. */
 export interface TranscriptCorrections {
+    removals?: Array<{ item: string; fromSec: number; toSec: number; heard: string }>;
     /** Renames for the whole meeting: source label → name. */
     labels?: Record<string, string>;
     /** Lines of `label` from `fromSec` to `toSec` (inclusive) belong to `speaker`. */
@@ -169,17 +170,19 @@ export function joinLine(source: TranscriptLines, join: { atSec: number; line?: 
 export function heardLineAt(
     source: TranscriptLines,
     anchor: { atSec: number; line?: number },
-    heard: string
+    heard: string | RegExp
 ): LineLookup {
+    const pattern =
+        typeof heard === "string" ? heardPattern(heard, "iu") : new RegExp(heard.source, heard.flags.replace("g", ""));
     const explicit = source.resolve(anchor);
 
     // An address that still names its line decides: heard words missing there are not looked for in another line.
     if (anchor.line !== undefined && explicit.kind === "found" && explicit.index === anchor.line) {
-        return heardIn(source.entries[explicit.index]!.text, heard).length > 0 ? explicit : { kind: "none" };
+        return pattern.test(source.entries[explicit.index]!.text) ? explicit : { kind: "none" };
     }
 
     return narrowed(
-        source.resolve(anchor, (entry) => heardIn(entry.text, heard).length > 0),
+        source.resolve(anchor, (entry) => pattern.test(entry.text)),
         source.resolve(anchor)
     );
 }
@@ -469,7 +472,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
             targets = [];
             let failed = false;
             for (const address of addresses) {
-                const found = heardLineAt(source, address, fix.heard);
+                const found = heardLineAt(source, address, termFixPattern(fix));
                 if (found.kind !== "found") {
                     if (fix.item) {
                         outcomes.push(
@@ -578,5 +581,19 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         }
     }
 
-    return { entries: lines, outcomes, ...counts };
+    const removed = new Set<TranscriptEntry>();
+    for (const removal of corrections.removals ?? []) {
+        const matching = source.entries.flatMap((entry, index) =>
+            inRange(entry, removal) && entry.text === removal.heard && lines.includes(all[index]!) ? [all[index]!] : []
+        );
+        for (const line of matching) {
+            removed.add(line);
+        }
+        outcomes.push(
+            matching.length
+                ? { item: removal.item, status: "applied", lines: matching.flatMap(addressOf) }
+                : { item: removal.item, status: "not-found", reason: "no matching local speech line" }
+        );
+    }
+    return { entries: lines.filter((line) => !removed.has(line)), outcomes, ...counts };
 }

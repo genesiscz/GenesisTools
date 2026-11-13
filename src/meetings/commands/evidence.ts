@@ -9,6 +9,7 @@ import { labelIdentityTable, lineEvidence, SELF } from "@genesiscz/utils/transcr
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { localSpeechDuring } from "../lib/local-speech";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { compactEvidence, rawMeeting } from "../lib/raw";
 import { fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
@@ -100,6 +101,7 @@ async function evidence(
                     ...(check.check ? { wordCheck: check.check } : { unavailable: check.reason }),
                 });
                 const raw = rawMeeting({
+                    localSpeech: localSpeechDuring({ start: meeting.start, end: meeting.end }),
                     record: current,
                     meeting,
                     evidence: found,

@@ -48,6 +48,7 @@ describe("word check", () => {
         expect(verdict("peníze")).toBe("dictionary");
         expect(verdict("bysme")).toBe("spoken");
         expect(verdict("jakej")).toBe("spoken jaký");
+        expect(verdict("Jakej")).toBe("spoken jaký");
         expect(verdict("vysdílím")).toBe("derived sdílím");
         expect(verdict("renamodelujeme")).toBe("derived modelujeme");
         expect(verdict("zamergovat")).toBe("loan merge");
@@ -60,6 +61,56 @@ describe("word check", () => {
         // "ne" is no prefix the check strips: a misheard "nepeníze" must not pass as "peníze".
         expect(verdict("nepeníze")).toBe("unknown");
         expect(verdict("proklizuje")).toBe("unknown");
+    });
+
+    test("spoken loan endings compose without accepting an unknown or negated root", () => {
+        const localCalls: string[][] = [];
+        const loanCalls: string[][] = [];
+        const tokens = ["widgetovejch", "zawidgetkovej", "florpkovej", "newidgetovejch"];
+        const words = createWordCheck({
+            provider: "test",
+            language: "cs",
+            rules: CZECH,
+            engine: engine([], localCalls),
+            loanEngine: engine(["widget"], loanCalls),
+            counts: new Map(),
+            loanWords: new Set(),
+            words: tokens,
+        });
+
+        expect(words.verdict("widgetovejch")).toMatchObject({ class: "loan", via: "widget" });
+        expect(words.verdict("zawidgetkovej")).toMatchObject({ class: "loan", via: "widget" });
+        expect(words.verdict("florpkovej").class).toBe("unknown");
+        expect(words.verdict("newidgetovejch").class).toBe("unknown");
+        expect(localCalls).toHaveLength(1);
+        expect(loanCalls).toHaveLength(1);
+    });
+
+    test("inflected acronym adjectives retain their known short root", () => {
+        const calls: string[][] = [];
+        const tokens = ["UIkovými", "UIkovejma", "UIkovýho", "UIkovýmu", "UIkovejch", "UIkovejm", "ZZkovejma"];
+        const words = createWordCheck({
+            provider: "test",
+            language: "cs",
+            rules: CZECH,
+            engine: engine([]),
+            loanEngine: engine([], calls),
+            counts: new Map(),
+            loanWords: new Set(["ui"]),
+            words: tokens,
+        });
+
+        for (const token of tokens.slice(0, -1)) {
+            expect(words.verdict(token)).toMatchObject({ class: "loan", via: "UI" });
+        }
+
+        expect(words.verdict("ZZkovejma").class).toBe("unknown");
+        expect(calls).toHaveLength(1);
+        expect(
+            findUnknownWords({ entries: [entry(tokens.join(" "))], vocab: [], wordCheck: words }).map(
+                (word) => word.heard
+            )
+        ).toEqual(["ZZkovejma"]);
     });
 
     test("the transcript's words go to the spell checker in one call", () => {

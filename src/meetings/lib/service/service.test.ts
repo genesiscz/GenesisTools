@@ -1201,6 +1201,11 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             [9, expect.any(Number)],
         ]);
         expect(speakers).toMatchObject({ meeting: REVIEW.id, timed: true });
+        const facts = await client.call("meeting.speakers", { meeting: REVIEW.id, evidence: true });
+        expect(facts.evidence?.lines).toContain("|mic?|e?");
+        expect(facts.evidence?.lines.split("\n")).toHaveLength(transcript.entries.length + 1);
+        expect(facts.evidence?.summary).toEqual(expect.any(Array));
+        expect(speakers.evidence).toBeUndefined();
         expect(speakers.speakers.map((one) => one.label).sort()).toEqual(["Dana Example", "Speaker 2"]);
         expect(screen).toEqual({ meeting: REVIEW.id, recorded: false, displays: [], frames: [] });
         expect(waveform).toEqual({ meeting: REVIEW.id, fromSec: 0, toSec: 10, peaks: [0.25, 0.25, 1, 0.25, 0.25] });

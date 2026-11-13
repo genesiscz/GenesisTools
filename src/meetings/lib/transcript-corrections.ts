@@ -15,6 +15,7 @@ import {
 } from "@genesiscz/utils/transcribe/apply";
 import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock, type TranscriptFormat } from "@genesiscz/utils/transcribe/render";
+import { termFixPattern } from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { openQuestions } from "./questions";
 import { diagnoseTermAddress } from "./term-address";
@@ -226,6 +227,11 @@ export function correctionsOf(
 
     return {
         labels: record.speakers.labels,
+        removals: used.flatMap((item) =>
+            item.kind === "removal"
+                ? [{ item: item.id, fromSec: item.fromSec, toSec: item.toSec, heard: item.heard }]
+                : []
+        ),
         ranges,
         joins: used.flatMap((item) =>
             item.kind === "join"
@@ -590,7 +596,18 @@ export function checkAnchors(
         const found =
             item.kind === "join"
                 ? joinLine(lines, { ...anchor, ...(item.joined ? { joined: item.joined } : {}) })
-                : heardLineAt(lines, anchor, item.heard);
+                : heardLineAt(
+                      lines,
+                      anchor,
+                      item.heardStem && item.proposedStem
+                          ? termFixPattern({
+                                heard: item.heard,
+                                replacement: item.proposedStem,
+                                heardStem: item.heardStem,
+                                proposedStem: item.proposedStem,
+                            })
+                          : item.heard
+                  );
         const at = formatClock(atSec);
 
         if (found.kind === "found") {

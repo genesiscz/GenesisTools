@@ -8,6 +8,7 @@ import { isEnglishWord } from "@genesiscz/utils/transcribe/terms";
 import { contextEntryText } from "./context-file";
 import { indicatorFacts } from "./indicator-facts";
 import { addQualityQuestions, qualityVoiceFeatures } from "./listen-quality";
+import { localSpeechDuring } from "./local-speech";
 import { OpenedMeeting } from "./opened-meeting";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { type SuggestRule, settledTermItems, suggestItems } from "./suggest";
@@ -104,6 +105,7 @@ export async function runSuggest(options: {
           )
         : energy.share;
     const inputs: Parameters<typeof suggestItems>[0] = {
+        localSpeech: localSpeechDuring({ start: meeting.start, end: meeting.end }),
         record: collected,
         meeting,
         rules,
