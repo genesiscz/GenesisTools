@@ -724,6 +724,12 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(PinCard.shownChoices(open).map(\.label), ["Dana Example"], "None of these is an action of the row, not a candidate")
         let decided = try XCTUnwrap(rows.first { !$0.isOpen })
         XCTAssertTrue(PinCard.shownChoices(decided).isEmpty, "a decided row's choices made it read as open: \(decided.id)")
+        // The fixture's decided row has no choices, so that line passes whatever the status does: the open row decided
+        // keeps its candidates and still shows none.
+        var confirmed = open
+        confirmed.status = "confirmed"
+        XCTAssertFalse(confirmed.choices.isEmpty, "the decided copy keeps its choices")
+        XCTAssertTrue(PinCard.shownChoices(confirmed).isEmpty, "the decided status hides the choices it still holds")
     }
 
     func testTheBarAboveTheRowsSaysWhatWaitsOnOneLine() {
