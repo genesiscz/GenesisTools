@@ -135,11 +135,79 @@ const SAME_VALUE = new Set([
 /** Where an argv array is kept before a call takes it: `const args = […]`, `{ args: […] }`, `args = […]`. */
 const ARGV_HOLDERS = new Set(["variable_declarator", "pair", "assignment_expression"]);
 
+/** The name a holder keeps its array under: the variable, the object key, or the assigned name. */
+const HOLDER_NAME: Record<string, string> = {
+    variable_declarator: "name",
+    pair: "key",
+    assignment_expression: "left",
+};
+
+/** Wrappers between a kept argv's name and the call that takes it: `run(step.args)`, `run([...BASE, "x"])`. */
+const ARGV_PATH = new Set([...SAME_VALUE, "member_expression", "subscript_expression", "spread_element", "array"]);
+
+/**
+ * Runners that take any program's argv, named by their verb only (`run(TREE_ARGS)` with `run` injected for tests):
+ * the program is the one the file runs. A runner named for a program (`runAx`) or any other call (`z.enum`) is not.
+ */
+const GENERIC_RUNNER = /^(?:run|runner|exec|execSync|execFile|execFileSync|spawn|spawnSync)$/;
+
+/** The name a call is made through: `run` for `run(…)`, `run` for `options.run!(…)`, `enum` for `z.enum(…)`. */
+function invokedName(call: SgNode): string {
+    let callee = call.field("function");
+
+    while (callee && SAME_VALUE.has(String(callee.kind()))) {
+        callee = callee.children().find((child) => child.isNamed()) ?? null;
+    }
+
+    if (callee?.kind() === "member_expression") {
+        return callee.field("property")?.text() ?? "";
+    }
+
+    return callee?.text() ?? "";
+}
+
+/** The call whose arguments hold `node`, through the wrappers of `ARGV_PATH`, or null when something else takes it. */
+function consumingCall(node: SgNode): SgNode | null {
+    let current: SgNode | null = node.parent();
+
+    while (current && ARGV_PATH.has(String(current.kind()))) {
+        current = current.parent();
+    }
+
+    return current?.kind() === "arguments" ? (current.parent() ?? null) : null;
+}
+
+/** The calls that take the array kept under `holder`'s name, found by that name in the holder's file. */
+function keptArgvCalls(holder: SgNode): SgNode[] {
+    const name = holder.field(HOLDER_NAME[String(holder.kind())] ?? "name")?.text() ?? "";
+
+    if (!/^[\w$]+$/.test(name)) {
+        return [];
+    }
+
+    const uses = holder
+        .getRoot()
+        .root()
+        .findAll({
+            rule: {
+                any: [{ kind: "identifier" }, { kind: "property_identifier" }],
+                regex: `^${name.replace(/\$/g, "\\$")}$`,
+            },
+        });
+
+    return uses.flatMap((use) => {
+        const call = consumingCall(use);
+        return call ? [call] : [];
+    });
+}
+
 /**
  * Whether an argv array goes to the program whose runner's name matches `program` (`/cmux/i` for `runCmuxOk`): passed
- * straight to such a call, or kept first in a variable or an object in a file that calls such a runner or imports a
- * module whose path names the program. The kept form is how an owner holds its argv (`const TREE_ARGS = […]` and
- * `run(TREE_ARGS)`), so a copy of the owner is a finding too. Use it as a definition's `test`.
+ * straight to such a call, or kept first in a variable or an object whose name then reaches such a call, or reaches a
+ * runner named by its verb only (`run(TREE_ARGS)`) in a file that calls a runner of the program or imports a module
+ * whose path names it. The kept form is how an owner holds its argv (`const TREE_ARGS = […]` and `run(TREE_ARGS)`), so
+ * a copy of the owner is a finding too; an array kept for another consumer (`z.enum(verbs)`, `runAx(AX_ARGS)`) is not,
+ * even in a file that runs the program. Use it as a definition's `test`.
  */
 export function argvFor(node: SgNode, program: RegExp): boolean {
     let holder = node.parent();
@@ -157,6 +225,16 @@ export function argvFor(node: SgNode, program: RegExp): boolean {
     }
 
     if (!ARGV_HOLDERS.has(String(holder.kind()))) {
+        return false;
+    }
+
+    const consumers = keptArgvCalls(holder);
+
+    if (consumers.some((call) => program.test(call.field("function")?.text() ?? ""))) {
+        return true;
+    }
+
+    if (!consumers.some((call) => GENERIC_RUNNER.test(invokedName(call)))) {
         return false;
     }
 
