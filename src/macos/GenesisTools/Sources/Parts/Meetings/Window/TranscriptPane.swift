@@ -252,7 +252,8 @@ struct TranscriptBlocksPane: View {
             speakerEvidence: (detail.record.value?.items ?? []).filter { item in
                 item.kind == "speaker-range" && (item.toSec ?? 0) >= chosen.from.atSec && (item.fromSec ?? 0) <= chosen.to.atSec
             }.compactMap(\.speakerEvidenceText),
-            close: { clearSelection() }))
+            close: { clearSelection() })
+        })
     }
 
     private func clearSelection() {

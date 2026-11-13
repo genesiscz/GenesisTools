@@ -1900,6 +1900,11 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meeting.show", { ref: "nope" }, "No meeting: meeting-not-found.");
     await ask(window, "meeting.show", { ref: "2026-11-03" }, "A prefix of two meetings: meeting-ref.");
     await ask(window, "meeting.transcript", { ref: REVIEW.id });
+    await ask(window, "meeting.transcript", {
+        ref: REVIEW.id,
+        withSuggested: true,
+        previewThresholds: [0.5, 0.6, 0.7, 0.8, 0.9, 1],
+    });
     await ask(
         window,
         "meeting.transcript",
@@ -1913,6 +1918,16 @@ async function captureExamples(): Promise<Example[]> {
         model: "fixture/words",
     });
     await ask(window, "meeting.transcript", { ref: RETRO.id }, "No transcript source: a meeting state.");
+    await ask(
+        window,
+        "meeting.transcript",
+        {
+            ref: RETRO.id,
+            withSuggested: true,
+            previewThresholds: [0.5, 0.6, 0.7, 0.8, 0.9, 1],
+        },
+        "No transcript source with the combined native threshold preview flags."
+    );
     await ask(
         window,
         "meeting.transcript",

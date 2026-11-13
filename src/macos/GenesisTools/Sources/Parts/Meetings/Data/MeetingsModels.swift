@@ -201,18 +201,10 @@ struct MeetingRecordView: Decodable, Equatable {
     var evidence: Evidence? = nil
     struct Stay: Decodable, Equatable { var name: String; var fromSec: Double; var toSec: Double }
     struct Attendance: Decodable, Equatable { var from: String; var people: [Stay] }
-    struct Seats: Decodable, Equatable {
-        struct Remote: Decodable, Equatable { var name: String }
-        struct Group: Decodable, Equatable { var id: String; var people: [String]; var deviceId: String? }
-        var room: [String]; var remote: [Remote]; var microphones: [Group]?
-    }
     var participants: [Person]? = nil
     var attendance: Attendance? = nil
-    var seats: Seats? = nil
     let recording: Recording?
     let sources: [String: JSONValue]
-    struct History: Decodable, Equatable { var command: String; var change: String }
-    var history: [History]? = nil
     var copySource: String? {
         guard let entry = history?.first, entry.command == "duplicate" else { return nil }
         return entry.change.replacingOccurrences(of: "duplicated from ", with: "").replacingOccurrences(of: " without items", with: "")
