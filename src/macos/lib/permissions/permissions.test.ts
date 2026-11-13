@@ -357,7 +357,11 @@ describe("the codesign keychain notice", () => {
 
         expect(probe).toMatchObject({ ok: true, dialog: false });
         expect(commands[0]?.slice(0, 5)).toEqual(["codesign", "--force", "--sign", "ABCDEF0123", "--timestamp=none"]);
-        expect(commands[0]?.at(-1)?.endsWith("/app/codesign-trust-probe.txt")).toBe(true);
+        const signedFile = commands[0]?.at(-1) ?? "";
+        expect(signedFile.endsWith("/codesign-trust-probe.txt")).toBe(true);
+        // A diagnostic leaves nothing behind: the file was in a temp folder of its own, which is gone.
+        expect(signedFile.includes("/app/")).toBe(false);
+        expect(existsSync(dirname(signedFile))).toBe(false);
         expect(
             await probeCodesignKey({ sign: "ABCDEF0123", dialogOpen: () => true, runCommand: async () => signed })
         ).toMatchObject({ ok: true, dialog: true });

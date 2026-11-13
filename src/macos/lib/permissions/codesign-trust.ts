@@ -1,7 +1,8 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
+import { makeTempDir } from "@genesiscz/utils/paths";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { findProcesses } from "@genesiscz/utils/process/processes";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
@@ -72,6 +73,8 @@ export interface CodesignKeyProbe {
 /**
  * Signs a small file with `sign` (a certificate's SHA-1 or name) once, to show whether codesign reaches the key
  * without the keychain dialog. The file is plain text, never run: codesign keeps its signature in extended attributes.
+ * It lives in a temp folder of its own, removed afterwards, so a probe writes no durable state and two probes never
+ * sign one file.
  */
 export async function probeCodesignKey({
     sign,
@@ -84,8 +87,8 @@ export async function probeCodesignKey({
     dialogOpen?: () => boolean;
     runCommand?: typeof boundedCommand;
 }): Promise<CodesignKeyProbe> {
-    const file = join(genesisAppDir(), "codesign-trust-probe.txt");
-    mkdirSync(dirname(file), { recursive: true });
+    const folder = makeTempDir("gt-codesign-probe-");
+    const file = join(folder, "codesign-trust-probe.txt");
     writeFileSync(file, "GenesisTools codesign trust probe\n");
     let dialog = false;
     const watch = setInterval(() => {
@@ -105,5 +108,6 @@ export async function probeCodesignKey({
         return { ok: failure === "", ms, dialog, detail: [result.stderr.trim(), failure].filter(Boolean).join("\n") };
     } finally {
         clearInterval(watch);
+        rmSync(folder, { recursive: true, force: true });
     }
 }
