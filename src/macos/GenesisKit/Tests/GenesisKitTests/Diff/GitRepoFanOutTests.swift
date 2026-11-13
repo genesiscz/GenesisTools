@@ -7,16 +7,25 @@ import XCTest
 /// found its repository again (`rev-parse`) and read its own status, HEAD copy, history and line counts.
 @MainActor
 final class GitRepoFanOutTests: XCTestCase {
-    /// The CLI provider, counting each git run by its subcommand.
+    /// The CLI provider, counting each git run in one repository by its subcommand. Repositories of earlier tests
+    /// still have models in `GitRepos.shared`, and their runs are not this test's.
     private final class CountingProvider: GenesisKitGTCLIProvider, @unchecked Sendable {
         private let lock = NSLock()
         private var counts: [String: Int] = [:]
+        private let only: String
+
+        init(only repo: URL) {
+            only = GitWorkingTreeSource.realPath(repo.path)
+        }
 
         override func git(_ arguments: [String], in repo: URL, input: Data? = nil, gitDirectory: String? = nil, environment: [String: String]? = nil) throws -> GitRunResult {
             let command = arguments.first { !$0.hasPrefix("-") } ?? ""
-            lock.lock()
-            counts[command, default: 0] += 1
-            lock.unlock()
+            let real = GitWorkingTreeSource.realPath(repo.path)
+            if real == only || real.hasPrefix(only + "/") {
+                lock.lock()
+                counts[command, default: 0] += 1
+                lock.unlock()
+            }
             return try super.git(arguments, in: repo, input: input, gitDirectory: gitDirectory, environment: environment)
         }
 
@@ -60,7 +69,7 @@ final class GitRepoFanOutTests: XCTestCase {
 
         // The tree spells its marks under its root as Foundation standardizes it (no /private).
         let marked = note.standardizedFileURL.path
-        let counting = CountingProvider()
+        let counting = CountingProvider(only: repo)
         let previous = GenesisKitGT.provider
         GenesisKitGT.provider = counting
         defer { GenesisKitGT.provider = previous }
