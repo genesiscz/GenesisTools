@@ -1,4 +1,10 @@
-import type { DecisionSendDto, WaitingDecisionDto, WaitingFormDto, WaitingSessionDto } from "@dd/contract";
+import type {
+    DecisionSendDto,
+    WaitingDecisionDto,
+    WaitingFormDto,
+    WaitingQueueDto,
+    WaitingSessionDto,
+} from "@dd/contract";
 
 /**
  * Pure rules of the answer queue (F6): what a send's answer means for the user, what a session has staged, and
@@ -191,6 +197,39 @@ export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
  * one. Kept here only until the screens that still import it from this module move to the shared one.
  */
 export { idempotencyKey } from "@/lib/idempotency";
+
+/**
+ * The queue with a stage the Mac took applied to its decision: the pick set (`""` clears it) and the note it staged.
+ * Whatever the stage did not name stays as the queue had it.
+ */
+export function withStaged(
+    queue: WaitingQueueDto | undefined,
+    stage: { session: string; number: number; option?: string; text?: string }
+): WaitingQueueDto | undefined {
+    if (!queue) {
+        return queue;
+    }
+
+    const staged = (item: WaitingDecisionDto): WaitingDecisionDto => ({
+        ...item,
+        draftOption: stage.option === undefined ? item.draftOption : stage.option || null,
+        draft: stage.text === undefined ? item.draft : stage.text || null,
+    });
+
+    return {
+        ...queue,
+        sessions: queue.sessions.map((session) =>
+            session.sessionId === stage.session
+                ? {
+                      ...session,
+                      items: session.items.map((item) =>
+                          item.kind === "decision" && item.number === stage.number ? staged(item) : item
+                      ),
+                  }
+                : session
+        ),
+    };
+}
 
 /** The facts a decision carries besides its question, in the order the card shows them; empty ones are left out. */
 export function decisionDetails(

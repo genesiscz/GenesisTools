@@ -1,3 +1,4 @@
+import type { WaitingQueueDto } from "@dd/contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useIsFocused } from "expo-router";
 import { createContext, type Dispatch, type SetStateAction, useContext, useEffect, useState } from "react";
@@ -11,7 +12,7 @@ import {
     sendStaged,
     stagePick,
 } from "@/features/answer-queue/queries";
-import { type KeptEdits, keptEdits, keptOr, type Receipt } from "@/features/answer-queue/units";
+import { type KeptEdits, keptEdits, keptOr, type Receipt, withStaged } from "@/features/answer-queue/units";
 import { useLiveRefetchInterval } from "@/live/provider";
 
 /**
@@ -39,22 +40,32 @@ export function useAnswerQueue() {
  */
 function useQueueWrite<V, R>(
     write: (client: ReturnType<typeof useDashboardClient>, variables: V) => Promise<R>,
-    onDone?: (result: R) => void
+    onDone?: (result: R, variables: V) => void
 ) {
     const client = useDashboardClient();
     const queryClient = useQueryClient();
 
     return useMutation({
         mutationFn: (variables: V) => write(client, variables),
-        onSuccess: (result) => onDone?.(result),
+        onSuccess: (result, variables) => onDone?.(result, variables),
         // Returned, so the write stays pending until the queue shows its result: a card disables its options while
         // pending, and a tap in the gap would compute the next set from the old staged pick and drop a letter.
         onSettled: () => queryClient.invalidateQueries({ queryKey: answerQueueKeys.queue }),
     });
 }
 
+/**
+ * A stage the Mac took goes into the cached queue at once. The refetch after it can fail and leave the old queue in
+ * place; the next tap on a multiple decision must still toggle from the set the Mac holds, not drop the first letter.
+ */
 export function useStagePick() {
-    return useQueueWrite((client, input: StageInput) => stagePick(client, input));
+    const queryClient = useQueryClient();
+    return useQueueWrite(
+        (client, input: StageInput) => stagePick(client, input),
+        (_result, input) => {
+            queryClient.setQueryData<WaitingQueueDto>(answerQueueKeys.queue, (queue) => withStaged(queue, input));
+        }
+    );
 }
 
 export function useSendStaged(onReceipt?: (receipt: Receipt) => void) {
