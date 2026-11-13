@@ -8,12 +8,11 @@
  *   <runsDir>/<run>/summary.json           an export of the last `run` output; no command reads it
  *   <runsDir>/<run>/run.lock               the process that plays the run now; removed when it ends
  */
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFile, link, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { isProcessAlive } from "@genesiscz/utils/process-alive";
-import { isProcessAliveSince } from "@genesiscz/utils/process-identity";
 import { z } from "zod";
 import type { CellRef, ConversationRecord } from "./conversation";
 import { EvalConfigError, type ScenarioOrigin, sha256 } from "./document";
@@ -285,17 +284,44 @@ function parseLockHolder(text: string): LockHolder | null {
     return null;
 }
 
+/** `ps -o etime=` resolves to whole seconds, so allow two of them either way. */
+const StartTolerance = 2_000;
+
 /**
  * A holder on another computer counts as alive. On this one, the lock pid must still run the process that wrote the
- * lock: a program that started after the lock time holds a recycled pid, and the lock is stale.
+ * lock: a program that started after the lock time holds a recycled pid, so the lock is stale. The engine imports only
+ * node built-ins, so it asks `ps` how long the pid has run (elapsed time has no time zone, unlike a start date); when
+ * `ps` cannot answer, the holder counts as alive.
  */
 function holderIsAlive(holder: LockHolder): boolean {
     if (holder.host !== hostname()) {
         return true;
     }
 
+    const ps = spawnSync("ps", ["-o", "etime=", "-p", String(holder.pid)], { encoding: "utf8", timeout: 5_000 });
+    if (ps.error) {
+        return true;
+    }
+
+    if (ps.status !== 0) {
+        return false;
+    }
+
+    const elapsed = elapsedMs(ps.stdout.trim());
+    const startedAt = elapsed === null ? Number.NaN : Date.now() - elapsed;
     const lockedAt = Date.parse(holder.at);
-    return Number.isFinite(lockedAt) ? isProcessAliveSince(holder.pid, lockedAt) : isProcessAlive(holder.pid);
+    return !Number.isFinite(startedAt) || !Number.isFinite(lockedAt) || startedAt <= lockedAt + StartTolerance;
+}
+
+/** `[[dd-]hh:]mm:ss` from `ps -o etime=` in milliseconds, or null for any other text. */
+function elapsedMs(text: string): number | null {
+    const match = text.match(/^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/);
+    if (!match) {
+        return null;
+    }
+
+    const [, days = "0", hours = "0", minutes, seconds] = match;
+    return (((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000;
 }
 
 async function readLockFile(path: string): Promise<string | null> {

@@ -162,6 +162,14 @@ it("lets one process play a run at a time, and takes over the lock of an ended o
     const takenOver = await store.claim();
     assert.match(await readFile(join(store.dir, "run.lock"), "utf8"), new RegExp(`"pid":${process.pid}`));
     await takenOver.release();
+
+    // A live pid whose process started after the lock time is a recycled pid: the lock is stale.
+    await writeFile(
+        join(store.dir, "run.lock"),
+        `${JSON.stringify({ pid: process.pid, host: hostname(), at: new Date(0).toISOString() })}\n`
+    );
+    const recycled = await store.claim();
+    await recycled.release();
     assert.deepEqual(
         (await readdir(store.dir)).filter((name) => name.startsWith("run.lock")),
         []
