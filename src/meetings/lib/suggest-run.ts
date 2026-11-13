@@ -48,15 +48,20 @@ async function directorySamePerson(options: {
  * Collects what the record lacks (platform, attendance, channel layout). A step that fails is a warning of the run's
  * result, so the window and the REPL see it as the CLI does, never only a line on stderr.
  */
-async function collectForSuggest(opened: OpenedMeeting, warnings: string[]): Promise<MeetingRecord> {
-    const { platform, attendance, evidence, id } = opened.record;
+async function collectForSuggest(
+    opened: OpenedMeeting,
+    warnings: string[],
+    attendance?: { spec: string; id?: string }
+): Promise<MeetingRecord> {
+    const { platform, evidence, id } = opened.record;
 
-    if (platform && attendance && evidence?.channels) {
+    if (platform && opened.record.attendance && evidence?.channels) {
         return opened.record;
     }
 
     try {
-        const outcome = await opened.collect();
+        // The run's explicit attendance choice reaches collection, so a title lookup never stores another chat.
+        const outcome = await opened.collect({ attendance });
 
         for (const note of outcome.notes) {
             if (note.ok) {
@@ -100,7 +105,11 @@ export async function runSuggest(options: {
     const { store, record, rules } = options;
     const warnings: string[] = [];
     const opened = OpenedMeeting.of(store, record);
-    const collected = await collectForSuggest(opened, warnings);
+    const collected = await collectForSuggest(
+        opened,
+        warnings,
+        options.attendance ? { spec: options.attendance, id: options.attendanceId } : undefined
+    );
     const meeting = await opened.meeting();
     const config = await opened.config();
     const evidence = rules.includes("evidence") || rules.includes("speakers") ? await opened.evidence() : null;

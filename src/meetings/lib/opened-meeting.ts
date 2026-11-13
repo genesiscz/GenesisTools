@@ -370,8 +370,12 @@ export class OpenedMeeting {
      * Collects what a linked recording can tell without being asked: the call platform (from the source), the
      * attendance and its sections (when the platform keeps them and the record has none), and the audio channel
      * layout. A step that fails is a note, never an error: the record stays as it was for that step.
+     *
+     * `attendance` is the run's explicit choice (`--attendance <spec> [--attendance-id <id>]`): the title lookup never
+     * runs then. A choice of the record's own platform is loaded exactly (that chat) and kept; a file or another
+     * platform is the run's alone, so nothing is collected for the record.
      */
-    async collect(): Promise<CollectOutcome> {
+    async collect(options: { attendance?: { spec: string; id?: string } } = {}): Promise<CollectOutcome> {
         const notes: CollectOutcome["notes"] = [];
 
         if (!this.sourceRef && !this.linkedOnce) {
@@ -393,10 +397,15 @@ export class OpenedMeeting {
 
         const platform = this.current.platform ? MEETING_PLATFORMS[this.current.platform] : undefined;
 
-        if (!this.current.attendance && platform && platform.capabilities.attendance !== "none") {
+        const chosen = options.attendance;
+        const foreignChoice = chosen !== undefined && chosen.spec !== platform?.id;
+
+        if (!this.current.attendance && platform && platform.capabilities.attendance !== "none" && foreignChoice) {
+            notes.push({ ok: true, text: `attendance: this run reads ${chosen.spec}, so none is kept on the record` });
+        } else if (!this.current.attendance && platform && platform.capabilities.attendance !== "none") {
             try {
                 const timeline = await this.timeline();
-                const loaded = await this.loadAttendance(platform.id);
+                const loaded = await this.loadAttendance(platform.id, chosen?.id?.trim() || undefined);
                 this.current = await timeline.store(this.store, loaded, platform.id);
                 notes.push({ ok: true, text: `${loaded.note}, ${this.current.sections?.length ?? 0} sections` });
             } catch (err) {

@@ -589,6 +589,58 @@ test("an exact attendance id reaches the Teams reader and chooses only that fixt
     }
 });
 
+test("suggest's exact attendance id reaches the automatic collection, so the record keeps that chat's attendance", async () => {
+    const cli = await import("@genesiscz/utils/cli");
+    const { runSuggest } = await import("./suggest-run");
+    const { store, record } = await newRecord({ platform: "teams" });
+    const opened = OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" });
+    const of = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
+    // Any lookup without the chosen id finds chat A, whose attendance names another person.
+    const exec = spyOn(cli, "execTool").mockImplementation(async (args) => ({
+        success: true,
+        exitCode: 0,
+        stderr: "",
+        stdout: SafeJSON.stringify([
+            {
+                meeting: {
+                    title: "Planning",
+                    startedAt: "2026-11-02T15:00:05.000Z",
+                    endedAt: "2026-11-02T15:10:05.000Z",
+                },
+                attendance: [
+                    {
+                        name: args.includes("chat-b") ? "Bob Example" : "Carol Example",
+                        joinedAt: "2026-11-02T15:00:05.000Z",
+                        leftAt: "2026-11-02T15:10:05.000Z",
+                    },
+                ],
+            },
+        ]),
+    }));
+    try {
+        await runSuggest({ store, record, rules: [], attendance: "teams", attendanceId: "chat-b" });
+        const lookups = exec.mock.calls.map(([args]) => args).filter((args) => args.includes("attendance"));
+        expect(lookups.length).toBeGreaterThan(0);
+        expect(lookups.every((args) => args.includes("chat-b"))).toBe(true);
+        expect(store.read(record.id)?.attendance?.people.map((stay) => stay.name)).toEqual(["Bob Example"]);
+
+        // A file (or another platform) is the run's own attendance: collection keeps none and looks nothing up.
+        of.mockRestore();
+        const other = await newRecord({ platform: "teams" });
+        exec.mockClear();
+        const outcome = await OpenedMeeting.of(other.store, other.record, {
+            source: fakeSource(),
+            sourceMeetingId: "abc",
+        }).collect({ attendance: { spec: join(other.store.root, "attendance.csv") } });
+        expect(exec).not.toHaveBeenCalled();
+        expect(outcome.notes.map((note) => note.text).join("\n")).toContain("so none is kept on the record");
+        expect(other.store.read(other.record.id)?.attendance).toBeUndefined();
+    } finally {
+        exec.mockRestore();
+        of.mockRestore();
+    }
+});
+
 test("a failed automatic collection is a warning of the suggest result, and a terms-only run judges no indicator gap", async () => {
     const { runSuggest } = await import("./suggest-run");
     const { store, record } = await newRecord();
