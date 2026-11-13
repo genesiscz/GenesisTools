@@ -658,4 +658,23 @@ final class ToolsClientTests: XCTestCase {
         XCTAssertNil(ToolsServerClient.resident(environment: ["GENESIS_TOOLS_HOME": "/tmp/sandbox"], preview: false, startServer: {}))
         XCTAssertNotNil(ToolsServerClient.resident(environment: [:], preview: false, startServer: {}))
     }
+
+    /// A failure report names "what ran" from the task's call ledger: the blocking and the stoppable capture both note
+    /// their call there, also across the queue hop of the stoppable form (the hub's runner did until 2026-11-10).
+    func testCapturesNoteTheirCallInTheCallersLedger() async throws {
+        let bridge = ToolsBridge(binaryPath: "/bin/sh", server: nil)
+        let ledger = ToolsCallLedger()
+        _ = ledger.recordSync { try? bridge.output(["-c", "echo 'fatal: no such ref' >&2; exit 3", "blocking"]) }
+        let blocking = try XCTUnwrap(ledger.failed)
+        XCTAssertEqual(blocking.argv.last, "blocking")
+        XCTAssertEqual(blocking.exit, 3)
+        XCTAssertEqual(blocking.via, "process")
+        XCTAssertEqual(blocking.stderr, "fatal: no such ref\n")
+
+        let stoppable = ToolsCallLedger()
+        let run = try await stoppable.record { try await bridge.captureStoppable(["-c", "exit 4", "stoppable"]) }
+        XCTAssertEqual(run.capture.status, 4)
+        XCTAssertEqual(stoppable.calls.map { $0.argv.last }, ["stoppable"])
+        XCTAssertEqual(stoppable.failed?.exit, 4)
+    }
 }
