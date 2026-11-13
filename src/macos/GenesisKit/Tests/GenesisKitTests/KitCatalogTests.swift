@@ -136,11 +136,21 @@ final class KitCatalogTests: XCTestCase {
             XCTAssertFalse(entry.critique.isEmpty, "\(entry.id) has no critique")
             // One sheet per entry keeps the test short; the looks share the layout.
             let look = try XCTUnwrap(entry.looks.last)
-            let rendered = await KitCatalogRenderer.png(of: CatalogSheet(entry: entry, look: look), width: CatalogSheet.width, scale: 1)
-            let data = try XCTUnwrap(rendered, "\(entry.id) did not draw")
-            let image = try XCTUnwrap(NSBitmapImageRep(data: data))
+            let sheet = CatalogSheet(entry: entry, look: look)
+            let rendered = await KitCatalogRenderer.picture(of: sheet, width: CatalogSheet.width, scale: 1)
+            let picture = try XCTUnwrap(rendered, "\(entry.id) did not draw")
+            var image = try XCTUnwrap(NSBitmapImageRep(data: picture.png))
             XCTAssertEqual(image.pixelsWide, Int(CatalogSheet.width))
             XCTAssertGreaterThan(image.pixelsHigh, 200, "\(entry.id) drew an empty sheet")
+            // Without the window server (no Screen Recording grant, a display that cannot stream), `cacheDisplay`
+            // draws the sheet, and it leaves Liquid Glass and everything the glass covers transparent: the glass card
+            // of settings-rows blanked its whole sheet. That sheet's background is then checked on the opaque form the
+            // kit draws under Reduce Transparency, so the check runs on every machine.
+            if !picture.windowServer, (image.colorAt(x: 10, y: 10)?.alphaComponent ?? 0) <= 0.99 {
+                let opaque = await KitCatalogRenderer.png(of: sheet.environment(\.nativeSettingsReduceTransparency, true),
+                                                          width: CatalogSheet.width, scale: 1)
+                image = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(opaque, "\(entry.id) did not draw opaque")))
+            }
             XCTAssertGreaterThan(image.colorAt(x: 10, y: 10)?.alphaComponent ?? 0, 0.99,
                                  "\(entry.id) lost its background while capturing native materials")
         }
