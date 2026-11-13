@@ -24,7 +24,7 @@ function fingerprint(value: Awaited<ReturnType<typeof stat>>): string {
     return [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs].join(":");
 }
 
-function sameSource(record: MeetingRecord, ref: SourceRef): boolean {
+function sourceStillLinked(record: MeetingRecord, ref: SourceRef): boolean {
     return record.sources[ref.sourceId]?.meetingId === ref.sourceMeetingId;
 }
 
@@ -71,7 +71,7 @@ export async function preserveSourceAudio(options: {
 }): Promise<PreserveSourceAudioResult> {
     const { store, meetingId, ref, sourcePath, signal } = options;
     const current = store.read(meetingId);
-    if (!current || !sameSource(current, ref)) {
+    if (!current || !sourceStillLinked(current, ref)) {
         throw new Error("The meeting's linked source changed before audio preservation; read it again and retry.");
     }
     signal?.throwIfAborted();
@@ -148,7 +148,7 @@ export async function preserveSourceAudio(options: {
             meetingId,
             { command: "audio preserve", change: `preserved ${ref.sourceId} source audio (${audio.bytes} bytes)` },
             (next) => {
-                if (!sameSource(next, ref)) {
+                if (!sourceStillLinked(next, ref)) {
                     throw new Error("The meeting's linked source changed while audio was being preserved; retry.");
                 }
                 const previous = next.audio?.sources[ref.sourceId];
