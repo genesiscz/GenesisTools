@@ -104,7 +104,11 @@ Both modes share the meeting record, its items and `tools meetings listen`.
 5. **The agent finishes.** Take the answers from the subscription (or `tools meetings items <meeting> --kind
    question`) and carry each one to the other lines with the same evidence. Ask what is still open in rounds (the `grilling` style): numbered questions
    with concrete quotes and timestamps, one recommendation each. Never settle a person's identity or a business term
-   by guessing.
+   by guessing. `transcript` applies suggested findings only with `--with-suggested`; use that flag to preview
+   unsettled findings. An open speaker question keeps its proposed voice as `[Name: NN %]` at every confidence.
+   Without the flag, choices carry no borrowed range confidence. A complete supplied unclear term mark is rendered
+   once. Confirm the findings settled by evidence or the user's answers with `tools meetings confirm <meeting>
+   <settled-item-ids>` before writing the polished file; keep unresolved findings open and visibly marked.
 6. **Write the one polished file** in the layout of [polishing.md](references/polishing.md#the-polished-file), then
    correct the source's summary against the polished transcript.
 7. **Report**: the file link, the count of changes per kind, the `[nejasné: ...]` count, and every decision that
