@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { buildInventory, copyNames, type FunctionFact, fingerprint, isDistinctName } from "@app/ts/lib/inventory";
 import { Lang, parse } from "@ast-grep/napi";
 import { checkSource, langFor, maskSwiftNonCode, withinCountRatchets } from "../lint-rules";
+import { spawnWithDeadline } from "../spawn-deadline";
 import adoFetchOutsideApi from "./ado-fetch-outside-api.definition";
 import appStatusOutsidePermissions from "./app-status-outside-permissions.definition";
 import cdpConnOutsideConnect from "./cdp-conn-outside-connect.definition";
@@ -310,6 +311,11 @@ describe("generate: an input it cannot read stops the run", () => {
             )
         ),
         GIT_CEILING_DIRECTORIES: dirname(dir),
+    });
+
+    test("a child that passes its deadline is killed and throws, so a stalled git never hangs the hook", () => {
+        expect(() => spawnWithDeadline(["sleep", "5"], { timeoutMs: 100 })).toThrow(/did not finish within 0.1 s/);
+        expect(spawnWithDeadline(["true"]).exitCode).toBe(0);
     });
 
     test("a base before the manifest is no baseline, a base with it is read, an unknown ref throws", () => {

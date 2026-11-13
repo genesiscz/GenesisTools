@@ -19,6 +19,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { findInFiles, type Lang, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isSuppressed, isTestFile, langFor, maskSwiftNonCode, pluginsDisabledFor, targetFiles } from "../lint-rules";
+import { spawnWithDeadline } from "../spawn-deadline";
 import type { RosterDefinition } from "./define";
 import { parseRosters, ROSTER_DEFINITIONS, ROSTERS_FILE, type Rosters, readRosters, rosterGrowth } from "./index";
 import { SWIFT_ROSTERS, type SwiftRoster, swiftRosterApplies, swiftRosterLines } from "./swift";
@@ -204,11 +205,12 @@ function serialize(rosters: Rosters): string {
 
 /**
  * The manifest at `base`, or null when that commit predates it: a manifest that did not exist cannot have been edited
- * up. An unknown or unfetched ref, or any other git failure, throws, so a baseline check never passes unread.
+ * up. An unknown or unfetched ref, a stalled git (killed at its deadline) or any other git failure throws, so a
+ * baseline check never passes unread.
  */
 export function baseRosters(base: string, { cwd = process.cwd() }: { cwd?: string } = {}): Rosters | null {
     const git = (args: string[], what: string): string => {
-        const run = Bun.spawnSync(["git", ...args], { cwd });
+        const run = spawnWithDeadline(["git", ...args], { cwd });
 
         if (run.exitCode !== 0) {
             throw new Error(`rosters: cannot ${what} (git exited ${run.exitCode}): ${run.stderr.toString().trim()}`);

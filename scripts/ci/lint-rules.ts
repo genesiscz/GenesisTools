@@ -51,6 +51,7 @@ import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./na
 import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
 import { parseRosters, ROSTER_DEFINITIONS, readRosters, rosterCounts, rosterGrowth } from "./rosters";
 import { SWIFT_ROSTERS, swiftRosterApplies, swiftRosterLines } from "./rosters/swift";
+import { spawnWithDeadline } from "./spawn-deadline";
 import { checkSwiftProcessToolRule, checkSwiftRowRules, checkSwiftStructRules } from "./swift-lint-rules";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
@@ -2493,7 +2494,7 @@ function checkRatchetGrowth({ from, cwd, changed }: { from: string; cwd: string;
         return;
     }
 
-    const listed = Bun.spawnSync(["git", "ls-tree", "--name-only", from, "--", ...inputs], { cwd });
+    const listed = spawnWithDeadline(["git", "ls-tree", "--name-only", from, "--", ...inputs], { cwd });
 
     if (listed.exitCode !== 0) {
         throw new Error(`lint-rules: cannot read ratchet baseline: ${listed.stderr.toString()}`);
@@ -2504,7 +2505,9 @@ function checkRatchetGrowth({ from, cwd, changed }: { from: string; cwd: string;
             continue;
         }
 
-        const previous = Bun.spawnSync(["git", "show", "--no-textconv", "--no-ext-diff", `${from}:${file}`], { cwd });
+        const previous = spawnWithDeadline(["git", "show", "--no-textconv", "--no-ext-diff", `${from}:${file}`], {
+            cwd,
+        });
 
         if (previous.exitCode !== 0) {
             throw new Error(`lint-rules: cannot read ${from}:${file}: ${previous.stderr.toString()}`);
@@ -2528,11 +2531,14 @@ export function changedFiles(base: string, { cwd = process.cwd() }: { cwd?: stri
     // checks out at depth 1 and fetches only the PR's base commit, so there is
     // no shared history for `merge-base` to walk — and GitHub's
     // `pull_request.base.sha` already IS the merge base.
-    const merged = Bun.spawnSync(["git", "merge-base", base, "HEAD"], { cwd });
+    const merged = spawnWithDeadline(["git", "merge-base", base, "HEAD"], { cwd });
     const from = merged.exitCode === 0 ? merged.stdout.toString().trim() : base;
-    const diff = Bun.spawnSync(["git", "diff", "--no-textconv", "--no-ext-diff", "--name-only", "-z", from, "HEAD"], {
-        cwd,
-    });
+    const diff = spawnWithDeadline(
+        ["git", "diff", "--no-textconv", "--no-ext-diff", "--name-only", "-z", from, "HEAD"],
+        {
+            cwd,
+        }
+    );
 
     if (diff.exitCode !== 0) {
         // Every failure degrades to a full scan. A changed-file optimisation
@@ -2558,6 +2564,7 @@ const RULE_INPUTS = new Set([
     "scripts/ci/lint-changed.sh",
     "scripts/ci/harness-guard.ts",
     "scripts/ci/harness-guard-allowlist.ts",
+    "scripts/ci/spawn-deadline.ts",
     "scripts/ci/swift-lint-rules.ts",
     "scripts/ci/swift-row-ratchet.ts",
     "src/utils/agent/identity/terminals.ts",
@@ -2587,7 +2594,7 @@ export async function targetFiles(): Promise<string[]> {
 
     // Must match every extension `langFor` can parse, or a tracked file with one
     // of the missing ones silently bypasses all six rules.
-    const listed = Bun.spawnSync([
+    const listed = spawnWithDeadline([
         "git",
         "ls-files",
         "-z",
