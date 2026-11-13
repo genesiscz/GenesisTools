@@ -1,5 +1,10 @@
 # Shippable checklist for a native view
 
+VoiceOver or Full Keyboard Access activation or testing, changes to OS accessibility settings, and extended
+accessibility-only work require explicit task-specific user confirmation. A generic UX, all-proposals or all-checks
+request does not authorize them. Without confirmation, report them as unrun. Preserve IDs, labels, semantics and
+completed fixes; ordinary authorized keyboard use and AX automation remain in scope.
+
 Walk it for every view you change. Each line exists because it was missed at least once, or because one of the
 skills distilled on 2026-10-24 states it and the app broke it ([sources.md](sources.md)). [audit.md](audit.md) says
 how to find a violation in code.
@@ -187,8 +192,8 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
 - A view that faded out, has zero size or sits off screen is hidden from VoiceOver, and an exiting view ignores
   clicks.
 - Translucency comes from system materials, not `Color.opacity` plus a blur, which ignores Reduce Transparency.
-- A report of an accessibility change names the manual checks that ran: VoiceOver, Full Keyboard Access, the
-  Accessibility Inspector. A code audit alone proves little.
+- A report of an accessibility change names the checks actually run, such as an authorized manual check or code audit,
+  and their limits. Do not imply that an unrun manual check passed.
 - VoiceOver reads in the visual order. Where a layout draws a later view first (a pinned header, a composer above
   its list), fix the order with `accessibilitySortPriority` or grouping.
 - Custom colours have a stronger variant under Increase Contrast (`@Environment(\.colorSchemeContrast)`), above all
