@@ -1,16 +1,16 @@
 import type { WatchMuteReceiptDto, WatchRowDto, WatchSourceId } from "@dd/contract";
 import * as Linking from "expo-linking";
-import { Stack } from "expo-router";
+import { Stack, useIsFocused } from "expo-router";
 import { memo, useCallback, useState } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import { ago } from "@/features/agents/components/SessionCard";
 import { idempotencyKey } from "@/features/answer-queue/units";
 import { useMuteWatch, useWatching } from "@/features/watching/hooks";
 import { attentionCount, MUTE_MINUTES, rowsOf } from "@/features/watching/queries";
+import { useMinuteClock } from "@/lib/minute-clock";
 import { Empty } from "@/ui/Empty";
 import { MockBadge } from "@/ui/MockBadge";
 import { StatusPill } from "@/ui/StatusPill";
-import { useMinuteClock } from "@/hooks/use-minute-clock";
 import { useThemeColors } from "@/theme/colors";
 
 const rowKey = (row: WatchRowDto) => `${row.source}:${row.id}`;
@@ -85,7 +85,7 @@ export default function WatchingScreen() {
     const c = useThemeColors();
     const watching = useWatching();
     const [source, setSource] = useState<WatchSourceId | "all">("all");
-    const now = useMinuteClock();
+    const now = useMinuteClock(useIsFocused());
     const rows = rowsOf(watching.data, source);
     const notes = (watching.data?.sources ?? []).filter((entry) => entry.note && (source === "all" || entry.id === source));
     const renderItem = useCallback(({ item }: { item: WatchRowDto }) => <WatchRow row={item} now={now} />, [now]);
