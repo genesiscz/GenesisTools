@@ -112,6 +112,49 @@ describe("diagram geometry", () => {
             )
         ).toBe(true);
     });
+    test("other rows of the endpoint bands are obstacles, and the route leaves and enters through a row gap", () => {
+        const layers: DiagramLayer[] = [
+            {
+                id: "top",
+                label: "Top",
+                columns: [1, 1, 1],
+                rows: 2,
+                nodes: [
+                    { id: "source", title: "Source", col: 2 },
+                    { id: "below-source", title: "Below source", col: 2 },
+                ],
+            },
+            {
+                id: "bottom",
+                label: "Bottom",
+                columns: [1, 1, 1],
+                rows: 2,
+                nodes: [
+                    { id: "above-target", title: "Above target", col: 2 },
+                    { id: "target", title: "Target", col: 2 },
+                ],
+            },
+        ];
+        const edges = [{ from: "source", to: "target" }];
+        const direct = layoutLayerDiagram({ layers, edges, routing: "direct" });
+        expect(direct.edges[0].crosses).toEqual(["below-source", "above-target"]);
+        const routed = layoutLayerDiagram({ layers, edges });
+        expect(routed.edges[0].crosses).toEqual([]);
+        const boxes = routed.nodes.filter((node) => node.node.id.includes("-"));
+        const corners = [...routed.edges[0].d.matchAll(/(-?[\d.]+) (-?[\d.]+)/g)].map((m) => ({
+            x: Number(m[1]),
+            y: Number(m[2]),
+        }));
+        for (let i = 1; i < corners.length; i += 1) {
+            for (let t = 0; t <= 1; t += 0.05) {
+                const x = corners[i - 1].x + (corners[i].x - corners[i - 1].x) * t;
+                const y = corners[i - 1].y + (corners[i].y - corners[i - 1].y) * t;
+                expect(boxes.filter((box) => x > box.x && x < box.x + box.w && y > box.y && y < box.y + box.h)).toEqual(
+                    []
+                );
+            }
+        }
+    });
     test("automatic nodes leave a later pinned node its requested column", () => {
         const layout = layoutLayerDiagram({
             layers: [
