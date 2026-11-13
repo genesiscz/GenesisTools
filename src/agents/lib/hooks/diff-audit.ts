@@ -64,7 +64,13 @@ export function fileToolWrites(rows: Iterable<ChangeLogRow>): Map<string, Write[
         }
 
         const path = canonical(row.path);
-        byFile.set(path, [...(byFile.get(path) ?? []), { session: row.session, at }]);
+        const writes = byFile.get(path);
+
+        if (writes) {
+            writes.push({ session: row.session, at });
+        } else {
+            byFile.set(path, [{ session: row.session, at }]);
+        }
     }
 
     for (const writes of byFile.values()) {
