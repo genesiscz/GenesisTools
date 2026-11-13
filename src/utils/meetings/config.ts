@@ -1034,6 +1034,29 @@ export class MeetingsConfigStore {
         return config.projects[project]?.labels ?? [];
     }
 
+    async setPersonDetails(options: {
+        project: string;
+        name: string;
+        role?: string;
+        aliases?: string[];
+    }): Promise<MeetingsConfig> {
+        return this.update((raw) => {
+            const match = objectAt(objectAt(objectAt(raw, "projects"), options.project), "match");
+            const people = rawPeople(match.people);
+            const person = people.find((person) => samePerson(person, { name: options.name }));
+            if (!person) {
+                throw new Error(`No paired person ${options.name} in ${options.project}`);
+            }
+            if (options.role !== undefined) {
+                person.role = options.role.trim() || undefined;
+            }
+            if (options.aliases !== undefined) {
+                person.aliases = options.aliases;
+            }
+            match.people = people;
+        });
+    }
+
     /** Pairs people with a project through one source (a calendar entry or a manual pairing). */
     async pairPeople(options: { project: string; people: PersonRef[]; by: PairedBy }): Promise<MeetingsConfig> {
         projectNameSchema.parse(options.project);

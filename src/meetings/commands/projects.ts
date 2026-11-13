@@ -177,8 +177,22 @@ async function unpair(name: string | undefined, opts: { entry?: string; person?:
     }
 }
 
-async function people(name: string | undefined, opts: { json?: boolean }): Promise<void> {
+async function people(
+    name: string | undefined,
+    opts: { json?: boolean; person?: string; role?: string; alias?: string[] }
+): Promise<void> {
     try {
+        if (opts.role !== undefined || opts.alias !== undefined) {
+            if (!name || !opts.person) {
+                throw new Error("Editing roles/aliases needs a project and --person <name>");
+            }
+            await new MeetingsConfigStore().setPersonDetails({
+                project: name,
+                name: opts.person,
+                role: opts.role,
+                aliases: opts.alias,
+            });
+        }
         const config = await new MeetingsConfigStore().read();
         const rows = Object.entries(config.projects)
             .filter(([project]) => !name || project === name)
@@ -194,7 +208,7 @@ async function people(name: string | undefined, opts: { json?: boolean }): Promi
             return;
         }
 
-        const table = createBoxTable(["PROJECT", "PERSON", "PAIRED BY"]);
+        const table = createBoxTable(["PROJECT", "PERSON", "ROLE", "ALIASES", "PAIRED BY"]);
 
         for (const row of rows) {
             const by = row.pairedBy.map((source) =>
@@ -202,7 +216,13 @@ async function people(name: string | undefined, opts: { json?: boolean }): Promi
                     ? "manual"
                     : `${source.title ?? source.entryId} (${source.entryId.slice(0, 12)})`
             );
-            table.push([row.project, row.email ? `${row.name} <${row.email}>` : row.name, by.join("\n")]);
+            table.push([
+                row.project,
+                row.email ? `${row.name} <${row.email}>` : row.name,
+                row.role ?? "unknown",
+                (row.aliases ?? []).join(", "),
+                by.join("\n"),
+            ]);
         }
 
         out.println(table.toString());
@@ -294,6 +314,9 @@ export function registerProjectsCommand(program: Command): void {
         .command("people")
         .argument("[name]", "only this project")
         .description("The people paired with each project and where each pairing came from")
+        .option("--person <name>", "the paired person to edit")
+        .option("--role <role>", "explicit project role, empty clears it")
+        .option("--alias <names...>", "explicit aliases, replaces the saved list")
         .option("--json", "print JSON")
         .action(people);
     projects

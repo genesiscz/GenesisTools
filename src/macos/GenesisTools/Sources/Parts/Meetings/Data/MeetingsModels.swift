@@ -162,6 +162,7 @@ struct MeetingRecordView: Decodable, Equatable {
 
     let id: String
     var title: String
+    var seats: MeetingSeats? = nil
     var project: String?
     var labels: [String]
     let start: String
@@ -200,14 +201,8 @@ struct MeetingRecordView: Decodable, Equatable {
     var evidence: Evidence? = nil
     struct Stay: Decodable, Equatable { var name: String; var fromSec: Double; var toSec: Double }
     struct Attendance: Decodable, Equatable { var from: String; var people: [Stay] }
-    struct Seats: Decodable, Equatable {
-        struct Remote: Decodable, Equatable { var name: String }
-        struct Group: Decodable, Equatable { var id: String; var people: [String]; var deviceId: String? }
-        var room: [String]; var remote: [Remote]; var microphones: [Group]?
-    }
     var participants: [Person]? = nil
     var attendance: Attendance? = nil
-    var seats: Seats? = nil
     let recording: Recording?
     let sources: [String: JSONValue]
     var copySource: String? {
@@ -425,6 +420,8 @@ struct PairedBy: Codable, Equatable, Hashable {
 }
 
 struct PairedPerson: Decodable, Equatable, Hashable, Identifiable {
+    var role: String? = nil
+    var aliases: [String]? = nil
     let name: String
     let email: String?
     let pairedBy: [PairedBy]
@@ -790,4 +787,22 @@ enum MeetingsFormat {
     static func cpu(_ seconds: Double) -> String {
         seconds < 10 ? String(format: "%.1f s CPU per minute", seconds) : String(format: "%.0f s CPU per minute", seconds)
     }
+}
+
+struct MeetingSeats: Codable, Equatable, Hashable {
+    struct Remote: Codable, Equatable, Hashable {
+        var name: String = ""
+        var label: String? = nil
+        var fromSec: Double? = nil
+        var toSec: Double? = nil
+    }
+    struct Microphone: Codable, Equatable, Hashable {
+        var id: String = "self"
+        var label: String? = nil
+        var people: [String] = []
+        var deviceId: String? = nil
+    }
+    var room: [String] = []
+    var remote: [Remote] = []
+    var microphones: [Microphone]? = nil
 }

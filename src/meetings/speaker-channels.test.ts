@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { correlateEcho } from "@genesiscz/utils/meetings/echo";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
@@ -439,4 +441,210 @@ test("R20 does not override a line when tagged channel and calibrated energy dis
             (item) => item.rules.includes("R20") && item.label === USER && item.fromSec <= 940 && item.toSec >= 940
         )
     ).toBe(false);
+});
+
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { Storage } from "@genesiscz/utils/storage/storage";
+import { planByChannel } from "./lib/by-channel";
+import { DecisionJournal } from "./lib/decision-journal";
+import { compactEvidence, rawMeeting } from "./lib/raw";
+import { rejectFilterIds } from "./lib/reject-filter";
+
+test("channel plans split on eligibility and leave shared room voices unresolved", () => {
+    const lines = Array.from({ length: 6 }, (_, index) => ({
+        index,
+        fromSec: index * 10,
+        label: "Room",
+        text: "A sufficiently long transcript sentence.",
+        channel: { micShare: [0.1, 0.1, 0.5, 0.9, 0.9, null][index] },
+    }));
+    const input = {
+        label: "Room",
+        room: ["Alice", "Bob"],
+        remote: [{ name: "Carol" }, { name: "Dan", label: "Own", fromSec: 10 }],
+        askRoom: { minSec: 8, max: 1 },
+    };
+    const plan = planByChannel({ lines, input });
+    expect(plan.ranges.map((r) => [r.from, r.to, r.speaker, r.confidence])).toEqual([
+        [0, 0, "Carol", 0.8],
+        [10, 10, "Carol", 0.7],
+    ]);
+    expect(plan.roomOnly).toHaveLength(1);
+    expect(plan.questions).toHaveLength(1);
+    expect(plan.mixed.map((l) => l.index)).toEqual([2]);
+    expect(planByChannel({ lines, input: { ...input, room: ["Alice"] } }).ranges.at(-1)?.speaker).toBe("Alice");
+    expect(planByChannel({ lines, input: { label: "Room", remote: ["Carol", "Dan"] } }).unresolved).toHaveLength(1);
+    expect(() => planByChannel({ lines, input: { label: "Room", micMax: 0.9, micMin: 0.1 } })).toThrow();
+});
+
+test("seats and atomic replacement persist, undo restores both and filter only selects suggestions", async () => {
+    const storage = new Storage(`seats-channel-${process.pid}`);
+    const store = new MeetingStore(storage);
+    const now = "2026-01-01T00:00:00Z";
+    const journal = new DecisionJournal({ store, ledger: () => undefined });
+    const record = await store.create(
+        { title: "Seat fixture", start: now, createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const seating = await journal.apply({
+        meeting: record.id,
+        actor: { kind: "cli" },
+        action: { kind: "set", seats: { room: ["Alice"], remote: [{ name: "Carol" }] } },
+    });
+    expect(new MeetingStore(storage).read(record.id)?.seats?.room).toEqual(["Alice"]);
+    const finding = {
+        kind: "speaker-range" as const,
+        from: 0,
+        to: 10,
+        label: "Room",
+        speaker: "Carol",
+        confidence: 0.5,
+        reason: "explicit channel evidence",
+    };
+    await journal.apply({
+        meeting: record.id,
+        actor: { kind: "agent", harness: "fixture", session: null },
+        action: { kind: "add", findings: [finding] },
+    });
+    const replacement = await journal.apply({
+        meeting: record.id,
+        actor: { kind: "agent", harness: "fixture", session: null },
+        action: {
+            kind: "add",
+            findings: [{ ...finding, confidence: 0.8 }],
+            replace: { by: "agent", kinds: ["speaker-range"] },
+        },
+    });
+    const read = new MeetingStore(storage).read(record.id)!;
+    expect(read.items.map((i) => i.status)).toEqual(["rejected", "suggested"]);
+    expect(rejectFilterIds(read.items, { kind: "speaker-range", where: "confidence>=0.7" })).toEqual([
+        read.items[1]!.id,
+    ]);
+    expect(rejectFilterIds(read.items, { where: "confidence<0.6" })).toEqual([]);
+    expect(() => rejectFilterIds(read.items, { where: "process.exit()" })).toThrow();
+    await journal.revert({ meeting: record.id, token: replacement.entry!.token, actor: { kind: "cli" } });
+    expect(new MeetingStore(storage).read(record.id)?.items.map((i) => i.status)).toEqual(["suggested"]);
+    await journal.revert({ meeting: record.id, token: seating.entry!.token, actor: { kind: "cli" } });
+    expect(new MeetingStore(storage).read(record.id)?.seats).toBeUndefined();
+});
+
+test("compact evidence has 509 bounded rows with mic percent and unknown", () => {
+    const raw = rawMeeting({
+        record,
+        meeting: {
+            sourceMeetingId: "fixture",
+            title: "Fixture",
+            participants: [],
+            folders: [],
+            start: START,
+            speakers: [],
+            transcript: Array.from({ length: 509 }, (_, i) => ({
+                speaker: "Room",
+                text: "x".repeat(800),
+                startSec: i * 2,
+            })),
+        },
+        evidence: null,
+        points: [],
+    });
+    raw.lines[0]!.channel.micShare = 0.2;
+    const compact = compactEvidence(raw);
+    expect(Buffer.byteLength(compact)).toBeLessThan(50_000);
+    expect(compact.split("\n")).toHaveLength(510);
+    expect(compact).toContain("mic20%");
+    expect(compact).toContain("mic?");
+});
+
+import { attributeByChannel } from "./lib/channel-operation";
+import { OpenedMeeting } from "./lib/opened-meeting";
+
+test("the actual byChannel dry-run door writes nothing, apply persists the same planned ranges", async () => {
+    const store = new MeetingStore(new Storage(`by-channel-door-${process.pid}`));
+    const record = await store.create(
+        {
+            title: "Door fixture",
+            start: START,
+            createdBy: "new",
+            seats: { room: ["Alice"], remote: [{ name: "Carol" }] },
+        },
+        { command: "test", change: "fixture" }
+    );
+    const fixture = scene([
+        { label: "Room", mic: 0 },
+        { label: "Room", mic: 0 },
+        { label: "Room", mic: 1 },
+    ]);
+    const load = spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue(fixture.meeting);
+    const evidence = spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue(fixture.evidence);
+    const file = join(store.folder(record.id), "meeting.json");
+    const before = {
+        bytes: readFileSync(file, "utf8"),
+        mtime: statSync(file).mtimeMs,
+        files: readdirSync(store.folder(record.id)),
+    };
+    try {
+        const input = { label: "Room", minChars: 0, dryRun: true };
+        const dry = await attributeByChannel({ store, record, input });
+        expect(dry.ranges.map((r) => r.speaker)).toEqual(["Carol", "Alice"]);
+        expect(readFileSync(file, "utf8")).toBe(before.bytes);
+        expect(statSync(file).mtimeMs).toBe(before.mtime);
+        expect(readdirSync(store.folder(record.id))).toEqual(before.files);
+        await attributeByChannel({ store, record, input: { ...input, dryRun: false } });
+        expect(
+            new MeetingStore(store.storage)
+                .read(record.id)
+                ?.items.filter((i) => i.kind === "speaker-range")
+                .map((i) => (i.kind === "speaker-range" ? i.speaker : ""))
+        ).toEqual(["Carol", "Alice"]);
+    } finally {
+        load.mockRestore();
+        evidence.mockRestore();
+    }
+});
+
+test("one shared indicator assessment marks strict meeting dominance and raw evidence exposes no signal", () => {
+    const lines: LineEvidence[] = Array.from(
+        { length: 100 },
+        (_, index): LineEvidence => ({
+            index,
+            startSec: index * 10,
+            endSec: index * 10 + 9,
+            label: "Room",
+            text: "Words",
+            speaking: index < 87 ? { Carol: 1 } : {},
+        })
+    );
+    const assessed = assessIndicator({ lines, selfName: "Alice" });
+    expect(assessed.dominant).toEqual({ name: "Carol", share: 0.87 });
+    expect(assessed.ignored.size).toBe(100);
+    expect(assessed.reasons.get(0)).toBe("meeting-dominance");
+    expect(
+        assessIndicator({
+            lines: lines.map((line, index): LineEvidence => ({ ...line, speaking: index < 80 ? { Carol: 1 } : {} })),
+            selfName: "Alice",
+        }).dominant
+    ).toBeUndefined();
+    const fixture = scene(Array.from({ length: 100 }, () => ({ label: "Room", mic: 0 })));
+    fixture.evidence.speaking = Array.from({ length: 100 }, (_, index) => ({
+        tSec: index * 10,
+        speaking: index < 87 ? ["Carol"] : [],
+    }));
+    const raw = rawMeeting({ record, meeting: fixture.meeting, evidence: fixture.evidence, points: [] });
+    expect(raw.meeting.indicator?.signal).toBe("no-signal");
+    expect(raw.lines[0]?.speakingSignal).toBe("no-signal");
+});
+
+test("raw evidence carries canonical seats and explicit project roles through aliases", () => {
+    const fixture = scene([{ label: "Room", mic: 0 }]);
+    const seated = { ...record, seats: { room: ["Al"], remote: [{ name: "Carol" }] } };
+    const raw = rawMeeting({
+        record: seated,
+        meeting: fixture.meeting,
+        evidence: fixture.evidence,
+        points: [],
+        people: [{ name: "Alice", role: "Engineer", aliases: ["Al"], pairedBy: [{ kind: "manual", at: START }] }],
+    });
+    expect(raw.meeting.seats).toEqual(seated.seats);
+    expect(raw.people.find((person) => person.name === "Al")).toMatchObject({ role: "Engineer", aliases: ["Al"] });
+    expect(raw.people.find((person) => person.name === "Carol")?.role).toBeUndefined();
 });

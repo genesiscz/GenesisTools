@@ -500,11 +500,22 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
     }
 }
 
+import { attributeByChannel } from "../lib/channel-operation";
+import { type RejectFilter, rejectFilterIds } from "../lib/reject-filter";
+
 async function decide(
     status: "confirmed" | "rejected",
     ref: string,
     ids: string[],
-    opts: { speaker?: string; proposed?: string; minConfidence?: string; reason?: string; json?: boolean }
+    opts: {
+        speaker?: string;
+        proposed?: string;
+        minConfidence?: string;
+        reason?: string;
+        json?: boolean;
+        kind?: RejectFilter["kind"];
+        where?: string;
+    }
 ): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
@@ -513,6 +524,13 @@ async function decide(
         return;
     }
 
+    if (status === "rejected" && (opts.kind || opts.where)) {
+        if (ids.length > 0 || opts.minConfidence !== undefined) {
+            fail("Use filter flags alone, without ids or --min-confidence");
+            return;
+        }
+        ids = rejectFilterIds(record.items, { kind: opts.kind, where: opts.where });
+    }
     const minConfidence = opts.minConfidence === undefined ? undefined : Number(opts.minConfidence);
 
     if (minConfidence !== undefined && Number.isNaN(minConfidence)) {
@@ -757,6 +775,7 @@ async function transcript(
         });
         reportOutcomes(applied.outcomes);
         ui.dim(appliedLine(applied));
+        ui.dim(`Suggested agent findings: ${opts.withSuggested ? "applied in preview" : "not applied"}`);
 
         if (markdown) {
             if (markdown.warning) {
@@ -849,8 +868,73 @@ export function registerItemCommands(program: Command): void {
         .option("--json", "print JSON")
         .action(rows);
 
-    program
-        .command("items")
+    const itemsCommand = program.command("items");
+    itemsCommand
+        .command("reject")
+        .argument("<meeting>", MEETING_REF)
+        .argument("[items...]")
+        .option("--kind <kind>", "suggested item kind")
+        .option("--where <comparison>", "confidence<0.6 or priority>=1")
+        .option("--json", "print decision JSON")
+        .action((ref: string, ids: string[], opts: { kind?: RejectFilter["kind"]; where?: string; json?: boolean }) =>
+            decide("rejected", ref, ids, opts)
+        );
+    itemsCommand
+        .command("by-channel")
+        .argument("<meeting>", MEETING_REF)
+        .requiredOption("--label <label>", "source label carrying room voices")
+        .option("--room <names...>", "people at the microphone")
+        .option("--remote <json>", "JSON remote seat array, with optional label/fromSec/toSec")
+        .option("--mic-max <share>", "remote maximum", "0.2")
+        .option("--mic-min <share>", "room minimum", "0.85")
+        .option("--min-chars <count>", "skip shorter lines", "25")
+        .option("--dry-run", "plan without writes")
+        .option("--replace <json>", "JSON {kinds,by:agent} to reject in the same write")
+        .option("--ask-room <json>", "JSON {minSec,max} for shared-room questions")
+        .action(
+            async (
+                ref: string,
+                opts: {
+                    label: string;
+                    room?: string[];
+                    remote?: string;
+                    micMax: string;
+                    micMin: string;
+                    minChars: string;
+                    dryRun?: boolean;
+                    replace?: string;
+                    askRoom?: string;
+                }
+            ) => {
+                try {
+                    const store = new MeetingStore();
+                    const record = requireMeeting(store, ref);
+                    if (!record) {
+                        return;
+                    }
+                    const result = await attributeByChannel({
+                        store,
+                        record,
+                        input: {
+                            label: opts.label,
+                            room: opts.room,
+                            remote: opts.remote ? SafeJSON.parse(opts.remote) : undefined,
+                            micMax: Number(opts.micMax),
+                            micMin: Number(opts.micMin),
+                            minChars: Number(opts.minChars),
+                            dryRun: opts.dryRun === true,
+                            replace: opts.replace ? SafeJSON.parse(opts.replace) : undefined,
+                            askRoom: opts.askRoom ? SafeJSON.parse(opts.askRoom) : undefined,
+                        },
+                    });
+                    out.result(SafeJSON.stringify(result, null, 2));
+                } catch (error) {
+                    fail(error);
+                }
+            }
+        );
+
+    itemsCommand
         .argument("<meeting>", MEETING_REF)
         .description("The meeting's items with their status, confidence and rules")
         .option("--status [status]", ITEM_STATUSES.join(" | "))
@@ -916,6 +1000,11 @@ export function registerItemCommands(program: Command): void {
             .option("--min-confidence <0..1>", "every suggested item at or above this confidence")
             .option("--reason <text>", `why: kept in the decision journal (${toolCommand("meetings", "journal")})`);
 
+        if (status === "rejected") {
+            command
+                .option("--kind <kind>", "reject suggested items of this kind")
+                .option("--where <comparison>", "confidence<0.6 or priority>=1");
+        }
         // Only a confirm takes a value: a reject keeps nothing of the item.
         if (status === "confirmed") {
             command
