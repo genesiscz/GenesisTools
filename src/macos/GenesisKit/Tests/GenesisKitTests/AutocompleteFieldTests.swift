@@ -258,6 +258,29 @@ final class AutocompleteFieldTests: XCTestCase {
         XCTAssertEqual(count, 1, "the first text was replaced within the pause, so only the second was asked")
     }
 
+    /// While a newer text's search runs, the older answers still show but do not belong to the text: Down, Return, Tab
+    /// and a click take none of them (an answer to "a" was taken for "ab" before its search finished).
+    func testAnswersToAnOlderTextCannotBeTakenWhileTheNewSearchRuns() async throws {
+        let model = AutocompleteModel<AutocompleteValue>()
+        let source = AutocompleteSource<AutocompleteValue>.search { text in
+            if text == "ab" { try await Task.sleep(for: .milliseconds(600)) }
+            return [AutocompleteValue("answer for \(text)")]
+        }
+        model.need(source, text: "a")
+        try await waitUntil { model.phase == .loaded }
+        XCTAssertTrue(model.answers(for: "a", source: source))
+
+        model.need(source, text: "ab")
+        XCTAssertEqual(model.answered?.map(\.title), ["answer for a"], "the older answers stay on screen")
+        XCTAssertFalse(model.answers(for: "ab", source: source), "but they do not belong to the new text")
+        try await waitUntil { model.phase == .loaded }
+        XCTAssertEqual(model.answered?.map(\.title), ["answer for ab"])
+        XCTAssertTrue(model.answers(for: "ab", source: source))
+
+        let list = AutocompleteSource<AutocompleteValue>.items([AutocompleteValue("Work")])
+        XCTAssertTrue(model.answers(for: "anything", source: list), "a fixed list is filtered by the text on screen")
+    }
+
     // MARK: Folders
 
     private func scratchHome() throws -> String {
