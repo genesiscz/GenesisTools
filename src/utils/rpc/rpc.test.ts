@@ -12,12 +12,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import { CHILD_STDIN_HIGH_WATER_BYTES, connectChildStdio } from "./child-stdio";
 import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
-import { failedCallLevel, LineBuffer, Outbox, RpcPeer, type RpcProgress } from "./peer";
+import { failedCallLevel, LineBuffer, Outbox, RpcPeer, type RpcPeerOptions, type RpcProgress } from "./peer";
 import {
     readLiveServiceEntry,
     type ServiceHost,
@@ -168,6 +169,91 @@ test("a handler failure sends its cause stack and issue, and the peer answers th
     }
 });
 
+describe("the supersede lane of a peer", () => {
+    function lanePeer(handle: RpcPeerOptions["handle"]) {
+        const replies = new Map<unknown, unknown>();
+        const peer = new RpcPeer({
+            write: (bytes) => {
+                for (const line of bytes.toString("utf8").split("\n").filter(Boolean)) {
+                    const reply = SafeJSON.parse(line, { strict: true });
+                    replies.set(Reflect.get(reply, "id"), Reflect.get(reply, "error") ?? Reflect.get(reply, "result"));
+                }
+
+                return bytes.length;
+            },
+            handle,
+            supersedes: (method) => (method === "cut" ? "cut" : undefined),
+            invalid: "answer",
+            log: logger.scoped("rpc-test").log,
+            label: "fixture",
+        });
+        const frame = (id: number, method: string) =>
+            `${SafeJSON.stringify({ jsonrpc: "2.0", id, method, params: { n: id } })}\n`;
+        return { peer, replies, frame };
+    }
+
+    test("a newer call cancels the one that runs and the one that waits; the waiting one never starts", async () => {
+        const started: number[] = [];
+        const firstStarted = Promise.withResolvers<void>();
+        const { peer, replies, frame } = lanePeer(async ({ method, params }, context) => {
+            const n = Number(Reflect.get(Object(params), "n"));
+            started.push(n);
+
+            if (method === "cut" && n < 3) {
+                firstStarted.resolve();
+                await new Promise((resolve) => context.signal.addEventListener("abort", resolve, { once: true }));
+            }
+
+            return { n };
+        });
+
+        try {
+            peer.receive(Buffer.from(frame(1, "cut")));
+            await withTimeout(firstStarted.promise, 5_000);
+            // One chunk: the second call waits behind the first when the third arrives, whatever the timing.
+            peer.receive(Buffer.from(frame(2, "cut") + frame(3, "cut")));
+            peer.receive(Buffer.from(frame(4, "status")));
+            await withTimeout(peer.queue, 5_000);
+
+            expect([1, 2].map((id) => Reflect.get(Object(replies.get(id)), "code"))).toEqual([
+                RPC_CANCELLED,
+                RPC_CANCELLED,
+            ]);
+            expect(replies.get(3)).toEqual({ n: 3 });
+            expect(replies.get(4)).toEqual({ n: 4 });
+            expect(started).toEqual([1, 3, 4]);
+        } finally {
+            peer.close("done");
+        }
+    });
+
+    test("a handler whose promise settles inside its abort listener still answers RPC_CANCELLED", async () => {
+        const firstStarted = Promise.withResolvers<void>();
+        const { peer, replies, frame } = lanePeer(({ params }, context) => {
+            if (Reflect.get(Object(params), "n") === 1) {
+                firstStarted.resolve();
+                return new Promise((resolve) =>
+                    context.signal.addEventListener("abort", () => resolve({ late: true }), { once: true })
+                );
+            }
+
+            return Promise.resolve({ n: 2 });
+        });
+
+        try {
+            peer.receive(Buffer.from(frame(1, "cut")));
+            await withTimeout(firstStarted.promise, 5_000);
+            peer.receive(Buffer.from(frame(2, "cut")));
+            await withTimeout(peer.queue, 5_000);
+
+            expect(Reflect.get(Object(replies.get(1)), "code")).toBe(RPC_CANCELLED);
+            expect(replies.get(2)).toEqual({ n: 2 });
+        } finally {
+            peer.close("done");
+        }
+    });
+});
+
 describe("the JSON-RPC socket server, both directions", () => {
     test("the server asks a client that said hello as host, and the reply comes back by id", async () => {
         const { socket, connections } = serve(async ({ method, params, connection }) => {
@@ -258,35 +344,36 @@ describe("the JSON-RPC socket server, both directions", () => {
         expect(await client.call<unknown>("status")).toEqual({ method: "status" });
     });
 
-    test("a newer call of a supersede lane cancels the older one that runs and the one that waits", async () => {
+    test("a newer call of a supersede lane on the socket cancels the older one that runs", async () => {
         const started: number[] = [];
+        const firstStarted = Promise.withResolvers<void>();
         const { socket } = serve(
             async ({ method, params, context }) => {
                 const n = Number(Reflect.get(Object(params), "n"));
                 started.push(n);
 
-                if (method === "cut" && n < 3) {
+                if (n === 1) {
+                    firstStarted.resolve();
                     await new Promise((resolve) => context.signal.addEventListener("abort", resolve, { once: true }));
                 }
 
-                return { n };
+                return { method, n };
             },
             (method) => (method === "cut" ? "cut" : undefined)
         );
         const client = await connect(socket);
         const first = client.call("cut", { n: 1 });
-        await Bun.sleep(10);
+        await withTimeout(firstStarted.promise, 5_000);
         const second = client.call("cut", { n: 2 });
-        const third = client.call("cut", { n: 3 });
 
-        const outcomes = await Promise.allSettled([first, second, third]);
-        const status = await client.call<unknown>("status", { n: 4 });
+        const outcomes = await Promise.allSettled([first, second]);
+        const status = await client.call<unknown>("status", { n: 3 });
 
         expect(
             outcomes.map((one) => (one.status === "fulfilled" ? one.value : Reflect.get(one.reason, "code")))
-        ).toEqual([RPC_CANCELLED, RPC_CANCELLED, { n: 3 }]);
-        expect(status).toEqual({ n: 4 });
-        expect(started).toEqual([1, 3, 4]);
+        ).toEqual([RPC_CANCELLED, { method: "cut", n: 2 }]);
+        expect(status).toEqual({ method: "status", n: 3 });
+        expect(started).toEqual([1, 2, 3]);
     });
 
     test("a client that goes rejects the server's waiting request", async () => {
