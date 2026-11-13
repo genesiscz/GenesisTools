@@ -11,6 +11,13 @@ public enum WorkflowArgumentError: Error, LocalizedError {
     }
 }
 
+/// Whether `--prepare` moves keyboard focus to the target element. A pointer action (a click, a drag) needs the window
+/// in front, never the element's keyboard focus, and an ordinary drag handle cannot take it: asking for it failed every
+/// prepared drag with "could not be focused during preparation".
+public func preparationFocusesElement(action: String) -> Bool {
+    !["click", "drag"].contains(action)
+}
+
 public struct WorkflowArguments {
     public let values: [String: String]
     public let flags: Set<String>
