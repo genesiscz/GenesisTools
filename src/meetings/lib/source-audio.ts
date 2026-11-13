@@ -1,0 +1,193 @@
+import { randomUUID } from "node:crypto";
+import { constants, lstatSync } from "node:fs";
+import { chmod, copyFile, link, mkdir, stat, unlink } from "node:fs/promises";
+import { extname, join } from "node:path";
+import { cloneOrCopy, type Placement } from "@genesiscz/utils/fs/clone";
+import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
+import { logger } from "@genesiscz/utils/logger";
+import {
+    MEETING_UNCHANGED,
+    type MeetingRecord,
+    type MeetingStore,
+    type PreservedSourceAudio,
+} from "@genesiscz/utils/meetings/record";
+import { type SourceRef, sourceRefOf } from "./sources";
+
+const { log } = logger.scoped("meetings-source-audio");
+/** Source media is permanent; capture retention owns the separate audio folder. */
+export const SOURCE_AUDIO_FOLDER = "source-audio";
+const fingerprints = new Map<string, { source: string; saved: string; sha256: string }>();
+const MAX_FINGERPRINTS = 128;
+
+function fingerprint(value: Awaited<ReturnType<typeof stat>>): string {
+    return [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs].join(":");
+}
+
+function sameSource(record: MeetingRecord, ref: SourceRef): boolean {
+    return record.sources[ref.sourceId]?.meetingId === ref.sourceMeetingId;
+}
+
+/** Pure lookup: no source read, migration, archive or hash on the playback path. */
+export function preservedSourceAudio(
+    record: MeetingRecord,
+    ref = sourceRefOf(record)
+): PreservedSourceAudio | undefined {
+    if (!ref) {
+        return undefined;
+    }
+    const audio = record.audio?.sources[ref.sourceId];
+    if (!audio || audio.sourceMeetingId !== ref.sourceMeetingId) {
+        return undefined;
+    }
+    try {
+        const file = lstatSync(audio.path);
+        return file.isFile() && file.size === audio.bytes ? audio : undefined;
+    } catch (error) {
+        if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
+            return undefined;
+        }
+        throw error;
+    }
+}
+
+export interface PreserveSourceAudioResult {
+    record: MeetingRecord;
+    audio: PreservedSourceAudio;
+    status: "preserved" | "already-preserved";
+    placement?: Exclude<Placement, "declined">;
+}
+
+/**
+ * Publishes verified private media before its metadata, never overwriting an archived version. A failed record
+ * write leaves the complete content-addressed file for a retry. Only unpublished scratch links are removed.
+ */
+export async function preserveSourceAudio(options: {
+    store: MeetingStore;
+    meetingId: string;
+    ref: SourceRef;
+    sourcePath: string;
+    signal?: AbortSignal;
+}): Promise<PreserveSourceAudioResult> {
+    const { store, meetingId, ref, sourcePath, signal } = options;
+    const current = store.read(meetingId);
+    if (!current || !sameSource(current, ref)) {
+        throw new Error("The meeting's linked source changed before audio preservation; read it again and retry.");
+    }
+    signal?.throwIfAborted();
+    const before = lstatSync(sourcePath);
+    if (!before.isFile() || before.size === 0) {
+        throw new Error("Source audio must be a nonempty regular file.");
+    }
+    const key = `${store.root}\0${meetingId}\0${ref.sourceId}`;
+    const old = preservedSourceAudio(current, ref);
+    const cached = fingerprints.get(key);
+    if (old && cached?.source === fingerprint(before) && cached.sha256 === old.sha256) {
+        const saved = await stat(old.path);
+        if (cached.saved === fingerprint(saved)) {
+            return { record: current, audio: old, status: "already-preserved" };
+        }
+    }
+
+    const folder = join(store.folder(meetingId), SOURCE_AUDIO_FOLDER);
+    await mkdir(folder, { recursive: true, mode: 0o700 });
+    if (!lstatSync(folder).isDirectory() || lstatSync(folder).isSymbolicLink()) {
+        throw new Error("The source-audio folder must be a real directory.");
+    }
+    await chmod(folder, 0o700);
+    const pending = join(folder, `.pending-${randomUUID()}`);
+    let placement: Exclude<Placement, "declined">;
+    try {
+        const cloned = cloneOrCopy({ source: sourcePath, destination: pending, mode: 0o600, mayCopy: false });
+        if (cloned === "declined") {
+            // Native asynchronous copy avoids the shared helper's whole-file fallback allocation.
+            await copyFile(sourcePath, pending, constants.COPYFILE_EXCL);
+            await chmod(pending, 0o600);
+            placement = "copied";
+        } else {
+            placement = cloned;
+        }
+        signal?.throwIfAborted();
+        const sha256 = await sha256FileAsync(pending, { signal });
+        const after = lstatSync(sourcePath);
+        const copied = lstatSync(pending);
+        if (fingerprint(before) !== fingerprint(after) || copied.size !== before.size) {
+            throw new Error(
+                "Source audio changed while it was being preserved; retry after the source finishes writing."
+            );
+        }
+        const suffix = extname(sourcePath).toLowerCase();
+        const extension = /^\.[a-z0-9]{1,6}$/.test(suffix) ? suffix : ".audio";
+        const destination = join(folder, `${sha256}${extension}`);
+        try {
+            // Same-directory hard-link publication is atomic and refuses an existing name.
+            await link(pending, destination);
+        } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+                throw error;
+            }
+            const held = lstatSync(destination);
+            if (
+                !held.isFile() ||
+                held.size !== copied.size ||
+                (await sha256FileAsync(destination, { signal })) !== sha256
+            ) {
+                throw new Error("An existing source-audio file does not match its digest; it was left untouched.");
+            }
+        }
+        signal?.throwIfAborted();
+        const audio: PreservedSourceAudio = {
+            sourceMeetingId: ref.sourceMeetingId,
+            path: destination,
+            sha256,
+            bytes: copied.size,
+            savedAt: new Date().toISOString(),
+        };
+        let changed = false;
+        const record = await store.update(
+            meetingId,
+            { command: "audio preserve", change: `preserved ${ref.sourceId} source audio (${audio.bytes} bytes)` },
+            (next) => {
+                if (!sameSource(next, ref)) {
+                    throw new Error("The meeting's linked source changed while audio was being preserved; retry.");
+                }
+                const previous = next.audio?.sources[ref.sourceId];
+                if (
+                    previous?.sourceMeetingId === audio.sourceMeetingId &&
+                    previous.path === audio.path &&
+                    previous.sha256 === audio.sha256 &&
+                    previous.bytes === audio.bytes
+                ) {
+                    return MEETING_UNCHANGED;
+                }
+                next.audio ??= { sources: {} };
+                next.audio.sources[ref.sourceId] = audio;
+                changed = true;
+            }
+        );
+        const saved = record.audio?.sources[ref.sourceId];
+        if (!saved) {
+            throw new Error("Source-audio metadata was not saved.");
+        }
+        fingerprints.delete(key);
+        fingerprints.set(key, { source: fingerprint(after), saved: fingerprint(await stat(saved.path)), sha256 });
+        if (fingerprints.size > MAX_FINGERPRINTS) {
+            fingerprints.delete(fingerprints.keys().next().value!);
+        }
+        log.debug(
+            {
+                meetingId,
+                source: ref.sourceId,
+                bytes: saved.bytes,
+                status: changed ? "preserved" : "already-preserved",
+            },
+            "source audio preserved"
+        );
+        return { record, audio: saved, status: changed ? "preserved" : "already-preserved", placement };
+    } finally {
+        await unlink(pending).catch((error: unknown) => {
+            if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+                log.warn({ error, path: pending }, "unpublished source-audio scratch could not be removed");
+            }
+        });
+    }
+}
