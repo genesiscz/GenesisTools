@@ -19,6 +19,7 @@ import { meetingAudioPath } from "./audio";
 import { MeetingComments } from "./comments";
 import { journalEntrySchema } from "./decision-actions";
 import { DecisionJournal } from "./decision-journal";
+import { FRAME_INDEX_FILE } from "./frame-index";
 import { meetingListRow, selectMeetings } from "./list-rows";
 import { planMoment } from "./moment";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
@@ -177,6 +178,35 @@ test("the items column keeps a long quote's source inside its width", async () =
         expect(printed.join("\n")).toContain('…" (quote from dto.ts:12)');
     } finally {
         output.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("screen-note --json reports frames whose OCR is still pending as a JSON result", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Pending OCR", start: "2026-11-09T10:00:00Z", createdBy: "record" },
+        { command: "test", change: "fixture" }
+    );
+    const folder = store.folder(record.id);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(
+        join(folder, FRAME_INDEX_FILE),
+        `${SafeJSON.stringify({ file: "frames/0.png", at: "2026-11-09T10:00:00.000Z", displayId: 1 }, { jsonl: true })}\n`
+    );
+    const results: unknown[] = [];
+    const result = spyOn(out, "result").mockImplementation((data: unknown) => {
+        results.push(data);
+    });
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "screen-note" });
+        await program.parseAsync(["screen-note", record.id, "--json"], { from: "user" });
+        expect(results.map((data) => SafeJSON.parse(String(data)))).toEqual([
+            { meeting: record.id, state: "ocr-pending", pending: expect.any(Number) },
+        ]);
+    } finally {
+        result.mockRestore();
         process.exitCode = 0;
     }
 });
