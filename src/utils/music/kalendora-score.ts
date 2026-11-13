@@ -1,4 +1,4 @@
-// Copied from /Users/Martin/Tresors/Projects/Kalendora/video/scripts/music.ts at 2026-11-12T06:17:16+01:00 at commit hash 481f90467dafdc609cfc834993855299b7410f94
+// Copied from the Kalendora repository, video/scripts/music.ts, at commit 481f90467dafdc609cfc834993855299b7410f94
 const Length = 95;
 export const SCORE_SECONDS = Length;
 export const SCORE_END = 91.5;
