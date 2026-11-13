@@ -361,6 +361,26 @@ describe("refreshGrokAuth", () => {
         expect(calls.filter((call) => !call.url.includes(".well-known"))).toHaveLength(1);
         expect(readAuth()[ENTRY_KEY]?.key).toBe(ROTATED);
     });
+
+    // The caller proved the file belonged to `expectedSubject` on an earlier read; the Grok CLI can
+    // switch accounts before the lock is taken, so the grant is spent only after the same check.
+    it("spends nothing and returns null when the active entry belongs to another identity", async () => {
+        writeAuth({ [ENTRY_KEY]: { ...defaultEntries()[ENTRY_KEY], user_id: "user-theirs" } as GrokAuthEntry });
+        const calls: FetchCall[] = [];
+        stubFetch({ calls });
+
+        expect(await refreshGrokAuth({ path: authPath, force: true, expectedSubject: "user-mine" })).toBeNull();
+        expect(calls).toHaveLength(0);
+        expect(readAuth()[ENTRY_KEY]?.refresh_token).toBe("refresh-one");
+    });
+
+    it("NEGATIVE CONTROL: the entry of the expected identity is still refreshed", async () => {
+        writeAuth({ [ENTRY_KEY]: { ...defaultEntries()[ENTRY_KEY], user_id: "user-mine" } as GrokAuthEntry });
+        const calls: FetchCall[] = [];
+        stubFetch({ calls });
+
+        expect(await refreshGrokAuth({ path: authPath, force: true, expectedSubject: "user-mine" })).toBe(FRESH);
+    });
 });
 describe("refreshGrokAuthOrThrow", () => {
     it("keeps an unreachable token endpoint as the cause, so the poll gate files it as transport", async () => {

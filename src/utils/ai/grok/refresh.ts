@@ -29,7 +29,7 @@ import { decodeJwt } from "@genesiscz/utils/jwt";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, isJsonObject, preserveUnreadableFile } from "@genesiscz/utils/storage/atomic-file";
 import { NETWORKED_LOCK_WAIT_MS, withFileLock } from "@genesiscz/utils/storage/file-lock";
-import { decodeJwtClaims, isAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
+import { decodeJwtClaims, entryHoldsSubject, isAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
 import { GrokAuthExpiredError } from "./auth-errors";
 import { grokAuthPath } from "./paths";
 import type { GrokAuthEntry } from "./types";
@@ -175,17 +175,24 @@ export function describeTokenError(body: string): string {
  * The holder is bounded by DISCOVERY_TIMEOUT_MS + TOKEN_TIMEOUT_MS = 20 s, well
  * inside the wait budget the other processes are given.
  */
-function performRefreshExclusively(authPath: string, force: boolean): Promise<string | null> {
-    return withFileLock(`${authPath}.lock`, () => performRefresh(authPath, force), NETWORKED_LOCK_WAIT_MS);
+function performRefreshExclusively(authPath: string, force: boolean, subject?: string): Promise<string | null> {
+    return withFileLock(`${authPath}.lock`, () => performRefresh(authPath, force, subject), NETWORKED_LOCK_WAIT_MS);
 }
 
-async function performRefresh(authPath: string, force: boolean): Promise<string | null> {
+async function performRefresh(authPath: string, force: boolean, subject?: string): Promise<string | null> {
     const entries = await readAuthFileAsync(authPath);
     const id = activeEntryId(entries);
     const entry = id ? entries.get(id) : undefined;
 
     if (!id || !entry) {
         logger.warn({ authPath }, "grok refresh: no auth entry to refresh");
+        return null;
+    }
+
+    // The identity is checked on the entry whose token or grant is handed out, inside the lock:
+    // the Grok CLI may have switched accounts after the caller's own proof read the file.
+    if (subject !== undefined && !entryHoldsSubject(entry, subject)) {
+        logger.warn({ authPath }, "grok refresh: the active auth entry belongs to another identity, not using it");
         return null;
     }
 
@@ -249,6 +256,11 @@ async function performRefresh(authPath: string, force: boolean): Promise<string 
     // rotated refresh token is the one the issuer now expects, so overwriting it
     // with ours would break the next refresh. Its access token is usable, so use it.
     if (target.key !== entry.key && !isTokenExpired(decodeJwtClaims(target.key))) {
+        if (subject !== undefined && !entryHoldsSubject(target, subject)) {
+            logger.warn({ authPath }, "grok refresh: the entry refreshed mid-grant names another identity");
+            return null;
+        }
+
         logger.info({ authPath }, "grok refresh: another writer refreshed this entry mid-grant, keeping its token");
         return target.key;
     }
@@ -296,12 +308,18 @@ async function performRefresh(authPath: string, force: boolean): Promise<string 
 export async function refreshGrokAuthOrThrow(options: {
     authPath: string;
     force?: boolean;
+    /** Use the file only while its active entry belongs to this xAI user (see `RefreshGrokAuthOptions`). */
+    expectedSubject?: string;
     /** Included in both log lines so a caller's context survives into the log. */
     context: Record<string, unknown>;
     onSuccess: string;
     onFailure: string;
 }): Promise<string> {
-    const { token: refreshed, error } = await refreshGrokAuthDetailed({ path: options.authPath, force: options.force });
+    const { token: refreshed, error } = await refreshGrokAuthDetailed({
+        path: options.authPath,
+        force: options.force,
+        ...(options.expectedSubject === undefined ? {} : { expectedSubject: options.expectedSubject }),
+    });
 
     if (!refreshed || isTokenExpired(decodeJwtClaims(refreshed))) {
         logger.warn({ authPath: options.authPath, ...options.context }, options.onFailure);
@@ -326,6 +344,12 @@ export interface RefreshGrokAuthOptions {
      * token whose claims cannot be decoded also reads as "not expired".
      */
     force?: boolean;
+    /**
+     * The xAI user id (`sub`) the caller proved the file belongs to. The active entry is checked
+     * against it inside the lock, right before its token is returned or its grant is spent, and a
+     * mismatch yields no token: the caller's proof read the file before the Grok CLI could switch accounts.
+     */
+    expectedSubject?: string;
 }
 
 export interface RefreshGrokAuthResult {
@@ -344,16 +368,18 @@ export interface RefreshGrokAuthResult {
 export function refreshGrokAuthDetailed(options?: RefreshGrokAuthOptions): Promise<RefreshGrokAuthResult> {
     const authPath = options?.path ?? grokAuthPath();
     const force = options?.force ?? false;
+    const subject = options?.expectedSubject;
     // A soft refresh in flight may return the very token a forced caller was
-    // just rejected for, so the two kinds never share a promise.
-    const key = `${force ? "force" : "soft"}::${authPath}`;
+    // just rejected for, so the two kinds never share a promise. A caller bound
+    // to one identity never shares a promise with an unbound one either.
+    const key = `${force ? "force" : "soft"}::${subject ?? ""}::${authPath}`;
     const existing = inflight.get(key);
 
     if (existing) {
         return existing;
     }
 
-    const next = performRefreshExclusively(authPath, force)
+    const next = performRefreshExclusively(authPath, force, subject)
         .then((token): RefreshGrokAuthResult => ({ token }))
         .catch((err: unknown): RefreshGrokAuthResult => {
             logger.warn({ err, authPath, force }, "grok refresh: refresh attempt failed");
