@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
 import { createFixtureClient } from "@/api/fixture-wire";
-import { prepareQuery } from "@/features/prompts/queries";
+import { prepareQuery, unappliedVariables } from "@/features/prompts/queries";
 
 const client = createFixtureClient();
 
@@ -30,5 +30,26 @@ describe("prepared prompts over the fixture wire", () => {
     it("inserts a value literally, replacement tokens included", async () => {
         const prepared = await prepare({ pr: "$& and $1" });
         expect(prepared.text).toContain("PR $& and $1 (feat/cart)");
+    });
+});
+
+describe("unapplied prompt values", () => {
+    it("holds an edit of a ready prompt back until the Mac has prepared it", async () => {
+        const ready = await prepare({ pr: "12" });
+        expect(unappliedVariables({}, ready)).toEqual([]);
+        // The user edits a value the session or an earlier apply supplied: the text still says 12.
+        expect(unappliedVariables({ pr: "13" }, ready)).toEqual(["pr"]);
+        expect(unappliedVariables({ branch: "feat/other" }, ready)).toEqual(["branch"]);
+
+        const applied = await prepare({ pr: "13" });
+        expect(unappliedVariables({ pr: "13" }, applied)).toEqual([]);
+    });
+
+    it("counts an edit back to the prepared value, or an empty one on a missing value, as applied", async () => {
+        const missing = await prepare({});
+        expect(unappliedVariables({ pr: "" }, missing)).toEqual([]);
+
+        const ready = await prepare({ pr: "12" });
+        expect(unappliedVariables({ pr: "12" }, ready)).toEqual([]);
     });
 });

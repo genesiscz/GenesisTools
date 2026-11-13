@@ -1,11 +1,10 @@
 import type { PromptVariableDto } from "@dd/contract";
-import { useQuery } from "@tanstack/react-query";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { useDashboardClient } from "@/api/client-provider";
 import { useBoardSession } from "@/features/agents/hooks";
-import { prepareQuery, promptsQuery, type SavedPromptRow } from "@/features/prompts/queries";
+import { usePreparedPrompt, usePromptList } from "@/features/prompts/hooks";
+import { type SavedPromptRow, unappliedVariables } from "@/features/prompts/queries";
 import { useThemeColors } from "@/theme/colors";
 import { Empty } from "@/ui/Empty";
 
@@ -49,10 +48,9 @@ function PromptRow({ prompt, onPick }: { prompt: SavedPromptRow; onPick: () => v
 /** One prompt prepared on the Mac for the session; the missing variables are typed here and prepared again. */
 function Prepared({ name, sessionKey, session }: { name: string; sessionKey: string; session: string | null }) {
     const c = useThemeColors();
-    const client = useDashboardClient();
     const [given, setGiven] = useState<Record<string, string>>({});
     const [draft, setDraft] = useState<Record<string, string>>({});
-    const prepared = useQuery(prepareQuery(client, { name, session, vars: given }));
+    const prepared = usePreparedPrompt({ name, session, vars: given });
 
     if (prepared.isPending) {
         return <ActivityIndicator color={c.accent} />;
@@ -62,7 +60,9 @@ function Prepared({ name, sessionKey, session }: { name: string; sessionKey: str
         return <Empty testID="prompt-prepare-error" title="Could not prepare" hint={String(prepared.error)} />;
     }
 
-    const ready = prepared.data.missing.length === 0;
+    // An edit counts until the Mac prepared the text with it: the text below and "Use" follow the last preparation.
+    const unapplied = unappliedVariables(draft, prepared.data);
+    const ready = prepared.data.missing.length === 0 && unapplied.length === 0;
 
     return (
         <ScrollView testID="prompt-prepared" contentContainerClassName="gap-3 p-4">
@@ -92,7 +92,7 @@ function Prepared({ name, sessionKey, session }: { name: string; sessionKey: str
                 {prepared.data.text}
             </Text>
             <View className="flex-row gap-2">
-                {Object.keys(draft).length > 0 ? (
+                {unapplied.length > 0 ? (
                     <Pressable
                         testID="btn-prompt-apply"
                         accessibilityRole="button"
@@ -115,7 +115,11 @@ function Prepared({ name, sessionKey, session }: { name: string; sessionKey: str
                     style={{ backgroundColor: ready ? c.accent : c.accentMuted }}
                 >
                     <Text style={{ color: ready ? c.bgBase : c.textMuted, fontWeight: "700" }}>
-                        {ready ? "Use in composer" : `Needs ${prepared.data.missing.join(", ")}`}
+                        {ready
+                            ? "Use in composer"
+                            : unapplied.length > 0
+                              ? "Apply the values first"
+                              : `Needs ${prepared.data.missing.join(", ")}`}
                     </Text>
                 </Pressable>
             </View>
@@ -132,7 +136,7 @@ export default function AgentPromptsScreen() {
     const c = useThemeColors();
     const { key } = useLocalSearchParams<{ key?: string }>();
     const session = useBoardSession(key ?? "");
-    const prompts = useQuery(promptsQuery(useDashboardClient()));
+    const prompts = usePromptList();
     const [picked, setPicked] = useState<string | null>(null);
 
     return (
