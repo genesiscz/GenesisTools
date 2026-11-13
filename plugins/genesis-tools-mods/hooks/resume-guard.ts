@@ -364,6 +364,8 @@ async function spool(
 
     await spoolEvents({
         append: (path, record) => appendJsonl(host, path, record),
+        report: ({ error, ...failure }) =>
+            logMod(host, "resume-guard", { event: "metrics-failed", ...failure, error: String(error) }),
         home,
         definition,
         events: [

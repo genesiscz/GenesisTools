@@ -6,6 +6,7 @@ import {
     injectionEvents,
     injectionSource,
     modsSpoolPath,
+    type SpoolFailure,
     spoolEvents,
 } from "../hooks/metrics";
 
@@ -112,6 +113,10 @@ test("metrics: a dropped part counts its receipt as handed and only the rest as 
 
 test("metrics: every batch carries its define line, so one lost write does not leave the metric undeclared", async () => {
     const lines: Record<string, unknown>[] = [];
+    const failures: SpoolFailure[] = [];
+    const report = (failure: SpoolFailure) => {
+        failures.push(failure);
+    };
     let fails = 1;
     const append = async (_path: string, record: Record<string, unknown>) => {
         if (fails > 0) {
@@ -126,9 +131,13 @@ test("metrics: every batch carries its define line, so one lost write does not l
         block: "",
         at: 4_000,
     });
-    await spoolEvents({ append, home: "/home/fixture", definition: INJECTION_DEFINITION, events, at: 4_000 });
-    await spoolEvents({ append, home: "/home/fixture", definition: INJECTION_DEFINITION, events, at: 5_000 });
+    await spoolEvents({ append, report, home: "/home/fixture", definition: INJECTION_DEFINITION, events, at: 4_000 });
+    await spoolEvents({ append, report, home: "/home/fixture", definition: INJECTION_DEFINITION, events, at: 5_000 });
     expect(lines.map((line) => ("define" in line ? "define" : "event"))).toEqual(["event", "define", "event"]);
+    // The lost line is not silent: the producer's log gets it.
+    expect(failures).toMatchObject([
+        { line: "define", path: modsSpoolPath("/home/fixture", 4_000), error: new Error("disk full") },
+    ]);
 });
 
 test("metrics: sources by first line, a receipt names what it replaced, and the spool path", () => {

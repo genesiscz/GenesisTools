@@ -383,20 +383,30 @@ export function injectionEvents(
     return events;
 }
 
+/** A spool line that could not be written: the producer logs it, so a missing metric is found in its log. */
+export interface SpoolFailure {
+    path: string;
+    line: "define" | "event";
+    metric: string;
+    error: unknown;
+}
+
 /**
  * Appends `events` to the day's spool file of `at`, one line each, after the metric's define line. Every batch carries
- * its define line: the append swallows a failure (and the shared writer queues and swallows its own), so a define
- * written once per plugin load and lost once left the metric undeclared until the next load. The drain treats a
- * repeated define as an upsert. A line that cannot be written is dropped; a producer never fails on the spool.
+ * its define line: a define written once per plugin load and lost once left the metric undeclared until the next load.
+ * The drain treats a repeated define as an upsert. A line that cannot be written is dropped and handed to `report`
+ * (the producer's log); a producer never fails on the spool.
  */
 export async function spoolEvents({
     append,
+    report,
     home,
     definition,
     events,
     at,
 }: {
     append: (path: string, record: Record<string, unknown>) => Promise<void>;
+    report: (failure: SpoolFailure) => Promise<void> | void;
     home: string;
     definition: MetricDefinition;
     events: readonly SpoolEvent[];
@@ -407,9 +417,18 @@ export async function spoolEvents({
     }
 
     const path = modsSpoolPath(home, at);
-    await append(path, { ...definition }).catch(() => undefined);
+    const metric = `${definition.define.project}/${definition.define.metric}`;
+    const write = async (line: SpoolFailure["line"], record: Record<string, unknown>) => {
+        try {
+            await append(path, record);
+        } catch (error) {
+            await Promise.resolve(report({ path, line, metric, error })).catch(() => undefined);
+        }
+    };
+
+    await write("define", { ...definition });
 
     for (const event of events) {
-        await append(path, { ...event }).catch(() => undefined);
+        await write("event", { ...event });
     }
 }
