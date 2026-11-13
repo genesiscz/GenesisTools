@@ -128,9 +128,15 @@ extension MeetingDetailModel {
     /// The source label a shown speaker name stands for: a transcript block shows the rename ("Dana Example") where the
     /// record renamed a label, and a rename or an assignment names the label ("Speaker 2").
     func speakerLabel(forShown name: String) -> String {
+        speakerLabels(forShown: name).first ?? name
+    }
+
+    /// Every source label a shown speaker name stands for, sorted: two labels share a name after a rename made them
+    /// one person. Sorted, because the order of a dictionary changes between runs.
+    func speakerLabels(forShown name: String) -> [String] {
         let labels = record.value?.speakers.labels ?? [:]
-        if labels[name] != nil { return name }
-        return labels.first { $0.value == name }?.key ?? name
+        if labels[name] != nil { return [name] }
+        return labels.filter { $0.value == name }.map(\.key).sorted()
     }
 
     /// True when `name` is a label of the transcript's source, not a name given to one.
@@ -141,7 +147,8 @@ extension MeetingDetailModel {
     }
 
     /// The stretch of a transcript block that starts at `startSec`: the speaker's lines from there until another
-    /// speaker talks. Only the label's own lines when the shown name is a source label.
+    /// speaker talks. Only the label's own lines when the shown name is a source label. A name that two labels share
+    /// names no label: the block's lines carry the shown name only, so either label could own them.
     func blockStretch(speaker: String, startSec: Double) -> DecisionAction.Stretch {
         let lines = transcript.value?.entries ?? []
         var end = startSec
@@ -151,8 +158,9 @@ extension MeetingDetailModel {
                 end = max(end, line.endSec ?? line.startSec ?? end)
             }
         }
-        let label = speakerLabel(forShown: speaker)
-        return DecisionAction.Stretch(label: isSourceLabel(label) ? label : nil, fromSec: startSec, toSec: end)
+        let held = speakerLabels(forShown: speaker)
+        let label = held.count > 1 ? nil : (held.first ?? speaker)
+        return DecisionAction.Stretch(label: label.flatMap { isSourceLabel($0) ? $0 : nil }, fromSec: startSec, toSec: end)
     }
 
     /// The plan's warning for renaming `label` to `typed` (G-PPL-4: "S2 is named Alex Example already: S3 and S2
