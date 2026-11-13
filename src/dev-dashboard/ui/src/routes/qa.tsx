@@ -707,6 +707,9 @@ function QaFeed() {
             });
         },
         onStatus: setSseDown,
+        // `qa` is a notice channel: an entry logged while the stream was closed (a hidden tab, a dropped network)
+        // arrives only through the log, so every connection open rereads it.
+        onOpen: () => void logQuery.refetch(),
     });
 
     const persisted = (logQuery.data ?? []).filter((r) => !seen.current.has(r.id));

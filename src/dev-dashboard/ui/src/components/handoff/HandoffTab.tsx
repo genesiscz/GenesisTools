@@ -110,6 +110,13 @@ export function HandoffTab() {
             void queryClient.invalidateQueries({ queryKey: ["handoff", id] });
             void queryClient.invalidateQueries({ queryKey: ["handoff-events", id] });
         },
+        // A notice channel: a handoff changed while the stream was closed sent no frame this page saw, so every
+        // connection open refetches the list and every open detail.
+        onOpen: () => {
+            void queryClient.invalidateQueries({ queryKey: ["handoff-log"] });
+            void queryClient.invalidateQueries({ queryKey: ["handoff"] });
+            void queryClient.invalidateQueries({ queryKey: ["handoff-events"] });
+        },
     });
 
     const projects = useMemo(
