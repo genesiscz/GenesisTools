@@ -611,6 +611,15 @@ test("all opened readers share independently identified goodbye windows without 
     expect(presence?.find((stay) => stay.name === "Carol Example")?.toSec).toBe(10);
     expect(presence?.find((stay) => stay.name === "Bob Example")?.toSec).toBe(90);
     expect(SafeJSON.stringify(new MeetingStore(store.storage).read(record.id))).toBe(before);
+    await store.update(record.id, { command: "test", change: "exact platform leave" }, (next) => {
+        next.attendance!.people[0]!.toSec = 12;
+        next.attendance!.people[0]!.leftAtExact = true;
+    });
+    const exact = new MeetingStore(store.storage).read(record.id)!;
+    const exactBefore = SafeJSON.stringify(exact);
+    const exactPresence = await OpenedMeeting.of(store, exact, { source: modified, sourceMeetingId: "abc" }).presence();
+    expect(exactPresence?.find((stay) => stay.name === "Carol Example")?.toSec).toBe(12);
+    expect(SafeJSON.stringify(new MeetingStore(store.storage).read(record.id))).toBe(exactBefore);
 });
 
 test("collect persists only a canonically identified departure and read-only presence retains it", async () => {
