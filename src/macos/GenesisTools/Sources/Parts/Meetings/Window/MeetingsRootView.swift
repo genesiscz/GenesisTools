@@ -81,10 +81,12 @@ struct MeetingsRootView: View {
                 .safeAreaPadding(.bottom, dockHeight)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
         } detail: {
+            // The notices inside the dock's padding, as MeetingDetailView has them: after it, a bottom notice stood
+            // behind the playback dock with its actions.
             MeetingsContactsPane(people: model.people)
+                .noticeStack(model.notices, alignment: model.noticePlace.alignment)
                 .safeAreaPadding(.bottom, dockHeight)
                 .heightFromWindow()
-                .noticeStack(model.notices, alignment: model.noticePlace.alignment)
                 .navigationTitle("People")
         }
     }
