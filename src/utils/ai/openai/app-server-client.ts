@@ -53,6 +53,7 @@ export const CODEX_APP_SERVER_DIALECT: Partial<RpcDialect> = {
     defaultDeadlineMs: 30 * 60_000,
     inOrder: false,
     maxLineBytes: 256 * 1024 * 1024,
+    errorEvidence: false,
 };
 
 /** A JSON-RPC error response, with the `code` and `data` the server sent (`data.codexErrorInfo` names the cause). */

@@ -39,6 +39,11 @@ export interface RpcDialect {
     inOrder: boolean;
     /** The longest line read; a longer one ends the connection. */
     maxLineBytes: number;
+    /**
+     * An error reply carries this repo's `stack` and `issue` members. On for our own peers, which read them; off for
+     * an external agent (Grok ACP, the Codex app-server), so an internal stack trace never leaves our processes.
+     */
+    errorEvidence: boolean;
 }
 
 /** The recorder's dialect, and the default of every field a peer does not set. */
@@ -49,6 +54,7 @@ export const DEFAULT_RPC_DIALECT: RpcDialect = {
     defaultDeadlineMs: 10_000,
     inOrder: true,
     maxLineBytes: DEFAULT_MAX_LINE_BYTES,
+    errorEvidence: true,
 };
 
 export interface RpcProgress {
@@ -659,7 +665,9 @@ export class RpcPeer {
             const level = failedCallLevel(error, id === undefined);
             log[level]({ ...logFields, method, error }, `${label} call ${level === "warn" ? "failed" : "refused"}`);
 
-            reply({ error: rpcErrorBody(error, this.options.tool ?? currentToolName()) });
+            const body = rpcErrorBody(error, this.options.tool ?? currentToolName());
+            const { stack: _stack, issue: _issue, ...standard } = body;
+            reply({ error: this.dialect.errorEvidence ? body : standard });
         }
     }
 }

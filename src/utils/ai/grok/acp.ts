@@ -157,6 +157,7 @@ export const GROK_ACP_DIALECT: Partial<RpcDialect> = {
     progress: false,
     defaultDeadlineMs: 240_000,
     maxLineBytes: 256 * 1024 * 1024,
+    errorEvidence: false,
 };
 
 function errorBody(error: RpcError): Record<string, unknown> {
