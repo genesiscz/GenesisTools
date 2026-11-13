@@ -49,8 +49,16 @@ export async function scanRoster(definition: RosterDefinition, files: readonly s
     for (const file of rosterFiles(definition, files)) {
         const lang = langFor(file);
 
-        if (lang !== null) {
-            byLang.set(lang, [...(byLang.get(lang) ?? []), file]);
+        if (lang === null) {
+            continue;
+        }
+
+        const bucket = byLang.get(lang);
+
+        if (bucket) {
+            bucket.push(file);
+        } else {
+            byLang.set(lang, [file]);
         }
     }
 

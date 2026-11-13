@@ -2671,7 +2671,13 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
             continue;
         }
 
-        byLang.set(lang, [...(byLang.get(lang) ?? []), file]);
+        const bucket = byLang.get(lang);
+
+        if (bucket) {
+            bucket.push(file);
+        } else {
+            byLang.set(lang, [file]);
+        }
     }
 
     // Suppression is deliberately NOT applied here: it needs the source lines,

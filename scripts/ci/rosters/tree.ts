@@ -83,7 +83,13 @@ function sharedExports(inventory: Inventory): Map<string, FunctionFact[]> {
 
     for (const fact of inventory.functions) {
         if (fact.exported && isShared(fact.file)) {
-            owners.set(fact.name, [...(owners.get(fact.name) ?? []), fact]);
+            const held = owners.get(fact.name);
+
+            if (held) {
+                held.push(fact);
+            } else {
+                owners.set(fact.name, [fact]);
+            }
         }
     }
 
