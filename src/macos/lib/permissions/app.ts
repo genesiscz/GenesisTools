@@ -723,7 +723,10 @@ function appSwiftEnvironment(
  * the tree to 1463 MiB, and the next app build took 2.6 s (nothing rebuilt). `args` go to `swift test` as they are
  * (`--filter HubUsageTests`). Returns its exit code.
  */
-export async function testApp(args: readonly string[]): Promise<number> {
+/** A cold build of every part plus the whole suite took about 6 minutes on 2026-11-05; an hour means it hangs. */
+export const APP_TEST_TIMEOUT_MS = 60 * 60_000;
+
+export async function testApp(args: readonly string[], timeoutMs = APP_TEST_TIMEOUT_MS): Promise<number> {
     if (!Bun.which("swift")) {
         throw new Error("swift not found. Install Xcode or the Command Line Tools, then re-run.");
     }
@@ -742,7 +745,20 @@ export async function testApp(args: readonly string[]): Promise<number> {
         env: appSwiftEnvironment(parts, sdkRoot),
         stdio: ["inherit", "inherit", "inherit"],
     });
+    let timedOut = false;
+    const deadline = setTimeout(() => {
+        timedOut = true;
+        // SIGINT first: swift test cancels its build and test children on it, as it does on Ctrl-C.
+        proc.kill("SIGINT");
+        setTimeout(() => proc.kill("SIGKILL"), 10_000).unref();
+    }, timeoutMs);
     const code = await proc.exited;
+    clearTimeout(deadline);
+
+    if (timedOut) {
+        logger.error({ cmd, timeoutMs }, "swift test passed its deadline and was stopped");
+        throw new Error(`swift test did not finish within ${Math.round(timeoutMs / 60_000)} minutes and was stopped`);
+    }
 
     if (code === 0) {
         mkdirSync(scratchPath, { recursive: true });
