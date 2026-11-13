@@ -939,8 +939,10 @@ export function letterboxPlacement({
     height: number;
     into: { w: number; h: number };
 }): SegmentPlacement {
-    const w = Math.min(into.w, Math.round((into.h * width) / height / 2) * 2);
-    const h = Math.min(into.h, Math.round((into.w * height) / width / 2) * 2);
+    // At least two pixels each way: a thin region (2 x 1920) rounds to 0, which ffmpeg reads as "keep the aspect", and
+    // the cursor rows divide by it.
+    const w = Math.min(into.w, Math.max(2, Math.round((into.h * width) / height / 2) * 2));
+    const h = Math.min(into.h, Math.max(2, Math.round((into.w * height) / width / 2) * 2));
     return { x: Math.floor((into.w - w) / 4) * 2, y: Math.floor((into.h - h) / 4) * 2, w, h, into };
 }
 

@@ -1539,6 +1539,15 @@ describe("segments of another shape: the picture and the cursor rows share one p
             w: 1440,
             h: 900,
         });
+        // A thin region keeps a picture of at least two pixels instead of rounding to 0.
+        expect(letterboxPlacement({ width: 2, height: 1920, into: { w: 1280, h: 720 } })).toMatchObject({
+            w: 2,
+            h: 720,
+        });
+        expect(letterboxPlacement({ width: 1920, height: 2, into: { w: 1280, h: 720 } })).toMatchObject({
+            w: 1280,
+            h: 2,
+        });
     });
 
     it("writes the same placement into the join filter", () => {
