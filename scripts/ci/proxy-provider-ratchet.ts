@@ -26,14 +26,29 @@ export const PROVIDER_TABLE_LEAF_ENTRIES: readonly string[] = [
 /** A provider class module, which only `ProviderDefinition.create` may load. */
 export const PROVIDER_CLASS_MODULE = /\/src\/ai-proxy\/lib\/providers\/[a-z0-9-]+-(?:subscription|api-key)\.ts$/;
 
+/** Importing two leaf modules takes about a second; a probe still running after this hangs and fails as such. */
+export const PROVIDER_PROBE_TIMEOUT_MS = 60_000;
+
 /** The provider class modules a fresh process loads when it imports the leaf entries, as paths under `root`. */
-export function providerClassModulesLoadedByTable(root: string): string[] {
+export function providerClassModulesLoadedByTable(root: string, timeoutMs = PROVIDER_PROBE_TIMEOUT_MS): string[] {
     const entries = PROVIDER_TABLE_LEAF_ENTRIES.map((entry) => `${root}/${entry}`);
     const script = [
         `for (const entry of ${SafeJSON.stringify(entries)}) { await import(entry); }`,
         "console.log(JSON.stringify(Object.keys(require.cache)));",
     ].join("\n");
-    const child = Bun.spawnSync([process.execPath, "-e", script], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawnSync([process.execPath, "-e", script], {
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: timeoutMs,
+        killSignal: "SIGKILL",
+    });
+
+    if (child.exitedDueToTimeout) {
+        throw new Error(
+            `importing the provider table did not finish within ${timeoutMs} ms: an entry hangs at import or keeps the process alive`
+        );
+    }
 
     if (child.exitCode !== 0) {
         throw new Error(`importing the provider table failed (exit ${child.exitCode}): ${child.stderr.toString()}`);

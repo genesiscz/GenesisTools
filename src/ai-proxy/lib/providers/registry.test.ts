@@ -49,4 +49,10 @@ describe("the provider definition table", () => {
     it("loads no provider class when the table and the config are imported", () => {
         expect(providerClassModulesLoadedByTable(resolve(import.meta.dir, "../../../.."))).toEqual([]);
     });
+
+    it("fails a probe that does not finish in time, instead of waiting for it", () => {
+        expect(() => providerClassModulesLoadedByTable(resolve(import.meta.dir, "../../../.."), 1)).toThrow(
+            /did not finish within 1 ms/
+        );
+    });
 });
