@@ -197,6 +197,27 @@ describe("a Moment of an item", () => {
         // The same voice goes on at 52: the minimum still reaches into it.
         expect(at("i2")).toMatchObject({ fromSec: 50, toSec: 54 });
     });
+
+    test("a removal hears the line it would remove, not only the pads around the line's start", () => {
+        // An automatic removal is the start of its line: fromSec and toSec are the same time.
+        const removals = record([
+            {
+                id: "i1",
+                kind: "removal",
+                fromSec: 20,
+                toSec: 20,
+                heard: "Dej to do Ada a pak taky do zadání, prosím.",
+                evidence: { reason: "local speech output", transcriptLine: 1 },
+            },
+        ]);
+
+        expect(planMoment({ record: removals, transcript, listen, target: { kind: "item", id: "i1" } })).toMatchObject({
+            fromSec: 20,
+            toSec: 30,
+            spotSec: 20,
+            padSec: listen.tone.leadSec + SPEAKER_PAD_SEC,
+        });
+    });
 });
 
 describe("a Moment of a time, a range, a selection or a stretch", () => {

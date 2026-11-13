@@ -331,7 +331,13 @@ function voiceEnd(lines: TranscriptLines, fromSec: number, toSec: number): numbe
 function itemSpan(record: MeetingRecord, item: MeetingItem, lines: TranscriptLines): Span {
     switch (item.kind) {
         case "removal":
-            return { fromSec: item.fromSec, toSec: item.toSec, spotSec: item.fromSec, pad: "voice", label: item.id };
+            return {
+                fromSec: item.fromSec,
+                toSec: voiceEnd(lines, item.fromSec, item.toSec),
+                spotSec: item.fromSec,
+                pad: "voice",
+                label: item.id,
+            };
         case "question":
             return questionSpan(record, item, lines);
         case "speaker-range": {
