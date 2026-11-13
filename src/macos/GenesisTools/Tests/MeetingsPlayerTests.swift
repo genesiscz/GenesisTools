@@ -658,3 +658,21 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertEqual(sounds[0].rate, 1.5)
     }
 }
+
+// MARK: Review round 2 (PR 759)
+
+extension MeetingsPlayerTests {
+    func testPoppingBackToAMomentWhoseCutWasCancelledCutsItAgain() async throws {
+        engine.holdCuts = true
+        let player = makePlayer()
+        player.play(.item("i1"), in: "m", from: .row)
+        try await until("the first cut waits") { self.engine.cuts.count == 1 }
+        player.play(.stretch(atSec: 40, speaker: "Dana Example"), in: "m", from: .speakerChip)
+        try await until("the pushed cut waits") { self.engine.cuts.count == 2 }
+        player.pop()
+        try await until("the first Moment is cut again") { self.engine.cuts.count == 3 }
+        engine.release()
+        try await until("the first Moment plays") { player.phase == .playing }
+        XCTAssertEqual(player.top?.target, .item("i1"))
+    }
+}
