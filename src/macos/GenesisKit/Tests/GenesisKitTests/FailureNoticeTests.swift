@@ -264,6 +264,18 @@ final class FailureNoticeTests: XCTestCase {
                        visible.maxY, "a window taller than the screen keeps its title bar on screen")
     }
 
+    func testAFittedPanelThatGrowsPastTheBottomMovesBackOntoTheScreen() {
+        let visible = CGRect(x: 0, y: 40, width: 1440, height: 835)
+        let grown = CGRect(x: 600, y: -200, width: 620, height: 600)
+        XCTAssertEqual(FailureNoticePanel.keptOnScreen(grown, visible: visible), CGRect(x: 600, y: 48, width: 620, height: 600),
+                       "the details opened below the bottom edge: the panel moves up to the margin")
+        let inside = CGRect(x: 600, y: 200, width: 620, height: 400)
+        XCTAssertEqual(FailureNoticePanel.keptOnScreen(inside, visible: visible), inside, "a panel on screen keeps its place")
+        let tall = CGRect(x: 600, y: -500, width: 620, height: 1200)
+        XCTAssertEqual(FailureNoticePanel.keptOnScreen(tall, visible: visible).maxY, visible.maxY,
+                       "a panel taller than the screen keeps its top edge on screen")
+    }
+
     @MainActor
     func testEscapeClosesAndCommandCCopiesTheContextUnlessTextIsSelected() throws {
         let window = FailureNoticeWindow(contentRect: CGRect(x: -10000, y: -10000, width: 300, height: 200),

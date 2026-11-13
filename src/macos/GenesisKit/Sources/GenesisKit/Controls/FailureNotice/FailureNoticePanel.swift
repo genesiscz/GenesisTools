@@ -171,10 +171,21 @@ public final class FailureNoticePanel: NSObject, NSWindowDelegate {
         let visible = panel.screen?.visibleFrame ?? content
         let target = min(max(height.rounded(.up), Self.minimumSize.height), visible.height - 16)
         guard abs(content.height - target) > 0.5 else { return }
-        let frame = panel.frameRect(forContentRect: CGRect(x: content.minX, y: content.maxY - target, width: content.width, height: target))
+        var frame = panel.frameRect(forContentRect: CGRect(x: content.minX, y: content.maxY - target, width: content.width, height: target))
+        if let screen = panel.screen {
+            frame = Self.keptOnScreen(frame, visible: screen.visibleFrame)
+        }
         fitting = true
         panel.setFrame(frame, display: true)
         fitting = false
+    }
+
+    /// `frame` moved up or down into `visible`, with the margins of `origin`: a panel that grows down from near the
+    /// bottom of the screen moves up, so the opened details stay on screen. A frame taller than the screen keeps its top.
+    nonisolated static func keptOnScreen(_ frame: CGRect, visible: CGRect) -> CGRect {
+        var frame = frame
+        frame.origin.y = min(max(frame.minY, visible.minY + 8), visible.maxY - frame.height).rounded()
+        return frame
     }
 
     public func windowDidEndLiveResize(_ notification: Notification) {
