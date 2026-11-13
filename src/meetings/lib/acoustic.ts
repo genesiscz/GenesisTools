@@ -116,7 +116,7 @@ export function decimate(samples: Float32Array, factor: number): Float32Array {
 }
 
 /** The recording as it was read: a change of size or time means its scores were measured on other audio. */
-function sourceFingerprint(audioPath: string): string {
+function recordingFingerprint(audioPath: string): string {
     const stat = statSync(audioPath);
     return SafeJSON.stringify([audioPath, stat.size, stat.mtimeMs]);
 }
@@ -180,7 +180,7 @@ export async function collectVoiceEvidence(store: MeetingStore, meeting: string)
     const enrolmentFile = join(folder, "voices.json");
     // The inputs as the scores use them: published only when neither changed during the long embedding loop.
     const enrolment = Bun.hash(readFileSync(enrolmentFile)).toString();
-    const source = sourceFingerprint(audioPath);
+    const source = recordingFingerprint(audioPath);
     const samples = readVoiceSamples(enrolmentFile);
     if (!samples.length) {
         throw new Error("Enrol confirmed voices before collecting identity evidence");
@@ -221,7 +221,7 @@ export async function collectVoiceEvidence(store: MeetingStore, meeting: string)
                       reason: voice?.quality === "unknown" ? voice.reason : "no embedding",
                   };
     }
-    if (Bun.hash(readFileSync(enrolmentFile)).toString() !== enrolment || sourceFingerprint(audioPath) !== source) {
+    if (Bun.hash(readFileSync(enrolmentFile)).toString() !== enrolment || recordingFingerprint(audioPath) !== source) {
         throw new Error(
             "The enrolled voices or the recording changed while voice evidence was collected; collect again."
         );
