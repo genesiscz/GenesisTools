@@ -17,6 +17,10 @@ export interface WorkerRequest {
     headers: Record<string, string>;
     body?: string;
     timeoutMs: number;
+    /**
+     * False: the caller follows redirects itself, so a redirect with a Location is answered with its status and headers
+     * and the transfer stops before the redirect's body (its size and a slow stream of it then cost nothing).
+     */
     followRedirects: boolean;
     /** The worker ends the transfer and replies with an error once the body passes this many bytes. */
     maxBodyBytes?: number;
