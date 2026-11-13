@@ -37,6 +37,12 @@ private struct UsageChartSettings: View {
             NativeSettingsCard("Limits table", subtitle: "One row per account, one column per window.") {
                 NativeSettingsToggle("Hide empty columns", detail: "Leave out a window column that no account has a reading for.",
                                      identifier: "usage.hideEmptyColumns", isOn: preferences.binding(\.hideEmptyColumns))
+                Divider()
+                NativeSettingsToggle("Show every window", detail: "The table lists every window, the burn rate and the trend instead of the room left, the reset and the run-out.",
+                                     identifier: "usage.limitsAllWindows", isOn: preferences.binding(\.limitsAllWindows))
+                Divider()
+                NativeSettingsToggle("Compare every account", detail: "The burn lanes under the table show every account on one axis, not only the one you picked.",
+                                     identifier: "usage.compareAllAccounts", isOn: preferences.binding(\.compareAllAccounts))
             }
             NativeSettingsCard("Burn lanes", subtitle: "One lane per window of each account, on one time axis.") {
                 picker("Range", detail: "How far back the lanes reach when the Usage mode opens.",

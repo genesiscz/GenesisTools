@@ -62,10 +62,18 @@ struct UsageSettingsSketchLimitsA: View {
     let settings: UsageSettings
     /// The sidebar's "Filter accounts…" text: it narrows the table, since the sidebar has no account rows.
     let filter: String
-    /// "All windows": the full matrix of the current view instead of the four decision columns. View state only.
-    @State private var allWindows = false
-    /// "Compare all": every account's lanes instead of the focused account's. View state only.
-    @State private var compareAll = false
+    /// The two display choices are Usage preferences (Settings → Usage charts, Limits table), so a return to Limits
+    /// keeps them: they were view state and reset to Decide and This account.
+    @ObservedObject private var preferences = UsagePreferences.shared
+    /// "All windows": the full matrix of the current view instead of the four decision columns.
+    private var allWindows: Bool { preferences.settings.limitsAllWindows }
+    /// "Compare all": every account's lanes instead of the focused account's.
+    private var compareAll: Bool { preferences.settings.compareAllAccounts }
+
+    /// A row is marked while it is selected; with no selection, the account the lanes show.
+    private func marked(_ row: UsageTableRow) -> Bool {
+        usage.selectedAccounts.isEmpty ? row.id == focusID : usage.selectedAccounts.contains(row.id)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -143,7 +151,9 @@ struct UsageSettingsSketchLimitsA: View {
                 ForEach(picks, id: \.0) { provider, pick in
                     let row = usage.table.rows.first { $0.account.provider == pick.provider && $0.account.accountId == pick.accountId }
                     UsageAdvicePickChip(provider: provider, pick: pick, row: row, now: usage.builtAt) {
-                        if let row { usage.select(account: row.id, additive: false) }
+                        // Selects the pick, never toggles it off: a toggle cleared a selected pick and the lanes fell
+                        // back to the first provider's.
+                        if let row { usage.selectedAccounts = [row.id] }
                     }
                     .equatable()
                 }
@@ -165,11 +175,17 @@ struct UsageSettingsSketchLimitsA: View {
                     .foregroundColor(ReviewPalette.dim)
                 Spacer(minLength: 0)
                 GenSegmentedTabs(
-                    "Columns", items: [.init(false, "Decide"), .init(true, "All windows")], selection: $allWindows,
+                    "Columns", items: [.init(false, "Decide"), .init(true, "All windows")], selection: preferences.binding(\.limitsAllWindows),
                     minSegmentWidth: 84, identifier: "usageSketchA.columns")
                     .instantTooltip("Decide shows the room left, the reset and the run-out. All windows shows every window, the burn rate and the trend.")
             }
-            if allWindows {
+            if rows.isEmpty {
+                // The filter hides every account: the headers alone said nothing.
+                Text("No account matches “\(filter.trimmingCharacters(in: .whitespaces))”")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(ReviewPalette.dim)
+                    .padding(.vertical, 8)
+            } else if allWindows {
                 fullMatrix
             } else {
                 decisionTable
@@ -192,7 +208,7 @@ struct UsageSettingsSketchLimitsA: View {
             .accessibilityHidden(true)
             ForEach(rows) { row in
                 UsageSketchAccountRowA(
-                    row: row, room: UsageSketchRoomA.of(row), selected: row.id == focusID, now: usage.builtAt
+                    row: row, room: UsageSketchRoomA.of(row), selected: marked(row), now: usage.builtAt
                 ) { additive in
                     usage.select(account: row.id, additive: additive)
                 }
@@ -209,7 +225,7 @@ struct UsageSettingsSketchLimitsA: View {
         return VStack(alignment: .leading, spacing: 2) {
             UsageTableHeader(columns: columns)
             ForEach(rows) { row in
-                UsageTableRowView(row: row, columns: columns, selected: row.id == focusID, now: usage.builtAt) { additive in
+                UsageTableRowView(row: row, columns: columns, selected: marked(row), now: usage.builtAt) { additive in
                     usage.select(account: row.id, additive: additive)
                 }
                 .equatable()
@@ -240,7 +256,7 @@ struct UsageSettingsSketchLimitsA: View {
                 }
                 Spacer(minLength: 8)
                 GenSegmentedTabs(
-                    "Lanes", items: [.init(false, "This account"), .init(true, "Compare all")], selection: $compareAll,
+                    "Lanes", items: [.init(false, "This account"), .init(true, "Compare all")], selection: preferences.binding(\.compareAllAccounts),
                     minSegmentWidth: 96, identifier: "usageSketchA.lanes")
             }
             if shownLanes.isEmpty {
