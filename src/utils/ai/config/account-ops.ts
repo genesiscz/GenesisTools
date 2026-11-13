@@ -503,7 +503,11 @@ export async function editAccount(idOrName: string, patch: EditAccountPatch): Pr
         const account = requireAccount(config, idOrName);
 
         if (patch.rename !== undefined && patch.rename !== account.name) {
-            if (config.accounts.some((entry) => entry.name === patch.rename)) {
+            // A name is a handle people type, so two that differ only in case would be one too many. Checked here,
+            // inside the lock, so two concurrent renames to `Work` and `work` cannot both commit.
+            const lower = patch.rename.toLowerCase();
+
+            if (config.accounts.some((entry) => entry.id !== account.id && entry.name.toLowerCase() === lower)) {
                 throw new Error(`An account named "${patch.rename}" already exists.`);
             }
 

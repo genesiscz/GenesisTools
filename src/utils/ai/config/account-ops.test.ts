@@ -161,6 +161,16 @@ describe("editAccount", () => {
         expect(account?.useEnvApiKey).toEqual(["FAKE_API_KEY"]);
     });
 
+    test("a rename to a name that differs from another account's only in case is refused under the lock", async () => {
+        await addAccount({ provider: "fake", name: "Work" });
+        const other = await addAccount({ provider: "fake", name: "side" });
+
+        await expect(editAccount(other.id, { rename: "work" })).rejects.toThrow("already exists");
+        // NEGATIVE CONTROL: an account may change the case of its own name.
+        await editAccount("Work", { rename: "WORK" });
+        expect((await AiConfigStore.load()).account("WORK")).toBeDefined();
+    });
+
     test("disable and re-enable round-trip", async () => {
         await addAccount({ provider: "fake", name: "toggle" });
 
