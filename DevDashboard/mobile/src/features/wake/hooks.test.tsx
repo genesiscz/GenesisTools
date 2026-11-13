@@ -6,7 +6,11 @@ mock.module("expo-secure-store", () => ({
     setItemAsync: async () => {},
     deleteItemAsync: async () => {},
 }));
-mock.module("@/api/client-provider", () => ({ useDashboardClient: () => ({}), useDashboardConnectionId: () => null }));
+mock.module("@/api/client-provider", () => ({
+    useDashboardClient: () => ({}),
+    useDashboardConnectionId: () => null,
+    useIsMockClient: () => false,
+}));
 
 const { cleanup, renderHook, waitFor } = await import("@testing-library/react-native/pure");
 const { useWakeDeadline } = await import("./hooks");

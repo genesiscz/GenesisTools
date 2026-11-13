@@ -11,27 +11,34 @@ export const HEALTH_INTERVAL_MS = 3_000;
 /** A Mac that has not answered this long after a wake is reported as still asleep. */
 export const WAKE_PATIENCE_MS = 120_000;
 
-/** The relay as the Mac last described it. A sleeping Mac answers nothing, so the screen falls back to the stored copy. */
+/**
+ * The relay as the Mac last described it. A sleeping Mac answers nothing, so the screen falls back to the stored copy.
+ * `fixture` is true when the client is the fixture client (no transport): its made-up relay is never saved over a
+ * Mac's real one, and for a chosen Mac whose transport did not build the query does not run, so its saved copy shows.
+ */
 export function relayQuery({
     client,
     connectionId,
     store,
+    fixture,
 }: {
     client: DashboardClient;
     connectionId: string | null;
     store: RelayStore;
+    fixture: boolean;
 }) {
     return queryOptions<WakeRelayDto>({
-        queryKey: [...wakeKeys.relay, connectionId],
+        queryKey: [...wakeKeys.relay, connectionId, fixture],
         queryFn: async () => {
             const relay = await client.call(ENDPOINTS.gatewayWake, {});
 
-            if (connectionId !== null) {
+            if (connectionId !== null && !fixture) {
                 await store.save(connectionId, relay);
             }
 
             return relay;
         },
+        enabled: !fixture || connectionId === null,
         retry: false,
     });
 }

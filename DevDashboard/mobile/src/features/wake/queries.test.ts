@@ -26,6 +26,7 @@ describe("Wake my Mac", () => {
                 client: fixtureDashboardClient,
                 connectionId: "mac-a",
                 store: storageFixture().store,
+                fixture: false,
             }).queryFn?.({} as never)
         ).toEqual(MOCK_WAKE);
         expect(await healthQuery(fixtureDashboardClient).queryFn?.({} as never)).toEqual(MOCK_HEALTH);
@@ -51,15 +52,31 @@ describe("Wake my Mac", () => {
         const reply = Promise.withResolvers<typeof MOCK_WAKE>();
         const client = { ...fixtureDashboardClient, call: (() => reply.promise) as typeof fixtureDashboardClient.call };
         let connectionId = "mac-a";
-        const options = relayQuery({ client, connectionId, store });
+        const options = relayQuery({ client, connectionId, store, fixture: false });
         const pending = options.queryFn!({} as never);
         connectionId = "mac-b";
-        const next = relayQuery({ client: fixtureDashboardClient, connectionId, store });
+        const next = relayQuery({ client: fixtureDashboardClient, connectionId, store, fixture: false });
         expect(next.queryKey).not.toEqual(options.queryKey);
         reply.resolve(MOCK_WAKE);
         expect(await pending).toEqual(MOCK_WAKE);
         expect(await store.load("mac-a")).toEqual(MOCK_WAKE);
         expect(await store.load(connectionId)).toBeNull();
+    });
+
+    it("never saves the fixture client's made-up relay over a Mac's saved one", async () => {
+        const { store } = storageFixture();
+        const real = { ...MOCK_WAKE, name: "mac-a", password: "real-password" };
+        await store.save("mac-a", real);
+
+        // A chosen Mac whose transport did not build: the query does not run, so its saved copy is shown.
+        const chosen = relayQuery({ client: fixtureDashboardClient, connectionId: "mac-a", store, fixture: true });
+        expect(chosen.enabled).toBe(false);
+        expect(await chosen.queryFn!({} as never)).toEqual(MOCK_WAKE);
+        expect(await store.load("mac-a")).toEqual(real);
+
+        // No Mac at all (the demo app): the fixture relay is shown and saved nowhere.
+        const demo = relayQuery({ client: fixtureDashboardClient, connectionId: null, store, fixture: true });
+        expect(demo.enabled).toBe(true);
     });
 
     it("posts the relay's /wake with the device login, and a bearer token when the relay has one", () => {
