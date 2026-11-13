@@ -41,7 +41,7 @@ import { personStays, rosterPresence } from "./person-stays";
 import { reviewRow } from "./review-rows";
 import { assignmentReach } from "./speaker-assign";
 import { correctTranscript } from "./transcript-corrections";
-import { enrolRemoteVoices, scoreRemoteLines } from "./voice-enrolment";
+import { enrolRemoteVoices, remoteStays, scoreRemoteLines } from "./voice-enrolment";
 
 const now = "2026-11-09T18:00:00.000Z";
 let stores = 0;
@@ -1825,6 +1825,75 @@ describe("workshop listen contracts", () => {
         expect(scoreRemoteLines({ embeddings, samples }).find((line) => line.index === 2)?.match.person).toBe(
             "Bob Example"
         );
+    });
+
+    test("remote enrolment skips confirmed multi-voice windows and windows a second stay touches", () => {
+        const channel = (fromSec: number) => ({
+            quality: "ready" as const,
+            track: "isolated-call" as const,
+            source: { audioPath: "/fixture.wav", size: 42, mtimeMs: 1 },
+            channel: 1 as const,
+            model: "fixture-model",
+            fromSec,
+            toSec: fromSec + 10,
+            embedding: [1, 0],
+        });
+        const embeddings = [
+            { index: 0, channels: [channel(10)] },
+            { index: 1, channels: [channel(40)] },
+        ];
+        const record = (items: unknown[]) =>
+            meetingRecordSchema.parse({ id: "voice", title: "", start: now, createdAt: now, createdBy: "new", items });
+        const alice = { name: "Alice Example", fromSec: 0, toSec: 100 };
+        const enrolled = (items: unknown[], remote: Array<{ name: string; fromSec: number; toSec: number }>) =>
+            enrolRemoteVoices({ record: record(items), embeddings, remote }).map((sample) => sample.fromSec);
+
+        expect(enrolled([], [alice])).toEqual([10, 40]);
+        expect(enrolled([], [alice, { name: "Bob Example", fromSec: 15, toSec: 30 }])).toEqual([40]);
+        expect(
+            enrolled(
+                [
+                    {
+                        id: "i1",
+                        kind: "speaker-range",
+                        label: "Voice",
+                        fromSec: 40,
+                        toSec: 40,
+                        status: "confirmed",
+                        speaker: "Alice Example + Bob Example",
+                        voices: ["Alice Example", "Bob Example"],
+                        rules: [],
+                        suggestedAt: now,
+                    },
+                ],
+                [alice]
+            )
+        ).toEqual([10]);
+    });
+
+    test("a remote seat is cut to its person's stays, so a departure and a rejoin stay apart", () => {
+        const record = meetingRecordSchema.parse({
+            id: "voice",
+            title: "",
+            start: now,
+            createdAt: now,
+            createdBy: "new",
+            seats: { remote: ["Alice Example", { name: "Bob Example", fromSec: 50 }] },
+        });
+        const presence = [
+            { name: "Alice Example", fromSec: 0, toSec: 100 },
+            { name: "Alice Example", fromSec: 200, toSec: 300 },
+        ];
+
+        expect(remoteStays({ record, presence, endSec: 400 })).toEqual([
+            { name: "Alice Example", fromSec: 0, toSec: 100 },
+            { name: "Alice Example", fromSec: 200, toSec: 300 },
+            { name: "Bob Example", fromSec: 50, toSec: 400 },
+        ]);
+        expect(remoteStays({ record, presence: undefined, endSec: 400 })).toEqual([
+            { name: "Alice Example", fromSec: 0, toSec: 400 },
+            { name: "Bob Example", fromSec: 50, toSec: 400 },
+        ]);
     });
 });
 
