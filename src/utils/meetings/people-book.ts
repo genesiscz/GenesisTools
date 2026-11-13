@@ -104,6 +104,17 @@ export function parsePeopleBook(text: string, path = PEOPLE_FILE): ReadBook {
     book.data.entries = readList(ownEntrySchema, entries, "entries", read);
     book.data.merges = readList(peopleMergeSchema, merges, "merges", read);
     book.data.hidden = readList(hiddenPersonSchema, hidden, "hidden", read);
+    // A list a hand edit turned into another value reads no element, and the next write would put an array in its
+    // place: the file is moved aside first, as torn text is.
+    const notLists = Object.entries({ entries, merges, hidden })
+        .filter(([, value]) => value !== undefined && !Array.isArray(value))
+        .map(([name]) => name);
+
+    if (notLists.length > 0) {
+        log.warn({ path, lists: notLists }, "people book list is not an array; the next write moves the file aside");
+        return { ...book, broken: `${notLists.join(", ")} is not a list` };
+    }
+
     return book;
 }
 
@@ -214,14 +225,27 @@ export class PeopleBook {
         });
     }
 
+    /**
+     * Shows again every hidden person `isPerson` names, decided under the book's lock: a merged person hides by any
+     * of its members, so showing it clears them all. Answers whether anything changed.
+     */
+    async show(isPerson: (hidden: HiddenPerson) => boolean): Promise<boolean> {
+        return this.change((data) => {
+            const before = data.hidden.length;
+            data.hidden = data.hidden.filter((one) => !isPerson(one));
+            return data.hidden.length < before;
+        });
+    }
+
     /** Writes a merge of two people under a new undo token. */
     async merge(merge: { people: [PersonRefValue, PersonRefValue]; name: string }): Promise<PeopleMerge> {
-        const saved: PeopleMerge = {
+        // Checked as the next read checks it: a merge the reader drops could never be undone by its token.
+        const saved = peopleMergeSchema.parse({
             token: randomUUID(),
             people: [personRefSchema.parse(merge.people[0]), personRefSchema.parse(merge.people[1])],
             name: merge.name.trim(),
             at: this.now().toISOString(),
-        };
+        });
         return this.change((data) => {
             data.merges.push(saved);
             return saved;

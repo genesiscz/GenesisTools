@@ -7,7 +7,14 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { meetingsConfigSchema } from "./config";
 import { PEOPLE_FILE, PeopleBook } from "./people-book";
 import { ContactsPeopleSource, type ContactsReader, darwinkitContacts } from "./people-contacts";
-import { foldText, PeopleDirectory, PeopleError, type PeopleSource, peopleDirectory } from "./people-directory";
+import {
+    foldText,
+    OwnPeopleSource,
+    PeopleDirectory,
+    PeopleError,
+    type PeopleSource,
+    peopleDirectory,
+} from "./people-directory";
 import { MEETING_FILE, MeetingStore } from "./record";
 
 let stores = 0;
@@ -353,7 +360,103 @@ describe("the people book and its merges", () => {
             { kind: "group", members: [] },
         ]);
     });
+
+    test("a list that is not an array moves the book aside before a write, and a blank merge name is refused", async () => {
+        const { book } = scratch([]);
+        const folder = join(book.path, "..");
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(book.path, SafeJSON.stringify({ version: 1, entries: { name: "Uma Example" }, merges: [] }));
+
+        await book.add({ name: "Vic Example" });
+        expect(readdirSync(folder).filter((name) => name.startsWith(`${PEOPLE_FILE}.broken-`))).toHaveLength(1);
+        expect(book.read().entries.map((entry) => entry.name)).toEqual(["Vic Example"]);
+
+        await expect(
+            book.merge({ people: [{ name: "Vic Example" }, { name: "Wes Example" }], name: " " })
+        ).rejects.toThrow();
+        expect(book.read().merges).toEqual([]);
+    });
+
+    test("showing a merged person again clears the hidden member too", async () => {
+        const { book } = scratch([]);
+        await book.add({ name: "Ada Example" });
+        await book.add({ name: "Bea Example" });
+        const directory = new PeopleDirectory({ sources: [new OwnPeopleSource(book)], book });
+
+        await directory.hide("Bea Example");
+        await directory.merge("Ada Example", "Bea Example");
+        expect((await directory.known("example")).people).toEqual([]);
+
+        expect((await directory.hide("Ada Example", false)).changed).toBe(true);
+        expect((await directory.known("example")).people.map((person) => person.name)).toEqual(["Ada Example"]);
+    });
+
+    test("a merged name is searchable, and a later merge that names it applies", async () => {
+        const { book } = scratch([]);
+        for (const name of ["Ada Example", "Bea Example", "Cy Example"]) {
+            await book.add({ name });
+        }
+        const directory = new PeopleDirectory({ sources: [new OwnPeopleSource(book)], book });
+
+        await directory.merge("Ada Example", "Bea Example", "Team Example");
+        expect((await directory.known("team")).people.map((person) => person.name)).toEqual(["Team Example"]);
+
+        await directory.merge("Team Example", "Cy Example", "Crew Example");
+        expect((await directory.known("")).people.map((person) => [person.name, person.aliases])).toEqual([
+            ["Crew Example", ["Ada Example", "Bea Example", "Cy Example"]],
+        ]);
+    });
+
+    test("a searching source that answers one merge member still shows the merged, hidden person", async () => {
+        const { book } = scratch([]);
+        const directory = new PeopleDirectory({
+            sources: [searching([{ name: "Ada Example" }, { name: "Bea Example" }])],
+            book,
+        });
+
+        await directory.merge("Ada Example", "Bea Example");
+        await directory.hide("Ada Example");
+
+        expect((await directory.known("bea")).people).toEqual([]);
+        expect(
+            (await directory.known("bea", { includeHidden: true })).people.map((person) => [person.name, person.hidden])
+        ).toEqual([["Ada Example", true]]);
+    });
+
+    test("a name id reaches a searching source, and an email reference joins the identities it links", async () => {
+        const { book } = scratch([]);
+        const zoe = new PeopleDirectory({ sources: [searching([{ name: "Zoe Example" }])], book });
+        const [listed] = (await zoe.known("")).people;
+
+        expect(listed?.id).toBe("name:example zoe");
+        expect((await zoe.find(listed!.id)).name).toBe("Zoe Example");
+        expect((await zoe.hide(listed!.id)).changed).toBe(true);
+
+        await book.add({ name: "Alex Example", email: "alex@example.com" });
+        const linked = new PeopleDirectory({
+            sources: [
+                searching([{ name: "Alex Example" }, { name: "Alexander Example", email: "alex@example.com" }]),
+                new OwnPeopleSource(book),
+            ],
+            book,
+        });
+        const people = (await linked.known("alex")).people;
+
+        expect(people.map((person) => [person.id, person.aliases.length])).toEqual([["email:alex@example.com", 1]]);
+        expect((await linked.find("alex@example.com")).id).toBe("email:alex@example.com");
+    });
 });
+
+/** A source that searches as Contacts does: only the people whose folded name holds the folded query. */
+function searching(people: Array<{ name: string; email?: string }>): PeopleSource {
+    return {
+        kind: "contacts",
+        people: async ({ text }) => ({
+            state: "ok",
+            people: people.filter((person) => foldText(person.name).includes(foldText(text))),
+        }),
+    };
+}
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
