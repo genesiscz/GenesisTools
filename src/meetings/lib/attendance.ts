@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import {
     type AttendanceTarget,
+    AttendanceUnavailableError,
     isMeetingPlatformId,
     MEETING_PLATFORM_IDS,
     type MeetingPlatform,
@@ -69,7 +70,8 @@ function fileReader(
 export async function loadPresence(
     meeting: AttendanceTarget,
     spec: string,
-    platform?: MeetingPlatformId
+    platform?: MeetingPlatformId,
+    selection?: { id: string }
 ): Promise<LoadedPresence> {
     if (isMeetingPlatformId(spec)) {
         const named = MEETING_PLATFORMS[spec];
@@ -78,13 +80,21 @@ export async function loadPresence(
             throw new Error(`${named.label} keeps no attendance on this Mac.`);
         }
 
-        const loaded = await named.attendance(meeting);
+        if (selection && named.attendanceSelection !== "id") {
+            throw new Error(`${named.label} does not support --attendance-id.`);
+        }
+
+        const loaded = await named.attendance(meeting, selection);
 
         if (!loaded) {
-            throw new Error(`${named.label}: no call near ${meeting.start}.`);
+            throw new AttendanceUnavailableError(`${named.label}: no call near ${meeting.start}.`);
         }
 
         return loaded;
+    }
+
+    if (selection) {
+        throw new Error("--attendance-id requires --attendance <platform>, not a file.");
     }
 
     const prefixed = existsSync(spec) ? undefined : platformFilePrefix(spec);

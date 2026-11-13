@@ -2,7 +2,12 @@ import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import type { AttendanceTarget, MeetingPlatform, PlatformAttendance } from "@genesiscz/utils/meetings/platform";
+import {
+    type AttendanceTarget,
+    AttendanceUnavailableError,
+    type MeetingPlatform,
+    type PlatformAttendance,
+} from "@genesiscz/utils/meetings/platform";
 import type { Presence } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
 
@@ -123,24 +128,62 @@ function readsTeamsAttendance(raw: string): boolean {
     }
 }
 
+async function readTeams(args: string[]) {
+    try {
+        return await execTool(args, { timeout: TEAMS_TIMEOUT_MS });
+    } catch (cause) {
+        throw new AttendanceUnavailableError("Teams attendance reader failed", { cause });
+    }
+}
+
+/** Diagnostic candidates only: never select a chat from this list. */
+async function candidateChats(target: AttendanceTarget): Promise<string> {
+    try {
+        const result = await readTeams(["ms-teams", "meetings", "list", "--json"]);
+        if (!result.success) {
+            return "Candidate chats unavailable; use --attendance-id <threadId> with a known chat id.";
+        }
+
+        const rows = z
+            .array(z.object({ id: z.string(), title: z.string(), lastMessageTime: z.number().nullable() }))
+            .parse(SafeJSON.parse(result.stdout, { strict: true }));
+        const start = Date.parse(target.start);
+        rows.sort(
+            (a, b) =>
+                Math.abs((a.lastMessageTime ?? Infinity) - start) - Math.abs((b.lastMessageTime ?? Infinity) - start)
+        );
+        return rows.length
+            ? `Closest cached chats by last message time (not call start); select with --attendance-id <threadId>:\n${rows
+                  .slice(0, 8)
+                  .map((row) => `${row.id}  ${row.title}`)
+                  .join("\n")}`
+            : "No cached meeting chats; use --attendance-id <threadId> with a known chat id.";
+    } catch (error) {
+        log.debug({ error }, "candidate chats unavailable");
+        return "Candidate chats unavailable; use --attendance-id <threadId> with a known chat id.";
+    }
+}
+
 export const teamsPlatform: MeetingPlatform = {
     id: "teams",
     label: "Microsoft Teams",
     capabilities: { attendance: "per-person", speaking: true },
     sourceNames: ["teams"],
 
-    async attendance(target) {
+    attendanceSelection: "id",
+
+    async attendance(target, selection) {
         // Another tool, with its own data and its own privacy identity, so it runs as its own process.
-        const result = await execTool(["ms-teams", "meetings", "attendance", target.title, "--json"], {
-            timeout: TEAMS_TIMEOUT_MS,
-        });
+        const args = selection ? ["--id", selection.id] : [target.title];
+        const result = await readTeams(["ms-teams", "meetings", "attendance", ...args, "--json"]);
         log.debug({ title: target.title, exitCode: result.exitCode }, "ms-teams attendance");
 
         if (!result.success) {
             // ms-teams says why on stdout ("Could not resolve a single meeting chat. Pass --id."), not on stderr.
-            const reason = (result.stderr.trim() || result.stdout.trim()).split("\n")[0];
-            throw new Error(
-                `${toolCommand("ms-teams", "meetings", "attendance")} "${target.title}" failed: ${reason || `exit ${result.exitCode}`}`
+            const reason = result.stderr.trim() || result.stdout.trim();
+            const candidates = await candidateChats(target);
+            throw new AttendanceUnavailableError(
+                `${toolCommand("ms-teams", "meetings", "attendance")} "${target.title}" failed: ${reason || `exit ${result.exitCode}`}\n${candidates}`
             );
         }
 

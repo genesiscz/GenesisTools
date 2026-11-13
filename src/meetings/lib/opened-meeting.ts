@@ -3,12 +3,14 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { type ChannelCalibration, channelEnergy, type SilentCallSpan } from "@genesiscz/utils/meetings/energy";
+import { AttendanceUnavailableError } from "@genesiscz/utils/meetings/platform";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { Presence } from "@genesiscz/utils/transcribe/speakers";
 import { type SummaryPoint, summaryPoints } from "@genesiscz/utils/transcribe/summary";
+import { loadPresence } from "./attendance";
 import { CallTimeline } from "./call-timeline";
 import { callSilentSpans, energyMicShareFor, type MicEnergy, storeCalibration } from "./energy";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./platforms";
@@ -106,11 +108,18 @@ export class OpenedMeeting {
      * Who was in the call, the user under their own name: the stays `spec` names (a platform or a platform's export
      * file) when given, else the ones the record keeps.
      */
-    async presence(spec?: string): Promise<Presence[] | undefined> {
+    async presence(spec?: string, attendanceId?: string): Promise<Presence[] | undefined> {
+        const selectedId = attendanceId?.trim();
+
+        if (selectedId !== undefined && (!spec || selectedId.length === 0)) {
+            throw new Error("--attendance-id requires --attendance <platform> and a nonempty id.");
+        }
+
         if (spec) {
-            const loaded = await (await this.timeline()).stays(spec);
+            const timeline = await this.timeline();
+            const loaded = await this.loadAttendance(spec, selectedId);
             ui.dim(loaded.note);
-            return loaded.presence;
+            return timeline.named(loaded.presence);
         }
 
         const attendance = this.current.attendance;
@@ -123,6 +132,36 @@ export class OpenedMeeting {
         }
 
         return undefined;
+    }
+
+    private async loadAttendance(spec: string, attendanceId?: string) {
+        const timeline = await this.timeline();
+        const meeting = await this.meeting();
+        return loadPresence(
+            { ...timeline.target(), title: meeting.title },
+            spec,
+            this.current.platform,
+            attendanceId === undefined ? undefined : { id: attendanceId }
+        );
+    }
+
+    /** Suggestion rules may proceed without unavailable platform attendance; malformed input still throws. */
+    async suggestionPresence(options: {
+        attendance?: string;
+        attendanceId?: string;
+        warnings: string[];
+    }): Promise<Presence[] | undefined> {
+        try {
+            return await this.presence(options.attendance, options.attendanceId);
+        } catch (error) {
+            if (!(error instanceof AttendanceUnavailableError)) {
+                throw error;
+            }
+
+            log.warn({ error, meeting: this.current.id }, "attendance unavailable for suggestions");
+            options.warnings.push(`attendance unavailable; E2 skipped: ${error.message}`);
+            return undefined;
+        }
     }
 
     /** The microphone's energy share per time range, with the calibration it was read with. Writes nothing. */
@@ -251,7 +290,7 @@ export class OpenedMeeting {
         if (!this.current.attendance && platform && platform.capabilities.attendance !== "none") {
             try {
                 const timeline = await this.timeline();
-                const loaded = await timeline.stays(platform.id);
+                const loaded = await this.loadAttendance(platform.id);
                 this.current = await timeline.store(this.store, loaded, platform.id);
                 notes.push({ ok: true, text: `${loaded.note}, ${this.current.sections?.length ?? 0} sections` });
             } catch (err) {

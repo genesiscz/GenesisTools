@@ -186,7 +186,7 @@ function readRows(meeting: string, all: boolean) {
 
 async function suggest(
     ref: string,
-    opts: { rules?: string; attendance?: string; wordCheck?: string; json?: boolean }
+    opts: { rules?: string; attendance?: string; attendanceId?: string; wordCheck?: string; json?: boolean }
 ): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
@@ -225,6 +225,7 @@ async function suggest(
             record,
             rules,
             attendance: opts.attendance,
+            attendanceId: opts.attendanceId,
             wordCheck: wordCheckChoice,
         });
 
@@ -787,6 +788,10 @@ export function registerItemCommands(program: Command): void {
             `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default: each language's languages.<code>.wordCheck, else ${DEFAULT_WORD_CHECK})`
         )
         .option("--json", "print the new items")
+        .option(
+            "--attendance-id <threadId>",
+            "Exact attendance chat id; requires --attendance with a platform supporting ids"
+        )
         .action(suggest);
 
     program

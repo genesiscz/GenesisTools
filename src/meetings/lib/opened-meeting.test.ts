@@ -315,11 +315,32 @@ test("CLI suggestions use the shared runner and render its warnings", async () =
     try {
         const program = new Command();
         registerItemCommands(program);
-        await program.parseAsync(["suggest", record.id, "--rules", "terms", "--word-check", "off", "--json"], {
-            from: "user",
-        });
+        await program.parseAsync(
+            [
+                "suggest",
+                record.id,
+                "--rules",
+                "terms",
+                "--word-check",
+                "off",
+                "--attendance",
+                "teams",
+                "--attendance-id",
+                "chat-b",
+                "--json",
+            ],
+            {
+                from: "user",
+            }
+        );
         expect(run).toHaveBeenCalledTimes(1);
-        expect(run.mock.calls[0][0]).toMatchObject({ record, rules: ["terms"], wordCheck: "off" });
+        expect(run.mock.calls[0][0]).toMatchObject({
+            record,
+            rules: ["terms"],
+            wordCheck: "off",
+            attendance: "teams",
+            attendanceId: "chat-b",
+        });
         expect(warn).toHaveBeenCalledWith("context fixture warning");
         expect(result).toHaveBeenCalled();
     } finally {
@@ -327,5 +348,171 @@ test("CLI suggestions use the shared runner and render its warnings", async () =
         run.mockRestore();
         warn.mockRestore();
         result.mockRestore();
+    }
+});
+
+describe("suggest attendance resilience", () => {
+    test("edited copies look up the source title and clock", async () => {
+        const { MEETING_PLATFORMS } = await import("./platforms");
+        const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockResolvedValue({
+            presence: [],
+            note: "fixture",
+        });
+        try {
+            for (const title of ["Planning", "Edited automatic copy"]) {
+                const { store, record } = await newRecord({ title });
+                await OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" }).presence(
+                    "teams"
+                );
+            }
+            expect(reader.mock.calls.map(([target]) => target)).toEqual([
+                { title: "Planning", start: "2026-11-02T15:00:05.000Z" },
+                { title: "Planning", start: "2026-11-02T15:00:05.000Z" },
+            ]);
+        } finally {
+            reader.mockRestore();
+        }
+    });
+
+    test.each(["Missing chat", "Ambiguous chat"])(
+        "explicit Teams %s warns with candidates and persists unrelated suggestions",
+        async (reason) => {
+            const cli = await import("@genesiscz/utils/cli");
+            const { runSuggest } = await import("./suggest-run");
+            const { store, record } = await newRecord();
+            const source = fakeSource();
+            const meeting = await source.load("abc");
+            const load = spyOn(source, "load").mockResolvedValue({
+                ...meeting,
+                transcript: [{ speaker: "Alice Example", startSec: 12, text: "A kubernetu zítra." }],
+            });
+            const opened = OpenedMeeting.of(store, record, { source, sourceMeetingId: "abc" });
+            const dictionary = spyOn(opened, "dictionary").mockResolvedValue({
+                abbrExpansion: "every",
+                fuzzy: { apply: 0.95, suggest: 0.8 },
+                entries: [{ type: "term", value: "Kubernetes" }],
+            });
+            const of = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
+            const collect = spyOn(opened, "collectWhenIncomplete").mockResolvedValue(record);
+            const exec = spyOn(cli, "execTool").mockImplementation(async (args) =>
+                args.includes("list")
+                    ? {
+                          success: true,
+                          exitCode: 0,
+                          stdout: SafeJSON.stringify([
+                              { id: "chat-a", title: "Planning A", lastMessageTime: Date.parse(record.start) },
+                              { id: "chat-b", title: "Planning B", lastMessageTime: Date.parse(record.start) + 1000 },
+                          ]),
+                          stderr: "",
+                      }
+                    : {
+                          success: false,
+                          exitCode: 1,
+                          stdout: `${reason}. Could not resolve a single meeting chat. Pass --id.`,
+                          stderr: "",
+                      }
+            );
+            try {
+                const result = await runSuggest({
+                    store,
+                    record,
+                    rules: ["terms"],
+                    attendance: "teams",
+                    wordCheck: "off",
+                });
+                expect(result.warnings.join("\n")).toContain("attendance unavailable");
+                expect(result.warnings.join("\n")).toContain("chat-a  Planning A");
+                expect(result.warnings.join("\n")).toContain("chat-b  Planning B");
+                expect(result.fresh.length).toBeGreaterThan(0);
+                expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual(result.fresh);
+            } finally {
+                exec.mockRestore();
+                load.mockRestore();
+                dictionary.mockRestore();
+                collect.mockRestore();
+                of.mockRestore();
+            }
+        }
+    );
+});
+
+test("an exact attendance id reaches the Teams reader and chooses only that fixture chat", async () => {
+    const cli = await import("@genesiscz/utils/cli");
+    const { store, record } = await newRecord();
+    const opened = OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" });
+    const exec = spyOn(cli, "execTool").mockImplementation(async (args) => ({
+        success: true,
+        exitCode: 0,
+        stderr: "",
+        stdout: SafeJSON.stringify([
+            {
+                meeting: {
+                    title: "Planning B",
+                    startedAt: "2026-11-02T15:00:05.000Z",
+                    endedAt: "2026-11-02T15:10:05.000Z",
+                },
+                attendance: [
+                    {
+                        name: args.includes("chat-b") ? "Bob Example" : "Carol Example",
+                        joinedAt: "2026-11-02T15:00:05.000Z",
+                        leftAt: "2026-11-02T15:10:05.000Z",
+                    },
+                ],
+            },
+        ]),
+    }));
+    try {
+        expect(await opened.presence("teams", "chat-b")).toEqual([{ name: "Bob Example", fromSec: 0, toSec: 600 }]);
+        expect(exec.mock.calls[0][0]).toEqual(["ms-teams", "meetings", "attendance", "--id", "chat-b", "--json"]);
+        expect(exec).toHaveBeenCalledTimes(1);
+        expect(await opened.presence("teams", " chat-b ")).toEqual([{ name: "Bob Example", fromSec: 0, toSec: 600 }]);
+        const { runSuggest } = await import("./suggest-run");
+        const of = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
+        const collect = spyOn(opened, "collectWhenIncomplete").mockResolvedValue(record);
+        try {
+            const result = await runSuggest({ store, record, rules: [], attendance: "teams", attendanceId: "chat-b" });
+            expect(result.warnings).toEqual([]);
+            expect(exec.mock.calls.at(-1)?.[0]).toEqual([
+                "ms-teams",
+                "meetings",
+                "attendance",
+                "--id",
+                "chat-b",
+                "--json",
+            ]);
+            expect(exec).toHaveBeenCalledTimes(3);
+        } finally {
+            of.mockRestore();
+            collect.mockRestore();
+        }
+    } finally {
+        exec.mockRestore();
+    }
+});
+
+test("suggest attendance recovery preserves validation and source failures", async () => {
+    const { store, record } = await newRecord();
+    const source = fakeSource();
+    const opened = OpenedMeeting.of(store, record, { source, sourceMeetingId: "abc" });
+    const warnings: string[] = [];
+    for (const options of [
+        { attendance: "/missing-attendance-fixture.json" },
+        { attendance: "google-meet" },
+        { attendanceId: "chat-b" },
+        { attendance: "facetime", attendanceId: "chat-b" },
+        { attendance: "teams", attendanceId: " " },
+        { attendance: "teams:/missing-attendance-fixture.json", attendanceId: "chat-b" },
+    ]) {
+        await expect(opened.suggestionPresence({ ...options, warnings })).rejects.toThrow();
+    }
+    const broken = spyOn(source, "load").mockRejectedValue(new Error("source failure"));
+    try {
+        const unreadable = OpenedMeeting.of(store, record, { source, sourceMeetingId: "abc" });
+        await expect(unreadable.suggestionPresence({ attendance: "teams", warnings })).rejects.toThrow(
+            "source failure"
+        );
+        expect(warnings).toEqual([]);
+    } finally {
+        broken.mockRestore();
     }
 });

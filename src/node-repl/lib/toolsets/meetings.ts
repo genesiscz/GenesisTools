@@ -377,7 +377,8 @@ export class MeetingsToolset extends ReplToolset {
                     };
                 },
                 suggest: async (input: z.input<typeof suggest.params> = {}) => {
-                    const asked = suggest.params.parse(input).rules ?? [...SUGGEST_RULES];
+                    const options = suggest.params.parse(input);
+                    const asked = options.rules ?? [...SUGGEST_RULES];
                     const unknown = asked.filter((rule) => !isSuggestRule(rule));
 
                     if (unknown.length > 0) {
@@ -388,6 +389,8 @@ export class MeetingsToolset extends ReplToolset {
                         store,
                         record: current(),
                         rules: asked.filter(isSuggestRule),
+                        attendance: options.attendance,
+                        attendanceId: options.attendanceId,
                     });
                     const record = current();
                     return { fresh: fresh.map((item) => itemRow(record, item)), retired, warnings };

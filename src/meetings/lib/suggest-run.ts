@@ -45,6 +45,7 @@ export async function runSuggest(options: {
     record: MeetingRecord;
     rules: SuggestRule[];
     attendance?: string;
+    attendanceId?: string;
     wordCheck?: WordCheckChoice;
 }): Promise<{ fresh: MeetingItem[]; retired: string[]; warnings: string[] }> {
     const { store, record, rules } = options;
@@ -78,7 +79,7 @@ export async function runSuggest(options: {
         rules,
         dictionary: await opened.dictionary(),
         sourceWords: await opened.sourceWords(),
-        presence: await opened.presence(options.attendance),
+        presence: await opened.suggestionPresence({ ...options, warnings }),
         evidence,
         energyMicShare: (await opened.energy()).share,
         listenBelow: config.global.suggest.listenBelow,
