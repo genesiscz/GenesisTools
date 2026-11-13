@@ -13,8 +13,8 @@ import { z } from "zod";
  *   The label's own person gets no score there: the rule speaks against them.
  * - The others share what is left by weight, from the range's lines: their voice (the user's microphone holds the
  *   line, E3 shows them speaking, E4 names them), being in the call (RA; never for the user, who is always in their own
- *   call), the turn timing (they talk under their own label within 10 s, R17: the same voice cut into another label),
- *   an agent's finding over the same lines (the polish). A share stays with someone the roster does not list
+ *   call), an agent's finding over the same lines (the polish). Talking under their own label within 10 s (R17)
+ *   speaks against them, as the suggest rule reads it: they are the other side of the dialogue, not this voice. A share stays with someone the roster does not list
  *   (`unlisted`), smaller when attendance is known.
  * - A candidate with no evidence for them gets no score, never a made-up one.
  * - The people directory folds two names of one person into one candidate.
@@ -59,8 +59,6 @@ export const SPEAKER_WEIGHTS = {
     liveName: 0.1,
     /** In the call over the range (RA): one of those present. */
     roster: 0.2,
-    /** They talk under their own label within 10 s (R17): the same voice, cut into another label. The strongest. */
-    timing: 2,
     /** An agent's finding naming the candidate over the same lines, times its confidence and its overlap. */
     polish: 2,
     /** The weight of a voice nobody in the list has, when attendance is unknown. */
@@ -122,7 +120,7 @@ export interface CandidateTally {
     live: number;
     /** Lines in the call (RA), or the share of the range without lines. Undefined: attendance is unknown. */
     roster?: number;
-    /** Lines where they talk under their own label within 10 s (R17). */
+    /** Lines where they talk under their own label within 10 s (R17): the other side of the dialogue, against them. */
     nearby: number;
     /** Lines they were muted through (RM). */
     muted: number;
@@ -192,6 +190,9 @@ export function lineTallies(options: {
     const tallies = new CandidateTallies({ selfName: options.selfName, samePerson: options.samePerson });
     const rosterKnown = options.lines.some((line) => line.present !== undefined);
 
+    // A line counts once per person, whichever of their names it uses (a name and its alias in one reading).
+    const once = (names: Iterable<string>) => new Set([...names].map((name) => tallies.of(name)));
+
     for (const line of options.lines) {
         const muted = (name: string) => line.muted?.some((person) => sameName(person, name)) === true;
 
@@ -201,34 +202,33 @@ export function lineTallies(options: {
             self.mic.set(rule, (self.mic.get(rule) ?? 0) + 1);
         }
 
-        for (const [name, readings] of Object.entries(line.speaking)) {
-            if (readings > 0 && !muted(name) && !sameName(name, options.selfName)) {
-                tallies.of(name).shown += 1;
-            }
+        const shown = Object.entries(line.speaking).flatMap(([name, readings]) =>
+            readings > 0 && !muted(name) && !sameName(name, options.selfName) ? [name] : []
+        );
+
+        for (const tally of once(shown)) {
+            tally.shown += 1;
         }
 
         if (line.liveName && !muted(line.liveName) && !sameName(line.liveName, options.selfName)) {
             tallies.of(line.liveName).live += 1;
         }
 
-        for (const name of line.present ?? []) {
-            const tally = tallies.of(name);
+        for (const tally of once(line.present ?? [])) {
             tally.roster = (tally.roster ?? 0) + 1;
         }
 
-        for (const name of line.muted ?? []) {
-            tallies.of(name).muted += 1;
+        for (const tally of once(line.muted ?? [])) {
+            tally.muted += 1;
         }
     }
 
     // After every line is read, so a person first named on a later line still counts an earlier one.
     options.lines.forEach((_line, index) => {
-        for (const label of options.nearby[index] ?? []) {
-            const talking = tallies.find(label);
+        const talking = new Set((options.nearby[index] ?? []).flatMap((label) => tallies.find(label) ?? []));
 
-            if (talking) {
-                talking.nearby += 1;
-            }
+        for (const tally of talking) {
+            tally.nearby += 1;
         }
     });
 
@@ -330,14 +330,14 @@ function weightOf(tally: CandidateTally, lines: number | undefined): number {
     const share = (count: number) => Math.min(1, lines === undefined ? count : lines > 0 ? count / lines : 0);
     const mic = [...tally.mic.values()].reduce((sum, count) => sum + count, 0);
     const roster = tally.self || tally.roster === undefined ? 0 : share(tally.roster);
-    return (
+    const weight =
         share(mic) * SPEAKER_WEIGHTS.mic +
         share(tally.shown) * SPEAKER_WEIGHTS.shown +
         share(tally.live) * SPEAKER_WEIGHTS.liveName +
         roster * SPEAKER_WEIGHTS.roster +
-        share(tally.nearby) * SPEAKER_WEIGHTS.timing +
-        Math.min(1, tally.polish) * SPEAKER_WEIGHTS.polish
-    );
+        Math.min(1, tally.polish) * SPEAKER_WEIGHTS.polish;
+    // R17: who talks under their own label beside a line is the other side of that dialogue, not its voice.
+    return weight * (1 - share(tally.nearby));
 }
 
 /** The evidence a tally holds, as a score lists it; line counts only when the tally counted lines. */
@@ -358,7 +358,7 @@ function evidenceOf(tally: CandidateTally, counted: boolean): SpeakerEvidence[] 
     }
 
     if (tally.nearby > 0) {
-        evidence.push({ kind: "timing", rule: MeetingRule.OwnLabel, ...counts(tally.nearby) });
+        evidence.push({ kind: "timing", rule: MeetingRule.OwnLabel, ...counts(tally.nearby), against: true });
     }
 
     if (tally.polish > 0) {
@@ -400,6 +400,32 @@ function joined(...lists: SpeakerEvidence[][]): SpeakerEvidence[] {
 const round = (value: number) => Math.round(value * 100) / 100;
 
 /**
+ * Shares rounded to hundredths that never add up to more than `budget`: when the rounding overshoots, the hundredths
+ * that were rounded up the most are taken back (17 even shares of 0.95 are 0.05 or 0.06, together 0.95).
+ */
+function roundedShares(values: number[], budget: number): number[] {
+    const hundredths = values.map((value) => value * 100);
+    const rounded = hundredths.map((value) => Math.round(value));
+    let over = rounded.reduce((sum, value) => sum + value, 0) - Math.floor(budget * 100 + 1e-9);
+    const order = hundredths
+        .map((value, index) => ({ index, up: rounded[index]! - value }))
+        .sort((a, b) => b.up - a.up);
+
+    for (const { index } of order) {
+        if (over <= 0) {
+            break;
+        }
+
+        if (rounded[index]! > 0) {
+            rounded[index]! -= 1;
+            over -= 1;
+        }
+    }
+
+    return rounded.map((value) => value / 100);
+}
+
+/**
  * The scores of a range's candidates from their tallies, best first. `confidence` is the item's: in `speaker` when the
  * range names one, else that the voice is not the label's own person. Only candidates with evidence get a score.
  */
@@ -438,13 +464,20 @@ export function scoreCandidates(options: {
         });
     }
 
-    for (const { tally, weight } of others) {
-        const confidence = round((rest * weight) / total);
+    // The others never share more than is left: the rule's confidence, or what the speaker's rounded score leaves.
+    const budget = speaker ? Math.min(rest, 1 - round(options.confidence)) : rest;
+    const shares = roundedShares(
+        others.map(({ weight }) => (rest * weight) / total),
+        budget
+    );
+
+    others.forEach(({ tally }, index) => {
+        const confidence = shares[index]!;
 
         if (confidence > 0) {
             scores.push({ speaker: tally.name, confidence, ...lines, evidence: evidenceOf(tally, counted) });
         }
-    }
+    });
 
     return scores.sort((a, b) => b.confidence - a.confidence);
 }
@@ -462,9 +495,13 @@ export function anchorScores(
     const anchor = scores.find((score) => sameName(score.speaker, speaker));
     const before = 1 - (anchor?.confidence ?? 0);
     const factor = before > 0 ? (1 - confidence) / before : 0;
-    const others = scores
-        .filter((score) => score !== anchor)
-        .map((score) => ({ ...score, confidence: round(score.confidence * factor) }))
+    const rest = scores.filter((score) => score !== anchor);
+    const shares = roundedShares(
+        rest.map((score) => score.confidence * factor),
+        1 - round(confidence)
+    );
+    const others = rest
+        .map((score, index) => ({ ...score, confidence: shares[index]! }))
         .filter((score) => score.confidence > 0);
     const top: SpeakerScore = anchor
         ? { ...anchor, confidence: round(confidence), evidence: joined(anchor.evidence, evidence) }
