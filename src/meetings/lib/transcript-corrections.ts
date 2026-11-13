@@ -226,9 +226,10 @@ export function correctionsOf(
 
     return {
         labels: record.speakers.labels,
+        // The removal's own line address, so two identical lines at one second are told apart, never both refused.
         removals: used.flatMap((item) =>
             item.kind === "removal"
-                ? [{ item: item.id, fromSec: item.fromSec, toSec: item.toSec, heard: item.heard }]
+                ? [{ item: item.id, fromSec: item.fromSec, toSec: item.toSec, heard: item.heard, ...address(item) }]
                 : []
         ),
         ranges,

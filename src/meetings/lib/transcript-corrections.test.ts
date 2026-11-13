@@ -631,6 +631,26 @@ test("a persisted confirmed removal hides only the matched speech line", async (
     expect(transformed.entries.map((line) => line.startSec)).toEqual([100]);
 });
 
+test("a confirmed removal names its line, so one of two identical lines at one second is hidden", () => {
+    const transcript = [line("Alice", 5, "Fixture task done."), line("Alice", 5, "Fixture task done.")];
+    const record = {
+        ...base,
+        items: [
+            item({
+                id: "i1",
+                kind: "removal",
+                fromSec: 5,
+                toSec: 5,
+                heard: "Fixture task done.",
+                evidence: { transcriptLine: 1 },
+            }),
+        ],
+    };
+    const corrected = correctTranscript({ record, transcript, config, format: "txt", dictionary: false });
+    expect(corrected.entries).toHaveLength(1);
+    expect(corrected.outcomes).toContainEqual(expect.objectContaining({ item: "i1", status: "applied" }));
+});
+
 test("a line-scoped stem fixes the addressed inflected form and leaves its neighbour", () => {
     const transcript = [line("Alice", 5, "i na browserem"), line("Alice", 8, "i na browseru")];
     const prepared = prepareFindings({
