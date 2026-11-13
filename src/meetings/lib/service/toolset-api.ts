@@ -117,7 +117,13 @@ export const add = defineMethod({
 });
 export const suggest = defineMethod({
     name: "items.suggest",
-    params: z.object({ rules: z.array(z.string()).optional() }).strict(),
+    params: z
+        .object({
+            rules: z.array(z.string()).optional(),
+            attendance: z.string().min(1).optional(),
+            attendanceId: z.string().trim().min(1).optional(),
+        })
+        .strict(),
     result: z.unknown(),
     resultName: "{ fresh: items.list rows, warnings }",
     effect: "reversible",
@@ -507,6 +513,7 @@ export const meetingsToolsetApi = defineApi({
             summary: "An opened meeting; `id` and `title` name it. Every call reads the meeting as saved now.",
             methods: [
                 info,
+                editPerson,
                 commentsList,
                 commentRead,
                 commentWithdraw,

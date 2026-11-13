@@ -293,6 +293,11 @@ struct HistorySheetView: View {
                 Spacer()
                 Button("Done") { detail.history = nil }.keyboardShortcut(.defaultAction)
             }
+            if history.item == nil {
+                ForEach(Array((detail.record.value?.history ?? []).filter { $0.command.hasPrefix("assign") }.enumerated()), id: \.offset) { _, entry in
+                    Text(verbatim: "Project · \(entry.change)").font(.caption).foregroundStyle(.secondary)
+                }
+            }
             switch history.entries {
             case .idle, .loading:
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 120)

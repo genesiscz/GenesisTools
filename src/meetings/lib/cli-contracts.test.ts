@@ -993,7 +993,7 @@ describe("rows --json: the review rows (F3)", () => {
                 confidence: 0.82,
             },
             { value: "EMP", label: "EMP", role: "suggested", action: { kind: "confirm" }, confidence: 0.7 },
-            { value: "OMP", label: "Keep as heard", role: "heard", action: { kind: "reject" } },
+            { value: "OMP", label: "Real word · keep as heard", role: "heard", action: { kind: "reject" } },
         ]);
         expect([term.edit, range.edit, term.sources]).toEqual([
             "spelling",

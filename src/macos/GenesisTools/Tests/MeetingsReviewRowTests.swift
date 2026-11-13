@@ -23,6 +23,25 @@ final class MeetingsReviewRowTests: XCTestCase {
         return (try XCTUnwrap(UserDefaults(suiteName: suite)), suite)
     }
 
+    func testCmsQuestionAndIndicatorContracts() throws {
+        var finding = DecisionAction.Finding(kind: "question")
+        finding.from = 10
+        finding.to = 20
+        finding.question = "Who owns the export?"
+        finding.choices = ["Alice", "Bob"]
+        finding.decides = []
+        var action = DecisionAction(kind: "add")
+        action.findings = [finding]
+        let data = try JSONEncoder().encode(action)
+        let decoded = try JSONDecoder().decode(DecisionAction.self, from: data)
+        XCTAssertEqual(decoded.findings?.first?.decides, [])
+        XCTAssertEqual(decoded.findings?.first?.from, 10)
+        let line = try JSONDecoder().decode(TranscriptLine.self, from: Data(#"{"startSec":10,"speaker":"Alice","text":"Hello","indicator":{"names":["Bob"],"ignored":"meeting-dominance"}}"#.utf8))
+        XCTAssertEqual(line.indicator?.text, "Bob · stuck, ignored (meeting-dominance)")
+        let blocks = TranscriptBlock.build(from: [line])
+        XCTAssertEqual(blocks.first?.lines.first?.indicator, line.indicator)
+    }
+
     // MARK: The trailing pane (decision 2)
 
     func testTheTranscriptPaneShowsBesideTheRowsOnlyWhenTheColumnIsWideEnough() {

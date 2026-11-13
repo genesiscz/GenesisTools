@@ -6,6 +6,7 @@ import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { isEnglishWord } from "@genesiscz/utils/transcribe/terms";
 import { contextEntryText } from "./context-file";
+import { indicatorFacts } from "./indicator-facts";
 import { OpenedMeeting } from "./opened-meeting";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { type SuggestRule, settledTermItems, suggestItems } from "./suggest";
@@ -47,6 +48,7 @@ export async function runSuggest(options: {
     record: MeetingRecord;
     rules: SuggestRule[];
     attendance?: string;
+    attendanceId?: string;
     wordCheck?: WordCheckChoice;
 }): Promise<{ fresh: MeetingItem[]; retired: string[]; warnings: string[] }> {
     const { store, record, rules } = options;
@@ -55,7 +57,10 @@ export async function runSuggest(options: {
     const collected = await opened.collectWhenIncomplete();
     const meeting = await opened.meeting();
     const config = await opened.config();
-    const evidence = rules.includes("evidence") ? await opened.evidence() : null;
+    const evidence = rules.includes("evidence") || rules.includes("speakers") ? await opened.evidence() : null;
+    for (const gap of indicatorFacts({ meeting, evidence }).gaps) {
+        warnings.push(`Speaking indicator gap ${gap.fromSec}s to ${gap.toSec}s: ${gap.reason}`);
+    }
 
     if (rules.includes("terms")) {
         warnings.push(...contextWarnings(collected));
@@ -74,14 +79,7 @@ export async function runSuggest(options: {
         wordCheck = check.check;
     }
 
-    let presence: Awaited<ReturnType<OpenedMeeting["presence"]>>;
-    try {
-        presence = await opened.presence(options.attendance);
-    } catch (error) {
-        log.warn({ error, meeting: record.id }, "attendance unavailable; suggest continues with the imported roster");
-        warnings.push(`attendance unavailable; E2 skipped: ${error instanceof Error ? error.message : String(error)}`);
-        presence = await opened.presence();
-    }
+    const presence = await opened.suggestionPresence({ ...options, warnings });
     const energy = await opened.energy();
     const echo =
         rules.includes("evidence") &&

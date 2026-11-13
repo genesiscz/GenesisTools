@@ -474,7 +474,7 @@ export async function askMeeting(
         log.warn({ err, meeting: record.id }, "posting the project question failed");
         await store.update(
             record.id,
-            { command: "assign ask", change: "the question could not be posted" },
+            { command: "assign ask", change: "the project question could not be posted (decision inbox)" },
             (current) => {
                 if (current.assign?.ask?.formId === formId) {
                     current.assign.ask.outcome = "failed";
@@ -706,7 +706,7 @@ async function advanceAsk(store: MeetingStore, record: MeetingRecord, deps: Assi
         await deps.inbox.cancel(ask.formId).catch((err: unknown) => log.warn({ err }, "cancel failed"));
         await store.update(
             record.id,
-            { command: "assign sweep", change: "question withdrawn: project set" },
+            { command: "assign sweep", change: "project question withdrawn (decision inbox): project set" },
             (current) => {
                 if (current.assign?.ask) {
                     current.assign.ask.outcome = "cancelled";
@@ -746,11 +746,15 @@ async function advanceAsk(store: MeetingStore, record: MeetingRecord, deps: Assi
         return applied.stale ? "stale" : "applied";
     }
 
-    await store.update(record.id, { command: "assign sweep", change: `question ${form.status}` }, (current) => {
-        if (current.assign?.ask) {
-            current.assign.ask.outcome = form.status === "timeout" ? "timeout" : "cancelled";
+    await store.update(
+        record.id,
+        { command: "assign sweep", change: `project question ${form.status} (decision inbox)` },
+        (current) => {
+            if (current.assign?.ask) {
+                current.assign.ask.outcome = form.status === "timeout" ? "timeout" : "cancelled";
+            }
         }
-    });
+    );
     setOpen(store, record.id, undefined);
     return form.status;
 }

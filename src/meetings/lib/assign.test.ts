@@ -805,6 +805,22 @@ describe("ask each time on the real question store", () => {
         expect(Object.keys((await config.read()).projects)).toContain("fabrikam");
     });
 
+    test("project-question withdrawal history names the decision inbox", async () => {
+        const { store, deps, meeting, formId } = await askedOnRealStore("Project history fixture");
+        await store.update(meeting.id, { command: "set", change: "fixture project" }, (record) => {
+            record.project = "offers";
+        });
+        expect((await assignSweep(store, deps)).advanced).toContainEqual({
+            meeting: meeting.id,
+            outcome: "withdrawn",
+        });
+        expect(getAskForm(formId)?.status).toBe("cancelled");
+        const saved = new MeetingStore(store.storage).read(meeting.id)!;
+        expect(saved.history.at(-1)?.change).toContain("project question");
+        expect(saved.history.at(-1)?.change).toContain("decision inbox");
+        expect(saved.assign?.ask?.outcome).toBe("cancelled");
+    });
+
     test("a cancelled form leaves the meeting without a project, closes the step and is not asked again", async () => {
         const { store, deps, meeting, formId } = await askedOnRealStore("Contoso review");
 
@@ -814,6 +830,9 @@ describe("ask each time on the real question store", () => {
         const record = store.read(meeting.id)!;
         expect(record.project).toBeUndefined();
         expect(record.assign?.ask?.outcome).toBe("cancelled");
+        const history = new MeetingStore(store.storage).read(meeting.id)!.history.at(-1)!;
+        expect(history.change).toContain("project question");
+        expect(history.change).toContain("decision inbox");
         expect(hasOpenAssignSteps(store)).toBe(false);
         expect((await assignSweep(store, deps)).asked).toEqual([]);
     });

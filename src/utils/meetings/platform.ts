@@ -44,6 +44,9 @@ export interface AttendanceFileReader {
     attendance(raw: string, target: AttendanceTarget, from: string): PlatformAttendance | null;
 }
 
+/** A platform read could not supply attendance; validation and storage errors use their original errors. */
+export class AttendanceUnavailableError extends Error {}
+
 export interface MeetingPlatform {
     id: MeetingPlatformId;
     label: string;
@@ -51,7 +54,9 @@ export interface MeetingPlatform {
     /** The names sources use for this platform (Wispr's `meta.platform`). */
     sourceNames: readonly string[];
     /** Who was in the call and when; null when the platform keeps no such call. Throws when it cannot be read. */
-    attendance(target: AttendanceTarget): Promise<PlatformAttendance | null>;
+    attendance(target: AttendanceTarget, selection?: { id: string }): Promise<PlatformAttendance | null>;
+    /** Whether attendance accepts an exact call/chat id. */
+    readonly attendanceSelection?: "id";
     /** Reads this platform's attendance export from a file; absent when the platform has no such export. */
     readonly attendanceFile?: AttendanceFileReader;
 }

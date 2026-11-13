@@ -36,13 +36,23 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    `terms.documents` lists, for the meeting's context documents, each passage that reads a document line aloud
    (`readAloud`: the heard words, the line and its text) and each spoken path or identifier (`identifiers`). It has
    no rule weights and no confidence.
-   Pull the documents the meeting discussed (read-only) and check the project dictionary (`tools meetings dictionary
-   show`). **Ask the user for each person's role** before you judge anything.
+   Pull the documents the meeting discussed (read-only). Save the version the meeting read with
+   `tools meetings context add <meeting> <file> --before-meeting`, or choose a known commit with `--rev <sha>`.
+   The first flag uses the meeting start, not its end. Both save the chosen text and full commit inside the record;
+   later file changes, deletion and duplication retain it. Check `evidence <meeting> --raw` for the expected
+   `terms.documents.readAloud` and `terms.documents.identifiers`. Without either flag, the ordinary file-reference
+   fallback still applies. Check the project dictionary (`tools meetings dictionary show`). **Ask the user for each person's role** before you judge anything.
 3. **Pass 2, the agent judges.** Attribute speakers with [speakers.md](references/speakers.md) first (a term fix often
    depends on who spoke), then build the glossary and fix terms with [polishing.md](references/polishing.md). Settle
    what the context settles, and store every finding in the record with its confidence and the facts it rests on, all
    in one `tools meetings items add <meeting> --from-file <json>` call: an array of objects named like the flags
-   (`tools meetings items add --help`). The kinds:
+   (`tools meetings items add --help`). Before insertion, inspect the batch with
+   `tools meetings items add <meeting> --from-file <json> --plan`: it previews each finding independently, naming
+   zero-based line indices and each line's first eight words. Planning requires a local transcript, never falls back
+   to a remote source, and writes nothing. A retry of the same batch retains equal open findings and reports their
+   IDs; question refs still resolve to retained IDs. Use `--allow-duplicates` only for an intentional second copy.
+   The REPL equivalent is `meeting.items.add({ findings, allowDuplicates: true })`; ordinary calls return retained
+   IDs in `duplicates`. The kinds:
    - `speaker-range`: `from`, `to`, `label`, `speaker`. `to` is the START time of the last line of the range, as
      `evidence --raw` prints it: a range takes every line of its label that starts inside it, so the end time of the
      last line can pull in the next line of the same label.
@@ -106,7 +116,14 @@ Both modes share the meeting record, its items and `tools meetings listen`.
 
 ## Procedure (automatic)
 
-1. Export raw (step 1 above) and `tools meetings new --source wisprflow:<id>`.
+1. Export raw (step 1 above) and `tools meetings new --source wisprflow:<id>`. For an independent automatic
+   comparison of an existing meeting, run
+   `tools meetings duplicate <original> --title "Automatic comparison" --without-items --json`, then use its
+   returned id for the remaining steps. The copy retains sources, context, frames and sound, but starts with zero
+   items and an empty decision journal; do not edit meeting.json by hand. `--no-items` is an alias. Copies inherit
+   the original project and do not ask for project assignment again. A normal duplicate retains items and copied
+   journal tokens with `copiedFrom`; its Undo changes only the copy. An older journal naming another meeting is
+   refused: use a clean copy or resolve that incompatibility explicitly before Undo.
 2. `tools meetings suggest <meeting> --attendance teams`. The term rules use the word check (`--word-check hunspell`,
    the default; `hunspell-cc0`, `macos` or `off`). Its dictionaries download on first use.
 3. `tools meetings listen <meeting>` for the user, with `--subscribe-answers` for you as in step 4 above, then review

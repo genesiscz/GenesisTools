@@ -132,8 +132,8 @@ export class CallTimeline {
     }
 
     /** Loads stays from a platform id or a platform's export file, named and on this clock. */
-    async stays(spec: string): Promise<LoadedPresence> {
-        const loaded = await loadPresence(this.target(), spec, this.record.platform);
+    async stays(spec: string, selection?: { id: string }): Promise<LoadedPresence> {
+        const loaded = await loadPresence(this.target(), spec, this.record.platform, selection);
         return { ...loaded, presence: this.named(loaded.presence) };
     }
 
