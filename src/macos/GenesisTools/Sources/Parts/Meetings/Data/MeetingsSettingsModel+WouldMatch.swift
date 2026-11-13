@@ -83,7 +83,9 @@ extension MeetingsSettingsModel {
                 _ = try await service.call(MeetingsAPI.DecisionApply.self,
                                            .init(meeting: meeting, action: .set(project: project), reason: nil, onDecided: nil))
                 return
-            } catch is MeetingsService.Unavailable {
+            } catch let failure as MeetingsService.Unavailable where failure.safeToRetry {
+                // Only a write the service never took: a lost reply may have applied it, and the command would
+                // journal the assignment twice (`writeLibrary` keeps the same rule).
                 try Task.checkCancellation()
             }
         }
