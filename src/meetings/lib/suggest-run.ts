@@ -12,6 +12,7 @@ import { localSpeechDuring } from "./local-speech";
 import { OpenedMeeting } from "./opened-meeting";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { type SuggestRule, settledTermItems, suggestItems } from "./suggest";
+import { meetingVoices } from "./voice";
 import type { WordCheckChoice } from "./word-check";
 
 const { log } = logger.scoped("meetings-suggest");
@@ -114,6 +115,10 @@ export async function runSuggest(options: {
         presence,
         evidence,
         energyMicShare: share,
+        voice:
+            rules.includes("evidence") && (collected.seats?.room.length ?? 0) > 1
+                ? await meetingVoices({ opened, voices: collected.seats!.room.length })
+                : undefined,
         listenBelow: config.global.suggest.listenBelow,
         questionBudget: config.global.suggest.questionCap,
         minPriority: config.global.playback.listen.minPriority,

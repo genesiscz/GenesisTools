@@ -2,7 +2,6 @@ import SwiftUI
 
 struct MeetingRoomPeopleView: View {
     @Bindable var detail: MeetingDetailModel
-    @State private var editing = false
     @State private var name = ""
     @State private var from = "0"
     @State private var to = ""
@@ -69,7 +68,7 @@ struct MeetingRoomPeopleView: View {
                 }
             }
         }.padding(.horizontal, 16)
-        .sheet(isPresented: $editing) { editor }
+        .sheet(isPresented: $detail.showingMeetingPeopleEditor) { editor }
     }
 
     private func voiceText(_ line: MeetingsAPI.Voice.Line) -> String {
@@ -91,7 +90,7 @@ struct MeetingRoomPeopleView: View {
         atMic = group?.id == "self" || person.isEmpty
         owner = group?.deviceId ?? ""
         failure = nil
-        editing = true
+        detail.showingMeetingPeopleEditor = true
     }
 
     private var editor: some View {
@@ -103,7 +102,7 @@ struct MeetingRoomPeopleView: View {
             if !atMic { TextField("Device owner, blank for own device", text: $owner) }
             if let failure { Text(failure).foregroundStyle(.red) }
             HStack {
-                Button("Cancel") { editing = false }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { detail.showingMeetingPeopleEditor = false }.keyboardShortcut(.cancelAction)
                 Button("Remove person", role: .destructive) { save(remove: true) }.disabled(busy || name.isEmpty)
                 Button("Save") { save(remove: false) }.disabled(busy || name.isEmpty).keyboardShortcut(.defaultAction)
             }
@@ -120,7 +119,7 @@ struct MeetingRoomPeopleView: View {
             do {
                 try await detail.editMeetingPerson(.init(meeting: detail.id, name: name, action: remove ? "remove" : "add",
                     fromSec: Double(from), toSec: Double(to), atMic: atMic, via: !atMic && !owner.isEmpty ? owner : nil))
-                editing = false
+                detail.showingMeetingPeopleEditor = false
             } catch { failure = error.localizedDescription }
         }
     }
@@ -131,7 +130,7 @@ struct MeetingRoomPeopleView: View {
             defer { busy = false }
             do {
                 guard let service = detail.service else { throw NSError(domain: "Meetings", code: 1, userInfo: [NSLocalizedDescriptionKey: "Start the Meetings service to measure voice features."]) }
-                voice = try await service.call(MeetingsAPI.Voice.self, .init(meeting: detail.id, voices: count, channel: channel))
+                voice = try await service.call(MeetingsAPI.Voice.self, .init(meeting: detail.id, voices: count, channel: channel), timeout: 190)
             } catch { failure = error.localizedDescription }
         }
     }

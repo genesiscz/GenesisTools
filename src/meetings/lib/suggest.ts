@@ -6,6 +6,7 @@ import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { VoiceMatch } from "@genesiscz/utils/meetings/voice";
+import type { LineVoice } from "@genesiscz/utils/meetings/voice-features";
 import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import {
     docIdentifiers,
@@ -1799,6 +1800,7 @@ export function suggestItems(options: {
     evidence?: MeetingEvidence | null;
     /** The microphone channel's share of the audio energy over a time range (R2.1), when the audio is at hand. */
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
+    voice?: LineVoice[];
     /** Items under this confidence become questions to answer by ear, when they matter (default 0.6). */
     listenBelow?: number;
     /** The summary's action items and decisions: a range that cites one matters more. */
@@ -1974,6 +1976,88 @@ export function suggestItems(options: {
             voiceMatches: record.evidence?.voice?.lines,
             samePerson: options.samePerson,
         });
+        for (const item of channel.items) {
+            if (item.kind !== "speaker-range") {
+                continue;
+            }
+            const at = item.fromSec;
+            const mic = options.energyMicShare?.(at, Math.max(at + 0.05, item.toSec));
+            const owner = mic !== undefined && mic >= ENERGY_MIC_SURE ? "self" : item.speaker;
+            const candidates = owner ? microphoneCandidates(record, at, owner) : [];
+            if (candidates.length > 1) {
+                item.speaker = undefined;
+                item.candidates = candidates;
+                item.confidence = Math.min(item.confidence ?? 0.4, 0.4);
+            }
+        }
+        for (const line of lineEvidence(
+            meeting.transcript,
+            options.evidence,
+            options.presence,
+            options.energyMicShare
+        )) {
+            if ((line.energyMic ?? line.micShare ?? 0) < ENERGY_MIC_SURE) {
+                continue;
+            }
+            const candidates = microphoneCandidates(record, line.startSec);
+            if (
+                candidates.length < 2 ||
+                channel.items.some(
+                    (item) =>
+                        item.kind === "speaker-range" &&
+                        item.label === line.label &&
+                        line.startSec >= item.fromSec &&
+                        line.startSec <= item.toSec
+                )
+            ) {
+                continue;
+            }
+            channel.items.push({
+                kind: "speaker-range",
+                status: "suggested",
+                label: line.label,
+                fromSec: line.startSec,
+                toSec: line.startSec,
+                candidates,
+                confidence: 0.4,
+                rules: [MeetingRule.Energy],
+                evidence: { channel: "mic", listen: true, note: "shared microphone" },
+            });
+        }
+        for (const item of channel.items) {
+            if (item.kind !== "speaker-range" || !item.candidates?.length) {
+                continue;
+            }
+            const indices = meeting.transcript.flatMap((entry, index) =>
+                entry.startSec !== undefined &&
+                entry.startSec >= item.fromSec &&
+                entry.startSec <= item.toSec &&
+                sameName(entry.speaker, item.label)
+                    ? [index]
+                    : []
+            );
+            const clusters = indices.map((index) => options.voice?.find((value) => value.index === index)?.cluster);
+            const first = clusters[0];
+            const cluster =
+                first?.speaker &&
+                clusters.every(
+                    (value) => value !== undefined && value.speaker === first.speaker && value.confidence >= 0.8
+                )
+                    ? first
+                    : undefined;
+            if (
+                cluster?.speaker &&
+                cluster.confidence >= 0.8 &&
+                item.candidates.some((name) => sameName(name, cluster.speaker!))
+            ) {
+                item.speaker = cluster.speaker;
+                item.confidence = 0.7;
+                item.evidence = {
+                    ...item.evidence,
+                    note: "anchored voice feature cluster; confidence is a separation heuristic",
+                };
+            }
+        }
         const arrivals = arrivalItems({
             entries: meeting.transcript,
             lines: lineEvidence(meeting.transcript, options.evidence, options.presence, options.energyMicShare),

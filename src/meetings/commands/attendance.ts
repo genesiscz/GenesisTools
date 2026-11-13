@@ -45,6 +45,9 @@ async function attendance(
         }
 
         let current = record;
+        if (opts.id && !opts.from) {
+            throw new Error("--id requires --from <platform>.");
+        }
 
         if (opts.add || opts.remove) {
             if ((opts.add && opts.remove) || opts.id) {

@@ -429,6 +429,12 @@ final class MeetingsServiceTests: XCTestCase {
                     XCTAssertEqual(row.decision?.by, "an agent (Claude Code, session 11111111)", label)
                     XCTAssertEqual(row.choices[1].action.decision(on: row), .confirm(["i1"], speaker: "Dana Example"))
                 }
+            case MeetingsAPI.MeetingPeopleEdit.name:
+                try roundTrip(MeetingsAPI.MeetingPeopleEdit.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingRecordView.self, result) }
+            case MeetingsAPI.Voice.name:
+                try roundTrip(MeetingsAPI.Voice.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.Voice.Result.self, result) }
             case MeetingsAPI.CommentStage.name:
                 try roundTrip(MeetingsAPI.CommentStage.Params.self, params, label)
                 if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.CommentStage.Result.self, result).state, "staged") }

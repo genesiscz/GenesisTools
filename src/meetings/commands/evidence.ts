@@ -16,6 +16,7 @@ import { OpenedMeeting } from "../lib/opened-meeting";
 import { compactEvidence, rawMeeting } from "../lib/raw";
 import { fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
 import { rawTerms } from "../lib/suggest";
+import { lineDeviceCandidates, meetingVoices } from "../lib/voice";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
 const FORMATS = ["table", "json", "lines"] as const;
@@ -39,6 +40,9 @@ async function evidence(
         from?: string;
         to?: string;
         wordCheck?: string;
+        voices?: string;
+        voiceFeatures?: boolean;
+        channel?: string;
     }
 ): Promise<void> {
     const flag = formatFlag(opts);
@@ -88,6 +92,14 @@ async function evidence(
 
         const presence = await opened.presence(opts.attendance);
         const energy = await opened.energy();
+        const voice =
+            format === "json" || opts.raw || opts.voiceFeatures || opts.voices
+                ? await meetingVoices({
+                      opened,
+                      voices: opts.voices === undefined ? undefined : Number(opts.voices),
+                      channel: opts.channel === undefined ? undefined : Number(opts.channel),
+                  })
+                : undefined;
 
         // The facts only, for an agent to reason over (decision 33 a): JSON whatever --format says.
         if (opts.raw || format === "lines") {
@@ -129,7 +141,20 @@ async function evidence(
                     terms,
                     people: (await opened.config()).projects[current.project ?? ""]?.match?.people,
                 });
-                out.result(format === "lines" ? compactEvidence(raw) : SafeJSON.stringify(raw, null, 2));
+                const enriched = {
+                    ...raw,
+                    lines: raw.lines.map((line) => ({
+                        ...line,
+                        voice: voice?.find((v) => v.index === line.index),
+                        deviceCandidates: lineDeviceCandidates({
+                            record: current,
+                            atSec: line.fromSec,
+                            micShare: line.energyMicShare ?? line.channel.micShare ?? undefined,
+                            liveName: line.liveName,
+                        }),
+                    })),
+                };
+                out.result(format === "lines" ? compactEvidence(enriched) : SafeJSON.stringify(enriched, null, 2));
             } finally {
                 check.check?.dispose();
             }
@@ -179,11 +204,32 @@ async function evidence(
                             knownLines: lines.filter((line) => !line.speakingUnknown).length,
                             unknownLines: lines.filter((line) => line.speakingUnknown).length,
                         },
-                        volume,
+                        volume:
+                            record.seats && record.seats.room.length > 1
+                                ? { ...volume, spread: false, sharedMic: true }
+                                : volume,
                         channels: energy.calibration ?? null,
                         files: found.files,
                         devices: found.devices,
-                        lines,
+                        lines: lines.map((line) => ({
+                            ...line,
+                            voice: voice?.find((v) => v.index === line.index),
+                            deviceCandidates: lineDeviceCandidates({
+                                record,
+                                atSec: line.startSec,
+                                micShare: line.energyMic ?? line.micShare,
+                                liveName: line.liveName,
+                            }),
+                            winner:
+                                lineDeviceCandidates({
+                                    record,
+                                    atSec: line.startSec,
+                                    micShare: line.energyMic ?? line.micShare,
+                                    liveName: line.liveName,
+                                }).length > 1
+                                    ? undefined
+                                    : line.winner,
+                        })),
                     },
                     null,
                     2
@@ -198,7 +244,13 @@ async function evidence(
         );
         const view = createBoxTable([
             "LABEL \\ VOICE",
-            ...identities.map((name) => (name === SELF ? `you (${found.selfName ?? "mic"})` : name)),
+            ...identities.map((name) =>
+                name === SELF
+                    ? record.seats && record.seats.room.length > 1
+                        ? `microphone group (${record.seats.room.join(", ")})`
+                        : `you (${found.selfName ?? "mic"})`
+                    : name
+            ),
         ]);
 
         for (const [label, row] of table) {
@@ -222,7 +274,9 @@ async function evidence(
             );
         }
 
-        if (volume) {
+        if (record.seats && record.seats.room.length > 1) {
+            ui.dim("A shared microphone identifies its active people as candidates, not its owner as speaker.");
+        } else if (volume) {
             const say =
                 volume.sureMicWordsElsewhere !== undefined
                     ? `${volume.sureMicWordsElsewhere} words are sure on your microphone under other labels; your label "${found.selfName}" holds ${volume.selfLabelWords}`
@@ -253,6 +307,9 @@ export function registerEvidenceCommand(program: Command): void {
             "--attendance <platform|file>",
             "who was in the call and when: a platform (teams) or its export file (teams:<file>)"
         )
+        .option("--voice-features", "measure RMS, low-band share, tilt and pitch for both physical audio channels")
+        .option("--voices <n>", "cluster lines into 1..16 voices, anchored by confirmed assignments")
+        .option("--channel <0|1>", "physical clustering channel, default calibrated mic channel or left when unknown")
         .option("--files", "also list the evidence files and their sizes")
         .option("--table", "compact per-line evidence table")
         .option("--from <seconds>", "table start time")
