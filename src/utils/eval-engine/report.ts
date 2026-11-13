@@ -71,10 +71,25 @@ function fold(record: ConversationRecord, ignore: ReadonlySet<string>): Folded {
 
 const ResultRank: Record<Result, number> = { fail: 0, inconclusive: 1, pass: 2 };
 
+/** A run's records by cell and scenario hash, built once per records list: every cell reads only its own bucket. */
+const recordsByCell = new WeakMap<readonly ConversationRecord[], Map<string, ConversationRecord[]>>();
+
+function cellRecords(view: RunView, cell: PlannedCell): ConversationRecord[] {
+    let index = recordsByCell.get(view.records);
+    if (!index) {
+        index = new Map();
+        for (const record of view.records) {
+            const key = `${cellKey(record.cell)}\u0000${record.cell.scenarioHash}`;
+            index.set(key, [...(index.get(key) ?? []), record]);
+        }
+        recordsByCell.set(view.records, index);
+    }
+    return index.get(`${cellKey(cell)}\u0000${cell.scenarioHash}`) ?? [];
+}
+
 /** The fold from records to one cell's numbers and verdict. `ignore`: expectation ids left out (for `compare`). */
 export function cellStats(cell: PlannedCell, view: RunView, ignore: ReadonlySet<string> = new Set()): CellStats {
-    const key = cellKey(cell);
-    const records = view.records.filter((r) => cellKey(r.cell) === key && r.cell.scenarioHash === cell.scenarioHash);
+    const records = cellRecords(view, cell);
     const n = view.manifest.plan.repeats;
     const folded = records.map((record) => fold(record, ignore));
     const passed = folded.filter((f) => f.outcome === "passed").length;
@@ -103,17 +118,21 @@ export function cellStats(cell: PlannedCell, view: RunView, ignore: ReadonlySet<
     }
 
     const hashes = new Set(records.map((r) => r.turns[0]?.promptHash ?? null));
-    const expectations: Record<string, ExpectationStats> = {};
+    // Maps, not objects: an expectation id or a branch name may be `constructor` or `__proto__`.
+    const counted = new Map<string, Omit<ExpectationStats, "branches"> & { branches: Map<string, number> }>();
     for (const record of records) {
         const worst = new Map<string, Result>();
         for (const v of recordVerdicts(record)) {
             if (ignore.has(v.id)) {
                 continue;
             }
-            expectations[v.id] ??= { severity: v.severity, passed: 0, of: 0, branches: {} };
-            const stats = expectations[v.id];
+            let stats = counted.get(v.id);
+            if (!stats) {
+                stats = { severity: v.severity, passed: 0, of: 0, branches: new Map() };
+                counted.set(v.id, stats);
+            }
             if (v.branch) {
-                stats.branches[v.branch] = (stats.branches[v.branch] ?? 0) + 1;
+                stats.branches.set(v.branch, (stats.branches.get(v.branch) ?? 0) + 1);
             }
             const before = worst.get(v.id);
             if (before === undefined || ResultRank[v.result] < ResultRank[before]) {
@@ -121,12 +140,16 @@ export function cellStats(cell: PlannedCell, view: RunView, ignore: ReadonlySet<
             }
         }
         for (const [id, result] of worst) {
-            expectations[id].of++;
-            if (result === "pass") {
-                expectations[id].passed++;
+            const stats = counted.get(id);
+            if (stats) {
+                stats.of++;
+                stats.passed += result === "pass" ? 1 : 0;
             }
         }
     }
+    const expectations: Record<string, ExpectationStats> = Object.fromEntries(
+        [...counted].map(([id, stats]) => [id, { ...stats, branches: Object.fromEntries(stats.branches) }])
+    );
     return {
         scenario: cell.scenario,
         scenarioHash: cell.scenarioHash,
@@ -235,12 +258,11 @@ function cellLine(stats: CellStats): CellLine {
         verdict: stats.verdict,
         promptHash: stats.promptHash,
     };
-    const branches: Record<string, Record<string, number>> = {};
-    for (const [id, e] of Object.entries(expectations)) {
-        if (Object.keys(e.branches).length) {
-            branches[id] = e.branches;
-        }
-    }
+    const branches: Record<string, Record<string, number>> = Object.fromEntries(
+        Object.entries(expectations)
+            .filter(([, e]) => Object.keys(e.branches).length)
+            .map(([id, e]) => [id, e.branches])
+    );
     return Object.keys(branches).length ? { ...line, branches } : line;
 }
 
@@ -454,6 +476,8 @@ export function compareEvalRuns(a: RunView, b: RunView): Comparison {
     };
     let compared = 0;
     let newSafetyMiss = false;
+    // A compared cell without a verdict in either run (errored) leaves the comparison without one, changed or not.
+    let unresolved = false;
     for (const scenario of scenarioIds) {
         const hashA = ma.scenarios[scenario]?.hash;
         const hashB = mb.scenarios[scenario]?.hash;
@@ -501,6 +525,9 @@ export function compareEvalRuns(a: RunView, b: RunView): Comparison {
             if (sb.verdict === "safety-failed" && sa.verdict !== "safety-failed") {
                 newSafetyMiss = true;
             }
+            if (sa.verdict === "errored" || sb.verdict === "errored") {
+                unresolved = true;
+            }
             if (sa.promptHash !== sb.promptHash) {
                 result.prompt.push({
                     scenario,
@@ -518,7 +545,7 @@ export function compareEvalRuns(a: RunView, b: RunView): Comparison {
                 ...new Set([...Object.keys(sa.expectations), ...Object.keys(sb.expectations)]),
             ].sort();
             const expectations = expectationIds
-                .map((id) => ({ id, a: countText(sa.expectations[id]), b: countText(sb.expectations[id]) }))
+                .map((id) => ({ id, a: countText(ownStats(sa, id)), b: countText(ownStats(sb, id)) }))
                 .filter((e) => e.a !== e.b);
             const change =
                 changeOf(sa, sb) ??
@@ -546,7 +573,7 @@ export function compareEvalRuns(a: RunView, b: RunView): Comparison {
         Object.assign(result, { verdict: "new-safety-miss", exitCode: ExitCode.SafetyFailed });
     } else if (result.cells.some((c) => c.change === "regressed")) {
         Object.assign(result, { verdict: "regressed", exitCode: ExitCode.Failed });
-    } else if (result.cells.some((c) => c.change === "no-verdict")) {
+    } else if (unresolved) {
         Object.assign(result, { verdict: "same", exitCode: ExitCode.NoVerdict });
     } else if (result.cells.some((c) => c.change === "fixed")) {
         Object.assign(result, { verdict: "improved", exitCode: ExitCode.Passed });
@@ -554,6 +581,10 @@ export function compareEvalRuns(a: RunView, b: RunView): Comparison {
         Object.assign(result, { verdict: "same", exitCode: ExitCode.Passed });
     }
     return result;
+}
+
+function ownStats(stats: CellStats, id: string): ExpectationStats | undefined {
+    return Object.hasOwn(stats.expectations, id) ? stats.expectations[id] : undefined;
 }
 
 function countText(stats: ExpectationStats | undefined): string {
