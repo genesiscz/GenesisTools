@@ -13,6 +13,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nonEmptyString as text } from "@genesiscz/utils/string";
 import { hookDiag } from "../log";
 import { mentionsRoot, safeSegment } from "../paths";
 import { gitDirReadings } from "./command-paths";
@@ -70,10 +71,6 @@ function field(value: unknown, key: string): unknown {
     return typeof value === "object" && value !== null && key in value
         ? (value as Record<string, unknown>)[key]
         : undefined;
-}
-
-function text(value: unknown): string | null {
-    return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function expandHome(value: string): string {
