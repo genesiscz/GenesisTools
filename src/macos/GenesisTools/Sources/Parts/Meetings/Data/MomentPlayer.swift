@@ -708,6 +708,11 @@ final class MomentPlayer {
             cut(next.id, Self.rollingParams(top.meeting, from: top.endSec))
             return
         }
+        // A whole-meeting file played to the recording's end: no repeat, and nothing past the end to offer or cut.
+        if top.kind == .file {
+            phase = .ended(offerMore: false)
+            return
+        }
         if MeetingsPreferences.Playback.repeatClip.value(defaults) == .once, !repeated.contains(id), let sound = sounds[id] {
             repeated.insert(id)
             let gap = top.moment?.repeatGapSec ?? 1
