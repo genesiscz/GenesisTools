@@ -1353,7 +1353,7 @@ describe("isolated playback echo and speaker enrolment", () => {
                 "pcm_s16le",
                 delayed,
             ],
-            { stderr: "pipe", timeout: 30_000 }
+            { stderr: "pipe", timeout: 30_000, env: process.env }
         );
         expect(mux.exitCode).toBe(0);
 
