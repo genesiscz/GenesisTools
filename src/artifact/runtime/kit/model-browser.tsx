@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { UML_MARK, type UmlMark } from "./uml-diagram";
 
 export type ModelBrowserIcon =
@@ -26,7 +26,14 @@ export interface ModelBrowserNode {
 export interface ModelBrowserProps {
     root: ModelBrowserNode[];
     title?: string;
+    /**
+     * Tab labels above the tree. With `tabRoots` they switch the tree; without it they are a static window header, so
+     * the default is no tab strip at all rather than labels that look clickable and do nothing.
+     */
     tabs?: string[];
+    /** The tree per tab: makes the strip real tabs. `tabs` defaults to its keys. */
+    tabRoots?: Record<string, ModelBrowserNode[]>;
+    initialTab?: string;
     selected?: string;
     onSelect?: (id: string, node: ModelBrowserNode) => void;
 }
@@ -154,24 +161,50 @@ function BrowserRow({
 export function ModelBrowser({
     root,
     title = "Browser",
-    tabs = ["Project", "Context", "Diagram", "Resources"],
+    tabRoots,
+    tabs = tabRoots ? Object.keys(tabRoots) : [],
+    initialTab,
     selected,
     onSelect,
 }: ModelBrowserProps) {
+    const uid = useId();
+    const [active, setActive] = useState(initialTab ?? tabs[0]);
+    const current = (active !== undefined ? tabRoots?.[active] : undefined) ?? root;
     return (
         <div className="overflow-auto border border-line bg-panel font-sans text-xs text-ink">
             <div className="flex items-center justify-between bg-panel-2 px-2 py-1 text-[15px]">
                 <span>{title}</span>
             </div>
-            <div className="flex gap-3 border-b border-line bg-panel-2 px-2 py-1">
-                {tabs.map((tab, i) => (
-                    <span key={tab} className={i === 0 ? "border-b-2 border-info text-ink" : "text-dim"}>
-                        {tab}
-                    </span>
-                ))}
-            </div>
-            <ul aria-label={title} className="m-0 px-1 py-1.5">
-                {root.map((node, i) => (
+            {tabs.length > 0 ? (
+                <div
+                    className="flex gap-3 border-b border-line bg-panel-2 px-2 py-1"
+                    role={tabRoots ? "tablist" : undefined}
+                    aria-label={tabRoots ? `${title} tabs` : undefined}
+                >
+                    {tabs.map((tab, i) =>
+                        tabRoots ? (
+                            <button
+                                key={tab}
+                                id={`${uid}-tab-${i}`}
+                                role="tab"
+                                type="button"
+                                aria-selected={active === tab}
+                                aria-controls={`${uid}-tree`}
+                                onClick={() => setActive(tab)}
+                                className={active === tab ? "border-b-2 border-info text-ink" : "text-dim"}
+                            >
+                                {tab}
+                            </button>
+                        ) : (
+                            <span key={tab} className={i === 0 ? "border-b-2 border-info text-ink" : "text-dim"}>
+                                {tab}
+                            </span>
+                        )
+                    )}
+                </div>
+            ) : null}
+            <ul id={`${uid}-tree`} aria-label={title} className="m-0 px-1 py-1.5">
+                {current.map((node, i) => (
                     <BrowserRow
                         key={node.id ?? `${i}-${node.name}`}
                         node={node}
