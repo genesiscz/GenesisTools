@@ -1137,7 +1137,10 @@ describe("doctor removals go through the tools rm verdict", () => {
             expect(move.mock.calls[0]?.[0][0]?.rule).toBe("doctor:fixture");
             expect(move.mock.calls[0]?.[0][0]?.target.path).toBe(cache);
             expect(move.mock.calls[0]?.[1].graceMinutes).toBe(0);
+            expect(move.mock.calls[0]?.[0][0]?.bytes).toBeUndefined();
             expect(drainer).toHaveBeenCalledTimes(1);
+            await removeForDoctor(cache, { analyzerId: "fixture", bytes: 4096 });
+            expect(move.mock.calls[1]?.[0][0]?.bytes).toBe(4096);
             expect(await removeForDoctor(join(allowed, "gone"), { analyzerId: "fixture" })).toEqual({ removed: false });
         } finally {
             move.mockRestore();

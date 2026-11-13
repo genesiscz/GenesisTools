@@ -395,7 +395,7 @@ function deleteDirectoryAction(id: string, label: string, path: string, bytes: n
         method: "delete",
         execute: async (_ctx: ExecutorContext, finding) => {
             try {
-                const removal = await removeForDoctor(path, { analyzerId: "dev-caches" });
+                const removal = await removeForDoctor(path, { analyzerId: "dev-caches", bytes });
 
                 if (removal.refusal) {
                     throw new Error(`Refusing removal: ${removal.refusal}`);
@@ -765,7 +765,7 @@ export function cleanPackageCacheAction(args: {
                     error: guarded.error,
                 };
             }
-            const removal = await removeForDoctor(args.path, { analyzerId: "dev-caches" });
+            const removal = await removeForDoctor(args.path, { analyzerId: "dev-caches", bytes: args.bytes });
 
             if (removal.refusal) {
                 return {

@@ -165,7 +165,7 @@ function deleteCacheAction(path: string, bytes: number): Action {
         method: "delete",
         execute: async (_ctx: ExecutorContext, finding) => {
             try {
-                const removal = await removeForDoctor(path, { analyzerId: "system-caches" });
+                const removal = await removeForDoctor(path, { analyzerId: "system-caches", bytes });
 
                 if (removal.refusal) {
                     throw new Error(`Refusing removal: ${removal.refusal}`);
