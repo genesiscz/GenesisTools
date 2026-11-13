@@ -20,6 +20,7 @@ import { resolveProject } from "../lib/project";
 import { withMeetingsClient } from "../lib/service/client";
 import { fail, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
+import { sourceAudioSummary } from "../lib/source-audio";
 import { windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
 
@@ -156,7 +157,7 @@ async function list(opts: { project?: string; json?: boolean; full?: boolean; li
         return;
     }
 
-    const table = createBoxTable(["WHEN", "ID", "PROJECT", "SOURCES", "CONTEXT", "ITEMS"]);
+    const table = createBoxTable(["WHEN", "ID", "PROJECT", "SOURCES", "AUDIO", "CONTEXT", "ITEMS"]);
 
     for (const record of records) {
         const open = record.items.filter((item) => item.status === "suggested").length;
@@ -165,6 +166,7 @@ async function list(opts: { project?: string; json?: boolean; full?: boolean; li
             pc.white(record.id),
             record.project ?? pc.yellow("none"),
             Object.keys(record.sources).join(", ") || "—",
+            sourceAudioSummary(record) ? "preserved" : "—",
             String(record.context.length),
             record.items.length === 0 ? "—" : `${record.items.length} (${open} open)`,
         ]);

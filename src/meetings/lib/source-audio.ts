@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { constants, lstatSync } from "node:fs";
 import { chmod, copyFile, link, mkdir, stat, unlink } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { cloneOrCopy, type Placement } from "@genesiscz/utils/fs/clone";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { logger } from "@genesiscz/utils/logger";
@@ -11,6 +11,7 @@ import {
     type MeetingStore,
     type PreservedSourceAudio,
 } from "@genesiscz/utils/meetings/record";
+import type { MeetingEvidence, MeetingSourceId, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { type SourceRef, sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-source-audio");
@@ -190,4 +191,79 @@ export async function preserveSourceAudio(options: {
             }
         });
     }
+}
+
+/** Legacy stopgap locations belong to their source; future sources must define their own lookup. */
+const LEGACY_AUDIO: Record<MeetingSourceId, (root: string, sourceMeetingId: string) => string[]> = {
+    wisprflow: (root, id) => [join(dirname(root), "meetings-audio-archive", encodeURIComponent(id), "upload.ogg")],
+};
+
+/** Keeps the rest of the source evidence and prefers the owned media, even after the provider removes its file. */
+export function withPreservedSourceAudio(
+    record: MeetingRecord,
+    evidence: MeetingEvidence | null
+): MeetingEvidence | null {
+    const audio = preservedSourceAudio(record);
+    return audio ? { ...(evidence ?? { segments: [], speaking: [], files: [] }), audioPath: audio.path } : evidence;
+}
+
+export type SourceAudioSync = {
+    record: MeetingRecord;
+    status: "preserved" | "already-preserved" | "missing";
+};
+
+/** Explicit lifecycle operation, never called by an evidence or playback read. */
+export async function syncSourceAudio(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    source: TranscriptSource;
+    sourceMeetingId: string;
+}): Promise<SourceAudioSync> {
+    const { store, record, source, sourceMeetingId } = options;
+    const ref = { sourceId: source.id, sourceMeetingId };
+    const evidence = await source.evidence(sourceMeetingId);
+    const candidates = [
+        ...(evidence?.audioPath ? [evidence.audioPath] : []),
+        ...LEGACY_AUDIO[source.id](store.root, sourceMeetingId),
+    ];
+    let sourcePath: string | undefined;
+    for (const candidate of candidates) {
+        try {
+            const file = lstatSync(candidate);
+            if (file.isFile() && file.size > 0) {
+                sourcePath = candidate;
+                break;
+            }
+        } catch (error) {
+            if (!(error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))) {
+                throw error;
+            }
+        }
+    }
+    if (!sourcePath) {
+        const saved = preservedSourceAudio(record, ref);
+        if (saved) {
+            return { record, status: "already-preserved" };
+        }
+        log.warn(
+            { meetingId: record.id, source: source.id, sourceMeetingId },
+            "No source audio is available to preserve; the record stays linked"
+        );
+        return { record, status: "missing" };
+    }
+    const result = await preserveSourceAudio({ store, meetingId: record.id, ref, sourcePath });
+    return { record: result.record, status: result.status };
+}
+
+/** Cheap list marker: metadata plus file presence/size, never a provider lookup or hash. */
+export function sourceAudioSummary(record: MeetingRecord): { sources: string[]; bytes: number } | undefined {
+    const sources: string[] = [];
+    let bytes = 0;
+    for (const [sourceId, audio] of Object.entries(record.audio?.sources ?? {})) {
+        if (preservedSourceAudio(record, { sourceId, sourceMeetingId: audio.sourceMeetingId })) {
+            sources.push(sourceId);
+            bytes += audio.bytes;
+        }
+    }
+    return sources.length > 0 ? { sources, bytes } : undefined;
 }

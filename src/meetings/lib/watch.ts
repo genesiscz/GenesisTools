@@ -87,19 +87,23 @@ function defaultDeps(store: MeetingStore): WatchDeps {
         liveRecording: async () => (await meetingSource((await current()).id)).liveRecording(),
         recorder: () => readRecorderState(store),
         recording: (meetingId) => store.read(meetingId)?.recording,
-        refresh: async (meetingId, sourceRef) =>
-            (
-                await linkSource({
-                    store,
-                    config: new MeetingsConfigStore(),
-                    sourceRef,
-                    meetingRef: meetingId,
-                    command: "watch refresh",
-                    createdBy: "autostart",
-                    quiet: true,
-                    refresh: true,
-                })
-            ).record,
+        refresh: async (meetingId, sourceRef) => {
+            const result = await linkSource({
+                store,
+                config: new MeetingsConfigStore(),
+                sourceRef,
+                meetingRef: meetingId,
+                command: "watch refresh",
+                createdBy: "autostart",
+                quiet: true,
+                refresh: true,
+            });
+            if (result.audio === "missing") {
+                // Keep the bounded end-refresh pending when the provider publishes its audio after the transcript.
+                throw new Error("Source audio is not available yet; the watcher will retry preservation.");
+            }
+            return result.record;
+        },
         run: (args) => execTool(args, { timeout: TOOL_TIMEOUT_MS }),
         lastActivityAt: (meetingId) => lastRecordingActivity(store, meetingId),
         endInterrupted: async (meetingId, at) => {

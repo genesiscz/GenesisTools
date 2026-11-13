@@ -14,6 +14,7 @@ import {
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { resolveProject } from "./project";
+import { type SourceAudioSync, syncSourceAudio } from "./source-audio";
 import { meetingSource } from "./sources";
 
 const { log } = logger.scoped("meetings-link");
@@ -129,6 +130,7 @@ function laterEnd(recordEnd: string | undefined, sourceEnd: string | undefined):
 export interface LinkResult {
     record: MeetingRecord;
     created: boolean;
+    audio?: SourceAudioSync["status"];
 }
 
 /**
@@ -193,7 +195,13 @@ export async function linkSource(options: {
             applySource({ record: current, sourceId: ref.source, block, meeting, refresh: options.refresh });
             current.project ??= project;
         });
-        return { record, created: false };
+        const audio = await syncSourceAudio({
+            store: options.store,
+            record,
+            source,
+            sourceMeetingId: meeting.sourceMeetingId,
+        });
+        return { record: audio.record, created: false, audio: audio.status };
     }
 
     const record = await options.store.create(
@@ -209,7 +217,13 @@ export async function linkSource(options: {
         },
         { command: options.command, change: `created from ${change}` }
     );
-    return { record, created: true };
+    const audio = await syncSourceAudio({
+        store: options.store,
+        record,
+        source,
+        sourceMeetingId: meeting.sourceMeetingId,
+    });
+    return { record: audio.record, created: true, audio: audio.status };
 }
 
 /** The `--play-links` of a transcript: a link per time that plays the meeting from there, and what to warn about. */
