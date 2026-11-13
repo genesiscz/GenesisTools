@@ -84,14 +84,16 @@ export function collectShapes(diff: string, skip: (file: string) => boolean): Ma
     };
 
     for (const line of diff.split("\n")) {
-        if (line.startsWith("+++ ")) {
-            file = line.slice(4).replace(/^b\//, "");
+        if (line.startsWith("--- ")) {
+            const old = line.slice(4).replace(/^a\//, "");
+            file = old === "/dev/null" ? "" : old;
             continue;
         }
 
-        if (line.startsWith("--- ")) {
-            const old = line.slice(4).replace(/^a\//, "");
-            file = old === "/dev/null" ? file : old;
+        if (line.startsWith("+++ ")) {
+            const next = line.slice(4).replace(/^b\//, "");
+            // A deleted file's new side is /dev/null: its removed lines still belong to the old path.
+            file = next === "/dev/null" ? file : next;
             continue;
         }
 

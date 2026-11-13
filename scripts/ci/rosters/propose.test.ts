@@ -53,6 +53,30 @@ describe("collectShapes and rankCandidates", () => {
 
         expect(keys).not.toContain("call:loadThroughStore");
     });
+
+    test("a deleted file's removed lines count under its old path, a new file's added lines under its new path", () => {
+        const stats = collectShapes(
+            [
+                "diff --git a/src/old.ts b/src/old.ts",
+                "deleted file mode 100644",
+                "--- a/src/old.ts",
+                "+++ /dev/null",
+                "@@ -1 +0,0 @@",
+                "-    await legacyLoad(path);",
+                "diff --git a/src/new.ts b/src/new.ts",
+                "new file mode 100644",
+                "--- /dev/null",
+                "+++ b/src/new.ts",
+                "@@ -0,0 +1 @@",
+                "+    return legacyLoad(inner);",
+            ].join("\n"),
+            (file) => !file.startsWith("src/")
+        );
+        const found = stats.get("call:legacyLoad");
+
+        expect([...(found?.removedFiles ?? [])]).toEqual(["src/old.ts"]);
+        expect([...(found?.addedFiles.keys() ?? [])]).toEqual(["src/new.ts"]);
+    });
 });
 
 describe("shadowedCandidates", () => {
