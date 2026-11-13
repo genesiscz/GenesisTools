@@ -1,8 +1,8 @@
 // The fixture is the smallest session that has every shape the reader joins, built from the layout of a real session
 // (2026-11-10): a run record, a journal, transcripts with a response written as two rows, an agent only the journal
 // knows, and a run that left no record. Ported from the session-analyzer skill's `scripts/workflows.test.ts`.
-import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claudeHooks } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/harness-hooks";
@@ -32,6 +32,21 @@ const SESSION = "aaaaaaaa-1111-4111-8111-111111111111";
 const RUN_A = "wf_aaaa1111-001";
 const RUN_B = "wf_bbbb2222-002";
 
+/** Every temporary folder a test made, removed once the file's tests ran. */
+const madeDirs: string[] = [];
+
+function tempDir(prefix: string): string {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    madeDirs.push(dir);
+    return dir;
+}
+
+afterAll(() => {
+    for (const dir of madeDirs) {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 function jsonl(rows: unknown[]): string {
     return `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`;
 }
@@ -56,7 +71,7 @@ function assistantRow(messageId: string, timestamp: string, block: Record<string
 }
 
 function buildSession(): string {
-    const project = mkdtempSync(join(tmpdir(), "gt-workflows-reader-"));
+    const project = tempDir("gt-workflows-reader-");
     const parent = join(project, `${SESSION}.jsonl`);
     const records = join(project, SESSION, "workflows");
     const runA = join(project, SESSION, "subagents", "workflows", RUN_A);
@@ -240,7 +255,7 @@ describe("the Claude session folder layout", () => {
     });
 
     test("a session with no sub-agent folder lists nothing and has no run", async () => {
-        const lonely = join(mkdtempSync(join(tmpdir(), "gt-workflows-none-")), `${SESSION}.jsonl`);
+        const lonely = join(tempDir("gt-workflows-none-"), `${SESSION}.jsonl`);
         writeFileSync(lonely, jsonl([{ type: "user", message: "hi" }]));
         expect(claudeSubagentTranscripts(lonely)).toEqual([]);
         expect(await runsOf(lonely)).toEqual([]);
@@ -319,6 +334,21 @@ describe("the Claude workflow reader", () => {
         } finally {
             writeFileSync(record, original);
         }
+    });
+
+    test("an unreadable journal leaves its run and the other runs listed, with the agents the record and folder name", async () => {
+        const local = buildSession();
+        const journal = join(local.replace(/\.jsonl$/, ""), "subagents", "workflows", RUN_A, "journal.jsonl");
+        // A folder where the journal belongs: it exists, so the reader opens it, and reading it fails.
+        renameSync(journal, `${journal}.moved`);
+        mkdirSync(journal);
+
+        const runs = await runsOf(local);
+        expect(runs.map((run) => run.runId)).toEqual([RUN_A, RUN_B]);
+        const run = pickWorkflowRun(runs, RUN_A);
+        expect(run.agents.map((agent) => agent.agentId).sort()).toEqual(["aaa1", "bbb2", "ccc3"]);
+        expect(run.agents.every((agent) => agent.journal === null && !agent.hasResult)).toBe(true);
+        expect(claudeWorkflows.results(run).size).toBe(0);
     });
 
     test("keeps a run that has transcripts but no run record", async () => {

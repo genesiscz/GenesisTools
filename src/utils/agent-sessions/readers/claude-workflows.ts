@@ -19,7 +19,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isDir } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import { concurrentMap } from "@genesiscz/utils/async";
-import { readLines } from "@genesiscz/utils/fs/read-lines";
+import { readLines, readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
@@ -156,29 +156,65 @@ function readRecordAgents(record: Row | null, drafts: Map<string, AgentDraft>): 
     }
 }
 
-/** The journal's rows with their 1-based line: a line is the evidence a caller cites. */
-function journalRows(journalPath: string): Array<{ line: number; row: Row }> {
+type JournalRow = { line: number; row: Row };
+
+function journalUnreadable(journalPath: string, line: number, error: unknown): void {
+    logger.warn(
+        { error, path: journalPath, readLines: line },
+        "[claude-workflows] journal unreadable: its agents keep what the record and the folder name, without journal lines or results past this line"
+    );
+}
+
+/**
+ * The journal's rows with their 1-based line (a line is the evidence a caller cites), read line by line, so a listing
+ * holds one row at a time and never the whole journal with every agent's result. An unreadable journal (removed after
+ * the check, a folder, no permission) ends the rows with a warning instead of failing every run of the session.
+ */
+async function* journalRows(journalPath: string): AsyncGenerator<JournalRow> {
     if (!existsSync(journalPath)) {
-        return [];
+        return;
     }
 
-    const rows: Array<{ line: number; row: Row }> = [];
+    let line = 0;
 
-    readFileSync(journalPath, "utf8")
-        .split("\n")
-        .forEach((raw, index) => {
+    try {
+        for await (const raw of readLines(journalPath)) {
+            line++;
             const row = raw.trim() ? parseRow(raw, journalPath) : null;
 
             if (row) {
-                rows.push({ line: index + 1, row });
+                yield { line, row };
             }
-        });
-
-    return rows;
+        }
+    } catch (error) {
+        journalUnreadable(journalPath, line, error);
+    }
 }
 
-function readJournalAgents(journalPath: string, drafts: Map<string, AgentDraft>): void {
-    for (const { line, row } of journalRows(journalPath)) {
+/** {@link journalRows} for the synchronous `results`: the one caller that wants the result bodies. */
+function* journalRowsSync(journalPath: string): Generator<JournalRow> {
+    if (!existsSync(journalPath)) {
+        return;
+    }
+
+    let line = 0;
+
+    try {
+        for (const raw of readLinesSync(journalPath)) {
+            line++;
+            const row = raw.trim() ? parseRow(raw, journalPath) : null;
+
+            if (row) {
+                yield { line, row };
+            }
+        }
+    } catch (error) {
+        journalUnreadable(journalPath, line, error);
+    }
+}
+
+async function readJournalAgents(journalPath: string, drafts: Map<string, AgentDraft>): Promise<void> {
+    for await (const { line, row } of journalRows(journalPath)) {
         const agentId = text(row.agentId);
 
         if (!agentId) {
@@ -271,12 +307,12 @@ function sizeOf(path: string): number {
     }
 }
 
-function readRun(input: {
+async function readRun(input: {
     runId: string;
     recordsDir: string;
     runDir: string | null;
     files: ClaudeSubagentFile[];
-}): WorkflowRun {
+}): Promise<WorkflowRun> {
     const { runId, recordsDir, runDir, files } = input;
     const recordFile = join(recordsDir, `${runId}.json`);
     const record = existsSync(recordFile) ? readJsonFile(recordFile) : null;
@@ -286,7 +322,7 @@ function readRun(input: {
     readRecordAgents(record, drafts);
 
     if (journalFile) {
-        readJournalAgents(journalFile, drafts);
+        await readJournalAgents(journalFile, drafts);
     }
 
     readDiskAgents(files, drafts);
@@ -348,7 +384,7 @@ function readRun(input: {
 }
 
 /** Every run of a session: the union of the run records and the run folders, oldest first. */
-export function claudeWorkflowRuns(sessionTranscript: string): WorkflowRun[] {
+export async function claudeWorkflowRuns(sessionTranscript: string): Promise<WorkflowRun[]> {
     const recordsDir = claudeWorkflowRecordsDir(sessionTranscript);
     const runDirs = new Map<string, string>();
 
@@ -367,9 +403,14 @@ export function claudeWorkflowRuns(sessionTranscript: string): WorkflowRun[] {
     }
 
     const runIds = [...new Set([...listRecordRunIds(recordsDir), ...runDirs.keys()])].sort();
-    const runs = runIds.map((runId) =>
-        readRun({ runId, recordsDir, runDir: runDirs.get(runId) ?? null, files: filesByRun.get(runId) ?? [] })
-    );
+    // One run after another: each journal streams, so a listing holds one row of one journal at a time.
+    const runs: WorkflowRun[] = [];
+
+    for (const runId of runIds) {
+        runs.push(
+            await readRun({ runId, recordsDir, runDir: runDirs.get(runId) ?? null, files: filesByRun.get(runId) ?? [] })
+        );
+    }
 
     // Unknown start times sort last: a run with no record was stopped before it could write one.
     return runs.sort(
@@ -380,7 +421,7 @@ export function claudeWorkflowRuns(sessionTranscript: string): WorkflowRun[] {
 function claudeWorkflowResults(run: WorkflowRun): Map<string, unknown> {
     const results = new Map<string, unknown>();
 
-    for (const { row } of run.journalPath ? journalRows(run.journalPath) : []) {
+    for (const { row } of run.journalPath ? journalRowsSync(run.journalPath) : []) {
         const agentId = text(row.agentId);
 
         if (row.type === "result" && agentId) {
@@ -472,7 +513,7 @@ async function claudeWorkflowGrep(
 
 export const claudeWorkflows: SessionWorkflowReader = {
     support: { supported: true },
-    runs: async (sessionTranscript) => ({ supported: true, items: claudeWorkflowRuns(sessionTranscript) }),
+    runs: async (sessionTranscript) => ({ supported: true, items: await claudeWorkflowRuns(sessionTranscript) }),
     results: claudeWorkflowResults,
     grep: claudeWorkflowGrep,
 };
