@@ -33,13 +33,16 @@ export function identifiedDepartures(options: {
                     stay.fromSec <= leave.atSec &&
                     stay.toSec >= leave.atSec - 5
             );
+            // An indicator assessed as stuck names nobody: not as the one shown speaking, and without attendance not as
+            // the only candidate either, since then the candidates would come from that same indicator.
+            const ignored = options.ignoredIndicator?.has(line.index) ?? false;
             const candidates = [
                 ...new Set(
                     present?.map((stay) => stay.name) ??
-                        Object.keys(line.speaking).filter((name) => !sameName(name, options.selfName))
+                        (ignored ? [] : Object.keys(line.speaking).filter((name) => !sameName(name, options.selfName)))
                 ),
             ];
-            const shown = options.ignoredIndicator?.has(line.index)
+            const shown = ignored
                 ? []
                 : candidates.filter((name) => Object.keys(line.speaking).some((other) => sameName(name, other)));
             const leaving =

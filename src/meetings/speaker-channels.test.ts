@@ -365,6 +365,13 @@ describe("shared indicator and departure APIs", () => {
         expect(
             identifiedDepartures({ hints, lines: shown, selfName: USER, presence, ignoredIndicator: new Set([0]) })
         ).toEqual([]);
+        // Without attendance the only candidate would come from that same stuck indicator: nobody is named.
+        expect(identifiedDepartures({ hints, lines: shown, selfName: USER })).toEqual([
+            { name: "Carol Example", atSec: 0, reason: "indicator" },
+        ]);
+        expect(identifiedDepartures({ hints, lines: shown, selfName: USER, ignoredIndicator: new Set([0]) })).toEqual(
+            []
+        );
     });
 });
 
