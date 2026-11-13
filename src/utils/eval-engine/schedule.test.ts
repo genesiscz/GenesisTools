@@ -237,6 +237,19 @@ describe("hardening regressions", () => {
         assert.equal(saved.records[0].attempt, 1);
     });
 
+    it("stops every other conversation before a record write failure ends the run", async () => {
+        const { system, input, options, store } = await setup(() => ({ reply: "ok" }));
+        store.writeFinal = async () => {
+            throw new Error("ENOSPC on the first record");
+        };
+        await assert.rejects(runPlan(input, options({ concurrency: 2 })), /ENOSPC/);
+        const openedAtFailure = system.log.opened.length;
+        await new Promise((done) => setTimeout(done, 20));
+
+        assert.equal(openedAtFailure, 2, "only the two conversations of the two workers were opened");
+        assert.equal(system.log.opened.length, openedAtFailure, "nothing opened after runPlan failed");
+    });
+
     it("cancels backoff without advancing the controlled clock", async () => {
         const { system, input, options } = await setup(() => ({ error: new EvalSystemError("transient", "502") }));
         input.plan = { ...input.plan, conversations: input.plan.conversations.slice(0, 1) };

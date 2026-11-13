@@ -279,10 +279,14 @@ export async function runPlan<TResolved, TSignals, THandle>(
     const done = await store.finalKeys();
     const pending = plan.conversations.filter((c) => !done.has(c.key));
     let spentUsd = (await store.finalRecords()).reduce((sum, record) => sum + recordCost(record), 0);
+    // A failure that ends the run (a record that could not be written) stops the other conversations too, so nothing
+    // opens or sends after runPlan has failed.
+    const failed = new AbortController();
+    const signal = AbortSignal.any([options.signal, failed.signal]);
     const limiter = createLimiter({
         max: options.concurrency,
         clock: options.clock,
-        signal: options.signal,
+        signal,
         onChange: (limitKey, limit) => options.onProgress?.({ type: "limit", limitKey, limit }),
     });
     const open = semaphore(Math.max(1, Math.floor(options.concurrency)));
@@ -297,14 +301,14 @@ export async function runPlan<TResolved, TSignals, THandle>(
         if (!scenario || !model || setup === undefined) {
             throw new Error(`the plan names ${conversation.key}, which the run does not hold`);
         }
-        if (!(await open.acquire(options.signal))) {
+        if (!(await open.acquire(signal))) {
             stopped = { reason: "aborted" };
             return;
         }
         let held = true;
         try {
             for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
-                if (options.signal.aborted) {
+                if (signal.aborted) {
                     stopped = { reason: "aborted" };
                     return;
                 }
@@ -346,13 +350,13 @@ export async function runPlan<TResolved, TSignals, THandle>(
                             harness: input.harness,
                             putPrompt: (text) => store.putPrompt(text),
                             keepGoing: options.keepGoing,
-                            signal: options.signal,
+                            signal,
                             now: () => new Date(options.clock.now()),
                         }
                     );
                 } catch (thrown) {
                     const error = asSystemError(thrown);
-                    if (options.signal.aborted) {
+                    if (signal.aborted) {
                         stopped = { reason: "aborted" };
                         return;
                     }
@@ -385,9 +389,9 @@ export async function runPlan<TResolved, TSignals, THandle>(
                         await waitOnEvalClock(
                             options.clock,
                             error.detail.retryAfterMs ?? Math.min(MaxPauseMs, 1000 * 2 ** (attempt - 1)),
-                            options.signal
+                            signal
                         );
-                        if (options.signal.aborted || !(await open.acquire(options.signal))) {
+                        if (signal.aborted || !(await open.acquire(signal))) {
                             stopped = { reason: "aborted" };
                             return;
                         }
@@ -407,6 +411,27 @@ export async function runPlan<TResolved, TSignals, THandle>(
         }
     };
 
-    await Promise.all(pending.map(play));
+    // A bounded pool: `concurrency` workers each take the next conversation, so a large plan holds no waiter per
+    // conversation. The first failure stops the pool, and every worker has ended before it is thrown.
+    const failures: unknown[] = [];
+    let next = 0;
+    const worker = async () => {
+        while (failures.length === 0 && next < pending.length) {
+            const conversation = pending[next++];
+            try {
+                await play(conversation);
+            } catch (error) {
+                failures.push(error);
+                failed.abort();
+            }
+        }
+    };
+    const workers = Math.max(1, Math.min(pending.length, Math.floor(options.concurrency)));
+    await Promise.all(Array.from({ length: workers }, worker));
+
+    if (failures.length > 0) {
+        throw failures[0];
+    }
+
     return { stopped, spentUsd };
 }
