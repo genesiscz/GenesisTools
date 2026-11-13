@@ -363,6 +363,32 @@ describe("video dispatch media bounds", () => {
 });
 
 describe("durable widget outbox", () => {
+    test("a watch stopped while another watch holds the worker lock ends at once and starts nothing", async () => {
+        const directory = await root();
+        // A live holder: this process's pid, so the lock is never stale and the new watch has to wait.
+        writeFileSync(join(directory, "worker.lock"), String(process.pid));
+        const controller = new AbortController();
+        let snapshots = 0;
+        const started = Date.now();
+        const worker = watchWidget({
+            root: directory,
+            signal: controller.signal,
+            emit: () => {},
+            dependencies: {
+                snapshot: async () => {
+                    snapshots++;
+                    throw new Error("a stopped watch never reads a snapshot");
+                },
+            },
+        });
+
+        setTimeout(() => controller.abort(), 100);
+        await worker;
+
+        expect(Date.now() - started).toBeLessThan(5_000);
+        expect(snapshots).toBe(0);
+    });
+
     test("a slow enqueue preserves later typing and newly attached media", async () => {
         const directory = await root();
         const firstId = randomUUID();

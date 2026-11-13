@@ -84,6 +84,47 @@ describe("file-lock: stale/orphaned lock handling", () => {
         expect(existsSync(lockPath)).toBe(true);
     });
 
+    it("an aborted signal ends a long wait at once, and the locked work never starts", async () => {
+        const lockPath = join(dir, "target.lock");
+        writeFileSync(lockPath, String(process.pid));
+        const controller = new AbortController();
+        let ran = false;
+        const started = Date.now();
+        const waiting = withFileLock(
+            lockPath,
+            async () => {
+                ran = true;
+            },
+            { timeoutMs: 30_000, signal: controller.signal }
+        );
+
+        setTimeout(() => controller.abort(new Error("widget closed")), 100);
+
+        await expect(waiting).rejects.toThrow("widget closed");
+        expect(Date.now() - started).toBeLessThan(5_000);
+        expect(ran).toBe(false);
+        expect(existsSync(lockPath)).toBe(true);
+    });
+
+    it("a lock taken after its caller gave up is released without running the work", async () => {
+        const lockPath = join(dir, "target.lock");
+        const controller = new AbortController();
+        controller.abort(new Error("gone"));
+        let ran = false;
+
+        await expect(
+            withFileLock(
+                lockPath,
+                async () => {
+                    ran = true;
+                },
+                { signal: controller.signal }
+            )
+        ).rejects.toThrow("gone");
+        expect(ran).toBe(false);
+        expect(existsSync(lockPath)).toBe(false);
+    });
+
     it("provides mutual exclusion under contention within one process", async () => {
         const lockPath = join(dir, "target.lock");
         let inFlight = 0;
