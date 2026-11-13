@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseDate } from "@genesiscz/utils/date";
 import { formatNumber } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { detectLanguage, embedText } from "@genesiscz/utils/macos/nlp";
+import * as p from "@genesiscz/utils/prompts/p";
 import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -114,6 +114,7 @@ function registerDownloadCommand(history: Command): void {
                             })),
                             { value: "__all__", label: "All contacts" },
                         ],
+                        cancel: "back",
                     });
 
                     if (p.isCancel(selected)) {
@@ -163,6 +164,7 @@ function registerDownloadCommand(history: Command): void {
                     const shouldEmbed = await p.confirm({
                         message: "Generate semantic embeddings for new messages?",
                         initialValue: true,
+                        cancel: "back",
                     });
 
                     if (!p.isCancel(shouldEmbed) && shouldEmbed) {
@@ -244,6 +246,7 @@ function registerEmbedCommand(history: Command): void {
                         })),
                         { value: "__all__", label: "All contacts" },
                     ],
+                    cancel: "back",
                 });
 
                 if (p.isCancel(selected)) {

@@ -97,6 +97,7 @@ export async function runLogin(opts: LoginOptions): Promise<number> {
             message: "Jenkins URL",
             initialValue: existing?.url ?? env.jenkins.getUrl() ?? DEFAULT_JENKINS_URL,
             placeholder: DEFAULT_JENKINS_URL ?? "https://jenkins.example.com",
+            cancel: "back",
         }));
 
     // isCancel BEFORE normalizing: p.text answers with a cancel SYMBOL, and
@@ -133,6 +134,7 @@ export async function runLogin(opts: LoginOptions): Promise<number> {
             message: "Jenkins username (the corporate login, not your full name)",
             initialValue: existing?.user ?? env.jenkins.getUser(),
             validate: (value) => (value.trim() ? undefined : "Required — a token alone authenticates as anonymous."),
+            cancel: "back",
         }));
 
     if (p.isCancel(user)) {
@@ -140,7 +142,7 @@ export async function runLogin(opts: LoginOptions): Promise<number> {
         return 1;
     }
 
-    const token = opts.token ?? (await p.password({ message: "Paste the API token" }));
+    const token = opts.token ?? (await p.password({ message: "Paste the API token", cancel: "back" }));
 
     if (p.isCancel(token)) {
         p.cancel("Cancelled.");

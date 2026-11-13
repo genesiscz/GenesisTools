@@ -1,9 +1,9 @@
 import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import { parseAttachmentsFilter, saveConversationExport } from "@app/macos/lib/messages/export";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { iMessagesDatabase } from "@genesiscz/utils/macos/iMessagesDatabase";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 
 export const MESSAGES_SHOW_FORMATS = ["text", "markdown"] as const;
@@ -56,6 +56,7 @@ async function promptShowFormat(): Promise<MessagesShowFormat | null> {
             { value: "text", label: "text — plain transcript" },
             { value: "markdown", label: "markdown — headings and quotes" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {

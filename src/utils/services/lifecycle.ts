@@ -1,6 +1,7 @@
 import { commandWords, execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
-import { batchPsInfo, captureSync, type PsRow } from "@genesiscz/utils/process/ps";
+import { captureSync } from "@genesiscz/utils/process/capture";
+import { type PsRow, readProcessRows } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { portIsOpen } from "./ensure";
 import { LAUNCHD_PREFIX, parseLaunchctlList, type ServiceRow } from "./inventory";
@@ -93,7 +94,7 @@ export function verifiedServicePids(row: ServiceRow, pids: number[], snapshot: M
 }
 
 function signalWave(row: ServiceRow, pids: number[], name: "SIGTERM" | "SIGKILL"): number[] {
-    const snapshot = batchPsInfo(pids);
+    const snapshot = readProcessRows(pids);
     const verified = new Set(verifiedServicePids(row, pids, snapshot));
     const signalled: number[] = [];
 
@@ -107,7 +108,7 @@ function signalWave(row: ServiceRow, pids: number[], name: "SIGTERM" | "SIGKILL"
         }
 
         try {
-            // pid-verified: this wave's fresh batchPsInfo snapshot matched the inventory command exactly.
+            // pid-verified: this wave's fresh readProcessRows snapshot matched the inventory command exactly.
             process.kill(pid, name);
             signalled.push(pid);
         } catch (error) {

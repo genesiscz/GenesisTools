@@ -109,9 +109,11 @@ describe("mock dashboard client qa surface (smoke — wired, even if fixtures ar
         expect(read.ok).toBe(true);
     });
 
-    it("qa.subscribe emits then closes cleanly", async () => {
+    it("the live qa channel emits then closes cleanly", async () => {
         const received = await new Promise<boolean>((resolve) => {
-            const sub = fixtureDashboardClient.qa.subscribe(() => resolve(true));
+            const sub = fixtureDashboardClient.live.subscribe(["qa"], {
+                onFrame: (frame) => resolve(frame.channel === "qa"),
+            });
             setTimeout(() => {
                 sub.close();
                 resolve(false);

@@ -16,19 +16,19 @@ import { getFileTools } from "@ask/tools/file-tools";
 import { getLanguageModel } from "@ask/types";
 import { expandAtMentions } from "@ask/utils/at-mentions";
 import { webSearchTool } from "@ask/utils/websearch";
-import * as p from "@clack/prompts";
 import { transcriptionManager } from "@genesiscz/utils/ai/transcription/TranscriptionManager";
 import { watchToolRun } from "@genesiscz/utils/cli/failures/watch";
+import { answerReadmeFlag } from "@genesiscz/utils/cli/readme-flag";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { input } from "@genesiscz/utils/prompts/clack";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { ToolSet } from "ai";
 import { tool } from "ai";
 import pc from "picocolors";
 
 // Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
+await answerReadmeFlag(import.meta.dir);
 
 import { showPricing } from "@ask/pricing/index";
 import type { Args, ChatConfig, CLIOptions, ProviderChoice } from "@ask/types";
@@ -98,17 +98,18 @@ class ASKTool {
                 return;
             }
 
-            // Apply config defaults from unified AIConfig
-            const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-            const aiConfig = await AIConfig.load();
-            const askDefaults = aiConfig.getAppDefaults("ask");
+            // Apply ask's chat defaults from the AI config. A chat model that is an account ref
+            // names an account, not a model, so it is not a model default here.
+            const { AiConfigStore } = await import("@genesiscz/utils/ai/config/AiConfigStore");
+            const askChat = (await AiConfigStore.load()).data().defaults.app?.ask?.chat;
+            const askModel = askChat?.model?.startsWith("@account/") ? undefined : askChat?.model;
 
-            if (!argv.provider && askDefaults?.provider) {
-                argv.provider = askDefaults.provider;
+            if (!argv.provider && askChat?.provider) {
+                argv.provider = askChat.provider;
             }
 
-            if (!argv.model && askDefaults?.model) {
-                argv.model = askDefaults.model;
+            if (!argv.model && askModel) {
+                argv.model = askModel;
             }
 
             // Fuzzy model matching: resolve partial model names
@@ -317,6 +318,7 @@ class ASKTool {
                 label: `${m.provider.name}/${m.model.id}`,
                 hint: m.model.name !== m.model.id ? m.model.name : undefined,
             })),
+            cancel: "back",
         });
 
         if (p.isCancel(choice)) {

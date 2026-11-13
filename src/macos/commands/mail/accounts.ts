@@ -1,8 +1,8 @@
 import { isStructuredFormat, printStructured } from "@app/macos/lib/mail/command-helpers";
-import * as p from "@clack/prompts";
 import { isQuietOutput } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
+import * as p from "@genesiscz/utils/prompts/p";
 import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 

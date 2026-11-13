@@ -1,10 +1,11 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { useMutation } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { Input } from "@ui/components/input";
 import { Check, Pencil, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { tmuxApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 const pillClass =
     "inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--dd-accent-from)]/15 px-2.5 py-0.5 font-mono text-[var(--dd-accent-from)] ring-1 ring-[var(--dd-accent-from)]/40";
@@ -33,7 +34,8 @@ export function TmuxSessionName({ name, editable = true, size = "sm", className 
     }, [editing, currentName]);
 
     const rename = useMutation({
-        mutationFn: (body: { from: string; to: string }) => tmuxApi.rename(body).then((r) => r.sessionName),
+        mutationFn: (body: { from: string; to: string }) =>
+            dashboard.call(ENDPOINTS.tmuxRename, body).then((r) => r.sessionName),
         onSuccess: (nextName) => {
             setCurrentName(nextName);
             setDraft(nextName);

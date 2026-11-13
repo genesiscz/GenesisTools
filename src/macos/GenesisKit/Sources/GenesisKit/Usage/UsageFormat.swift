@@ -91,15 +91,17 @@ public enum UsageFormat {
         return dayMonth.string(from: date)
     }
 
-    /// The short name of a window for a column or a lane: "5h", "Week", "Fable", or the CLI's label.
+    /// The short name of a window for a column or a lane, in plain words and sentence case: "5h", "Week", "Fable",
+    /// "Extra usage" (the paid overage), "Per model" (a model's own window with no model named), else the CLI's label.
     public static func windowName(kind: String?, label: String, scopeModel: String? = nil) -> String {
         if let scopeModel, !scopeModel.isEmpty { return scopeModel }
         switch kind {
         case "session": return "5h"
         case "weekly": return "Week"
         case "monthly": return "Month"
-        case "credit": return "Credit"
-        default: return label
+        case "credit": return "Extra usage"
+        case "scoped": return "Per model"
+        default: return label.prefix(1).uppercased() + label.dropFirst()
         }
     }
 

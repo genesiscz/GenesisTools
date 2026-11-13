@@ -1,29 +1,17 @@
 import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import type { EmbeddingModel, ImageModel, LanguageModel, SpeechModel, TranscriptionModel } from "ai";
+import type { CatalogEntry } from "../catalog/types";
 import type { AccountEntry } from "../config/schema";
 import type { AccountFeatures } from "./account-features";
+import type { Capability, ProviderKind } from "./capabilities";
 
 /**
  * A provider plugin is the extension point of the AI layer: adding a provider is
  * one folder plus one registry line, with no core edits.
  */
 
-export type ProviderKind = "api-key" | "subscription" | "local" | "gateway";
-
-export type Capability =
-    | "chat"
-    | "embed"
-    | "transcribe"
-    | "tts"
-    | "translate"
-    | "summarize"
-    | "classify"
-    | "sentiment"
-    | "image"
-    | "video"
-    | "realtime"
-    | "rerank";
+export type { Capability, ProviderKind } from "./capabilities";
 
 export interface CredentialSpec {
     /** Fields this provider needs from `account.credentials`. */
@@ -88,6 +76,13 @@ export interface ProviderPlugin {
     readonly credential: CredentialSpec;
     bind(ctx: BindContext): Promise<ProviderBinding>;
     health?(ctx: BindContext): Promise<HealthReport>;
+    /**
+     * The models this account serves right now, for a model picker. A plugin without a live
+     * listing leaves it out and the picker answers from the static catalog. `bind` never calls
+     * it, so binding an account stays free of network requests; an implementation may cache
+     * its answer per account id.
+     */
+    listModels?(ctx: BindContext): Promise<CatalogEntry[]>;
     /**
      * Account lifecycle and quota features: login, logout, home discovery, usage
      * polling, transcript scope. Absent on api-key, local and gateway plugins.

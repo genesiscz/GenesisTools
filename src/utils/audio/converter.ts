@@ -46,9 +46,45 @@ export async function convertToWhisperWav(audio: Buffer | string): Promise<Buffe
     }
 }
 
+/**
+ * The filter that keeps an audio stream on its container's clock: a first sample that starts after the first video
+ * frame, and any gap in the timestamps, are filled with silence, so a time in the output is a time in the movie.
+ */
+export const CONTAINER_CLOCK_FILTER = "aresample=async=1:first_pts=0";
+
+/**
+ * True when afconvert would lose the input's clock: a container with a video stream, or an audio stream that starts
+ * after 0. afconvert reads the first sample as time 0 and cannot pad, so such an input goes to ffmpeg.
+ */
+async function needsContainerClock(inputPath: string): Promise<boolean> {
+    try {
+        const proc = Bun.spawn(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,start_time", "-of", "csv=p=0", inputPath],
+            { stdout: "pipe", stderr: "pipe" }
+        );
+        const [text] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+        await proc.exited;
+
+        if (proc.exitCode !== 0) {
+            return false;
+        }
+
+        return text
+            .trim()
+            .split("\n")
+            .some((line) => {
+                const [type, start] = line.split(",");
+                return type === "video" || (type === "audio" && Number(start) > 0.001);
+            });
+    } catch (error) {
+        logger.debug({ error, inputPath }, "ffprobe could not read the input; afconvert is tried first");
+        return false;
+    }
+}
+
 async function convertFileToWhisperWav(inputPath: string, outputPath: string): Promise<Buffer> {
     try {
-        const afResult = await tryAfconvert(inputPath, outputPath);
+        const afResult = (await needsContainerClock(inputPath)) ? null : await tryAfconvert(inputPath, outputPath);
 
         if (afResult) {
             return afResult;
@@ -105,6 +141,9 @@ async function tryFfmpeg(inputPath: string, outputPath: string): Promise<Buffer 
                 "-y",
                 "-i",
                 inputPath,
+                "-vn",
+                "-af",
+                CONTAINER_CLOCK_FILTER,
                 "-ar",
                 "16000", // 16kHz
                 "-ac",
@@ -141,6 +180,41 @@ async function tryFfmpeg(inputPath: string, outputPath: string): Promise<Buffer 
 export const MONO_MP3_BITRATE_KBPS = 128;
 
 /**
+ * The ffmpeg argv of `convertFileToMonoMp3`: the input's audio tracks `tracks` (`a:N`, default the first), mixed with
+ * no level change when there are several, each kept on the container's clock, as one 16 kHz mono MP3.
+ */
+export function monoMp3Args(options: { input: string; output: string; tracks?: readonly number[] }): string[] {
+    const tracks = options.tracks && options.tracks.length > 0 ? options.tracks : [0];
+    const audio =
+        tracks.length === 1
+            ? ["-map", `0:a:${tracks[0]}`, "-af", CONTAINER_CLOCK_FILTER]
+            : [
+                  "-filter_complex",
+                  `${tracks.map((index) => `[0:a:${index}]`).join("")}amix=inputs=${tracks.length}:normalize=0,${CONTAINER_CLOCK_FILTER}[heard]`,
+                  "-map",
+                  "[heard]",
+              ];
+
+    return [
+        "ffmpeg",
+        "-y",
+        "-i",
+        options.input,
+        "-vn",
+        ...audio,
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "libmp3lame",
+        "-b:a",
+        `${MONO_MP3_BITRATE_KBPS}k`,
+        options.output,
+    ];
+}
+
+/**
  * Transcode any audio file to a single 16kHz mono MP3.
  *
  * This is the lowest common denominator every cloud STT model accepts:
@@ -151,35 +225,19 @@ export const MONO_MP3_BITRATE_KBPS = 128;
  *
  * `timeoutMs` bounds the transcode: on expiry ffmpeg is killed, the partial output removed, and
  * the call throws. A network input (an HLS playlist) needs it, since a live stream never ends.
+ * `tracks` picks the audio tracks to hear (see `monoMp3Args`); a late first sample keeps its place.
  *
  * @returns the output path on success.
  */
 export async function convertFileToMonoMp3(
     inputPath: string,
     outputPath: string,
-    options: { timeoutMs?: number } = {}
+    options: { timeoutMs?: number; tracks?: readonly number[] } = {}
 ): Promise<string> {
-    const proc = Bun.spawn(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            inputPath,
-            "-vn",
-            "-map",
-            "0:a:0",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-c:a",
-            "libmp3lame",
-            "-b:a",
-            `${MONO_MP3_BITRATE_KBPS}k`,
-            outputPath,
-        ],
-        { stdout: "pipe", stderr: "pipe" }
-    );
+    const proc = Bun.spawn(monoMp3Args({ input: inputPath, output: outputPath, tracks: options.tracks }), {
+        stdout: "pipe",
+        stderr: "pipe",
+    });
 
     let timedOut = false;
     const timer =

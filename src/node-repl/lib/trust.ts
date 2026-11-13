@@ -69,10 +69,19 @@ export function loadImportPolicy(path = importPolicyPath()): ImportPolicy {
         return DEFAULT_IMPORT_POLICY;
     }
 
+    let text: string;
+
+    // Its own step: a file that cannot be read (EACCES, EISDIR) was reported as "not valid JSON".
+    try {
+        text = readFileSync(path, "utf8");
+    } catch (error) {
+        throw new Error(`${path}: cannot be read (${error instanceof Error ? error.message : String(error)})`);
+    }
+
     let parsed: unknown;
 
     try {
-        parsed = SafeJSON.parse(readFileSync(path, "utf8"));
+        parsed = SafeJSON.parse(text);
     } catch (error) {
         throw new Error(`${path}: not valid JSON (${error instanceof Error ? error.message : String(error)})`);
     }

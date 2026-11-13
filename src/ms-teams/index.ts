@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { registerAuthCommand } from "@app/ms-teams/commands/auth";
 import { registerCallsCommand } from "@app/ms-teams/commands/calls";
 import { registerConversationsCommand } from "@app/ms-teams/commands/conversations";
 import { registerDoctorCommand } from "@app/ms-teams/commands/doctor";
@@ -15,11 +16,7 @@ import { registerShowCommand } from "@app/ms-teams/commands/show";
 import { registerSyncCommand } from "@app/ms-teams/commands/sync";
 import { registerTranscriptsCommand } from "@app/ms-teams/commands/transcripts";
 import { enhanceHelp, isInteractive, runTool } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 program
@@ -30,6 +27,7 @@ program
 
 registerSyncCommand(program);
 registerDoctorCommand(program);
+registerAuthCommand(program);
 registerRepairCommand(program);
 registerConversationsCommand(program);
 registerShowCommand(program);
@@ -54,8 +52,4 @@ program.action(() => {
 
 enhanceHelp(program);
 
-await runTool(program, { tool: "ms-teams" }).catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
-    out.error(message);
-    process.exit(1);
-});
+await runTool(program, { tool: "ms-teams" });

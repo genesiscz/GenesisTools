@@ -1,7 +1,8 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { assertApiKeySourceAllowed, resolveAccountApiKey } from "@app/ai-proxy/lib/providers/api-key-guard";
-import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
-import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
+import { defaultApiKeyEnvName, maskApiKey } from "@app/ai-proxy/lib/providers/api-key-state";
+import { OPENROUTER_API_BASE_URL } from "@app/ai-proxy/lib/providers/endpoints";
+import { type ExchangeFetch, exchange } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { mapOpenRouterReasoningEffort } from "@app/ai-proxy/lib/reasoning-effort-vocab";
 import type { AiProxyAccountConfig, AiProxyOpenRouterRoute, UsageSummary } from "@app/ai-proxy/lib/types";
@@ -12,8 +13,6 @@ import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
 import { isObject } from "@genesiscz/utils/object";
 import { matchGlob } from "@genesiscz/utils/string";
 
-export const OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1";
-
 const APP_NAME = "GenesisTools";
 const APP_URL = "https://github.com/genesiscz/GenesisTools";
 
@@ -23,14 +22,6 @@ function matchOpenRouterRoute(
     upstreamModel: string
 ): AiProxyOpenRouterRoute | undefined {
     return routes?.find((route) => matchGlob(upstreamModel, route.match));
-}
-
-function maskKey(key: string): string {
-    if (key.length <= 8) {
-        return "****";
-    }
-
-    return `${key.slice(0, 4)}…${key.slice(-4)}`;
 }
 
 /**
@@ -54,15 +45,21 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
     private readonly account: AiProxyAccountConfig;
     private readonly apiKey: string;
     private readonly baseUrl: string;
+    private readonly fetch: ExchangeFetch;
 
-    constructor(account: AiProxyAccountConfig, apiKey: string) {
+    constructor(account: AiProxyAccountConfig, apiKey: string, fetch: ExchangeFetch = fetchDirect) {
         this.account = account;
         this.accountFingerprint = accountConfigFingerprint(account);
         this.apiKey = apiKey;
+        this.fetch = fetch;
         this.baseUrl = (account.baseUrl ?? OPENROUTER_API_BASE_URL).replace(/\/$/, "");
     }
 
-    static async create(account: AiProxyAccountConfig): Promise<OpenRouterApiKeyProvider> {
+    /** `fetch` is the upstream seam for tests; the proxy always sends through `fetchDirect`. */
+    static async create(
+        account: AiProxyAccountConfig,
+        fetch: ExchangeFetch = fetchDirect
+    ): Promise<OpenRouterApiKeyProvider> {
         const envName = defaultApiKeyEnvName(account);
         const resolved = resolveAccountApiKey({
             account,
@@ -85,7 +82,7 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
             "ai-proxy: openrouter account using a billed API key"
         );
 
-        return new OpenRouterApiKeyProvider(account, resolved.key);
+        return new OpenRouterApiKeyProvider(account, resolved.key, fetch);
     }
 
     /**
@@ -122,7 +119,7 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
     /** `GET /api/v1/key` is key-scoped and real, unlike OpenAI's platform billing. */
     async getUsage(): Promise<UsageSummary> {
         try {
-            const response = await fetchDirect(`${this.baseUrl}/key`, {
+            const response = await this.fetch(`${this.baseUrl}/key`, {
                 headers: { Authorization: `Bearer ${this.apiKey}`, Accept: "application/json" },
             });
 
@@ -130,7 +127,7 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
                 return {
                     accountName: this.account.name,
                     provider: "openrouter",
-                    summary: `GET /key failed (${response.status}) for key ${maskKey(this.apiKey)}.`,
+                    summary: `GET /key failed (${response.status}) for key ${maskApiKey(this.apiKey)}.`,
                 };
             }
 
@@ -141,7 +138,7 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
                 return {
                     accountName: this.account.name,
                     provider: "openrouter",
-                    summary: `Key ${maskKey(this.apiKey)} present; /key returned no data block.`,
+                    summary: `Key ${maskApiKey(this.apiKey)} present; /key returned no data block.`,
                 };
             }
 
@@ -161,7 +158,7 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
             return {
                 accountName: this.account.name,
                 provider: "openrouter",
-                summary: `Key ${maskKey(this.apiKey)} present; usage lookup failed.`,
+                summary: `Key ${maskApiKey(this.apiKey)} present; usage lookup failed.`,
             };
         }
     }
@@ -243,62 +240,31 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
         return SafeJSON.stringify(body);
     }
 
-    private async forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
-        const started = performance.now();
+    private forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
         const streaming = /"stream"\s*:\s*true/.test(bodyText);
-        const upstreamBody = this.buildUpstreamBody(mapOpenRouterReasoningEffort(bodyText), upstreamModel, streaming);
         const defaults = this.account.openrouter;
 
-        try {
-            const upstream = await fetchDirect(`${this.baseUrl}${path}`, {
-                method: "POST",
-                body: upstreamBody,
-                signal: req.signal,
-                headers: {
-                    Authorization: `Bearer ${this.apiKey}`,
-                    "Content-Type": "application/json",
-                    Accept: req.headers.get("Accept") ?? "application/json",
-                    // Attribution on the openrouter.ai dashboard, so spend from
-                    // this proxy is distinguishable from a direct SDK call.
-                    "HTTP-Referer": defaults?.appUrl ?? APP_URL,
-                    "X-Title": defaults?.appName ?? APP_NAME,
-                },
-            });
-
-            const elapsedMs = Math.round(performance.now() - started);
-            logger[upstream.ok ? "debug" : "warn"](
-                { account: this.account.name, upstreamModel, path, status: upstream.status, elapsedMs },
-                `ai-proxy: openrouter upstream request ${upstream.ok ? "ok" : "failed"}`
-            );
-
-            return new Response(upstream.body, { status: upstream.status, headers: relayHeaders(upstream) });
-        } catch (err) {
-            if (req.signal.aborted) {
-                logger.debug({ account: this.account.name, path }, "ai-proxy: openrouter client aborted");
-                return new Response(null, { status: 499 });
-            }
-
-            logger.warn(
-                {
-                    err,
-                    account: this.account.name,
-                    upstreamModel,
-                    path,
-                    elapsedMs: Math.round(performance.now() - started),
-                },
-                "ai-proxy: openrouter upstream fetch threw"
-            );
-
-            return new Response(
-                SafeJSON.stringify({
-                    error: {
-                        message: err instanceof Error ? err.message : String(err),
-                        type: "upstream_error",
-                        code: "openrouter_api_fetch_failed",
+        return exchange({
+            fetch: this.fetch,
+            request: {
+                url: `${this.baseUrl}${path}`,
+                init: {
+                    method: "POST",
+                    body: this.buildUpstreamBody(mapOpenRouterReasoningEffort(bodyText), upstreamModel, streaming),
+                    headers: {
+                        Authorization: `Bearer ${this.apiKey}`,
+                        "Content-Type": "application/json",
+                        Accept: req.headers.get("Accept") ?? "application/json",
+                        // Attribution on the openrouter.ai dashboard, so spend from
+                        // this proxy is distinguishable from a direct SDK call.
+                        "HTTP-Referer": defaults?.appUrl ?? APP_URL,
+                        "X-Title": defaults?.appName ?? APP_NAME,
                     },
-                }),
-                { status: 502, headers: { "Content-Type": "application/json" } }
-            );
-        }
+                },
+            },
+            signal: req.signal,
+            log: { provider: "openrouter", account: this.account.name, route: path, fields: { upstreamModel } },
+            failureCode: "openrouter_api_fetch_failed",
+        });
     }
 }

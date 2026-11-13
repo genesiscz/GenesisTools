@@ -109,6 +109,7 @@ async function runInbox(opts: InboxOptions): Promise<void> {
         const selected = await p.select({
             message: "Inbox role",
             options: INBOX_ROLES.map((value) => ({ value, label: value })),
+            cancel: "back",
         });
         if (p.isCancel(selected)) {
             return;

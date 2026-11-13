@@ -58,11 +58,14 @@ describe("recordAnswer", () => {
     });
 });
 
+/** A 2x1 PNG; encodeRgbaToPng is async (it loads the canvas addon lazily) and setup() below is not. */
+const SOURCE_PNG = await encodeRgbaToPng(new Uint8ClampedArray([240, 40, 30, 255, 20, 100, 60, 255]), 2, 1);
+
 describe("answer image attachments", () => {
     function setup() {
         const root = mkdtempSync(join(tmpdir(), "qa-images-"));
         const path = join(root, "source.dat");
-        const bytes = encodeRgbaToPng(new Uint8ClampedArray([240, 40, 30, 255, 20, 100, 60, 255]), 2, 1);
+        const bytes = SOURCE_PNG;
         writeFileSync(path, bytes);
         return { root, path, bytes, logBase: join(root, "log"), attachmentsRoot: join(root, "durable") };
     }
@@ -199,7 +202,7 @@ describe("image import failure boundaries", () => {
     it("cleans only newly imported files if the owning answer cannot be appended", async () => {
         const root = mkdtempSync(join(tmpdir(), "qa-failed-append-"));
         const path = join(root, "shot.png");
-        writeFileSync(path, encodeRgbaToPng(new Uint8ClampedArray([1, 2, 3, 255]), 1, 1));
+        writeFileSync(path, await encodeRgbaToPng(new Uint8ClampedArray([1, 2, 3, 255]), 1, 1));
         const logBase = join(root, "blocked-log");
         const attachmentsRoot = join(root, "durable");
         mkdirSync(attachmentsRoot);
@@ -222,7 +225,7 @@ describe("image import failure boundaries", () => {
 
     it("rejects huge header dimensions before attempting to decode pixels", async () => {
         const root = mkdtempSync(join(tmpdir(), "qa-header-limit-"));
-        const bytes = encodeRgbaToPng(new Uint8ClampedArray([1, 2, 3, 255]), 1, 1);
+        const bytes = await encodeRgbaToPng(new Uint8ClampedArray([1, 2, 3, 255]), 1, 1);
         bytes.writeUInt32BE(100_000, 16);
         bytes.writeUInt32BE(100_000, 20);
         const path = join(root, "oversized.png");

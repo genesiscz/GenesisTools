@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { checkoutCodeStamp } from "@genesiscz/utils/rpc/code-stamp";
 import { z } from "zod";
 import type { DrainResult } from "./spool";
 import {
@@ -190,5 +190,5 @@ export function metricsSourceRoot(): string {
 }
 
 export function metricsCodeStamp(root = metricsSourceRoot()): string {
-    return createHash("sha1").update(root).digest("hex").slice(0, 12);
+    return checkoutCodeStamp(root);
 }

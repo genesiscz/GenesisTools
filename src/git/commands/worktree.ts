@@ -1,9 +1,11 @@
 /**
- * `tools git worktree config|init|sync-plans` — worktree creation policy for this repo.
+ * `tools git worktree config|init|sync-plans|backup` — worktree creation policy for this repo.
  *
  * `config` is the guided setup and the only place the policy is written. `init` creates or
  * finds a worktree and runs the configured install. `sync-plans` rescues `.claude/plans`
- * into the main checkout and is what the post-commit hook calls.
+ * into the main checkout and is what the post-commit hook calls. `backup` saves a linked
+ * worktree's commits, uncommitted changes and untracked files, proves the copy, and with
+ * `--remove` removes the worktree (core: `@genesiscz/utils/git` `backupWorktree`).
  *
  * `init` refuses to run unconfigured rather than defaulting, because a wrong base directory
  * scatters worktrees across the disk and moving one afterwards means rewriting its gitdir
@@ -12,19 +14,26 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { ui } from "@genesiscz/utils/cli/ui";
+import { formatBytes } from "@genesiscz/utils/format";
 import {
     assertLocalRepoConfigReplaceable,
+    backupWorktree,
     createGit,
+    DEFAULT_WORKTREE_BACKUP_MAX_COPY_BYTES,
     formatRepoConfig,
     loadRepoConfig,
+    planWorktreeBackup,
     type RepoConfig,
+    type WorktreeBackupPlan,
+    type WorktreeBackupResult,
     type WorktreeSection,
     writeLocalRepoConfig,
 } from "@genesiscz/utils/git";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -133,6 +142,7 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
                 { value: "reset", label: "Reset", hint: "answer every question from the defaults" },
             ],
             initialValue: "keep",
+            cancel: "back",
         });
 
         if (p.isCancel(action) || action === "keep") {
@@ -150,6 +160,7 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
                     { value: "plansSync", label: "plansSync", hint: String(current.plansSync ?? false) },
                 ],
                 required: true,
+                cancel: "back",
             });
 
             if (p.isCancel(picked)) {
@@ -175,6 +186,7 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
             message: "Base directory for new worktrees",
             options: presets.map((preset) => ({ value: preset.value, label: preset.label, hint: preset.example })),
             initialValue: start.base,
+            cancel: "back",
         });
 
         if (p.isCancel(picked)) {
@@ -191,6 +203,7 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
             placeholder: "bun install",
             initialValue: start.install ?? "",
             defaultValue: "",
+            cancel: "back",
         });
 
         if (p.isCancel(typed)) {
@@ -205,6 +218,7 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
         const confirmed = await p.confirm({
             message: "Copy .claude/plans back to the main checkout after each commit in a worktree?",
             initialValue: start.plansSync ?? true,
+            cancel: "back",
         });
 
         if (p.isCancel(confirmed)) {
@@ -228,7 +242,10 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
     };
 
     p.note(formatRepoConfig({ git: { worktrees: next.git?.worktrees } }), "About to write");
-    const confirmed = await p.confirm({ message: `Write to ${repoRoot}/.git/genesis-tools.config.json?` });
+    const confirmed = await p.confirm({
+        message: `Write to ${repoRoot}/.git/genesis-tools.config.json?`,
+        cancel: "back",
+    });
 
     if (p.isCancel(confirmed) || !confirmed) {
         p.cancel("Nothing written.");
@@ -289,7 +306,12 @@ async function runInit(options: WorktreeOptions): Promise<number> {
     const addArgs = options.create
         ? ["worktree", "add", "-b", branch, target, options.base ?? "HEAD"]
         : ["worktree", "add", target, branch];
-    const added = await git.executor.exec(addArgs);
+    const added = await git.executor.exec(addArgs, {
+        timeout: {
+            ms: 600_000,
+            reason: "a new worktree checks out the whole tree and runs the post-checkout hook, which installs",
+        },
+    });
 
     if (!added.success) {
         out.log.error(`git worktree add failed: ${added.stderr.trim()}`);
@@ -352,6 +374,175 @@ async function runSyncPlans(options: WorktreeOptions): Promise<number> {
     return 0;
 }
 
+interface BackupOptions {
+    remove?: boolean;
+    dryRun?: boolean;
+    note?: string;
+    maxCopyMb?: string;
+    json?: boolean;
+}
+
+const KEY_WIDTH = 11;
+
+function printPlan(plan: WorktreeBackupPlan): void {
+    const branch = plan.branch?.replace(/^refs\/heads\//, "") ?? null;
+    ui.header(`Worktree ${plan.path}`);
+    ui.kv("repository", `${plan.repo} (${plan.repoRoot})`, KEY_WIDTH);
+    ui.kv("branch", branch ?? "detached HEAD", KEY_WIDTH);
+    ui.kv("HEAD", plan.head.slice(0, 10), KEY_WIDTH);
+    ui.kv("base", plan.base ? `${plan.base.sha.slice(0, 10)} from ${plan.base.ref}` : "none found", KEY_WIDTH);
+    ui.kv(
+        "commits",
+        `${plan.commits.length} since the base${plan.merges > 0 ? ` (${plan.merges} merge commits skipped)` : ""}, ${plan.unreachable} on no branch, remote or tag`,
+        KEY_WIDTH
+    );
+    ui.kv("changed", `${plan.changed.length} tracked file(s)`, KEY_WIDTH);
+    ui.kv("staged", `${plan.staged.length} tracked file(s) in the index`, KEY_WIDTH);
+    ui.kv("untracked", `${plan.untracked.length} file(s) or folder(s)`, KEY_WIDTH);
+    ui.kv(
+        "ignored",
+        `${plan.ignored.length} kept${plan.ignored.length > 0 ? `: ${plan.ignored.slice(0, 5).join(", ")}${plan.ignored.length > 5 ? ", ..." : ""}` : ""}`,
+        KEY_WIDTH
+    );
+    ui.kv("copy size", formatBytes(plan.copyBytes), KEY_WIDTH);
+    ui.kv("locked", plan.locked === null ? "no" : plan.locked || "yes, without a reason", KEY_WIDTH);
+}
+
+function printBlockers(blockers: string[]): void {
+    if (blockers.length === 0) {
+        ui.ok("No blockers.");
+        return;
+    }
+
+    for (const blocker of blockers) {
+        ui.err(blocker);
+    }
+}
+
+/**
+ * Why a backup refused before writing: the plan's blockers, or the refusal itself when no blocker holds it (a backup
+ * root inside the worktree is checked after the plan).
+ */
+export function preWriteReasons(result: {
+    plan: Pick<WorktreeBackupPlan, "blockers">;
+    refusal: WorktreeBackupResult["refusal"];
+}): string[] {
+    if (result.plan.blockers.length > 0 || result.refusal === null) {
+        return result.plan.blockers;
+    }
+
+    return [result.refusal];
+}
+
+function printResult(result: WorktreeBackupResult): void {
+    printPlan(result.plan);
+
+    if (result.folder === null) {
+        printBlockers(preWriteReasons(result));
+        return;
+    }
+
+    ui.kv("folder", result.folder, KEY_WIDTH);
+
+    if (result.ref !== null) {
+        ui.kv("safety ref", result.ref, KEY_WIDTH);
+    }
+
+    const tree =
+        result.proof.treeMatches === null ? "" : result.proof.treeMatches ? ", tree matches HEAD" : ", tree DIFFERS";
+    const { uncommitted, staged, commits, copies } = result.proof;
+    ui.kv(
+        "proof",
+        `uncommitted ${uncommitted}; staged ${staged}; commits ${commits}${tree}; copies ${copies}`,
+        KEY_WIDTH
+    );
+
+    if (result.skipped.length > 0) {
+        ui.warn(`Not copied (sockets, fifos, devices): ${result.skipped.join(", ")}`);
+    }
+
+    if (result.removed) {
+        const branch = result.plan.branch?.replace(/^refs\/heads\//, "");
+        ui.ok(`Removed ${result.plan.path}${branch ? `; the branch ${branch} stays in the repository` : ""}.`);
+        return;
+    }
+
+    if (result.refusal !== null) {
+        ui.err(result.refusal);
+        return;
+    }
+
+    ui.ok("Backed up. The worktree stays (no --remove).");
+}
+
+/**
+ * The `--max-copy-mb` value in bytes, or null for anything but a plain decimal number of MiB: `Number()` alone reads
+ * `""` as 0 and `0x10` as 16. A byte count past `Number.MAX_SAFE_INTEGER` is refused too: a long run of digits reads
+ * as Infinity, and an Infinity limit would switch the copy ceiling off.
+ */
+export function parseMaxCopyMb(value: string | undefined): number | null {
+    if (value === undefined) {
+        return DEFAULT_WORKTREE_BACKUP_MAX_COPY_BYTES;
+    }
+
+    if (!/^(\d+(\.\d*)?|\.\d+)$/.test(value)) {
+        return null;
+    }
+
+    const bytes = Math.round(Number(value) * 1024 * 1024);
+    return Number.isSafeInteger(bytes) ? bytes : null;
+}
+
+/**
+ * 0 when the backup did what was asked, 2 when it is proven but `--remove` kept the worktree (a change or a process
+ * during the backup), 1 for any other refusal: a script can tell a usable backup from a failed one.
+ */
+export function backupExitCode(result: Pick<WorktreeBackupResult, "refusal" | "proven">): number {
+    if (result.refusal === null) {
+        return 0;
+    }
+
+    return result.proven ? 2 : 1;
+}
+
+async function runBackup(path: string, options: BackupOptions): Promise<number> {
+    const maxCopyBytes = parseMaxCopyMb(options.maxCopyMb);
+
+    if (maxCopyBytes === null) {
+        out.log.error(`--max-copy-mb takes a number of MiB, such as 512; got "${options.maxCopyMb}".`);
+        return 1;
+    }
+
+    try {
+        if (options.dryRun) {
+            const plan = await planWorktreeBackup({ path, maxCopyBytes, remove: options.remove });
+
+            if (options.json) {
+                out.result(plan);
+            } else {
+                printPlan(plan);
+                printBlockers(plan.blockers);
+                ui.dim("Dry run: nothing was written.");
+            }
+
+            return plan.blockers.length > 0 ? 1 : 0;
+        }
+
+        const result = await backupWorktree({ path, remove: options.remove, note: options.note, maxCopyBytes });
+
+        if (options.json) {
+            out.result(result);
+        } else {
+            printResult(result);
+        }
+
+        return backupExitCode(result);
+    } catch (err) {
+        out.log.error(err instanceof Error ? err.message : String(err));
+        return 1;
+    }
+}
+
 export function registerWorktreeCommand(program: Command, _storage: Storage): void {
     const worktree = program.command("worktree").description("worktree creation policy for this repo");
 
@@ -384,5 +575,20 @@ export function registerWorktreeCommand(program: Command, _storage: Storage): vo
         .option("--hook", "Internal: called by the post-commit hook")
         .action(async (options: WorktreeOptions) => {
             process.exitCode = await runSyncPlans(options);
+        });
+
+    worktree
+        .command("backup")
+        .description(
+            "back up a linked worktree (commit patches, uncommitted patch, untracked and ignored files), prove it, optionally remove it"
+        )
+        .argument("<path>", "The linked worktree's folder")
+        .option("--remove", "Remove the worktree once the backup is proven and nothing changed")
+        .option("--dry-run", "Print the plan and the blockers, write nothing")
+        .option("--note <text>", "What the work was, for the backup's README")
+        .option("--max-copy-mb <n>", "Refuse when untracked and ignored files to copy exceed this many MiB", "512")
+        .option("--json", "Print the plan (with --dry-run) or the result as JSON")
+        .action(async (path: string, options: BackupOptions) => {
+            process.exitCode = await runBackup(path, options);
         });
 }

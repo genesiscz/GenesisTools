@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { sessionCostSummary } from "@app/ai-spend/lib/workers/ledger";
 import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
 import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
 import { suggestCommand } from "@genesiscz/utils/cli";
@@ -9,6 +8,7 @@ import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
 import { WorkerDeliveryRejectedError } from "@genesiscz/utils/worker/delivery";
 import type { WorkerDriver, WorkerMeta, WorkerVerbOutcome } from "@genesiscz/utils/worker/driver";
 import { surfacesFromFlags } from "@genesiscz/utils/worker/isolation";
+import { sessionCostSummary } from "@genesiscz/utils/worker/spend-ledger";
 import { printWorkerTurn } from "@genesiscz/utils/worker/turn-report";
 import type { Command } from "commander";
 import pc from "picocolors";

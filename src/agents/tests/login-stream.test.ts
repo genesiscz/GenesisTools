@@ -145,7 +145,8 @@ describe("agents login stream (monitor contract)", () => {
             const betaTap = new JsonlTap(beta.stdout);
             await betaTap.waitUntil((line) => line.type === "ready", 8_000);
 
-            await leadTap.waitUntil((line) => line.type === "logged_in" && line.agent_name === "beta", 8_000);
+            // Main learns an arrival from agent_joined; a peer's logged_in is not shown to it any more.
+            await leadTap.waitUntil((line) => line.type === "agent_joined" && line.agent_name === "beta", 8_000);
 
             const sent = spawnAgents(home, [
                 "message",

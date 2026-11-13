@@ -369,8 +369,8 @@ async function toggle({
 }
 
 /**
- * An answer: the token's letter or set, the staged letters for a send, or the text of a reply. A reply to a decision
- * that takes several letters that names only letters ("a, c") answers with those letters.
+ * An answer: the token's letter or set, the staged letters and note for a send, or the text of a reply. A reply to a
+ * decision that takes several letters that names only letters ("a, c") answers with those letters.
  */
 async function answer({
     claim,
@@ -411,11 +411,16 @@ async function answer({
         );
     }
 
+    // A send delivers what is staged, as `sendDrafts` does: the note staged with the pick goes out as its text, since
+    // the answered row drops both draft fields.
+    const note = claim.tokenKind === "send" ? row?.draft?.trim() : undefined;
+
     try {
         const result = await deps.answer({
             session: decision.session,
             number: decision.number,
             ...(reply && !lettered ? { text: reply } : { option }),
+            ...(note ? { text: note } : {}),
             ...(claim.revision === undefined ? {} : { expectedRevision: claim.revision }),
             ...(claim.provider ? { provider: claim.provider } : {}),
             deliveryKey: key,

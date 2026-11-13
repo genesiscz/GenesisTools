@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseDecisionBlocks } from "./read";
-import { findRefs, isFooterLine, recommendedLetterIn, stripRecommendation } from "./reply-text";
+import { advisesAgainst, findRefs, isFooterLine, recommendedLetterIn, stripRecommendation } from "./reply-text";
 
 describe("stripRecommendation", () => {
     test("(recommended) and (My recommendation, because …) are removed and the reason kept", () => {
@@ -162,5 +162,9 @@ describe("parseDecisionBlocks with context, rationale and recommended", () => {
             "Keep traces (not recommended)",
         ]);
         expect(stripRecommendation("Keep traces (not recommended)").recommended).toBe(false);
+        // Two words between the negation and "recommend" still advise against the option.
+        expect(advisesAgainst("Keep traces: I would not really recommend it")).toBe(true);
+        expect(advisesAgainst("Keep traces: I don't really strongly recommend it")).toBe(true);
+        expect(advisesAgainst("Keep traces: recommended")).toBe(false);
     });
 });

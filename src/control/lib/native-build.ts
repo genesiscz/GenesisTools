@@ -3,10 +3,12 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 
 const REQUIRED_SOURCES = ["Package.swift", "Sources", "SnapshotSupport"] as const;
+const prof = profiler.scope("control-native");
 const RECEIPT_VERSION = 1;
 
 interface NativeSourceFile {
@@ -139,6 +141,67 @@ export const NATIVE_BUILD_LOCK_WAIT_MS = NATIVE_BUILD_TIMEOUT_MS + 60_000;
  */
 export const NATIVE_BUILD_WORKER_TIMEOUT_MS = NATIVE_BUILD_LOCK_WAIT_MS + NATIVE_BUILD_TIMEOUT_MS + 30_000;
 
+/** What one compile cost: the build process with every child it waited for (swift-frontend, ld). */
+export interface NativeBuildStats {
+    exitCode: number | null;
+    /** User plus system CPU, children included. */
+    cpuMs: number;
+    /** The largest resident set of the build or one of its children. */
+    peakRssBytes: number;
+}
+
+/** A compile that exited with an error, with what it cost. */
+export class NativeBuildFailed extends Error {
+    constructor(
+        message: string,
+        readonly stats: NativeBuildStats
+    ) {
+        super(message);
+        this.name = "NativeBuildFailed";
+    }
+}
+
+/** One rebuild as the day log and the profiling log keep it, so a slow or heavy rebuild can be found later. */
+export interface NativeBuildReport {
+    /** Who asked: `first-use`, `recording-start`, `recorder-service-start`, `recorder-service-check`. */
+    trigger: string;
+    /** The native sources the build compiled (`captureNativeSources`). */
+    fingerprint: string;
+    ms: number;
+    exitCode: number | null;
+    cpuMs?: number;
+    peakRssMb?: number;
+}
+
+function reportOf({
+    trigger,
+    fingerprint,
+    ms,
+    stats,
+}: {
+    trigger: string;
+    fingerprint: string;
+    ms: number;
+    stats?: NativeBuildStats;
+}): NativeBuildReport {
+    return {
+        trigger,
+        fingerprint,
+        ms: Math.round(ms),
+        exitCode: stats?.exitCode ?? null,
+        ...(stats ? { cpuMs: stats.cpuMs, peakRssMb: Math.round(stats.peakRssBytes / (1024 * 1024)) } : {}),
+    };
+}
+
+/** `[profile:control-native] ax-tool build <trigger> … <ms>`, the `[profile:cli]` line's shape. */
+function recordBuild(report: NativeBuildReport): void {
+    prof.record(
+        `ax-tool build ${report.trigger}`,
+        report.ms,
+        `exit=${report.exitCode ?? "none"} cpu=${report.cpuMs ?? "?"}ms rss=${report.peakRssMb ?? "?"}MB fp=${report.fingerprint.slice(0, 12)}`
+    );
+}
+
 /**
  * Compiles the native CLI unless it is already fresh, and records the receipt, one process at a
  * time. Agents start several `tools control` commands at once, and on a fresh checkout each of
@@ -150,14 +213,17 @@ export async function buildNativeOnce({
     sourceDir,
     lockPath,
     build,
+    trigger = "unknown",
     timeoutMs = NATIVE_BUILD_LOCK_WAIT_MS,
 }: {
     binary: string;
     sourceDir: string;
     lockPath: string;
-    build: () => Promise<void>;
+    build: () => Promise<NativeBuildStats | undefined>;
+    /** Who asked for the build; it goes into the rebuild's log line. */
+    trigger?: string;
     timeoutMs?: number;
-}): Promise<{ built: boolean }> {
+}): Promise<{ built: boolean; report?: NativeBuildReport }> {
     if (existsSync(lockPath)) {
         logger.info({ lockPath }, "another process is compiling ax-tool; waiting for it");
     }
@@ -170,19 +236,50 @@ export async function buildNativeOnce({
             }
 
             const before = captureNativeSources(sourceDir);
-            await build();
+            const started = performance.now();
+            let stats: NativeBuildStats | undefined;
+
+            try {
+                stats = await build();
+            } catch (error) {
+                const report = reportOf({
+                    trigger,
+                    fingerprint: before.fingerprint,
+                    ms: performance.now() - started,
+                    stats: error instanceof NativeBuildFailed ? error.stats : undefined,
+                });
+                logger.warn({ ...report, error, sourceDir }, "ax-tool rebuild failed");
+                recordBuild(report);
+                throw error;
+            }
+
             recordNativeBuild({ binary, sourceDir, before });
-            return { built: true };
+            const report = reportOf({
+                trigger,
+                fingerprint: before.fingerprint,
+                ms: performance.now() - started,
+                stats,
+            });
+            logger.info({ ...report, sourceDir }, "ax-tool rebuilt");
+            recordBuild(report);
+            return { built: true, report };
         },
         timeoutMs
     );
 }
 
-/** `swift build -c release` in `sourceDir`; throws with the compiler's last words on failure. */
-export async function swiftReleaseBuild(sourceDir: string): Promise<void> {
-    const command = ["swift", "build", "-c", "release"];
+const SWIFT_RELEASE_BUILD = ["swift", "build", "-c", "release"];
+
+/**
+ * `swift build -c release` in `sourceDir` (`command` for a test), with its cost; throws `NativeBuildFailed` with the
+ * compiler's last words on failure.
+ */
+export async function swiftReleaseBuild(
+    sourceDir: string,
+    command: readonly string[] = SWIFT_RELEASE_BUILD
+): Promise<NativeBuildStats> {
     logger.debug({ command, cwd: sourceDir }, "swift build started");
-    const proc = Bun.spawn(command, {
+    const proc = Bun.spawn([...command], {
         cwd: sourceDir,
         stdout: "pipe",
         stderr: "pipe",
@@ -194,8 +291,21 @@ export async function swiftReleaseBuild(sourceDir: string): Promise<void> {
         proc.exited,
     ]);
 
+    // The kernel adds each reaped child's usage to its parent's, so this covers the compiler processes too.
+    const usage = proc.resourceUsage();
+    const stats: NativeBuildStats = {
+        exitCode,
+        cpuMs: usage ? Math.round(Number(usage.cpuTime.total) / 1000) : 0,
+        peakRssBytes: usage?.maxRSS ?? 0,
+    };
+
     if (exitCode !== 0) {
         const details = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
-        throw new Error(`swift build exited ${exitCode ?? proc.signalCode}:\n${details.slice(-4000)}`);
+        throw new NativeBuildFailed(
+            `swift build exited ${exitCode ?? proc.signalCode}:\n${details.slice(-4000)}`,
+            stats
+        );
     }
+
+    return stats;
 }

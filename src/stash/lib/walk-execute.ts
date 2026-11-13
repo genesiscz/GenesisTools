@@ -358,7 +358,7 @@ export async function processAutoRemoves(args: { walk: Walk; projectRoot: string
 // ─── Interactive walk ─────────────────────────────────────────────────────────
 
 export async function walkInteractive(args: { walk: Walk; verb: string }): Promise<void> {
-    const { select, note } = await import("@clack/prompts");
+    const { select, note } = await import("@genesiscz/utils/prompts/p");
     while (!args.walk.isComplete()) {
         const region = args.walk.currentRegion();
         if (!region) {
@@ -380,7 +380,7 @@ export async function walkInteractive(args: { walk: Walk; verb: string }): Promi
         if (region.klass === "missing") {
             selectOpts.splice(1, 1);
         }
-        const sel = await select({ message: "decision?", options: selectOpts });
+        const sel = await select({ message: "decision?", options: selectOpts, cancel: "back" });
         if (typeof sel !== "string") {
             ui.warn(
                 `paused; resume with: ${toolCommand("stash", args.verb, args.walk.snapshot().stashName, "--continue")}`

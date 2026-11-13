@@ -3,10 +3,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { registerCaptureLifecycleCommands } from "@app/cmux/commands/capture-install";
-import * as p from "@clack/prompts";
 import { runTool } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Storage } from "@genesiscz/utils/storage/storage.ts";
 import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
@@ -79,6 +79,7 @@ program
                     { value: "uninstall", label: "Uninstall" },
                     { value: "cancel", label: pc.dim("Cancel") },
                 ],
+                cancel: "back",
             });
 
             if (p.isCancel(action) || action === "cancel") {
@@ -110,6 +111,7 @@ program
                             hint: "~1s startup (spawns bun), no regeneration needed",
                         },
                     ],
+                    cancel: "back",
                 });
 
                 if (p.isCancel(newMode)) {
@@ -155,6 +157,7 @@ program
                 label: rc,
             })),
             initialValues: rcPaths,
+            cancel: "back",
         });
 
         if (p.isCancel(selectedRcs)) {
@@ -176,6 +179,7 @@ program
                     hint: "~1s startup (spawns bun), no regeneration needed",
                 },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(hookMode)) {
@@ -194,6 +198,7 @@ program
             options: featureOptions,
             initialValues: ALL_FEATURES.map((f) => f.name),
             required: false,
+            cancel: "back",
         });
 
         if (p.isCancel(selectedFeatures)) {

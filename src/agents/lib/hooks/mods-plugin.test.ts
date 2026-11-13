@@ -23,7 +23,6 @@ import {
     sectionsOfCalls,
 } from "../../../../plugins/genesis-tools-mods/hooks/sections";
 import { MODS_DEFAULTS, modsSettings } from "../../../../plugins/genesis-tools-mods/hooks/settings";
-import { DEFAULT_HOOKS_CONFIG } from "./config";
 import { overflowPart } from "./diff/full";
 import { MOD_MAX_PATCH_CHARS, MODS_SESSION_VAR } from "./diff/run";
 import { MOD_SWITCHES, modSwitchKeys } from "./mods";
@@ -247,10 +246,6 @@ describe("idle compaction", () => {
 });
 
 describe("the mods section", () => {
-    it("the plugin's defaults are the CLI's, field for field", () => {
-        expect(MODS_DEFAULTS).toEqual(DEFAULT_HOOKS_CONFIG.mods);
-    });
-
     it("starts every mod off but the full diff and the idle compaction, and each one has a switch by name", () => {
         const valueAt = (key: string): unknown =>
             key

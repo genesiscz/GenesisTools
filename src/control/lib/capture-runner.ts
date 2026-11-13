@@ -15,8 +15,8 @@ import { join } from "node:path";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { renderAnnotationPlan } from "@genesiscz/utils/image";
+import { loadCanvas } from "@genesiscz/utils/image/canvas";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { NativeCaptureControls, nativeScreens, nativeTargetRegion, validateNativeCapturePlan } from "./capture-native";
 import {
     type Action,
@@ -292,7 +292,8 @@ export async function runCapturePlanWithSignal({
     signal: AbortSignal;
     guardFocus?: CaptureFocusGuard;
     stopGraceMs?: number;
-    onRecording?: () => void;
+    /** `sessionDir` is the recorder's own folder: ax-tool writes its first frame's time there (`movie-start.json`). */
+    onRecording?: (started: { sessionDir: string }) => void;
     /** The native recorder has to compile first (after a source change), which takes up to a minute. */
     onPreparing?: () => void;
 }): Promise<RunResult> {
@@ -336,7 +337,7 @@ export async function runCapturePlanWithSignal({
     if (backend === "native") {
         validateNativeCapturePlan(plan);
         try {
-            axTool = await ensureBinaryAsync({ signal, onBuild: onPreparing });
+            axTool = await ensureBinaryAsync({ signal, onBuild: onPreparing, trigger: "recording-start" });
         } catch (error) {
             throwIfCancelled("while the recorder was being built");
             throw error;
@@ -384,26 +385,58 @@ export async function runCapturePlanWithSignal({
     }
 
     throwIfCancelled("during focus");
-    if (cap.countdownSec && cap.countdownSec > 0) {
+    // With a countdown the native recorder starts as its last second begins, and the countdown holds zero until the
+    // first frame: arming takes about a second, which used to come after zero. The overlay stays out of the movie,
+    // because the native recorder leaves its window out. Peekaboo cannot leave a window out, so it starts after zero.
+    let arming: Promise<CaptureAttempt> | undefined;
+    const startRecorder = (excludeWindowIds: number[] = []): Promise<CaptureAttempt> => {
+        if (arming) {
+            return arming;
+        }
+
+        if (backend === "native") {
+            const spec = excludeWindowIds.length
+                ? { ...cap, excludeWindowIds: [...(cap.excludeWindowIds ?? []), ...excludeWindowIds] }
+                : cap;
+            const outDir = join(captureSessionsRoot(), `native-${randomUUID()}`);
+            arming = startCapture([axTool, ...nativeCaptureArgv(spec, outDir)], signal);
+        } else {
+            arming = startPeekabooCapture({ cap, warnings, signal });
+        }
+
+        return arming;
+    };
+    if (cap.countdownSec && cap.countdownSec > 0 && backend !== "native") {
         await runCountdown(Math.min(cap.countdownSec, 10), { signal });
+    } else if (cap.countdownSec && cap.countdownSec > 0) {
+        const armed = Promise.withResolvers<void>();
+        await runCountdown(Math.min(cap.countdownSec, 10), {
+            signal,
+            hold: {
+                // A failed start ends the hold; its error comes from the await below.
+                lastSecond: ({ excludeWindowIds }) => {
+                    startRecorder(excludeWindowIds).then(
+                        () => armed.resolve(),
+                        () => armed.resolve()
+                    );
+                },
+                until: armed.promise,
+            },
+        });
     }
 
-    throwIfCancelled("before the recorder started");
-    let attempt: CaptureAttempt;
-    if (backend === "native") {
-        const outDir = join(captureSessionsRoot(), `native-${randomUUID()}`);
-        attempt = await startCapture([axTool, ...nativeCaptureArgv(cap, outDir)], signal);
+    if (!arming) {
+        throwIfCancelled("before the recorder started");
+    }
 
-        if (!attempt.sessionDir) {
-            throwIfCancelled("while the recorder was arming");
+    const attempt = await startRecorder();
+    if (!attempt.sessionDir) {
+        throwIfCancelled("while the recorder was arming");
+
+        if (backend === "native") {
             throw new CaptureRunError(
                 `Native recording never started: ${attempt.failDiag}. No fallback was attempted.`
             );
-        }
-    } else {
-        attempt = await startPeekabooCapture({ cap, warnings, signal });
-        if (!attempt.sessionDir) {
-            throwIfCancelled("while the recorder was arming");
         }
     }
 
@@ -449,7 +482,7 @@ export async function runCapturePlanWithSignal({
         }
     }
     if (attempt.sessionDir && !signal.aborted) {
-        onRecording?.();
+        onRecording?.({ sessionDir: attempt.sessionDir });
     }
 
     const t0 = Date.now();
@@ -958,6 +991,7 @@ export async function runClickmap(opts: ClickmapOptions): Promise<ClickmapResult
     // so 1 image px == 1 point and gridlines land exactly on labeled coords.
     const w = Math.round(match.w);
     const h = Math.round(match.h);
+    const { createCanvas, loadImage } = await loadCanvas();
     const raw = await loadImage(rawPath);
     const scaled = createCanvas(w, h);
     const sctx = scaled.getContext("2d");

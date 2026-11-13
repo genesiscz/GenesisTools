@@ -1,8 +1,9 @@
 import { cameraHiddenId } from "./camera";
 import { denoiseSchema } from "./denoise";
 import { textAnimateOf } from "./overlays";
+import { timeToUs } from "./plan";
 import type { CursorSample, EditOp, EditProject } from "./project";
-import { MINIMUM_CLIP_US, newId, placeZoom, TEXT_MAX_CHARS } from "./project";
+import { CANVAS_ZOOM_HOLDS_FOCUS, MINIMUM_CLIP_US, newId, placeZoom, TEXT_MAX_CHARS } from "./project";
 
 /**
  * The ops that change an item that exists (a zoom, hidden part, text, shape, clip or lane) by its id, as the editor
@@ -20,6 +21,44 @@ const SPOTLIGHT_DIM = 0.5;
 /** The shortest a hidden part, text, shape or camera part may last. */
 const MINIMUM_ITEM_US = 100_000;
 
+/** The smallest share of the picture a hidden part's rectangle, or one of its keyframes, is wide or high. */
+const MINIMUM_PART_SIDE = 0.01;
+
+interface PartBox {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+type TrackKey = NonNullable<NonNullable<EditProject["redactions"]>[number]["track"]>[number];
+
+/** A box held inside the picture and at least 1 % wide and high: a drag past the edge stops at the edge. */
+function inPicture(box: PartBox): PartBox {
+    const width = clamp(box.width, MINIMUM_PART_SIDE, 1);
+    const height = clamp(box.height, MINIMUM_PART_SIDE, 1);
+    return { x: clamp(box.x, 0, 1 - width), y: clamp(box.y, 0, 1 - height), width, height };
+}
+
+/**
+ * A tracked part's keyframes after its rectangle moved from `from` to `to`: every key moves by the same amount and its
+ * size scales by the same ratio, each held inside the picture, so the part keeps its motion at the place it was put.
+ * The editor window moves the keys by the same rule (RedactionTrack.moved), measured from the box it shows.
+ */
+function movedKeys(keys: readonly TrackKey[], from: PartBox, to: PartBox): TrackKey[] {
+    const scaleX = to.width / Math.max(from.width, Number.EPSILON);
+    const scaleY = to.height / Math.max(from.height, Number.EPSILON);
+    return keys.map((key) => ({
+        atUs: key.atUs,
+        ...inPicture({
+            x: key.x + to.x - from.x,
+            y: key.y + to.y - from.y,
+            width: key.width * scaleX,
+            height: key.height * scaleY,
+        }),
+    }));
+}
+
 function missing(kind: string, id: string, ids: readonly string[]): Error {
     return new Error(`no ${kind} ${id}; ${kind}s: ${ids.join(", ") || "none"}`);
 }
@@ -36,10 +75,19 @@ export function setZoom(project: EditProject, op: Op<"setZoom">): EditProject {
     }
 
     const zoom = project.zooms[index];
-    // Placing the focus by hand makes a zoom that followed the cursor a manual one, unless the op names the mode.
-    const mode = op.mode ?? (op.focus ? "manual" : zoom.mode);
+    const canvas = zoom.target === "canvas";
+
+    if (canvas && op.mode === "follow") {
+        throw new RangeError(CANVAS_ZOOM_HOLDS_FOCUS);
+    }
+
+    // Placing the focus by hand makes a zoom that followed the cursor a manual one, unless the op names the mode. A
+    // canvas zoom saved with follow before the rule renders at its focus, so a change to it stores that manual mode.
+    const mode = canvas ? "manual" : (op.mode ?? (op.focus ? "manual" : zoom.mode));
+    // A tuned auto zoom becomes the user's: dropping origin keeps it through a later autoZoom.
+    const { origin: _origin, ...own } = zoom;
     const next = {
-        ...zoom,
+        ...own,
         mode,
         ...(op.scale === undefined ? {} : { scale: clamp(op.scale, 1, 4) }),
         ...(op.focus ? { focusX: clamp(op.focus.x, 0, 1), focusY: clamp(op.focus.y, 0, 1) } : {}),
@@ -61,10 +109,9 @@ export function setRedaction(project: EditProject, op: Op<"setRedaction">): Edit
         );
     }
 
-    const rect = op.rect ?? { x: item.x, y: item.y, width: item.width, height: item.height };
-    const width = clamp(rect.width, 0.01, 1);
-    const height = clamp(rect.height, 0.01, 1);
+    const rect = inPicture(op.rect ?? item);
     const {
+        track: oldTrack,
         label: oldLabel,
         follow: oldFollow,
         dim: oldDim,
@@ -84,12 +131,25 @@ export function setRedaction(project: EditProject, op: Op<"setRedaction">): Edit
     const cutout = op.cutout ?? oldCutout;
     // R8 11: 0 makes the edge sharp again.
     const dimAround = op.dimAround === undefined ? oldDimAround : op.dimAround || undefined;
+    // The renderers place a part with keyframes by its keys alone, so a new rect moves the keys with it, and a track
+    // sent with the op (the editor's, already moved) replaces them; [] makes the part fixed at its rect.
+    const track = op.track
+        ? op.track.map(({ at, ...box }) => ({ atUs: timeToUs(at), ...inPicture(box) })).sort((a, b) => a.atUs - b.atUs)
+        : op.rect && oldTrack?.length
+          ? movedKeys(oldTrack, item, rect)
+          : oldTrack;
+    const keyed = track && track.length > 0 ? track : undefined;
+
+    if (follow && keyed && (op.follow || op.track)) {
+        throw new Error(
+            `hidden part ${op.id} follows its text through ${keyed.length} keyframes, so it cannot follow the cursor too; send track: [] with follow: true to make it a fixed part that follows the cursor`
+        );
+    }
+
     const next = {
         ...rest,
-        x: clamp(rect.x, 0, 1 - width),
-        y: clamp(rect.y, 0, 1 - height),
-        width,
-        height,
+        ...rect,
+        ...(keyed ? { track: keyed } : {}),
         ...(op.style ? { style: op.style } : {}),
         ...(label === undefined ? {} : { label }),
         ...(follow === undefined ? {} : { follow }),
@@ -242,7 +302,9 @@ export function duplicateItem(project: EditProject, id: string): EditProject {
             throw new RangeError("no room after this zoom for a copy; zooms cannot overlap");
         }
 
-        const zooms = [...project.zooms, { ...zoom, id: newId("z"), ...span }].sort((a, b) => a.startUs - b.startUs);
+        // A copy is the user's own zoom, so a later autoZoom keeps it.
+        const { origin: _origin, ...own } = zoom;
+        const zooms = [...project.zooms, { ...own, id: newId("z"), ...span }].sort((a, b) => a.startUs - b.startUs);
         return { ...project, zooms };
     }
 
@@ -318,23 +380,50 @@ export function removeCameraHidden(project: EditProject, id: string): EditProjec
 }
 
 /**
+ * The corners, in 0...1 of the picture, of a square in pixels round `at` whose half side is `radius` times the
+ * picture's short side, so the circle drawn in it is round on any picture shape. Near an edge the square moves
+ * inward and keeps its size, so the circle is never cut flat.
+ */
+export function circleAround(
+    at: { x: number; y: number },
+    radius: number,
+    picture: { width: number; height: number }
+): { start: { x: number; y: number }; end: { x: number; y: number } } {
+    const short = Math.min(picture.width, picture.height);
+    const half = { x: (radius * short) / picture.width, y: (radius * short) / picture.height };
+    const centre = { x: clamp(at.x, half.x, 1 - half.x), y: clamp(at.y, half.y, 1 - half.y) };
+    return {
+        start: { x: centre.x - half.x, y: centre.y - half.y },
+        end: { x: centre.x + half.x, y: centre.y + half.y },
+    };
+}
+
+/** Where an arrow that points at `at` starts: towards the middle of the picture (the editor window's arrow tail). */
+export function arrowTail(at: { x: number; y: number }): { x: number; y: number } {
+    const toward = { x: at.x > 0.5 ? -1 : 1, y: at.y > 0.5 ? -1 : 1 };
+    return { x: clamp(at.x + toward.x * 0.09, 0, 1), y: clamp(at.y + toward.y * 0.09, 0, 1) };
+}
+
+/**
  * Where a new shape goes when the op gives no points: at `at`, else where the pointer is at its start (the cursor
- * track), else the middle. An arrow points at it from towards the middle; a box or circle goes round it.
+ * track), else the middle. An arrow points at it from towards the middle (arrowTail). A circle goes round it, round
+ * in pixels with a radius of 6 % of the picture's short side (circleAround). A box goes round it as 16 % of the
+ * picture's width by 12 % of its height, so its shape in pixels follows the picture's shape.
  */
 export function placedShape(
     kind: "arrow" | "box" | "circle",
-    at: { x: number; y: number }
+    at: { x: number; y: number },
+    picture: { width: number; height: number }
 ): { start: { x: number; y: number }; end: { x: number; y: number } } {
-    const unit = (value: number) => clamp(value, 0, 1);
-
     if (kind === "arrow") {
-        const toward = { x: at.x > 0.5 ? -1 : 1, y: at.y > 0.5 ? -1 : 1 };
-        return {
-            start: { x: unit(at.x + toward.x * 0.09), y: unit(at.y + toward.y * 0.09) },
-            end: { x: at.x, y: at.y },
-        };
+        return { start: arrowTail(at), end: { x: at.x, y: at.y } };
     }
 
+    if (kind === "circle") {
+        return circleAround(at, 0.06, picture);
+    }
+
+    const unit = (value: number) => clamp(value, 0, 1);
     return {
         start: { x: unit(at.x - 0.08), y: unit(at.y - 0.06) },
         end: { x: unit(at.x + 0.08), y: unit(at.y + 0.06) },
@@ -376,11 +465,18 @@ export function cursorPointAt(samples: readonly CursorSample[], ms: number): { x
 /**
  * One track's noise reduction, the editor's Audio tab rules: a track in or out of the cleaned tracks (every track is
  * no list, no track left is off), or a track's own strength in whole dB (with one track it is the base strength, and a
- * strength equal to the base is not written). Turning a track on turns the sound on.
+ * strength equal to the base is not written). Turning a track on turns the sound on. The movie's track count is the
+ * measured `audioTracks`, else the op's `trackCount`; with neither the op is refused, because a guessed count of 1
+ * kept every track cleaned when one was turned off.
  */
-export function denoiseTrack(project: EditProject, op: Op<"denoise">): EditProject {
+export function denoiseTrack(project: EditProject, op: Op<"denoise">, measured: { audioTracks?: number }): EditProject {
     const track = op.track ?? 0;
-    const count = Math.max(1, op.trackCount ?? 1);
+    const count = measured.audioTracks ?? op.trackCount;
+
+    if (count === undefined) {
+        throw new RangeError("a denoise op with a track needs the movie's track count (trackCount)");
+    }
+
     const settings = denoiseSchema.parse({ ...project.audio.denoise });
     const audio = { ...project.audio, include: op.on === false ? project.audio.include : true };
 

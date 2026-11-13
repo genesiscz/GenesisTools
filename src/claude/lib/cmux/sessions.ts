@@ -50,7 +50,7 @@ export async function listCandidates(opts: ListCandidatesOptions): Promise<Resto
         .slice(0, opts.limit);
 
     logger.debug(
-        { scope: listing.scope, total: listing.total, offered: recent.length, limit: opts.limit },
+        { scope: listing.scope, listed: listing.sessions.length, offered: recent.length, limit: opts.limit },
         "[claude-cmux] session candidates selected"
     );
 

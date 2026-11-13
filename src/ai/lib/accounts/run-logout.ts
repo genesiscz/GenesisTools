@@ -1,4 +1,3 @@
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type ClearableCredential, clearCredentials, removeAccount } from "@genesiscz/utils/ai/config/account-ops";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -8,6 +7,7 @@ import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import { resolveAccountName } from "./select-account";
 import { resolveAccountsProvider } from "./select-provider";
@@ -149,6 +149,7 @@ export async function runLogout(opts: RunLogoutOptions): Promise<void> {
             message: "Remove which credentials?",
             options: available.map((target) => ({ value: target, ...LABEL_OF[target] })),
             required: true,
+            cancel: "back",
         });
 
         if (p.isCancel(chosen)) {
@@ -171,7 +172,11 @@ export async function runLogout(opts: RunLogoutOptions): Promise<void> {
             `Logout "${account.name}"`
         );
 
-        const confirmed = await p.confirm({ message: "Remove these credentials?", initialValue: false });
+        const confirmed = await p.confirm({
+            message: "Remove these credentials?",
+            initialValue: false,
+            cancel: "back",
+        });
 
         if (p.isCancel(confirmed) || !confirmed) {
             p.cancel("Cancelled — nothing removed.");
@@ -219,6 +224,7 @@ async function offerToRemoveEmptyAccount(account: AccountEntry, interactive: boo
     const removeEntry = await p.confirm({
         message: `Remove the account entry "${account.name}" from the config entirely?`,
         initialValue: false,
+        cancel: "back",
     });
 
     if (p.isCancel(removeEntry) || !removeEntry) {

@@ -2,7 +2,8 @@ import { analysedSignature, parameterCount } from "../signature";
 import type { Analyser, Recommendation } from "./types";
 
 const FUNCTION_KINDS = new Set(["function", "method"]);
-const STRING_OR_COMMENT = /(["'`])(?:\\.|(?!\1)[^\\])*\1|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
+/** A string literal or a comment; a caller blanks the comments and keeps the strings, or blanks both. */
+export const STRING_OR_COMMENT = /(["'`])(?:\\.|(?!\1)[^\\])*\1|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
 
 /**
  * The deepest brace nesting inside a declaration. String literals and comments are blanked

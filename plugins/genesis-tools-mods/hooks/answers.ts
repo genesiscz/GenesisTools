@@ -12,6 +12,7 @@
 import type { ToolCallInput } from "claude-code";
 import { sessionDirOf } from "./agents-band";
 import { decisionLink, genesisProbe } from "./genesis";
+import { takesSeveral } from "./option-labels";
 import {
     agentsDir,
     type Host,
@@ -64,47 +65,6 @@ export interface LoggedDecision {
     draftOption?: string;
     draft?: string;
     at: number;
-}
-
-/** The letters a recommendation names when it is a rising set of two or more ("abc", "a, c", "a + c"). */
-function recommendedSet(recommended: string | undefined): boolean {
-    const plain = (recommended ?? "").trim().toLowerCase();
-
-    if (!/^[a-z](?:[\s,+&/]*[a-z])*$/.test(plain)) {
-        return false;
-    }
-
-    const letters = plain.replace(/[^a-z]/g, "");
-
-    for (let index = 1; index < letters.length; index++) {
-        if (letters.charCodeAt(index) <= letters.charCodeAt(index - 1)) {
-            return false;
-        }
-    }
-
-    return letters.length > 1;
-}
-
-const ASKS_FOR_SEVERAL =
-    /\b(?:any set of (?:the )?(?:letters|options)|(?:pick|choose|select|tick) (?:several|multiple|one or more|any number)|all that apply|several letters|multiple letters)\b/i;
-
-/**
- * Whether a decision takes any set of its options instead of one. A plugin file is standalone, so this copies
- * `takesSeveral` of src/question/lib/decisions/option-labels.ts: posted `multiple`, a recommendation of two or more
- * rising letters, or a prompt that asks for a set. The inbox JSON carries `multiple` already; a CLI without the field
- * and an ask read from the session's own messages (no log row) get the same answer from the text.
- */
-export function takesSeveral(row: {
-    multiple?: boolean;
-    recommended?: string;
-    prompt?: string;
-    options?: readonly unknown[];
-}): boolean {
-    if (row.options !== undefined && row.options.length < 2) {
-        return false;
-    }
-
-    return row.multiple === true || recommendedSet(row.recommended) || ASKS_FOR_SEVERAL.test(row.prompt ?? "");
 }
 
 /** A message the session sent to the inbox, or a question and answer it recorded. */
@@ -325,7 +285,7 @@ function answersOfValue(parsed: unknown, at: number): SessionAnswers | undefined
                 multiple: item.multiple === true,
                 recommended: text(item.recommended),
                 prompt,
-                options: options.length > 0 ? options : undefined,
+                options: options.length > 0 ? options.map((option) => option.letter) : undefined,
             });
 
             return {

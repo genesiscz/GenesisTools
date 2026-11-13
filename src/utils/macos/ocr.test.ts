@@ -56,7 +56,7 @@ describe("region tiles", () => {
         }
     );
 
-    it("reads a grid of tiles at most tilePx on a side, top row first, each reaching past its inner edges", () => {
+    it("reads a grid of cells at most tilePx on a side, top row first, each tile reaching past its inner edges", () => {
         const ultrawide = planOcrTiles({ width: 2880, height: 1205 });
         expect(ultrawide).toHaveLength(6);
         expect(ultrawide[0]).toEqual({ x: 0, y: 0.47, width: 1 / 3 + 0.03, height: 0.53 });
@@ -70,9 +70,19 @@ describe("region tiles", () => {
             { width: 1440, height: 2560 },
         ]) {
             for (const tile of planOcrTiles(size)) {
+                // The cell is at most tilePx; the overlap adds up to 3% of the image on each inner side.
                 expect(tile.width * size.width).toBeLessThanOrEqual(DEFAULT_OCR_TILE_PX + 0.06 * size.width);
                 expect(tile.height * size.height).toBeLessThanOrEqual(DEFAULT_OCR_TILE_PX + 0.06 * size.height);
             }
+        }
+    });
+
+    it("a tilePx of 0, below 1 or not finite plans the default grid instead of looping forever or reading nothing", () => {
+        const size = { width: 2880, height: 1205 };
+        const standard = planOcrTiles(size);
+
+        for (const bad of [0, 0.5, -960, Number.NaN, Number.POSITIVE_INFINITY]) {
+            expect(planOcrTiles(size, bad)).toEqual(standard);
         }
     });
 

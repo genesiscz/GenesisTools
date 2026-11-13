@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import * as p from "@clack/prompts";
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { registerAddCommand } from "./commands/add";
@@ -22,13 +21,7 @@ registerEditCommand(program);
 registerHistoryCommand(program);
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "benchmark" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        p.log.error(message);
-        process.exit(1);
-    }
+    await runTool(program, { tool: "benchmark" });
 }
 
 main();

@@ -751,9 +751,9 @@ describe("catalog pricing ladder", () => {
             if (miniPricing?.cachedReadPer1M) {
                 expect(miniPricing?.cachedReadPer1M).toBeCloseTo(miniPricing?.inputPer1M / 2, 1);
             }
-            // Cache creation should be free (0)
+            // A cache write is not an additive fee at OpenAI: it bills at the plain input rate.
             if (miniPricing?.cachedCreatePer1M !== undefined) {
-                expect(miniPricing?.cachedCreatePer1M).toBe(0);
+                expect(miniPricing?.cachedCreatePer1M).toBe(miniPricing?.inputPer1M);
             }
         });
 

@@ -70,7 +70,10 @@ interface RenderOptions {
     isCurrentNote?: (target: string) => boolean;
     /** Called with the raw target of `![[x]]`, `[[x]]`, `![](x)` and `[t](x)` (relative and file: hrefs only). */
     resolveAsset?: (target: string) => ResolvedAsset | null;
-    /** Relative and file: links and images render as plain text, so a rendered attachment cannot reach further files. */
+    /**
+     * Relative and file: links and images render as plain text unless `resolveAsset` names them, so a rendered
+     * attachment reaches only what its resolver allows (a linked note's own images on the share page).
+     */
     inertLocalLinks?: boolean;
     idPrefix?: string;
     /** Wrap each top-level block in `data-line-start`/`data-line-end` (1-based source lines, frontmatter counted). */
@@ -574,6 +577,28 @@ const CALLOUT_HEAD_RE = /^ {0,3}> ?\[!([A-Za-z][\w-]*)\]([-+])?[ \t]*([^\n]*)(?:
 // alias groups, optional custom titles, and fold markers — marked-alert@2 only
 // handles the 5 GH types and discards the custom title, so we own the whole
 // blockquote-callout path here instead.
+/**
+ * marked reads `Intro\n***\nSetup\n-----` as one Setext heading; in CommonMark (and Obsidian) the `***` or `___`
+ * line is a thematic break that ends the paragraph, so only `Setup` is the heading. Declining the Setext match
+ * lets the paragraph rule stop at the break.
+ */
+function setextStopsAtBreakExtension(): MarkedExtension {
+    return {
+        tokenizer: {
+            lheading(src) {
+                const match = this.rules.block.lheading.exec(src);
+                const hr = this.rules.block.hr;
+
+                if (match?.[1].split("\n").some((line) => hr.test(line))) {
+                    return undefined;
+                }
+
+                return false;
+            },
+        },
+    };
+}
+
 function obsidianCalloutExtension(): MarkedExtension {
     return {
         extensions: [
@@ -746,15 +771,14 @@ interface ImageRequest {
 
 function renderImage(opts: RenderOptions, image: ImageRequest): string {
     const local = isLocalHref(image.href);
-
-    if (local && opts.inertLocalLinks) {
-        return `<span class="dd-md-inert-link">${escapeHtml(image.alt || image.href)}</span>`;
-    }
-
     const asset = local ? (opts.resolveAsset?.(image.href) ?? null) : null;
 
     if (asset) {
         return renderAsset(asset, escapeHtml(image.alt || asset.name), true, image.size);
+    }
+
+    if (local && opts.inertLocalLinks) {
+        return `<span class="dd-md-inert-link">${escapeHtml(image.alt || image.href)}</span>`;
     }
 
     const src = escapeHtml(sanitizeUrl(image.href, SAFE_IMG_SRC_RE));
@@ -851,15 +875,14 @@ function buildMarked(opts: RenderOptions, book: FootnoteBook, openHtml: string[]
                 },
                 link(token: Tokens.Link): string {
                     const local = isLocalHref(token.href);
-
-                    if (local && opts.inertLocalLinks) {
-                        return `<span class="dd-md-inert-link">${this.parser.parseInline(token.tokens)}</span>`;
-                    }
-
                     const asset = local ? (opts.resolveAsset?.(token.href) ?? null) : null;
 
                     if (asset) {
                         return renderAsset(asset, this.parser.parseInline(token.tokens), false);
+                    }
+
+                    if (local && opts.inertLocalLinks) {
+                        return `<span class="dd-md-inert-link">${this.parser.parseInline(token.tokens)}</span>`;
                     }
 
                     // On a shared page a local file the page does not serve (a code file outside the vault)
@@ -889,6 +912,7 @@ function buildMarked(opts: RenderOptions, book: FootnoteBook, openHtml: string[]
             langPrefix: "hljs language-",
             highlight: highlightCode,
         }),
+        setextStopsAtBreakExtension(),
         obsidianCalloutExtension(),
         obsidianSyntaxExtension(book),
         detailsExtension(),
@@ -917,6 +941,40 @@ function lexDocument(md: Marked, markdown: string): Token[] {
     }
 
     return tokens;
+}
+
+/** A note body without its YAML frontmatter, cut by the rule the renderer uses. */
+export function stripFrontmatter(source: string): string {
+    const match = source.match(FRONTMATTER_RE);
+
+    return match ? source.slice(match[0].length) : source;
+}
+
+export interface NoteHeading {
+    /** The 0-based line of the body the heading starts on (a Setext heading: its text line). */
+    line: number;
+    depth: number;
+    text: string;
+}
+
+/**
+ * The top-level headings of a note body, read from the tokens the renderer draws, so a heading in a fence,
+ * an indented code block or an HTML block is never one. A heading inside a `<details>` fold is not listed.
+ */
+export function noteHeadings(body: string): NoteHeading[] {
+    const md = buildMarked({ resolveWikilink: () => null }, new FootnoteBook(), []);
+    const headings: NoteHeading[] = [];
+    let line = 0;
+
+    for (const token of lexDocument(md, body)) {
+        if (token.type === "heading") {
+            headings.push({ line, depth: token.depth, text: token.text });
+        }
+
+        line += lineCount(token.raw);
+    }
+
+    return headings;
 }
 
 function renderWithLineAnchors(md: Marked, markdown: string, lineOffset: number): string {

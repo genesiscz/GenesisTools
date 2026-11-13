@@ -101,6 +101,39 @@ public final class FlowFocusRuntime: ObservableObject {
             stateURL: root.appendingPathComponent("focus-snapshot.json"))
         participant = Participant(version: 1, pid: ProcessInfo.processInfo.processIdentifier,
                                   hostID: self.hostID, nonce: UUID(), launchDate: NSRunningApplication.current.launchDate)
+        // Settings, Focus: Retry and Details on "Focus is off" reach the runtime through the controller.
+        focus.reopenLedger = { [weak self] in self?.restart() }
+        focus.runtimeStatus = { [weak self] in self?.statusLine ?? "" }
+    }
+
+    /// Settings, Focus, Retry: stops and starts again, so a ledger that did not open, or an owner that went away, is
+    /// tried once more. A restart already running is not doubled.
+    public func restart() {
+        guard !reconnecting else { return }
+        reconnecting = true
+        PerfLog.mark("flow-focus.restart role=\(roleLine)")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.stop()
+            self.lastSnapshot = nil
+            self.reconnecting = false
+            await self.start()
+        }
+    }
+
+    /// What the runtime does now, in words, for Settings, Focus, Details when no error text explains "Focus is off".
+    var statusLine: String {
+        "\(roleLine)\nLedger: \(dataRoot.appendingPathComponent("activity.db").path)"
+    }
+
+    private var roleLine: String {
+        switch role {
+        case .stopped: return "Flow and Focus are not running in this window."
+        case .starting: return "Flow and Focus are starting."
+        case .owner: return "This window runs Flow and Focus."
+        case .client(let host): return "Flow and Focus run in another window (\(host))."
+        case .unavailable(let message): return "Flow and Focus are unavailable: \(message)"
+        }
     }
 
     public func start() async {
@@ -331,7 +364,12 @@ public final class FlowFocusRuntime: ObservableObject {
                 MainActor.assumeIsolated { self?.configuration.reload() }
             }
         configuration.$revision.dropFirst().sink { [weak self] _ in
-            guard let self, self.role.isOwner else { return }
+            guard let self else { return }
+            guard self.role.isOwner else {
+                // A client shows its own timer window, so it follows Show timer window too.
+                if case .client = self.role { self.focus.applyPresentation(appConfig: self.configuration.app) }
+                return
+            }
             self.focus.apply(appConfig: self.configuration.app)
             self.flow.setLabEnabled(self.configuration.dictationEnabled)
             self.schedulePublication()

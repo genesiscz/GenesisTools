@@ -688,17 +688,3 @@ export function redactHar(har: HarFile, options: RedactorOptions = {}): Redactio
 
     return { har: swept, changes: redactor.changes, skipped: redactor.skipped };
 }
-
-/** Redact a single entry (shared by `export --sanitize`). */
-export function redactEntry(
-    entry: HarEntry,
-    index = 0,
-    options: RedactorOptions = {}
-): { entry: HarEntry; changes: RedactionChange[] } {
-    const clone = SafeJSON.parse(SafeJSON.stringify(entry, { strict: true }), {
-        strict: true,
-    }) as HarEntry;
-    const redactor = new Redactor(options);
-    redactor.redactEntryInPlace(clone, index);
-    return { entry: clone, changes: redactor.changes };
-}

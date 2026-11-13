@@ -4,9 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildIntrospectText } from "@app/ai-proxy/lib/introspect";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-
-setupStorageSandbox();
 
 const scratch = mkdtempSync(join(tmpdir(), "gt-introspect-"));
 

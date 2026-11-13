@@ -1,0 +1,5 @@
+{
+    "about": "The intro card's logo types. overlays.ts PICTURE_EXTENSIONS is this list, and applyCard accepts a logo with each extension (recording-editor.test.ts). The editor's logo picker, CardsSection.logoTypes in EditorOverlayControls.swift, offers no file whose extension is missing here (Tests/RecorderHuntLogoPictureTypesTests.swift). `refused` are files the picker must not offer and the edit refuses.",
+    "extensions": ["png", "jpg", "jpeg", "jpe", "heic", "heif", "hif", "tif", "tiff", "gif", "webp", "bmp", "dib"],
+    "refused": ["svg", "psd", "jp2", "mp3"]
+}

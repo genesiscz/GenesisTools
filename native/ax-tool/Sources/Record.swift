@@ -349,6 +349,13 @@ private func resolveRecordWindow(_ options: RecordOptions) -> (id: CGWindowID, b
     return (id, frame)
 }
 
+/// A run's stats with `movieMs`, the movie's own length, when it wrote a movie. `durationMs` is the run's wall time,
+/// which also counts the wait for the first frame and the stop.
+func withMovieLength(_ stats: [String: Any], _ movieMs: Int?) -> [String: Any] {
+    guard let movieMs else { return stats }
+    return stats.merging(["movieMs": movieMs]) { _, new in new }
+}
+
 /// `--control-stdin` events: one JSON object per line on stderr, so a supervisor can stream them while the final
 /// result stays on stdout. Silent without the flag.
 enum CaptureEvents {
@@ -398,6 +405,13 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     var rateChanged: ((Double) -> Void)?
     private let configuration: SCStreamConfiguration
     private var firstTimestamp: CMTime?
+    /// `firstTimestamp` on the wall clock, taken when that frame arrives, before its PNG is written (up to a second
+    /// later). Every capture reports it as `firstFrameEpochMs`: the session's markers use the wall clock, so frames
+    /// anchored to the PNG's file time would sit late against them (src/utils/screen-recorder/native.ts).
+    private var firstFrameEpoch: Double?
+    /// `firstTimestamp` for readers off the frame queue, which can be busy for about a second writing the first PNG.
+    private let movieStartLock = NSLock()
+    private var movieStartTime: CMTime?
     private var lastTimestamp: CMTime?
     private(set) var kept: [KeptFrame] = []
     /// PNG encoding runs here, off `queue` (`consume`). At most `maxPendingEncodes` frames wait, each a full-size
@@ -660,8 +674,15 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     func consume(_ pixelBuffer: CVPixelBuffer, timestamp: CMTime) {
         if firstTimestamp == nil {
             firstTimestamp = timestamp
+            movieStartLock.lock()
+            movieStartTime = timestamp
+            movieStartLock.unlock()
             writer?.startSession(atSourceTime: timestamp)
             audio?.movieStarted(at: timestamp)
+            let hostNow = CMClockGetTime(CMClockGetHostTimeClock())
+            let at = epochMs(ofHostTime: timestamp, hostNow: hostNow, epochNowMs: Date().timeIntervalSince1970 * 1000)
+            firstFrameEpoch = at
+            noteMovieStart(at)
         }
         lastTimestamp = timestamp
         captured += 1
@@ -792,6 +813,16 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     /// The first frame's host time: the origin of every timestamp in the result, audio included.
     var origin: CMTime? { queue.sync { firstTimestamp } }
 
+    /// `origin` on the wall clock, in epoch milliseconds; nil before the first frame.
+    var firstFrameEpochMs: Double? { queue.sync { firstFrameEpoch } }
+
+    /// The same moment without waiting for the frame queue, for the cursor track's 60 Hz samples; nil before it.
+    var movieStart: CMTime? {
+        movieStartLock.lock()
+        defer { movieStartLock.unlock() }
+        return movieStartTime
+    }
+
     /// `set-fps`: a new rate pair, applied at once at the new active rate.
     func setFrameRates(active: Double?, idle: Double?) -> (active: Double, idle: Double) {
         queue.sync {
@@ -828,12 +859,30 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     var videoSucceeded: Bool { options.videoOut == nil || (writer?.status == .completed && !videoAppendFailed) }
 
+    /// The movie starts at this frame. Its wall-clock time goes into `movie-start.json` now, before the frame's PNG
+    /// (up to a second for a first retina frame), because the session hears of the start only from that PNG and
+    /// counts marks in movie time from this moment (src/control/lib/recording-native.ts MOVIE_START_FILE).
+    private func noteMovieStart(_ at: Double) {
+        guard options.videoOut != nil else { return }
+        let url = URL(fileURLWithPath: options.outDir).appendingPathComponent("movie-start.json")
+        do {
+            try JSONSerialization.data(withJSONObject: ["firstFrameEpochMs": at]).write(to: url, options: .atomic)
+        } catch {
+            warnings.append("the movie's first-frame time could not be written: \(error.localizedDescription)")
+        }
+    }
+
+    /// The movie's length (its first frame to its end), once `finishVideo` ended its writer session.
+    private(set) var movieMs: Int?
+
     /// `stop` is the host-clock moment recording stopped. Frames carry host-clock timestamps and
     /// the session started at the first one, so the end needs no duration from another origin.
     func finishVideo(stoppedAt stop: CMTime) {
         guard let writer, let writerInput else { return }
-        if firstTimestamp != nil {
-            writer.endSession(atSourceTime: movieSessionEnd(stop: stop, lastFrame: lastTimestamp))
+        if let firstTimestamp {
+            let end = movieSessionEnd(stop: stop, lastFrame: lastTimestamp)
+            writer.endSession(atSourceTime: end)
+            movieMs = movieLengthMs(first: firstTimestamp, end: end)
         }
         writerInput.markAsFinished()
         let done = DispatchSemaphore(value: 0)
@@ -965,8 +1014,12 @@ func cmdCaptureScreen() {
         display = displayContaining(CGPoint(x: target.bounds.midX, y: target.bounds.midY))
     case "region":
         guard let region = options.region else { errorExit("region mode needs --region x,y,w,h", code: "invalid-argument") }
-        guard let found = displayContaining(CGPoint(x: region.midX, y: region.midY)) else {
-            errorExit("no display contains the region", code: "display-missing")
+        // One display holds all of it: a midpoint lookup recorded past the display's edge or failed after the folder.
+        let displays = activeDisplays()
+        guard let id = regionDisplay(region, displays: displays.map { DisplayFrame(id: $0.id, bounds: $0.bounds) }),
+              let found = displays.first(where: { $0.id == id }) else {
+            let area = [region.minX, region.minY, region.width, region.height].map { String(Int($0.rounded())) }
+            errorExit("the area \(area.joined(separator: ",")) is not inside one display; run `ax-tool screens`", code: "display-missing")
         }
         display = found
         sourceRect = CGRect(x: region.minX - found.bounds.minX, y: region.minY - found.bounds.minY,
@@ -992,7 +1045,9 @@ func cmdCaptureScreen() {
 
     let content: SCShareableContent
     do {
-        content = try shareableContent(listing: indicator.windowIDs)
+        // The windows the movie leaves out too (the camera preview, a countdown): one the list does not hold yet
+        // could not be left out, so the movie would show it.
+        content = try shareableContent(listing: indicator.windowIDs.union(options.selection.excludedWindowIDs))
     } catch {
         errorExit("ScreenCaptureKit refused to enumerate content: \(error.localizedDescription)", code: captureErrorCode(error))
     }
@@ -1007,6 +1062,13 @@ func cmdCaptureScreen() {
     } else {
         guard let scDisplay = content.displays.first(where: { $0.displayID == display.id }) else {
             errorExit("display \(display.id) is not shareable", code: "display-missing")
+        }
+        // Fail closed: a window the caller asked to leave out that is not listed cannot be left out, and it would be
+        // filmed. The border's panels stay best effort (`shareableContent` warns about them).
+        do {
+            try requireExclusionsListed(options.selection.excludedWindowIDs, in: content)
+        } catch {
+            errorExit("\(error.localizedDescription), so nothing was recorded; try again", code: "failed")
         }
         let excluded = indicator.windowIDs.union(options.selection.excludedWindowIDs)
         filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
@@ -1083,28 +1145,37 @@ func cmdCaptureScreen() {
         }
         CGDisplayRegisterReconfigurationCallback(displayReconfigurationCallback, nil)
     }
-    // The rectangle the cursor track is relative to, in global points: the window as it moves, the region, or the
-    // recorded display (which a switch or follow-focus changes). The loop's 0.25 s tick keeps it current.
+    // The rectangle the cursor track is relative to, in global points: the window as it moves (the loop's 0.25 s
+    // tick keeps it current), the region, or the recorded display, which a switch or follow-focus changes. A movie keeps
+    // its first size and letterboxes a display of another shape into it, so that rectangle takes the movie's shape.
+    let movieSize = options.videoOut == nil ? nil : CGSize(width: width, height: height)
     let trackedRect = LockedRect(windowTarget?.bounds ?? options.region ?? sourceRect.map {
         $0.offsetBy(dx: display.bounds.minX, dy: display.bounds.minY)
-    } ?? display.bounds)
+    } ?? cursorTrackRect(display: display.bounds, movie: movieSize))
     var cursorTrack: CursorTrackWriter?
     if let path = argValue("--cursor-track") {
         cursorTrack = CursorTrackWriter(path: path, shapes: argValue("--cursor-shapes")) { trackedRect.value }
         if CommandLine.arguments.contains("--shortcuts") { cursorTrack?.watchShortcuts() }
         if cursorTrack == nil { recorder.warn("the cursor track \(path) could not be created") }
     }
+    // `started` only measures the run's wall time (stats.durationMs). The cursor track counts from the movie's first
+    // frame, which came up to 0.18 s before it when the capture records audio.
     let started = Date()
     host.cursorTrack = cursorTrack
-    cursorTrack?.start(at: started)
+    if options.mode == "screen", sourceRect == nil {
+        // Moved when the stream takes the new display, not on a later tick; the next row names the new point width.
+        host.onDisplayChange = { geometry in
+            trackedRect.value = cursorTrackRect(display: geometry.bounds, movie: movieSize)
+            cursorTrack?.pointWidthChanged()
+        }
+    }
+    cursorTrack?.start { recorder.movieStart }
     let cancelled = runRecordingLoop(duration: options.duration) {
         if let target = windowTarget,
            let rows = CGWindowListCopyWindowInfo([.optionIncludingWindow], target.id) as? [[CFString: Any]],
            let raw = rows.first?[kCGWindowBounds] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw) {
             indicator.update([bounds])
             trackedRect.value = bounds
-        } else if options.mode == "screen", sourceRect == nil {
-            trackedRect.value = host.display.bounds
         }
         guard options.mode == "screen" else { return recorder.failure == nil && !host.stopRequested }
 
@@ -1137,7 +1208,7 @@ func cmdCaptureScreen() {
     audio?.close()
     recorder.finishVideo(stoppedAt: stoppedAt)
     let endedEarly = captureEarlyEnd(cancelled: cancelled || host.stopRequested, displayRemoved: host.displayRemoved,
-                                     streamFailed: streamFailure != nil)
+                                     streamFailed: streamFailure != nil, exclusionUnresolved: host.exclusionFailure != nil)
 
     let outURL = URL(fileURLWithPath: options.outDir)
     let frames: [[String: Any]] = recorder.kept.map { frame in
@@ -1180,9 +1251,11 @@ func cmdCaptureScreen() {
         "source": "native", "captureEngine": "ScreenCaptureKit", "scope": options.mode, "cancelled": cancelled || host.stopRequested,
         "options": recordedOptions,
         "frames": frames,
-        "stats": ["durationMs": durationMs, "capturedFrames": recorder.captured, "keptFrames": recorder.kept.count,
-                  "droppedFrames": recorder.captured - recorder.kept.count, "bytesWritten": recorder.bytesWritten,
-                  "displaySwitches": recorder.displaySwitches, "heartbeatFrames": recorder.heartbeatFrames],
+        "stats": withMovieLength(["durationMs": durationMs, "capturedFrames": recorder.captured,
+                                  "keptFrames": recorder.kept.count,
+                                  "droppedFrames": recorder.captured - recorder.kept.count, "bytesWritten": recorder.bytesWritten,
+                                  "displaySwitches": recorder.displaySwitches, "heartbeatFrames": recorder.heartbeatFrames],
+                                 recorder.movieMs),
         "warnings": recorder.warnings,
         "sessionDir": options.outDir,
         "display": ["id": host.display.id],
@@ -1191,8 +1264,14 @@ func cmdCaptureScreen() {
     if let audio {
         data["tracks"] = audio.summaries(origin: recorder.origin)
     }
+    if let firstFrameEpochMs = recorder.firstFrameEpochMs {
+        data["firstFrameEpochMs"] = firstFrameEpochMs
+    }
     if let endedEarly {
         data["endedEarly"] = endedEarly.rawValue
+    }
+    if let exclusionFailure = host.exclusionFailure {
+        data["endedEarlyReason"] = exclusionFailure
     }
     if let streamFailure {
         data["streamError"] = streamFailure.localizedDescription
@@ -1279,6 +1358,8 @@ private final class ScreenStreamHost {
     private(set) var displaysUsed: [CGDirectDisplayID]
     /// The recorded display is gone and the recording ends with `display-removed`.
     var displayRemoved = false
+    /// Why a restart could not leave the excluded windows out; it ended the recording (`exclusion-unresolved`).
+    var exclusionFailure: String?
     /// The reconfiguration callback saw the recorded display leave while following focus.
     var displayLost = false
     /// A `stop` command or the end of stdin: end like SIGINT.
@@ -1290,6 +1371,8 @@ private final class ScreenStreamHost {
 
     let audio: NativeAudio?
     var cursorTrack: CursorTrackWriter?
+    /// Runs on the main thread each time the stream takes another display (a live switch or a restart).
+    var onDisplayChange: ((DisplayGeometry) -> Void)?
     /// `set-max-long-side` replaces `--max-long-side`.
     private var maxLongSide: Int?
     /// The size in points the stream records: the display in screen mode, else the window or region.
@@ -1509,6 +1592,7 @@ private final class ScreenStreamHost {
             displaysUsed.append(geometry.id)
         }
         indicator.update([geometry.bounds])
+        onDisplayChange?(geometry)
     }
 
     private func outputSize(for geometry: DisplayGeometry) -> CGSize? {
@@ -1525,11 +1609,14 @@ private final class ScreenStreamHost {
         let previousDisplay = display
         let previousSize = outputSize(for: display)
         let excluded = excludedWindowIDs
+        let requested = options.selection.excludedWindowIDs
         let stream = self.stream
         let recorder = self.recorder
         Task {
             do {
-                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                // A listing without a window the movie leaves out throws: the recording stays on its display, whose
+                // filter still leaves the window out.
+                let content = try await listedContent(requested)
                 guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else {
                     throw NSError(domain: "ax-tool", code: 2, userInfo: [NSLocalizedDescriptionKey: "display \(target) is not shareable"])
                 }
@@ -1567,9 +1654,9 @@ private final class ScreenStreamHost {
     private func restart(on target: CGDirectDisplayID) {
         let geometry = displayGeometry(target)
         do {
-            let content = try awaitResult(timeoutSeconds: 10) {
-                try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            }
+            // The old stream is gone with its display: a new one that cannot leave the window out ends the recording.
+            let requested = options.selection.excludedWindowIDs
+            let content = try awaitResult(timeoutSeconds: 10) { try await listedContent(requested) }
             guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else { return }
             indicator.update([geometry.bounds])
             let excluded = excludedWindowIDs
@@ -1590,8 +1677,13 @@ private final class ScreenStreamHost {
             adopt(geometry)
             deadTicks = 0
         } catch {
-            recorder.warn("could not restart the recording on display \(target): \(error.localizedDescription)")
-            CaptureEvents.error("failed", "could not restart the recording on display \(target): \(error.localizedDescription)")
+            let reason = "could not restart the recording on display \(target): \(error.localizedDescription)"
+            recorder.warn(reason)
+            CaptureEvents.error("failed", reason)
+            if error is UnresolvedExclusions {
+                // Not a plain lost display: the result names it, so the session pauses with the reason.
+                exclusionFailure = reason
+            }
             displayRemoved = true
         }
     }
@@ -1604,23 +1696,65 @@ private final class ScreenStreamHost {
 /// that ScreenCaptureKit's start and stop are XPC calls, and an XPC call that never answers used to
 /// hold this process forever. The caller's own grace kill exists too, but a timeout here reports a
 /// real error to the user instead of a silent kill.
-/// The shareable content once the window server lists `windowIDs` (the recording border's panels). A panel ordered in
-/// a moment ago is not listed until its change is committed, and no run loop had turned yet: the filter left it in,
-/// and its rounded corners were in every movie (review 2026-11-06: about 30 red pixels in each corner). Commits the
-/// panels, then asks again for at most `timeout` seconds; past it, the last answer stands.
+/// The shareable content once the window server lists `windowIDs` (the recording border's panels, and the windows the
+/// movie leaves out). A panel ordered in a moment ago is not listed until its change is committed, and no run loop had
+/// turned yet: the filter left it in, and its rounded corners were in every movie (review 2026-11-06: about 30 red
+/// pixels in each corner). Commits the panels, then asks again for at most `timeout` seconds; past it, the last answer
+/// stands. Each retry has only the time left, and a retry that fails or stalls keeps the last answer too (`pollListing`).
 func shareableContent(listing windowIDs: Set<CGWindowID>, timeout: TimeInterval = 1) throws -> SCShareableContent {
     CATransaction.flush()
-    let deadline = Date().addingTimeInterval(timeout)
-    while true {
-        let content = try awaitResult { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
-        let listed = Set(content.windows.map(\.windowID))
-        if windowIDs.isSubset(of: listed) { return content }
-        if Date() >= deadline {
-            FileHandle.standardError.write(Data("ax-tool: the recording border is not listed yet; the movie may show its corners\n".utf8))
-            return content
-        }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    let polled = try pollListing(
+        timeout: timeout,
+        wait: { RunLoop.current.run(until: Date().addingTimeInterval($0)) },
+        fetch: { remaining in
+            try awaitResult(timeoutSeconds: remaining ?? 30) {
+                try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            }
+        },
+        isListed: { content in windowIDs.isSubset(of: Set(content.windows.map(\.windowID))) }
+    )
+    switch polled.end {
+    case .listed:
+        break
+    case .deadline:
+        let missing = windowIDs.subtracting(Set(polled.value.windows.map(\.windowID))).sorted().map(String.init).joined(separator: ",")
+        FileHandle.standardError.write(Data("ax-tool: windows \(missing) are not listed yet; the movie may show them (the recording border, a window it leaves out)\n".utf8))
+    case .retryFailed(let reason):
+        FileHandle.standardError.write(Data("ax-tool: listing the windows again failed (\(reason)); the movie may show the recording border or a window it leaves out\n".utf8))
     }
+    return polled.value
+}
+
+/// Throws when a window the caller asked the movie to leave out still exists but `content` does not list it: a display
+/// filter built from `content` could not leave it out, so the movie would show it. Every display filter of a recording
+/// (the start, a display switch, a restart) checks this; the recording border's panels stay best effort.
+func requireExclusionsListed(_ requested: Set<CGWindowID>, in content: SCShareableContent) throws {
+    let unresolved = unlistedExclusions(requested, in: content)
+    guard unresolved.isEmpty else { throw UnresolvedExclusions(ids: unresolved) }
+}
+
+private func unlistedExclusions(_ requested: Set<CGWindowID>, in content: SCShareableContent) -> [CGWindowID] {
+    unresolvedExclusions(requested: requested, listed: Set(content.windows.map(\.windowID)), exists: windowExists)
+}
+
+/// The shareable content of a display switch or a restart once it lists every window in `requested`, asking again
+/// for at most `timeout` seconds (`awaitExclusionsListed`). Off-screen windows are listed too: a minimized window
+/// the movie leaves out must be in the filter when it comes back. Throws `UnresolvedExclusions` past the deadline.
+func listedContent(_ requested: Set<CGWindowID>, timeout: TimeInterval = 1) async throws -> SCShareableContent {
+    try await awaitExclusionsListed(
+        timeout: timeout,
+        sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
+        fetch: { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false) },
+        unresolved: { unlistedExclusions(requested, in: $0) }
+    )
+}
+
+/// Whether the window server still has the window, on screen or not. `.optionAll` lists off-screen windows too; Apple
+/// documents `.optionIncludingWindow` as meaningful only beside an above or below option. A list the window server
+/// does not give counts as "exists", so an exclusion check fails closed.
+func windowExists(_ id: CGWindowID) -> Bool {
+    guard let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[CFString: Any]] else { return true }
+    return info.contains { ($0[kCGWindowNumber] as? CGWindowID) == id }
 }
 
 func awaitResult<T>(timeoutSeconds: Double = 30, _ operation: @escaping () async throws -> T) throws -> T {

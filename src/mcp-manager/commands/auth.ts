@@ -59,6 +59,7 @@ export async function authLogin(
                 value: n,
                 label: `${n} (${c.url ?? c.httpUrl})`,
             })),
+            cancel: "back",
         });
 
         if (p.isCancel(picked) || typeof picked !== "string") {
@@ -202,6 +203,7 @@ async function resolveClientName(
     const picked = await p.select({
         message: "OAuth client_name",
         options: clientNameSelectOptions(preset),
+        cancel: "back",
     });
 
     if (p.isCancel(picked) || picked === CLIENT_NAME_ABORT || typeof picked !== "string") {
@@ -317,7 +319,7 @@ async function readClientSecret(server: string): Promise<string | undefined> {
         return (await Bun.stdin.text()).trim();
     }
 
-    const typed = await p.password({ message: `Client secret for ${server}` });
+    const typed = await p.password({ message: `Client secret for ${server}`, cancel: "back" });
 
     if (p.isCancel(typed) || typeof typed !== "string") {
         return undefined;

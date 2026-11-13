@@ -25,9 +25,9 @@ import {
     sendStaged,
     stageAnswer,
     startAnswers,
-    takesSeveral,
 } from "./answers";
 import { liveAgo } from "./live";
+import { takesSeveral } from "./option-labels";
 import { type Feature, type Host, logMod, settingsOf } from "./shared";
 import {
     actionRow,
@@ -80,11 +80,16 @@ function setLocal(n: number, letters: string): string {
     return letters;
 }
 
-/** The one line per ticked decision (`D16: ac)`), and the ticks forgotten: they leave in the prompt exactly once. */
-function takeLocalLines(): string[] {
-    const lines = [...localPick]
+/** The one line per ticked decision (`D16: ac)`), without forgetting the ticks: the preview shows them. */
+function localLines(): string[] {
+    return [...localPick]
         .sort(([a], [b]) => a - b)
         .map(([n, letters]) => stagedMessage({ [String(n)]: `${letters})` }));
+}
+
+/** The ticked lines, and the ticks forgotten: they leave in the prompt exactly once. */
+function takeLocalLines(): string[] {
+    const lines = localLines();
 
     localPick.clear();
 
@@ -158,7 +163,7 @@ export function asksIn(text: string): OpenDecision[] {
             }
         }
 
-        const multiple = takesSeveral({ prompt: words.join("\n"), options });
+        const multiple = takesSeveral({ prompt: words.join("\n"), options: options.map((option) => option.letter) });
 
         found.push({ n: Number(match[2]), title, options, ...(multiple ? { multiple } : {}) });
         i = j - 1;
@@ -521,6 +526,9 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
     );
     // Preview, fill and send all use the store's complete outgoing batch, including answered rows.
     const outgoing = read?.staged ?? message;
+    // Ticks on a decision the log does not have are staged only here; the preview shows them without taking them.
+    const ticked = localLines();
+    const preview = [outgoing, ...ticked].filter(Boolean).join("\n");
     const width = Math.max(10, kit.columns - 4);
     const isOpen = (decision: ShownDecision) => {
         const byDefault = settings.expand === "all" || (settings.expand === "waiting" && isWaiting(decision));
@@ -542,15 +550,16 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
             return;
         }
 
+        // A several-letter decision only ticks, so unticking its last letter (`option: ""`) is a press too.
+        if (/not waiting/.test(done.error) && answer.option !== undefined && decision.multiple) {
+            // The one `D<n>: ac)` line is written when the person sends or puts it in the prompt.
+            const letters = setLocal(decision.n, answer.option);
+
+            await pressed(host, key, letters ? `Ticked ${letters})` : "Unticked.");
+            return;
+        }
+
         if (/not waiting/.test(done.error) && words) {
-            if (answer.option !== undefined && decision.multiple) {
-                // Only tick: the one `D<n>: ac)` line is written when the person sends or puts it in the prompt.
-                const ticked = setLocal(decision.n, answer.option);
-
-                await pressed(host, key, ticked ? `Ticked ${ticked})` : "Unticked.");
-                return;
-            }
-
             await host.fill({ text: `D${decision.n}: ${words}\n`, mode: "append" });
             await pressed(
                 host,
@@ -847,11 +856,16 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
             )}
             {list.length === 0 ? dimNote(kit, "No decisions in this session yet.") : null}
             {first ? group(first.title, waitingRows) : null}
-            {outgoing ? (
+            {preview ? (
                 <Box flexDirection="column" marginTop={1}>
-                    {sectionTitle(kit, "Staged", `(${staged.length})`)}
-                    {dimNote(kit, "send submits exactly this:")}
-                    {outgoing.split("\n").flatMap((line, index) =>
+                    {sectionTitle(kit, "Staged", `(${staged.length + ticked.length})`)}
+                    {dimNote(
+                        kit,
+                        ticked.length > 0
+                            ? "send puts the D lines of decisions the log does not have in the prompt, and submits the rest:"
+                            : "send submits exactly this:"
+                    )}
+                    {preview.split("\n").flatMap((line, index) =>
                         wrapWords(line, width, 6).map((text, part) => (
                             <Text key={`staged-${index}-${part}`} color="cyan" wrap="truncate-end">
                                 {text}

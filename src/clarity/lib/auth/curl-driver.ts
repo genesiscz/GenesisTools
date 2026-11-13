@@ -1,8 +1,8 @@
 import { createInterface } from "node:readline";
 import type { ClarityAuthDriver } from "@app/clarity/lib/auth/types";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
-import * as clack from "@clack/prompts";
 import { out } from "@genesiscz/utils/logger";
+import * as clack from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 /**

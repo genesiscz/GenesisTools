@@ -3,6 +3,9 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
+import { registerAreasCommands } from "./commands/areas";
+import { registerCopiesCommands } from "./commands/copies";
+import { registerDepthCommands } from "./commands/depth";
 import { registerDuplicatesCommands } from "./commands/duplicates";
 import { registerImportsCommands } from "./commands/imports";
 import { registerProfileCommands } from "./commands/profile";
@@ -22,10 +25,13 @@ program
 registerImportsCommands(program);
 registerSkeletonCommands(program);
 registerDuplicatesCommands(program);
+registerCopiesCommands(program);
 registerRefactorsCommands(program);
 registerSourcemapsCommands(program);
 registerProfileCommands(program);
 registerProgramCommands(program);
+registerAreasCommands(program);
+registerDepthCommands(program);
 
 if (import.meta.main) {
     await runTool(program, { tool: "ts" });

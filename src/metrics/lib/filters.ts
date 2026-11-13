@@ -30,7 +30,7 @@ export interface QueryFlags extends FilterFlags {
 export class FlagError extends Error {}
 
 /** `10d`, `2h`, `30m`: that long before now; else a date, a time or `HH:MM` as `--since` reads it elsewhere. */
-export function parseWhen(text: string, flag: string, now = Date.now()): number {
+export function parseTimeFlag(text: string, flag: string, now = Date.now()): number {
     const trimmed = text.trim();
 
     if (/^\d+\s*[smhd]/i.test(trimmed)) {
@@ -123,7 +123,7 @@ function boundOf(
     }
 
     if (!text.startsWith(CHECKPOINT_PREFIX)) {
-        return { at: parseWhen(text, flag) };
+        return { at: parseTimeFlag(text, flag) };
     }
 
     const name = text.slice(CHECKPOINT_PREFIX.length).trim();

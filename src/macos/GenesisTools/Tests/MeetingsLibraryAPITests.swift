@@ -127,7 +127,7 @@ final class MeetingsLibraryAPITests: XCTestCase {
             XCTAssertGreaterThan(decoded[method] ?? 0, 0, "the fixture has an example of \(method)")
         }
         // An Undo's add of an entry made again since, and a project meetings still have.
-        XCTAssertEqual(Set(refusals), ["dictionary-exists", "failed"])
+        XCTAssertEqual(Set(refusals), ["dictionary-exists", "project-in-use"])
     }
 
     /// The service lists every library method in its hello, so the window can call them.

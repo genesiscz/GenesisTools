@@ -67,10 +67,12 @@ enum VoiceoverMix {
                     continue
                 }
                 let available = try await source.load(.timeRange)
-                let duration = CMTimeMinimum(available.duration, EditRenderer.us(placement.playUs))
+                // A part export plays the rest of a line that started before the part (skipUs).
+                let skip = CMTimeMinimum(EditRenderer.us(placement.clip.skipUs ?? 0), available.duration)
+                let duration = CMTimeMinimum(available.duration - skip, EditRenderer.us(placement.playUs))
                 guard duration > .zero,
                       let out = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
-                try out.insertTimeRange(CMTimeRange(start: available.start, duration: duration), of: source,
+                try out.insertTimeRange(CMTimeRange(start: available.start + skip, duration: duration), of: source,
                                         at: EditRenderer.us(placement.outUs))
                 let parameters = AVMutableAudioMixInputParameters(track: out)
                 parameters.setVolume(Float(placement.clip.volume), at: .zero)

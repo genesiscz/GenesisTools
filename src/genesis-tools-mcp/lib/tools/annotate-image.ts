@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import type { Annotation, PresetName } from "@genesiscz/utils/image";
-import { renderAnnotationPlan, validateAnnotations } from "@genesiscz/utils/image";
+import { ANNOTATION_PRESETS, renderAnnotationPlan, validateAnnotations } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface AnnotateImageArgs {
@@ -57,7 +57,7 @@ export const ANNOTATE_IMAGE_INPUT_SCHEMA = {
         annotations: {
             type: "array",
             description:
-                'annotation objects, drawn in array order; coordinates are natural image pixels. Kinds: highlight {rect:{x,y,w,h}, style?, label?:{text,position?}} (rounded-rect outline + translucent wash — the review register), box (square corners), ellipse, arrow {from:{x,y}, to:{x,y}}, label {at:{x,y}, text} (chip), blur {rect, strength?} (redact secrets), crop {rect} (applied LAST regardless of position), grid {step?, originOffset?:{x,y}, labels?} (coordinate-finder gridlines labeled with absolute coords). Example: [{ "kind": "highlight", "rect": { "x": 748, "y": 812, "w": 1246, "h": 430 }, "label": { "text": "Build pipeline" } }]',
+                'annotation objects, drawn in array order; coordinates are natural image pixels. Kinds: highlight {rect:{x,y,w,h}, style?, preset?, label?:{text,position?,offset?:{x,y},leader?}} (rounded-rect outline + translucent wash — the review register), box (square corners), ellipse, arrow {from:{x,y}, to:{x,y}}, label {at:{x,y}, text} (chip), blur {rect, strength?} (redact secrets), crop {rect} (applied LAST regardless of position), grid {step?, originOffset?:{x,y}, labels?} (coordinate-finder gridlines labeled with absolute coords). Label positions: top-left (default), top-right, top, bottom-left, bottom-right, bottom, left, right (with a leader line), inside; "\\n" breaks a label into lines; a label that would leave the image or cover an earlier label moves to the next free position. A shape\'s own preset overrides the plan\'s. Example: [{ "kind": "highlight", "rect": { "x": 748, "y": 812, "w": 1246, "h": 430 }, "label": { "text": "Build pipeline" } }]',
             items: { type: "object" },
         },
         output: {
@@ -66,9 +66,9 @@ export const ANNOTATE_IMAGE_INPUT_SCHEMA = {
         },
         preset: {
             type: "string",
-            enum: ["review-red", "callout-amber", "redact"],
+            enum: Object.keys(ANNOTATION_PRESETS),
             description:
-                "style defaults per kind: review-red = thick red rounded outline + wash (default), callout-amber, redact = blackout fill + heavy blur. Per-annotation style values override the preset",
+                "style defaults per kind: review-red = thick red rounded outline + wash (default), callout-amber, redact = blackout fill + heavy blur, review-dashed and callout-amber-dashed = thin dashed outline with small chips (web shots), info-blue, ok-green, question-purple, muted-gray (context). Per-annotation preset and style values override the plan preset",
         },
     },
     required: ["input", "annotations"],

@@ -1,10 +1,11 @@
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { profiler } from "@genesiscz/utils/profile";
 import { type Command, Help, type Option } from "commander";
 import pc from "picocolors";
+import type { DeadlineExpiry } from "./failures/record";
 
 export { isInteractive } from "./is-interactive";
 
@@ -480,9 +481,114 @@ export const PLAIN_OUTPUT_ENV: Record<string, string | undefined> = {
     NO_COLOR: "1",
 };
 
+/**
+ * A bound with the reason a command may run that long: the form a call uses when its command can outlast
+ * {@link DEFAULT_EXEC_TIMEOUT_MS} by design (a clone, a rebase, a build). `ms: 0` is no deadline at all, legal only
+ * here, with its reason.
+ */
+export interface ExecDeadline {
+    ms: number;
+    reason: string;
+}
+
+/**
+ * The bound of every `exec` that names none, on the call or on its Executor. A wait has a deadline or it is a bug
+ * (`.claude/rules/code.md`): before 2026-11-10 an `exec` without a timeout waited for its child forever.
+ */
+export const DEFAULT_EXEC_TIMEOUT_MS = 60_000;
+
+/**
+ * How long an expiry may spend writing its failure record (failures/deadline.ts) before the error is thrown anyway.
+ * Tests shorten it.
+ */
+export const deadlineRecording = { boundMs: 2_000 };
+
+/** `boundedCommand` has no unbounded mode, so `{ ms: 0, reason }` runs under its largest bound (24.8 days). */
+const NO_DEADLINE_MS = 2_147_483_647;
+
+/** Where a call's bound came from: its own options, its Executor's, or {@link DEFAULT_EXEC_TIMEOUT_MS}. */
+export type ExecDeadlineSource = "call" | "executor" | "default";
+
+export interface ResolvedExecDeadline {
+    /** 0: no deadline. */
+    ms: number;
+    reason: string | null;
+    source: ExecDeadlineSource;
+}
+
+/** One level of the bound: null when it names none (unset, or a bare number that is not positive). */
+function deadlineOf(value: number | ExecDeadline | undefined): { ms: number; reason: string | null } | null {
+    if (value === undefined) {
+        return null;
+    }
+
+    if (typeof value === "number") {
+        return value > 0 ? { ms: value, reason: null } : null;
+    }
+
+    if (!Number.isFinite(value.ms) || value.ms < 0) {
+        throw new Error(`timeout.ms must be 0 or a positive number of milliseconds, not ${value.ms}`);
+    }
+
+    const reason = value.reason.trim();
+
+    if (value.ms === 0 && !reason) {
+        throw new Error("timeout { ms: 0 } removes the deadline and needs a reason that says why");
+    }
+
+    return { ms: value.ms, reason: reason || null };
+}
+
+/** The bound a call runs under: the call's, then its Executor's, then the default. */
+export function resolveExecDeadline(
+    call: number | ExecDeadline | undefined,
+    executor: number | ExecDeadline | undefined
+): ResolvedExecDeadline {
+    const fromCall = deadlineOf(call);
+
+    if (fromCall) {
+        return { ...fromCall, source: "call" };
+    }
+
+    const fromExecutor = deadlineOf(executor);
+
+    if (fromExecutor) {
+        return { ...fromExecutor, source: "executor" };
+    }
+
+    return { ms: DEFAULT_EXEC_TIMEOUT_MS, reason: null, source: "default" };
+}
+
+/** Every argument of `cmd`, with the ones that name or carry a credential hidden (as in {@link spawnLabel}). */
+export function maskedArgv(cmd: string[]): string[] {
+    return cmd.map((arg, index) => (index > 0 && (SECRET_ARG.test(arg) || isSecretFlag(cmd[index - 1])) ? "***" : arg));
+}
+
+/** The sentence an expiry throws and records: the command, the bound, where the bound came from, and the fix. */
+export function deadlineMessage(deadline: ResolvedExecDeadline, cmd: string[]): string {
+    const command = maskedArgv(cmd).join(" ");
+    const reason = deadline.reason ? `: ${deadline.reason}` : "";
+
+    if (deadline.source === "default") {
+        return (
+            `Command timed out after ${deadline.ms}ms (the default deadline of an Executor call): ${command}. ` +
+            "A command that can run longer by design passes timeout: { ms, reason }."
+        );
+    }
+
+    const source = deadline.source === "call" ? `this call's bound${reason}` : `its Executor's bound${reason}`;
+
+    return `Command timed out after ${deadline.ms}ms (${source}): ${command}`;
+}
+
 export interface ExecutorOptions {
     /** Base command prefix (e.g., "git" → all calls prepend "git") */
     prefix?: string;
+    /**
+     * The bound of every call of this executor that names none; a call's own `timeout` wins. Unset: the default
+     * ({@link DEFAULT_EXEC_TIMEOUT_MS}).
+     */
+    timeout?: number | ExecDeadline;
     /** Working directory for all commands */
     cwd?: string;
     /** Environment variables (merged on top of process.env) */
@@ -500,20 +606,55 @@ export interface ExecCallOptions {
     cwd?: string;
     /** Override/extend environment variables for this call */
     env?: Record<string, string | undefined>;
-    /** Timeout in milliseconds. Process is killed and promise rejects on expiry. 0 or unset: no timeout. */
-    timeout?: number;
+    /**
+     * The bound of this call: the process group is killed and the promise rejects on expiry. A number is
+     * milliseconds; a bare 0 or none means the Executor's bound, else {@link DEFAULT_EXEC_TIMEOUT_MS}. A command that
+     * can run longer by design says why: `{ ms: 600_000, reason: "a clone of a large repository" }`; `{ ms: 0, reason }`
+     * is no deadline.
+     */
+    timeout?: number | ExecDeadline;
+    /**
+     * `false` returns stdout and stderr exactly as the command wrote them. Default `true` trims both. NUL-delimited
+     * output (`git ls-files -z`) needs `false`: a leading space or newline is part of the first path.
+     */
+    trim?: boolean;
+}
+
+/**
+ * Writes the failure record of an expiry (failures/deadline.ts), loaded only here so no tool pays for it at startup.
+ * Bounded by `deadlineRecording.boundMs`: the thrown error never waits longer, and a record that fails is a debug line.
+ * The record step starts no process through an Executor, so an expiry cannot recurse.
+ */
+async function recordExpiry(expiry: DeadlineExpiry): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, deadlineRecording.boundMs);
+    });
+    const record = import("./failures/deadline")
+        .then((deadline) => deadline.recordDeadline(expiry))
+        .then(
+            () => undefined,
+            (error: unknown) => {
+                logger.debug({ error }, "exec: the deadline record was not written");
+            }
+        );
+
+    await Promise.race([record, bound]);
+    clearTimeout(timer);
 }
 
 export class Executor {
     private prefix: string | undefined;
     private cwd: string;
     private env: Record<string, string | undefined> | undefined;
+    private timeout: number | ExecDeadline | undefined;
     verbose: boolean;
     debug: boolean;
     private label: string;
 
     constructor(options: ExecutorOptions = {}) {
         this.prefix = options.prefix;
+        this.timeout = options.timeout;
         this.cwd = options.cwd ?? process.cwd();
         this.env = options.env;
         this.verbose = options.verbose ?? false;
@@ -549,7 +690,9 @@ export class Executor {
     }
 
     /**
-     * Execute a command and capture output.
+     * Execute a command and capture output, always under a deadline (`ExecCallOptions.timeout`): the call's bound,
+     * else the Executor's, else {@link DEFAULT_EXEC_TIMEOUT_MS}. On expiry the whole process group is killed and the
+     * call throws.
      * If prefix is set, args are prepended with it.
      * e.g., new Executor({ prefix: "git" }).exec(["status"]) → runs "git status"
      */
@@ -557,62 +700,65 @@ export class Executor {
         const cmd = this.prefix ? [this.prefix, ...args] : args;
         const cwd = options?.cwd ?? this.cwd;
         const env = this.buildEnv(options?.env);
+        const deadline = resolveExecDeadline(options?.timeout, this.timeout);
+        // Taken before the first await, while the caller is still on the stack: an expiry record names the call site.
+        const callSite = new Error("exec call site").stack ?? null;
+        const finish = (text: string): string => (options?.trim === false ? text : text.trim());
 
         if (this.verbose) {
             out.println(pc.gray(`  $ ${cmd.join(" ")}`));
         }
 
         const stopTimer = spawnProf.start(spawnLabel(cmd));
-        let result: ExecResult;
+        const started = performance.now();
+        const bounded = await boundedCommand({
+            command: cmd,
+            timeoutMs: deadline.ms === 0 ? NO_DEADLINE_MS : deadline.ms,
+            cwd,
+            environment: env,
+            maxBufferBytes: 64 * 1024 * 1024,
+        });
 
-        if (options?.timeout !== undefined && options.timeout > 0) {
-            const timeoutMs = options.timeout;
-            const bounded = await boundedCommand({
-                command: cmd,
-                timeoutMs,
-                cwd,
-                environment: env,
-                maxBufferBytes: 64 * 1024 * 1024,
-            });
+        if (bounded.error) {
+            stopTimer(bounded.error.code === "ETIMEDOUT" ? "timeout" : "error");
 
-            if (bounded.error) {
-                stopTimer(bounded.error.code === "ETIMEDOUT" ? "timeout" : "error");
-
-                if (bounded.error.code === "ETIMEDOUT") {
-                    throw new Error(`Command timed out after ${timeoutMs}ms: ${cmd.join(" ")}`);
-                }
-
-                throw bounded.error;
+            if (bounded.error.code === "ETIMEDOUT") {
+                const message = deadlineMessage(deadline, cmd);
+                logger.warn(
+                    {
+                        command: spawnLabel(cmd),
+                        timeoutMs: deadline.ms,
+                        source: deadline.source,
+                        reason: deadline.reason,
+                    },
+                    message
+                );
+                await recordExpiry({
+                    child: {
+                        command: maskedArgv(cmd),
+                        cwd,
+                        timeoutMs: deadline.ms,
+                        defaulted: deadline.source === "default",
+                        reason: deadline.reason,
+                    },
+                    message,
+                    durationMs: performance.now() - started,
+                    stack: callSite,
+                });
+                throw new Error(message);
             }
 
-            const exitCode = bounded.status ?? 1;
-            stopTimer(`exit=${exitCode}`);
-            result = {
-                success: exitCode === 0,
-                stdout: bounded.stdout.trim(),
-                stderr: bounded.stderr.trim(),
-                exitCode,
-            };
-        } else {
-            const proc = Bun.spawn({
-                cmd,
-                cwd,
-                env,
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-            const [stdout, stderr, exitCode] = await Promise.all([
-                new Response(proc.stdout).text(),
-                new Response(proc.stderr).text(),
-                proc.exited,
-            ]);
-            stopTimer(`exit=${exitCode}`);
-            result = {
-                success: exitCode === 0,
-                stdout: stdout.trim(),
-                stderr: stderr.trim(),
-                exitCode,
-            };
+            throw bounded.error;
         }
+
+        const exitCode = bounded.status ?? 1;
+        stopTimer(`exit=${exitCode}`);
+        const result: ExecResult = {
+            success: exitCode === 0,
+            stdout: finish(bounded.stdout),
+            stderr: finish(bounded.stderr),
+            exitCode,
+        };
 
         if (this.debug) {
             if (result.stdout) {
@@ -631,7 +777,8 @@ export class Executor {
 
     /**
      * Execute a command with inherited stdio (interactive).
-     * User sees the command's output directly.
+     * User sees the command's output directly. It has no deadline on purpose: a person may be answering the child
+     * (a prompt, an editor, a pager), and only that person knows when it is done.
      */
     async execInteractive(args: string[], options?: Pick<ExecCallOptions, "cwd" | "env">): Promise<ExecResult> {
         const cmd = this.prefix ? [this.prefix, ...args] : args;
@@ -660,10 +807,10 @@ export class Executor {
     }
 
     /**
-     * Execute and throw on failure.
+     * Execute and throw on failure (a non-zero exit, or the deadline of `options.timeout`, as in {@link exec}).
      */
-    async execOrThrow(args: string[], errorMsg?: string): Promise<ExecResult> {
-        const result = await this.exec(args);
+    async execOrThrow(args: string[], errorMsg?: string, options?: ExecCallOptions): Promise<ExecResult> {
+        const result = await this.exec(args, options);
         if (!result.success) {
             throw new Error(
                 errorMsg ?? `Command failed: ${this.prefix ? `${this.prefix} ` : ""}${args.join(" ")}\n${result.stderr}`

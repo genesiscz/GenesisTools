@@ -1,12 +1,13 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
-import { parsePidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
-import { attemptRenameSteal, LockTimeoutError, tryAcquireLock, withFileLock } from "./file-lock";
+import { EMPTY_HOLDER_GRACE_MS, serializePidRecord } from "@genesiscz/utils/process/pidfile";
+import { LockTimeoutError, withFileLock, withQueuedFileLock } from "./file-lock";
 
+// The race cases (N racers, a fresh claim during arbitration, a steal that finds new bytes) are in
+// src/utils/process/claim-takeover.test.ts, with every other caller of the shared takeover.
 describe("file-lock: stale/orphaned lock handling", () => {
     let dir: string;
 
@@ -33,6 +34,9 @@ describe("file-lock: stale/orphaned lock handling", () => {
         // then blocks every future acquirer.
         const lockPath = join(dir, "target.lock");
         writeFileSync(lockPath, "");
+        // Past the shared grace an empty lock is an orphan (claim-takeover.test.ts covers one inside it).
+        const created = new Date(Date.now() - EMPTY_HOLDER_GRACE_MS - 1_000);
+        utimesSync(lockPath, created, created);
 
         const result = await withFileLock(lockPath, async () => "acquired", 2000);
 
@@ -117,59 +121,6 @@ describe("file-lock: stale/orphaned lock handling", () => {
         expect(existsSync(nestedDir)).toBe(true);
     });
 
-    it("exactly one of N concurrent racers steals a stale lock (rename-based takeover regression test)", async () => {
-        // Regression test for the Jul 3 incident: launchd respawn storm got 31
-        // daemon instances racing the same stale pidfile/lock past a
-        // check-then-unlink-then-write takeover, and N of them "won". The
-        // rename-based steal must guarantee exactly one winner no matter how
-        // many racers hit it concurrently.
-        const lockPath = join(dir, "target.lock");
-        writeFileSync(lockPath, "999999999"); // dead PID — eligible for steal
-
-        const RACER_COUNT = 12;
-        const results = await Promise.all(Array.from({ length: RACER_COUNT }, () => tryAcquireLock(lockPath)));
-
-        const winners = results.filter((won) => won === true);
-        expect(winners).toHaveLength(1);
-
-        // Exactly one lock file remains, owned by us (the single process all
-        // racers ran in), and no leftover `.stale-*` temp files. The winner
-        // rewrites the slot as an identity-bearing record, not the bare number
-        // the losers validated as stale.
-        expect(existsSync(lockPath)).toBe(true);
-
-        const held = parsePidRecord(readFileSync(lockPath, "utf-8"));
-        expect(held?.pid).toBe(process.pid);
-        expect(held?.command ?? "").toContain("bun");
-
-        expect(readdirSync(dir)).toEqual(["target.lock"]);
-    });
-
-    it("a fresh claim cannot be renamed while another claimant owns arbitration", async () => {
-        const lockPath = join(dir, "target.lock");
-        let releaseOwner: () => void = () => {};
-        let ownerReady: () => void = () => {};
-        const ownerStarted = new Promise<void>((resolve) => {
-            ownerReady = resolve;
-        });
-        const ownerRelease = new Promise<void>((resolve) => {
-            releaseOwner = resolve;
-        });
-        const owner = tryWithPathArbitration(lockPath, async () => {
-            writeFileSync(lockPath, String(process.pid));
-            ownerReady();
-            await ownerRelease;
-        });
-        await ownerStarted;
-
-        expect(await attemptRenameSteal(lockPath, "999999999")).toBe(false);
-        expect(await tryAcquireLock(lockPath)).toBe(false);
-        expect(readFileSync(lockPath, "utf8").trim()).toBe(String(process.pid));
-
-        releaseOwner();
-        expect((await owner).acquired).toBe(true);
-    });
-
     it("a release that cannot read the lock never replaces fn's result", async () => {
         const lockPath = join(dir, "target.lock");
 
@@ -182,18 +133,73 @@ describe("file-lock: stale/orphaned lock handling", () => {
 
         expect(result).toBe("committed");
     });
+});
 
-    it("a steal that grabs a FRESH lock restores it and loses (TOCTOU guard)", async () => {
-        // The stealer validated "999999999" as dead, but by the time its
-        // rename lands a live holder has re-acquired the lock. The steal must
-        // detect the content mismatch, restore the fresh lock, and lose.
-        const lockPath = join(dir, "target.lock");
-        writeFileSync(lockPath, "12345");
+describe("file-lock: the arrival-order queue", () => {
+    let dir: string;
 
-        const won = await attemptRenameSteal(lockPath, "999999999");
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "file-lock-queue-"));
+    });
 
-        expect(won).toBe(false);
-        expect(readFileSync(lockPath, "utf-8").trim()).toBe("12345"); // restored, not clobbered
-        expect(readdirSync(dir)).toEqual(["target.lock"]); // no temp litter
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("a caller that takes the lock again at once cannot keep a waiting caller from its turn", async () => {
+        const lockPath = join(dir, "vision.lock");
+        const order: string[] = [];
+        let firstTurn: () => void = () => undefined;
+        const holding = new Promise<void>((resolve) => {
+            firstTurn = resolve;
+        });
+        const scan = (async () => {
+            for (let frame = 0; frame < 30; frame++) {
+                await withQueuedFileLock(
+                    lockPath,
+                    async () => {
+                        order.push("scan");
+                        firstTurn();
+                        await Bun.sleep(10);
+                    },
+                    5000
+                );
+            }
+        })();
+        await holding;
+        await withQueuedFileLock(lockPath, async () => order.push("read"), 5000);
+        await scan;
+
+        expect(order.indexOf("read")).toBeLessThanOrEqual(2);
+        expect(readdirSync(`${lockPath}.queue`)).toEqual([]);
+    });
+
+    it("a ticket of a dead process or one past its deadline does not hold up the queue", async () => {
+        const lockPath = join(dir, "vision.lock");
+        mkdirSync(`${lockPath}.queue`, { recursive: true });
+        writeFileSync(
+            join(`${lockPath}.queue`, "000000000000001-000000001-2147483000"),
+            `{"pid":2147483000,"at":${Date.now()},"until":9e15}`
+        );
+        writeFileSync(
+            join(`${lockPath}.queue`, "000000000000002-000000001-1"),
+            `{"pid":${process.pid},"at":${Date.now()},"until":${Date.now() - 120_000}}`
+        );
+        writeFileSync(join(`${lockPath}.queue`, "000000000000003-000000001-1"), "not a ticket");
+
+        expect(await withQueuedFileLock(lockPath, async () => "served", 1000)).toBe("served");
+        expect(readdirSync(`${lockPath}.queue`)).toEqual([]);
+    });
+
+    it("a live older ticket makes a caller wait, and its timeout is a LockTimeoutError", async () => {
+        const lockPath = join(dir, "vision.lock");
+        mkdirSync(`${lockPath}.queue`, { recursive: true });
+        writeFileSync(
+            join(`${lockPath}.queue`, "000000000000001-000000001-1"),
+            `{"pid":${process.pid},"at":${Date.now()},"until":${Date.now() + 60_000}}`
+        );
+
+        await expect(withQueuedFileLock(lockPath, async () => "never", 300)).rejects.toBeInstanceOf(LockTimeoutError);
+        expect(readdirSync(`${lockPath}.queue`)).toEqual(["000000000000001-000000001-1"]);
     });
 });

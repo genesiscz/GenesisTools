@@ -15,7 +15,6 @@
 import { registerResolveCommand } from "@app/markdown/commands/resolve";
 import { registerTokensCommand } from "@app/markdown/commands/tokens";
 import { runTool } from "@genesiscz/utils/cli";
-import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 const program = new Command();
@@ -26,13 +25,7 @@ registerResolveCommand(program);
 registerTokensCommand(program);
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "markdown" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(`Error: ${message}`);
-        process.exitCode = 1;
-    }
+    await runTool(program, { tool: "markdown" });
 }
 
 main();

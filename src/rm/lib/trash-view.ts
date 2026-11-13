@@ -119,7 +119,7 @@ export function renderTrash(batches: readonly TrashBatch[], options: TrashViewOp
     ];
     const rows = sorted.map((batch) => {
         const first = batch.items[0];
-        const path = first ? shortRmPath(first.original, displayContext(batch.caller), PATH_MAX) : "-";
+        const path = first ? shortRmPath(first.original, displayContext(batch.caller), { max: PATH_MAX }) : "-";
         const more = batch.items.length > 1 ? ` +${batch.items.length - 1}` : "";
         return {
             id: batchSuffix(batch.id, ids),

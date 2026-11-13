@@ -1,5 +1,5 @@
 import { relative } from "node:path";
-import { bashWriteLookup } from "@app/agents/lib/changes/log";
+import { bashWriteLookup } from "@genesiscz/utils/agents/change-log";
 import { isInteractive, toolCommand } from "@genesiscz/utils/cli";
 import { createStopwatch, formatBytes, formatCount } from "@genesiscz/utils/format";
 import { rmEnablePresetCommand, rmRequestHintLine } from "@genesiscz/utils/genesis-tools/tools/hints";
@@ -574,7 +574,7 @@ function printDryRun(plan: RmPlanItem[], ctx: RunContext, options: ExecuteOption
             size: sizes.has(path) ? formatBytes(sizes.get(path) ?? 0) : "-",
             path: isInside(path, ctx.cwd)
                 ? middleCut(relative(ctx.cwd, path), DRY_PATH_MAX)
-                : shortRmPath(path, display, DRY_PATH_MAX),
+                : shortRmPath(path, display, { max: DRY_PATH_MAX }),
             notes: notes.join(" · "),
         };
     });

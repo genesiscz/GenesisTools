@@ -63,8 +63,11 @@ const IN_LABEL =
     /\s*\(\s*(?:this is\s+)?(?:my\s+)?(?:recommend(?:ed|ation)|i\s+recommend(?:\s+this)?)(?:\s*[,:;.-]\s*|\s+)?([^)]*)\)\s*/i;
 const TRAILING_TAG = /\s*[*_]*\(?\b(?:recommended|my recommendation)\b\)?[*_]*\s*[.]?\s*$/i;
 const LEADING_TAG = /^\s*[*_]*(?:recommended)[*_]*\s*[:\-–—]\s*/i;
-/** "not recommended", "I don't recommend it", "never recommended": words that advise against an option. */
-const ADVISES_AGAINST = /(?:\bnot|n't|\bnever)\s+(?:\w+\s+)?recommend/i;
+/**
+ * "not recommended", "I don't recommend it", "never recommended", "would not really recommend": words that advise
+ * against an option, with up to two words between the negation and "recommend".
+ */
+const ADVISES_AGAINST = /(?:\bnot|n't|\bnever)\s+(?:\w+\s+){0,2}recommend/i;
 
 /** Whether `text` advises against its option ("not recommended: duplicates"), so it must never mark it recommended. */
 export function advisesAgainst(text: string): boolean {

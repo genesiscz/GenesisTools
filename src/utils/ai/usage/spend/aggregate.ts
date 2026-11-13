@@ -1,9 +1,9 @@
-import { costOf, priceFor, resolvePrice } from "./pricing";
+import type { UsageToPrice } from "./priced-usage";
+import type { SourceId } from "./reports/types";
 import type {
     DayBreakdown,
     Filters,
     ModelBreakdown,
-    PricingTable,
     ProjectBreakdown,
     Report,
     SessionBreakdown,
@@ -13,9 +13,31 @@ import type {
 
 interface AggregateArgs extends Filters {
     events: UsageEvent[];
-    pricing: PricingTable;
+    /**
+     * The price of an event whose loader resolved no cost (`costUsd`), or null when nothing prices it: it then adds
+     * $0 and leaves its model marked unpriced. `UsageEvent` carries no harness, so the caller, which knows it, prices
+     * through `priceUsage` (`toUsage` below for the events of one harness).
+     */
+    price: (event: UsageEvent) => number | null;
     /** injected — the pure core never reads the system clock */
     now: Date;
+}
+
+/** An event of a known harness as the priced-usage module reads it. */
+export function toUsage(event: UsageEvent, source: SourceId): UsageToPrice {
+    return {
+        source,
+        model: event.model,
+        at: event.timestamp,
+        tokens: {
+            input: event.inputTokens,
+            output: event.outputTokens,
+            cacheWrite: event.cacheCreationTokens,
+            cacheRead: event.cacheReadTokens,
+            cacheWrite1h: event.cacheCreation1hTokens,
+        },
+        serviceTier: event.serviceTier,
+    };
 }
 
 function emptyTotals(): TokenTotals {
@@ -53,38 +75,8 @@ function passesFilters(ev: UsageEvent, f: Filters): boolean {
     return true;
 }
 
-function eventCost(ev: UsageEvent, pricing: PricingTable): number {
-    if (ev.costUsd !== undefined) {
-        return ev.costUsd;
-    }
-
-    const entry = priceFor(ev.model, pricing);
-    if (!entry) {
-        return 0;
-    }
-
-    // Per event, not per table: a dated promotion or a long-context band only
-    // resolves against THIS event's timestamp and request size.
-    const at = new Date(ev.timestamp);
-    const price = resolvePrice(entry, {
-        at: Number.isNaN(at.getTime()) ? undefined : at,
-        contextTokens: ev.inputTokens + ev.cacheReadTokens + ev.cacheCreationTokens,
-    });
-
-    return costOf(
-        {
-            input: ev.inputTokens,
-            output: ev.outputTokens,
-            cacheWrite: ev.cacheCreationTokens,
-            cacheRead: ev.cacheReadTokens,
-            cacheWrite1h: ev.cacheCreation1hTokens,
-        },
-        price
-    );
-}
-
 export function aggregate(args: AggregateArgs): Report {
-    const { events, pricing, now } = args;
+    const { events, price, now } = args;
     const top = args.top ?? 10;
 
     const seen = new Set<string>();
@@ -108,18 +100,17 @@ export function aggregate(args: AggregateArgs): Report {
     const bySession = new Map<string, { tokens: TokenTotals; cost: number; project: string; lastDay: string }>();
 
     for (const ev of kept) {
-        const evCost = eventCost(ev, pricing);
+        // The loader's resolved cost wins; otherwise the caller's pricer, per event (a dated rate or a context
+        // band resolves against THIS event's moment and size).
+        const known = ev.costUsd ?? price(ev);
+        const evCost = known ?? 0;
         totalCost += evCost;
         addTokens(totalTokens, ev);
 
-        const model = byModel.get(ev.model) ?? {
-            tokens: emptyTotals(),
-            cost: 0,
-            priced: priceFor(ev.model, pricing) !== null,
-        };
+        const model = byModel.get(ev.model) ?? { tokens: emptyTotals(), cost: 0, priced: false };
         addTokens(model.tokens, ev);
         model.cost += evCost;
-        model.priced ||= ev.costUsd !== undefined;
+        model.priced ||= known !== null;
         byModel.set(ev.model, model);
 
         const day = dayOf(ev.timestamp);

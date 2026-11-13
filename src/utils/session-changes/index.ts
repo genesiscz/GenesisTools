@@ -1,5 +1,6 @@
 import type { HistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import type { SessionChangesRead } from "@genesiscz/utils/agent-sessions/types";
+import { readChangeLog } from "@genesiscz/utils/agents/change-log";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { requireSibling } from "@genesiscz/utils/fs/module-dir";
 import { logger } from "@genesiscz/utils/logger";
@@ -26,15 +27,7 @@ export {
 } from "./compute";
 export type { PathRuleContext } from "./rules";
 export { defaultTempDirs, pathExclusion, rootOf } from "./rules";
-export type { TranscriptSource } from "./transcript";
-export {
-    applyReplacement,
-    fileToolVia,
-    findClaudeTranscript,
-    isShellTool,
-    parseClaudeTranscript,
-    readClaudeTranscript,
-} from "./transcript";
+export { applyReplacement, fileToolVia, isShellTool } from "./tool-calls";
 export type {
     BlobStore,
     ChangeConfidence,
@@ -101,12 +94,14 @@ function readTranscript(sessionId: string): SessionChangesRead | null {
 
 /**
  * One session's changes from disk: what its provider's reader reads from its transcript (Claude's main and
- * subagent transcripts, Codex's rollout patch items), plus whatever change log rows the caller read. A session no
- * reader has a transcript for (Grok, or a deleted one) is judged from the log alone.
+ * subagent transcripts, Codex's rollout patch items), plus the session's change log rows: the ones the caller
+ * passes in `log`, else the log read here (`readChangeLog`). The log is what holds the files a Bash command
+ * changed. A session no reader has a transcript for (Grok, or a deleted one) is judged from the log alone.
  */
 export function loadSessionChanges(
     input: Omit<SessionChangesInput, "transcript">
 ): ComputedSessionChanges & { transcriptPath: string | null } {
+    const rows = input.log ?? readChangeLog(input.sessionId);
     const read = readTranscript(input.sessionId);
     const transcriptPath = read?.transcriptPath ?? null;
     const transcript = read?.transcript ?? null;
@@ -114,11 +109,11 @@ export function loadSessionChanges(
         {
             session: input.sessionId,
             transcriptPath,
-            logRows: input.log?.length ?? 0,
+            logRows: rows.length,
             calls: transcript?.calls.length ?? 0,
         },
         "computing session changes"
     );
 
-    return { ...computeSessionChanges({ ...input, transcript }), transcriptPath };
+    return { ...computeSessionChanges({ ...input, log: rows, transcript }), transcriptPath };
 }

@@ -1,5 +1,4 @@
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
-import { OpenAiApiKeyProvider } from "@app/ai-proxy/lib/providers/openai-api-key";
 import { listOpenAiProxyModels } from "@app/ai-proxy/lib/providers/openai-api-key.models";
 
 export const openAiApiKeyDefinition: ProviderDefinition = {
@@ -22,7 +21,8 @@ export const openAiApiKeyDefinition: ProviderDefinition = {
     usage: { snapshot: null },
     routes: { chatViaResponses: true, reshapesChat: false, recoversCompaction: false },
     upstreamEndpoints: null,
-    create: (account) => OpenAiApiKeyProvider.create(account),
+    create: async (account) =>
+        (await import("@app/ai-proxy/lib/providers/openai-api-key")).OpenAiApiKeyProvider.create(account),
     suggestedModel: (account) => `${account.name}/${account.providerSlug}/gpt-6.1-sol`,
     introspect: async () => [],
 };

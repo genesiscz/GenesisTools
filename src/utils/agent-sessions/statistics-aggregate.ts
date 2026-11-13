@@ -1,9 +1,9 @@
 import { type TokenUsage, zeroTokenUsage } from "./cache-types";
-import type { HistoryStatisticsRead } from "./types";
+import type { SupportedHistoryStatistics } from "./types";
 
 export interface HistoryStatisticsSource {
     project: string;
-    statistics: HistoryStatisticsRead;
+    statistics: SupportedHistoryStatistics;
 }
 
 export interface HistoryStatisticsAggregate {

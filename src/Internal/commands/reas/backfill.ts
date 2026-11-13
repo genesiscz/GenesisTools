@@ -9,9 +9,9 @@
  */
 
 import { Database } from "bun:sqlite";
-import * as p from "@clack/prompts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import pc from "picocolors";
 import { DISTRICTS, type DistrictInfo } from "./data/districts";
@@ -260,6 +260,7 @@ async function promptDistrict(): Promise<DistrictInfo | symbol> {
                 hint: String(DISTRICTS[name].reasId),
             })),
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(selection)) {
@@ -271,6 +272,7 @@ async function promptDistrict(): Promise<DistrictInfo | symbol> {
         const query = await p.text({
             message: "Search districts:",
             placeholder: "e.g. Brno, Ostrava, Plzeň...",
+            cancel: "back",
         });
 
         if (p.isCancel(query)) {
@@ -304,6 +306,7 @@ async function promptDistrict(): Promise<DistrictInfo | symbol> {
                 label: name,
                 hint: String(info.reasId),
             })),
+            cancel: "back",
         });
 
         if (p.isCancel(match)) {
@@ -325,6 +328,7 @@ async function promptYears(): Promise<number[] | symbol> {
             label: String(year),
         })),
         required: true,
+        cancel: "back",
     });
 
     if (p.isCancel(choices)) {
@@ -344,6 +348,7 @@ async function promptConstructionTypes(): Promise<readonly string[] | symbol> {
         ],
         required: true,
         initialValues: ["brick", "panel"],
+        cancel: "back",
     });
 
     if (p.isCancel(choices)) {
@@ -438,6 +443,7 @@ export async function main() {
     const proceed = await p.confirm({
         message: `Fetch and insert ${pc.bold(String(totalAvailable))} listings into the database?`,
         initialValue: true,
+        cancel: "back",
     });
 
     if (p.isCancel(proceed) || !proceed) {

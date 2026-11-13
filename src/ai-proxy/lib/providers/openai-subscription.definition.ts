@@ -1,6 +1,5 @@
 import { codexModelOverrides, listedCodexModels, setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
-import { OpenAiSubscriptionProvider } from "@app/ai-proxy/lib/providers/openai-subscription";
 import { listOpenAiSubProxyModels } from "@app/ai-proxy/lib/providers/openai-subscription.models";
 import { CODEX_AUTH_PATH } from "@genesiscz/utils/ai/openai/codex-auth";
 
@@ -37,7 +36,8 @@ export const openAiSubscriptionDefinition: ProviderDefinition = {
     usage: { snapshot: null },
     routes: { chatViaResponses: true, reshapesChat: false, recoversCompaction: true },
     upstreamEndpoints: null,
-    create: (account) => OpenAiSubscriptionProvider.create(account),
+    create: async (account) =>
+        (await import("@app/ai-proxy/lib/providers/openai-subscription")).OpenAiSubscriptionProvider.create(account),
     suggestedModel: (account) => `${account.name}/${account.providerSlug}/gpt-6.1-sol`,
     introspect: async () => [],
 };

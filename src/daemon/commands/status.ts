@@ -1,7 +1,7 @@
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { LAUNCHD_MIGRATION_HINT } from "@genesiscz/utils/macos/genesis-app";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { getDaemonPid } from "../daemon";

@@ -45,6 +45,12 @@ describe("estimateCostUsd", () => {
         expect(estimateCostUsd("gpt-5.6-luna", small)).toBeCloseTo(0.14, 10);
     });
 
+    it("bills Fable 5.2 at its $8/$40 list price", () => {
+        expect(
+            estimateCostUsd("claude-fable-5-2", { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 })
+        ).toBeCloseTo(48, 10);
+    });
+
     it("bills Fable 5 and 5.1 at their $10/$50 list price", () => {
         for (const id of ["claude-fable-5-1", "claude-fable-5"]) {
             expect(estimateCostUsd(id, { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 })).toBeCloseTo(60, 10);

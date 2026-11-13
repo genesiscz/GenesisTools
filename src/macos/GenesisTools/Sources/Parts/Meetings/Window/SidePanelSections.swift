@@ -213,6 +213,7 @@ enum SidePanelWords {
     /// Choices whose words depend on the key ("always" of the typed answer is "On every question").
     static let keyedTitles: [String: [String: String]] = [
         MeetingsPreferences.typedAnswerKey: ["always": "On every question", "noChoices": "Without choices"],
+        MeetingsPreferences.speakerOrderKey: ["spoken": "Most spoken", "transcript": "Transcript"],
     ]
 
     /// A number choice of 0 that means "not at all" for its key.
@@ -374,6 +375,7 @@ enum SidePanelCatalog {
             row(Transcript.avatars, value: Transcript.avatars.value(defaults)),
             row(Transcript.blockBreakSec, value: Transcript.blockBreakSec.value(defaults)),
             row(Transcript.clipSec, value: Transcript.clipSec.value(defaults)),
+            row(Speakers.order, value: Speakers.order.value(defaults)),
             row(Speakers.showQuestions, value: Speakers.showQuestions.value(defaults)),
             row(Speakers.hintChips, value: Speakers.hintChips.value(defaults)),
         ])

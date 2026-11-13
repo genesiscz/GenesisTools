@@ -229,7 +229,9 @@ export interface HistoryRecordRead {
     complete: boolean;
 }
 
-export interface HistoryStatisticsRead {
+/** What one transcript contributes to the statistics tables. */
+export interface SupportedHistoryStatistics {
+    supported: true;
     summary: HistoryFileStatistics;
     /** Exact event-date token buckets for uncached compatibility facades; persisted daily contributions keep provider semantics. */
     dailyTokens?: Record<string, TokenUsage>;
@@ -237,6 +239,12 @@ export interface HistoryStatisticsRead {
     issues: NativeSourceIssue[];
     complete: boolean;
 }
+
+/**
+ * `readStatistics`'s answer. A provider whose files carry no statistics answers `{ supported: false, reason }` from
+ * the member, and the refresh then reports coverage "unsupported"; the member is never left out.
+ */
+export type HistoryStatisticsRead = SupportedHistoryStatistics | { supported: false; reason: string };
 
 export interface HistoryReadOptions {
     signal?: AbortSignal;
@@ -386,6 +394,20 @@ export interface SessionPathRole {
     nested: boolean;
 }
 
+/** Which session started this one (`NativeSessionReader.readSpawnLink`): a sub-agent's spawner. */
+export interface SpawnLink {
+    /** The session that started this one. */
+    parentSessionId: string;
+    /** How deep below the conversation's first session the spawn sits (1: started by the lead). */
+    depth?: number;
+    /** The role the spawner gave it (Codex `agent_role`). */
+    role?: string;
+    /** The name the harness gave it (Codex `agent_nickname`). */
+    nickname?: string;
+    /** The task path the spawner gave it (Codex `agent_path`, such as `/root/review_fixes`). */
+    agentPath?: string;
+}
+
 export interface RowAnchorIds {
     messageIds: string[];
     toolCallIds: string[];
@@ -479,6 +501,13 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      */
     classifyPath(relativePath: string): SessionPathRole | null;
     /**
+     * The session that started this one, or null for a session nobody spawned or a provider whose files name no
+     * spawner. Codex reads its rollout's `session_meta` header (`codexSpawnLink`, which the usage context shares);
+     * Claude answers from the sub-agent folder layout (`classifyPath`); Grok's sub-agent files keep no lead id, so
+     * its reader answers null. The hub's agents tree asks here and never parses a header itself.
+     */
+    readSpawnLink(source: NativeSessionSource<Kind>): Promise<SpawnLink | null>;
+    /**
      * A new walk that names the native ids of each row of this provider's transcript (a source anchor's message id,
      * tool call id and turn id), oldest row first. Stateful: a Codex row names its turn only where the turn starts.
      */
@@ -503,14 +532,17 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
     lineLocalRecords?: boolean;
     /** Scanned records never carry `metadataChanges`, so a session's metadata after a scan is its indexed row. */
     scanKeepsMetadata?: boolean;
-    /** Compact operations are enabled as provider extraction completes. */
-    readMetadata?(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): Promise<HistoryMetadataRead>;
-    scan?(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): AsyncIterable<HistorySourceRecord>;
-    readRecords?(
+    /** The session's metadata row, read from its transcript and sidecars. */
+    readMetadata(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): Promise<HistoryMetadataRead>;
+    /** Every original record of the session, oldest first, with its searchable entries. */
+    scan(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): AsyncIterable<HistorySourceRecord>;
+    /** The original records a search matched, found again by the locators `scan` gave them. */
+    readRecords(
         source: NativeSessionSource<Kind>,
         options: HistoryReadOptions & { locators: string[] }
     ): Promise<HistoryRecordRead>;
-    readStatistics?(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): Promise<HistoryStatisticsRead>;
+    /** One transcript's statistics contribution, or `{ supported: false, reason }` when the provider keeps none. */
+    readStatistics(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): Promise<HistoryStatisticsRead>;
     roots(): string[];
     discover(
         roots: string[],
@@ -549,19 +581,17 @@ export interface NativeIndexSyncResult extends NativeIndexStatus {
 export type NativeIndexChanges = Pick<NativeIndexSyncResult, "parsed" | "unchanged" | "removed" | "issues">;
 
 /** The reader members a provider's history module implements itself; the provider's reader spreads them in. */
-export type HistoryOperations<Kind extends AgentKind> = Pick<NativeSessionReader<Kind>, "parserVersion"> &
-    Required<
-        Pick<
-            NativeSessionReader<Kind>,
-            | "readMetadata"
-            | "scan"
-            | "readRecords"
-            | "readBackward"
-            | "readTurnBoundary"
-            | "readForward"
-            | "continuedIn"
-            | "currentModel"
-            | "scanInsights"
-            | "rowAnchors"
-        >
-    >;
+export type HistoryOperations<Kind extends AgentKind> = Pick<
+    NativeSessionReader<Kind>,
+    | "parserVersion"
+    | "readMetadata"
+    | "scan"
+    | "readRecords"
+    | "readBackward"
+    | "readTurnBoundary"
+    | "readForward"
+    | "continuedIn"
+    | "currentModel"
+    | "scanInsights"
+    | "rowAnchors"
+>;

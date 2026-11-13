@@ -428,7 +428,9 @@ export function registerWatcherCommands(program: Command): void {
 
     program
         .command("check")
-        .description("Probe watchers and report. Reads only: nothing is recorded and nobody is notified.")
+        .description(
+            "Probe watchers and report. Nothing is recorded and nobody is notified, but each probe runs, so a command watcher's command runs too."
+        )
         .argument("[id]", "Watcher id")
         .option("--url <target>", "Ad-hoc target to probe without saving a watcher")
         .option("-k, --kind <kind>", "Kind for --url (default: guessed)")

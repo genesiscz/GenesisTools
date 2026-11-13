@@ -1,11 +1,39 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import type { ChannelDefinition, NotificationEvent, WebhookChannelConfig } from "../types";
 
-/** True when the endpoint accepted the event (or there was nothing to send). Never throws. */
+/**
+ * A webhook aimed at a server the test itself started is not a host effect, so the test-process refusal lets it
+ * through. Everything else leaves the machine, including the plausible-looking placeholder domains in fixtures, which
+ * belong to somebody and would receive a real POST.
+ */
+export function isLoopbackUrl(url: string): boolean {
+    try {
+        const { hostname } = new URL(url);
+        // `new URL("http://[::1]:3000").hostname` keeps the brackets, so the bare "::1" form never appears here. The
+        // whole 127.0.0.0/8 range is loopback, not just .1, and a test is free to bind anywhere in it.
+        return hostname === "localhost" || hostname === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+    } catch {
+        // An unparseable URL reaches no server, so the dispatcher's own error path is the honest thing to let it hit.
+        return true;
+    }
+}
+
+/**
+ * True when the endpoint accepted the event (or there was nothing to send). Never throws, except that it rejects in a
+ * test process (and a child a test spawns) when the URL is not loopback.
+ */
 export async function dispatchWebhook(event: NotificationEvent, config: WebhookChannelConfig): Promise<boolean> {
     if (!config.enabled || !config.url) {
         return true;
+    }
+
+    if (!isLoopbackUrl(config.url)) {
+        refuseHostEffectInTest(
+            "The webhook notification channel",
+            "Point it at a loopback server the test starts, or assert the event instead of posting it."
+        );
     }
 
     try {

@@ -1,7 +1,7 @@
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { formatHostsList, parseHostsList } from "@app/dev-dashboard/lib/allowed-hosts";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import * as p from "@genesiscz/utils/prompts/p";
 
 async function promptAllowedHosts(current: string[]): Promise<string[] | null> {
     const input = await p.text({
@@ -15,6 +15,7 @@ async function promptAllowedHosts(current: string[]): Promise<string[] | null> {
                 return "Enter at least one valid hostname";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(input)) {
@@ -34,6 +35,7 @@ export async function runFirstTimeSetup(): Promise<void> {
     const want = await p.confirm({
         message:
             "Would you like to configure custom hostnames for the dev dashboard? (for LAN/tunnel access — Vite rejects requests from unregistered hostnames when served on 0.0.0.0)",
+        cancel: "back",
     });
 
     if (p.isCancel(want) || !want) {
@@ -70,6 +72,7 @@ export async function runConfigure(): Promise<void> {
         message: "Allowed hostnames (comma-delimited, empty to allow all):",
         initialValue: formatHostsList(config.allowedHosts),
         placeholder: "dev-dashboard.example.com",
+        cancel: "back",
     });
 
     if (p.isCancel(input)) {

@@ -58,9 +58,16 @@ extension EditorModel {
         }
     }
 
-    /// Moves the playhead to a source second; a cut moment says so.
-    func fxGo(toSource seconds: Double) {
-        guard let out = TimelineMap.outputTime(ofSource: Int64((seconds * 1_000_000).rounded()), in: project) else {
+    /// Moves the playhead to a source second, or to the first kept moment of `seconds`..`until`; a cut moment, or a
+    /// range cut whole, says so.
+    func fxGo(toSource seconds: Double, until: Double? = nil) {
+        let fromUs = Int64((seconds * 1_000_000).rounded())
+        let firstShown: Int64? = if let until {
+            TimelineMap.shown(fromUs: fromUs, toUs: Int64((until * 1_000_000).rounded()), in: project)?.startOut
+        } else {
+            TimelineMap.outputTime(ofSource: fromUs, in: project)
+        }
+        guard let out = firstShown else {
             show("That moment was cut from the edit.", error: false)
             return
         }
@@ -86,6 +93,13 @@ struct PrivateDataSection: View {
     @State private var busy = false
     @State private var failure: String?
     @State private var phrase = ""
+    /// Off by default: a fixed area (a header) can hold the very name being hidden, and an area left visible shows it.
+    @State private var leaveFixed = false
+
+    /// The op the Hide button sends. Fixed areas stay hidden unless the person chose to leave them visible.
+    static func hideTextOp(_ text: String, leaveFixed: Bool) -> EditOp {
+        .hideText(EditOp.HideText(text: text, excludeFixed: leaveFixed ? true : nil))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -98,9 +112,14 @@ struct PrivateDataSection: View {
                 Button("Hide") { hideText() }
                     .disabled(busy || phrase.trimmingCharacters(in: .whitespaces).isEmpty)
                     .buttonStyle(.genHoverPlain())
-                    .instantTooltip("Finds every place the words show (OCR on this Mac) and blurs each one while it shows; the blur follows a scroll and leaves a toast over it visible")
+                    .instantTooltip("Finds every place the words show (OCR on this Mac) and blurs each one while it shows; the blur follows a scroll")
                     .accessibilityIdentifier("recorder.hide.textButton")
             }
+            Toggle("Leave fixed areas visible", isOn: $leaveFixed)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11.5))
+                .instantTooltip("A tab bar or a toast that stays still while the text scrolls is not blurred. Leave this off when a fixed header holds a name or a number: an area left visible shows the text inside it.")
+                .accessibilityIdentifier("recorder.hide.leaveFixed")
             SectionLabel(text: "Private data", value: hits.map { Plural.count($0.count, "hit") })
             Text("Emails, tokens and keys, phone numbers, IBANs and card numbers on the screen. The text is read on this Mac with Vision; nothing leaves it.")
                 .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
@@ -140,7 +159,7 @@ struct PrivateDataSection: View {
                 .toggleStyle(.checkbox)
                 .disabled(hit.hidden)
                 .accessibilityLabel("Hide \(hit.label) \(hit.masked)")
-            Button { model.fxGo(toSource: hit.from) } label: {
+            Button { model.fxGo(toSource: hit.from, until: hit.to) } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: "\(hit.label)  \(hit.masked)").font(.system(size: 12, weight: .medium)).lineLimit(1)
                     Text(verbatim: "\(clock(hit.from))–\(clock(hit.to))\(hit.hidden ? " · hidden" : "")\(hit.plays == nil ? " · cut" : "")")
@@ -172,7 +191,7 @@ struct PrivateDataSection: View {
         let text = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !busy else { return }
         busy = true
-        model.applyOps(EditOp.json([.hideText(EditOp.HideText(text: text, excludeFixed: true))])) { result in
+        model.applyOps(EditOp.json([Self.hideTextOp(text, leaveFixed: leaveFixed)])) { result in
             busy = false
             switch result {
             case .success:
@@ -221,12 +240,12 @@ struct SmoothCursorSection: View {
                 SectionLabel(text: "Ignore moves under", value: String(format: "%.0f pt", smooth.jitterPx))
                 Slider(value: Binding(get: { smooth.jitterPx }, set: { value in
                     model.setLooks { $0.cursorSmooth?.jitterPx = value.rounded() }
-                }), in: 0...12)
+                }), in: EditLimits.smoothJitterPx)
                     .accessibilityLabel("Ignore cursor moves under, in points")
                 SectionLabel(text: "Fade when still after", value: smooth.idleFadeSeconds == 0 ? "never" : String(format: "%.1f s", smooth.idleFadeSeconds))
                 Slider(value: Binding(get: { smooth.idleFadeSeconds }, set: { value in
                     model.setLooks { $0.cursorSmooth?.idleFadeSeconds = (value * 2).rounded() / 2 }
-                }), in: 0...10)
+                }), in: EditLimits.smoothIdleFadeSeconds)
                     .accessibilityLabel("Fade the cursor when still after, in seconds")
             }
         }
@@ -306,7 +325,7 @@ struct WaitsSection: View {
             })) { EmptyView() }
                 .toggleStyle(.checkbox)
                 .accessibilityLabel("Speed up the stretch at \(clock(wait.from))")
-            Button { model.fxGo(toSource: wait.from) } label: {
+            Button { model.fxGo(toSource: wait.from, until: wait.to) } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: "\(wait.kind == "still" ? "Waiting" : "Typing")  \(Self.speed(wait.speed))")
                         .font(.system(size: 12, weight: .medium))

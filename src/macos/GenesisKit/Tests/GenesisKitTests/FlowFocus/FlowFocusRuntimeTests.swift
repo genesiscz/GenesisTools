@@ -559,6 +559,25 @@ final class FlowFocusRuntimeTests: XCTestCase {
         await owner.stop()
     }
 
+    func testAClientFollowsTheTimerWindowSettingAfterItAttached() async throws {
+        let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.timer-owner", liveServices: false, presentsWindows: false)
+        let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.timer-client", liveServices: false, presentsWindows: false)
+        await owner.start()
+        await client.start()
+        XCTAssertEqual(client.role, .client("test.timer-owner"))
+        XCTAssertEqual(client.focus.settings.timerWindow, .automatic)
+        for mode in [FocusSettings.TimerWindow.off, .automatic] {
+            var focus = FocusSettings.from(appConfig: client.configuration.app)
+            focus.timerWindow = mode
+            let stored = await client.configuration.saveAppValue(focus.storedFields, forKey: "focus")
+            XCTAssertTrue(stored)
+            XCTAssertEqual(client.focus.settings.timerWindow, mode,
+                           "a client's own timer window follows the setting it had not read when it attached")
+        }
+        await client.stop()
+        await owner.stop()
+    }
+
     func testAClientSaveReportsWhatTheOwnerStoredNotWhatItSent() async throws {
         let owner = FlowFocusRuntime(dataRoot: directory, hostID: "test.save-owner", liveServices: false, presentsWindows: false)
         let client = FlowFocusRuntime(dataRoot: directory, hostID: "test.save-client", liveServices: false, presentsWindows: false)

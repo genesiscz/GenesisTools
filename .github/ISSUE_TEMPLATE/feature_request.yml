@@ -1,0 +1,73 @@
+name: Feature request
+description: Suggest a new tool, a new option or a better workflow.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem first. The solution can come second.
+        Search [existing issues](https://github.com/genesiscz/GenesisTools/issues?q=is%3Aissue+label%3Aenhancement) before you submit.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues and found no duplicate.
+          required: true
+        - label: This request covers one feature.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in your way today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: How should it work? Show the command line, the window or the output you would expect.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and workarounds
+      description: What do you do today, and what other approaches did you consider?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - recorder
+        - meetings
+        - hub
+        - widget
+        - node-repl
+        - github
+        - ai
+        - new tool
+        - other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you build it?
+      options:
+        - "Yes, I would open a PR"
+        - "Maybe, with some pointers"
+        - "No, I only want to suggest it"
+    validations:
+      required: true

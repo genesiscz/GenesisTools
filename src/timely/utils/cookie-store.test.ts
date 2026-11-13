@@ -2,10 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Storage } from "@genesiscz/utils/storage";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { clearStoredCookie, readStoredCookie, saveCookie } from "./cookie";
-
-setupStorageSandbox();
 
 const COOKIE = "_memory_session=abc; revision=12";
 

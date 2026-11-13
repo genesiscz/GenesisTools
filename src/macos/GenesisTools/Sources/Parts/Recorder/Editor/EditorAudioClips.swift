@@ -48,6 +48,22 @@ extension EditorModel {
 
 /// How far the music drops under speech, in dB, and under what (the `ducking` op). Off keeps the share slider above.
 struct DuckingSection: View {
+    static let fadePresets = [0, 150, 300, 600, 1000]
+
+    /// The dip-time tabs: the presets, and the stored value in its place when it is none of them (an agent's 3 s), so
+    /// the tabs show the value the export uses instead of the nearest preset.
+    static func fadeValues(_ fadeMs: Int) -> [Int] {
+        fadePresets.contains(fadeMs) ? fadePresets : (fadePresets + [fadeMs]).sorted()
+    }
+
+    static func fadeLabel(_ fadeMs: Int) -> String {
+        switch fadeMs {
+        case 0: "Cut"
+        case 1000: "1 s"
+        default: fadeMs % 100 == 0 ? String(format: "%.1f s", Double(fadeMs) / 1000) : String(format: "%.2f s", Double(fadeMs) / 1000)
+        }
+    }
+
     @Bindable var model: EditorModel
 
     var body: some View {
@@ -60,14 +76,13 @@ struct DuckingSection: View {
             .accessibilityIdentifier("recorder.audio.ducking")
             if let ducking {
                 SectionLabel(text: "Quieter by", value: ducking.db == 0 ? "Off" : "\(Int(ducking.db.rounded())) dB")
-                Slider(value: Binding(get: { ducking.db }, set: { value in model.setDucking { $0.db = value.rounded() } }), in: 0...30)
+                Slider(value: Binding(get: { ducking.db }, set: { value in model.setDucking { $0.db = value.rounded() } }), in: EditLimits.duckingDb)
                     .accessibilityLabel("Music quieter under speech, in decibels")
                     .accessibilityValue("\(Int(ducking.db.rounded())) dB")
                     .accessibilityIdentifier("recorder.audio.ducking.db")
-                SectionLabel(text: "Dip and return")
-                GenSegmentedTabs("Dip time", items: [.init(0, "Cut"), .init(150, "0.15 s"), .init(300, "0.3 s"), .init(600, "0.6 s"), .init(1000, "1 s")],
-                                 selection: Binding(get: { [0, 150, 300, 600, 1000].min { abs($0 - ducking.fadeMs) < abs($1 - ducking.fadeMs) } ?? 300 },
-                                                    set: { value in model.setDucking { $0.fadeMs = value } }),
+                SectionLabel(text: "Dip and return", value: Self.fadeLabel(ducking.fadeMs))
+                GenSegmentedTabs("Dip time", items: Self.fadeValues(ducking.fadeMs).map { GenSegmentedTabs<Int>.Item($0, Self.fadeLabel($0)) },
+                                 selection: Binding(get: { ducking.fadeMs }, set: { value in model.setDucking { $0.fadeMs = value } }),
                                  minSegmentWidth: 40, identifier: "recorder.audio.ducking.fade", fillsWidth: true)
                 SwitchRow("Under the transcript's lines", isOn: Binding(get: { ducking.transcript }, set: { on in model.setDucking { $0.transcript = on } }))
                     .accessibilityIdentifier("recorder.audio.ducking.transcript")
@@ -105,6 +120,11 @@ private struct VoiceoverRow: View {
     var body: some View {
         let missing = !FileManager.default.fileExists(atPath: clip.file)
         let plays = TimelineMap.outputTime(ofSource: clip.atUs, in: model.project)
+        // A card's line plays where the export lays it: a card that went away or got shorter under it plays nothing.
+        let cards = CardSpans(project: model.project, enabled: true)
+        let hasCard = clip.card.map { $0 == .intro ? cards.intro != nil : cards.end != nil } ?? false
+        let cardPlays = clip.card != nil && VoiceoverMix.exportPlacements(model.project, cards: cards)
+            .contains { $0.clip.id == clip.id }
         let name = clip.label ?? URL(fileURLWithPath: clip.file).deletingPathExtension().lastPathComponent
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -116,9 +136,16 @@ private struct VoiceoverRow: View {
                 Spacer()
                 if let card = clip.card {
                     // Round 3 (2026-11-08): a card's line plays only in the export, over its card.
-                    Text(verbatim: "\(card.rawValue) card +\(formatClock(clip.atUs, tenths: true))")
-                        .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
-                        .instantTooltip("Plays over the \(card.rawValue) card in the export; the preview has no cards")
+                    Text(verbatim: hasCard
+                        ? "\(card.rawValue) card +\(formatClock(clip.atUs, tenths: true))"
+                        : "no \(card.rawValue) card")
+                        .font(.system(size: 11.5).monospacedDigit())
+                        .foregroundStyle(cardPlays ? RecorderPalette.dim : Color.orange)
+                        .instantTooltip(!hasCard
+                            ? "The edit has no \(card.rawValue) card, so it does not play"
+                            : cardPlays
+                                ? "Plays over the \(card.rawValue) card in the export; the preview has no cards"
+                                : "It starts after the \(card.rawValue) card ends, so it does not play")
                 } else {
                     Text(verbatim: plays.map { formatClock($0, tenths: true) } ?? "cut")
                         .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(plays == nil ? Color.orange : RecorderPalette.dim)

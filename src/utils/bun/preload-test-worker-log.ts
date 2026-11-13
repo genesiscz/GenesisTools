@@ -4,7 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { readStallSnapshot } from "@genesiscz/utils/bun/worker-stall";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { collectProcessTree, listPsTable, PS_COLUMNS_SPEC } from "@genesiscz/utils/process/ps";
+import { collectProcessTree, listProcessRows, PS_COLUMNS_SPEC } from "@genesiscz/utils/process/processes";
 
 /**
  * Opt-in test-worker log: which `bun test --parallel` worker ran which file, and which child processes
@@ -40,7 +40,7 @@ if (setting) {
         let children: Array<{ pid: number; ppid: number; command: string }> = [];
 
         try {
-            const rows = await listPsTable({ timeoutMs: 5_000 });
+            const rows = await listProcessRows({ timeoutMs: 5_000 });
             const tree = new Set(collectProcessTree(process.pid, rows));
             children = rows
                 // The `ps` taking this very measurement is a child too; it is not a leftover.

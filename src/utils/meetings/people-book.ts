@@ -3,6 +3,7 @@ import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
@@ -76,10 +77,6 @@ function emptyBook(): ReadBook {
     };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * Reads the book's text. A list element that does not parse (a newer build's shape, a hand edit) is kept as it is and
  * written back, never dropped; text that is not JSON (a torn write, a hand edit) reads as an empty book with `broken`.
@@ -95,7 +92,7 @@ export function parsePeopleBook(text: string, path = PEOPLE_FILE): ReadBook {
         return { ...book, broken: error instanceof Error ? error.message : String(error) };
     }
 
-    if (!isRecord(raw)) {
+    if (!isObject(raw)) {
         log.warn({ path }, "people book is not an object; it reads as empty and the next write moves it aside");
         return { ...book, broken: "the file is not a JSON object" };
     }

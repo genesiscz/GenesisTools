@@ -430,8 +430,11 @@ package func runHub(_ args: [String]) -> Never {
                 }
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
-            FileHandle.standardError.write(Data("hub snapshot: not settled within 60 s\n".utf8))
+        // The give-up timer leaves room for the configured load wait (GENESIS_HUB_SNAPSHOT_WAIT, up to 50 s)
+        // plus the focus and settle pauses around it, so it never fires before the fallback capture.
+        let giveUp = max(60, HubSnapshotLoads.deadline + 30)
+        DispatchQueue.main.asyncAfter(deadline: .now() + giveUp) {
+            FileHandle.standardError.write(Data("hub snapshot: not settled within \(Int(giveUp)) s\n".utf8))
             exit(1)
         }
         window.orderInForSnapshot()
@@ -2529,28 +2532,64 @@ private struct HubModePicker: View {
         .inbox: "tray", .timeline: "clock", .agents: "person.2", .usage: "chart.bar.xaxis",
     ]
 
-    /// Six titles need about 340 pt at the small control size; narrower, the row shows icons.
+    /// Narrower than `titlesWidth`, the row shows icons with tooltips: a title is never cut ("Worktr…").
     @State private var icons = false
 
+    /// Room each title takes beside its text: the segment's own inset, so a title never touches its neighbour.
+    private static let titleInset: CGFloat = 6
+    private static let spacing: CGFloat = 1
+    private static let outerPadding: CGFloat = 2
+
+    /// A title's width at the semibold weight a selected one takes, so selecting a mode never cuts its title.
+    static func titleWidth(_ text: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        return ceil((text as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    static func title(_ mode: HubMode, waiting: Int) -> String {
+        mode == .inbox && waiting > 0 ? "\(mode.title) \(waiting)" : mode.title
+    }
+
+    /// The width the row needs to show every title whole. Each segment is at least as wide as its own title (the
+    /// Inbox one with its count) and shares the rest; equal segments needed 450 pt for "Worktrees", so a 370 pt
+    /// sidebar showed only icons. It was a fixed 340 pt written when six modes fitted, and with seven "Worktrees"
+    /// was cut at 350 pt (hub UX council, 2026-11-09).
+    static func titlesWidth(waiting: Int) -> CGFloat {
+        let count = CGFloat(HubMode.allCases.count)
+        let titles = HubMode.allCases.map { titleWidth(title($0, waiting: waiting)) + titleInset }.reduce(0, +)
+        return (titles + (count - 1) * spacing + 2 * outerPadding).rounded(.up)
+    }
+
+    /// The row's height: a 20 pt segment and the padding around it.
+    private static let height: CGFloat = 20 + 2 * outerPadding
+
     var body: some View {
-        HStack(spacing: 1) {
-            ForEach(HubMode.allCases, id: \.self) { mode in
-                segment(mode, icons: icons)
+        // The width is read from a clear view that takes exactly what the sidebar offers. The segments have minimum
+        // widths, so the row itself is never narrower than its titles: measured on the row, it never asked for icons,
+        // and a 312 pt sidebar cut "Usage" off at its edge.
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.height)
+            .measuredWidth("hub.modes", narrowerThan: Self.titlesWidth(waiting: inbox.waitingCount), $icons)
+            .overlay {
+                HStack(spacing: Self.spacing) {
+                    ForEach(HubMode.allCases, id: \.self) { mode in
+                        segment(mode, icons: icons)
+                    }
+                }
+                .padding(Self.outerPadding)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(ReviewPalette.hairline))
             }
-        }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.06)))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(ReviewPalette.hairline))
-        .frame(maxWidth: .infinity)
-        .measuredWidth("hub.modes", narrowerThan: 340, $icons)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("Mode"))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Text("Mode"))
     }
 
     private func segment(_ mode: HubMode, icons: Bool) -> some View {
         let selected = model.mode == mode
         let waiting = inbox.waitingCount
         let count = mode == .inbox && waiting > 0 ? " \(waiting)" : ""
+        let least = icons ? 0 : Self.titleWidth(Self.title(mode, waiting: waiting)) + Self.titleInset
         return Button {
             model.setMode(mode)
         } label: {
@@ -2566,7 +2605,7 @@ private struct HubModePicker: View {
                 }
             }
             .foregroundColor(selected ? .white : Color.white.opacity(0.7))
-            .frame(maxWidth: .infinity)
+            .frame(minWidth: least, maxWidth: .infinity)
             .frame(height: 20)
             .background(RoundedRectangle(cornerRadius: 5).fill(selected ? Color.white.opacity(0.16) : Color.clear))
             .contentShape(Rectangle())
@@ -2575,40 +2614,6 @@ private struct HubModePicker: View {
         .instantTooltip(mode.tooltip(waiting: waiting))
         .accessibilityLabel(Text(mode.title))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-}
-
-/// A row at the top of the Agents sidebar that opens another face of the app: a title, what it opens,
-/// the row hover and the pointer.
-private struct AgentsLaunchRow: View {
-    let title: String
-    let detail: String
-    let symbol: String
-    let tooltip: String
-    let action: () -> Void
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: symbol)
-                .font(.system(size: 12))
-                .foregroundColor(ReviewPalette.dim)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 12.5))
-                Text(detail).font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            Image(systemName: "arrow.up.forward.app")
-                .font(.system(size: 10))
-                .foregroundColor(ReviewPalette.dim)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .contentShape(Rectangle())
-        .rowButton(action)
-        .padding(.horizontal, 6)
-        .instantTooltip(tooltip)
-        .accessibilityLabel(Text("\(title): \(detail)"))
     }
 }
 
@@ -2647,6 +2652,8 @@ private struct SessionListView: View {
     @Bindable var model: HubModel
     @StateObject private var history = HubHistoryModel()
     @AppStorage("hub.sessions.grouping") private var grouping = SessionGrouping.time.rawValue
+    /// A chip every row of a group shows is left out of the rows after the first (`SessionRowHidden`).
+    @AppStorage(HubSessionRows.hideSharedKey, store: HubDefaults.store) private var hideShared = true
     @StateObject private var prefs = GroupPrefs(key: "sessions.groups")
     /// Stuck verdicts of the live sessions (Hub/HubStuck.swift); rows take the value, not the store.
     @ObservedObject private var stuck = HubStuckStore.shared
@@ -2680,10 +2687,12 @@ private struct SessionListView: View {
         switch model.mode {
         case .sessions: return "Filter sessions, projects, accounts…"
         case .inbox: return "Filter waiting sessions and questions…"
-        case .timeline: return "Filter the activity: title, project, branch, author, sha…"
+        case .timeline: return "Filter activity, authors, SHAs…"
         case .agents: return "Filter agents, sessions, models, accounts…"
         case .usage: return "Filter accounts…"
-        case .worktrees, .prs: return "Filter repos, branches…"
+        case .worktrees: return "Filter repos, branches…"
+        // The field searches PRs (`PRQuery`): title, repo, branch, author, number.
+        case .prs: return "Filter PRs: title, #123, @author…"
         }
     }
 
@@ -2716,21 +2725,17 @@ private struct SessionListView: View {
         VStack(spacing: 0) {
             // Back and forward sit in the band under the title bar, right above the mode switch:
             // the switch row has no room left in a narrow sidebar.
-            // The glass switch sits here too: five modes need the whole width of the row below.
+            // The palette and Settings sit here too (the glass switch when asked for): the modes need the whole row below.
             HStack(spacing: 0) {
                 HubNavButtons(model: model)
                 Spacer(minLength: 0)
-                // The palette had only a key (⌘K) and a menu item; this is the one-click way in.
-                IconButton(systemName: "command", tooltip: HubKeymap.hint("Command palette", HubKeymap.commandPalette)) {
-                    model.paletteRequest = ""
-                }
-                .foregroundColor(ReviewPalette.dim)
-                // A gear is the settings glyph; the shield read as a security warning (H19).
-                IconButton(systemName: "gearshape", tooltip: HubKeymap.hint("Settings", "hub.app.settings")) {
-                    AppMenuTarget.shared.openSettings(nil)
-                }
-                .foregroundColor(ReviewPalette.dim)
-                GlassToggle()
+                // The palette had only a key (⌘K) and a menu item; this is the one-click way in, with a word: a bare ⌘
+                // glyph read as no button at all (hub UX C2).
+                HubPaletteButton { model.paletteRequest = "" }
+                // Settings, plus the widget's and Clicky's where the build has them (Hub/HubSettingsGear.swift).
+                HubSettingsGear()
+                // Off by default: Glass lives in View → Glass (⌘⇧G), the palette and Settings (Hub/HubPanels.swift).
+                GlassToggleSlot()
             }
             .padding(.horizontal, 12)
             .frame(height: 28)
@@ -2799,28 +2804,6 @@ private struct SessionListView: View {
             } else if model.mode == .usage {
                 UsageListView(usage: model.usage, filter: model.filter)
             } else if model.mode == .agents {
-                // Staging: the widget and Clicky entries exist only in the Preview app (main.swift).
-                if NativeStaging.facesEnabled {
-                    // Each says what it opens: two bare names read as list entries nobody could place (H22).
-                    VStack(spacing: 2) {
-                        AgentsLaunchRow(
-                            title: "Widget",
-                            detail: "Opens the notch widget's settings",
-                            symbol: "rectangle.rightthird.inset.filled",
-                            tooltip: "Start the notch and side widget and open its settings: modules, edges and pinned sessions"
-                        ) { WidgetLaunch.start() }
-                        AgentsLaunchRow(
-                            title: "Clicky",
-                            detail: "Key sounds and the app's settings",
-                            symbol: "keyboard",
-                            tooltip: "Open the settings window at Clicky, the keyboard sounds"
-                        ) {
-                            guard AppParts.requirePart("clicky", for: "open Clicky's settings") else { return }
-                            FeatureSettingsLaunch.open(pageID: "clicky.sound")
-                        }
-                    }
-                    .padding(.bottom, 6)
-                }
                 AgentsListView(model: model, agents: model.agents)
             } else {
                 ScrollViewReader { proxy in
@@ -2838,10 +2821,17 @@ private struct SessionListView: View {
                             ForEach(sections, id: \.title) { section in
                                 Section {
                                     if !(section.managed && prefs.collapsed.contains(section.title)) {
+                                        let hidden = hideShared
+                                            ? SessionRowHidden.shared(section.rows, projectInTitle: mode == .project || mode == .projectHarness)
+                                            : (first: SessionRowHidden(), rest: SessionRowHidden())
+                                        let firstID = section.rows.first?.id
                                         ForEach(section.rows) { session in
                                             let activity = SessionRowActivity(work: live.work[session.sessionId], isLive: session.isLive)
                                             let selected = session.id == model.selectedID
-                                            SessionRowView(session: session, selected: selected, stuck: stuck.verdicts[session.sessionId], activity: activity) {
+                                            SessionRowView(
+                                                session: session, selected: selected, stuck: stuck.verdicts[session.sessionId], activity: activity,
+                                                hidden: session.id == firstID ? hidden.first : hidden.rest
+                                            ) {
                                                 listFocused = true
                                                 model.select(session.id)
                                             }
@@ -2880,6 +2870,7 @@ private struct SessionListView: View {
                             HubHistorySection(model: model, history: history, shown: Set(sections.flatMap(\.rows).map(\.sessionId)))
                         }
                         .padding(.bottom, 12)
+                        .genScrollBars()
                     }
                     .modifier(SidebarArrowKeys(
                         ids: { [collapsed = prefs.collapsed] in Self.sessionKeyOrder(sections, collapsed: collapsed) },
@@ -2984,16 +2975,41 @@ enum SessionRowActivity: Equatable {
 /// One session of the list, from values. Live (its row button, the provider tooltip) under the pointer or when
 /// selected (`liveRow`); the same labels with no control at rest, so the 69-row list adds two responders, not 140,
 /// to the accessibility walks a sidebar drag pays for (`PRRow` in Hub/HubPRs.swift, 2026-10-29).
+/// The chips a session row leaves out because every row of its group shows the same one: three identical marks per
+/// row said nothing (hub UX C8, Settings → Hub → Panes → Sessions list). The group's first row keeps them, so the list
+/// still says the shared project or account once; a group titled by its project drops the project from every row.
+struct SessionRowHidden: Equatable {
+    var project = false
+    var account = false
+    var host = false
+
+    /// What the first row and the rows after it leave out. A group of one shares nothing with another row.
+    static func shared(_ rows: [HubSession], projectInTitle: Bool) -> (first: SessionRowHidden, rest: SessionRowHidden) {
+        func same<T: Equatable>(_ value: (HubSession) -> T?) -> Bool {
+            guard rows.count > 1, let first = rows.first.flatMap(value) else { return false }
+            return rows.allSatisfy { value($0) == first }
+        }
+        let rest = SessionRowHidden(
+            project: projectInTitle || same { $0.project },
+            account: same { $0.account },
+            host: same { $0.host?.badge }
+        )
+        return (SessionRowHidden(project: projectInTitle), rest)
+    }
+}
+
 private struct SessionRowView: View, Equatable {
     let session: HubSession
     let selected: Bool
     var stuck: StuckVerdict?
     /// The dot: working or waiting from the open transcript's follow, else live from the list; nil for a quiet row.
     var activity: SessionRowActivity?
+    var hidden = SessionRowHidden()
     let select: () -> Void
 
     static func == (a: SessionRowView, b: SessionRowView) -> Bool {
         a.session == b.session && a.selected == b.selected && a.stuck == b.stuck && a.activity == b.activity
+            && a.hidden == b.hidden
     }
 
     var body: some View {
@@ -3014,26 +3030,30 @@ private struct SessionRowView: View, Equatable {
             VStack(alignment: .leading, spacing: 3) {
                 // The stuck badge sits by the title: on the meta line it squeezed the project and account to "Gene…".
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    // The selected row keeps the title's ending ("… wave 1b" against "… wave 1"), which tells similar
+                    // sessions apart; its whole title is in the tooltip (hub UX C5).
                     Text(session.displayTitle)
                         .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
                         .lineLimit(2)
+                        .truncationMode(selected ? .middle : .tail)
+                        .instantTooltip(selected ? session.displayTitle : "")
                     if let stuck {
                         Spacer(minLength: 0)
                         StuckBadge(verdict: stuck)
                     }
                 }
                 HStack(spacing: 6) {
-                    if let project = session.project {
+                    if let project = session.project, !hidden.project {
                         Text(project).layoutPriority(-2)
                     }
-                    if let account = session.account {
+                    if let account = session.account, !hidden.account {
                         Text(account)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Capsule().stroke(Color.white.opacity(0.15)))
                             .layoutPriority(-1)
                     }
-                    if let host = session.host {
+                    if let host = session.host, !hidden.host {
                         Badge(host.badge, tooltip: host.id.map { "Ran in \(host.appName), thread \($0)" } ?? "Ran in \(host.appName)")
                     }
                     Spacer(minLength: 0)
@@ -3215,14 +3235,16 @@ struct SessionDetailView: View {
     @Environment(\.hubGlass) private var glass
 
     /// A small count on the button: changed files, open decisions. `.pending` keeps the badge's place
-    /// while there is no count yet, so the buttons do not move when the diff has loaded.
+    /// while there is no count yet, so the buttons do not move when the diff has loaded. The changed files show
+    /// once, on Changes: Files lists the same changed files, and two badges with the same number read as two
+    /// different counts (hub UX council, 2026-11-09).
     private func badge(for tab: HubTab) -> PaneBadge {
         switch tab {
-        case .changes, .files:
+        case .changes:
             let count = model.review?.files.count ?? 0
             return count > 0 ? .count(count) : .pending
         case .decisions: return .count(model.decisions.filter(\.isOpen).count)
-        case .transcript: return .none
+        case .files, .transcript: return .none
         }
     }
 
@@ -3425,9 +3447,21 @@ private struct PaneToggle: View {
             .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: targeted)
         }
         .buttonStyle(.genHoverPlain())
-        .instantTooltip(open
+        .instantTooltip((open
             ? "Hide the \(tab.title) pane · option-click: only this one · drag onto another to swap"
             : "Show the \(tab.title) pane · option-click: only this one · drag onto another to swap")
+            + (badgeMeaning.map { "\n\($0)" } ?? ""))
+        .accessibilityValue(Text(badgeMeaning ?? ""))
+    }
+
+    /// What the badge counts, in words: the tooltip and VoiceOver say it, the badge alone is a bare number.
+    private var badgeMeaning: String? {
+        guard case .count(let count) = badge else { return nil }
+        switch tab {
+        case .changes: return Plural.count(count, "changed file")
+        case .decisions: return Plural.count(count, "open decision")
+        case .files, .transcript: return nil
+        }
     }
 
     private func dragAndDrop(_ view: some View) -> some View {

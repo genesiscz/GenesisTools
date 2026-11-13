@@ -225,12 +225,13 @@ final class RecorderScreenFindViewTests: XCTestCase {
                                         displays: [(1, "Built-in Retina Display"), (4, "Studio")])
         model.screenQuery = "token"
         model.screenHits = hits
-        XCTAssertEqual(hits.map(\.shown), [true, false, true])
-        XCTAssertEqual(hits.map(\.sourceUs), [0, 4_000_000, 12_500_000])
+        // The shared fixture holds a fourth moment since 3cc80012cf: the same frame again at 14.5 s.
+        XCTAssertEqual(hits.map(\.shown), [true, false, true, true])
+        XCTAssertEqual(hits.map(\.sourceUs), [0, 4_000_000, 12_500_000, 14_500_000])
 
         let image = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen", width: 300)
         let text = try EditorShots.text(image).lowercased()
-        for word in ["find on screen", "3 moments", "api token: sk-123", "studio, not shown then", "00:12.5", "tokén list"] {
+        for word in ["find on screen", "4 moments", "api token: sk-123", "studio, not shown then", "00:12.5", "tokén list"] {
             XCTAssertTrue(text.contains(word), "\(word) missing from: \(text)")
         }
 
@@ -332,11 +333,11 @@ final class RecorderScreenFindViewTests: XCTestCase {
         let model = model()
         model.screenQuery = "token"
         model.screenSearchFailure = EditorModel.screenSearchProblem(stderr: "/x has no recording.json; make the proxy first\n", status: 1)
-        XCTAssertTrue(model.screenSearchFailure?.hasPrefix("This movie has no screen text.") == true)
+        XCTAssertEqual(model.screenSearchFailure, EditorModel.noScreenText)
         XCTAssertEqual(EditorModel.screenSearchProblem(stderr: "boom\nthe last line\n", status: 2), "The search did not run: the last line")
         // Regression test: deep test 2026-11-07 R2-RE6 — a movie recording's refusal reads as the plain sentence too.
         XCTAssertEqual(EditorModel.screenSearchProblem(stderr: "/x has no screen text: only a frames recording …\n", status: 1),
-                       "This movie has no screen text. Only a frames recording or a meeting keeps the text it read off its screens.")
+                       EditorModel.noScreenText)
         let image = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen-no-text", width: 300)
         XCTAssertTrue(try EditorShots.text(image).lowercased().contains("no screen text"))
     }
@@ -346,13 +347,14 @@ final class RecorderScreenFindViewTests: XCTestCase {
     // at once, with no box.
     func testAMovieRecordingSaysItHasNoScreenTextBeforeAnySearch() throws {
         let manifest = folder.appendingPathComponent("recording.json")
-        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), false, "no recording.json: find-screen refuses it")
+        let movie = folder.appendingPathComponent("missing-screen.mp4")
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder, movie: movie), false, "no recording.json: find-screen refuses it")
         try Data(#"{"settings":{"kind":"video"},"frames":[]}"#.utf8).write(to: manifest)
-        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), false, "a movie recording lists no frames")
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder, movie: movie), false, "no frames and no movie to read")
         try Data(#"{"frames":[{"file":"frames/0001.jpg","t":0}]}"#.utf8).write(to: manifest)
-        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), true)
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder, movie: movie), true)
         try Data("not json".utf8).write(to: manifest)
-        XCTAssertNil(EditorModel.hasScreenText(recordingFolder: folder), "unreadable: keep the box and let the door answer")
+        XCTAssertNil(EditorModel.hasScreenText(recordingFolder: folder, movie: movie), "unreadable: keep the box and let the door answer")
 
         let model = model()
         model.screenTextKnown = false
@@ -500,6 +502,11 @@ final class RecorderEditTests: XCTestCase {
         return project
     }
 
+    /// The whole 10 s movie at 1x with these zooms, where source time is output time.
+    private func zoomed(_ zooms: [EditProject.Zoom]) -> EditProject {
+        project([.init(id: "c", fromUs: 0, toUs: 10_000_000)], zooms: zooms)
+    }
+
     /// Only `tools recorder export` cleans the sound, so an MP4 with noise reduction goes there; a plain MP4 stays in
     /// the window's own renderer (progress and Cancel), and a GIF or WebM always goes to the CLI.
     func testAnMP4WithNoiseReductionExportsThroughTheCLIAndAPlainOneInTheWindow() {
@@ -573,12 +580,13 @@ final class RecorderEditTests: XCTestCase {
             CursorTrack.Sample(ms: 3000, x: 0.98, y: 0.02),
         ])
         var part = EditProject.Redaction(id: "s", startUs: 0, endUs: 3_000_000, x: 0, y: 0, width: 0.2, height: 0.2, style: .spotlight)
-        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 500_000, track: track).x, 0, "not following: it stays")
+        let pointer = CursorTrack.Pointer()
+        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 500_000, track: track, pointer: pointer).x, 0, "not following: it stays")
         part.follow = true
-        let centred = ZoomState.placed(part, atSourceUs: 500_000, track: track)
+        let centred = ZoomState.placed(part, atSourceUs: 500_000, track: track, pointer: pointer)
         XCTAssertEqual(centred.x, 0.4, accuracy: 0.001)
         XCTAssertEqual(centred.y, 0.4, accuracy: 0.001)
-        let corner = ZoomState.placed(part, atSourceUs: 2_800_000, track: track)
+        let corner = ZoomState.placed(part, atSourceUs: 2_800_000, track: track, pointer: pointer)
         XCTAssertEqual(corner.x, 0.8, accuracy: 0.001, "kept inside the picture")
         XCTAssertEqual(corner.y, 0, accuracy: 0.001)
     }
@@ -717,17 +725,43 @@ final class RecorderEditTests: XCTestCase {
     func testTheZoomEasesInHoldsAndKeepsItsViewInsideTheFrame() {
         let zoom = EditProject.Zoom(id: "z", startUs: 1_000_000, endUs: 3_000_000, scale: 2, focusX: 0.95, focusY: 0.05,
                                     easeInMs: 500, easeOutMs: 500)
-        XCTAssertEqual(ZoomCurve.view(atSource: 500_000, zooms: [zoom], cursor: nil), .whole)
-        let start = ZoomCurve.view(atSource: 1_000_000, zooms: [zoom], cursor: nil)
+        XCTAssertEqual(ZoomCurve.view(atSource: 500_000, project: zoomed([zoom]), cursor: nil), .whole)
+        let start = ZoomCurve.view(atSource: 1_000_000, project: zoomed([zoom]), cursor: nil)
         XCTAssertEqual(start.scale, 1, accuracy: 0.001)
-        let middle = ZoomCurve.view(atSource: 1_250_000, zooms: [zoom], cursor: nil)
+        let middle = ZoomCurve.view(atSource: 1_250_000, project: zoomed([zoom]), cursor: nil)
         XCTAssertGreaterThan(middle.scale, 1.5, "the ease-out curve passes half its way early")
-        let held = ZoomCurve.view(atSource: 2_000_000, zooms: [zoom], cursor: nil)
+        let held = ZoomCurve.view(atSource: 2_000_000, project: zoomed([zoom]), cursor: nil)
         XCTAssertEqual(held.scale, 2, accuracy: 0.0001)
         XCTAssertEqual(held.rect.maxX, 1, accuracy: 0.0001, "a focus at the edge is held so the view stays in the frame")
         XCTAssertEqual(held.rect.minY, 0, accuracy: 0.0001)
         XCTAssertEqual(ZoomCurve.easeOut(0), 0, accuracy: 0.0001)
         XCTAssertEqual(ZoomCurve.easeOut(1), 1, accuracy: 0.0001)
+    }
+
+    /// PR #752 review: every frame placed the clips, intersected every zoom with every clip and sorted them, twice per
+    /// frame (picture and canvas) and again for motion blur. The schedule is made once per edit and layer; a changed
+    /// zoom or clip makes a new one, and the view follows the change.
+    func testEveryFrameOfOneEditReusesItsZoomSchedule() {
+        let zoom = EditProject.Zoom(id: "z", startUs: 1_000_000, endUs: 3_000_000, scale: 2, easeInMs: 0, easeOutMs: 0)
+        let movie = project([.init(id: "a", fromUs: 0, toUs: 4_000_000), .init(id: "b", fromUs: 5_000_000, toUs: 9_000_000)],
+                            zooms: [zoom])
+        _ = ZoomCurve.view(atSource: 0, project: movie, cursor: nil)
+        _ = ZoomCurve.canvasView(atSource: 0, project: movie)
+        let before = ZoomCurve.scheduleBuilds
+        for us in stride(from: Int64(0), to: 4_000_000, by: 16_667) {
+            _ = ZoomCurve.view(atSource: us, project: movie, cursor: nil)
+            _ = ZoomCurve.canvasView(atSource: us, project: movie)
+        }
+        XCTAssertEqual(ZoomCurve.scheduleBuilds, before, "240 frames of both layers reuse the edit's schedules")
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, project: movie, cursor: nil).scale, 2, accuracy: 0.0001)
+
+        var changed = movie
+        changed.zooms[0].scale = 3
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, project: changed, cursor: nil).scale, 3, accuracy: 0.0001,
+                       "a changed zoom is placed again")
+        XCTAssertEqual(ZoomCurve.scheduleBuilds, before + 1)
+        changed.clips.removeFirst()
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, project: changed, cursor: nil), .whole, "a cut zoom never shows")
     }
 
     /// Round 3 (2026-11-08): the release starts and lands softly. It used to leave at full speed (about a fifth of the
@@ -757,7 +791,8 @@ final class RecorderEditTests: XCTestCase {
             let endUs: Int64 = 3_000_000
             let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: endUs, scale: 2, easeInMs: 500, easeOutMs: easeMs)
             let releaseUs = endUs - Int64(easeMs) * 1000
-            let scale = { (us: Int64) in ZoomCurve.view(atSource: us, zooms: [zoom], cursor: nil).scale }
+            let movie = zoomed([zoom])
+            let scale = { (us: Int64) in ZoomCurve.view(atSource: us, project: movie, cursor: nil).scale }
             // 50 ms before the end the view is nearly whole again, not still zoomed and about to snap.
             XCTAssertLessThan(scale(endUs - 50_000), 1.08, "\(easeMs) ms")
             // Half way through the release it is half way out.
@@ -780,20 +815,35 @@ final class RecorderEditTests: XCTestCase {
         let first = EditProject.Zoom(id: "a", startUs: 3_302_578, endUs: 5_302_578, scale: 1.5, easeInMs: 450, easeOutMs: 450)
         let second = EditProject.Zoom(id: "b", startUs: 5_302_578, endUs: 7_302_578, scale: 1.5, easeInMs: 450, easeOutMs: 450)
         for us in stride(from: 4_000_000, through: 6_500_000, by: 16_667) {
-            let view = ZoomCurve.view(atSource: Int64(us), zooms: [second, first], cursor: nil)
+            let view = ZoomCurve.view(atSource: Int64(us), project: zoomed([second, first]), cursor: nil)
             XCTAssertEqual(view.scale, 1.5, accuracy: 0.0001, "at \(us) µs")
         }
         // A short gap glides too: from one focus to the other, smoothly, without going back to the whole frame.
         let left = EditProject.Zoom(id: "l", startUs: 0, endUs: 2_000_000, scale: 2, focusX: 0.25, focusY: 0.5)
         let right = EditProject.Zoom(id: "r", startUs: 2_300_000, endUs: 4_000_000, scale: 2, focusX: 0.75, focusY: 0.5)
-        var previous = ZoomCurve.view(atSource: 1_400_000, zooms: [left, right], cursor: nil)
+        var previous = ZoomCurve.view(atSource: 1_400_000, project: zoomed([left, right]), cursor: nil)
         for us in stride(from: 1_416_667, through: 2_900_000, by: 16_667) {
-            let view = ZoomCurve.view(atSource: Int64(us), zooms: [left, right], cursor: nil)
+            let view = ZoomCurve.view(atSource: Int64(us), project: zoomed([left, right]), cursor: nil)
             XCTAssertEqual(view.scale, 2, accuracy: 0.0001, "at \(us) µs")
             XCTAssertLessThan(abs(view.centerX - previous.centerX), 0.05, "at \(us) µs")
             previous = view
         }
-        XCTAssertEqual(ZoomCurve.view(atSource: 3_000_000, zooms: [left, right], cursor: nil).centerX, 0.75, accuracy: 0.0001)
+        XCTAssertEqual(ZoomCurve.view(atSource: 3_000_000, project: zoomed([left, right]), cursor: nil).centerX, 0.75, accuracy: 0.0001)
+    }
+
+    func testDeeplyOverlappingZoomsGlideInsteadOfJumping() {
+        // The second starts at 3 s inside the first (0 to 5 s): the window from the first's leave to the second's
+        // arrival is empty, and the view jumped from one focus to the other in one frame at 3 s.
+        let first = EditProject.Zoom(id: "a", startUs: 0, endUs: 5_000_000, scale: 2, focusX: 0.25, focusY: 0.5, easeInMs: 500, easeOutMs: 500)
+        let second = EditProject.Zoom(id: "b", startUs: 3_000_000, endUs: 8_000_000, scale: 2, focusX: 0.75, focusY: 0.5, easeInMs: 500, easeOutMs: 500)
+        var previous = ZoomCurve.view(atSource: 2_900_000, project: zoomed([first, second]), cursor: nil)
+        for us in stride(from: 2_916_667, through: 4_000_000, by: 16_667) {
+            let view = ZoomCurve.view(atSource: Int64(us), project: zoomed([first, second]), cursor: nil)
+            XCTAssertEqual(view.scale, 2, accuracy: 0.0001, "at \(us) µs")
+            XCTAssertLessThan(abs(view.centerX - previous.centerX), 0.05, "at \(us) µs")
+            previous = view
+        }
+        XCTAssertEqual(ZoomCurve.view(atSource: 3_600_000, project: zoomed([first, second]), cursor: nil).centerX, 0.75, accuracy: 0.0001)
     }
 
     func testLinkedZoomsShorterThanTheirEaseNeverShowTheWholeFrameOrJump() {
@@ -805,9 +855,9 @@ final class RecorderEditTests: XCTestCase {
         let short = EditProject.Zoom(id: "c", startUs: 4_000_000, endUs: 4_300_000, scale: 2)
         let later = EditProject.Zoom(id: "d", startUs: 4_600_000, endUs: 6_000_000, scale: 2)
         for (zooms, from, to) in [([first, second], 4_500_000, 5_400_000), ([short, later], 4_100_000, 5_000_000)] {
-            var previous = ZoomCurve.view(atSource: Int64(from), zooms: zooms, cursor: nil)
+            var previous = ZoomCurve.view(atSource: Int64(from), project: zoomed(zooms), cursor: nil)
             for us in stride(from: from, through: to, by: 5_000) {
-                let view = ZoomCurve.view(atSource: Int64(us), zooms: zooms, cursor: nil)
+                let view = ZoomCurve.view(atSource: Int64(us), project: zoomed(zooms), cursor: nil)
                 XCTAssertGreaterThan(view.scale, 1.2, "\(zooms.map(\.id)) at \(us) µs: never the whole frame between them")
                 XCTAssertLessThan(abs(view.scale - previous.scale), 0.05, "\(zooms.map(\.id)) at \(us) µs: no jump")
                 previous = view
@@ -818,7 +868,7 @@ final class RecorderEditTests: XCTestCase {
     func testAFollowZoomTracksTheSmoothedCursor() {
         let track = CursorTrack(samples: (0...40).map { CursorTrack.Sample(ms: Double($0) * 50, x: 0.3, y: 0.6, click: nil) })
         let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: 2_000_000, scale: 2, mode: .follow, easeInMs: 0, easeOutMs: 0)
-        let view = ZoomCurve.view(atSource: 1_000_000, zooms: [zoom], cursor: track)
+        let view = ZoomCurve.view(atSource: 1_000_000, project: zoomed([zoom]), cursor: track)
 
         XCTAssertEqual(view.centerX, 0.3, accuracy: 0.0001)
         XCTAssertEqual(view.centerY, 0.6, accuracy: 0.0001)
@@ -832,8 +882,9 @@ final class RecorderEditTests: XCTestCase {
             CursorTrack.Sample(ms: 4000, x: 0.8, y: 0.5),
         ])
         let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: 4_000_000, scale: 1.5, mode: .follow, easeInMs: 0, easeOutMs: 0)
+        let movie = zoomed([zoom])
         let centers = stride(from: 1_600_000, through: 2_400_000, by: 100_000).map {
-            ZoomCurve.view(atSource: Int64($0), zooms: [zoom], cursor: track).centerX
+            ZoomCurve.view(atSource: Int64($0), project: movie, cursor: track).centerX
         }
         // It moves a little every step, never more than a fifth of the way at once.
         for (a, b) in zip(centers, centers.dropFirst()) {
@@ -894,7 +945,8 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(try EditProject.decode(styled.encoded()), styled)
         XCTAssertEqual(Looks.color("#FF8000").red, 1)
         XCTAssertEqual(Looks.color("nonsense"), .white)
-        XCTAssertEqual(Looks.marks(atSourceMs: 1200, clicks: [.init(ms: 1000, x: 0.2, y: 0.3, click: "left")], durationMs: 400),
+        XCTAssertEqual(Looks.marks(atSourceMs: 1200, clicks: [.init(ms: 1000, x: 0.2, y: 0.3, click: "left")], durationMs: 400,
+                                   project: zoomed([])),
                        [.init(x: 0.2, y: 0.3, progress: 0.5)])
     }
 
@@ -1036,9 +1088,10 @@ final class RecorderEditTests: XCTestCase {
     }
 
     func testMotionBlurSmearsOnlyAMovingZoom() {
-        // A sharp edge: black left half, white right half.
-        let size = CGRect(x: 0, y: 0, width: 200, height: 100)
-        let image = CIImage(color: .white).cropped(to: CGRect(x: 100, y: 0, width: 100, height: 100))
+        // A sharp edge: black left half, white right half. 2000 px wide: the longest smear is a share of the width
+        // (about 21 px here), so a narrow picture would smear less than the 4 px to the sampled pixel.
+        let size = CGRect(x: 0, y: 0, width: 2000, height: 100)
+        let image = CIImage(color: .white).cropped(to: CGRect(x: 1000, y: 0, width: 1000, height: 100))
             .composited(over: CIImage(color: .black).cropped(to: size))
         let context = CIContext()
         func gray(_ result: CIImage, _ x: Int) -> UInt8 {
@@ -1048,12 +1101,12 @@ final class RecorderEditTests: XCTestCase {
             return pixel[0]
         }
         let still = ZoomCurve.View(scale: 2, centerX: 0.5, centerY: 0.5)
-        XCTAssertEqual(gray(Looks.motionBlur(from: still, to: still, amount: 0.5, on: image), 96), 0, "a still zoom stays sharp")
+        XCTAssertEqual(gray(Looks.motionBlur(from: still, to: still, amount: 0.5, on: image), 996), 0, "a still zoom stays sharp")
         let panned = ZoomCurve.View(scale: 2, centerX: 0.55, centerY: 0.5)
         let blurred = Looks.motionBlur(from: still, to: panned, amount: 0.5, on: image)
-        XCTAssertGreaterThan(gray(blurred, 96), 20, "a pan smears the edge sideways")
+        XCTAssertGreaterThan(gray(blurred, 996), 20, "a pan smears the edge sideways")
         XCTAssertEqual(blurred.extent, size, "the picture keeps its size")
-        XCTAssertEqual(gray(Looks.motionBlur(from: still, to: panned, amount: 0, on: image), 96), 0, "0 is off")
+        XCTAssertEqual(gray(Looks.motionBlur(from: still, to: panned, amount: 0, on: image), 996), 0, "0 is off")
     }
 
     func testASpotlightDimsEverythingButItsRectangle() {
@@ -1116,6 +1169,24 @@ final class RecorderEditTests: XCTestCase {
         await writer.finishWriting()
     }
 
+    @MainActor
+    func testAFilmstripLoadThatANewerLoadReplacedPublishesNothing() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("strip-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try await makeMovie(at: movie)
+        let strip = Filmstrip()
+        // The first load is cancelled at once: its empty answer must neither show nor end the second load.
+        strip.load(video: movie, durationUs: 2_000_000, count: 40)
+        strip.load(video: movie, durationUs: 2_000_000, count: 4)
+        let deadline = Date().addingTimeInterval(30)
+        while !strip.loaded, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(strip.loaded)
+        XCTAssertEqual(strip.spacingUs, 500_000)
+        XCTAssertEqual(strip.tiles.map(\.sourceUs), [0, 500_000, 1_000_000, 1_500_000])
+    }
+
     func testACancelledExportStopsAndLeavesNoFile() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("cancel-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -1154,9 +1225,9 @@ final class RecorderEditTests: XCTestCase {
     }
 
     func testTheSizeEstimateMatchesAMeasuredExport() {
-        let bytes = EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .h264)
+        let bytes = EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .h264, fps: 60)
         XCTAssertEqual(Double(bytes), 10_300_000, accuracy: 600_000, "the export measured at 10.3 MB")
-        XCTAssertLessThan(EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .hevc), bytes)
+        XCTAssertLessThan(EditExporter.estimatedBytes(size: CGSize(width: 1152, height: 720), lengthUs: 20_000_000, codec: .hevc, fps: 60), bytes)
     }
 
     /// The tag over a dragged segment names its start in the movie (after the cut) and its length.
@@ -1446,6 +1517,18 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(part.clips.map { [$0.fromUs, $0.toUs] }, [[1_000_000, 2_000_000], [3_000_000, 6_000_000], [6_000_000, 7_000_000]])
         XCTAssertEqual(part.outputDurationUs, 4_500_000)
         XCTAssertNil(TimelineMap.part(project, fromOut: 7_000_000, toOut: 9_000_000))
+    }
+
+    // Regression test: review of PR 748, round 1. The shortest clip was measured in output time, so a whole 0.1 s clip
+    // at 16x (6.25 ms played) was dropped from a part; it is source time, as split and trim measure it.
+    func testAPartKeepsAWholeShortClipAtAHighSpeed() throws {
+        let project = EditProject(source: .init(video: "/m.mp4", durationUs: 8_000_000, width: 100, height: 100),
+                                  clips: [.init(id: "fast", fromUs: 1_000_000, toUs: 1_100_000, speed: 16),
+                                          .init(id: "slow", fromUs: 2_000_000, toUs: 4_000_000)])
+        let whole = try XCTUnwrap(TimelineMap.part(project, fromOut: 0, toOut: 6_250))
+        XCTAssertEqual(whole.clips.map { [$0.fromUs, $0.toUs] }, [[1_000_000, 1_100_000]])
+        let tail = try XCTUnwrap(TimelineMap.part(project, fromOut: 4_250, toOut: 1_000_000))
+        XCTAssertEqual(tail.clips.map(\.id), ["fast", "slow"])
     }
 
     // Regression test: deep test 2026-11-07 R3-RX1. A movie the renderer could not open left the preview black with a

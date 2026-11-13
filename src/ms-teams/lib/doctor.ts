@@ -1,7 +1,8 @@
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { cacheDbPath, liveBlobDir, liveIdbDir, venvPython } from "./paths";
+import { type AuthVerdict, readAuthHealth } from "./auth-health";
+import { cacheDbPath, liveBlobDir, liveIdbDir, liveWebLogRoot, venvPython } from "./paths";
 import { teamsAppIsUp } from "./process";
 import { TeamsCache } from "./store";
 
@@ -19,6 +20,8 @@ export interface DoctorReport {
     venvPythonExists: boolean;
     teamsProcess: boolean;
     readable: boolean;
+    /** Token renews and chat-list errors from the web-client log; `tools ms-teams auth` prints the detail. */
+    auth: { verdict: AuthVerdict; needsSignIn: string[] };
 }
 
 export function inspectDoctor(): DoctorReport {
@@ -37,6 +40,7 @@ export function inspectDoctor(): DoctorReport {
         }
     }
 
+    const authHealth = readAuthHealth(liveWebLogRoot());
     let counts: DoctorReport["counts"] = null;
     let cacheIngestedAt: string | null = null;
     let cacheReadable = false;
@@ -71,5 +75,9 @@ export function inspectDoctor(): DoctorReport {
         venvPythonExists: existsSync(venvPython()),
         teamsProcess: teamsAppIsUp(),
         readable,
+        auth: {
+            verdict: authHealth.verdict,
+            needsSignIn: authHealth.resources.filter((r) => r.needsSignIn).map((r) => r.resource),
+        },
     };
 }

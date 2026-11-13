@@ -1,19 +1,20 @@
 import { createRequire } from "node:module";
-import type { isCancel as clackIsCancel } from "@clack/prompts";
 import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
 import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
 import { asResult } from "@genesiscz/utils/cli/result";
 import { writeStderr } from "@genesiscz/utils/cli/stderr";
 import { isBrokenPipe, writeStdout, writeStdoutStrict } from "@genesiscz/utils/cli/stdout";
+import type { isCancelled } from "@genesiscz/utils/prompts/clack/helpers";
 import { getBackend } from "@genesiscz/utils/prompts/p/backend";
+import { settle } from "@genesiscz/utils/prompts/p/settle";
 import type { SelectValue } from "@genesiscz/utils/prompts/p/types";
 import { type Logger, logger } from "../logger";
 
 const requireLazy = createRequire(import.meta.url);
 
 // lazy: saves 8.5 ms cold import of @clack/prompts for every logger importer (tools ts imports analyze, 2026-10-01); a cancel value only exists after a clack prompt already loaded it
-const isCancel: typeof clackIsCancel = (value): value is symbol =>
-    (requireLazy("@clack/prompts") as { isCancel: typeof clackIsCancel }).isCancel(value);
+const isCancel: typeof isCancelled = (value): value is symbol =>
+    (requireLazy("@genesiscz/utils/prompts/clack/helpers") as { isCancelled: typeof isCancelled }).isCancelled(value);
 
 /**
  * Trimmed to only the fields that actually affect behavior. The previous
@@ -205,15 +206,16 @@ export function makeOut(component: string | null, mirror: "component" | "config"
             message: (m) => getBackend().log.message(m),
         },
         spinner: () => (isQuietOutput() ? createQuietSpinner() : getBackend().spinner()),
-        text: (o) => getBackend().text(o),
-        confirm: (o) => getBackend().confirm(o),
+        // out's prompts keep the facade's default cancel outcome (exit); settle applies it.
+        text: async (o) => settle(await getBackend().text(o), "exit"),
+        confirm: async (o) => settle(await getBackend().confirm(o), "exit"),
         // p/ is intentionally non-generic (SelectValue); the Out contract is
         // generic for ergonomic call sites. The variance gap is real and only
         // bridgeable with a cast at this boundary — `never` is assignable to
         // any `V | symbol` result.
-        select: (o) => getBackend().select(o) as Promise<never>,
-        multiselect: (o) => getBackend().multiselect(o) as Promise<never>,
-        password: (o) => getBackend().password(o),
+        select: async (o) => settle(await getBackend().select(o), "exit") as never,
+        multiselect: async (o) => settle(await getBackend().multiselect(o), "exit") as never,
+        password: async (o) => settle(await getBackend().password(o), "exit"),
         isCancel,
         result: (data) => emitResult(asResult(data)),
         // print: RAW stdout path — bytes pass through unchanged. No newline

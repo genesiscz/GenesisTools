@@ -46,7 +46,7 @@ export async function dropCommand(opts: {
     }
 
     if (isInteractive()) {
-        const { confirm } = await import("@clack/prompts");
+        const { confirm } = await import("@genesiscz/utils/prompts/p");
         const ok = await confirm({
             message: `delete stash "${opts.name}"${opts.allVersions ? " (all versions)" : opts.version ? ` v${opts.version}` : " (latest)"}?`,
         });

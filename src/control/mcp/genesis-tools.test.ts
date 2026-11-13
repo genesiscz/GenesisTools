@@ -3,11 +3,11 @@
  * native call: under the test runner the real ax-tool throws, so a handler that reached it fails.
  */
 import { describe, expect, test } from "bun:test";
-import { answerText } from "@app/genesis-tools-mcp/lib/tool-entry";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { controlToolEntries } from "./genesis-tools";
+import { answerText } from "@genesiscz/utils/mcp/tool-entry";
+import { toolGroup } from "./genesis-tools";
 
-const entries = controlToolEntries();
+const { entries } = toolGroup();
 
 async function call(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
     const entry = entries[name];
@@ -18,7 +18,7 @@ async function call(name: string, args: Record<string, unknown>): Promise<Record
     return SafeJSON.parse(answerText(await entry.handler(args)), { strict: true }) as Record<string, unknown>;
 }
 
-describe("controlToolEntries", () => {
+describe("the control tool group", () => {
     test("exposes the plan runner, the validated workflow runner and two read-only queries", () => {
         expect(Object.keys(entries).sort()).toEqual([
             "control_find",

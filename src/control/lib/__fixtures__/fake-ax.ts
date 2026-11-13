@@ -80,7 +80,7 @@ export async function runCli(register: (program: Command) => void, args: string[
 }
 
 /** A solid PNG, optionally with one rectangle painted another colour: enough for pixel-diff gates. */
-export function solidPng({
+export async function solidPng({
     width,
     height,
     color,
@@ -90,7 +90,7 @@ export function solidPng({
     height: number;
     color: [number, number, number];
     patch?: { x: number; y: number; w: number; h: number; color: [number, number, number] };
-}): Buffer {
+}): Promise<Buffer> {
     const data = new Uint8ClampedArray(width * height * 4);
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {

@@ -1,4 +1,3 @@
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type ApplyLoginOutcomeResult, applyLoginOutcome } from "@genesiscz/utils/ai/config/account-ops";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -7,6 +6,7 @@ import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { identityMismatch } from "@genesiscz/utils/ai/providers/identity-guard";
 import { logger, out } from "@genesiscz/utils/logger";
 import { expandPath } from "@genesiscz/utils/paths";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 /**
@@ -79,7 +79,7 @@ export async function applyIdentityPolicy(input: IdentityPolicyInput): Promise<I
         };
     }
 
-    const proceed = await p.confirm({ message: "Save anyway?", initialValue: false });
+    const proceed = await p.confirm({ message: "Save anyway?", initialValue: false, cancel: "back" });
 
     if (p.isCancel(proceed) || !proceed) {
         return { ok: false, reason: "Cancelled — nothing written." };
@@ -139,7 +139,11 @@ export async function applyAuthFileOwnershipPolicy(input: {
         };
     }
 
-    const proceed = await p.confirm({ message: `Point "${input.accountName}" at it too?`, initialValue: false });
+    const proceed = await p.confirm({
+        message: `Point "${input.accountName}" at it too?`,
+        initialValue: false,
+        cancel: "back",
+    });
 
     if (p.isCancel(proceed) || !proceed) {
         return { ok: false, reason: "Cancelled — nothing written." };
@@ -182,6 +186,7 @@ export async function applySuggestedNamePolicy(input: {
     const proceed = await p.confirm({
         message: `Replace the ${stored} credentials of "${input.accountName}" with this login?`,
         initialValue: false,
+        cancel: "back",
     });
 
     if (p.isCancel(proceed) || !proceed) {

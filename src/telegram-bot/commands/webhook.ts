@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { cloudflaredHome } from "@app/dev-dashboard/lib/tunnel/cloudflared";
 import { getStorage, loadTelegramConfig, notConfiguredMessage, saveWebhookUrl } from "@app/telegram-bot/lib/config";
-import { createTelegramApi, describeApiError } from "@app/telegram-bot/lib/webhook/api";
+import { createTelegramApi } from "@app/telegram-bot/lib/webhook/api";
 import { hasWebhookSecret, registerWithStoredSecret, rotateWebhookSecret } from "@app/telegram-bot/lib/webhook/secret";
 import {
     resolveWebhookSettings,
@@ -11,11 +11,12 @@ import {
     WebhookSettingsError,
 } from "@app/telegram-bot/lib/webhook/settings";
 import { applyTunnelChange, planTunnelChange, readTunnelConfig } from "@app/telegram-bot/lib/webhook/tunnel";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
-import { captureSync } from "@genesiscz/utils/process/ps";
+import { captureSync } from "@genesiscz/utils/process/capture";
+import * as p from "@genesiscz/utils/prompts/p";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { describeApiError } from "@genesiscz/utils/telegram-bot/lib/api";
 import type { TelegramBotConfig } from "@genesiscz/utils/telegram-bot/lib/types";
 import type { Command } from "commander";
 

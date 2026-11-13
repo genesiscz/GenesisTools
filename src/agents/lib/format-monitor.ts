@@ -74,7 +74,11 @@ export function monitorHeadline(event: MonitorEvent, names: AgentNames): string 
         case "agent_joined":
             return `joined: ${event.agent_name} · present: ${nameList(event.present, "nobody else")}`;
         case "agent_left": {
-            const note = event.note ? `: ${oneLine(event.note)}` : "";
+            const note = event.note
+                ? `: ${oneLine(event.note)}`
+                : event.lapsed_since
+                  ? `: no new login since ${event.lapsed_since}`
+                  : "";
             return `left: ${event.agent_name} (${event.reason}${note}) · remaining: ${nameList(event.remaining, "nobody")}`;
         }
         case "registered": {
@@ -89,7 +93,7 @@ export function monitorHeadline(event: MonitorEvent, names: AgentNames): string 
         case "logged_in":
             return `logged in: ${event.agent_name} (${event.mode})`;
         case "logged_out":
-            return `logged out: ${names.get(event.agent_id) ?? event.agent_id} (${event.reason})`;
+            return `logged out: ${names.get(event.agent_id) ?? event.agent_id} (${event.reason}${event.rearm_until ? `, re-arm grace until ${event.rearm_until}` : ""})`;
         case "stale_lock_reaped": {
             const pid = event.pid === undefined ? "" : `, pid ${event.pid}`;
             return `stale lock reaped: ${event.lock} (${event.reason}${pid})`;

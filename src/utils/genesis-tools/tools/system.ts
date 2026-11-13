@@ -135,6 +135,11 @@ export function gitConfigInitCommand(): string {
     return toolCommand("git config init");
 }
 
+/** Saves and proves a worktree's commits, changes and untracked files; a backup README names it as its writer. */
+export function gitWorktreeBackupCommand(): string {
+    return toolCommand("git worktree backup");
+}
+
 /** Converts a brute-force vector index to sqlite-vec. */
 export function indexerMigrateVecCommand(): string {
     return toolCommand("indexer migrate-vec");

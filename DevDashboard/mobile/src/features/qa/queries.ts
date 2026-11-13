@@ -13,7 +13,7 @@ import { queryOptions } from "@tanstack/react-query";
  * (:640). `enrichQaEntry` does `{ ...entry, answerHtml, answerHtmlPreview, questionHtml }`, and
  * `entry` is a full `QaRow` (`queryEntries(): QaRow[]` — base `QaEntry` + `supersededBy` + `readAt`).
  * So the runtime payload IS a `QaRow`. The shipped contract, however, types `QaLogRes.entries` and
- * `qa.subscribe`'s entry as the NARROWER `EnrichedQaEntry` (just the 3 HTML fields) — a known
+ * the live `qa` channel's entry as the NARROWER `EnrichedQaEntry` (just the 3 HTML fields) — a known
  * contract-typing bug we cannot fix here (contract files are read-only this pass; flagged in the
  * notes). We assert the real shape ONCE, in the queryFn boundary, so every consumer downstream sees
  * `QaRow[]` with zero casts. The transport's own `qa-stream.ts` already does the identical cast.
@@ -21,6 +21,8 @@ import { queryOptions } from "@tanstack/react-query";
 
 export const qaKeys = {
     log: (params?: QaLogParams) => ["qa", "log", params ?? {}] as const,
+    /** The live window the `qa` channel fills (`live/cache-table.ts`); no request reads it. */
+    live: ["qa", "live"] as const,
 } as const;
 
 export interface QaLogParams {

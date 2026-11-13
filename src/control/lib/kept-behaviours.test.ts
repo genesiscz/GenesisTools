@@ -281,18 +281,18 @@ describe("draw and compare-screenshot", () => {
     const small = join(dir, "small.png");
 
     test("fixtures", async () => {
-        await Bun.write(a, solidPng({ width: 40, height: 40, color: [255, 255, 255] }));
-        await Bun.write(same, solidPng({ width: 40, height: 40, color: [255, 255, 255] }));
+        await Bun.write(a, await solidPng({ width: 40, height: 40, color: [255, 255, 255] }));
+        await Bun.write(same, await solidPng({ width: 40, height: 40, color: [255, 255, 255] }));
         await Bun.write(
             changed,
-            solidPng({
+            await solidPng({
                 width: 40,
                 height: 40,
                 color: [255, 255, 255],
                 patch: { x: 0, y: 0, w: 20, h: 20, color: [0, 0, 0] },
             })
         );
-        await Bun.write(small, solidPng({ width: 20, height: 20, color: [255, 255, 255] }));
+        await Bun.write(small, await solidPng({ width: 20, height: 20, color: [255, 255, 255] }));
     });
 
     test("draw writes an annotated copy and never mutates the input", async () => {

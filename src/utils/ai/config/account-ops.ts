@@ -1,7 +1,7 @@
 import { aiConfigAccountListCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { secrets } from "@genesiscz/utils/security";
+import { type MaybeSecret, resolveSecret, secrets } from "@genesiscz/utils/security";
 import type { LoginOutcome } from "../providers/account-features";
 import { describeCredential } from "../providers/credentials";
 import type { ProviderBinding } from "../providers/plugin-types";
@@ -11,7 +11,7 @@ import { slugifyAccountId } from "./migrations/2026-08-configV4";
 import { vaultPathFor } from "./migrations/2026-08-secretsToVault";
 import type { Referrer } from "./refs";
 import { accountRef, referrersOf } from "./refs";
-import type { AccountBilling, AccountEntry, AiConfigData, UseEnvApiKey } from "./schema";
+import type { AccountBilling, AccountCredentials, AccountEntry, AiConfigData, UseEnvApiKey } from "./schema";
 
 /**
  * Account CRUD as one library, so the CLI, the TUI and any future surface share
@@ -253,7 +253,7 @@ export interface ApplyLoginOutcomeInput {
     apps?: string[];
     /**
      * Apps whose `chat.model` default should point at this account when they have
-     * none. Mirrors `addAccountWithDefaults` (`AIConfig.ts:180-196`), which is how
+     * none. Mirrors the retired v3 `addAccountWithDefaults`, which is how
      * a first `tools claude login` made itself the default for `claude` and `ask`.
      */
     defaultForApps?: string[];
@@ -329,7 +329,7 @@ function assertUnchangedSinceGuard(
  * so a re-login could use neither. A plain overwrite is not an option either:
  * a flow returns only the credentials it obtained, so writing them wholesale
  * dropped `longLivedToken`, `secondary`, `label` and `apps` — the bug
- * `mergeAccountEntry` (`AIConfig.ts:64-73`) exists to prevent. A provider switch
+ * the retired v3 `mergeAccountEntry` existed to prevent. A provider switch
  * still replaces the credentials outright, since the stored ones mean nothing to
  * the new vendor.
  */
@@ -554,6 +554,49 @@ export interface RemoveAccountResult {
     referrers: Referrer[];
     /** Vault entries deleted along with the account, so no orphan is left behind. */
     secretsDeleted: string[];
+    /**
+     * In-config refs (`defaults.*`, `models.*`) a forced removal cleared, so no default points at a missing account.
+     * A ref another config holds (`ai-proxy:…`) is not this file's to edit: it stays in `referrers` for the caller.
+     */
+    refsCleared: string[];
+}
+
+/** Delete the value at a dotted referrer path (`defaults.account.chat`, `models.list[2].ref`); false when absent. */
+function deleteConfigPath(root: object, path: string): boolean {
+    const segments = path.split(/\.|\[(\d+)\]/).filter((segment): segment is string => Boolean(segment));
+    let parent: unknown = root;
+
+    for (const segment of segments.slice(0, -1)) {
+        if (!parent || typeof parent !== "object") {
+            return false;
+        }
+
+        parent = (parent as Record<string, unknown>)[segment];
+    }
+
+    const last = segments.at(-1);
+
+    if (!parent || typeof parent !== "object" || last === undefined) {
+        return false;
+    }
+
+    if (Array.isArray(parent)) {
+        const index = Number(last);
+        if (!Number.isInteger(index) || index >= parent.length) {
+            return false;
+        }
+
+        parent.splice(index, 1);
+        return true;
+    }
+
+    const record = parent as Record<string, unknown>;
+    if (!(last in record)) {
+        return false;
+    }
+
+    delete record[last];
+    return true;
 }
 
 /**
@@ -575,10 +618,17 @@ export async function removeAccount(idOrName: string, options: { force?: boolean
         }
 
         const secretsDeleted = await deleteAccountSecrets(account.id);
+        // As the v3 facade did for its defaultAccounts: a forced removal leaves no in-config default naming the
+        // account. Deepest paths first, so removing an array item cannot shift the index of a later one.
+        const refsCleared = referrers
+            .map((referrer) => referrer.path)
+            .filter((path) => !path.includes(":"))
+            .sort((a, b) => b.localeCompare(a, "en", { numeric: true }))
+            .filter((path) => deleteConfigPath(config, path));
 
         config.accounts = config.accounts.filter((entry) => entry.id !== account.id);
-        logger.info({ id: account.id, referrers: referrers.length, secretsDeleted }, "removed AI account");
-        return { account, referrers, secretsDeleted };
+        logger.info({ id: account.id, referrers: referrers.length, secretsDeleted, refsCleared }, "removed AI account");
+        return { account, referrers, secretsDeleted, refsCleared };
     });
 }
 
@@ -655,6 +705,218 @@ export async function clearCredentials(
         logger.info({ id: account.id, fields, secretsDeleted }, "cleared AI account credentials");
         return { account, secretsDeleted };
     });
+}
+
+/**
+ * Store an API key on the provider's first account, or create an account named `name` for it.
+ * For a provider with one shared key (a Hugging Face token pasted at a prompt): the caller
+ * has a key, not an account, and must not mint a second account on every paste.
+ */
+export async function setProviderApiKey(input: {
+    provider: string;
+    name: string;
+    apiKey: string;
+}): Promise<AccountEntry> {
+    const { registerBuiltInPlugins } = await import("../providers/plugins");
+    registerBuiltInPlugins();
+
+    const existing = (await AiConfigStore.load()).accounts({ provider: input.provider })[0];
+    if (existing) {
+        return editAccount(existing.id, { apiKey: input.apiKey });
+    }
+
+    return addAccount({ provider: input.provider, name: input.name, secrets: { apiKey: input.apiKey } });
+}
+
+/** Top-level fields a provider learns about an account after login: plan, identity, billing anchor. */
+export type AccountFieldsPatch = Partial<
+    Pick<
+        AccountEntry,
+        | "label"
+        | "apps"
+        | "organizationUuid"
+        | "accountUuid"
+        | "subscriptionPlan"
+        | "subscriptionStatus"
+        | "subscriptionCreatedAt"
+        | "subscriptionCheckedAt"
+        | "subscriptionReactivatedAt"
+        | "planContradictedAt"
+    >
+>;
+
+/** A secondary (Claude Code keychain) login with plain token values; they go to the vault. */
+export type SecondaryLoginPatch = Omit<NonNullable<AccountCredentials["secondary"]>, "accessToken" | "refreshToken"> & {
+    accessToken?: string;
+    refreshToken?: string;
+};
+
+export interface AccountPatch {
+    /** A field left `undefined` keeps its stored value: a partial reading never erases data. */
+    fields?: AccountFieldsPatch;
+    /** Merged onto the stored secondary login; its tokens are vaulted. */
+    secondary?: SecondaryLoginPatch;
+}
+
+/**
+ * Update the fields of ONE account found by its immutable id, under the config lock.
+ *
+ * For writes that are not a login and not a token refresh: a profile read that learned the
+ * plan, a probe that contradicted it, a keychain rotation pulled back into the secondary
+ * login. Needs no provider plugin, so it works in a process that registered none.
+ */
+export async function patchAccount(accountId: string, patch: AccountPatch): Promise<AccountEntry> {
+    const store = await AiConfigStore.load();
+
+    return store.withLock(async (config) => {
+        const account = config.accounts.find((entry) => entry.id === accountId);
+        if (!account) {
+            throw new AccountNotFoundError(accountId);
+        }
+
+        for (const [key, value] of Object.entries(patch.fields ?? {})) {
+            if (value !== undefined) {
+                Object.assign(account, { [key]: value });
+            }
+        }
+
+        if (patch.secondary) {
+            const { accessToken, refreshToken, ...rest } = patch.secondary;
+            const merged = { ...account.credentials.secondary, ...rest };
+
+            if (accessToken) {
+                merged.accessToken = await vaultOrLiteral(
+                    vaultPathFor(account.id, "secondary.accessToken"),
+                    accessToken
+                );
+            }
+
+            if (refreshToken) {
+                merged.refreshToken = await vaultOrLiteral(
+                    vaultPathFor(account.id, "secondary.refreshToken"),
+                    refreshToken
+                );
+            }
+
+            account.credentials.secondary = merged;
+        }
+
+        return account;
+    });
+}
+
+/** The OAuth pair stored for an account, resolved from the vault. */
+export interface StoredOAuthTokens {
+    accessToken?: string;
+    refreshToken?: string;
+    expiresAt?: number;
+    refreshExpiresAt?: number;
+}
+
+/** What one refresh grant returned. */
+export interface RefreshedOAuthTokens {
+    accessToken: string;
+    refreshToken: string;
+    expiresAt: number;
+    refreshExpiresAt?: number;
+}
+
+export type StoreRefreshedTokensResult =
+    /** The producer refreshed and the new pair is persisted. */
+    | { status: "stored"; tokens: StoredOAuthTokens }
+    /** The stored refresh token is not the caller's: another process refreshed. Do not refresh again. */
+    | { status: "already-refreshed"; tokens: StoredOAuthTokens }
+    /** The producer declined (nothing to refresh with, or the stored pair is still fresh). */
+    | { status: "kept"; tokens: StoredOAuthTokens };
+
+/**
+ * Store a value in the vault, or keep it as a literal when no master key is reachable.
+ *
+ * Only for a token that was just obtained and cannot be obtained again: a refresh grant is
+ * single-use, so throwing here would lose the only copy of the rotated pair. The next
+ * interactive run vaults the literal, and the warning keeps the state visible.
+ */
+async function vaultOrLiteral(path: string, value: string): Promise<MaybeSecret> {
+    try {
+        const vault = await secrets();
+        return await vault.set(path, value);
+    } catch (err) {
+        logger.warn({ err, path }, "vault unavailable; storing credential as a literal for now");
+        return value;
+    }
+}
+
+async function storedOAuthTokens(credentials: AccountCredentials): Promise<StoredOAuthTokens> {
+    return {
+        accessToken: await resolveSecret(credentials.accessToken),
+        refreshToken: await resolveSecret(credentials.refreshToken),
+        expiresAt: credentials.expiresAt,
+        refreshExpiresAt: credentials.refreshExpiresAt,
+    };
+}
+
+/**
+ * The one write of an OAuth refresh, for the account with this immutable id.
+ *
+ * A refresh token is SINGLE-USE. Everything happens under the config file lock: the stored
+ * refresh token is read again inside the lock and compared with `previousRefreshToken`, the
+ * value the caller read before it decided to refresh. When they differ another process has
+ * already refreshed (or a re-login replaced the pair), so the stored tokens are returned and
+ * `tokens` is never called: spending the old token again would answer `invalid_grant` and
+ * brick the account. Only when they match does `tokens` run, still inside the lock, and its
+ * pair is persisted before the lock is released.
+ *
+ * `tokens` is the producer of the new pair (the upstream refresh call), not the pair itself,
+ * because the compare must come BEFORE the spend: two processes that both refreshed first and
+ * compared afterwards would have spent the grant twice. It gets the stored pair and may answer
+ * null to keep it (no refresh token, or the stored pair is still fresh).
+ */
+export async function storeRefreshedTokens(
+    accountId: string,
+    previousRefreshToken: string | undefined,
+    tokens: (stored: StoredOAuthTokens) => Promise<RefreshedOAuthTokens | null>,
+    options: { lockTimeout?: number } = {}
+): Promise<StoreRefreshedTokensResult> {
+    const store = await AiConfigStore.load();
+
+    return store.withLock(async (config) => {
+        const account = config.accounts.find((entry) => entry.id === accountId);
+        if (!account) {
+            throw new AccountNotFoundError(accountId);
+        }
+
+        const stored = await storedOAuthTokens(account.credentials);
+        if (stored.refreshToken !== previousRefreshToken) {
+            logger.info({ id: accountId }, "[token-refresh] the stored refresh token moved on; not refreshing again");
+            return { status: "already-refreshed", tokens: stored };
+        }
+
+        const fresh = await tokens(stored);
+        if (!fresh) {
+            return { status: "kept", tokens: stored };
+        }
+
+        account.credentials.accessToken = await vaultOrLiteral(
+            vaultPathFor(account.id, "accessToken"),
+            fresh.accessToken
+        );
+        account.credentials.refreshToken = await vaultOrLiteral(
+            vaultPathFor(account.id, "refreshToken"),
+            fresh.refreshToken
+        );
+        account.credentials.expiresAt = fresh.expiresAt;
+        account.credentials.refreshExpiresAt = fresh.refreshExpiresAt ?? account.credentials.refreshExpiresAt;
+
+        return {
+            status: "stored",
+            tokens: {
+                accessToken: fresh.accessToken,
+                refreshToken: fresh.refreshToken,
+                expiresAt: fresh.expiresAt,
+                refreshExpiresAt: account.credentials.refreshExpiresAt,
+            },
+        };
+    }, options.lockTimeout);
 }
 
 export interface AccountTestResult {

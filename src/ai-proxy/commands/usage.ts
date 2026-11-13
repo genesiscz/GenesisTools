@@ -1,5 +1,7 @@
 import { loadConfig } from "@app/ai-proxy/lib/config";
-import { createProvider, isProviderImplemented, providerKey } from "@app/ai-proxy/lib/providers/registry";
+import { createProvider } from "@app/ai-proxy/lib/providers/pool";
+import { providerKey } from "@app/ai-proxy/lib/providers/provider-key";
+import { isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import { keepsBillingSnapshot, maybeSyncBilling } from "@app/ai-proxy/lib/usage/billing-sync";

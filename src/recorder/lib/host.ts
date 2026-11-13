@@ -1,10 +1,10 @@
-import { basename, dirname } from "node:path";
 import type { RpcProgress, RpcRequestOptions } from "@genesiscz/utils/rpc/peer";
 import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
 import type { z } from "zod";
 import {
     type EditorOpenState,
     editorOpenArgs,
+    editorWindowKeyOf,
     exportAnswerSchema,
     exportArgv,
     type FaceRun,
@@ -136,11 +136,6 @@ function spanOf(value: z.infer<typeof spanSchema> | undefined): { from: number; 
     return Array.isArray(value) ? { from: value[0], to: value[1] } : value;
 }
 
-/** The recording folder an edit path names, as the editor's window rows do. */
-function folderOf(path: string): string {
-    return /\.(json|mp4|mov)$/i.test(basename(path)) ? dirname(path) : path;
-}
-
 type HeadlessTable = {
     [M in HostMethod]: (deps: HeadlessDeps, params: HostParams<M>, context: HostCallContext) => Promise<HostResult<M>>;
 };
@@ -152,7 +147,7 @@ const HEADLESS: HeadlessTable = {
             editorOpenArgs(params.path, { focus: params.focus ?? true, atSeconds: params.atSeconds, tab: params.tab })
         );
         // The window opens through the app's arguments: its number is known once editor-open.json lists it, else 0.
-        const row = deps.editorState()?.open.find((each) => each.path === folderOf(params.path));
+        const row = deps.editorState()?.open.find((each) => each.path === editorWindowKeyOf(params.path));
         return { opened: true, window: row?.window ?? 0 };
     },
     "window.show": async (deps, params) => {
@@ -173,7 +168,9 @@ const HEADLESS: HeadlessTable = {
     },
     "window.close": async (deps, params) => {
         const listed = (deps.editorState()?.open ?? []).find((each) =>
-            params.window !== undefined ? each.window === params.window : each.path === folderOf(params.path ?? "")
+            params.window !== undefined
+                ? each.window === params.window
+                : each.path === editorWindowKeyOf(params.path ?? "")
         );
 
         // The windows are the app's: with no host connected, a window the editor lists cannot be reached.
@@ -264,7 +261,7 @@ export class HeadlessHost implements RecorderHost {
 
     /** The window number editor-open.json lists for an edit's recording, when it lists it. */
     windowOf(path: string): number | undefined {
-        return this.deps.editorState()?.open.find((each) => each.path === folderOf(path))?.window;
+        return this.deps.editorState()?.open.find((each) => each.path === editorWindowKeyOf(path))?.window;
     }
 
     call<M extends HostMethod>(

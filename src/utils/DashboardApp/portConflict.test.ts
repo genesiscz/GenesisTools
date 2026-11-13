@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { resolve } from "node:path";
 import { getPortOwner } from "@genesiscz/utils/network";
-import { resolveCommandForLaunchd } from "./launchd";
+import { resolveCommandForLaunchd } from "@genesiscz/utils/process/launchd-agent";
 import { canKillPortOwner } from "./portConflict";
 import { stopUiServerOnPort } from "./stopUiServerOnPort";
 

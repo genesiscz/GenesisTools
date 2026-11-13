@@ -1,9 +1,6 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { asRecord } from "./ingest-parse";
 import type { CallLogEvent } from "./types";
+import { parseWebLogFile, readWebLogFiles } from "./web-log";
 
 const log = logger.scoped("ms-teams").log;
 
@@ -48,20 +45,10 @@ export function parseCallLogFile(text: string): CallLogEvent[] {
         return [];
     }
 
-    const root = asRecord(SafeJSON.parse(text, { strict: true }));
-    const lines = Array.isArray(root?.logsArray) ? root.logsArray : [];
     const events: CallLogEvent[] = [];
 
-    for (const raw of lines) {
-        const line = asRecord(raw);
-        const message = typeof line?.message === "string" ? line.message : null;
-        const at = typeof line?.timeStamp === "string" ? Date.parse(line.timeStamp) : Number.NaN;
-
-        if (!message || Number.isNaN(at)) {
-            continue;
-        }
-
-        const event = parseCallLogMessage(message, at);
+    for (const line of parseWebLogFile(text)) {
+        const event = parseCallLogMessage(line.message, line.at);
 
         if (event) {
             events.push(event);
@@ -92,25 +79,11 @@ export function callLogEventSubject(event: CallLogEvent): string {
  * rotates within about a day, so `sync` stores what it finds.
  */
 export function readCallLogEvents(root: string): CallLogEvent[] {
-    if (!existsSync(root)) {
-        log.debug({ root }, "[ms-teams] no web-client log directory");
-        return [];
-    }
-
     const seen = new Set<string>();
     const events: CallLogEvent[] = [];
     let files = 0;
 
-    for (const path of listFiles(root)) {
-        let text: string;
-
-        try {
-            text = readFileSync(path, "utf8");
-        } catch (err) {
-            log.debug({ err, path }, "[ms-teams] skipped an unreadable web-client log file");
-            continue;
-        }
-
+    for (const { path, text } of readWebLogFiles(root)) {
         let parsed: CallLogEvent[];
 
         try {
@@ -139,28 +112,4 @@ export function readCallLogEvents(root: string): CallLogEvent[] {
     log.debug({ root, files, events: events.length }, "[ms-teams] read web-client call log");
 
     return events;
-}
-
-function listFiles(dir: string): string[] {
-    const out: string[] = [];
-
-    for (const name of readdirSync(dir)) {
-        const path = join(dir, name);
-        let isDir: boolean;
-
-        try {
-            isDir = statSync(path).isDirectory();
-        } catch (err) {
-            log.debug({ err, path }, "[ms-teams] skipped a web-client log entry that vanished");
-            continue;
-        }
-
-        if (isDir) {
-            out.push(...listFiles(path));
-        } else if (!name.startsWith(".") && name !== "LOG" && !name.endsWith(".ldb") && !name.endsWith(".log")) {
-            out.push(path);
-        }
-    }
-
-    return out;
 }

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { JobRegistry, type ProgressEvent } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -347,6 +347,8 @@ export function sourceOf(value: string): EditSource {
 
 /** The movies a video recording keeps in its folder, in the order the editor prefers them. */
 const VIDEO_RECORDING_MOVIES = ["screen.mp4", "screen.mov"];
+/** The subfolder a library recording keeps its frames in (`start.ts`, `frame-output.ts`). */
+const RECORDING_FRAMES_DIR = "frames";
 
 /**
  * What editor.open() edits: a video recording's folder or id is its movie. The folder was read as a frames folder, and
@@ -360,7 +362,12 @@ export function editSourceOf(value: string): EditSource {
         return source;
     }
 
-    for (const folder of [located.path, dirname(located.path)]) {
+    // The parent's movie stands in only for the recording's own frames subfolder. Any other folder inside a video
+    // recording was asked for by name, and editing the parent's movie instead edited content nobody asked for.
+    const folders =
+        basename(located.path) === RECORDING_FRAMES_DIR ? [located.path, dirname(located.path)] : [located.path];
+
+    for (const folder of folders) {
         if (readRecordingManifest(folder)?.settings?.kind !== "video") {
             continue;
         }

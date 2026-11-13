@@ -1,6 +1,6 @@
 import type { CalendarEntry } from "./calendar-entry";
 import type { MeetingsConfig } from "./config";
-import { type PersonRef, pairedAmong, withoutSelf } from "./people";
+import { nameKey, type PersonRef, pairedAmong, samePerson, withoutSelf } from "./people";
 import type { MeetingSourceId } from "./sources";
 
 /** One calendar entry that overlaps the meeting, with how much of the meeting it covers. */
@@ -110,21 +110,25 @@ export function titleWords(title: string): string[] {
     return [...new Set(words)];
 }
 
-/** A person's name for matching: no accents, no case, no "(QT)" style suffix, its words in any order. */
-function personKey(name: string): string {
-    return fold(name)
-        .replace(/\([^)]*\)/g, " ")
-        .split(/[^\p{L}\p{N}]+/u)
-        .filter(Boolean)
-        .sort()
-        .join(" ");
+/**
+ * One name holds every word of the other and more ("Bob" and "Bob Smith"): maybe the same person, maybe not, so it
+ * keeps a calendar entry offered but never counts as a shared person.
+ */
+function partlySamePerson(a: PersonRef, b: PersonRef): boolean {
+    const aWords = nameKey(a.name).split(" ").filter(Boolean);
+    const bWords = nameKey(b.name).split(" ").filter(Boolean);
+    const [shorter, longer] = aWords.length <= bWords.length ? [aWords, bWords] : [bWords, aWords];
+
+    return shorter.length > 0 && shorter.length < longer.length && shorter.every((word) => longer.includes(word));
 }
 
 /**
  * The entries that overlap the meeting, or start within `slackMin` of its start, best first. A meeting with no end yet
- * is taken as 30 minutes long. With the meeting's people known (`people`, the user left out), an entry that names
- * other people too but none of them is someone else's meeting in the same hour and is left out (2026-11-09: a Teams
- * chat call was offered "FW: Vykázání do ADO", which shared nobody); the rest rank by shared people, then by cover.
+ * is taken as 30 minutes long. With the meeting's people known (`people`), an entry that names other people too but
+ * none of them is someone else's meeting in the same hour and is left out (2026-11-09: a Teams chat call was offered
+ * "FW: Vykázání do ADO", which shared nobody); the rest rank by shared people, then by people whose name only partly
+ * matches ("Bob" and "Bob Smith"), then by cover. The user is left out on both sides: anyone either list marks `self`,
+ * and every copy of that name, so one unmarked copy of the user is no shared person. A name without letters is no one.
  */
 export function calendarCandidates(options: {
     entries: CalendarEntry[];
@@ -137,35 +141,55 @@ export function calendarCandidates(options: {
     const end = options.end ? Date.parse(options.end) : start + 30 * 60_000;
     const length = Math.max(end - start, 60_000);
     const slack = options.slackMin * 60_000;
-    const known = new Set(
-        (options.people ?? []).filter((person) => !person.self).map((person) => personKey(person.name))
-    );
+    const people = options.people ?? [];
+    const selves = people.filter((person) => person.self);
+    // Someone else: not marked self, not the user's name, and a name with letters (`samePerson` matches no empty key).
+    const othersIn = (list: PersonRef[], alsoSelf: PersonRef[]) =>
+        withoutSelf(list).filter(
+            (person) => nameKey(person.name) !== "" && !alsoSelf.some((self) => samePerson(self, person))
+        );
 
     return options.entries
-        .map((entry): CalendarCandidate => {
+        .map((entry) => {
             const from = Math.max(start, Date.parse(entry.start));
             const to = Math.min(end, Date.parse(entry.end));
             const overlap = Math.max(0, to - from);
-            const candidate = { entry, overlapSec: Math.round(overlap / 1000), share: Math.min(1, overlap / length) };
+            const candidate: CalendarCandidate = {
+                entry,
+                overlapSec: Math.round(overlap / 1000),
+                share: Math.min(1, overlap / length),
+            };
+            const entrySelves = entry.people.filter((person) => person.self);
+            const known = othersIn(people, entrySelves);
+            const attendees = othersIn(entry.people, selves);
 
-            if (known.size === 0) {
-                return candidate;
+            if (known.length === 0) {
+                return { candidate, attendees: attendees.length, partly: 0 };
             }
 
-            const others = entry.people.filter((person) => !person.self).map((person) => personKey(person.name));
-            return { ...candidate, sharedPeople: others.filter((key) => known.has(key)).length };
+            const shared = attendees.filter((person) => known.some((other) => samePerson(other, person)));
+            const partly = attendees.filter(
+                (person) => !shared.includes(person) && known.some((other) => partlySamePerson(other, person))
+            );
+
+            return {
+                candidate: { ...candidate, sharedPeople: shared.length },
+                attendees: attendees.length,
+                partly: partly.length,
+            };
         })
-        .filter((candidate) => candidate.overlapSec > 0 || Math.abs(Date.parse(candidate.entry.start) - start) <= slack)
-        .filter((candidate) => {
-            const others = candidate.entry.people.filter((person) => !person.self).length;
-            return candidate.sharedPeople !== 0 || others === 0;
-        })
+        .filter(
+            ({ candidate }) => candidate.overlapSec > 0 || Math.abs(Date.parse(candidate.entry.start) - start) <= slack
+        )
+        .filter(({ candidate, attendees, partly }) => candidate.sharedPeople !== 0 || partly > 0 || attendees === 0)
         .sort(
             (a, b) =>
-                (b.sharedPeople ?? 0) - (a.sharedPeople ?? 0) ||
-                b.share - a.share ||
-                Date.parse(a.entry.start) - Date.parse(b.entry.start)
-        );
+                (b.candidate.sharedPeople ?? 0) - (a.candidate.sharedPeople ?? 0) ||
+                b.partly - a.partly ||
+                b.candidate.share - a.candidate.share ||
+                Date.parse(a.candidate.entry.start) - Date.parse(b.candidate.entry.start)
+        )
+        .map(({ candidate }) => candidate);
 }
 
 /**

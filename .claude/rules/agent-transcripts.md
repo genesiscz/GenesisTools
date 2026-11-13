@@ -74,7 +74,11 @@ provider, so a new provider is a list of members to fill in and no feature parse
   and never names a JSONL field such as `"type":"assistant"`, `response_item`, `continued-in` or `chat_history`.
 - **The format parsers live beside the readers** (`src/utils/agent-sessions/readers/`: `codex-turns.ts`,
   `codex-changes.ts`, `codex-import.ts`, `codex-usage.ts`, `grok-usage.ts`, `claude-tail-usage.ts`,
-  `claude-native-scan.ts`, moved there 2026-10-30). `src/utils/ai/transcripts/` keeps provider-neutral logic and
+  `claude-native-scan.ts`, moved there 2026-10-30). The Claude change parser joined them on 2026-11-10:
+  `claude-changes-parse.ts` reads the lines and `claude-changes.ts` folds them for `readChanges`, while
+  `src/utils/session-changes/` only computes over a `SessionTranscript`. `claude-locate.ts` is the one module that
+  maps a Claude id or an 8-character prefix to a file (`canonicalClaudeTranscript` and its sync form); a prefix of
+  several sessions throws `AmbiguousSessionIdError`. `src/utils/ai/transcripts/` keeps provider-neutral logic and
   tables keyed by provider. The turn-state dialects moved there too on 2026-10-30
   (`readers/<harness>-turn-state.ts`); the one door from a transcript path to a `TurnSnapshot` is `readTurnState`
   (`src/utils/ai/transcripts/turn-state.ts`), and its shapes are in `turn-state-types.ts`. Do not add a new parser

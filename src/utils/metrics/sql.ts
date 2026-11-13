@@ -250,7 +250,7 @@ function limitOf(limit: number | undefined, fallback: number): number {
     return Math.min(limit, MAX_LIMIT);
 }
 
-function percentOf(aggregate: MetricAggregate): number | undefined {
+function percentileOf(aggregate: MetricAggregate): number | undefined {
     return aggregate.startsWith("p") ? Number(aggregate.slice(1)) : undefined;
 }
 
@@ -267,7 +267,7 @@ function simpleAggregate(aggregate: MetricAggregate): string {
         case "max":
             return "MAX(value)";
         default:
-            return `percentile(value, ${percentOf(aggregate)})`;
+            return `percentile(value, ${percentileOf(aggregate)})`;
     }
 }
 
@@ -399,7 +399,7 @@ export function buildAggregateSql(metricId: number, query: MetricQuery, options:
     const aliases = groupNames.map((name, index) => ({ name, alias: `g${index}` }));
     const order = sortSql(query, { groups: aliases, aggregates });
     const limit = limitOf(query.limit, DEFAULT_QUERY_LIMIT);
-    const needsWindow = percentiles === "window" && aggregates.some((aggregate) => percentOf(aggregate.name));
+    const needsWindow = percentiles === "window" && aggregates.some((aggregate) => percentileOf(aggregate.name));
 
     if (!needsWindow && groupNames.some(isCheckpointGroup) && groupNames.every(readsTimeOnly)) {
         const built = checkpointRangeSql({ metricId, query, marks, groups: aliases, aggregates, order, limit });
@@ -431,7 +431,7 @@ export function buildAggregateSql(metricId: number, query: MetricQuery, options:
         const select = [
             ...groups.map((group) => group.alias),
             ...aggregates.map((aggregate) => {
-                const percent = percentOf(aggregate.name);
+                const percent = percentileOf(aggregate.name);
                 return `${percent === undefined ? simpleAggregate(aggregate.name) : windowPercentile(percent)} AS ${aggregate.alias}`;
             }),
         ].join(", ");

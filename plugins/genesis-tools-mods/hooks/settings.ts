@@ -1,5 +1,10 @@
 // The `mods` section of the hooks file as this plugin reads it. No engine types here: the CLI's own tests import
-// this file to hold its defaults equal to `src/agents/lib/hooks/config.ts`, outside the plugin's type world.
+// this file outside the plugin's type world. The defaults are generated from `src/agents/lib/hooks/config.ts` into
+// `mods-defaults.ts` by scripts/gen-harness-plugin.ts.
+
+import { MODS_DEFAULTS } from "./mods-defaults";
+
+export { MODS_DEFAULTS };
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -7,8 +12,8 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * The `mods` section of the hooks file, one object per feature (`tools agents hooks config set mods.<feature>.<field>`).
- * The CLI keeps the same shape and defaults in `src/agents/lib/hooks/config.ts` (`ModsConfig`); a test holds the two
- * equal, since this plugin runs outside the repository and cannot import it.
+ * The CLI keeps the same shape in `src/agents/lib/hooks/config.ts` (`ModsConfig`); this plugin runs outside the
+ * repository and cannot import it, so `scripts/gen-harness-plugin.ts` writes the CLI's defaults into `mods-defaults.ts`.
  */
 export interface ModsSettings {
     diff: { fullDiff: boolean; collapseGitSync: boolean; bottomRow: boolean; filesOnly: boolean };
@@ -55,36 +60,6 @@ export interface ModsSettings {
      */
     resumeGuard: { enabled: boolean; idleSeconds: number; minTokens: number; teammates: boolean };
 }
-
-/** Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`. */
-export const MODS_DEFAULTS: ModsSettings = {
-    diff: { fullDiff: true, collapseGitSync: true, bottomRow: true, filesOnly: false },
-    idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
-    agentModel: { enabled: false, format: "label" },
-    agentRow: { enabled: false, format: "version", effort: true },
-    decisions: { enabled: false, chip: "any", expand: "waiting", history: "collapsed", enter: "stage-then-send" },
-    inbox: { enabled: false, chip: "any", expand: "none" },
-    links: { enabled: false },
-    git: {
-        enabled: false,
-        labels: "full",
-        checkouts: 3,
-        cwd: "touched",
-        expand: "first",
-        name: "repo-folder",
-        earlier: "show",
-    },
-    askRow: { enabled: false },
-    spinner: { enabled: false },
-    cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
-    tmpUsage: { enabled: false, minutes: 5 },
-    agentsBand: { enabled: false, warnMinutes: 60 },
-    hooks: { tokens: false, dedupe: false, metrics: true },
-    log: { readings: false },
-    sidebar: { hints: true, feedback: "line", focus: "command" },
-    stall: { enabled: false, action: "button", minutes: 5 },
-    resumeGuard: { enabled: false, idleSeconds: 295, minTokens: 150_000, teammates: true },
-};
 
 function whole(value: unknown, min: number, max: number, fallback: number): number {
     return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max ? value : fallback;
