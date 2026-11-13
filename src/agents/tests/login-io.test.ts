@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     type AgentNames,
@@ -8,6 +11,7 @@ import {
     type MonitorEvent,
 } from "../lib/format-monitor";
 import { formatReadyEvent, resolveFeedFormat } from "../lib/login-io";
+import { releaseSlot, tryAcquireSlot } from "../lib/slot-lock";
 import type { AgentRecord, FeedEvent, MessageEvent } from "../lib/types";
 
 describe("formatReadyEvent", () => {
@@ -33,6 +37,29 @@ describe("formatReadyEvent", () => {
             mode: "stream",
             is_main: true,
         });
+    });
+});
+
+describe("login slot", () => {
+    test("one login holds the slot, and a release by a process the slot does not name deletes nothing", () => {
+        const dir = mkdtempSync(join(tmpdir(), "login-slot-test-"));
+        const slot = join(dir, "agent-1.login");
+        const login = { since: "2026-01-01T00:00:00.000Z", owner: "agent-1", kind: "login" as const };
+
+        try {
+            expect(tryAcquireSlot(slot, { ...login, pid: 999999999 })).toBe(true);
+            expect(tryAcquireSlot(slot, { ...login, pid: process.pid })).toBe(false);
+
+            releaseSlot(slot);
+            expect(existsSync(slot)).toBe(true);
+
+            rmSync(slot);
+            expect(tryAcquireSlot(slot, { ...login, pid: process.pid })).toBe(true);
+            releaseSlot(slot);
+            expect(existsSync(slot)).toBe(false);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 

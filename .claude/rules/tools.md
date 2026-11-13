@@ -39,7 +39,8 @@ Whenever you write a helper, in a new tool or in a change to an existing one, as
 - `src/utils/repo-context/` - Repository context gatherers (agent instruction files, owning project + package manager + test runner, test commands) over a caller-supplied reader; `gatherRepoContext()`, `defaultGatherers()`
 - `src/utils/ai/evaluation/spend.ts` - All Jev spend from the usage ledger: `jevSpend()`, `jevCalls()` (by feature label, model, day)
 - `src/utils/browser-router/router-link.ts` - Every link to a GenesisTools app: `routerLink({ preset, action, data, via?, when?, render?, fallback })` returns `{ result, link, via, error? }`, the link only when it opens on this Mac (router installed, the https handler, preset routed; or the app installed for its scheme) and the fallback with a coded reason otherwise; `schemeLink()` for a link the code opens itself. A new kind of link is a new entry in its `LinkTargets` table, never a URL at a call site: lint-rules `no-raw-genesis-link` fails a `genesis.tools/`, `genesis-md://` or `genesis-tools://` literal anywhere else
-- `src/utils/rm/` - Safe deletion (`tools rm`): `planRemoval()` (a verdict per path from the rule table: hard-deny, git, session scratch, own files, presets, trusted roots), `moveToTrash()`, `drainDue()`, `restoreBatch()`, `kickDrainer()`. A tool that deletes user files or caches goes through it instead of `rmSync`
+- `src/utils/rm/` - Safe deletion (`tools rm`): `planRemoval()` (a verdict per path from the rule table: hard-deny, git, session scratch, own files, presets, trusted roots), `moveToTrash()`, `drainDue()`, `restoreBatch()`, `kickDrainer()`. A tool that deletes user files or caches goes through it instead of `rmSync`; `tools doctor` does through `removeForDoctor()` (`src/doctor/lib/remove.ts`: the hard-deny verdict first, then the trash with no grace), and in a test process the trash refuses any path outside the test's temp folder
+- `src/utils/mcp/` - One MCP tool group per tool: `ToolEntry` and `toolCallResult()` (`tool-entry.ts`), `ToolGroupRow` with its lazy `load` (`tool-group.ts`), `serveToolGroup(row, info)` for a standalone stdio server (`serve-group.ts`). The aggregator's table is `TOOL_GROUPS` in `src/genesis-tools-mcp/lib/groups.ts`; a new group is one row there and one `src/<tool>/mcp/genesis-tools.ts` that exports `toolGroup()`
 - `src/utils/genesis-tools/probe.ts` - What of GenesisTools this Mac has and which link kinds (`md`, `finder`, `hub`, `claude-find`) a click opens: `probeGenesisTools()`, `linkState(url, facts)`; `tools genesis-tools probe` prints it. `src/utils/macos/launch-services.ts` `appPathForBundleId()` is the app lookup (`open -b`'s, not Spotlight's). Rules: `.claude/rules/genesis-links.md`
 - `src/utils/genesis-tools/tools/` - Every `tools …` command a util names, one function per command: `ai.ts` (accounts, defaults, the vault, provider logins), `system.ts` (agent bus, terminals, browser router, macOS grants, git, search, speech), `services.ts` (dashboards and local servers), all built with `toolCommand()` alone; `suggest.ts` for a line built with `suggestCommand()`, only in a util that already loads the executor. A util imports the function (`import { claudeLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai"`) and calls it; it never writes `tools …` or calls `toolCommand()` itself, and lint-rules `no-tool-command-in-utils` fails that outside this folder. A new command is a new function there. A copy of `src/utils` in another repository edits only this folder
 
@@ -61,7 +62,7 @@ Most tools follow these common patterns:
 **Interactive User Experience**:
 
 -   Two prompt libraries available: `@inquirer/prompts` (legacy) and `@clack/prompts` (preferred for new tools)
--   **Prompts go through the `p` facade** (`p.text`, `p.select`, `p.multiselect`, `p.password`, … from `@genesiscz/utils/prompts/p`). Set the backend once at the tool's entry point with `p.setBackend`; never call `inquirerBackend.*` or `clackBackend.*` in tool code, so cancel handling stays the same on both backends.
+-   **Prompts go through the `p` facade** (`p.text`, `p.select`, `p.multiselect`, `p.password`, … from `@genesiscz/utils/prompts/p`). Set the backend once at the tool's entry point with `p.setBackend`; never call `inquirerBackend.*` or `clackBackend.*` in tool code, so cancel handling stays the same on both backends. A cancel (Escape, Ctrl-C) ends the process with code 0 by default; a call whose caller handles the cancel passes `cancel: "back"` and gets the cancel symbol back (`if (p.isCancel(answer)) { … }`). Lint `no-raw-clack-import` refuses `@clack/prompts` outside `src/utils/prompts/`; a clack function the facade lacks becomes a pass-through there. Tests answer a cancel with `CANCEL_ANSWER` from `p/__tests__/test-backend.ts`.
 -   **Non-TTY guard**: Always check `isInteractive()` (from `@genesiscz/utils/cli`) before showing prompts. When non-interactive, either error with `suggestCommand()` showing required CLI flags, or use a sensible default:
 
     ```typescript
@@ -90,6 +91,12 @@ Most tools follow these common patterns:
 
 **Process Execution**:
 
+-   **`Executor.exec` always has a deadline**: the call's `timeout`, else the Executor's, else
+    `DEFAULT_EXEC_TIMEOUT_MS` (60 s). On expiry the process group is killed, the call throws and a `deadline`
+    record goes into the failures log. A command that can run longer by design (a clone, a fetch, a rebase, a build)
+    says why: `timeout: { ms: 600_000, reason: "a fetch of every branch" }`; `{ ms: 0, reason }` is no deadline.
+    `scripts/ci/exec-deadline-ratchet.ts` lists the calls that still run on the default (lint `no-exec-without-deadline`);
+    a call leaves it only when it really needs its own bound.
 -   Use `Bun.spawn()` for executing external commands
 -   Handle stdout/stderr streams properly using `new Response(proc.stdout).text()`
 

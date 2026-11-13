@@ -1,13 +1,15 @@
-import { existsSync, mkdirSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { SERVER_BASE_DIR } from "@app/youtube/lib/server/port-file";
-import { launchdProgramArgumentsXml } from "@genesiscz/utils/macos/genesis-app";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import {
+    installLaunchd as installAgent,
+    isLaunchdInstalled as isAgentInstalled,
+    type LaunchdInstallOptions,
+    renderLaunchdPlist,
+    uninstallLaunchd as uninstallAgent,
+} from "@genesiscz/utils/process/launchd-agent";
 
-const LAUNCH_AGENTS_DIR = join(homedir(), "Library", "LaunchAgents");
 export const LAUNCHD_LABEL = "com.genesis-tools.youtube-server";
-export const PLIST_PATH = join(LAUNCH_AGENTS_DIR, `${LAUNCHD_LABEL}.plist`);
 
 export interface InstallLaunchdOptions {
     port: number;
@@ -15,54 +17,33 @@ export interface InstallLaunchdOptions {
     entryPath?: string;
 }
 
-export function generateLaunchdPlist(opts: Required<InstallLaunchdOptions>): string {
-    const logPath = join(SERVER_BASE_DIR, "server.log");
-    const errorLogPath = join(SERVER_BASE_DIR, "server.err.log");
-
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>${LAUNCHD_LABEL}</string>
-  <key>ProgramArguments</key>
-${launchdProgramArgumentsXml([opts.bunPath, "run", opts.entryPath, "--port", String(opts.port)])}
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>${logPath}</string>
-  <key>StandardErrorPath</key><string>${errorLogPath}</string>
-  <key>EnvironmentVariables</key>
-  <dict><key>HOME</key><string>${homedir()}</string><key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:${dirname(opts.bunPath)}</string></dict>
-  <key>WorkingDirectory</key><string>${resolve(import.meta.dir, "../../../../..")}</string>
-  <key>ThrottleInterval</key><integer>10</integer>
-  <key>ProcessType</key><string>Background</string>
-</dict>
-</plist>`;
+export function youtubeLaunchdOptions(opts: Required<InstallLaunchdOptions>): LaunchdInstallOptions {
+    return {
+        label: LAUNCHD_LABEL,
+        command: [opts.bunPath, "run", opts.entryPath, "--port", String(opts.port)],
+        cwd: resolve(import.meta.dir, "../../../../.."),
+        logPaths: { stdout: join(SERVER_BASE_DIR, "server.log"), stderr: join(SERVER_BASE_DIR, "server.err.log") },
+        processType: "Background",
+    };
 }
 
+export function generateLaunchdPlist(opts: Required<InstallLaunchdOptions>): string {
+    return renderLaunchdPlist(youtubeLaunchdOptions(opts));
+}
+
+/** Restores the previous plist when the load fails (`installLaunchd` in the shared module). */
 export async function installLaunchd(opts: InstallLaunchdOptions): Promise<void> {
     const bunPath = opts.bunPath ?? Bun.which("bun") ?? process.execPath;
     const entryPath = opts.entryPath ?? resolve(import.meta.dir, "index.ts");
-    mkdirSync(LAUNCH_AGENTS_DIR, { recursive: true });
     mkdirSync(SERVER_BASE_DIR, { recursive: true });
-    // A plist cut short by a full disk or a crash makes `launchctl load` fail, and the server then never restarts.
-    atomicWriteFileSync(PLIST_PATH, generateLaunchdPlist({ port: opts.port, bunPath, entryPath }));
-    const proc = Bun.spawn(["launchctl", "load", "-w", PLIST_PATH], { stdio: ["ignore", "pipe", "pipe"] });
-    const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
-
-    if (exitCode !== 0) {
-        throw new Error(`launchctl load failed: ${stderr}`);
-    }
+    // RunAtLoad already started the server on load; a kickstart -k would kill and restart it at once.
+    await installAgent(youtubeLaunchdOptions({ port: opts.port, bunPath, entryPath }), { kickstart: false });
 }
 
 export async function uninstallLaunchd(): Promise<void> {
-    if (!existsSync(PLIST_PATH)) {
-        return;
-    }
-
-    await Bun.spawn(["launchctl", "unload", PLIST_PATH], { stdio: ["ignore", "pipe", "pipe"] }).exited;
-    unlinkSync(PLIST_PATH);
+    await uninstallAgent(LAUNCHD_LABEL);
 }
 
 export function isLaunchdInstalled(): boolean {
-    return existsSync(PLIST_PATH);
+    return isAgentInstalled(LAUNCHD_LABEL);
 }

@@ -1,17 +1,24 @@
+import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { splitEmbedArgv } from "@app/ai/commands/agent/embed";
 import { codexSpec } from "@app/codex/lib/spec";
 import { grokSpec } from "@app/grok/lib/spec";
+import { claudeHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
+import { initializeCompactHistorySchema } from "@genesiscz/utils/agent-sessions/migrations";
+import * as historyOpen from "@genesiscz/utils/agent-sessions/open-service";
+import { HistoryService } from "@genesiscz/utils/agent-sessions/service";
+import { HistorySyncRepository } from "@genesiscz/utils/agent-sessions/sync-repository";
 import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
 import type { WorkerDriver, WorkerMeta } from "@genesiscz/utils/worker/driver";
 import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { Command } from "commander";
-import { registerAgentCmuxCommand } from "./cmux";
+import { lookupAgentSession, registerAgentCmuxCommand } from "./cmux";
 import { registerAgentTool } from "./register";
 import type { AgentToolSpec } from "./spec";
 
@@ -249,4 +256,50 @@ test("an embed launch takes the account before -- and passes everything after it
         account: "embed",
         native: ["app-server"],
     });
+});
+
+test("cmux session lookup never takes a sub-agent of the session as its match", async () => {
+    // A Claude sub-agent's transcript carries its lead's session id, starts later, and here runs in its own worktree.
+    // The catalog lists it first, so a lookup that got sub-agents back matched it and reported the worktree as the
+    // session's cwd.
+    const root = mkdtempSync(join(tmpdir(), "agent-cmux-lookup-"));
+    const lead = "aaaaaaaa-2222-4333-8444-000000000001";
+    const project = join(root, "-projects-shop");
+    mkdirSync(join(project, lead, "subagents"), { recursive: true });
+    const transcript = (path: string, record: Record<string, unknown>) =>
+        writeFileSync(path, `${SafeJSON.stringify({ type: "user", sessionId: lead, ...record })}\n`);
+    transcript(join(project, `${lead}.jsonl`), {
+        cwd: "/projects/shop",
+        timestamp: "2026-09-16T10:00:00Z",
+        message: { content: "lead work" },
+    });
+    transcript(join(project, lead, "subagents", "agent-a1b2c3.jsonl"), {
+        agentId: "a1b2c3",
+        isSidechain: true,
+        cwd: "/projects/shop-worktree",
+        timestamp: "2026-09-16T11:00:00Z",
+        message: { content: "worker job" },
+    });
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: claudeHistoryReader,
+    });
+    const open = spyOn(historyOpen, "openHistoryService").mockReturnValue(service);
+
+    try {
+        const everything = await service.catalog({});
+        expect(everything.metadata.map((row) => row.isSubagent)).toEqual([true, false]);
+
+        expect(await lookupAgentSession("claude", lead.slice(0, 8))).toMatchObject({
+            sessionId: lead,
+            cwd: "/projects/shop",
+        });
+    } finally {
+        open.mockRestore();
+        database.close();
+    }
 });

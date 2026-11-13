@@ -23,7 +23,7 @@ interface SelectOption {
 }
 
 interface PromptOverride {
-    select: (opts: { message: string; options: SelectOption[] }) => Promise<string | symbol>;
+    select: (opts: { message: string; options: SelectOption[]; cancel?: "back" }) => Promise<string | symbol>;
     note: (message: string, title?: string) => void;
 }
 
@@ -37,7 +37,7 @@ export async function pickPatchInteractively(
         return { kept: "", droppedCount: 0 };
     }
 
-    const clack = opts?.prompts ?? (await import("@clack/prompts"));
+    const clack = opts?.prompts ?? (await import("@genesiscz/utils/prompts/p"));
     const { select, note } = clack;
     // Override path (tests) returns plain strings; only clack's real select() emits the cancel
     // symbol on Ctrl-C, so the isCancel lookup is only needed for the real prompts module.
@@ -58,6 +58,7 @@ export async function pickPatchInteractively(
                     { value: "n", label: "no — skip" },
                     { value: "q", label: "quit picker (keep nothing remaining)" },
                 ],
+                cancel: "back",
             });
 
             if (isCancel(sel) || sel === "q") {

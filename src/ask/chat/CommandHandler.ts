@@ -1,8 +1,8 @@
 import { modelSelector } from "@ask/providers/ModelSelector";
 import type { OutputConfig, OutputFormat, ProviderChoice } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
-import * as p from "@clack/prompts";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { LanguageModel } from "ai";
 import pc from "picocolors";
 
@@ -145,6 +145,7 @@ export class CommandHandler {
                     }
                     return undefined;
                 },
+                cancel: "back",
             });
 
             if (p.isCancel(file)) {
@@ -300,6 +301,7 @@ export class CommandHandler {
         const result = await p.confirm({
             message,
             initialValue: false,
+            cancel: "back",
         });
         if (p.isCancel(result)) {
             return false;
@@ -309,7 +311,7 @@ export class CommandHandler {
 
     async getInput(prompt: string, secure = false): Promise<string> {
         const result = secure
-            ? await p.password({ message: prompt })
+            ? await p.password({ message: prompt, cancel: "back" })
             : await p.text({
                   message: prompt,
                   validate: (value) => {
@@ -318,6 +320,7 @@ export class CommandHandler {
                       }
                       return undefined;
                   },
+                  cancel: "back",
               });
 
         if (p.isCancel(result)) {
@@ -333,6 +336,7 @@ export class CommandHandler {
                 value: choice,
                 label: choice,
             })),
+            cancel: "back",
         });
         if (p.isCancel(result)) {
             return null;

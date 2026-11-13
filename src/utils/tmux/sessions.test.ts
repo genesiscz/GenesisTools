@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@genesiscz/utils/tmux/bin";
 import { insideTmux } from "@genesiscz/utils/tmux/inside";
+import { TMUX_SEND_KEYS_TIMEOUT_MS, tmuxSendKeys } from "@genesiscz/utils/tmux/send-keys";
 import {
     argvWithChildDeadline,
     buildTmuxSpawnEnv,
@@ -45,6 +46,35 @@ describe("tmux sessions", () => {
         setTmuxSpawnSyncForTests(null);
         setTmuxBinForTests(null);
         resetTmuxBinCache();
+    });
+
+    test("tmuxSendKeys builds one send-keys argv with the default deadline, and a timed-out or failed call says so", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: { cmd: string[]; timeoutMs?: number }[] = [];
+        let answer: { exitCode: number | null; stdout: string; stderr?: string } = { exitCode: 0, stdout: "" };
+        setTmuxSpawnSyncForTests((cmd, opts) => {
+            calls.push({ cmd, timeoutMs: opts?.timeoutMs });
+            return answer;
+        });
+
+        expect(await tmuxSendKeys("cmux-demo", ["-l", "--", "claude 'it'\\''s'"])).toEqual({ ok: true });
+        expect(await tmuxSendKeys("cmux-demo", ["Enter"], { timeoutMs: 1_500 })).toEqual({ ok: true });
+        expect(calls).toEqual([
+            {
+                cmd: ["/mock/tmux", "send-keys", "-t", "cmux-demo", "-l", "--", "claude 'it'\\''s'"],
+                timeoutMs: TMUX_SEND_KEYS_TIMEOUT_MS,
+            },
+            { cmd: ["/mock/tmux", "send-keys", "-t", "cmux-demo", "Enter"], timeoutMs: 1_500 },
+        ]);
+
+        answer = { exitCode: null, stdout: "" };
+        expect(await tmuxSendKeys("cmux-demo", ["Enter"])).toMatchObject({ ok: false, timedOut: true });
+        answer = { exitCode: 1, stdout: "", stderr: "can't find session: cmux-demo" };
+        expect(await tmuxSendKeys("cmux-demo", ["Enter"])).toEqual({
+            ok: false,
+            timedOut: false,
+            detail: "tmux send-keys to cmux-demo failed (1): can't find session: cmux-demo",
+        });
     });
 
     test("pane and client listings parse, an absent server is empty, and an unanswered tmux is a failure", async () => {

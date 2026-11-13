@@ -586,10 +586,11 @@ export interface WaitingQueue {
 /**
  * The phone's answer queue (`GET /api/qa/waiting`): every item the waiting set says waits for the human, grouped by
  * session, with the waiting set's counts. The items are the hub inbox's own (`buildInbox`), so the phone stages and
- * answers with the same ids and revisions. The counts follow the notch's rules: freshness by session activity, and
- * nothing asked at or before `clearedAt` (the notch's "Mark all read") counts. One difference stays: the notch also
- * counts an old item of a session whose agent is running right now (its agent roster); the queue has no roster, so
- * such an item counts here only while its session is fresh by activity.
+ * answers with the same ids and revisions. The notch widget's badge asks the same `waitingSet`, so both count by one
+ * rule: a session's items count while it is fresh (by activity or its newest ask) or its agent runs, and nothing asked
+ * at or before `clearedAt` (the notch's "Mark all read") counts. Only the inputs differ: the notch passes the running
+ * agents of its roster as `live`, and the queue has no roster, so an old item of a running agent counts here only
+ * while its session is fresh by activity.
  */
 export async function loadWaitingQueue({
     hours = 72,

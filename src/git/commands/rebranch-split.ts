@@ -10,7 +10,6 @@ import { analyseCommits, parseGroupSpec } from "@app/git/lib/rebranch/classify";
 import { mergeRefusal, proveSplit, readSourceHistory } from "@app/git/lib/rebranch/history";
 import { draftPlan, readPlanFile, resolvePlan } from "@app/git/lib/rebranch/plan";
 import { analysisDetails, analysisTable, reportLines } from "@app/git/lib/rebranch/render";
-import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
@@ -24,6 +23,7 @@ import {
 } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -139,7 +139,7 @@ function applyIo(): ApplyFlowIo {
         success: (message) => out.log.success(message),
         confirm: isInteractive()
             ? async (message) => {
-                  const ok = await p.confirm({ message, initialValue: false });
+                  const ok = await p.confirm({ message, initialValue: false, cancel: "back" });
 
                   return !p.isCancel(ok) && ok;
               }

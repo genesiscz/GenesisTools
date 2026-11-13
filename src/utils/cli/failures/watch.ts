@@ -10,7 +10,8 @@ import { appendFailure, type FailureCaller, type FailureKind, type ToolFailure }
 import { takeRunId } from "./run-id";
 
 const TAIL_CHARS = 4000;
-const TOOLS_ROOT = resolve(moduleDir(import.meta), "../../../..");
+/** The GenesisTools checkout this code runs from: the main one or a worktree. */
+export const TOOLS_ROOT = resolve(moduleDir(import.meta), "../../../..");
 const SECRET_WORD = "(?:token|secret|password|passwd|api[-_]?key|auth|cookie|credential)";
 const SECRET_FLAG = new RegExp(`^--?[\\w-]*${SECRET_WORD}[\\w-]*$`, "i");
 /** A positional argument whose declared name is secret-shaped (`[secret]`) takes a secret value. */
@@ -484,6 +485,22 @@ export function agentCaller(): FailureCaller | null {
 /** Masks message text using the live run's raw credentials, without exposing those values to callers. */
 export function redactCurrentRunText(text: string): string {
     return redactRunText(text, run?.argv ?? [], run?.secrets() ?? {});
+}
+
+/**
+ * The tool run of this process as a record another module writes keeps it (a command deadline, deadline.ts): the
+ * tool, its command path, its argv with secrets masked. Null when no CLI run is watched (a test, a library caller).
+ */
+export function currentRunFacts(): { tool: string; command: string | null; argv: string[] } | null {
+    if (!run) {
+        return null;
+    }
+
+    return {
+        tool: run.tool,
+        command: run.commandPath()?.replace(/^tools /, "") ?? null,
+        argv: redactArgv(run.argv, run.secrets()),
+    };
 }
 
 function caller(): FailureCaller | null {

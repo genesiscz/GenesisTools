@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import * as realPrompts from "@clack/prompts";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { CANCEL_ANSWER, makeTestBackend } from "@genesiscz/utils/prompts/p/__tests__/test-backend";
 import { stripAnsi } from "@genesiscz/utils/string";
+import { setPromptBackend } from "@genesiscz/utils/testing/prompt-mock";
 import { executeBuiltin } from "./builtins";
 import { saveCredential } from "./credentials";
 import type { RunLogger } from "./run-logger";
@@ -24,7 +25,7 @@ interface ExecutedStep {
 
 type StepScript = (step: PresetStep) => StepHandlerResult | Promise<StepHandlerResult>;
 
-const CANCELLED = Symbol("cancelled");
+const CANCELLED = CANCEL_ANSWER;
 const executed: ExecutedStep[] = [];
 const scripts = new Map<string, StepScript>();
 const promptCalls: Array<{ message: string; placeholder?: string }> = [];
@@ -41,10 +42,11 @@ function logSink(level: string): (message: string) => void {
     };
 }
 
-mock.module("@clack/prompts", () => ({
-    ...realPrompts,
+const scripted = makeTestBackend();
+setPromptBackend({
+    ...scripted,
     log: {
-        ...realPrompts.log,
+        ...scripted.log,
         warn: logSink("warn"),
         step: logSink("step"),
         info: logSink("info"),
@@ -52,18 +54,18 @@ mock.module("@clack/prompts", () => ({
     },
     spinner: () => ({
         start: () => {},
-        stop: (message: string) => {
-            spinnerStops.push(message);
+        stop: (message?: string) => {
+            spinnerStops.push(message ?? "");
         },
         message: () => {},
     }),
-    text: async (options: { message: string; placeholder?: string }) => {
+    text: async (options) => {
         promptCalls.push({ message: options.message, placeholder: options.placeholder });
-        return promptAnswers.shift();
+        // The queued answer is untyped on purpose: a string, or CANCELLED.
+        return promptAnswers.shift() as never;
     },
-    isCancel: (value: unknown) => value === CANCELLED,
     cancel: logSink("cancel"),
-}));
+});
 
 mock.module("./step-runner.ts", () => ({
     ...realStepRunner,

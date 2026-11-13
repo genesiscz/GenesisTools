@@ -1,8 +1,8 @@
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -28,6 +28,7 @@ export function registerDeleteCommand(parent: Command): void {
                         p.confirm({
                             message: `Delete profile "${name}" (${summary.workspaces} workspace(s))?`,
                             initialValue: false,
+                            cancel: "back",
                         })
                     );
                     if (!confirmed) {

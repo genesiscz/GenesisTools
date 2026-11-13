@@ -1,7 +1,7 @@
 import { dirname } from "node:path";
-import { resolveGrokAuthPath } from "@app/ai-proxy/lib/account-config";
 import { loadCatalogFile } from "@app/ai-proxy/lib/catalog-file";
-import { providerKey } from "@app/ai-proxy/lib/providers/registry";
+import { resolveGrokAuthPath } from "@app/ai-proxy/lib/providers/account-paths";
+import { providerKey } from "@app/ai-proxy/lib/providers/provider-key";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import type { GrokModelRecord } from "@genesiscz/utils/ai/grok";
 import {

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { macosPermissionsOpenCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
+import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import {
     describeResponsibleIdentity,
     genesisAppBundlePath,
@@ -128,12 +129,18 @@ function markPrompted(dir: string): void {
 }
 
 /**
- * Show the dialog, open the pane and reveal the bundle. Returns what happened; never throws.
- * `force` skips the hourly throttle (used by `tools macos permissions open`).
+ * Show the dialog, open the pane and reveal the bundle. Returns what happened; throws only in a test process, where
+ * the modal dialog would wait for a click nobody gives. `force` skips the hourly throttle (used by
+ * `tools macos permissions open`).
  */
 export function requestFullDiskAccess(
     options: FullDiskAccessContext & { force?: boolean; stampDir?: string }
 ): FullDiskAccessPromptResult {
+    refuseHostEffectInTest(
+        "requestFullDiskAccess",
+        "Assert the decision instead of raising a modal dialog nobody is there to answer."
+    );
+
     if (process.platform !== "darwin") {
         return "no-ui";
     }

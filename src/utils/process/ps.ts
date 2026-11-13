@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { chunk } from "../array";
 
 /**
@@ -16,11 +14,14 @@ import { chunk } from "../array";
  *
  * POSIX only. `ps` and `lsof` do not exist on Windows; callers that may run
  * there check the platform themselves (see `src/port/lib/scanner.ts`).
+ *
+ * The `ps` adapter of the process layer: only `src/utils/process/` imports it (lint rule `no-process-tool-spawn`).
+ * Callers ask `processes.ts`, which reads the kernel first and comes here for what only `ps` or `lsof` can answer.
+ * Running a program in general is `capture.ts`.
  */
 
-import { spawnSync } from "node:child_process";
 import { logger } from "@genesiscz/utils/logger";
-import { canReadProcessCwd, readProcessCwd } from "@genesiscz/utils/process/cwd";
+import { capture, captureSync } from "./capture";
 
 const { log } = logger.scoped("process-ps");
 
@@ -44,15 +45,6 @@ const PS_OUTPUT_PATTERN =
     /^(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+([\d.]+)\s+(\d+)\s+\w+\s+(\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.*)$/;
 
 const PS_LIST_PATTERN = /^\s*(\d+)\s+([\d.]+)\s+(\d+)\s+(.*)$/;
-
-export interface CaptureResult {
-    stdout: string;
-    stderr: string;
-    /** Exit code, or null when the child was killed or never reported one. */
-    status: number | null;
-    /** Set by {@link capture} when it killed the child at its deadline; that kill is already logged there. */
-    timedOut?: true;
-}
 
 /** One row of {@link PS_COLUMNS_SPEC}. `rss` is in kilobytes, as `ps` reports it. */
 export interface PsRow {
@@ -78,97 +70,6 @@ export interface PsListRow {
 
 /** Re-exported from `../array`, where it now lives; batching pids is only one of its uses. */
 export { chunk };
-
-/** Where macOS keeps `lsof`, `sysctl` and friends: absent from a launchd job's PATH unless its plist adds them. */
-const SYSTEM_BIN_DIRS = ["/usr/sbin", "/sbin"];
-
-/**
- * A bare command name the PATH cannot resolve, found in the system bin folders instead. The daemon
- * runs tasks with a PATH without `/usr/sbin`, so a bare `lsof` failed there and read as "no output".
- */
-export function resolveSystemCommand(command: string): string {
-    if (command.includes("/") || Bun.which(command)) {
-        return command;
-    }
-
-    for (const dir of SYSTEM_BIN_DIRS) {
-        const candidate = join(dir, command);
-
-        if (existsSync(candidate)) {
-            return candidate;
-        }
-    }
-
-    return command;
-}
-
-/** Run a binary with an argv and capture both streams. No shell, so no quoting hazard. */
-export function captureSync(command: string, args: string[], options?: { timeoutMs?: number }): CaptureResult {
-    const result = spawnSync(resolveSystemCommand(command), args, {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: options?.timeoutMs,
-    });
-
-    return {
-        stdout: result.stdout ?? "",
-        stderr: result.stderr ?? "",
-        status: result.status,
-    };
-}
-
-/**
- * Async {@link captureSync}. Use this one from anything with a render loop: a
- * synchronous `ps -axo` over a thousand processes blocks the event loop for as
- * long as it takes, and an Ink app cannot paint or read a keypress meanwhile.
- *
- * `timeoutMs` kills the child rather than waiting forever, because `lsof` can
- * block indefinitely on an unresponsive mount.
- */
-export async function capture(
-    command: string,
-    args: string[],
-    options?: { timeoutMs?: number; cwd?: string; env?: NodeJS.ProcessEnv }
-): Promise<CaptureResult> {
-    const proc = Bun.spawn([resolveSystemCommand(command), ...args], {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        cwd: options?.cwd,
-        env: options?.env,
-    });
-    const timeoutMs = options?.timeoutMs;
-    const streams = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    void streams.catch(() => {});
-
-    if (timeoutMs === undefined) {
-        const [stdout, stderr] = await streams;
-        await proc.exited;
-
-        return { stdout, stderr, status: proc.exitCode };
-    }
-
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timedOut = await new Promise<boolean>((resolve) => {
-        timeoutId = setTimeout(() => resolve(true), timeoutMs);
-        void proc.exited.then(() => resolve(false));
-    });
-
-    if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-    }
-
-    if (timedOut) {
-        proc.kill("SIGKILL");
-        log.warn({ command, args, timeoutMs }, "child was killed on timeout; its output is partial");
-
-        return { stdout: "", stderr: "", status: null, timedOut: true };
-    }
-
-    const [stdout, stderr] = await streams;
-
-    return { stdout, stderr, status: proc.exitCode };
-}
 
 /**
  * Parse a POSIX `ps -o time` / `cputime` cell into milliseconds.
@@ -263,67 +164,6 @@ export function batchPsInfo(pids: number[]): Map<number, PsRow> {
     }
 
     return rows;
-}
-
-/**
- * The working directory of each pid, read from the kernel by {@link readProcessCwd} (libproc on macOS, `/proc` on
- * Linux) at about 8 µs a pid, where one `lsof` call cost about 223 ms of CPU. A pid that is gone, a zombie, or
- * another user's process is absent.
- *
- * `lsof` ({@link batchCwdViaLsof}) runs only where that kernel reader does not exist. It is not asked about the pids
- * libproc refused: `lsof` is not setuid on macOS and makes the same libproc call with the same permissions. Measured
- * on 2026-10-12 over all 1,487 processes: both answered for the same 1,142 pids with the same paths, and `lsof`
- * answered for no pid more, so asking it again would cost 223 ms for nothing.
- */
-export function batchCwd(pids: number[]): Map<number, string> {
-    if (!canReadProcessCwd()) {
-        return batchCwdViaLsof(pids);
-    }
-
-    const values = new Map<number, string>();
-
-    for (const pid of pids) {
-        const cwd = readProcessCwd(pid);
-
-        if (cwd !== null) {
-            values.set(pid, cwd);
-        }
-    }
-
-    return values;
-}
-
-/** One `lsof -a -d cwd -p <batch>` per {@link PS_BATCH_SIZE} pids: {@link batchCwd} where no kernel reader exists. */
-export function batchCwdViaLsof(pids: number[]): Map<number, string> {
-    const values = new Map<number, string>();
-
-    for (const batch of chunk(pids, PS_BATCH_SIZE)) {
-        const result = captureSync("lsof", ["-a", "-d", "cwd", "-p", batch.join(",")]);
-        const lines = result.stdout.split("\n").slice(1);
-
-        for (const line of lines) {
-            if (line.trim() === "") {
-                continue;
-            }
-
-            const parts = line.trim().split(/\s+/);
-
-            if (parts.length < 9) {
-                continue;
-            }
-
-            const pid = Number.parseInt(parts[1], 10);
-            const cwd = parts.slice(8).join(" ");
-
-            if (Number.isNaN(pid) || !cwd.startsWith("/")) {
-                continue;
-            }
-
-            values.set(pid, cwd);
-        }
-    }
-
-    return values;
 }
 
 /**

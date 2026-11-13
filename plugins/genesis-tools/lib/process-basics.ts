@@ -5,8 +5,8 @@
  * the dependency repair) and `src/utils/bun/orphan-worker-guard.ts` (loaded by isolated test workers).
  *
  * Two byte-identical copies: `src/utils/process/process-basics.ts` and `plugins/genesis-tools/lib/process-basics.ts`
- * (`process-basics.test.ts` fails when they differ, and compares both with `@genesiscz/utils/process`). Edit the
- * `src` one, then copy it over the plugin one.
+ * (`bun scripts/gen-harness-plugin.ts --check` fails when they differ; `process-basics.test.ts` compares the plugin copy
+ * with `@genesiscz/utils/process`). Edit the `src` one, then run `bun scripts/gen-harness-plugin.ts`.
  *
  * - macOS: `sysctl(KERN_PROC_PID | KERN_PROC_ALL)` and `KERN_PROCARGS2` through `bun:ffi`, microseconds where one
  *   `ps -p` costs about 6 ms. The kernel withholds another user's argv; only then does `ps` (setuid) run, once.

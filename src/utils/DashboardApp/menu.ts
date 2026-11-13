@@ -32,6 +32,7 @@ export async function promptMineMenu(
     const picked = await p.select({
         message: `Already running (pid ${pid} on :${port}). What now?`,
         options,
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
@@ -65,6 +66,7 @@ export async function promptForeignMenu(
                   { value: "abort", label: "Abort" },
               ]
             : [{ value: "abort", label: "Abort" }],
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
@@ -82,6 +84,7 @@ export async function promptLaunchdInstall(key: string): Promise<boolean | null>
     const picked = await p.confirm({
         message: `Install ${key} as a launchd agent so it survives reboots and restarts on crash?`,
         initialValue: false,
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
@@ -104,6 +107,7 @@ export async function promptDependencyStart(depKey: string, parentKey: string): 
             { value: "start", label: `Start ${depKey} first` },
             { value: "skip", label: `Skip — start ${parentKey} anyway` },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {

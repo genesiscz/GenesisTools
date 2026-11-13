@@ -490,6 +490,7 @@ export async function resolveCaptureEnumFlags(
         const picked = await p.select({
             message: label,
             options: values.map((value) => ({ value, label: value })),
+            cancel: "back",
         });
         if (p.isCancel(picked) || typeof picked !== "string" || !values.includes(picked)) {
             return undefined;

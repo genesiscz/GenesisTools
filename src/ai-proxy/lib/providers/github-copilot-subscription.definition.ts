@@ -1,6 +1,5 @@
-import { resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/account-config";
+import { resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/providers/account-paths";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
-import { GithubCopilotSubscriptionProvider } from "@app/ai-proxy/lib/providers/github-copilot-subscription";
 import { listCopilotProxyModels } from "@app/ai-proxy/lib/providers/github-copilot-subscription.models";
 import {
     fetchCopilotModels,
@@ -77,7 +76,10 @@ export const githubCopilotSubscriptionDefinition: ProviderDefinition = {
     },
     routes: { chatViaResponses: true, reshapesChat: false, recoversCompaction: false },
     upstreamEndpoints: GITHUB_COPILOT_UPSTREAM_ENDPOINTS,
-    create: (account) => GithubCopilotSubscriptionProvider.create(account),
+    create: async (account) =>
+        (
+            await import("@app/ai-proxy/lib/providers/github-copilot-subscription")
+        ).GithubCopilotSubscriptionProvider.create(account),
     suggestedModel: (account) => `${account.name}/github-copilot/claude-sonnet-4`,
     introspect: async (account) => {
         const dataDir = resolveGithubCopilotDataDir(account);

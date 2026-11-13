@@ -87,6 +87,7 @@ export function registerBoardCommand(program: Command): void {
                 const ok = await p.confirm({
                     message: `Stop ${key} (pid ${opts.pid}) and its tree?`,
                     initialValue: false,
+                    cancel: "back",
                 });
 
                 if (p.isCancel(ok) || !ok) {

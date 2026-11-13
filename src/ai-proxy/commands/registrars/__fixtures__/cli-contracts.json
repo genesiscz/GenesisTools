@@ -1,0 +1,495 @@
+[
+    {
+        "argv": [
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy [options] [command]\n\nOpenAI-compatible local proxy for Grok, GitHub Copilot, and other AI providers\n\nOptions:\n  -V, --version                    output the version number\n  -v, --verbose                    Enable verbose logging\n  --readme                         Print this tool's README and exit\n  -h, --help                       display help for command\n\nCommands:\n  up                               Start ai-proxy (and optional public exposure\n                                   tunnel)\n  down                             Stop ai-proxy only (never stops shared\n                                   cloudflared tunnel)\n  install [options]                Install the launchd agent so ai-proxy starts\n                                   at login and respawns on crash (macOS)\n  uninstall [options]              Unload and remove the launchd agent (the\n                                   proxy stops)\n  status [options]                 Show ai-proxy and public exposure status\n  serve [options]                  Start the OpenAI-compatible proxy server\n  models [options]                 List proxy model ids and metadata\n  sessions [options]               One row per session record: accounts, model,\n                                   requests, tokens, cache hit %, losses, last\n                                   error\n  session [options] <id> [action]  One session: its record, then one row per\n                                   request with cache read, write, hit % and\n                                   losses. `use` switches its accounts (no\n                                   restart)\n  stats [options]                  Cache totals per agent: hit %, its spread per\n                                   request and per session, losses by cause\n  monitor [options]                Live requests and compaction events, one line\n                                   each (filters: session, model, compaction,\n                                   slow, errors)\n  calls [options]                  Query proxied calls\n                                   (session/stage/label/model/slow) and open\n                                   full transcripts\n  link [options]                   Register this proxy as an AI-config account\n                                   so @proxy/<slug>/<model> refs resolve\n  clients                          Manage per-user client keys + usage ledger\n  introspect|ls [options]          Print full copy-paste inventory for Cursor\n                                   BYOK\n  config                           Manage ai-proxy config (interactive menu when\n                                   run without subcommand)\n  usage [options]                  Show subscription or Management API usage\n  accounts                         Manage configured accounts\n  internal                         Internal maintenance commands\n  help [command]                   display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "up",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy up [options]\n\nStart ai-proxy (and optional public exposure tunnel)\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "down",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy down [options]\n\nStop ai-proxy only (never stops shared cloudflared tunnel)\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "install",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy install [options]\n\nInstall the launchd agent so ai-proxy starts at login and respawns on crash\n(macOS)\n\nOptions:\n  --json      Machine-readable output\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "uninstall",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy uninstall [options]\n\nUnload and remove the launchd agent (the proxy stops)\n\nOptions:\n  --json      Machine-readable output\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "status",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy status [options]\n\nShow ai-proxy and public exposure status\n\nOptions:\n  --json      Machine-readable output\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "serve",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy serve [options]\n\nStart the OpenAI-compatible proxy server\n\nOptions:\n  --port <number>            Listen port\n  --host <host>              Listen host\n  --translate-cursor <mode>  Cursor translation mode: auto|on|off\n  --thinking <mode>          Thinking presentation: raw|cursor|folded\n  --no-translate             Disable Cursor translation\n  -h, --help                 display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "models",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy models [options]\n\nList proxy model ids and metadata\n\nOptions:\n  --provider <slug>    Filter by provider slug\n  --visibility <tier>  Filter by visibility: high|medium|low\n  --json               Machine-readable output\n  --cursor-ids         Print only proxy ids\n  -h, --help           display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "sessions",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy sessions [options]\n\nOne row per session record: accounts, model, requests, tokens, cache hit %,\nlosses, last error\n\nOptions:\n  --open          Only sessions that are still open\n  --since <when>  Sessions active since a duration (1d, 7d) or a local date\n                  (default: \"7d\")\n  --json          Machine-readable output\n  -h, --help      display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "session",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy session [options] <id> [action]\n\nOne session: its record, then one row per request with cache read, write, hit %\nand losses. `use` switches its accounts (no restart)\n\nOptions:\n  -f, --follow                Keep printing the session's new requests as they\n                              come\n  --json                      Machine-readable output\n  --codex <account>           use: run the session's Codex turns on this login\n                              or proxy account\n  --claude <account>          use: run the session's Claude turns on this login\n                              or proxy account\n  --grok <account>            use: run the session's Grok turns on this login or\n                              proxy account\n  --allow-metered <account>   use: allow this per-token account (repeatable)\n                              (default: [])\n  --marker <id>               compaction-drop or compaction-restore: exact\n                              blocked compaction ID\n  --from <file>               compaction-restore: saved record file\n  --acknowledge-context-loss  compaction-drop: explicitly accept loss of the\n                              earlier context\n  -h, --help                  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "stats",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy stats [options]\n\nCache totals per agent: hit %, its spread per request and per session, losses by\ncause\n\nOptions:\n  --session <id>      One session only\n  --agent <agent>     codex, claude (or anthropic), grok, other\n  --since <when>      A duration (1d, 7d) or a local date (default: \"7d\")\n  --from-transcripts  Read Claude Code's own transcripts instead of the proxy\n                      ledger (the agent comes from the model id)\n  --json              Machine-readable output\n  -h, --help          display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "monitor",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy monitor [options]\n\nLive requests and compaction events, one line each (filters: session, model,\ncompaction, slow, errors)\n\nOptions:\n  --session <prefix>  Only this session: the proxy record, Claude Code's id, or\n                      a request's session tag\n  --model <text>      Only models whose id contains this\n  --compaction        Only compaction requests and compaction events\n  --slow <secs>       Only requests at least this slow (events always print)\n  --errors            Only failed requests and warning events (retry, missed,\n                      wasted, failed, blocked)\n  --since <minutes>   Print the last N minutes first\n  --once              Print the --since backlog and stop\n  --json              One JSON object per line\n  -h, --help          display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "calls",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy calls [options]\n\nQuery proxied calls (session/stage/label/model/slow) and open full transcripts\n\nOptions:\n  --session <id>        Filter by x-gt-session (substring)\n  --stage <name>        Filter by x-gt-stage (exact)\n  --label <text>        Filter by x-gt-label (substring)\n  --model <text>        Filter by proxy model id (substring)\n  --slower-than <secs>  Only calls at least this slow\n  --since <minutes>     Only calls from the last N minutes\n  --limit <n>           Max rows (newest kept) (default: \"40\")\n  --show                Print the full prompt + response of each match\n  --timeline            Show per-call phase breakdown (dispatch, TTFB, thinking,\n                        text)\n  --json                Machine-readable output\n  -h, --help            display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "link",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy link [options]\n\nRegister this proxy as an AI-config account so @proxy/<slug>/<model> refs\nresolve\n\nOptions:\n  --status    Report the link without changing anything\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "clients",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy clients [options] [command]\n\nManage per-user client keys + usage ledger\n\nOptions:\n  -h, --help            display help for command\n\nCommands:\n  list                  List configured clients (keys masked)\n  add [options] <name>  Add a client; prints its generated key ONCE\n  secure                Move plaintext client keys into the vault (config keeps\n                        only a reference)\n  usage [options]       Per-client monthly usage (JSON, or CSV for invoicing)\n  help [command]        display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "clients",
+            "list",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy clients list [options]\n\nList configured clients (keys masked)\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "clients",
+            "add",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy clients add [options] <name>\n\nAdd a client; prints its generated key ONCE\n\nOptions:\n  --token-cap <n>       Monthly total-token cap\n  --cost-cap <usd>      Monthly cost cap in USD\n  --provider <type...>  Restrict to provider types (never subscription types)\n  -h, --help            display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "clients",
+            "secure",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy clients secure [options]\n\nMove plaintext client keys into the vault (config keeps only a reference)\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "clients",
+            "usage",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy clients usage [options]\n\nPer-client monthly usage (JSON, or CSV for invoicing)\n\nOptions:\n  --month <YYYY-MM>  Month to report (default: current UTC month)\n  --csv              CSV output\n  -h, --help         display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "introspect",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy introspect|ls [options]\n\nPrint full copy-paste inventory for Cursor BYOK\n\nOptions:\n  --json            Machine-readable output\n  --show-secrets    Include full proxy API key in output\n  --clipboard       Copy output to clipboard\n  --section <name>  accounts|endpoints|models|cursor|all\n  --account <name>  Limit to one account\n  -h, --help        display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "ls",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy introspect|ls [options]\n\nPrint full copy-paste inventory for Cursor BYOK\n\nOptions:\n  --json            Machine-readable output\n  --show-secrets    Include full proxy API key in output\n  --clipboard       Copy output to clipboard\n  --section <name>  accounts|endpoints|models|cursor|all\n  --account <name>  Limit to one account\n  -h, --help        display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "config",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy config [options] [command]\n\nManage ai-proxy config (interactive menu when run without subcommand)\n\nOptions:\n  -h, --help      display help for command\n\nCommands:\n  setup-tunnel    Interactive cloudflared tunnel setup for Cursor (public URL)\n  detect          Detect local Grok, GitHub Copilot, and API keys\n  init [options]  Initialize config from detected accounts\n  show            Show current config (redacted)\n  set [options]   Update config values\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "config",
+            "setup-tunnel",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy config setup-tunnel [options]\n\nInteractive cloudflared tunnel setup for Cursor (public URL)\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "config",
+            "detect",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy config detect [options]\n\nDetect local Grok, GitHub Copilot, and API keys\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "config",
+            "init",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy config init [options]\n\nInitialize config from detected accounts\n\nOptions:\n  --append    Add detected providers the config has no account for, leaving\n              existing accounts untouched\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "config",
+            "show",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy config show [options]\n\nShow current config (redacted)\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "config",
+            "set",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy config set [options]\n\nUpdate config values\n\nOptions:\n  --port <number>                  Listen port\n  --proxy-key <key>                Proxy API key\n  --translate <mode>               Cursor translation mode\n  --thinking <mode>                Thinking presentation: raw|cursor|folded\n  --public-hostname <host>         Public hostname for Cursor, e.g.\n                                   proxy.example.dev\n  --public-base-path <path>        URL prefix on hostname, e.g. /ai\n  --exposure-mode <mode>           none|cloudflared|tailscale|custom\n  --public-base-url <url>          Custom Cursor base URL (\u2026/v1) when\n                                   mode=custom\n  --tunnel-name <name>             cloudflared tunnel name\n  --cloudflared-config <path>      Path to cloudflared config.yml\n  --cloudflared-auto-start <bool>  Start tunnel on up (true|false)\n  -h, --help                       display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "usage",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy usage [options]\n\nShow subscription or Management API usage\n\nOptions:\n  --account <name>   Limit to one account\n  --provider <type>  Filter by provider type or slug (e.g. openai-subscription,\n                     codex)\n  --json             Machine-readable output\n  --recent <n>       Include last N local request records\n  --breakdown        Per-model aggregates over the trailing 30 days\n  --paths            Print local usage store file paths\n  -h, --help         display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts [options] [command]\n\nManage configured accounts\n\nOptions:\n  -h, --help                    display help for command\n\nCommands:\n  login <provider>              OAuth login for a provider (github-copilot,\n                                codex)\n  status                        Auth detail for codex accounts (source, expiry,\n                                plan)\n  bind [options] <name>         Point a codex account at a managed login (tools\n                                codex login), instead of the Codex CLI's\n                                auth.json\n  set-routing [options] <name>  Pin an OpenRouter account's provider routing\n                                (order/only/ignore/sort/fallbacks)\n  list                          List configured accounts\n  test <name>                   Ping upstream for an account\n  disable <name>                Disable an account (kept in config, skipped at\n                                runtime)\n  enable <name>                 Re-enable a disabled account\n  failover <name> [state]       Show or set (on|off) whether a Codex account\n                                moves to its failover list by itself; off by\n                                default, so the error reaches the client\n  set-key <name> [key]          Choose an api-key account's credential (omit key\n                                for a masked interactive chooser)\n  allow-env [options] <name>    Non-interactive form of set-key's env choice\n                                (clears any stored key; --off revokes)\n  remove <name>                 Remove an account from config\n  help [command]                display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "login",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts login [options] <provider>\n\nOAuth login for a provider (github-copilot, codex)\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "status",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts status [options]\n\nAuth detail for codex accounts (source, expiry, plan)\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "bind",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts bind [options] <name>\n\nPoint a codex account at a managed login (tools codex login), instead of the\nCodex CLI's auth.json\n\nOptions:\n  --codex <login>  The managed openai-sub login, e.g. one listed by `tools\n                   ai-proxy accounts status`\n  -h, --help       display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "set-routing",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts set-routing [options] <name>\n\nPin an OpenRouter account's provider routing (order/only/ignore/sort/fallbacks)\n\nOptions:\n  --match <glob>            Scope to one per-model route instead of the\n                            account-level default (exact id or a trailing *)\n  --order <providers>       Comma-separated provider names, most preferred first\n  --only <providers>        Comma-separated provider names \u2014 route ONLY to these\n  --ignore <providers>      Comma-separated provider names to never route to\n  --sort <mode>             price|throughput|latency\n  --allow-fallbacks         Allow OpenRouter to fall back beyond the\n                            pinned/allowed providers\n  --no-allow-fallbacks      Refuse fallback \u2014 only the pinned/allowed providers\n                            may serve the request\n  --require-parameters      Only route to providers supporting every parameter\n                            in the request\n  --no-require-parameters   Allow providers that silently drop unsupported\n                            parameters\n  --data-collection <mode>  allow|deny\n  --fallback-models <ids>   Comma-separated OpenRouter model ids to try if the\n                            primary one fails\n  --clear                   Remove all provider-routing pins for this account\n  -h, --help                display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "list",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts list [options]\n\nList configured accounts\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "test",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts test [options] <name>\n\nPing upstream for an account\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "disable",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts disable [options] <name>\n\nDisable an account (kept in config, skipped at runtime)\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "enable",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts enable [options] <name>\n\nRe-enable a disabled account\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "failover",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts failover [options] <name> [state]\n\nShow or set (on|off) whether a Codex account moves to its failover list by\nitself; off by default, so the error reaches the client\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "set-key",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts set-key [options] <name> [key]\n\nChoose an api-key account's credential (omit key for a masked interactive\nchooser)\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "allow-env",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts allow-env [options] <name>\n\nNon-interactive form of set-key's env choice (clears any stored key; --off\nrevokes)\n\nOptions:\n  --off         revoke the opt-in\n  --env <NAME>  Read the key from this env var instead of the provider's default\n                name\n  -h, --help    display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "accounts",
+            "remove",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy accounts remove [options] <name>\n\nRemove an account from config\n\nOptions:\n  -h, --help  display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "internal",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy internal [options] [command]\n\nInternal maintenance commands\n\nOptions:\n  -h, --help               display help for command\n\nCommands:\n  update-models [options]  Probe upstream models and write\n                           ~/.genesis-tools/ai-proxy/models-catalog.json\n  help [command]           display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [
+            "internal",
+            "update-models",
+            "--help"
+        ],
+        "exit": 0,
+        "stdout": "Usage: ai-proxy internal update-models [options]\n\nProbe upstream models and write ~/.genesis-tools/ai-proxy/models-catalog.json\n\nOptions:\n  --account <name>   Limit to one account\n  --provider <slug>  Filter by provider slug (grok, github-copilot)\n  --dry-run          Print would-be catalog without writing\n  --no-probe         Picker catalog only\n  -h, --help         display help for command\n",
+        "stderr": ""
+    },
+    {
+        "argv": [],
+        "exit": 1,
+        "stdout": "",
+        "stderr": "Usage: ai-proxy [options] [command]\n\nOpenAI-compatible local proxy for Grok, GitHub Copilot, and other AI providers\n\nOptions:\n  -V, --version                    output the version number\n  -v, --verbose                    Enable verbose logging\n  --readme                         Print this tool's README and exit\n  -h, --help                       display help for command\n\nCommands:\n  up                               Start ai-proxy (and optional public exposure\n                                   tunnel)\n  down                             Stop ai-proxy only (never stops shared\n                                   cloudflared tunnel)\n  install [options]                Install the launchd agent so ai-proxy starts\n                                   at login and respawns on crash (macOS)\n  uninstall [options]              Unload and remove the launchd agent (the\n                                   proxy stops)\n  status [options]                 Show ai-proxy and public exposure status\n  serve [options]                  Start the OpenAI-compatible proxy server\n  models [options]                 List proxy model ids and metadata\n  sessions [options]               One row per session record: accounts, model,\n                                   requests, tokens, cache hit %, losses, last\n                                   error\n  session [options] <id> [action]  One session: its record, then one row per\n                                   request with cache read, write, hit % and\n                                   losses. `use` switches its accounts (no\n                                   restart)\n  stats [options]                  Cache totals per agent: hit %, its spread per\n                                   request and per session, losses by cause\n  monitor [options]                Live requests and compaction events, one line\n                                   each (filters: session, model, compaction,\n                                   slow, errors)\n  calls [options]                  Query proxied calls\n                                   (session/stage/label/model/slow) and open\n                                   full transcripts\n  link [options]                   Register this proxy as an AI-config account\n                                   so @proxy/<slug>/<model> refs resolve\n  clients                          Manage per-user client keys + usage ledger\n  introspect|ls [options]          Print full copy-paste inventory for Cursor\n                                   BYOK\n  config                           Manage ai-proxy config (interactive menu when\n                                   run without subcommand)\n  usage [options]                  Show subscription or Management API usage\n  accounts                         Manage configured accounts\n  internal                         Internal maintenance commands\n  help [command]                   display help for command\n"
+    },
+    {
+        "argv": [
+            "not-a-command"
+        ],
+        "exit": 1,
+        "stdout": "",
+        "stderr": "error: unknown command 'not-a-command'\n\nUsage: ai-proxy [options] [command]\n\nOpenAI-compatible local proxy for Grok, GitHub Copilot, and other AI providers\n\nOptions:\n  -V, --version                    output the version number\n  -v, --verbose                    Enable verbose logging\n  --readme                         Print this tool's README and exit\n  -h, --help                       display help for command\n\nCommands:\n  up                               Start ai-proxy (and optional public exposure\n                                   tunnel)\n  down                             Stop ai-proxy only (never stops shared\n                                   cloudflared tunnel)\n  install [options]                Install the launchd agent so ai-proxy starts\n                                   at login and respawns on crash (macOS)\n  uninstall [options]              Unload and remove the launchd agent (the\n                                   proxy stops)\n  status [options]                 Show ai-proxy and public exposure status\n  serve [options]                  Start the OpenAI-compatible proxy server\n  models [options]                 List proxy model ids and metadata\n  sessions [options]               One row per session record: accounts, model,\n                                   requests, tokens, cache hit %, losses, last\n                                   error\n  session [options] <id> [action]  One session: its record, then one row per\n                                   request with cache read, write, hit % and\n                                   losses. `use` switches its accounts (no\n                                   restart)\n  stats [options]                  Cache totals per agent: hit %, its spread per\n                                   request and per session, losses by cause\n  monitor [options]                Live requests and compaction events, one line\n                                   each (filters: session, model, compaction,\n                                   slow, errors)\n  calls [options]                  Query proxied calls\n                                   (session/stage/label/model/slow) and open\n                                   full transcripts\n  link [options]                   Register this proxy as an AI-config account\n                                   so @proxy/<slug>/<model> refs resolve\n  clients                          Manage per-user client keys + usage ledger\n  introspect|ls [options]          Print full copy-paste inventory for Cursor\n                                   BYOK\n  config                           Manage ai-proxy config (interactive menu when\n                                   run without subcommand)\n  usage [options]                  Show subscription or Management API usage\n  accounts                         Manage configured accounts\n  internal                         Internal maintenance commands\n  help [command]                   display help for command\n"
+    },
+    {
+        "argv": [
+            "--not-a-flag"
+        ],
+        "exit": 1,
+        "stdout": "",
+        "stderr": "error: unknown option '--not-a-flag'\n\nUsage: ai-proxy [options] [command]\n\nOpenAI-compatible local proxy for Grok, GitHub Copilot, and other AI providers\n\nOptions:\n  -V, --version                    output the version number\n  -v, --verbose                    Enable verbose logging\n  --readme                         Print this tool's README and exit\n  -h, --help                       display help for command\n\nCommands:\n  up                               Start ai-proxy (and optional public exposure\n                                   tunnel)\n  down                             Stop ai-proxy only (never stops shared\n                                   cloudflared tunnel)\n  install [options]                Install the launchd agent so ai-proxy starts\n                                   at login and respawns on crash (macOS)\n  uninstall [options]              Unload and remove the launchd agent (the\n                                   proxy stops)\n  status [options]                 Show ai-proxy and public exposure status\n  serve [options]                  Start the OpenAI-compatible proxy server\n  models [options]                 List proxy model ids and metadata\n  sessions [options]               One row per session record: accounts, model,\n                                   requests, tokens, cache hit %, losses, last\n                                   error\n  session [options] <id> [action]  One session: its record, then one row per\n                                   request with cache read, write, hit % and\n                                   losses. `use` switches its accounts (no\n                                   restart)\n  stats [options]                  Cache totals per agent: hit %, its spread per\n                                   request and per session, losses by cause\n  monitor [options]                Live requests and compaction events, one line\n                                   each (filters: session, model, compaction,\n                                   slow, errors)\n  calls [options]                  Query proxied calls\n                                   (session/stage/label/model/slow) and open\n                                   full transcripts\n  link [options]                   Register this proxy as an AI-config account\n                                   so @proxy/<slug>/<model> refs resolve\n  clients                          Manage per-user client keys + usage ledger\n  introspect|ls [options]          Print full copy-paste inventory for Cursor\n                                   BYOK\n  config                           Manage ai-proxy config (interactive menu when\n                                   run without subcommand)\n  usage [options]                  Show subscription or Management API usage\n  accounts                         Manage configured accounts\n  internal                         Internal maintenance commands\n  help [command]                   display help for command\n"
+    },
+    {
+        "argv": [
+            "clients",
+            "add"
+        ],
+        "exit": 1,
+        "stdout": "",
+        "stderr": "error: missing required argument 'name'\n\nUsage: ai-proxy clients add [options] <name>\n\nAdd a client; prints its generated key ONCE\n\nOptions:\n  --token-cap <n>       Monthly total-token cap\n  --cost-cap <usd>      Monthly cost cap in USD\n  --provider <type...>  Restrict to provider types (never subscription types)\n  -h, --help            display help for command\n"
+    },
+    {
+        "argv": [
+            "session"
+        ],
+        "exit": 1,
+        "stdout": "",
+        "stderr": "error: missing required argument 'id'\n\nUsage: ai-proxy session [options] <id> [action]\n\nOne session: its record, then one row per request with cache read, write, hit %\nand losses. `use` switches its accounts (no restart)\n\nOptions:\n  -f, --follow                Keep printing the session's new requests as they\n                              come\n  --json                      Machine-readable output\n  --codex <account>           use: run the session's Codex turns on this login\n                              or proxy account\n  --claude <account>          use: run the session's Claude turns on this login\n                              or proxy account\n  --grok <account>            use: run the session's Grok turns on this login or\n                              proxy account\n  --allow-metered <account>   use: allow this per-token account (repeatable)\n                              (default: [])\n  --marker <id>               compaction-drop or compaction-restore: exact\n                              blocked compaction ID\n  --from <file>               compaction-restore: saved record file\n  --acknowledge-context-loss  compaction-drop: explicitly accept loss of the\n                              earlier context\n  -h, --help                  display help for command\n"
+    },
+    {
+        "argv": [
+            "accounts",
+            "disable"
+        ],
+        "exit": 1,
+        "stdout": "",
+        "stderr": "error: missing required argument 'name'\n\nUsage: ai-proxy accounts disable [options] <name>\n\nDisable an account (kept in config, skipped at runtime)\n\nOptions:\n  -h, --help  display help for command\n"
+    },
+    {
+        "argv": [
+            "config",
+            "set",
+            "--port"
+        ],
+        "exit": 1,
+        "stdout": "",
+        "stderr": "error: option '--port <number>' argument missing\n\nUsage: ai-proxy config set [options]\n\nUpdate config values\n\nOptions:\n  --port <number>                  Listen port\n  --proxy-key <key>                Proxy API key\n  --translate <mode>               Cursor translation mode\n  --thinking <mode>                Thinking presentation: raw|cursor|folded\n  --public-hostname <host>         Public hostname for Cursor, e.g.\n                                   proxy.example.dev\n  --public-base-path <path>        URL prefix on hostname, e.g. /ai\n  --exposure-mode <mode>           none|cloudflared|tailscale|custom\n  --public-base-url <url>          Custom Cursor base URL (\u2026/v1) when\n                                   mode=custom\n  --tunnel-name <name>             cloudflared tunnel name\n  --cloudflared-config <path>      Path to cloudflared config.yml\n  --cloudflared-auto-start <bool>  Start tunnel on up (true|false)\n  -h, --help                       display help for command\n"
+    },
+    {
+        "argv": [
+            "serve",
+            "--port"
+        ],
+        "exit": 1,
+        "stdout": "",
+        "stderr": "error: option '--port <number>' argument missing\n\nUsage: ai-proxy serve [options]\n\nStart the OpenAI-compatible proxy server\n\nOptions:\n  --port <number>            Listen port\n  --host <host>              Listen host\n  --translate-cursor <mode>  Cursor translation mode: auto|on|off\n  --thinking <mode>          Thinking presentation: raw|cursor|folded\n  --no-translate             Disable Cursor translation\n  -h, --help                 display help for command\n"
+    },
+    {
+        "argv": [
+            "accounts",
+            "not-a-command"
+        ],
+        "exit": 1,
+        "stdout": "",
+        "stderr": "error: unknown command 'not-a-command'\n\nUsage: ai-proxy accounts [options] [command]\n\nManage configured accounts\n\nOptions:\n  -h, --help                    display help for command\n\nCommands:\n  login <provider>              OAuth login for a provider (github-copilot,\n                                codex)\n  status                        Auth detail for codex accounts (source, expiry,\n                                plan)\n  bind [options] <name>         Point a codex account at a managed login (tools\n                                codex login), instead of the Codex CLI's\n                                auth.json\n  set-routing [options] <name>  Pin an OpenRouter account's provider routing\n                                (order/only/ignore/sort/fallbacks)\n  list                          List configured accounts\n  test <name>                   Ping upstream for an account\n  disable <name>                Disable an account (kept in config, skipped at\n                                runtime)\n  enable <name>                 Re-enable a disabled account\n  failover <name> [state]       Show or set (on|off) whether a Codex account\n                                moves to its failover list by itself; off by\n                                default, so the error reaches the client\n  set-key <name> [key]          Choose an api-key account's credential (omit key\n                                for a masked interactive chooser)\n  allow-env [options] <name>    Non-interactive form of set-key's env choice\n                                (clears any stored key; --off revokes)\n  remove <name>                 Remove an account from config\n  help [command]                display help for command\n"
+    },
+    {
+        "argv": [
+            "internal",
+            "not-a-command"
+        ],
+        "exit": 1,
+        "stdout": "",
+        "stderr": "error: unknown command 'not-a-command'\n\nUsage: ai-proxy internal [options] [command]\n\nInternal maintenance commands\n\nOptions:\n  -h, --help               display help for command\n\nCommands:\n  update-models [options]  Probe upstream models and write\n                           ~/.genesis-tools/ai-proxy/models-catalog.json\n  help [command]           display help for command\n"
+    }
+]

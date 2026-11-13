@@ -165,6 +165,7 @@ the same time never mix their lines. The kinds:
 | `crash`     | an uncaught exception or rejection; `fatal: false` when the process went on         |
 | `exit`      | a non-zero exit with none of the above (the tool printed its own message)           |
 | `interrupt` | Ctrl-C or SIGTERM (130, 143), often a harness timeout; hidden unless `--interrupts` |
+| `deadline` | a command the tool ran through `Executor` outlived its bound and was killed; the run itself may go on (`fatal: false`), and `logs show` prints the child command, its bound and the call's stack |
 
 A run the default signal action kills never reaches its own watcher. Its waiting parent writes that record instead:
 the GenesisTools.app launcher (`src/macos/GenesisTools/Sources/Host/LauncherFailures.swift`) on the default path, or

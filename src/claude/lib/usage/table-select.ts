@@ -1,5 +1,4 @@
 import { atYourPace, type PaceScope } from "@genesiscz/utils/ai/usage/forecast/burn-pace";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
 import { hasNoSessionLimit, type ScoredAccount } from "./account-picker";
@@ -9,7 +8,8 @@ import { accountCells, type DetailBlockPace, detailBlock, NO_SESSION_LIMIT_LEGEN
 interface AccountTableOptions {
     message: string;
     scored: ScoredAccount[];
-    accountsByName: Map<string, AIAccountEntry>;
+    /** What the detail block shows of an account; a stored v4 account passes its credentials' secondary. */
+    accountsByName: Map<string, { label?: string; secondary?: { emailAddress?: string } }>;
     /** Defaults to the dashboard config's `paceScope`; `pooled` when unset. */
     paceScope?: PaceScope;
 }

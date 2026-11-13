@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { staleOutputs } from "../gen-harness-plugin";
 import { findAliasImports, shipsAndRuns } from "./check-plugin-standalone";
 
 describe("findAliasImports", () => {
@@ -68,5 +69,15 @@ describe("PR #422 review regressions", () => {
             { line: 1, specifier: "@app/lazy" },
             { line: 2, specifier: "@genesiscz/utils/json" },
         ]);
+    });
+});
+
+// The --check of scripts/gen-harness-plugin.ts: harness-facts.ts, the scratch dirs, the host markers, the mods
+// defaults and the whole-file copies (process-basics.ts, process-alive.ts, option-labels.ts) are what it writes from
+// src today. It lives here, not in src/utils, because the generator reads an @app module that the utils program may
+// not reach.
+describe("the plugin's vendored files", () => {
+    test("every file the plugins carry from src is what scripts/gen-harness-plugin.ts writes", () => {
+        expect(staleOutputs()).toEqual([]);
     });
 });

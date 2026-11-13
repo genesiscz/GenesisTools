@@ -12,13 +12,13 @@ import { parseDate } from "@app/claude/lib/history/search";
 import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/summarize/engine.ts";
 import { listTemplates, SummarizeEngine } from "@app/claude/lib/history/summarize/engine.ts";
 import { modelSelector } from "@ask/providers/ModelSelector";
-import * as p from "@clack/prompts";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { encodedProjectDir } from "@genesiscz/utils/claude";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
 import { formatCost } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { pickAppleNotesFolder } from "@genesiscz/utils/prompts/clack/apple-notes";
+import * as p from "@genesiscz/utils/prompts/p";
 import chalk from "chalk";
 
 // =============================================================================
@@ -160,6 +160,7 @@ async function pickSessionInteractively(project?: string): Promise<ClaudeSession
     const selected = await p.select({
         message: "Select a session to summarize:",
         options: choices,
+        cancel: "back",
     });
 
     if (p.isCancel(selected)) {
@@ -188,6 +189,7 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
                 label: t.name,
                 hint: t.description,
             })),
+            cancel: "back",
         });
         if (p.isCancel(modeChoice)) {
             p.cancel("Cancelled.");
@@ -207,6 +209,7 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
                     return "Prompt cannot be empty for custom mode.";
                 }
             },
+            cancel: "back",
         });
         if (p.isCancel(promptInput)) {
             p.cancel("Cancelled.");
@@ -266,6 +269,7 @@ async function runInteractiveFlow(session: ClaudeSession, opts: SummarizeCommand
     if (!opts.promptOnly) {
         const confirmed = await p.confirm({
             message: "Proceed with summarization?",
+            cancel: "back",
         });
         if (p.isCancel(confirmed) || !confirmed) {
             p.cancel("Cancelled.");

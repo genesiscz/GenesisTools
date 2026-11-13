@@ -9,6 +9,7 @@ Nine command groups answer nine questions:
 
 - `skeleton`: what is in this file or folder?
 - `duplicates`: what is written more than once?
+- `copies`: which helpers of `src/utils` are written again, under their name, a copy's name or with their body?
 - `refactors`: what should I change first?
 - `areas`: how do the folders import each other, and which direction must not exist?
 - `depth`: which modules are shallow, with an interface nearly as big as their code?
@@ -55,6 +56,7 @@ tools ts sourcemaps resolve https://app.example.com/static/js/710.f9e49e56.chunk
 |---|---|
 | `skeleton <paths...>` | Every declaration with its signature and line span |
 | `duplicates <paths...>` (alias `dupes`) | The same code written more than once, with the copy to keep |
+| `copies [paths...]` | Functions that copy a helper `--shared` (default `src/utils`) exports: same name, `myX`/`xLocal`/`x2`, or the same body under any name |
 | `refactors <paths...>` | Ranked recommendations from six analysers |
 | `areas <paths...>` | Static import graph between areas: size, fan-in, fan-out, mutual pairs, forbidden directions, Mermaid |
 | `depth <paths...>` | Shallow and deep modules: interface size against code, pass-through exports, importers |
@@ -184,6 +186,18 @@ directly. `repo-map` also read JavaScript, Python, Go and Rust.
 adds 17.0%. Turn them on when a machine is the reader; leave them off when a person is.
 
 ---
+
+### `tools ts copies [paths...]`
+
+The facts the tree rosters guard (`scripts/ci/rosters/tree.ts`), printed per helper with every copy. A body matches
+when only its parameter names, comments and spacing differ (`isRecord(value)` and `isPlainObject(input)` with one
+body are one helper). A name counts only with two words or more. It reads `src` in about 2 s.
+
+```bash
+tools ts copies                        # src against src/utils
+tools ts copies src/hub --limit 10     # one tool
+tools ts copies --json                 # every copy with its owner
+```
 
 ### `tools ts duplicates <paths...>` (alias `dupes`)
 

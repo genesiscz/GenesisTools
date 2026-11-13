@@ -1,5 +1,5 @@
-import { OPENAI_API_BASE_URL, OpenAiApiKeyProvider } from "@app/ai-proxy/lib/providers/openai-api-key";
-import { providerKey } from "@app/ai-proxy/lib/providers/registry";
+import { OPENAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/endpoints";
+import { providerKey } from "@app/ai-proxy/lib/providers/provider-key";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { toProxyId } from "@genesiscz/utils/ai/grok";
 import { logger } from "@genesiscz/utils/logger";
@@ -54,6 +54,7 @@ export async function listOpenAiProxyModels(account: AiProxyAccountConfig): Prom
     const baseUrl = (account.baseUrl ?? OPENAI_API_BASE_URL).replace(/\/$/, "");
 
     try {
+        const { OpenAiApiKeyProvider } = await import("@app/ai-proxy/lib/providers/openai-api-key");
         const provider = await OpenAiApiKeyProvider.create(account);
         const models = await provider.listModels();
 

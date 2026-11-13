@@ -388,6 +388,101 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
         }
     });
 
+    test("both merge directions acquire the same lock order and hold both locks while reading records", async () => {
+        for (const reverse of [false, true]) {
+            const { store, from, into, inbox, backupRoot } = await call();
+            const acquire = store.storage.withFileLock.bind(store.storage);
+            const read = store.read.bind(store);
+            const active = new Set<string>();
+            const acquired: string[] = [];
+            let lockedReads = 0;
+            store.storage.withFileLock = (options) =>
+                acquire({
+                    ...options,
+                    fn: async () => {
+                        acquired.push(options.file);
+                        active.add(options.file);
+                        try {
+                            return await options.fn();
+                        } finally {
+                            active.delete(options.file);
+                        }
+                    },
+                });
+            store.read = (id) => {
+                if (active.size > 0) {
+                    expect([...active].sort()).toEqual([store.path(from), store.path(into)].sort());
+                    lockedReads += 1;
+                }
+
+                return read(id);
+            };
+
+            await mergeMeetings({
+                store,
+                fromId: reverse ? into : from,
+                intoId: reverse ? from : into,
+                inbox,
+                backupRoot,
+            });
+            expect(acquired).toEqual([store.path(from), store.path(into)].sort());
+            expect(lockedReads).toBeGreaterThanOrEqual(2);
+            expect(active.size).toBe(0);
+        }
+    });
+
+    test("merge rereads both records after acquiring their locks and preserves a concurrent source edit", async () => {
+        const { store, from, into, inbox, backupRoot } = await call();
+        const acquire = store.storage.withFileLock.bind(store.storage);
+        let injected = false;
+        store.storage.withFileLock = async (options) => {
+            if (!injected && options.file === store.path(into)) {
+                injected = true;
+                const current = store.read(from)!;
+                current.context.push({
+                    id: "c1",
+                    kind: "note",
+                    ref: "arrived while waiting for the lock",
+                    addedAt: "2026-11-05T14:08:00.000Z",
+                    addedBy: "user",
+                });
+                writeFileSync(store.path(from), SafeJSON.stringify(current));
+            }
+
+            return acquire(options);
+        };
+
+        await mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot });
+        const reopened = new MeetingStore(store.storage);
+        expect(reopened.read(into)?.context.some((item) => item.ref === "arrived while waiting for the lock")).toBe(
+            true
+        );
+        expect(reopened.read(from)).toBeUndefined();
+    });
+
+    test("merge revalidates the destination source link under both locks before moving files", async () => {
+        const { store, from, into, inbox, backupRoot } = await call();
+        const acquire = store.storage.withFileLock.bind(store.storage);
+        let injected = false;
+        store.storage.withFileLock = async (options) => {
+            if (!injected && options.file === store.path(into)) {
+                injected = true;
+                const current = store.read(into)!;
+                current.sources.wisprflow = { meetingId: "a-different-call" };
+                writeFileSync(store.path(into), SafeJSON.stringify(current));
+            }
+
+            return acquire(options);
+        };
+
+        await expect(mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot })).rejects.toThrow(
+            "hold different source meetings"
+        );
+        expect(existsSync(backupRoot)).toBe(false);
+        expect(readdirSync(join(store.folder(from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
+        expect(new MeetingStore(store.storage).read(from)?.id).toBe(from);
+    });
+
     test("the dictionary and the stored attendance of the record that goes away come along", async () => {
         const { store, from, into, inbox, backupRoot } = await call();
         const attendance = { from: "teams", people: [{ name: "Alice", fromSec: 0, toSec: 60 }] };

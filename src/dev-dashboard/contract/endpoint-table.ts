@@ -16,14 +16,71 @@ import type {
     PrTriageDto,
 } from "@app/dev-dashboard/contract/agents";
 import type {
+    AiAccountsResult,
+    AiDaemonStatus,
+    AiSpendSeriesResult,
+    AiSpendTotalsResult,
+    AiUsageResult,
+    AiUsageSeriesResult,
+} from "@app/dev-dashboard/contract/ai-accounts";
+import type {
     ApprovalAnswerInput,
     ApprovalReceiptDto,
     PendingApprovalsDto,
 } from "@app/dev-dashboard/contract/approvals";
 import type { MorningBriefDto } from "@app/dev-dashboard/contract/brief";
+import type {
+    AttachTmuxResult,
+    ContainersResult,
+    DaemonOverview,
+    DashboardSendTarget,
+    DiskUsageResult,
+    FocusSessionResultDto,
+    HandoffActionInput,
+    HandoffActionResponse,
+    HandoffEventsResponse,
+    HandoffGetResponse,
+    HandoffListResponse,
+    HandoffPostResponse,
+    HandoffTarget,
+    HandoffTaskInput,
+    KillPortResult,
+    LogEntry,
+    ProcessSort,
+    PublicHandoff,
+    PublishedNote,
+    QaRow,
+    RunSummary,
+    SavedCommand,
+    SavedCommandInput,
+    TodoPriority,
+    TtydSession,
+} from "@app/dev-dashboard/contract/dto";
+import type {
+    AttentionRes,
+    CmuxLayoutRes,
+    CmuxSnapshotRes,
+    CommandsRes,
+    NetStatusRes,
+    ObsidianNoteRes,
+    ObsidianTreeRes,
+    PortsRes,
+    ProcessesRes,
+    PulseHistoryRes,
+    PulseRes,
+    TimelineRes,
+    TmuxPresetRestoreRes,
+    TmuxPresetSaveRes,
+    TmuxPresetsRes,
+    TmuxSessionsRes,
+    TodosRes,
+    TtydListRes,
+    WeatherRes,
+} from "@app/dev-dashboard/contract/endpoints";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
 import type { ForecastDto, GlanceDto } from "@app/dev-dashboard/contract/glance";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
+import type { LiveAskForm, LiveChannel, LiveSubscribeBody } from "@app/dev-dashboard/contract/live";
 import type { MemoActInput, MemoActReceiptDto, MemosDto } from "@app/dev-dashboard/contract/memos";
 import type { PingWatchesDto, PingWatchInput } from "@app/dev-dashboard/contract/ping";
 import type { PushDeviceReceipt, PushDeviceRegistration } from "@app/dev-dashboard/contract/push";
@@ -70,7 +127,7 @@ export const TIMEOUT_TIER_MS: Readonly<Record<TimeoutTier, number | undefined>> 
     stream: undefined,
 };
 
-export type EndpointMethod = "GET" | "POST" | "DELETE";
+export type EndpointMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
 /**
  * One endpoint. `I` is the input (path params, then query for GET, else the JSON body); `O` the JSON answer. The
@@ -248,12 +305,35 @@ export interface WaitingQueueDto {
     at: string;
 }
 
+/** One sound of `GET /api/qa/audio-library` (`AudioLibraryEntry` in `@genesiscz/utils/audio/library`). */
+export interface QaAudioEntryDto {
+    id: string;
+    label: string;
+    kind: "bundled" | "synth";
+    isDefault: boolean;
+}
+
+/** The sounds the QA ding may play, and the default one. */
+export interface QaAudioLibraryDto {
+    bundled: QaAudioEntryDto[];
+    synth: QaAudioEntryDto[];
+    default: QaAudioEntryDto;
+}
+
 /** One answer of a pending ask form, as `POST /api/qa/pending/:id/answer` takes it. */
 export interface PendingAnswerDto {
     itemId: string;
     selectedChoices?: string[];
     freeText?: string;
 }
+
+/**
+ * The answer of `POST /api/qa/pending/:id/answer`. A refusal carries the same shape with its status (404 unknown, 409
+ * not pending, 400 incomplete with the missing items), so a caller may read it with `answerOnRefusal`.
+ */
+export type PendingAnswerResultDto =
+    | { ok: true; form: LiveAskForm; entryId: string }
+    | { ok: false; code: "not_found" | "not_pending" | "incomplete"; error: string; missing?: string[] };
 
 export const ENDPOINTS = {
     // Decisions (the hub inbox), the same doors as `tools question inbox`.
@@ -308,9 +388,9 @@ export const ENDPOINTS = {
     act: row<{ text?: string }, ActReceiptDto>("POST", "/api/act", "act"),
 
     // Pending ask forms.
-    qaPending: row<Record<string, never>, unknown>("GET", "/api/qa/pending", "read"),
-    qaPendingGet: row<{ id: string }, unknown>("GET", "/api/qa/pending/:id", "read"),
-    qaPendingAnswer: row<{ id: string; answers: PendingAnswerDto[] }, { ok: boolean; entryId?: string }>(
+    qaPending: row<{ ids?: string }, { forms: LiveAskForm[] }>("GET", "/api/qa/pending", "read"),
+    qaPendingGet: row<{ id: string }, { form: LiveAskForm }>("GET", "/api/qa/pending/:id", "read"),
+    qaPendingAnswer: row<{ id: string; answers: PendingAnswerDto[] }, PendingAnswerResultDto>(
         "POST",
         "/api/qa/pending/:id/answer",
         "keyed-write"
@@ -319,18 +399,32 @@ export const ENDPOINTS = {
     qaStream: row<Record<string, never>, never>("GET", "/api/qa/stream", "read", "stream"),
 
     // Handoffs.
-    handoffLog: row<Record<string, never>, unknown>("GET", "/api/handoff/log", "read"),
-    handoffGet: row<{ id: string }, unknown>("GET", "/api/handoff/get", "read"),
-    handoffAction: row<Record<string, unknown>, unknown>("POST", "/api/handoff/action", "keyed-write"),
+    handoffLog: row<{ limit?: number }, HandoffListResponse>("GET", "/api/handoff/log", "read"),
+    handoffGet: row<{ id: string }, HandoffGetResponse>("GET", "/api/handoff/get", "read"),
+    handoffAction: row<{ id: string; actions: HandoffActionInput[] }, HandoffActionResponse>(
+        "POST",
+        "/api/handoff/action",
+        "keyed-write"
+    ),
 
     // AI accounts.
-    aiAccounts: row<Record<string, never>, unknown>("GET", "/api/ai/accounts", "read"),
-    aiUsage: row<{ providers?: string; accounts?: string }, unknown>("GET", "/api/ai/usage", "read"),
-    aiUsageRefresh: row<Record<string, never>, unknown>("POST", "/api/ai/usage/refresh", "keyed-write"),
-    aiUsageSeries: row<Record<string, string | undefined>, unknown>("GET", "/api/ai/usage/series", "read"),
-    aiSpendTotals: row<Record<string, string | undefined>, unknown>("GET", "/api/ai/spend/totals", "read", "scan"),
-    aiSpendSeries: row<Record<string, string | undefined>, unknown>("GET", "/api/ai/spend/series", "read", "scan"),
-    claudeUsageTotals: row<Record<string, string | undefined>, unknown>(
+    aiAccounts: row<Record<string, never>, AiAccountsResult>("GET", "/api/ai/accounts", "read"),
+    aiUsage: row<{ providers?: string; accounts?: string }, AiUsageResult>("GET", "/api/ai/usage", "read"),
+    aiUsageRefresh: row<Record<string, never>, AiUsageResult>("POST", "/api/ai/usage/refresh", "keyed-write"),
+    aiUsageSeries: row<Record<string, string | undefined>, AiUsageSeriesResult>("GET", "/api/ai/usage/series", "read"),
+    aiSpendTotals: row<Record<string, string | undefined>, AiSpendTotalsResult>(
+        "GET",
+        "/api/ai/spend/totals",
+        "read",
+        "scan"
+    ),
+    aiSpendSeries: row<Record<string, string | undefined>, AiSpendSeriesResult>(
+        "GET",
+        "/api/ai/spend/series",
+        "read",
+        "scan"
+    ),
+    claudeUsageTotals: row<Record<string, string | undefined>, AiSpendTotalsResult>(
         "GET",
         "/api/claude/usage/totals",
         "read",
@@ -338,10 +432,15 @@ export const ENDPOINTS = {
     ),
 
     // The long-running reads the proxy gave a longer deadline before this table.
-    ports: row<Record<string, never>, unknown>("GET", "/api/ports", "read", "slow"),
-    pulse: row<Record<string, never>, unknown>("GET", "/api/system/pulse", "read", "slow"),
-    pulseHistory: row<{ metric: string; minutes: number }, unknown>("GET", "/api/system/pulse/history", "read", "slow"),
-    tmuxSessions: row<{ include?: string }, unknown>("GET", "/api/tmux/sessions", "read", "slow"),
+    ports: row<Record<string, never>, PortsRes>("GET", "/api/ports", "read", "slow"),
+    pulse: row<Record<string, never>, PulseRes>("GET", "/api/system/pulse", "read", "slow"),
+    pulseHistory: row<{ metric: string; minutes: number }, PulseHistoryRes>(
+        "GET",
+        "/api/system/pulse/history",
+        "read",
+        "slow"
+    ),
+    tmuxSessions: row<{ include?: string }, TmuxSessionsRes>("GET", "/api/tmux/sessions", "read", "slow"),
     live: row<Record<string, never>, never>("GET", "/api/live", "read", "stream"),
     daemonRunsTail: row<Record<string, string | undefined>, never>("GET", "/api/daemon/runs/tail", "read", "stream"),
 
@@ -445,6 +544,191 @@ export const ENDPOINTS = {
     gatewayMemos: row<GatewayInput, MemosDto>("GET", "/api/gateway/memos", "read"),
     /** Runs one action of a memo once: Reminders, the vault note, or a session (F28). */
     memosAct: row<MemoActInput, MemoActReceiptDto>("POST", "/api/memos/act", "keyed-write", "slow"),
+    // The rest of the dashboard's own routes (C30): each was a pattern literal in its route file. The handlers stay
+    // written by hand; `server/bind.ts` (`bindHandler`) takes the method, the pattern and the tier from the row.
+    netStatus: row<Record<string, never>, NetStatusRes>("GET", "/api/net/status", "read"),
+    weather: row<Record<string, never>, WeatherRes>("GET", "/api/weather", "read"),
+    tmuxCreate: row<
+        { name?: string; cwd?: string; command?: string },
+        { sessionName: string; cwd: string; command: string }
+    >("POST", "/api/tmux/create", "keyed-write"),
+    tmuxRename: row<{ from: string; to: string }, { sessionName: string }>("POST", "/api/tmux/rename", "keyed-write"),
+    tmuxPresets: row<Record<string, never>, TmuxPresetsRes>("GET", "/api/tmux/presets", "read"),
+    tmuxPresetSave: row<{ name: string; note?: string; prefix?: string }, TmuxPresetSaveRes>(
+        "POST",
+        "/api/tmux/presets/save",
+        "keyed-write"
+    ),
+    tmuxPresetRestore: row<{ name: string }, TmuxPresetRestoreRes>("POST", "/api/tmux/presets/restore", "keyed-write"),
+    tmuxPresetDelete: row<{ name: string }, { removed: boolean }>("DELETE", "/api/tmux/presets", "keyed-write"),
+    ttydList: row<Record<string, never>, TtydListRes>("GET", "/api/ttyd/list", "read"),
+    ttydSpawn: row<{ command?: string; cwd?: string; tmuxSessionName?: string }, { session: TtydSession }>(
+        "POST",
+        "/api/ttyd/spawn",
+        "keyed-write"
+    ),
+    ttydKill: row<{ id: string; killTmux?: boolean }, { ok: boolean }>("POST", "/api/ttyd/kill", "keyed-write"),
+    ttydRename: row<{ id: string; name: string }, { ok: boolean }>("POST", "/api/ttyd/rename", "keyed-write"),
+    cmuxSnapshot: row<Record<string, never>, CmuxSnapshotRes>("GET", "/api/cmux/snapshot", "read"),
+    cmuxLayout: row<Record<string, never>, CmuxLayoutRes>("GET", "/api/cmux/layout", "read"),
+    cmuxCreateTerminal: row<{ cwd?: string }, { result: AttachTmuxResult }>(
+        "POST",
+        "/api/cmux/create-terminal",
+        "keyed-write"
+    ),
+    cmuxCreateWorkspace: row<
+        { windowId: string; name?: string; cwd?: string },
+        { result: { workspaceId: string; windowId: string } }
+    >("POST", "/api/cmux/create-workspace", "keyed-write"),
+    cmuxSendSession: row<
+        { tmuxSessionName: string; target: DashboardSendTarget; cwd?: string },
+        { result: AttachTmuxResult }
+    >("POST", "/api/cmux/send-session", "keyed-write"),
+    cmuxRemoveSession: row<{ tmuxSessionName: string }, { removed: number }>(
+        "POST",
+        "/api/cmux/remove-session",
+        "keyed-write"
+    ),
+    cmuxAttach: row<{ workspaceId: string; paneId: string }, { ok: boolean }>(
+        "POST",
+        "/api/cmux/attach",
+        "keyed-write"
+    ),
+    cmuxRename: row<{ workspaceId: string; surfaceId?: string; title: string }, { ok: boolean }>(
+        "POST",
+        "/api/cmux/rename",
+        "keyed-write"
+    ),
+    /** Focuses the cmux pane a session lives in; a miss is a 409 with the same body shape. */
+    cmuxFocusSession: row<{ sessionId: string }, FocusSessionResultDto>(
+        "POST",
+        "/api/cmux/focus-session",
+        "keyed-write"
+    ),
+    commands: row<Record<string, never>, CommandsRes>("GET", "/api/commands", "read"),
+    commandsCreate: row<SavedCommandInput, { command: SavedCommand }>("POST", "/api/commands", "keyed-write"),
+    commandsDelete: row<{ id: string }, { removed: number }>("DELETE", "/api/commands", "keyed-write"),
+    aiDaemon: row<Record<string, never>, AiDaemonStatus>("GET", "/api/ai/daemon", "read"),
+    aiDaemonRegister: row<Record<string, never>, { ok: boolean }>("POST", "/api/ai/daemon/register", "keyed-write"),
+    claudeUsage: row<Record<string, never>, AiUsageResult>("GET", "/api/claude/usage", "read"),
+    claudeUsageHistory: row<
+        { account?: string; buckets?: string; bucket?: string; minutes?: number },
+        AiUsageSeriesResult
+    >("GET", "/api/claude/usage/history", "read"),
+    daemonStatus: row<Record<string, never>, DaemonOverview>("GET", "/api/daemon/status", "read"),
+    daemonRuns: row<{ task?: string; limit?: number }, RunSummary[]>("GET", "/api/daemon/runs", "read"),
+    daemonRunLog: row<{ logFile: string }, LogEntry[]>("GET", "/api/daemon/runs/log", "read"),
+    timeline: row<{ since?: number }, TimelineRes>("GET", "/api/timeline", "read"),
+    containers: row<Record<string, never>, ContainersResult>("GET", "/api/containers", "read"),
+    diskUsage: row<Record<string, never>, DiskUsageResult>("GET", "/api/disk/usage", "read"),
+    portsKill: row<{ pid: number; expectedCommand?: string }, KillPortResult>("POST", "/api/ports/kill", "keyed-write"),
+    /** Changes the channel set of one open `/api/live` connection. */
+    liveSubscribe: row<LiveSubscribeBody, { ok: true; channels: LiveChannel[] }>(
+        "POST",
+        "/api/live/subscribe",
+        "keyed-write"
+    ),
+    processes: row<{ sort?: ProcessSort; limit?: number }, ProcessesRes>("GET", "/api/processes", "read"),
+    /** `command` is required: the server compares it with the live name, so a reissued pid is never signalled. */
+    processesKill: row<{ pid: number; command: string }, { ok: boolean }>("POST", "/api/processes/kill", "keyed-write"),
+    qaLog: row<{ project?: string; tag?: string; unread?: "1"; limit?: number }, { entries: QaRow[] }>(
+        "GET",
+        "/api/qa/log",
+        "read"
+    ),
+    /** The unclipped entry: `/api/qa/log` clips answers over `QA_ANSWER_MAX_CHARS`. */
+    qaEntry: row<{ id: string }, { entry: QaRow }>("GET", "/api/qa/entry/:id", "read"),
+    qaRead: row<{ ids: string[]; unread?: boolean }, { ok: boolean; updated: number }>(
+        "POST",
+        "/api/qa/read",
+        "keyed-write"
+    ),
+    qaAudioLibrary: row<Record<string, never>, QaAudioLibraryDto>("GET", "/api/qa/audio-library", "read"),
+    /** The sound file itself (audio bytes, not JSON): read through `client.url`, never `call`. */
+    qaSound: row<{ id: string }, never>("GET", "/api/qa/sound", "read"),
+    qaConfig: row<{ sound?: string; soundVolume?: number }, { ok: boolean; output: string }>(
+        "POST",
+        "/api/qa/config",
+        "keyed-write"
+    ),
+    /** Posts a pending ask form (the Genesis.app and `tools question ask` door); answers 201. */
+    qaPendingPost: row<Record<string, unknown>, { form: LiveAskForm }>("POST", "/api/qa/pending", "keyed-write"),
+    qaPendingCancel: row<{ id: string }, { form: LiveAskForm }>("DELETE", "/api/qa/pending/:id", "keyed-write"),
+    qaSaveToObsidian: row<
+        {
+            entryId: string;
+            relativeDir: string;
+            baseName: string;
+            mode?: "create" | "append";
+            createDir?: boolean;
+            includeFrontmatter?: boolean;
+            includeQuestion?: boolean;
+        },
+        { path: string }
+    >("POST", "/api/qa/save-to-obsidian", "keyed-write"),
+    handoffEvents: row<{ id: string; limit?: number; before?: string; beforeUid?: string }, HandoffEventsResponse>(
+        "GET",
+        "/api/handoff/events",
+        "read"
+    ),
+    handoffPost: row<
+        {
+            title: string;
+            name?: string;
+            description?: string;
+            tasks: HandoffTaskInput[];
+            target?: HandoffTarget;
+            refs?: string[];
+        },
+        HandoffPostResponse
+    >("POST", "/api/handoff/post", "keyed-write"),
+    /** One file as the raw body; the query carries the handoff, the file name and the task. */
+    handoffAttach: row<
+        { id: string; filename?: string; taskId?: string; note?: string },
+        { attachmentId: string; handoff: PublicHandoff }
+    >("POST", "/api/handoff/attach", "keyed-write"),
+    /** The attachment file itself (bytes, not JSON): read through `client.url`, never `call`. */
+    handoffAttachment: row<{ id: string }, never>("GET", "/api/handoff/attachment", "read"),
+    attention: row<Record<string, never>, AttentionRes>("GET", "/api/attention", "read"),
+    todos: row<{ listIds?: string; lists?: string; includeCompleted?: "true" }, TodosRes>("GET", "/api/todos", "read"),
+    todosRequestAccess: row<Record<string, never>, { authorized: boolean; status: string }>(
+        "POST",
+        "/api/todos/request-access",
+        "keyed-write"
+    ),
+    todoAdd: row<
+        { title: string; listName?: string; due?: string; priority?: TodoPriority; notes?: string },
+        { reminderId: string }
+    >("POST", "/api/todos", "keyed-write"),
+    todoComplete: row<{ reminderId: string }, { ok: true }>("POST", "/api/todos/complete", "keyed-write"),
+    todoUpdate: row<
+        {
+            reminderId: string;
+            listIdentifier: string;
+            title: string;
+            notes?: string;
+            due?: string | null;
+            priority?: TodoPriority;
+            url?: string;
+        },
+        { ok: true }
+    >("PATCH", "/api/todos", "keyed-write"),
+    todoDelete: row<{ reminderId: string }, { ok: true }>("DELETE", "/api/todos", "keyed-write"),
+    obsidianTree: row<Record<string, never>, ObsidianTreeRes>("GET", "/api/obsidian/tree", "read"),
+    obsidianMkdir: row<{ relativeDir: string }, { ok: boolean; relativeDir: string }>(
+        "POST",
+        "/api/obsidian/mkdir",
+        "keyed-write"
+    ),
+    obsidianNote: row<{ path: string }, ObsidianNoteRes>("GET", "/api/obsidian/note", "read"),
+    obsidianPublish: row<{ path: string }, { note: PublishedNote }>("POST", "/api/obsidian/publish", "keyed-write"),
+    obsidianUnpublish: row<{ slug: string }, { remaining: PublishedNote[] }>(
+        "POST",
+        "/api/obsidian/unpublish",
+        "keyed-write"
+    ),
+    /** The phone's first sealed request: proves the pairing code and stores the phone's box key. */
+    e2ePair: row<{ envelope: string }, { ok: true }>("POST", "/api/e2e/pair", "keyed-write"),
 } as const satisfies Record<string, Endpoint>;
 
 export type EndpointName = keyof typeof ENDPOINTS;

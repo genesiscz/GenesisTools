@@ -1,11 +1,13 @@
-import type { ContainersResult } from "@app/dev-dashboard/lib/containers/types";
+import type { ContainersResult } from "@app/dev-dashboard/contract/dto";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { useQuery } from "@tanstack/react-query";
 import { ContainersTable } from "@/components/containers/ContainersTable";
+import { dashboard } from "@/lib/dashboard-client";
 
 export function ContainersRoute() {
     const { data } = useQuery<ContainersResult>({
         queryKey: ["containers"],
-        queryFn: () => fetch("/api/containers").then((r) => r.json()),
+        queryFn: () => dashboard.call(ENDPOINTS.containers, {}),
         refetchInterval: 5000,
     });
 

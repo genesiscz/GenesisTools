@@ -1,24 +1,14 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { assertApiKeySourceAllowed, resolveAccountApiKey } from "@app/ai-proxy/lib/providers/api-key-guard";
-import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
-import { relayHeaders, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
+import { defaultApiKeyEnvName, maskApiKey } from "@app/ai-proxy/lib/providers/api-key-state";
+import { OPENAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/endpoints";
+import { type ExchangeFetch, exchange, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
-
-export const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
-
-function maskKey(key: string): string {
-    if (key.length <= 8) {
-        return "****";
-    }
-
-    return `${key.slice(0, 4)}…${key.slice(-4)}`;
-}
 
 /**
  * OpenAI API-key provider (`https://api.openai.com/v1`, provider type
@@ -33,11 +23,13 @@ export class OpenAiApiKeyProvider implements ProxyProvider {
     private readonly account: AiProxyAccountConfig;
     private readonly apiKey: string;
     private readonly baseUrl: string;
+    private readonly fetch: ExchangeFetch;
 
-    constructor(account: AiProxyAccountConfig, apiKey: string) {
+    constructor(account: AiProxyAccountConfig, apiKey: string, fetch: ExchangeFetch = fetchDirect) {
         this.account = account;
         this.accountFingerprint = accountConfigFingerprint(account);
         this.apiKey = apiKey;
+        this.fetch = fetch;
         this.baseUrl = (account.baseUrl ?? OPENAI_API_BASE_URL).replace(/\/$/, "");
     }
 
@@ -74,7 +66,7 @@ export class OpenAiApiKeyProvider implements ProxyProvider {
 
     async listModels(): Promise<OpenAiModel[]> {
         try {
-            const response = await fetchDirect(`${this.baseUrl}/models`, {
+            const response = await this.fetch(`${this.baseUrl}/models`, {
                 headers: { Authorization: `Bearer ${this.apiKey}` },
             });
 
@@ -108,7 +100,7 @@ export class OpenAiApiKeyProvider implements ProxyProvider {
         return {
             accountName: this.account.name,
             provider: "openai",
-            summary: `API key ${maskKey(this.apiKey)} present. Platform billing has no key-scoped usage endpoint.`,
+            summary: `API key ${maskApiKey(this.apiKey)} present. Platform billing has no key-scoped usage endpoint.`,
         };
     }
 
@@ -127,62 +119,24 @@ export class OpenAiApiKeyProvider implements ProxyProvider {
         return this.forward("/realtime/client_secrets", model, rewriteSessionModel(bodyText, model), req);
     }
 
-    private async forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
-        const started = performance.now();
-        const upstreamBody = rewriteBodyModel(bodyText, upstreamModel);
-
-        try {
-            const upstream = await fetchDirect(`${this.baseUrl}${path}`, {
-                method: "POST",
-                body: upstreamBody,
-                signal: req.signal,
-                headers: {
-                    Authorization: `Bearer ${this.apiKey}`,
-                    "Content-Type": "application/json",
-                    Accept: req.headers.get("Accept") ?? "application/json",
-                },
-            });
-
-            const elapsedMs = Math.round(performance.now() - started);
-            logger[upstream.ok ? "debug" : "warn"](
-                { account: this.account.name, upstreamModel, path, status: upstream.status, elapsedMs },
-                `ai-proxy: openai upstream request ${upstream.ok ? "ok" : "failed"}`
-            );
-
-            return new Response(upstream.body, {
-                status: upstream.status,
-                headers: relayHeaders(upstream),
-            });
-        } catch (err) {
-            if (req.signal.aborted) {
-                logger.debug({ account: this.account.name, path }, "ai-proxy: openai client aborted");
-                return new Response(null, { status: 499 });
-            }
-
-            logger.warn(
-                {
-                    err,
-                    account: this.account.name,
-                    upstreamModel,
-                    path,
-                    elapsedMs: Math.round(performance.now() - started),
-                },
-                "ai-proxy: openai upstream fetch threw"
-            );
-
-            return new Response(
-                SafeJSON.stringify({
-                    error: {
-                        message: err instanceof Error ? err.message : String(err),
-                        type: "upstream_error",
-                        code: "openai_api_fetch_failed",
+    private forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
+        return exchange({
+            fetch: this.fetch,
+            request: {
+                url: `${this.baseUrl}${path}`,
+                init: {
+                    method: "POST",
+                    body: rewriteBodyModel(bodyText, upstreamModel),
+                    headers: {
+                        Authorization: `Bearer ${this.apiKey}`,
+                        "Content-Type": "application/json",
+                        Accept: req.headers.get("Accept") ?? "application/json",
                     },
-                }),
-                {
-                    status: 502,
-                    headers: { "Content-Type": "application/json" },
-                }
-            );
-        }
+                },
+            },
+            signal: req.signal,
+            log: { provider: "openai", account: this.account.name, route: path, fields: { upstreamModel } },
+            failureCode: "openai_api_fetch_failed",
+        });
     }
 }

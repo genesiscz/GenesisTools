@@ -1,10 +1,10 @@
-import * as p from "@clack/prompts";
 import { formatAudioLibrary, parseSoundSpec } from "@genesiscz/utils/audio/library";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 import { setVaultRoot } from "@genesiscz/utils/obsidian/config";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import {
     ASK_VIA_QUESTION_TOOL_DESCRIPTION,
@@ -35,6 +35,7 @@ async function promptAskViaQuestionTool(current: boolean): Promise<boolean | nul
             { value: "on", label: "On", hint: `agents post every ❓ DECISION through ${toolCommand("question")}` },
             { value: "off", label: "Off", hint: "agents ask with their native tools (default)" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
@@ -80,6 +81,7 @@ async function interactiveConfig(): Promise<void> {
             },
             { value: "print", label: "Print the whole config" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {

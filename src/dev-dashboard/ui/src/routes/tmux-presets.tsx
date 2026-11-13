@@ -1,15 +1,16 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import type { TmuxPresetsRes } from "@app/dev-dashboard/contract/endpoints";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { PresetCaptureForm } from "@/components/tmux-presets/PresetCaptureForm";
 import { PresetsList } from "@/components/tmux-presets/PresetsList";
-import { presetsApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 /**
  * Tmux Presets route — lists every saved layout preset, captures the current live tmux layout into a
  * new named one, and restores/deletes a preset behind an explicit `window.confirm` (same guardrail the
  * process-monitor kill flow uses). Consumes the SAME backend route the mobile app does
- * (`/api/tmux/presets`) via `presetsApi`. Restore mutates the live host, so it does NOT invalidate the
+ * (`/api/tmux/presets`) via `ENDPOINTS.tmuxPresets`. Restore mutates the live host, so it does NOT invalidate the
  * list; capture/delete do (a new preset appears / a deleted one drops out).
  */
 export function TmuxPresetsRoute() {
@@ -18,19 +19,19 @@ export function TmuxPresetsRoute() {
 
     const { data } = useQuery<TmuxPresetsRes>({
         queryKey: ["tmux-presets"],
-        queryFn: () => presetsApi.list(),
+        queryFn: () => dashboard.call(ENDPOINTS.tmuxPresets, {}),
         refetchInterval: 30000,
     });
 
     const captureMutation = useMutation({
-        mutationFn: (input: { name: string; note?: string }) => presetsApi.save(input),
+        mutationFn: (input: { name: string; note?: string }) => dashboard.call(ENDPOINTS.tmuxPresetSave, input),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["tmux-presets"] });
         },
     });
 
     const restoreMutation = useMutation({
-        mutationFn: (name: string) => presetsApi.restore(name),
+        mutationFn: (name: string) => dashboard.call(ENDPOINTS.tmuxPresetRestore, { name }),
         onSuccess: (res) => {
             const { name, created, skipped, failed } = res.result;
             const tail = failed > 0 ? ` · ${failed} failed` : "";
@@ -39,7 +40,7 @@ export function TmuxPresetsRoute() {
     });
 
     const deleteMutation = useMutation({
-        mutationFn: (name: string) => presetsApi.remove(name),
+        mutationFn: (name: string) => dashboard.call(ENDPOINTS.tmuxPresetDelete, { name }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["tmux-presets"] });
         },

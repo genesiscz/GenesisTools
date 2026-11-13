@@ -354,6 +354,37 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
         throw new Error(`No meeting "${!from ? request.fromId : request.intoId}".`);
     }
 
+    if (request.dryRun) {
+        return mergeLockedMeetings({ request, from, into, update: store.update.bind(store) });
+    }
+
+    return store.withRecords({
+        ids: [from.id, into.id],
+        fn: async (records, update) => {
+            const currentFrom = records.get(from.id);
+            const currentInto = records.get(into.id);
+
+            if (!currentFrom || !currentInto) {
+                throw new Error("A meeting disappeared before the merge acquired its locks.");
+            }
+
+            return mergeLockedMeetings({ request, from: currentFrom, into: currentInto, update });
+        },
+    });
+}
+
+async function mergeLockedMeetings({
+    request,
+    from,
+    into,
+    update,
+}: {
+    request: MergeRequest;
+    from: MeetingRecord;
+    into: MeetingRecord;
+    update: MeetingStore["update"];
+}): Promise<MergeResult> {
+    const { store } = request;
     const refused = refusal(from, into, store);
 
     if (refused) {
@@ -449,7 +480,7 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
 
     const fromHistory = from.history.map((entry) => ({ ...entry, change: `[${from.id}] ${entry.change}` }));
     const shift = attendanceShift(from, into);
-    const record = await store.update(
+    const record = await update(
         into.id,
         {
             command: "merge",

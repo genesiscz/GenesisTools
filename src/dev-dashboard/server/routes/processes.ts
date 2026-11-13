@@ -1,5 +1,7 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { collectProcesses, killProcess, sortProcesses } from "@app/dev-dashboard/lib/system/processes";
 import type { ProcessSort } from "@app/dev-dashboard/lib/system/types";
+import { bindHandler } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { logger } from "@genesiscz/utils/logger";
@@ -23,51 +25,43 @@ function parseLimit(value: string | null): number {
 
 export function processesRoutes(): RouteDef[] {
     return [
-        {
-            method: "GET",
-            pattern: "/api/processes",
-            handler: async (ctx) => {
-                try {
-                    const sort = parseSort(ctx.query.get("sort"));
-                    const limit = parseLimit(ctx.query.get("limit"));
-                    const processes = sortProcesses(await collectProcesses(), sort).slice(0, limit);
+        bindHandler(ENDPOINTS.processes, async (ctx) => {
+            try {
+                const sort = parseSort(ctx.query.get("sort"));
+                const limit = parseLimit(ctx.query.get("limit"));
+                const processes = sortProcesses(await collectProcesses(), sort).slice(0, limit);
 
-                    return { kind: "json", status: 200, body: { sort, processes } };
-                } catch (err) {
-                    logger.warn({ error: err, route: "GET /api/processes" }, "process list collection failed");
-                    return errorResult(err);
+                return { kind: "json", status: 200, body: { sort, processes } };
+            } catch (err) {
+                logger.warn({ error: err, route: "GET /api/processes" }, "process list collection failed");
+                return errorResult(err);
+            }
+        }),
+        bindHandler(ENDPOINTS.processesKill, async (ctx) => {
+            try {
+                const { pid, command } = await ctx.readJson<{ pid?: number; command?: string }>();
+
+                if (typeof pid !== "number") {
+                    return { kind: "json", status: 400, body: { ok: false, error: "missing numeric pid" } };
                 }
-            },
-        },
-        {
-            method: "POST",
-            pattern: "/api/processes/kill",
-            handler: async (ctx) => {
-                try {
-                    const { pid, command } = await ctx.readJson<{ pid?: number; command?: string }>();
 
-                    if (typeof pid !== "number") {
-                        return { kind: "json", status: 400, body: { ok: false, error: "missing numeric pid" } };
-                    }
-
-                    // REQUIRED, not optional. The command the client listed for this
-                    // pid is the only thing standing between this route and "SIGTERM
-                    // whatever number you post at me" — a pid can be reissued between
-                    // the table render and the click.
-                    if (typeof command !== "string" || command.trim() === "") {
-                        return {
-                            kind: "json",
-                            status: 400,
-                            body: { ok: false, error: "missing command — required to verify the pid before killing" },
-                        };
-                    }
-
-                    return { kind: "json", status: 200, body: { ok: killProcess(pid, command) } };
-                } catch (err) {
-                    logger.warn({ error: err, route: "POST /api/processes/kill" }, "process kill failed");
-                    return errorResult(err);
+                // REQUIRED, not optional. The command the client listed for this
+                // pid is the only thing standing between this route and "SIGTERM
+                // whatever number you post at me" — a pid can be reissued between
+                // the table render and the click.
+                if (typeof command !== "string" || command.trim() === "") {
+                    return {
+                        kind: "json",
+                        status: 400,
+                        body: { ok: false, error: "missing command — required to verify the pid before killing" },
+                    };
                 }
-            },
-        },
+
+                return { kind: "json", status: 200, body: { ok: killProcess(pid, command) } };
+            } catch (err) {
+                logger.warn({ error: err, route: "POST /api/processes/kill" }, "process kill failed");
+                return errorResult(err);
+            }
+        }),
     ];
 }

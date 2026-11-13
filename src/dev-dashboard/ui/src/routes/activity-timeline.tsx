@@ -1,8 +1,7 @@
-import { paths } from "@app/dev-dashboard/contract/endpoints";
-import type { TimelineEvent } from "@app/dev-dashboard/lib/timeline/types";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { useQuery } from "@tanstack/react-query";
 import { Timeline } from "@/components/activity-timeline/Timeline";
-import { fetchJson } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 /** Local midnight today, epoch ms — the default "today on this machine" lower bound. */
 function startOfTodayMs(): number {
@@ -20,7 +19,7 @@ export function ActivityTimelineRoute() {
 
     const { data, isLoading } = useQuery({
         queryKey: ["timeline", "feed", since],
-        queryFn: () => fetchJson<TimelineEvent[]>(paths.timeline({ since })),
+        queryFn: () => dashboard.call(ENDPOINTS.timeline, { since }),
         refetchInterval: 20_000,
     });
 

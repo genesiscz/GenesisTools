@@ -1,4 +1,4 @@
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import { embeddingProviderTypes, embedModelsForType, findDescriptor } from "./local/descriptors";
 import { getProvider } from "./providers";
@@ -97,6 +97,7 @@ export async function selectEmbeddingProvider(options?: {
     const choice = await p.select({
         message: "Embedding provider",
         options: promptOptions,
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {
@@ -131,6 +132,7 @@ export async function selectEmbeddingModel(
     const choice = await p.select({
         message: `Model for ${provider}`,
         options,
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {

@@ -6,8 +6,8 @@ import { inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
 import {
     AmbiguousTabError,
-    Conn,
     choosePortByMatch,
+    connect,
     NoMatchingTabError,
     Page,
     pickPageTarget,
@@ -220,8 +220,8 @@ export async function attachTab(
     opts: { port?: string; match?: string },
     hooks: { beforeEnable?: (page: Page) => void } = {}
 ): Promise<Page> {
-    const { target } = await pickTab(opts);
-    const page = new Page(new Conn(target.webSocketDebuggerUrl), target);
+    const { port, target } = await pickTab(opts);
+    const page = new Page(connect(target, port), target);
     hooks.beforeEnable?.(page);
     await page.enable();
     return page;

@@ -6,6 +6,8 @@ import { env } from "@genesiscz/utils/env/envVariables";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type NativeInboxState, nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
+import { type ToolEntry, toolCallResult } from "@genesiscz/utils/mcp/tool-entry";
+import type { LoadedToolGroup, ToolGroupRow } from "@genesiscz/utils/mcp/tool-group";
 import {
     type CallToolResult,
     type ListToolsResult,
@@ -14,7 +16,7 @@ import {
     Server,
 } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { type ToolEntry, toolCallResult } from "./tool-entry";
+import { TOOL_GROUPS } from "./groups";
 import { ANNOTATE_IMAGE_INPUT_SCHEMA, type AnnotateImageArgs, handleAnnotateImage } from "./tools/annotate-image";
 import {
     HANDOFF_ACTION_DESCRIPTION,
@@ -67,8 +69,6 @@ import {
     QUESTION_UPDATE_DESCRIPTION,
     QUESTION_UPDATE_INPUT_SCHEMA,
 } from "./tools/question-update";
-
-export type { ToolAnswer, ToolEntry } from "./tool-entry";
 
 const log = logger.child({ component: "claude:mcp" });
 
@@ -305,12 +305,10 @@ const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
     handoff: (name) => name.startsWith("handoff_"),
     decision: (name) => DECISION_TOOLS.has(name),
     annotate: (name) => name.startsWith("annotate_"),
-    jev: (name) => name.startsWith("jev_"),
-    control: (name) => name.startsWith("control_"),
-    fetch: (name) => name.startsWith("fetch_"),
-    alza: (name) => name.startsWith("alza_"),
-    waze: (name) => name.startsWith("waze_"),
-    usage: (name) => name.startsWith("usage_"),
+    // One row per tool group (groups.ts): its capability is its id, its tools are the ones named with its prefix.
+    ...Object.fromEntries(
+        TOOL_GROUPS.map((row): [string, (name: string) => boolean] => [row.id, (name) => name.startsWith(row.prefix)])
+    ),
 };
 
 /**
@@ -335,109 +333,63 @@ export function filterRegistryByCapabilities(
 }
 
 const registries = new Map<string, Record<string, ToolEntry>>();
-let jevEntries: Promise<Record<string, ToolEntry>> | undefined;
-let controlEntries: Promise<Record<string, ToolEntry>> | undefined;
-let fetchModule: Promise<typeof import("@app/fetch/mcp/genesis-tools")> | undefined;
-let alzaModule: Promise<typeof import("@app/alza/mcp/genesis-tools")> | undefined;
-let wazeModule: Promise<typeof import("@app/waze/mcp/genesis-tools")> | undefined;
-let usageEntries: Promise<Record<string, ToolEntry>> | undefined;
+/** Each group that has loaded, by its row id. A group that never loaded holds nothing and is not here. */
+const loadedGroups = new Map<string, Promise<LoadedToolGroup>>();
 
 /**
- * The Jev tools import the evaluation stack (about 80 MB resident, measured 2026-10-01), so they load
- * only for a capability list that can expose them: unset (everything) or one naming `jev`.
+ * The groups a capability list exposes: unset means every group that is not opt-in, a list means the groups it names.
+ * An opt-in group (alza, waze) loads only when named, never for an unset list.
  */
-function loadJevEntries(): Promise<Record<string, ToolEntry>> {
-    jevEntries ??= import("@app/jev/mcp/genesis-tools").then((module) => module.jevToolEntries());
-    return jevEntries;
+export function enabledToolGroups(rows: readonly ToolGroupRow[], capabilities: string[] | undefined): ToolGroupRow[] {
+    return rows.filter((row) => (capabilities === undefined ? !row.optIn : capabilities.includes(row.id)));
 }
 
-/**
- * The control tools import the native runner and the plan and workflow runners, so they load only for a
- * capability list that can expose them: unset (everything) or one naming `control`.
- */
-function loadControlEntries(): Promise<Record<string, ToolEntry>> {
-    controlEntries ??= import("@app/control/mcp/genesis-tools").then((module) => module.controlToolEntries());
-    return controlEntries;
-}
-
-/**
- * The fetch tools import the HTML converter and start a curl worker on their first chrome request, so they load
- * only for a capability list that can expose them: unset (everything) or one naming `fetch`.
- */
-function loadFetchEntries(): Promise<Record<string, ToolEntry>> {
-    fetchModule ??= import("@app/fetch/mcp/genesis-tools");
-    return fetchModule.then((module) => module.fetchToolEntries());
-}
-
-/**
- * The Alza tools (an unofficial Alza.cz client with sign-in, basket and orders) are opt-in: they load only when the
- * capability list names `alza`, never for an unset list, because most hosts have no use for a shop's 40 tools.
- */
-function loadAlzaEntries(): Promise<Record<string, ToolEntry>> {
-    alzaModule ??= import("@app/alza/mcp/genesis-tools");
-    return alzaModule.then((module) => module.alzaToolEntries());
-}
-
-/**
- * The Waze tools (live Waze reports read through a live-map tab in the user's Brave over CDP) are opt-in: they load only
- * when the capability list names `waze`, never for an unset list, because they drive the user's real browser.
- */
-function loadWazeEntries(): Promise<Record<string, ToolEntry>> {
-    wazeModule ??= import("@app/waze/mcp/genesis-tools");
-    return wazeModule.then((module) => module.wazeToolEntries());
-}
-
-/**
- * Ends what a loaded group holds open (the fetch and Alza groups' Chrome workers, the Waze group's live-map tab). A
- * group that never loaded holds nothing.
- */
-async function closeLoadedGroups(): Promise<void> {
-    if (fetchModule) {
-        await (await fetchModule).closeFetchTools();
+/** Loads a group once; later callers share the same load. */
+export function loadToolGroup(row: ToolGroupRow): Promise<LoadedToolGroup> {
+    let loaded = loadedGroups.get(row.id);
+    if (!loaded) {
+        loaded = row.load();
+        loadedGroups.set(row.id, loaded);
     }
 
-    if (alzaModule) {
-        await (await alzaModule).closeAlzaTools();
-    }
-
-    if (wazeModule) {
-        await (await wazeModule).closeWazeTools();
-    }
+    return loaded;
 }
 
 /**
- * The usage tools import the limits store, the forecast and the rankers, so they load only for a capability list
- * that can expose them: unset (everything) or one naming `usage`.
+ * Ends what every loaded group holds open (the fetch and Alza groups' Chrome workers, the Waze group's live-map tab)
+ * and forgets the groups and the registries built from them, so a later request loads them again. The stdio server
+ * calls it when stdin ends, the gateway's hosted child when it is stopped.
  */
-function loadUsageEntries(): Promise<Record<string, ToolEntry>> {
-    usageEntries ??= import("@app/ai/mcp/genesis-tools").then((module) => module.usageToolEntries());
-    return usageEntries;
+export async function closeLoadedGroups(): Promise<void> {
+    const loaded = [...loadedGroups.entries()];
+    loadedGroups.clear();
+    registries.clear();
+    const results = await Promise.allSettled(loaded.map(async ([, group]) => (await group).close?.()));
+    results.forEach((result, index) => {
+        if (result.status === "rejected") {
+            log.warn({ err: result.reason, group: loaded[index][0] }, "closing a tool group failed");
+        }
+    });
 }
 
-/** One registry per instructions variant; a resident server builds it once, not per request. */
+/** One registry per instructions variant and group set; a resident server builds it once, not per request. */
 async function toolRegistry(
     context: InstructionContext,
     capabilities: string[] | undefined
 ): Promise<Record<string, ToolEntry>> {
-    const withJev = capabilities === undefined || capabilities.includes("jev");
-    const withControl = capabilities === undefined || capabilities.includes("control");
-    const withFetch = capabilities === undefined || capabilities.includes("fetch");
-    const withAlza = capabilities?.includes("alza") ?? false;
-    const withWaze = capabilities?.includes("waze") ?? false;
-    const withUsage = capabilities === undefined || capabilities.includes("usage");
-    const key = `${context.askViaQuestionTool}:${context.inboxState}:${withJev}:${withControl}:${withFetch}:${withAlza}:${withWaze}:${withUsage}`;
+    const groups = enabledToolGroups(TOOL_GROUPS, capabilities);
+    const key = `${context.askViaQuestionTool}:${context.inboxState}:${groups.map((row) => row.id).join(",")}`;
     let registry = registries.get(key);
     if (!registry) {
-        registry = {
-            ...(withJev ? await loadJevEntries() : {}),
-            ...(withControl ? await loadControlEntries() : {}),
-            ...(withFetch ? await loadFetchEntries() : {}),
-            ...(withAlza ? await loadAlzaEntries() : {}),
-            ...(withWaze ? await loadWazeEntries() : {}),
-            ...(withUsage ? await loadUsageEntries() : {}),
-            ...buildToolRegistry(context),
-        };
-        registries.set(key, registry);
+        const loaded = await Promise.all(groups.map((row) => loadToolGroup(row)));
+        const built: Record<string, ToolEntry> = {};
+        for (const group of loaded) {
+            Object.assign(built, group.entries);
+        }
+
+        Object.assign(built, buildToolRegistry(context));
+        registries.set(key, built);
+        registry = built;
     }
 
     return registry;

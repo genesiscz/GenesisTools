@@ -17,6 +17,12 @@ export interface PricedCallInput extends CallTokens {
     at: string | null;
     /** The tier the call was billed at when it is not the standard one, as `NativeCall` carries it. */
     serviceTier?: string;
+    /** The one-hour share of `cacheWrite`, as `NativeCall` carries it. */
+    cacheWrite1h?: number;
+    /** The call sums several requests, so it takes no context band. */
+    aggregate?: boolean;
+    /** The cost the transcript recorded for the call, as `NativeCall` carries it. */
+    recordedCostUsd?: number;
 }
 
 /** USD for one call at list price, or null when the model has no known price. */

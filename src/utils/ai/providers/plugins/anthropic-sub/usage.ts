@@ -1,6 +1,4 @@
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../../../config/schema";
 import type {
@@ -155,35 +153,17 @@ function snapshotBase(account: AccountEntry, usage: AccountUsage, fetchedAt: str
     };
 }
 
-/**
- * The v3 entry `pollAccount` still takes. Looked up by NAME, which is what the legacy
- * facade keys on; a v4 account whose provider is not `anthropic-sub` never reaches here
- * because `pollAccounts` filters by provider first.
- */
-async function legacyEntryFor(account: AccountEntry): Promise<{ entry: AIAccountEntry; config: AIConfig }> {
-    const config = await AIConfig.load();
-    const entry = config.getAccountsByProvider(ANTHROPIC_SUB).find((candidate) => candidate.name === account.name);
-
-    if (!entry) {
-        throw new Error(`Account "${account.name}" is not in the AI config`);
-    }
-
-    return { entry, config };
-}
-
 export async function pollAnthropicAccount(
     account: AccountEntry,
     opts: UsagePollOptions = {}
 ): Promise<AccountUsageSnapshot> {
     const fetchedAt = new Date().toISOString();
-    const { entry, config } = await legacyEntryFor(account);
     const previousUsage = previousUsageOf(opts.previous);
 
     // An empty gate on purpose: the poll core already refused every account the gate
     // blocks, so re-reading it here would only make the backoff decision twice.
     const usage = await pollAccount({
-        account: entry,
-        config,
+        account,
         gate: {},
         now: Date.now(),
         ...(opts.probe === undefined ? {} : { probe: opts.probe }),

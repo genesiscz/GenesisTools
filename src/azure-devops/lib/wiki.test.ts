@@ -4,7 +4,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Api } from "@app/azure-devops/api";
-import type { GitCommitRefApi, WikiPageApi, WikiV2 } from "@app/azure-devops/api.types";
+import type { GitCommitRefApi, WikiPageApi, WikiPageDetailApi, WikiV2 } from "@app/azure-devops/api.types";
+import { FakeTransport } from "@app/azure-devops/lib/fake-transport.fixtures";
 import {
     defaultAttachmentDir,
     diffWikiPage,
@@ -50,20 +51,87 @@ function wiki(overrides: Partial<WikiV2>): WikiV2 {
     };
 }
 
-/** A real Api whose network-facing methods fail loudly unless the test gives them an answer. */
-function stubApi() {
-    const api = new Api(config);
-    const unexpected = (method: string) => async (): Promise<never> => {
-        throw new Error(`unexpected Api.${method} call`);
-    };
+/** What a wiki page request asked for, read back from its URL. */
+interface PageQuery {
+    wikiId: string;
+    pageId?: number;
+    path?: string;
+    recursionLevel?: string;
+    includeContent: boolean;
+}
+
+/** What the fake Azure DevOps answers per wiki route. An unset route fails the request; a test may set one later. */
+interface WikiAnswers {
+    wikis?: WikiV2[];
+    page?: (query: PageQuery) => WikiPageApi | Response;
+    views?: WikiPageDetailApi | Response;
+    commits?: GitCommitRefApi[] | Response;
+    file?: (url: URL) => ArrayBuffer | Response;
+}
+
+function notFound(): Response {
+    return new Response("not found", { status: 404 });
+}
+
+function segmentAfter(url: URL, name: string): string | undefined {
+    const segments = url.pathname.split("/");
+    const index = segments.indexOf(name);
+
+    return index >= 0 && segments[index + 1] ? decodeURIComponent(segments[index + 1]) : undefined;
+}
+
+function pageQuery(url: URL): PageQuery {
+    const pageId = segmentAfter(url, "pages");
 
     return {
-        api,
-        getWikis: spyOn(api, "getWikis").mockImplementation(unexpected("getWikis")),
-        getWikiPage: spyOn(api, "getWikiPage").mockImplementation(unexpected("getWikiPage")),
-        getWikiPageViews: spyOn(api, "getWikiPageViews").mockImplementation(unexpected("getWikiPageViews")),
-        getGitCommitsForPath: spyOn(api, "getGitCommitsForPath").mockImplementation(unexpected("getGitCommitsForPath")),
-        fetchBinary: spyOn(api, "fetchBinary").mockImplementation(unexpected("fetchBinary")),
+        wikiId: segmentAfter(url, "wikis") ?? "",
+        pageId: pageId === undefined ? undefined : Number(pageId),
+        path: url.searchParams.get("path") ?? undefined,
+        recursionLevel: url.searchParams.get("recursionLevel") ?? undefined,
+        includeContent: url.searchParams.get("includeContent") === "true",
+    };
+}
+
+/** A real Api over the fake transport: every request runs through `Api.send` and is answered from `answers`. */
+function fakeApi(answers: WikiAnswers = {}) {
+    const unexpected = (what: string): never => {
+        throw new Error(`unexpected ${what} request`);
+    };
+    const fresh = <T>(answer: T): T => (answer instanceof Response ? (answer.clone() as T) : answer);
+    const transport = new FakeTransport([
+        ["GET /stats?", () => fresh(answers.views ?? unexpected("page views"))],
+        ["GET /pages", ({ url }) => (answers.page ? answers.page(pageQuery(new URL(url))) : unexpected("wiki page"))],
+        [
+            "GET /commits?",
+            () => {
+                const commits = fresh(answers.commits ?? unexpected("commits"));
+                return commits instanceof Response ? commits : { count: commits.length, value: commits };
+            },
+        ],
+        ["GET /items?", ({ url }) => (answers.file ? answers.file(new URL(url)) : unexpected("file"))],
+        ["GET /wiki/wikis?", () => (answers.wikis ? { value: answers.wikis } : unexpected("wiki list"))],
+    ]);
+    const urls = (match: (url: URL) => boolean) => transport.calls.map((call) => new URL(call.url)).filter(match);
+
+    return {
+        api: new Api(config, transport.apiOptions()),
+        answers,
+        pageQueries: () =>
+            urls((url) => url.pathname.includes("/pages") && !url.pathname.endsWith("/stats")).map(pageQuery),
+        viewQueries: () =>
+            urls((url) => url.pathname.endsWith("/stats")).map((url) => ({
+                wikiId: segmentAfter(url, "wikis"),
+                pageId: Number(segmentAfter(url, "pages")),
+                days: Number(url.searchParams.get("pageViewsForDays")),
+            })),
+        commitQueries: () =>
+            urls((url) => url.pathname.endsWith("/commits")).map((url) => ({
+                repositoryId: segmentAfter(url, "repositories"),
+                itemPath: url.searchParams.get("searchCriteria.itemPath") ?? undefined,
+                version: url.searchParams.get("searchCriteria.itemVersion.version") ?? undefined,
+                top: Number(url.searchParams.get("searchCriteria.$top")),
+            })),
+        fileUrls: () => urls((url) => url.pathname.endsWith("/items")),
     };
 }
 
@@ -432,14 +500,10 @@ describe("toPageChange", () => {
 
 describe("fillPageIds", () => {
     test("asks for the id of the rows that lack one and keeps the order of the rows", async () => {
-        const stubs = stubApi();
-        stubs.getWikiPage.mockImplementation(async ({ path }) => ({
-            id: path === "/A/B" ? 22 : 33,
-            path: path ?? "/",
-        }));
+        const fake = fakeApi({ page: ({ path }) => ({ id: path === "/A/B" ? 22 : 33, path: path ?? "/" }) });
 
         const filled = await fillPageIds({
-            api: stubs.api,
+            api: fake.api,
             wiki: wiki({}),
             rows: [treeRow("/A", 1), treeRow("/A/B"), treeRow("/A/C")],
         });
@@ -449,25 +513,18 @@ describe("fillPageIds", () => {
             ["/A/B", 22],
             ["/A/C", 33],
         ]);
-        expect(stubs.getWikiPage.mock.calls.map(([args]) => args)).toEqual([
-            { wikiId: "w-1", path: "/A/B", recursionLevel: "none" },
-            { wikiId: "w-1", path: "/A/C", recursionLevel: "none" },
+        expect(fake.pageQueries()).toEqual([
+            { wikiId: "w-1", path: "/A/B", recursionLevel: "none", includeContent: false },
+            { wikiId: "w-1", path: "/A/C", recursionLevel: "none", includeContent: false },
         ]);
     });
 
     test("leaves the id empty for a row whose lookup fails, logs it and still fills the others", async () => {
-        const stubs = stubApi();
+        const fake = fakeApi({ page: ({ path }) => (path === "/A/B" ? notFound() : { id: 33, path: path ?? "/" }) });
         const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
-        stubs.getWikiPage.mockImplementation(async ({ path }) => {
-            if (path === "/A/B") {
-                throw new Error("HTTP 404");
-            }
-
-            return { id: 33, path: path ?? "/" };
-        });
 
         const filled = await fillPageIds({
-            api: stubs.api,
+            api: fake.api,
             wiki: wiki({}),
             rows: [treeRow("/A/B"), treeRow("/A/C")],
         });
@@ -478,11 +535,11 @@ describe("fillPageIds", () => {
     });
 
     test("makes no request when every row already has an id", async () => {
-        const stubs = stubApi();
+        const fake = fakeApi();
         const rows = [treeRow("/A", 1), treeRow("/A/B", 2)];
 
-        expect(await fillPageIds({ api: stubs.api, wiki: wiki({}), rows })).toEqual(rows);
-        expect(stubs.getWikiPage).not.toHaveBeenCalled();
+        expect(await fillPageIds({ api: fake.api, wiki: wiki({}), rows })).toEqual(rows);
+        expect(fake.pageQueries()).toEqual([]);
     });
 });
 
@@ -491,18 +548,18 @@ describe("resolveWikiPage", () => {
     const codeWiki = wiki({ id: "w-2", name: "Team-Docs", type: "codeWiki", mappedPath: "/docs" });
 
     test("reads a page by id from a URL and picks the wiki that URL names", async () => {
-        const stubs = stubApi();
-        stubs.getWikis.mockResolvedValue([projectWiki, codeWiki]);
-        stubs.getWikiPage.mockResolvedValue({ id: 1234, path: "/Some Page" });
+        const fake = fakeApi();
+        fake.answers.wikis = [projectWiki, codeWiki];
+        fake.answers.page = () => ({ id: 1234, path: "/Some Page" });
 
         const result = await resolveWikiPage({
-            api: stubs.api,
+            api: fake.api,
             input: "https://dev.azure.com/contoso/Widgets/_wiki/wikis/Team-Docs/1234/Some-Page",
         });
 
-        expect(result.wiki).toBe(codeWiki);
+        expect(result.wiki).toEqual(codeWiki);
         expect(result.page).toEqual({ id: 1234, path: "/Some Page" });
-        expect(stubs.getWikiPage).toHaveBeenCalledWith({
+        expect(fake.pageQueries()).toContainEqual({
             wikiId: "w-2",
             pageId: 1234,
             path: undefined,
@@ -512,19 +569,19 @@ describe("resolveWikiPage", () => {
     });
 
     test("reads a page by path in the project wiki and passes the recursion level and content flag on", async () => {
-        const stubs = stubApi();
-        stubs.getWikis.mockResolvedValue([codeWiki, projectWiki]);
-        stubs.getWikiPage.mockResolvedValue({ path: "/Projects/Feature" });
+        const fake = fakeApi();
+        fake.answers.wikis = [codeWiki, projectWiki];
+        fake.answers.page = () => ({ path: "/Projects/Feature" });
 
         const result = await resolveWikiPage({
-            api: stubs.api,
+            api: fake.api,
             input: "Projects/Feature",
             recursionLevel: "full",
             includeContent: true,
         });
 
-        expect(result.wiki).toBe(projectWiki);
-        expect(stubs.getWikiPage).toHaveBeenCalledWith({
+        expect(result.wiki).toEqual(projectWiki);
+        expect(fake.pageQueries()).toContainEqual({
             wikiId: "w-1",
             pageId: undefined,
             path: "/Projects/Feature",
@@ -534,27 +591,27 @@ describe("resolveWikiPage", () => {
     });
 
     test("an explicit wiki name wins over the wiki in the URL", async () => {
-        const stubs = stubApi();
-        stubs.getWikis.mockResolvedValue([projectWiki, codeWiki]);
-        stubs.getWikiPage.mockResolvedValue({ id: 1234, path: "/Some Page" });
+        const fake = fakeApi();
+        fake.answers.wikis = [projectWiki, codeWiki];
+        fake.answers.page = () => ({ id: 1234, path: "/Some Page" });
 
         const result = await resolveWikiPage({
-            api: stubs.api,
+            api: fake.api,
             input: "https://dev.azure.com/contoso/Widgets/_wiki/wikis/Team-Docs/1234/Some-Page",
             wikiName: "widgets",
         });
 
-        expect(result.wiki).toBe(projectWiki);
+        expect(result.wiki).toEqual(projectWiki);
     });
 
     test("does not ask for the page when no wiki matches", async () => {
-        const stubs = stubApi();
-        stubs.getWikis.mockResolvedValue([projectWiki]);
+        const fake = fakeApi();
+        fake.answers.wikis = [projectWiki];
 
-        await expect(resolveWikiPage({ api: stubs.api, input: "57274", wikiName: "nope" })).rejects.toThrow(
+        await expect(resolveWikiPage({ api: fake.api, input: "57274", wikiName: "nope" })).rejects.toThrow(
             "No wiki named 'nope'"
         );
-        expect(stubs.getWikiPage).not.toHaveBeenCalled();
+        expect(fake.pageQueries()).toEqual([]);
     });
 });
 
@@ -574,13 +631,13 @@ describe("defaultAttachmentDir", () => {
 
 describe("downloadWikiAttachments", () => {
     test("saves each attachment from the wiki's git repository and maps the link to the saved file", async () => {
-        const stubs = stubApi();
+        const fake = fakeApi();
         const outputDir = join(await tempDir(), "files");
         const codeWiki = wiki({ mappedPath: "/docs/", versions: [{ version: "wikiMaster" }] });
-        stubs.fetchBinary.mockImplementation(async (url) => bytes(`bytes of ${new URL(url).searchParams.get("path")}`));
+        fake.answers.file = (url) => bytes(`bytes of ${new URL(url).searchParams.get("path")}`);
 
         const localPaths = await downloadWikiAttachments({
-            api: stubs.api,
+            api: fake.api,
             config,
             wiki: codeWiki,
             refs: extractAttachmentRefs("![a](/.attachments/image-1.png) ![b](/.attachments/diagram%20v2.png)"),
@@ -596,28 +653,24 @@ describe("downloadWikiAttachments", () => {
             "bytes of /docs/.attachments/diagram v2.png"
         );
 
-        const requested = new URL(stubs.fetchBinary.mock.calls[0][0]);
+        const requested = fake.fileUrls()[0];
 
         expect(requested.pathname).toBe("/contoso/Widgets/_apis/git/repositories/r-1/items");
         expect(requested.searchParams.get("versionDescriptor.version")).toBe("wikiMaster");
     });
 
     test("reports a download that fails and still saves the other attachments", async () => {
-        const stubs = stubApi();
+        const fake = fakeApi();
         const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
         const outputDir = await tempDir();
-        stubs.fetchBinary.mockImplementation(async (url) => {
-            const gitPath = new URL(url).searchParams.get("path") ?? "";
+        fake.answers.file = (url) => {
+            const gitPath = url.searchParams.get("path") ?? "";
 
-            if (gitPath.endsWith("missing.png")) {
-                throw new Error("HTTP 404");
-            }
-
-            return bytes(`bytes of ${gitPath}`);
-        });
+            return gitPath.endsWith("missing.png") ? notFound() : bytes(`bytes of ${gitPath}`);
+        };
 
         const localPaths = await downloadWikiAttachments({
-            api: stubs.api,
+            api: fake.api,
             config,
             wiki: wiki({}),
             refs: extractAttachmentRefs("![a](/.attachments/ok.png) ![b](/.attachments/missing.png)"),
@@ -628,16 +681,16 @@ describe("downloadWikiAttachments", () => {
         expect(existsSync(join(outputDir, "missing.png"))).toBe(false);
         expect(await readFile(join(outputDir, "ok.png"), "utf8")).toBe("bytes of /.attachments/ok.png");
         expect(String(warn.mock.calls[0][0])).toContain("could not download missing.png");
-        expect(new URL(stubs.fetchBinary.mock.calls[0][0]).searchParams.has("versionDescriptor.version")).toBe(false);
+        expect(fake.fileUrls()[0].searchParams.has("versionDescriptor.version")).toBe(false);
     });
 
     test("saves attachments whose names flatten to the same file under different names", async () => {
-        const stubs = stubApi();
+        const fake = fakeApi();
         const outputDir = await tempDir();
-        stubs.fetchBinary.mockImplementation(async (url) => bytes(`bytes of ${new URL(url).searchParams.get("path")}`));
+        fake.answers.file = (url) => bytes(`bytes of ${new URL(url).searchParams.get("path")}`);
 
         const localPaths = await downloadWikiAttachments({
-            api: stubs.api,
+            api: fake.api,
             config,
             wiki: wiki({}),
             refs: [
@@ -654,11 +707,11 @@ describe("downloadWikiAttachments", () => {
     });
 
     test("neither requests nor creates anything for a page without attachments", async () => {
-        const stubs = stubApi();
+        const fake = fakeApi();
         const outputDir = join(await tempDir(), "never-created");
 
         const localPaths = await downloadWikiAttachments({
-            api: stubs.api,
+            api: fake.api,
             config,
             wiki: wiki({}),
             refs: [],
@@ -666,7 +719,7 @@ describe("downloadWikiAttachments", () => {
         });
 
         expect(localPaths.size).toBe(0);
-        expect(stubs.fetchBinary).not.toHaveBeenCalled();
+        expect(fake.fileUrls()).toEqual([]);
         expect(existsSync(outputDir)).toBe(false);
     });
 });
@@ -688,29 +741,29 @@ describe("loadWikiPageDetails", () => {
     };
 
     function stubbedPage(pageApi: WikiPageApi = page) {
-        const stubs = stubApi();
-        stubs.getWikis.mockResolvedValue([projectWiki]);
-        stubs.getWikiPage.mockResolvedValue(pageApi);
-        stubs.getGitCommitsForPath.mockResolvedValue([commit]);
-        stubs.getWikiPageViews.mockResolvedValue({
+        const fake = fakeApi();
+        fake.answers.wikis = [projectWiki];
+        fake.answers.page = () => pageApi;
+        fake.answers.commits = [commit];
+        fake.answers.views = {
             id: 7,
             path: "/Projects/Feature",
             viewStats: [
                 { day: "2026-02-01", count: 3 },
                 { day: "2026-02-02", count: 4 },
             ],
-        });
-        stubs.fetchBinary.mockImplementation(async () => bytes("png bytes"));
+        };
+        fake.answers.file = () => bytes("png bytes");
 
-        return stubs;
+        return fake;
     }
 
     test("collects the page, last change, summed views and subpages, and points the content at the downloads", async () => {
-        const stubs = stubbedPage();
+        const fake = stubbedPage();
         const outputDir = await tempDir();
 
         const details = await loadWikiPageDetails({
-            api: stubs.api,
+            api: fake.api,
             config,
             input: "7",
             includeContent: true,
@@ -742,27 +795,27 @@ describe("loadWikiPageDetails", () => {
             content: `Intro ![shot](${encodeURI(localPath)} =400x) and ![again](${encodeURI(localPath)})\n`,
         });
         expect(await readFile(localPath, "utf8")).toBe("png bytes");
-        expect(stubs.getWikiPage).toHaveBeenCalledWith({
+        expect(fake.pageQueries()).toContainEqual({
             wikiId: "w-1",
             pageId: 7,
             path: undefined,
             recursionLevel: "oneLevel",
             includeContent: true,
         });
-        expect(stubs.getGitCommitsForPath).toHaveBeenCalledWith({
+        expect(fake.commitQueries()).toContainEqual({
             repositoryId: "r-1",
             itemPath: "/Projects/Feature.md",
             version: "wikiMaster",
             top: 1,
         });
-        expect(stubs.getWikiPageViews).toHaveBeenCalledWith({ wikiId: "w-1", pageId: 7, days: 30 });
+        expect(fake.viewQueries()).toContainEqual({ wikiId: "w-1", pageId: 7, days: 30 });
     });
 
     test("lists the attachments without downloading them or returning the content when neither was asked for", async () => {
-        const stubs = stubbedPage();
+        const fake = stubbedPage();
 
         const details = await loadWikiPageDetails({
-            api: stubs.api,
+            api: fake.api,
             config,
             input: "7",
             includeContent: false,
@@ -771,14 +824,14 @@ describe("loadWikiPageDetails", () => {
 
         expect(details.content).toBeUndefined();
         expect(details.attachments).toEqual([{ name: "shot.png", localPath: undefined }]);
-        expect(stubs.fetchBinary).not.toHaveBeenCalled();
+        expect(fake.fileUrls()).toEqual([]);
     });
 
     test("downloads nothing for a page whose content links no attachment", async () => {
-        const stubs = stubbedPage({ ...page, content: "No pictures here\n" });
+        const fake = stubbedPage({ ...page, content: "No pictures here\n" });
 
         const details = await loadWikiPageDetails({
-            api: stubs.api,
+            api: fake.api,
             config,
             input: "7",
             includeContent: true,
@@ -788,7 +841,7 @@ describe("loadWikiPageDetails", () => {
 
         expect(details.attachments).toEqual([]);
         expect(details.content).toBe("No pictures here\n");
-        expect(stubs.fetchBinary).not.toHaveBeenCalled();
+        expect(fake.fileUrls()).toEqual([]);
     });
 
     test("skips the view count when views are off or the page has no id", async () => {
@@ -812,14 +865,14 @@ describe("loadWikiPageDetails", () => {
 
         expect(withoutViews.views).toBeUndefined();
         expect(withoutId.views).toBeUndefined();
-        expect(off.getWikiPageViews).not.toHaveBeenCalled();
-        expect(noId.getWikiPageViews).not.toHaveBeenCalled();
+        expect(off.viewQueries()).toEqual([]);
+        expect(noId.viewQueries()).toEqual([]);
     });
 
     test("leaves the last change out when the page has no git path or the history is empty", async () => {
         const noGitPath = stubbedPage({ ...page, gitItemPath: undefined });
         const emptyHistory = stubbedPage();
-        emptyHistory.getGitCommitsForPath.mockResolvedValue([]);
+        emptyHistory.answers.commits = [];
 
         const first = await loadWikiPageDetails({
             api: noGitPath.api,
@@ -837,19 +890,19 @@ describe("loadWikiPageDetails", () => {
         });
 
         expect(first.lastChange).toBeUndefined();
-        expect(noGitPath.getGitCommitsForPath).not.toHaveBeenCalled();
+        expect(noGitPath.commitQueries()).toEqual([]);
         expect(second.lastChange).toBeUndefined();
-        expect(emptyHistory.getGitCommitsForPath).toHaveBeenCalledTimes(1);
+        expect(emptyHistory.commitQueries()).toHaveLength(1);
     });
 
     test("still returns the page when the last change and the views cannot be loaded, and logs both", async () => {
-        const stubs = stubbedPage();
+        const fake = stubbedPage();
         const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
-        stubs.getGitCommitsForPath.mockRejectedValue(new Error("HTTP 500"));
-        stubs.getWikiPageViews.mockRejectedValue(new Error("HTTP 403"));
+        fake.answers.commits = new Response("server error", { status: 500 });
+        fake.answers.views = new Response("forbidden", { status: 403 });
 
         const details = await loadWikiPageDetails({
-            api: stubs.api,
+            api: fake.api,
             config,
             input: "7",
             includeContent: false,
@@ -882,21 +935,19 @@ describe("diffWikiPage", () => {
     };
 
     function stubbedHistory(history: GitCommitRefApi[] = commits, pageApi: WikiPageApi = page) {
-        const stubs = stubApi();
-        stubs.getWikis.mockResolvedValue([projectWiki]);
-        stubs.getWikiPage.mockResolvedValue(pageApi);
-        stubs.getGitCommitsForPath.mockResolvedValue(history);
-        stubs.fetchBinary.mockImplementation(async (url) =>
-            bytes(versions[new URL(url).searchParams.get("versionDescriptor.version") ?? ""] ?? "")
-        );
+        const fake = fakeApi();
+        fake.answers.wikis = [projectWiki];
+        fake.answers.page = () => pageApi;
+        fake.answers.commits = history;
+        fake.answers.file = (url) => bytes(versions[url.searchParams.get("versionDescriptor.version") ?? ""] ?? "");
 
-        return stubs;
+        return fake;
     }
 
     test("compares the newest commit with the one before it when no versions are named", async () => {
-        const stubs = stubbedHistory();
+        const fake = stubbedHistory();
 
-        const result = await diffWikiPage({ api: stubs.api, config, input: "7" });
+        const result = await diffWikiPage({ api: fake.api, config, input: "7" });
 
         expect(result.wiki).toBe("Widgets.wiki");
         expect(result.path).toBe("/Projects/Feature");
@@ -909,14 +960,14 @@ describe("diffWikiPage", () => {
         expect(result.to.commitId).toBe("ccc3333333");
         expect(result.diff.startsWith("--- a/Feature\n+++ b/Feature\n")).toBe(true);
         expect(result.diff).toContain("@@ -1,2 +1,2 @@\n one\n-two\n+three");
-        expect(stubs.getWikiPage).toHaveBeenCalledWith({
+        expect(fake.pageQueries()).toContainEqual({
             wikiId: "w-1",
             pageId: 7,
             path: undefined,
             recursionLevel: "none",
             includeContent: false,
         });
-        expect(stubs.getGitCommitsForPath).toHaveBeenCalledWith({
+        expect(fake.commitQueries()).toContainEqual({
             repositoryId: "r-1",
             itemPath: "/Projects/Feature.md",
             version: "wikiMaster",
@@ -925,11 +976,11 @@ describe("diffWikiPage", () => {
     });
 
     test("reads each version of the page file at its own commit", async () => {
-        const stubs = stubbedHistory();
+        const fake = stubbedHistory();
 
-        await diffWikiPage({ api: stubs.api, config, input: "7" });
+        await diffWikiPage({ api: fake.api, config, input: "7" });
 
-        const requested = stubs.fetchBinary.mock.calls.map(([url]) => new URL(url).searchParams);
+        const requested = fake.fileUrls().map((url) => url.searchParams);
 
         expect(requested.map((params) => params.get("versionDescriptor.version")).sort()).toEqual([
             "bbb2222222",
@@ -940,9 +991,9 @@ describe("diffWikiPage", () => {
     });
 
     test("takes both versions from abbreviated commit ids when they are given", async () => {
-        const stubs = stubbedHistory();
+        const fake = stubbedHistory();
 
-        const result = await diffWikiPage({ api: stubs.api, config, input: "7", from: "aaa", to: "bbb" });
+        const result = await diffWikiPage({ api: fake.api, config, input: "7", from: "aaa", to: "bbb" });
 
         expect(result.from.commitId).toBe("aaa1111111");
         expect(result.to.commitId).toBe("bbb2222222");
@@ -950,39 +1001,34 @@ describe("diffWikiPage", () => {
     });
 
     test("starts from the commit before a chosen target version", async () => {
-        const stubs = stubbedHistory();
+        const fake = stubbedHistory();
 
-        const result = await diffWikiPage({ api: stubs.api, config, input: "7", to: "bbb2" });
+        const result = await diffWikiPage({ api: fake.api, config, input: "7", to: "bbb2" });
 
         expect(result.from.commitId).toBe("aaa1111111");
         expect(result.to.commitId).toBe("bbb2222222");
     });
 
     test("returns an empty diff when both versions hold the same text", async () => {
-        const stubs = stubbedHistory([
+        const fake = stubbedHistory([
             { commitId: "ddd4444444" },
             { commitId: "ccc3333333", comment: "Same text, other commit" },
         ]);
-        stubs.fetchBinary.mockImplementation(async () => bytes("same\n"));
+        fake.answers.file = () => bytes("same\n");
 
-        const result = await diffWikiPage({ api: stubs.api, config, input: "7" });
+        const result = await diffWikiPage({ api: fake.api, config, input: "7" });
 
         expect(result.diff).toBe("");
     });
 
     test("passes the context size on to the diff", async () => {
-        const stubs = stubbedHistory();
+        const fake = stubbedHistory();
         const lines = (middle: string) => ["l1", "l2", "l3", "l4", middle, "l6", "l7", "l8", "l9", ""].join("\n");
-        stubs.fetchBinary.mockImplementation(async (url) =>
-            bytes(
-                new URL(url).searchParams.get("versionDescriptor.version") === "ccc3333333"
-                    ? lines("new")
-                    : lines("old")
-            )
-        );
+        fake.answers.file = (url) =>
+            bytes(url.searchParams.get("versionDescriptor.version") === "ccc3333333" ? lines("new") : lines("old"));
 
-        const narrow = await diffWikiPage({ api: stubs.api, config, input: "7", context: 1 });
-        const wide = await diffWikiPage({ api: stubs.api, config, input: "7" });
+        const narrow = await diffWikiPage({ api: fake.api, config, input: "7", context: 1 });
+        const wide = await diffWikiPage({ api: fake.api, config, input: "7" });
 
         expect(narrow.diff).toContain(" l4\n-old\n+new\n l6");
         expect(narrow.diff).not.toContain(" l3");
@@ -991,50 +1037,50 @@ describe("diffWikiPage", () => {
     });
 
     test("refuses a page that has no git path", async () => {
-        const stubs = stubbedHistory(commits, { id: 7, path: "/Projects/Feature" });
+        const fake = stubbedHistory(commits, { id: 7, path: "/Projects/Feature" });
 
-        await expect(diffWikiPage({ api: stubs.api, config, input: "7" })).rejects.toThrow(
+        await expect(diffWikiPage({ api: fake.api, config, input: "7" })).rejects.toThrow(
             "Page /Projects/Feature has no git path"
         );
-        expect(stubs.getGitCommitsForPath).not.toHaveBeenCalled();
+        expect(fake.commitQueries()).toEqual([]);
     });
 
     test("names the history window when the requested version is not in it", async () => {
-        const stubs = stubbedHistory();
+        const fake = stubbedHistory();
 
-        await expect(diffWikiPage({ api: stubs.api, config, input: "7", to: "zzz" })).rejects.toThrow(
+        await expect(diffWikiPage({ api: fake.api, config, input: "7", to: "zzz" })).rejects.toThrow(
             "No commit 'zzz' in the last 3 versions of /Projects/Feature"
         );
-        await expect(diffWikiPage({ api: stubs.api, config, input: "7", from: "yyy" })).rejects.toThrow(
+        await expect(diffWikiPage({ api: fake.api, config, input: "7", from: "yyy" })).rejects.toThrow(
             "No commit 'yyy' in the last 3 versions of /Projects/Feature"
         );
-        expect(stubs.fetchBinary).not.toHaveBeenCalled();
+        expect(fake.fileUrls()).toEqual([]);
     });
 
     test("says so when the target is the oldest version and nothing older exists", async () => {
-        const stubs = stubbedHistory();
+        const fake = stubbedHistory();
 
-        await expect(diffWikiPage({ api: stubs.api, config, input: "7", to: "aaa" })).rejects.toThrow(
+        await expect(diffWikiPage({ api: fake.api, config, input: "7", to: "aaa" })).rejects.toThrow(
             "/Projects/Feature has no version older than aaa11111"
         );
     });
 
     test("says the page has no history when no version is named and the history is empty", async () => {
-        const stubs = stubbedHistory([]);
+        const fake = stubbedHistory([]);
 
-        const failure = await diffWikiPage({ api: stubs.api, config, input: "7" }).catch((error: Error) => error);
+        const failure = await diffWikiPage({ api: fake.api, config, input: "7" }).catch((error: Error) => error);
 
         expect(failure).toBeInstanceOf(Error);
         expect((failure as Error).message).toBe(
             "Page /Projects/Feature has no history, so there is nothing to compare"
         );
-        expect(stubs.fetchBinary).not.toHaveBeenCalled();
+        expect(fake.fileUrls()).toEqual([]);
     });
 
     test("still names a requested version that an empty history cannot hold", async () => {
-        const stubs = stubbedHistory([]);
+        const fake = stubbedHistory([]);
 
-        await expect(diffWikiPage({ api: stubs.api, config, input: "7", to: "zzz" })).rejects.toThrow(
+        await expect(diffWikiPage({ api: fake.api, config, input: "7", to: "zzz" })).rejects.toThrow(
             "No commit 'zzz' in the last 0 versions of /Projects/Feature"
         );
     });

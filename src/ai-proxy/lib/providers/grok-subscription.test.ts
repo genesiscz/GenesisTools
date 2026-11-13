@@ -7,7 +7,7 @@ import { resetWhamItemStore } from "@app/ai-proxy/lib/providers/wham-item-store"
 import { CLAUDE_CODE_COMPACTION_MARK } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { TOOL_ROUTING_TAG } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { GrokSubscriptionClient } from "@genesiscz/utils/ai/grok";
+import { GrokAuthExpiredError, GrokSubscriptionClient } from "@genesiscz/utils/ai/grok";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -449,6 +449,68 @@ describe("GrokSubscriptionProvider.messages /responses route (default)", () => {
         expect(res.status).toBe(200);
     });
 
+    it("retries on every rejection text the shared check knows, in any letter case", async () => {
+        const { provider, sent } = stubbedProvider((calls) =>
+            calls.length === 1
+                ? new Response(
+                      SafeJSON.stringify({ error: "INVALID_ENCRYPTED_CONTENT: could NOT DECRYPT reasoning" }),
+                      {
+                          status: 400,
+                          headers: { "content-type": "application/json" },
+                      }
+                  )
+                : new Response(envelope, { status: 200, headers: { "content-type": "application/json" } })
+        );
+        const body = SafeJSON.stringify({
+            model: "grok-4.6",
+            max_tokens: 100,
+            messages: [
+                { role: "user", content: "hi" },
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "thinking", thinking: "old reasoning", signature: "grokrs1:rs_x:STALEENC==" },
+                        { type: "text", text: "earlier answer" },
+                    ],
+                },
+                { role: "user", content: "again?" },
+            ],
+        });
+
+        const res = await provider.messages(
+            new Request("http://proxy/v1/messages", { method: "POST", body }),
+            "grok-4.6",
+            body
+        );
+
+        expect(sent).toHaveLength(2);
+        expect(res.status).toBe(200);
+    });
+
+    it("does not retry a decrypt rejection when the request replayed no reasoning items", async () => {
+        const { provider, sent } = stubbedProvider(
+            () =>
+                new Response(SafeJSON.stringify({ code: "invalid-argument", error: "Could not decrypt the content" }), {
+                    status: 400,
+                    headers: { "content-type": "application/json" },
+                })
+        );
+        const body = SafeJSON.stringify({
+            model: "grok-4.6",
+            max_tokens: 100,
+            messages: [{ role: "user", content: "hi" }],
+        });
+
+        const res = await provider.messages(
+            new Request("http://proxy/v1/messages", { method: "POST", body }),
+            "grok-4.6",
+            body
+        );
+
+        expect(sent).toHaveLength(1);
+        expect(res.status).toBe(400);
+    });
+
     it("does not retry on unrelated errors", async () => {
         const { provider, sent } = stubbedProvider(
             () =>
@@ -595,6 +657,74 @@ describe("GrokSubscriptionProvider.responses item_reference chaining", () => {
  * The spy sits on the token endpoint itself and throws, and the negative control
  * proves the normal path still reaches it.
  */
+describe("GrokSubscriptionProvider single-shot forward through the exchange", () => {
+    function providerAnswering(answer: (init: RequestInit) => Promise<Response>): GrokSubscriptionProvider {
+        const provider = makeProvider();
+        const client = provider as unknown as {
+            client: { fetch: (path: string, init: RequestInit) => Promise<Response> };
+        };
+        client.client.fetch = async (_path, init) => answer(init);
+
+        return provider;
+    }
+
+    function chat(provider: GrokSubscriptionProvider, signal?: AbortSignal): Promise<Response> {
+        const body = SafeJSON.stringify({ model: "grok-4.6", messages: [{ role: "user", content: "hi" }] });
+
+        return provider.chatCompletions(
+            new Request("http://proxy/v1/chat/completions", { method: "POST", body, signal }),
+            "grok-4.6",
+            body
+        );
+    }
+
+    it("re-wraps a non-OK answer in the OpenAI envelope and keeps retry-after", async () => {
+        const provider = providerAnswering(
+            async () =>
+                new Response(SafeJSON.stringify({ code: "rate", error: "Slow down" }), {
+                    status: 429,
+                    headers: { "retry-after": "9", "x-request-id": "dropped" },
+                })
+        );
+
+        const response = await chat(provider);
+        const body = SafeJSON.parse(await response.text(), { strict: true });
+
+        expect(response.status).toBe(429);
+        expect(response.headers.get("retry-after")).toBe("9");
+        expect(response.headers.get("x-request-id")).toBeNull();
+        expect(body).toMatchObject({ error: { type: "rate_limit_error" } });
+    });
+
+    it("answers an expired Grok login with its auth envelope", async () => {
+        const provider = providerAnswering(async () => {
+            throw new GrokAuthExpiredError("/tmp/none/auth.json");
+        });
+
+        const response = await chat(provider);
+        const body = SafeJSON.parse(await response.text(), { strict: true });
+
+        expect(response.status).toBe(502);
+        expect(body).toMatchObject({ error: { type: "upstream_auth_error", code: "grok_auth_expired" } });
+    });
+
+    it("answers a client abort with 499", async () => {
+        const provider = providerAnswering(async (init) => {
+            if (init.signal?.aborted) {
+                throw new DOMException("The operation was aborted.", "AbortError");
+            }
+
+            return new Response("{}");
+        });
+        const controller = new AbortController();
+        controller.abort();
+
+        const response = await chat(provider, controller.signal);
+
+        expect(response.status).toBe(499);
+    });
+});
+
 describe("GrokSubscriptionProvider.create probe mode", () => {
     const issuer = "https://auth.example.test";
     const originalFetch = globalThis.fetch;
@@ -684,7 +814,7 @@ describe("GrokSubscriptionProvider.create probe mode", () => {
     });
 
     it("the registry builds a Grok account for inspection in probe mode", async () => {
-        const { createProviderForInspection } = await import("@app/ai-proxy/lib/providers/registry");
+        const { createProviderForInspection } = await import("@app/ai-proxy/lib/providers/pool");
         const grantCalls: string[] = [];
         stubFetchRefusingGrant(grantCalls);
 
@@ -696,7 +826,7 @@ describe("GrokSubscriptionProvider.create probe mode", () => {
 
     /** Negative control: the registry's serving build is not a probe. */
     it("the registry builds a Grok account for serving without probe mode", async () => {
-        const { createProvider } = await import("@app/ai-proxy/lib/providers/registry");
+        const { createProvider } = await import("@app/ai-proxy/lib/providers/pool");
         const grantCalls: string[] = [];
         stubFetchRefusingGrant(grantCalls);
 

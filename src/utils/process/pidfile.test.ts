@@ -1,16 +1,25 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { tryWithPathArbitration, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import * as identity from "@genesiscz/utils/process-identity";
 import {
-    attemptStaleTakeover,
     buildPidRecord,
     claimPidFile,
     classifyPidRecord,
     clearPidFile,
+    EMPTY_HOLDER_GRACE_MS,
     inspectPidFile,
     ownsPidFile,
     readLivePid,
@@ -234,29 +243,6 @@ describe("pidfile", () => {
         });
     });
 
-    test("stale takeover cannot rename a fresh pidfile during claim arbitration", async () => {
-        let releaseOwner: () => void = () => {};
-        let ownerReady: () => void = () => {};
-        const ownerStarted = new Promise<void>((resolve) => {
-            ownerReady = resolve;
-        });
-        const ownerRelease = new Promise<void>((resolve) => {
-            releaseOwner = resolve;
-        });
-        const owner = tryWithPathArbitration(path, async () => {
-            writeFileSync(path, String(process.pid));
-            ownerReady();
-            await ownerRelease;
-        });
-        await ownerStarted;
-
-        expect(await attemptStaleTakeover(path, String(DEAD_PID))).toBe(false);
-        expect(readFileSync(path, "utf8").trim()).toBe(String(process.pid));
-
-        releaseOwner();
-        expect((await owner).acquired).toBe(true);
-    });
-
     test("a failed arbiter release does not replace the callback's result", async () => {
         // A directory replaced by a file makes proper-lockfile's rmdir fail, so release() rejects.
         const breakArbiter = () => {
@@ -330,6 +316,9 @@ describe("pidfile", () => {
 
         for (const content of stale) {
             writeFileSync(path, content);
+            // An unreadable claim is an orphan only past the shared grace; claim-takeover.test.ts covers one inside it.
+            const created = new Date(Date.now() - EMPTY_HOLDER_GRACE_MS - 1_000);
+            utimesSync(path, created, created);
             expect(await claimPidFile(path)).toEqual({ status: "claimed", tookOver: true });
             expect(readPidRecord(path)?.pid).toBe(process.pid);
         }
@@ -354,6 +343,7 @@ describe("pidfile", () => {
             await owner.exited;
         }
 
+        // A fresh unreadable file may be an owner between its create and its write, so it is held whatever the rule.
         writeFileSync(path, "not a pid");
         const onlyStale = (state: { status: string }) => state.status === "dead" || state.status === "foreign";
 

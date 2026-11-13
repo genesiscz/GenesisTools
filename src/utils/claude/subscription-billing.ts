@@ -106,8 +106,10 @@ export function applySystemPromptPrefix(prefix: string | undefined, basePrompt: 
  * Create a fetch wrapper that:
  * 1. Strips x-api-key (SDK injects it, but OAuth uses Bearer only)
  * 2. Injects billing header as system[0] (required for Sonnet/Opus)
+ *
+ * `transport` is the fetch underneath (a test's fake); the global fetch when absent.
  */
-export function createSubscriptionFetch(): typeof fetch {
+export function createSubscriptionFetch(transport?: typeof fetch): typeof fetch {
     return ((url: RequestInfo | URL, init?: RequestInit) => {
         const headers = new Headers(init?.headers);
         headers.delete("x-api-key");
@@ -122,6 +124,6 @@ export function createSubscriptionFetch(): typeof fetch {
             }
         }
 
-        return globalThis.fetch(url, { ...init, body, headers });
+        return (transport ?? globalThis.fetch)(url, { ...init, body, headers });
     }) as typeof fetch;
 }

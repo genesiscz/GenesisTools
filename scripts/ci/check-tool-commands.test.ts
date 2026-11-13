@@ -111,7 +111,6 @@ describe("checkTree", () => {
     // The guard must catch the rename it exists for: `foo bar` renamed to `foo baz`.
     test("reports a reference to a renamed subcommand", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": 'program.command("baz");',
             "src/other/index.ts": 'out.info(toolCommand("foo bar"));',
         });
@@ -124,7 +123,6 @@ describe("checkTree", () => {
 
     test("accepts a group built by a helper and a lazy registrar key", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts":
                 'const REGISTRARS = {\n    clones: async () => (await import("x")).register,\n};\nprogram.addCommand(buildGroup("apfs"));',
             "src/other/index.ts": 'toolCommand("foo clones"); toolCommand("foo apfs");',
@@ -136,7 +134,6 @@ describe("checkTree", () => {
     // `tools cc` has no commander program: it routes argv by hand against a SUBCOMMANDS set.
     test("accepts a subcommand a hand-routed tool lists in its SUBCOMMANDS set, and still rejects others", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": 'const SUBCOMMANDS = new Set([\n    "run",\n    "resume",\n]);',
             "src/other/index.ts": 'toolCommand("foo run");\ntoolCommand("foo gone");',
         });
@@ -150,7 +147,6 @@ describe("checkTree", () => {
     // `tools agents hooks mods enable|disable` registers both words in one loop.
     test("accepts the words of a const that is a choice of two literals, and still rejects others", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts":
                 'for (const on of [true, false]) {\n    const verb = on ? "enable" : "disable";\n    program.command(verb);\n}',
             "src/other/index.ts": 'toolCommand("foo enable");\ntoolCommand("foo disable");\ntoolCommand("foo toggle");',
@@ -168,7 +164,6 @@ describe("checkTree", () => {
         'program.command(("enable" as const));',
     ])("unwraps literal registrations: %s", (registration) => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": registration,
             "src/other/index.ts": 'toolCommand("foo enable"); toolCommand("foo gone");',
         });
@@ -184,7 +179,6 @@ describe("checkTree", () => {
         'let verb = "enable"; function update() { verb = "disable"; } program.command(verb);',
     ])("tracks literal writes to the same binding: %s", (registration) => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": registration,
             "src/other/index.ts": 'toolCommand("foo enable"); toolCommand("foo disable"); toolCommand("foo gone");',
         });
@@ -203,7 +197,6 @@ describe("checkTree", () => {
         'const verb = on ? "enable" : dynamic; program.command(verb);',
     ])("does not infer a registration after a dynamic write: %s", (registration) => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": `program.command("status"); ${registration}`,
             "src/other/index.ts": 'toolCommand("foo status"); toolCommand("foo enable");',
         });
@@ -215,7 +208,6 @@ describe("checkTree", () => {
 
     test.each(["argument", "arguments"])("resolves literal choices for chained .%s()", (method) => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": `const verb = on ? "enable" : "disable"; program.command((verb)).description("toggle").${method}("<name>");`,
             "src/other/index.ts":
                 'toolCommand("foo enable alice"); toolCommand("foo disable bob"); toolCommand("foo gone alice");',
@@ -234,7 +226,6 @@ describe("checkTree", () => {
         'const verb = "removed"; { program.command(verb); const verb = dynamic; }',
     ])("does not leak registrations across lexical bindings: %s", (registration) => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": `program.command("status"); ${registration}`,
             "src/other/index.ts": 'toolCommand("foo status"); toolCommand("foo removed");',
         });
@@ -246,7 +237,6 @@ describe("checkTree", () => {
 
     test("keeps outer bindings after leaving a block and ignores writes to a shadow", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts":
                 'const verb = "enable"; { let verb = "unused"; verb = dynamic; } function b() { program.command(verb); }',
             "src/other/index.ts": 'toolCommand("foo enable"); toolCommand("foo unused");',
@@ -259,7 +249,6 @@ describe("checkTree", () => {
 
     test("does not infer registration words from mutable let or var initializers", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts":
                 'let verb = "old"; verb = next(); program.command(verb); var other = "gone"; other = next(); program.command(other); const stable = "real"; program.command(stable);',
             "src/other/index.ts": 'toolCommand("foo old");\ntoolCommand("foo gone");\ntoolCommand("foo real");',
@@ -272,7 +261,6 @@ describe("checkTree", () => {
 
     test("accepts a command registered in a @genesiscz/utils module the tool imports", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": 'import { registerConfig } from "@genesiscz/utils/eval/config-cli";',
             "src/utils/eval/config-cli.ts": 'program.command("config");',
             "src/other/index.ts": 'toolCommand("foo config");',
@@ -283,7 +271,6 @@ describe("checkTree", () => {
 
     test("accepts a command registered behind a @genesiscz/utils barrel's re-export", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": 'import { defineApp } from "@genesiscz/utils/App";',
             "src/utils/App/index.ts": 'export { registerAppCommands } from "./commander";',
             "src/utils/App/commander.ts": 'cmd.command("up");',
@@ -295,7 +282,6 @@ describe("checkTree", () => {
 
     test("matches a tool folder whatever its letter case, as the macOS dispatcher does", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/Internal/index.ts": 'program.command("reas");',
             "src/other/index.ts": 'suggestCommand("tools internal reas");',
         });
@@ -305,7 +291,6 @@ describe("checkTree", () => {
 
     test("stops at the positional values of a command that declares arguments", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts":
                 'notify.command("set")\n    .argument("<channel>")\n    .action(run);\nprofile.command("add <name>");',
             "src/other/index.ts": 'toolCommand("foo set say"); toolCommand("foo add me");',
@@ -316,7 +301,6 @@ describe("checkTree", () => {
 
     test("still rejects a renamed word before the positional values", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": 'notify.command("put").argument("<channel>");',
             "src/other/index.ts": 'toolCommand("foo set say");',
         });
@@ -326,7 +310,6 @@ describe("checkTree", () => {
 
     test("accepts a command named by a dashboard registry entry", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": 'registerDashboard({ type: "ui", commandName: "ui" });',
             "src/other/index.ts": 'toolCommand("foo ui");',
         });
@@ -336,7 +319,6 @@ describe("checkTree", () => {
 
     test("passes a tree whose references all exist", () => {
         const root = tree({
-            tools: "const TOOL_ALIASES = new Map([]);",
             "src/foo/index.ts": 'program.command("baz <id>");',
             "src/other/index.ts": 'out.info(toolCommand("foo baz"));',
         });

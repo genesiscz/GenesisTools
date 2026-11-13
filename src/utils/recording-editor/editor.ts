@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+import { sha256Json } from "@genesiscz/utils/hash";
 import { composeImageGrid, type ImageGridResult } from "@genesiscz/utils/image/grid";
 import { decodeImageRgba } from "@genesiscz/utils/image/raster";
 import {
@@ -13,7 +13,6 @@ import {
     type StepContext,
     type StepReport,
 } from "@genesiscz/utils/jobs";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { RECORDING_MANIFEST } from "@genesiscz/utils/screen-recorder/library";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -155,13 +154,9 @@ function toResult(options: { state: EditState; steps: StepReport[]; jobId: strin
     };
 }
 
-function hash(value: unknown): string {
-    return createHash("sha256").update(SafeJSON.stringify(value)).digest("hex");
-}
-
 /** `<genesis-tools root>/recordings/edits/<source hash>/`: one workspace per source, shared by its plans. */
 export function defaultEditsDir(located: LocatedSource): string {
-    return genesisToolsDir("recordings", "edits", hash(located.path).slice(0, 16));
+    return genesisToolsDir("recordings", "edits", sha256Json(located.path).slice(0, 16));
 }
 
 function frameLabel(mode: "time" | "sample" | "index" | "none", frame: EditFrame, position: number): string {
@@ -534,7 +529,7 @@ function compile(options: {
             : join(
                   outputDir,
                   "steps",
-                  `${String(index).padStart(2, "0")}-${kind}-${hash([located.fingerprint, plan.steps.slice(0, index + 1)]).slice(0, 12)}`
+                  `${String(index).padStart(2, "0")}-${kind}-${sha256Json([located.fingerprint, plan.steps.slice(0, index + 1)]).slice(0, 12)}`
               );
     const steps: JobStep<EditState>[] = [
         {

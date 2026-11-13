@@ -1,8 +1,9 @@
-import type { ToolEntry } from "@app/genesis-tools-mcp/lib/server";
 import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import type { ToolEntry } from "@genesiscz/utils/mcp/tool-entry";
+import type { LoadedToolGroup } from "@genesiscz/utils/mcp/tool-group";
 import { z } from "zod";
 import { NativeControlDriver } from "../lib/decision/native";
 import { replayWorkflow } from "../lib/decision/workflow";
@@ -118,7 +119,11 @@ function queryEntry(
  * plan behaves the same from either door: validation before the first step, the focus-steal guard,
  * per-step ms, failedSteps and stopOnFail.
  */
-export function controlToolEntries(): Record<string, ToolEntry> {
+export function toolGroup(): LoadedToolGroup {
+    return { entries: controlToolEntries() };
+}
+
+function controlToolEntries(): Record<string, ToolEntry> {
     return {
         control_workflow_run: {
             description:

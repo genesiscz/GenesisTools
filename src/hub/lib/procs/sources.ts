@@ -2,9 +2,10 @@ import { realpathSync } from "node:fs";
 import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { logger } from "@genesiscz/utils/logger";
+import { capture } from "@genesiscz/utils/process/capture";
 import { ownLineage, readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { parseLaunchctlList } from "@genesiscz/utils/process/launchctl";
-import { capture, listPsTable, type PsRow } from "@genesiscz/utils/process/ps";
+import { listProcessRows, type PsRow } from "@genesiscz/utils/process/processes";
 import { readTopEnergy } from "@genesiscz/utils/process/top";
 import { buildProcsReport, type ProcsReport, type SessionLike } from "./tree";
 
@@ -40,7 +41,7 @@ function realpathOr(path: string): string {
 }
 
 export const realProcsSources: ProcsSources = {
-    table: () => listPsTable({ timeoutMs: PS_TIMEOUT_MS }),
+    table: () => listProcessRows({ timeoutMs: PS_TIMEOUT_MS }),
     cwdOf: (pid) => {
         const cwd = readProcessCwd(pid);
         return cwd && cwd !== "/" ? realpathOr(cwd) : null;
@@ -104,7 +105,7 @@ export async function openAgentSessionIds(
         sources ??
         (psTimeoutMs === undefined
             ? realProcsSources
-            : { ...realProcsSources, table: () => listPsTable({ timeoutMs: psTimeoutMs }) });
+            : { ...realProcsSources, table: () => listProcessRows({ timeoutMs: psTimeoutMs }) });
     const report = await readProcsReport({ sources: bounded });
     return new Set(
         report.groups.flatMap((group) =>

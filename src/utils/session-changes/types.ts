@@ -1,3 +1,5 @@
+import type { ChangeLogRow } from "@genesiscz/utils/agents/change-log";
+
 /** How a file was changed: a harness file tool names its path exactly; `bash` is inferred from a shell call. */
 export type ChangeVia = "edit" | "write" | "notebook" | "bash";
 
@@ -41,21 +43,8 @@ export type ExclusionReason =
     /** The file tool call failed, so it changed nothing. */
     | "tool-failed";
 
-/** One row of the per-session change log the agents hook writes (`~/.genesis-tools/agents/<id>/changes.jsonl`). */
-export interface LoggedChange {
-    ts: string;
-    session: string;
-    turn: string;
-    tool: string;
-    /** The tool call that made the change. Rows written before 2026-09-24 do not carry it. */
-    toolUseId?: string;
-    cwd: string;
-    path: string;
-    beforeOid: string | null;
-    afterOid: string | null;
-    source: "edit" | "write" | "bash";
-    skipped?: "binary" | "large";
-}
+/** One row of the per-session change log the agents hook writes: the one row type of `@genesiscz/utils/agents/change-log`. */
+export type LoggedChange = ChangeLogRow;
 
 /** One tool call of the session, read from the transcript. */
 export interface SessionToolCall {

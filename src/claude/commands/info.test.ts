@@ -23,12 +23,10 @@ describe("tools claude info: which account", () => {
         const account = await resolveInfoAccount({
             name: undefined,
             readAccounts: vaultRead,
-            loadSecrets: async () => ({
-                getAccountsByProvider: () => [
-                    { name: "personal", provider: "anthropic-sub", tokens: { longLivedToken: "tok-personal" } },
-                    { name: "work", provider: "anthropic-sub", tokens: { longLivedToken: "tok-work" } },
-                ],
-            }),
+            loadSecrets: async () => [
+                { name: "personal", longLivedToken: "tok-personal" },
+                { name: "work", longLivedToken: "tok-work" },
+            ],
             readToken: async () => "tok-work",
         });
 

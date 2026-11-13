@@ -4,11 +4,10 @@ import { runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
-import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
+import { clackBackend } from "@genesiscz/utils/prompts/p/clack-backend";
 
 // Use inquirer backend for this tool
-p.setBackend(inquirerBackend);
+p.setBackend(clackBackend);
 
 import { Command } from "commander";
 import * as watchman from "fb-watchman";
@@ -30,9 +29,6 @@ interface WatchmanResponse {
     relative_path?: string;
     warning?: string;
 }
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
 
 const client = new watchman.Client();
 
