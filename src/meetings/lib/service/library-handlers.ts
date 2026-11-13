@@ -4,7 +4,7 @@ import { applyConfigEdits, type ConfigEdit, configValueAt, parseConfigPath } fro
 import { testPhrase } from "../dictionary-test";
 import { matchPreview } from "../match-preview";
 import { projectLabels } from "../meeting-fields";
-import { removeProject, renameProject } from "../project-admin";
+import { removeProject, renameProject, restoreProject } from "../project-admin";
 import { pairFromMeetings, projectMeetingPeople } from "../project-people";
 import { projectSuggestions, type SuggestionReads } from "../project-suggestions";
 import { dictionaryShowRead } from "../window-reads";
@@ -75,6 +75,14 @@ export async function removeKnownProject(
         ...(params.unassign ? { unassign: true } : {}),
         ...(deps.now ? { now: deps.now() } : {}),
     });
+}
+
+export async function restoreRemovedProject(
+    params: MeetingsParsedParams<"projects.restore">,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): Promise<MeetingsResult<"projects.restore">> {
+    return restoreProject({ config: configOf(deps), store, backup: params.backup });
 }
 
 export async function changeProjectLabels(

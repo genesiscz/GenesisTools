@@ -1143,6 +1143,26 @@ extension MeetingsServiceTests {
 }
 
 extension MeetingsServiceTests {
+    /// The removal notice's Undo restores the project from the backup the removal answered (`projects.restore`).
+    func testAProjectRemovalNoticeUndoesTheRemovalFromItsBackup() async throws {
+        try writeServiceEntry()
+        try libraryAnswers()
+        let model = settingsWithDeniedCommands(makeService())
+        model.removeProject("Harbor", unassign: true)
+        try await waitForSettingsCalls(["projects.remove"], model: model)
+        let removal = try MeetingsService.decode(ProjectRemoval.self,
+                                                 try XCTUnwrap(fake.answers["projects.remove"]?["result"]))
+        let notice = try XCTUnwrap(model.notices.notices.last { $0.text.hasPrefix("Removed the project Harbor") })
+        let undo = try XCTUnwrap(notice.actions.first { $0.label == "Undo" }, "the removal notice offers its Undo")
+        undo.perform(notice.id)
+        try await waitForSettingsCalls(["projects.restore"], model: model)
+        let restore = try XCTUnwrap(fake.received.first { $0["method"] as? String == "projects.restore" })
+        XCTAssertEqual((restore["params"] as? [String: Any])?["backup"] as? String, removal.backup)
+        let texts = model.notices.notices.map(\.text)
+        XCTAssertTrue(texts.contains { $0.hasPrefix("Restored the project Harbor") }, "\(texts)")
+        XCTAssertEqual(commands.runs, [], "a healthy typed service must not launch a command")
+    }
+
     func testSettingsBatchRulesAndRemovalsUseTypedParams() async throws {
         try writeServiceEntry()
         try libraryAnswers()

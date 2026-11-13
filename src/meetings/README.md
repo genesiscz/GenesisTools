@@ -64,6 +64,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `projects add <name>` | Add a known project |
 | `projects rename <name> <new-name> [--json]` | Rename a project everywhere it is named: its block (dictionary, labels, match rules, export folder), its source folder pairings and the project of its meetings. Refused when the new name is taken |
 | `projects remove <name> [--unassign] [--json]` | Remove a project; its block and pairings go into `~/.genesis-tools/backups/meetings/<time>-project-<name>.json` first. Refused while meetings have it, unless `--unassign` leaves them without a project |
+| `projects restore <backup> [--json]` | Undo a removal from the backup file it printed: the block, its source pairings (a pairing made again since stays) and the project of the meetings it left without one (a meeting given another project since keeps it). Refused while a project of that name exists; only a file in the removal backups folder is read |
 | `projects labels <name> [--add <label...>] [--remove <label...>]` | The labels a meeting of the project can carry ("Checkout 2.0") |
 | `projects pair <name> --person "Name <email>"...` | Pair people with a project by hand; a later meeting with them proposes it |
 | `projects unpair --entry <id>` / `projects unpair <name> --person <who>` | Remove the pairings one calendar entry made (a person another source pairs stays), or one person from a project |

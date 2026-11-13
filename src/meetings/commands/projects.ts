@@ -106,6 +106,23 @@ async function remove(name: string, opts: { unassign?: boolean; json?: boolean }
     }
 }
 
+async function restore(backup: string, opts: { json?: boolean }): Promise<void> {
+    try {
+        const result = await withMeetingsClient((client) => client.call("projects.restore", { backup }));
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        ui.ok(
+            `Restored the project ${result.name}${result.meetings.length ? `, with ${plural(result.meetings.length, "meeting")}` : ""}.`
+        );
+    } catch (err) {
+        fail(err);
+    }
+}
+
 async function labels(name: string, opts: { add?: string[]; remove?: string[] }): Promise<void> {
     try {
         const { labels: known } = await withMeetingsClient((client) =>
@@ -289,6 +306,14 @@ export function registerProjectsCommand(program: Command): void {
         .option("--unassign", "leave the meetings that have it without a project")
         .option("--json", "print { name, unassigned, backup } as JSON")
         .action(remove);
+    projects
+        .command("restore")
+        .argument("<backup>", "the backup file `projects remove` printed")
+        .description(
+            "Undo a removal: the project, its folder pairings and the project of the meetings it left without one come back"
+        )
+        .option("--json", "print { name, meetings, sources } as JSON")
+        .action(restore);
     projects
         .command("labels")
         .argument("<name>", "the project name")

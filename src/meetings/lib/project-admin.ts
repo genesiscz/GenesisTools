@@ -1,11 +1,12 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfigStore, projectNameSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { z } from "zod";
 import { type AssignInbox, decisionInbox } from "./assign-inbox";
 import { localStamp } from "./shared";
 
@@ -138,6 +139,11 @@ export interface ProjectRemoval {
     backup: string;
 }
 
+/** The folder removal backups go to, unless a caller names its own. */
+function backupFolder(root?: string): string {
+    return root ?? genesisToolsDir("backups", "meetings");
+}
+
 /**
  * Removes a known project: its block and its source folder pairings, kept in a backup file first. A project that
  * meetings use is refused with their ids unless `unassign`, which leaves those meetings without a project.
@@ -171,7 +177,7 @@ export async function removeProject(options: {
     }
 
     const stamp = localStamp(options.now ?? new Date());
-    const folder = options.backupRoot ?? genesisToolsDir("backups", "meetings");
+    const folder = backupFolder(options.backupRoot);
     let backup = "";
     let removed: unknown;
     const pairings: Record<string, unknown> = {};
@@ -189,7 +195,17 @@ export async function removeProject(options: {
         backup = writeBackup({
             folder,
             base: `${stamp}-project-${name}`,
-            text: `${SafeJSON.stringify({ project: name, block: removed ?? {}, sources: pairings }, null, 4)}\n`,
+            // `meetings`: the ones that had it, so `restoreProject` can give it back to those still without one.
+            text: `${SafeJSON.stringify(
+                {
+                    project: name,
+                    block: removed ?? {},
+                    sources: pairings,
+                    meetings: using.map((record) => record.id),
+                },
+                null,
+                4
+            )}\n`,
         });
 
         if (isObject(raw.projects)) {
@@ -234,4 +250,97 @@ export async function removeProject(options: {
 
     log.debug({ name, unassigned: unassigned.length, backup }, "project removed");
     return { name, unassigned, backup };
+}
+
+/** A removal backup as `removeProject` writes it; one written before `meetings` existed restores no meeting. */
+const projectBackupSchema = z.object({
+    project: z.string().min(1),
+    block: z.record(z.string(), z.unknown()),
+    sources: z.record(z.string(), z.unknown()).default({}),
+    meetings: z.array(z.string()).default([]),
+});
+
+export interface ProjectRestore {
+    name: string;
+    /** The meetings that have the project again: those it was removed from that still have none. */
+    meetings: string[];
+    /** The sources whose folder pairing came back; a source whose pairing was made again keeps the newer one. */
+    sources: string[];
+}
+
+/**
+ * The Undo of `removeProject`: the block from its backup comes back, with the source pairings and the project of the
+ * meetings it left without one. Refused when a project of that name exists again; a meeting given another project
+ * since keeps it. Only a backup in the removal backups folder is read.
+ */
+export async function restoreProject(options: {
+    config: MeetingsConfigStore;
+    store: MeetingStore;
+    backup: string;
+    backupRoot?: string;
+}): Promise<ProjectRestore> {
+    const { config, store } = options;
+    const folder = backupFolder(options.backupRoot);
+    const path = existsSync(options.backup) ? realpathSync(options.backup) : options.backup;
+    const inside = existsSync(folder) ? relative(realpathSync(folder), path) : "..";
+
+    if (!existsSync(path) || inside.startsWith("..") || isAbsolute(inside)) {
+        throw new Error(`${options.backup} is not a project removal backup in ${folder}`);
+    }
+
+    const saved = projectBackupSchema.parse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
+    const name = projectNameSchema.parse(saved.project);
+    const sources: string[] = [];
+
+    await config.update((raw) => {
+        const projects = isObject(raw.projects) ? raw.projects : {};
+
+        if (projects[name] !== undefined) {
+            throw new Error(`A project ${name} exists again; rename it or remove it first to restore the removed one.`);
+        }
+
+        projects[name] = saved.block;
+        raw.projects = projects;
+
+        for (const [source, pairing] of Object.entries(saved.sources)) {
+            const block = isObject(raw.sources) ? raw.sources[source] : undefined;
+
+            if (!isObject(block)) {
+                log.debug({ source, name }, "the source is not configured any more; its pairing stays in the backup");
+                continue;
+            }
+
+            const match = isObject(block.match) ? block.match : {};
+
+            if (match[name] === undefined) {
+                match[name] = pairing;
+                block.match = match;
+                sources.push(source);
+            }
+        }
+    });
+
+    const meetings: string[] = [];
+
+    for (const id of saved.meetings.filter((one) => store.read(one))) {
+        const changed = await store.updateIf(
+            id,
+            { command: "projects restore", change: `project ${name} restored` },
+            (next) => {
+                if (next.project !== undefined) {
+                    return false;
+                }
+
+                next.project = name;
+                return true;
+            }
+        );
+
+        if (changed) {
+            meetings.push(id);
+        }
+    }
+
+    log.debug({ name, meetings: meetings.length, sources: sources.length, backup: path }, "project restored");
+    return { name, meetings, sources };
 }

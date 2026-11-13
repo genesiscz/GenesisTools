@@ -78,6 +78,7 @@
             "projects.add",
             "projects.rename",
             "projects.remove",
+            "projects.restore",
             "projects.labels",
             "projects.unpair",
             "projects.preview",
@@ -100,7 +101,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "66324a59143a"
+          "version": "db2fcb7aece3"
         }
       }
     },
@@ -1272,6 +1273,7 @@
             "projects.add",
             "projects.rename",
             "projects.remove",
+            "projects.restore",
             "projects.labels",
             "projects.unpair",
             "projects.preview",
@@ -1294,7 +1296,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "66324a59143a"
+          "version": "db2fcb7aece3"
         }
       }
     },
@@ -5957,6 +5959,7 @@
             "projects.add",
             "projects.rename",
             "projects.remove",
+            "projects.restore",
             "projects.labels",
             "projects.unpair",
             "projects.preview",
@@ -5979,7 +5982,7 @@
             "comment.changed",
             "people.changed"
           ],
-          "version": "66324a59143a"
+          "version": "db2fcb7aece3"
         }
       }
     },
@@ -6646,6 +6649,32 @@
               "command": "attendance",
               "change": "remove meeting person Robin Example"
             }
+          ]
+        }
+      }
+    },
+    {
+      "method": "projects.restore",
+      "direction": "client→service",
+      "note": "The Undo of the removal: the block, its pairings and the meeting it left without a project come back.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 109,
+        "method": "projects.restore",
+        "params": {
+          "backup": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-pyxtjP/gt-test-home-3SrahT/.genesis-tools/backups/meetings/2026-11-03-1000-project-Harbor.json"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 109,
+        "result": {
+          "name": "Harbor",
+          "meetings": [
+            "2026-11-03-1000-design-review"
+          ],
+          "sources": [
+            "wisprflow"
           ]
         }
       }

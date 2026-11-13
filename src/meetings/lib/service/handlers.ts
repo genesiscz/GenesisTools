@@ -502,6 +502,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "projects.add": async (params) => (await library()).addProject(params, deps),
         "projects.rename": async (params) => (await library()).renameKnownProject(params, storeOf(), deps),
         "projects.remove": async (params) => (await library()).removeKnownProject(params, storeOf(), deps),
+        "projects.restore": async (params) => (await library()).restoreRemovedProject(params, storeOf(), deps),
         "projects.labels": async (params) => (await library()).changeProjectLabels(params, deps),
         "projects.unpair": async (params) => (await library()).unpairProjects(params, deps),
         "projects.preview": async (params) => (await library()).previewProjects(params, storeOf(), deps),

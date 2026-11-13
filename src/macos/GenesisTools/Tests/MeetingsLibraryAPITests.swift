@@ -42,7 +42,7 @@ final class MeetingsLibraryAPITests: XCTestCase {
     }
 
     private static let methods = [
-        MeetingsAPI.ProjectsAdd.name, MeetingsAPI.ProjectsRename.name, MeetingsAPI.ProjectsRemove.name,
+        MeetingsAPI.ProjectsAdd.name, MeetingsAPI.ProjectsRename.name, MeetingsAPI.ProjectsRemove.name, MeetingsAPI.ProjectsRestore.name,
         MeetingsAPI.ProjectsLabels.name, MeetingsAPI.ProjectsUnpair.name, MeetingsAPI.ProjectsPreview.name,
         MeetingsAPI.DictionaryShowEntries.name, MeetingsAPI.DictionaryAdd.name, MeetingsAPI.DictionaryRemove.name,
         MeetingsAPI.DictionaryTest.name, MeetingsAPI.ConfigEdit.name, MeetingsAPI.TonePresets.name,
@@ -72,6 +72,12 @@ final class MeetingsLibraryAPITests: XCTestCase {
                     let removal = try MeetingsService.decode(MeetingsAPI.ProjectsRemove.Result.self, result)
                     XCTAssertEqual(removal.unassigned, [Self.review])
                     XCTAssertTrue(removal.backup.hasSuffix("-project-Harbor.json"), removal.backup)
+                }
+            case MeetingsAPI.ProjectsRestore.name:
+                try roundTrip(MeetingsAPI.ProjectsRestore.Params.self, params, label)
+                if let result {
+                    let restore = try MeetingsService.decode(MeetingsAPI.ProjectsRestore.Result.self, result)
+                    XCTAssertEqual(restore, .init(name: "Harbor", meetings: [Self.review], sources: ["wisprflow"]))
                 }
             case MeetingsAPI.ProjectsLabels.name:
                 try roundTrip(MeetingsAPI.ProjectsLabels.Params.self, params, label)
