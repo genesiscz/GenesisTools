@@ -4,6 +4,7 @@ import Zeroconf, { type Service } from "react-native-zeroconf";
 
 export interface DiscoveredAgent {
     name: string;
+    /** Ready for a URL authority: an IPv6 literal comes in brackets. */
     host: string;
     port: number;
     /** http://host:port */
@@ -12,8 +13,31 @@ export interface DiscoveredAgent {
 
 const SERVICE_TYPE = "devdashboard";
 
-function toAgent(service: Service): DiscoveredAgent | null {
-    const host = service.addresses?.[0] ?? service.host;
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+/**
+ * The host to put in a URL authority. An IPv4 address first; else a routable IPv6 literal, in brackets; else the
+ * mDNS host name. A link-local IPv6 address (fe80::) needs a zone the URL parser refuses, so it is never picked.
+ */
+export function urlHostOf(service: Pick<Service, "addresses" | "host">): string | null {
+    const addresses = service.addresses ?? [];
+    const ipv4 = addresses.find((address) => IPV4.test(address));
+
+    if (ipv4) {
+        return ipv4;
+    }
+
+    const ipv6 = addresses.find((address) => address.includes(":") && !address.includes("%") && !/^fe80:/i.test(address));
+
+    if (ipv6) {
+        return `[${ipv6}]`;
+    }
+
+    return service.host ? service.host.replace(/\.$/, "") : null;
+}
+
+export function toAgent(service: Service): DiscoveredAgent | null {
+    const host = urlHostOf(service);
 
     if (!host || !service.port) {
         return null;
