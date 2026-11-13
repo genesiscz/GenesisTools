@@ -1463,6 +1463,10 @@ func cmdAct(appName _: String) {
             workflowFailure("set requires --value")
         }
         if axStringAttribute(element, "AXRole") == "AXPopUpButton" {
+            if workflowFlag("--no-activate") {
+                workflowDispatchState = "not_started"
+                workflowFailure("native dropdown selection opens a menu and cannot run with --no-activate; no option was changed")
+            }
             try workflowSelectOption(element, value: value)
             break
         }
