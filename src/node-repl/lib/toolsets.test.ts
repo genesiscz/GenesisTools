@@ -6,6 +6,7 @@ import { RecordingSession, type SegmentRecorder } from "@app/control/lib/recordi
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
 import type { AppStatus } from "@app/macos/lib/permissions/app";
 import * as appModule from "@app/macos/lib/permissions/app";
+import * as channelOperation from "@app/meetings/lib/channel-operation";
 import { DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
@@ -2099,6 +2100,27 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(meeting.items.list({ kind: "term" })).toEqual([]);
     });
 
+    // The REPL measured the whole meeting and cut the table after it; the CLI measures only the window.
+    test("meetings: evidence({ raw, from, to }) measures only the window, as the CLI's evidence --table does", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Evidence window", start: "2026-11-02T12:45:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const raw = { lines: [] } as unknown as Awaited<ReturnType<typeof channelOperation.channelEvidence>>;
+        const measured = spyOn(channelOperation, "channelEvidence").mockResolvedValue(raw);
+
+        try {
+            const meeting = (await loadMeetings()).open(record.id) as unknown as {
+                evidence(input: unknown): Promise<unknown>;
+            };
+            await meeting.evidence({ raw: true, from: 10, to: 20 });
+            await meeting.evidence({ raw: true });
+            expect(measured.mock.calls.map((call) => call[1])).toEqual([{ fromSec: 10, toSec: 20 }, undefined]);
+        } finally {
+            measured.mockRestore();
+        }
+    });
+
     // R2-MC12: confirm and reject shared one schema, so a reject took speaker and proposed and kept nothing of them.
     test("meetings: items.reject refuses the values only a confirm takes, and rejects by id", async () => {
         const record = await new MeetingStore().create(
@@ -2115,6 +2137,23 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         await expect(meeting.items.reject({ ids: [item.id], speaker: "Alice" })).rejects.toThrow('"speaker"');
         expect(meeting.record.items[0].status).toBe("suggested");
         expect((await meeting.items.reject({ ids: [item.id] })).decided).toEqual([item.id]);
+    });
+
+    // A filter that matched nothing reached the journal as an empty id list, which it refuses ("Name the items").
+    test("meetings: items.reject by a filter that matches nothing decides nothing, and one that matches rejects", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Reject filter", start: "2026-11-02T12:30:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const meetings = await loadMeetings();
+        const meeting = meetings.open(record.id);
+        await meeting.items.add({
+            findings: [{ kind: "term", at: 1, heard: "jason", proposed: "JSON", confidence: 0.4, reason: "a fixture" }],
+        });
+        const [item] = meeting.record.items;
+        expect((await meeting.items.reject({ kind: "term", where: "confidence>0.8" })).decided).toEqual([]);
+        expect(meeting.record.items[0].status).toBe("suggested");
+        expect((await meeting.items.reject({ kind: "term", where: "confidence<0.5" })).decided).toEqual([item.id]);
     });
 
     test("meetings: an opened meeting reads and changes the settings of its live recording, and says so when it is not recording", async () => {
