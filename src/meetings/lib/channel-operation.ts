@@ -6,7 +6,8 @@ import { callerActor, DecisionJournal } from "./decision-journal";
 import { OpenedMeeting } from "./opened-meeting";
 import { rawMeeting } from "./raw";
 
-export async function channelEvidence(opened: OpenedMeeting) {
+/** The channel evidence of a meeting; with a window, only the lines that start in it are measured. */
+export async function channelEvidence(opened: OpenedMeeting, window?: { fromSec: number; toSec: number }) {
     const config = await opened.config();
     return rawMeeting({
         record: opened.record,
@@ -14,6 +15,7 @@ export async function channelEvidence(opened: OpenedMeeting) {
         evidence: await opened.evidence(),
         points: [],
         people: config.projects[opened.record.project ?? ""]?.match?.people,
+        ...(window ? { window } : {}),
     });
 }
 

@@ -119,10 +119,20 @@ export function lineEvidence(
     evidence: { segments: EvidenceSegment[]; speaking: SpeakingObservation[] },
     presence?: Presence[],
     /** The microphone channel's share of the audio energy over a time range, when the audio is at hand. */
-    energyMicShare?: AcousticShare
+    energyMicShare?: AcousticShare,
+    /** Only the lines that start in this window are measured; each keeps its index in the whole transcript. */
+    options: { window?: { fromSec: number; toSec: number } } = {}
 ): LineEvidence[] {
     const lines = new TranscriptLines(entries);
+    const { window } = options;
     const timed = entries.flatMap((entry, at) => {
+        if (
+            window &&
+            (entry.startSec === undefined || entry.startSec < window.fromSec || entry.startSec > window.toSec)
+        ) {
+            return [];
+        }
+
         const span = lines.span(at);
         return span ? [{ entry, span, index: at }] : [];
     });

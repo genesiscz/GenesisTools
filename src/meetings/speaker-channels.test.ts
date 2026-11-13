@@ -745,6 +745,17 @@ test("a channel replacement stays on its label, applies with an empty plan, stam
     ).rejects.toThrow("at least one finding");
 });
 
+test("line evidence with a window measures only the lines that start in it, at their whole-transcript index", () => {
+    const fixture = scene(Array.from({ length: 6 }, () => ({ label: "Room", mic: 1 })));
+    const windowed = lineEvidence(fixture.meeting.transcript, fixture.evidence, undefined, undefined, {
+        window: { fromSec: 20, toSec: 30 },
+    });
+    expect(windowed.map((line) => [line.index, line.startSec])).toEqual([
+        [2, 20],
+        [3, 30],
+    ]);
+});
+
 test("byChannel decides on the measured microphone share, not the rounded one shown", async () => {
     const store = new MeetingStore(new Storage(`by-channel-precision-${process.pid}`));
     const record = await store.create(
