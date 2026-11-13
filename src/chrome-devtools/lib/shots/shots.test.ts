@@ -16,11 +16,13 @@ import {
     union,
     within,
 } from "@genesiscz/utils/chrome-devtools/shots/kit";
-import { LocatorSyntaxError, parseLocator } from "@genesiscz/utils/chrome-devtools/shots/locator";
+import { LocatorSyntaxError, parseLocator, splitChain } from "@genesiscz/utils/chrome-devtools/shots/locator";
 import {
+    annotationOf,
     capturePart,
     DEFAULT_SETUP,
     describeMiss,
+    frameArea,
     type PageSetup,
     type Resolution,
     resolveLocators,
@@ -29,6 +31,7 @@ import {
 } from "@genesiscz/utils/chrome-devtools/shots/page";
 import { parseShotPart } from "@genesiscz/utils/chrome-devtools/shots/part";
 import { type AnnotationRect, composeOverlay, encodeImage, validateAnnotations } from "@genesiscz/utils/image";
+import { labelSpot } from "@genesiscz/utils/image/mark-layout";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { attach, type Page } from "../cdp";
@@ -92,6 +95,14 @@ describe("the locator grammar", () => {
         expect(() => parseShotPart({ marks: [{ target: id("x"), at: "under" as "below" }] })).toThrow(/unknown side/);
     });
 
+    test("a chain splits only at separators outside quotes and regex literals", () => {
+        expect(splitChain('role=button[name="Next >> page"]')).toEqual(['role=button[name="Next >> page"]']);
+        expect(splitChain('css=[title="a >> b"] >> nth=0')).toEqual(['css=[title="a >> b"]', "nth=0"]);
+        expect(splitChain("text=/a >> [/] b/ >> nth=1")).toEqual(["text=/a >> [/] b/", "nth=1"]);
+        expect(splitChain("text=Don't >> nth=1")).toEqual(["text=Don't", "nth=1"]);
+        expect(parseLocator('role=button[name="Next >> page"]').chains[0]?.steps).toHaveLength(1);
+    });
+
     test("a malformed locator fails at the boundary and names itself", () => {
         expect(() => parseLocator("tesid=x")).toThrow(LocatorSyntaxError);
         expect(() => parseLocator("tesid=x")).toThrow(/locator "tesid=x": unknown step/);
@@ -117,6 +128,9 @@ body { margin: 0; font: 16px Helvetica, Arial, sans-serif; }
 <input id="name" class="abs" style="left:400px;top:330px;width:200px;height:24px">
 <div data-testid="hidden-thing" style="display:none">skryté</div>
 <div id="host" class="abs" style="left:700px;top:20px;width:100px;height:50px"></div>
+<div data-testid="invisible" class="abs" style="left:900px;top:20px;width:40px;height:40px;visibility:hidden"><span data-testid="invisible-child" style="display:block;width:20px;height:20px"></span></div>
+<div data-testid="mixed" class="abs" style="left:900px;top:100px;width:40px;height:40px"></div>
+<div data-testid="mixed" class="abs" style="left:960px;top:200px;width:40px;height:40px;visibility:hidden"></div>
 </body></html>`;
 
 const SHADOW = `document.getElementById("host").attachShadow({ mode: "open" }).innerHTML =
@@ -210,6 +224,20 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
             "testid=panel | testid=usages-buton (member testid=usages-buton) matched nothing"
         );
         expect(hidden).toEqual({ ok: false, source: "testid=hidden-thing", reason: "zero-size" });
+    });
+
+    test("visibility:hidden matches are never boxed, and a chain step into a shadow host searches its root", async () => {
+        const [invisible, invisibleChild, mixed, inHost] = await resolve(
+            id("invisible"),
+            id("invisible-child"),
+            id("mixed"),
+            within(css("#host"), css("span"))
+        );
+
+        expect(invisible).toEqual({ ok: false, source: "testid=invisible", reason: "zero-size" });
+        expect(invisibleChild).toEqual({ ok: false, source: "testid=invisible-child", reason: "zero-size" });
+        expect(box(mixed)).toEqual({ x: 900, y: 100, w: 40, h: 40, count: 1 });
+        expect(box(inHost)).toEqual({ x: 700, y: 20, w: 60, h: 20, count: 1 });
     });
 
     test("text boxes inside a clip are the obstacles, and the overlay's own text is not one", async () => {
@@ -388,6 +416,70 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
         const plan = await loadWebPlan(planPath);
 
         expect(plan.marks).toEqual([{ target: ["testid=panel", "testid=row-1"], label: "x" }]);
+    });
+});
+
+describe("what a shot's overlay paints and exports", () => {
+    test("an unfilled ellipse's painted area covers its whole curved stroke and not its middle", () => {
+        const frame = {
+            shape: "ellipse" as const,
+            box: { x: 10, y: 20, w: 400, h: 200 },
+            stroke: "#ff4d4f",
+            strokeWidth: 3,
+            dash: [],
+            radius: 0,
+            fill: "",
+        };
+        const areas = frameArea(frame);
+        const covered = (x: number, y: number) =>
+            areas.some((area) => x >= area.x && x <= area.x + area.w && y >= area.y && y <= area.y + area.h);
+
+        for (let degree = 0; degree < 360; degree += 3) {
+            const angle = (degree * Math.PI) / 180;
+            const x = 210 + (200 - 1.5) * Math.cos(angle);
+            const y = 120 + (100 - 1.5) * Math.sin(angle);
+            expect(covered(x, y)).toBe(true);
+        }
+
+        expect(covered(210, 120)).toBe(false);
+        expect(covered(210 + 100, 120 + 50)).toBe(false);
+    });
+
+    test("the exported annotation carries the drawn style and the offset to where the chip was placed", () => {
+        const placedChip = { x: 120, y: 20, w: 60, h: 18 };
+        const annotation = annotationOf(
+            {
+                mark: { kind: "box", target: parseLocator("testid=x"), label: { text: "Here" } },
+                frame: {
+                    shape: "rect",
+                    box: { x: 100, y: 50, w: 200, h: 100 },
+                    stroke: "#ffb020",
+                    strokeWidth: 3,
+                    dash: [9, 6],
+                    radius: 8,
+                    fill: "",
+                },
+                chip: {
+                    spec: { text: "Here", style: { bg: "#ffb020", fg: "#111111", fontSize: 14 }, at: placedChip },
+                    placed: { chip: placedChip, position: "top-left", moved: true },
+                },
+            },
+            { x: 0, y: 0, w: 800, h: 600 },
+            2
+        );
+
+        if (annotation.kind !== "box") {
+            throw new Error(`expected a box annotation, got ${annotation.kind}`);
+        }
+
+        expect(annotation.style).toEqual({ stroke: "#ffb020", strokeWidth: 6, radius: 16, fill: "", dash: [18, 12] });
+        expect(annotation.label?.style).toEqual({ bg: "#ffb020", fg: "#111111", fontSize: 28 });
+        const rect = { x: 200, y: 100, w: 400, h: 200 };
+        const spot = labelSpot(
+            { rect, size: { w: 120, h: 36 }, position: "top-left", gap: 8, offset: annotation.label?.offset },
+            "top-left"
+        );
+        expect({ x: spot.x, y: spot.y }).toEqual({ x: 240, y: 40 });
     });
 });
 

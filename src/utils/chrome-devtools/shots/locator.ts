@@ -151,8 +151,54 @@ function parseStep(raw: string): LocatorStep {
     }
 }
 
+/**
+ * The steps of a chain: ` >> ` separates them only outside a quoted string and a `/regex/` value, so
+ * `role=button[name="Next >> page"]` and `text=/a >> b/` stay one step. A quote opens only where a value starts
+ * (after `=`, `[`, `(`, `,` or a space), so the apostrophe in `text=Don't` is plain text.
+ */
+export function splitChain(source: string): string[] {
+    const steps: string[] = [];
+    let start = 0;
+    let quote: string | null = null;
+    let regex = false;
+    let inClass = false;
+
+    for (let i = 0; i < source.length; i++) {
+        const char = source[i];
+        if (quote !== null || regex) {
+            if (char === "\\") {
+                i++;
+            } else if (quote !== null && char === quote) {
+                quote = null;
+            } else if (regex && inClass && char === "]") {
+                inClass = false;
+            } else if (regex && !inClass && char === "[") {
+                inClass = true;
+            } else if (regex && !inClass && char === "/") {
+                regex = false;
+            }
+
+            continue;
+        }
+
+        const before = i === 0 ? "" : source[i - 1];
+        if ((char === '"' || char === "'") && (before === "" || "=[(, ".includes(before))) {
+            quote = char;
+        } else if (char === "/" && before === "=") {
+            regex = true;
+        } else if (source.startsWith(" >> ", i)) {
+            steps.push(source.slice(start, i));
+            start = i + 4;
+            i += 3;
+        }
+    }
+
+    steps.push(source.slice(start));
+    return steps;
+}
+
 function parseChain(source: string): LocatorChain {
-    const steps = source.split(" >> ").map(parseStep);
+    const steps = splitChain(source).map(parseStep);
     if (steps[0].engine === "has-text" || steps[0].engine === "nth") {
         throw new LocatorSyntaxError(
             `${steps[0].engine}= filters what a step before it found, so it cannot come first`

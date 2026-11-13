@@ -77,6 +77,11 @@ export function resolveShotLocators(arg: {
     const cssIn = (scope: Element | Document, selector: string): Element[] => {
         const found: Element[] = [];
         const roots: Array<Element | Document | ShadowRoot> = [scope];
+        // A chain step after a shadow host searches inside it: the host's own root is not among its descendants.
+        if (scope instanceof Element && scope.shadowRoot) {
+            roots.push(scope.shadowRoot);
+        }
+
         for (const element of descendants(scope)) {
             if (element.shadowRoot) {
                 roots.push(element.shadowRoot);
@@ -252,7 +257,10 @@ export function resolveShotLocators(arg: {
             }
         }
 
-        const rects = unique(elements)
+        // `visibility: hidden` (also inherited from an ancestor) keeps a full rectangle, so geometry alone would box
+        // nothing anyone can see; such matches neither succeed alone nor widen the union.
+        const visible = unique(elements).filter((element) => getComputedStyle(element).visibility === "visible");
+        const rects = visible
             .map((element) => element.getBoundingClientRect())
             .filter((rect) => rect.width > 0 && rect.height > 0);
         if (rects.length === 0) {
@@ -267,7 +275,7 @@ export function resolveShotLocators(arg: {
         return {
             ok: true,
             source: locator.source,
-            count: unique(elements).length,
+            count: rects.length,
             box: { x: left + scrollX, y: top + scrollY, w: right - left, h: bottom - top },
         };
     });
