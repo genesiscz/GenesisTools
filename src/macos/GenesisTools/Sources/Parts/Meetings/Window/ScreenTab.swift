@@ -5,15 +5,6 @@ import SwiftUI
 
 /// The screen recording as a timeline: every kept frame in time order with the OCR lines that changed since the same
 /// display's earlier frame. A display filter on top; a click on a frame shows it large with those lines boxed.
-extension MeetingsPreferences {
-    /// The Screen tab's list.
-    enum Screen {
-        static let onlyNewText = MeetingsWindowSetting(
-            key: "meetings.screen.onlyNewText", defaultValue: true, choices: [true, false],
-            title: "Only frames with new text", detail: "The Screen tab leaves out the frames whose text the display already showed.")
-    }
-}
-
 struct ScreenTab: View {
     @Bindable var detail: MeetingDetailModel
     @State private var display: Int = -1
