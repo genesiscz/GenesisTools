@@ -37,4 +37,18 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         XCTAssertEqual(detail.blockStretch(speaker: "Alex Example", startSec: 8).label, "Speaker 3", "a name one label holds keeps it")
         XCTAssertEqual(detail.blockStretch(speaker: "Speaker 3", startSec: 8).label, "Speaker 3")
     }
+
+    // MARK: The `listen --answer` fallback keeps its journal entry (PR 759)
+
+    func testTheListenAnswerFallbackKeepsItsEntryAndAnUnreadableAnswerFails() throws {
+        let bare = #"{"token":"t1","at":"2026-11-09T17:32:38.000Z","meeting":"m","actor":{"kind":"listen"},"action":{"kind":"answer","question":"q1","answer":"yes"},"decided":["q1"],"skipped":[]}"#
+        let answered = try MeetingDetailModel.decodeDecision(Data(bare.utf8), command: ["listen", "m"])
+        XCTAssertEqual(answered.entry?.token, "t1", "the bare entry printed by listen --answer --json carries the Undo token")
+        let wrapped = #"{"entry":null,"skipped":[{"id":"i1","reason":"already confirmed"}]}"#
+        let confirmed = try MeetingDetailModel.decodeDecision(Data(wrapped.utf8), command: ["confirm", "m"])
+        XCTAssertNil(confirmed.entry)
+        XCTAssertEqual(confirmed.skipped.map(\.id), ["i1"])
+        XCTAssertThrowsError(try MeetingDetailModel.decodeDecision(Data("[1]".utf8), command: ["listen", "m"]),
+                             "an answer of neither shape is a failure, not an empty result")
+    }
 }
