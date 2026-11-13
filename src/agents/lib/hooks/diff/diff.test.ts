@@ -47,10 +47,12 @@ import { type HookPayload, parseHookPayload } from "../payload";
 import {
     type AttributionContext,
     attribute,
+    executedScripts,
     readOnlyCommand,
     recordTouches,
     rootIsOwn,
     scriptNames,
+    scriptTexts,
     sessionWrites,
 } from "./attribution";
 import { beforeCopier, beforeCopy, leftOutOfCapture } from "./before";
@@ -6721,6 +6723,45 @@ describe("the rule that decides whose a changed file is", () => {
         expect(scriptNames({ scripts: scripts('open("index.ts")')(), file: "/checkout/index.ts", root })).toBe(false);
         // The script is not proof of its own change.
         expect(scriptNames({ scripts: [{ path: file, text: file }], file, root })).toBe(false);
+    });
+
+    it("a script spells the file only as a whole path or name, never inside a longer one", () => {
+        const scripts = (text: string) => [{ path: "/checkout/scripts/gen.ts", text }];
+
+        expect(scriptNames({ scripts: scripts('write("src/dev-monitor.ts.bak", out)'), file, root })).toBe(false);
+        expect(scriptNames({ scripts: scripts('write("my-dev-monitor.ts", out)'), file, root })).toBe(false);
+        // NEGATIVE CONTROL: the name at the end of another path still names the file.
+        expect(scriptNames({ scripts: scripts('write("../src/dev-monitor.ts", out)'), file, root })).toBe(true);
+    });
+
+    it("only a script the command executes is read for proof, never one it copies or prints", () => {
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "gt-scripted-")));
+        const script = join(dir, "scripts", "catalog.ts");
+        // A path below a cloud storage folder: reading it could download it, so it is never read for proof.
+        const cloud = join(dir, "Library", "CloudStorage", "Drive", "scripts", "catalog.ts");
+
+        try {
+            for (const path of [script, cloud]) {
+                mkdirSync(dirname(path), { recursive: true });
+                writeFileSync(path, 'write("src/dev-monitor.ts", out)');
+            }
+
+            expect(executedScripts("cp scripts/catalog.ts /tmp/catalog-copy.ts && cat scripts/catalog.ts")).toEqual([]);
+            expect(scriptTexts({ paths: [script], command: "cp scripts/catalog.ts /tmp/catalog-copy.ts" })).toEqual([]);
+            expect(executedScripts("cd x && bun run scripts/catalog.ts --check | tee out")).toEqual([
+                "scripts/catalog.ts",
+            ]);
+            expect(scriptTexts({ paths: [script], command: "bun scripts/catalog.ts" }).map((s) => s.path)).toEqual([
+                script,
+            ]);
+            expect(scriptTexts({ paths: [cloud], command: "bun scripts/catalog.ts" })).toEqual([]);
+            expect(executedScripts("./scripts/gen.sh a && python3 -u tools/make.py")).toEqual([
+                "./scripts/gen.sh",
+                "tools/make.py",
+            ]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     it("a runner's unnamed change is shown in a root that is this session's alone, never a file another actor took", () => {

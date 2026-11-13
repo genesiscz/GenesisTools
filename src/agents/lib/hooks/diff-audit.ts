@@ -184,7 +184,7 @@ export function auditDiffLog({
             busyRoots: () => new Set(),
             siblings: () => new Set(),
             writes: () => proof,
-            scripts: () => scriptTexts(named.paths),
+            scripts: () => scriptTexts({ paths: named.paths, command: entry.command }),
             ownRoot: (root) => {
                 const known = ownRoots.get(root);
 

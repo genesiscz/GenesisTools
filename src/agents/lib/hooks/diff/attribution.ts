@@ -11,7 +11,15 @@ import {
 } from "node:fs";
 import { basename, extname, join, relative, sep } from "node:path";
 import { changeLogPath, changeLogPathIn, readChangeLogFile, walkChangeLogs } from "@genesiscz/utils/agents/change-log";
-import { commandTokenIndex, commandWord, scanShell, splitPipeline, tokenize } from "@genesiscz/utils/shell/scan";
+import { cloudReadRisk } from "@genesiscz/utils/fs/cloud-placeholder";
+import {
+    commandTokenIndex,
+    commandWord,
+    rawToken,
+    scanShell,
+    splitPipeline,
+    tokenize,
+} from "@genesiscz/utils/shell/scan";
 import { commandEditsFiles } from "../../changes/log";
 import { hookDiag } from "../log";
 import { hookDataRoot, touchesPath } from "../paths";
@@ -616,27 +624,158 @@ const SCRIPT_MAX_BYTES = 256 * 1024;
 /** A bare file name shorter than this is too common to be proof (`index.ts`, `README.md`). */
 const DISTINCT_NAME_CHARS = 14;
 
-/** The text of every script file among `paths` (what the command names), for rule `scripted`. Never throws. */
-export function scriptTexts(paths: Iterable<string>): Array<{ path: string; text: string }> {
+/** Programs that run the script file given as their first operand (`bun gen.ts`, `python3 -u gen.py`). */
+const SCRIPT_RUNNERS = new Set([
+    "bun",
+    "bunx",
+    "node",
+    "deno",
+    "tsx",
+    "ts-node",
+    "npx",
+    "uv",
+    "python",
+    "python3",
+    "ruby",
+    "php",
+    "perl",
+    "bash",
+    "sh",
+    "zsh",
+    "swift",
+]);
+/** A runner's verb before the script: `bun run gen.ts`, `deno run gen.ts`, `npx tsx gen.ts`, `uv run gen.py`. */
+const RUNNER_VERBS = new Set(["run", "exec", "tsx", "ts-node"]);
+
+/**
+ * The script operands a command executes: the program word itself (`./scripts/gen.sh`) or the first operand of a
+ * runner (`bun scripts/gen.ts`). A file the command only copies, reads or prints (`cp gen.ts /tmp`) is none.
+ */
+export function executedScripts(command: string): string[] {
+    let units: ReturnType<typeof scanShell>["units"];
+
+    try {
+        units = scanShell(command).units;
+    } catch (err) {
+        hookDiag("Could not scan the command for the scripts it runs", { err });
+        return [];
+    }
+
+    const operands: string[] = [];
+
+    for (const unit of units) {
+        for (const statement of unit) {
+            for (const element of splitPipeline(statement)) {
+                const tokens = tokenize(element);
+                const index = commandTokenIndex(tokens, command);
+
+                if (index === -1) {
+                    continue;
+                }
+
+                const head = rawToken(command, tokens[index]);
+
+                if (SCRIPT_EXTENSIONS.has(extname(head))) {
+                    operands.push(head);
+                    continue;
+                }
+
+                if (!SCRIPT_RUNNERS.has(commandWord(head))) {
+                    continue;
+                }
+
+                for (const token of tokens.slice(index + 1)) {
+                    const word = rawToken(command, token);
+
+                    if (word.startsWith("-") || RUNNER_VERBS.has(word)) {
+                        continue;
+                    }
+
+                    if (SCRIPT_EXTENSIONS.has(extname(word))) {
+                        operands.push(word);
+                    }
+
+                    break;
+                }
+            }
+        }
+    }
+
+    return operands;
+}
+
+/** Whether the absolute `path` is the file a typed `operand` names (`./scripts/gen.ts`, `scripts/gen.ts`, absolute). */
+function operandIs(operand: string, path: string): boolean {
+    if (operand.startsWith("/")) {
+        return operand === path;
+    }
+
+    const rel = operand.replace(/^(?:\.\/)+/, "");
+    return rel.length > 0 && !rel.startsWith("../") ? path.endsWith(`/${rel}`) : path.endsWith(`/${basename(rel)}`);
+}
+
+/**
+ * The text of every script the command runs among `paths` (what it names), for rule `scripted`. A file the command
+ * only names is no proof, and a file whose read could download it from a cloud provider is not read (the rule
+ * named capture and change recording follow). Never throws.
+ */
+export function scriptTexts({
+    paths,
+    command,
+}: {
+    paths: Iterable<string>;
+    command: string | undefined;
+}): Array<{ path: string; text: string }> {
+    const operands = command ? executedScripts(command) : [];
     const out: Array<{ path: string; text: string }> = [];
 
+    if (operands.length === 0) {
+        return out;
+    }
+
     for (const path of paths) {
-        if (!SCRIPT_EXTENSIONS.has(extname(path))) {
+        if (!SCRIPT_EXTENSIONS.has(extname(path)) || !operands.some((operand) => operandIs(operand, path))) {
             continue;
         }
 
         try {
             const stat = statSync(path);
 
-            if (stat.isFile() && stat.size <= SCRIPT_MAX_BYTES) {
-                out.push({ path, text: readFileSync(path, "utf8") });
+            if (!stat.isFile() || stat.size > SCRIPT_MAX_BYTES) {
+                continue;
             }
+
+            const risk = cloudReadRisk(path, stat);
+
+            if (risk) {
+                hookDiag("Not reading a script for proof", { path, risk });
+                continue;
+            }
+
+            out.push({ path, text: readFileSync(path, "utf8") });
         } catch {
             // A named path that is no file (yet): the usual case for an output path.
         }
     }
 
     return out;
+}
+
+/** Whether `text` holds `needle` as a whole path or name, not inside a longer one (`gen.ts.bak`, `my-gen.ts`). */
+function spellsWhole(text: string, needle: string, slashBefore: boolean): boolean {
+    const before = slashBefore ? /[\w.-]/ : /[\w./-]/;
+    const after = /[\w./-]/;
+
+    for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1)) {
+        const prev = text[at - 1];
+        const next = text[at + needle.length];
+
+        if ((prev === undefined || !before.test(prev)) && (next === undefined || !after.test(next))) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /** Whether a script the command runs spells `file`: its absolute path, its path in the root, or a distinct name. */
@@ -651,13 +790,18 @@ export function scriptNames({
 }): boolean {
     const inRoot = relative(root, file);
     const name = basename(file);
+    // A path must stand alone; a bare name may end a path (`out/dev-monitor.ts`), but never a longer name.
     const needles = [
-        file,
-        ...(inRoot.includes("/") ? [inRoot] : []),
-        ...(name.length >= DISTINCT_NAME_CHARS ? [name] : []),
+        { needle: file, slashBefore: false },
+        ...(inRoot.includes("/") ? [{ needle: inRoot, slashBefore: false }] : []),
+        ...(name.length >= DISTINCT_NAME_CHARS ? [{ needle: name, slashBefore: true }] : []),
     ];
 
-    return scripts.some((script) => script.path !== file && needles.some((needle) => script.text.includes(needle)));
+    return scripts.some(
+        (script) =>
+            script.path !== file &&
+            needles.some(({ needle, slashBefore }) => spellsWhole(script.text, needle, slashBefore))
+    );
 }
 
 export interface AttributionContext {

@@ -2186,7 +2186,7 @@ function attributionContext({
             return writes;
         },
         scripts: () => {
-            scripts ??= scriptTexts(named.paths);
+            scripts ??= scriptTexts({ paths: named.paths, command: payload.command });
             return scripts;
         },
         ownRoot: (root) => {
