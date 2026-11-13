@@ -375,7 +375,9 @@ export function shellSegments(text: string): ShellToken[][] {
             continue;
         }
 
-        if (char === " " || char === "\t" || char === "\r") {
+        // Every character readWord stops at as whitespace (WORD_END's `\s`, a no-break space too): one it does not
+        // consume here came back as an empty word at the same index, and the scan never moved again.
+        if (/\s/.test(char)) {
             i++;
             continue;
         }
@@ -419,7 +421,8 @@ export function shellSegments(text: string): ShellToken[][] {
 
         const { word, end } = readWord(command, i);
         current.push({ kind: "word", text: word });
-        i = end;
+        // A word always moves the scan, whatever character it stopped at.
+        i = Math.max(end, i + 1);
     }
 
     close();
@@ -560,8 +563,40 @@ function gitTargets(args: string[]): WriteTargets | null {
     return null;
 }
 
-/** The first operand is the script unless `-e` or `-f` carries it. */
-function editedFiles(args: string[], scriptFlag: (arg: string) => boolean): string[] {
+/**
+ * Where an option carries the script: `next` when the next argument is it (`-e`, `-ne`, `--expression`), `here` when
+ * it is attached (`-es/a/b/`, `-pe's/a/b/'` read as `-pes/a/b/`, `--expression=s/a/b/`), else undefined. A letter of
+ * `stops` takes the rest of its cluster as its own value (`-i.bak`, `-Mstrict`), so no script follows it there.
+ */
+function scriptOption(
+    arg: string,
+    { letters, stops, long }: { letters: string; stops: string; long: readonly string[] }
+): "next" | "here" | undefined {
+    if (arg.startsWith("--")) {
+        if (long.includes(arg)) {
+            return "next";
+        }
+
+        return long.some((flag) => arg.startsWith(`${flag}=`)) ? "here" : undefined;
+    }
+
+    for (let i = 1; i < arg.length; i++) {
+        const letter = arg[i] ?? "";
+
+        if (stops.includes(letter)) {
+            return undefined;
+        }
+
+        if (letters.includes(letter)) {
+            return i === arg.length - 1 ? "next" : "here";
+        }
+    }
+
+    return undefined;
+}
+
+/** The first operand is the script unless an option carries it (`-e`, `-f`, attached or not). */
+function editedFiles(args: string[], scriptFlag: (arg: string) => "next" | "here" | undefined): string[] {
     const files: string[] = [];
     let scriptGiven = false;
     for (let i = 0; i < args.length; i++) {
@@ -571,9 +606,11 @@ function editedFiles(args: string[], scriptFlag: (arg: string) => boolean): stri
         }
 
         if (arg.startsWith("-") && arg !== "-") {
-            if (scriptFlag(arg)) {
+            const script = scriptFlag(arg);
+
+            if (script) {
                 scriptGiven = true;
-                i++;
+                i += script === "next" ? 1 : 0;
             }
 
             continue;
@@ -638,7 +675,11 @@ export const WRITE_RULES: readonly WriteRule[] = [
         programs: ["sed"],
         targets: (args) =>
             args.some((arg) => /^-[A-Za-z]*i/.test(arg) || arg.startsWith("--in-place"))
-                ? written(editedFiles(args, (arg) => ["-e", "-f", "--expression", "--file"].includes(arg)))
+                ? written(
+                      editedFiles(args, (arg) =>
+                          scriptOption(arg, { letters: "ef", stops: "il", long: ["--expression", "--file"] })
+                      )
+                  )
                 : null,
     },
     {
@@ -646,7 +687,7 @@ export const WRITE_RULES: readonly WriteRule[] = [
         targets: (args, command) =>
             // `-pi`, `-i.bak`, `-0777pi`; not `-Mlib` or `-mstrict`, whose letters after M are a module name.
             args.some((arg) => /^-[0-9a-ln-zA-LN-Z]*i/.test(arg))
-                ? written(editedFiles(args, (arg) => /^-\w*[eE]$/.test(arg)))
+                ? written(editedFiles(args, (arg) => scriptOption(arg, { letters: "eE", stops: "iIMmxCdD", long: [] })))
                 : inlineScript(args, command, ["-e", "-E"]),
     },
     {
@@ -686,19 +727,31 @@ export const WRITE_RULES: readonly WriteRule[] = [
 export function writeTargets(command: string): WriteTargets {
     const paths = new Set<string>();
     let output = false;
+    // Where a `cd` earlier in the command moved the shell, relative to the payload's cwd (`""`: not moved). A `cd` in a
+    // subshell is taken to last, which can only add rules for a later relative path, never drop them.
+    let dir = "";
+    const from = (path: string) => (dir && !isAbsolute(path) && !path.startsWith("~") ? join(dir, path) : path);
     for (const segment of shellSegments(command)) {
+        const words = segment.flatMap((token) => (token.kind === "word" ? [token.text] : []));
+
+        if (words[0] === "cd") {
+            const to = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
+            // `cd -` and `cd $DIR` go somewhere this scan cannot know: later paths stay against the cwd, as before.
+            dir = to === undefined ? "~" : to === "-" || /[$`]/.test(to) ? "" : from(to);
+            continue;
+        }
+
         for (const token of segment) {
             if (token.kind === "redirect" && token.target) {
-                paths.add(token.target);
+                paths.add(from(token.target));
             }
         }
 
-        const words = segment.flatMap((token) => (token.kind === "word" ? [token.text] : []));
         const call = commandOf(words);
         const rule = call ? WRITE_RULES.find((candidate) => candidate.programs.includes(call.program)) : undefined;
         const found = call && rule ? rule.targets(call.args, command) : null;
         for (const path of found?.paths ?? []) {
-            paths.add(path);
+            paths.add(from(path));
         }
 
         output ||= found?.output === true;

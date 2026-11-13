@@ -260,6 +260,16 @@ describe("writeTargets", () => {
         ["cat > src/new.ts <<'EOF'\nmkdir not/a/command\nEOF\nls", ["src/new.ts"]],
         ["printf x | tee -a src/a.ts src/b.ts", ["src/a.ts", "src/b.ts"]],
         ["sed -i '' 's/a/b/' src/a.ts", ["src/a.ts"]],
+        // An attached expression is the script, not the first operand.
+        ["sed -i -e's/a/b/' src/utils/ai/a.ts", ["src/utils/ai/a.ts"]],
+        ["sed -i --expression=s/a/b/ src/utils/ai/a.ts", ["src/utils/ai/a.ts"]],
+        ["perl -i -pe's/a/b/' src/utils/ai/a.ts", ["src/utils/ai/a.ts"]],
+        ["perl -0777pi -e 's/a/b/' src/a.ts", ["src/a.ts"]],
+        // A `cd` before the write moves its relative paths; a `cd -` or `cd $X` leaves them against the cwd.
+        ["cd src/utils/ai && touch example.ts", ["src/utils/ai/example.ts"]],
+        ["cd src && cd utils && echo x > ai/b.ts", ["src/utils/ai/b.ts"]],
+        ["cd /tmp/w && touch a.ts", ["/tmp/w/a.ts"]],
+        ['cd "$D" && touch a.ts', ["a.ts"]],
         ["sed -i.bak -e 's/a/b/' -e 's/c/d/' src/a.ts src/b.ts", ["src/a.ts", "src/b.ts"]],
         ["perl -pi -e 's/a/b/' src/a.ts", ["src/a.ts"]],
         ["mv -f old.ts src/du/", ["src/du/"]],
@@ -275,8 +285,9 @@ describe("writeTargets", () => {
         ["prettier --write src/a.ts", ["src/a.ts"]],
         ["bun \"$ROOT/skills/fable-replace/scripts/cli.ts\" <<'FR'\nfile: src/du/x.ts\nFR", ["src/du/x.ts"], true],
         [
+            // fable-replace runs in x after the `cd`, so its spec's relative path is under x.
             "cd x && bun plugins/p/skills/fable-replace/scripts/cli.ts <<'FR'\nfile: src/du/x.ts\nFR",
-            ["src/du/x.ts"],
+            ["x/src/du/x.ts"],
             true,
         ],
         ["FOO=1 touch src/a.ts && mkdir -p src/du/new", ["src/a.ts", "src/du/new"]],
@@ -329,6 +340,11 @@ describe("writeTargets", () => {
         expect(shellSegments("a 1; b && c || d | e\nf <<X\ng ; h\nX\ni").map((segment) => segment.length)).toEqual([
             2, 1, 1, 1, 1, 1, 1,
         ]);
+    });
+
+    it("moves past every whitespace character, a no-break space too, instead of scanning the same index forever", () => {
+        expect(shellSegments("echo x > src/a.ts ; ls").map((segment) => segment.length)).toEqual([3, 1]);
+        expect(writeTargets("echo x > src/a.ts").paths).toEqual(["src/a.ts"]);
     });
 });
 
