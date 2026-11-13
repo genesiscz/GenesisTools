@@ -4,14 +4,19 @@ import { languageSettings, type MeetingsConfig } from "@genesiscz/utils/meetings
 import { type AcousticShare, collectEcho, echoForRange } from "@genesiscz/utils/meetings/echo";
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type LineVoice, lineVoices, type VoiceFrame, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
+import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { contextEntryText } from "./context-file";
 import { indicatorFacts } from "./indicator-facts";
-import { addQualityQuestions, qualityVoiceFeatures } from "./listen-quality";
+import { addQualityQuestions } from "./listen-quality";
 import { localSpeechDuring } from "./local-speech";
 import { OpenedMeeting } from "./opened-meeting";
+import { errorText } from "./shared";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { knownWord, type SuggestRule, settledTermItems, suggestItems } from "./suggest";
-import { meetingVoices } from "./voice";
+import { anchoredMeetingVoices } from "./voice";
 import type { WordCheckChoice } from "./word-check";
 
 const { log } = logger.scoped("meetings-suggest");
@@ -40,6 +45,45 @@ async function directorySamePerson(options: {
 }
 
 /**
+ * Collects what the record lacks (platform, attendance, channel layout). A step that fails is a warning of the run's
+ * result, so the window and the REPL see it as the CLI does, never only a line on stderr.
+ */
+async function collectForSuggest(opened: OpenedMeeting, warnings: string[]): Promise<MeetingRecord> {
+    const { platform, attendance, evidence, id } = opened.record;
+
+    if (platform && attendance && evidence?.channels) {
+        return opened.record;
+    }
+
+    try {
+        const outcome = await opened.collect();
+
+        for (const note of outcome.notes) {
+            if (note.ok) {
+                log.info({ meeting: id }, note.text);
+            } else {
+                warnings.push(note.text);
+            }
+        }
+
+        return outcome.record;
+    } catch (error) {
+        log.warn({ error, meeting: id }, "collect failed");
+        warnings.push(`could not collect the call's facts: ${errorText(error)}`);
+        return opened.record;
+    }
+}
+
+/** The quality questions' spans: each transcript entry as the transcript lines read it. */
+function entrySpans(entries: TranscriptEntry[]): Array<{ index: number; fromSec: number; toSec: number }> {
+    const lines = new TranscriptLines(entries);
+    return entries.flatMap((_entry, index) => {
+        const span = lines.span(index);
+        return span ? [{ index, fromSec: span.fromSec, toSec: span.toSec }] : [];
+    });
+}
+
+/**
  * Runs the rules on a meeting's transcript and adds what they find as suggested items, in one save: the CLI's
  * `suggest` and the REPL's meeting.suggest(). The platform, attendance and channel layout are collected first when the
  * record lacks them. A word check that cannot run is a warning, not a failure: the term rules then skip every word
@@ -56,12 +100,16 @@ export async function runSuggest(options: {
     const { store, record, rules } = options;
     const warnings: string[] = [];
     const opened = OpenedMeeting.of(store, record);
-    const collected = await opened.collectWhenIncomplete();
+    const collected = await collectForSuggest(opened, warnings);
     const meeting = await opened.meeting();
     const config = await opened.config();
     const evidence = rules.includes("evidence") || rules.includes("speakers") ? await opened.evidence() : null;
-    for (const gap of indicatorFacts({ meeting, evidence }).gaps) {
-        warnings.push(`Speaking indicator gap ${gap.fromSec}s to ${gap.toSec}s: ${gap.reason}`);
+
+    // Only indicator evidence that was read can show a gap: a terms-only run, or a source without it, has none to judge.
+    if (evidence) {
+        for (const gap of indicatorFacts({ meeting, evidence }).gaps) {
+            warnings.push(`Speaking indicator gap ${gap.fromSec}s to ${gap.toSec}s: ${gap.reason}`);
+        }
     }
 
     if (rules.includes("terms")) {
@@ -104,6 +152,46 @@ export async function runSuggest(options: {
               }
           )
         : energy.share;
+    // One decode and one pitch pass serve both the room voice clustering and the quality questions.
+    let frames: VoiceFrame[] | undefined;
+
+    if (rules.includes("evidence")) {
+        try {
+            frames = await voiceFrames({ audioPath: await opened.audioPath() });
+        } catch (error) {
+            log.warn({ error, meeting: record.id }, "voice change points unavailable");
+            warnings.push("Voice change points unavailable; long stretches remain open for listening");
+        }
+    }
+
+    const roomSize = collected.seats?.room.length ?? 0;
+    let voice: LineVoice[] | undefined;
+
+    if (frames && roomSize > 1) {
+        // Clustering is optional evidence: without it the shared-device lines keep their candidates.
+        try {
+            const spans = lineEvidence(meeting.transcript, { segments: [], speaking: [] }).map((line) => ({
+                index: line.index,
+                fromSec: line.startSec,
+                toSec: line.endSec,
+            }));
+            const micChannel = energy.calibration?.layout === "right-mic" ? 1 : 0;
+            voice = anchoredMeetingVoices({
+                record: collected,
+                transcript: meeting.transcript,
+                features: lineVoices({ frames, spans }),
+                voices: roomSize,
+                channel: micChannel,
+                micChannel,
+            });
+        } catch (error) {
+            log.warn({ error, meeting: record.id, roomSize }, "room voice clustering unavailable");
+            warnings.push(
+                `Room voice clustering unavailable (${errorText(error)}); shared-device lines keep their candidates`
+            );
+        }
+    }
+
     const inputs: Parameters<typeof suggestItems>[0] = {
         localSpeech: rules.includes("evidence") ? localSpeechDuring({ start: meeting.start, end: meeting.end }) : [],
         record: collected,
@@ -114,10 +202,7 @@ export async function runSuggest(options: {
         presence,
         evidence,
         energyMicShare: share,
-        voice:
-            rules.includes("evidence") && (collected.seats?.room.length ?? 0) > 1
-                ? await meetingVoices({ opened, voices: collected.seats!.room.length })
-                : undefined,
+        voice,
         listenBelow: config.global.suggest.listenBelow,
         questionBudget: config.global.suggest.questionCap,
         minPriority: config.global.playback.listen.minPriority,
@@ -130,15 +215,7 @@ export async function runSuggest(options: {
             : {}),
         now: new Date().toISOString(),
     };
-    let features: Awaited<ReturnType<typeof qualityVoiceFeatures>> | undefined;
-    if (rules.includes("evidence")) {
-        try {
-            features = await qualityVoiceFeatures(opened);
-        } catch (error) {
-            log.warn({ error, meeting: record.id }, "voice change points unavailable");
-            warnings.push("Voice change points unavailable; long stretches remain open for listening");
-        }
-    }
+    const features = frames ? lineVoices({ frames, spans: entrySpans(meeting.transcript) }) : undefined;
     let fresh: MeetingItem[] = [];
     let retired: string[] = [];
     const known = knownWord(wordCheck);
@@ -163,15 +240,30 @@ export async function runSuggest(options: {
             retired = [...settled.keys()];
             fresh = suggestItems({ ...inputs, record: current });
             current.items.push(...fresh);
-            const quality = addQualityQuestions({
-                record: current,
-                entries: meeting.transcript,
-                longStretchWords: config.global.suggest.longStretchWords,
-                below: Math.max(0.7, config.global.suggest.applyAbove),
-                features,
-                channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
-            });
-            fresh.push(...current.items.filter((item) => quality.includes(item.id)));
+            // The long-stretch questions are evidence questions, and they share the meeting's one question budget.
+            const open = current.items.filter((item) => item.kind === "question" && item.status === "suggested");
+            const room = Math.max(0, config.global.suggest.questionCap - open.length);
+
+            if (rules.includes("evidence") && room > 0) {
+                const draft = structuredClone(current);
+                const before = new Set(current.items.map((item) => item.id));
+                const quality = addQualityQuestions({
+                    record: draft,
+                    entries: meeting.transcript,
+                    longStretchWords: config.global.suggest.longStretchWords,
+                    below: Math.max(0.7, config.global.suggest.applyAbove),
+                    features,
+                    channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
+                });
+                const accepted = draft.items
+                    .filter((item) => item.kind === "question" && !before.has(item.id))
+                    .slice(0, room);
+                const keep = new Set(
+                    accepted.flatMap((item) => (item.kind === "question" ? [item.id, ...item.decides] : []))
+                );
+                current.items = draft.items.filter((item) => before.has(item.id) || keep.has(item.id));
+                fresh.push(...current.items.filter((item) => quality.includes(item.id) && keep.has(item.id)));
+            }
         });
     } finally {
         wordCheck?.dispose();

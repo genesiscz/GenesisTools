@@ -589,6 +589,40 @@ test("an exact attendance id reaches the Teams reader and chooses only that fixt
     }
 });
 
+test("a failed automatic collection is a warning of the suggest result, and a terms-only run judges no indicator gap", async () => {
+    const { runSuggest } = await import("./suggest-run");
+    const { store, record } = await newRecord();
+    const source = fakeSource();
+    const meeting = await source.load("abc");
+    const load = spyOn(source, "load").mockResolvedValue({
+        ...meeting,
+        transcript: Array.from({ length: 10 }, (_, index) => ({
+            speaker: "Alice Example",
+            startSec: index * 10,
+            text: "A long enough line.",
+        })),
+    });
+    const opened = OpenedMeeting.of(store, record, { source, sourceMeetingId: "abc" });
+    const of = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
+    const collect = spyOn(opened, "collect").mockResolvedValue({
+        record,
+        notes: [
+            { ok: true, text: "platform: Teams" },
+            { ok: false, text: "attendance not collected: fixture refused" },
+        ],
+    });
+    try {
+        const result = await runSuggest({ store, record, rules: ["terms"], wordCheck: "off" });
+
+        expect(result.warnings).toContain("attendance not collected: fixture refused");
+        expect(result.warnings.some((warning) => warning.startsWith("Speaking indicator gap"))).toBe(false);
+    } finally {
+        collect.mockRestore();
+        of.mockRestore();
+        load.mockRestore();
+    }
+});
+
 test("suggest attendance recovery preserves validation and source failures", async () => {
     const { store, record } = await newRecord();
     const source = fakeSource();
