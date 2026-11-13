@@ -1582,6 +1582,10 @@ describe("files the command NAMES rather than works in", () => {
         const note = join(vault, "last.md");
         writeFileSync(note, "x");
         expect(namedArguments(`bash -c "sed -i '' s/a/b/ ${note}"`, [vault])).toContain(note);
+        // Single quotes close the body the same way; a quote of the inner word stays its own.
+        expect(namedArguments(`bash -c 'cat ${note}'`, [vault])).toContain(note);
+        expect(namedArguments(`sh -c 'cat ${note} | wc -l'`, [vault])).toContain(note);
+        expect(namedArguments(`bash -c 'cat "${note}"'`, [vault])).toContain(note);
     });
 
     it("reads a relative literal in the folder the command last cd-ed into, before the session folder", () => {
