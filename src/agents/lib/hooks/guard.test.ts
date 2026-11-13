@@ -374,6 +374,45 @@ describe("the guard explains a rule once per loop", () => {
         });
     });
 
+    it("splits a message's tokens over its rules in whole numbers that add up to the message", () => {
+        const values: number[] = [];
+        const recorder = {
+            record: (_project: string, _metric: string, value: number) => {
+                values.push(value);
+            },
+            flush: () => {},
+        };
+        const block = evaluateCommand(COMMAND, DEFAULT_HOOKS_CONFIG);
+        const first = block.violations[0];
+
+        if (!first) {
+            throw new Error("the fixture command fires no rule");
+        }
+
+        const rules = ["rule-a", "rule-b", "rule-c"];
+        const three = {
+            ...block,
+            violations: rules.map((ruleId) => ({ ...first, ruleId })),
+            seenRules: rules,
+            explainedRules: rules,
+        };
+
+        // 400 characters are 100 tokens, 401 are 101: neither splits evenly over three rules.
+        for (const length of [400, 401]) {
+            values.length = 0;
+            recordGuardVerdict({
+                payload: payload("sess-split", "/nonexistent.jsonl"),
+                verdict: { ...three, message: "x".repeat(length) },
+                config: { ...DEFAULT_HOOKS_CONFIG, shadow: false },
+                recorder,
+            });
+
+            expect(values).toHaveLength(3);
+            expect(values.reduce((sum, value) => sum + value, 0)).toBe(Math.ceil(length / 4));
+            expect(Math.max(...values) - Math.min(...values)).toBeLessThanOrEqual(1);
+        }
+    });
+
     it("reads a compaction from each harness's own rows, and calls an unreadable tail compacted", () => {
         const { dir, transcript } = fixture();
 

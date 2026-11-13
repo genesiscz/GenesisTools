@@ -37,9 +37,21 @@ function deliveryOf(verdict: GuardVerdict, ruleId: string, outcome: GuardVerdict
 }
 
 /**
+ * `tokens` split over `rules` in whole numbers that add up to `tokens`: each gets the quotient, and the first
+ * `remainder` rules one more. Rounding one share for every rule did not: 100 over three rules recorded 99, 101 recorded
+ * 102.
+ */
+function tokenShares(tokens: number, rules: readonly string[]): Map<string, number> {
+    const quotient = rules.length > 0 ? Math.floor(tokens / rules.length) : 0;
+    const remainder = tokens - quotient * rules.length;
+
+    return new Map(rules.map((rule, index) => [rule, quotient + (index < remainder ? 1 : 0)]));
+}
+
+/**
  * One `agent-context / guard.verdict` event per firing rule. The value is the estimated tokens (characters / 4) of the
- * message the model got, split evenly over the rules in it; a rule that showed nothing has value 0, so `sum` is the
- * guard's context cost and `count` its firings. Never throws: a metric must not stop a command.
+ * message the model got, split over the rules in it (`tokenShares`); a rule that showed nothing has value 0, so `sum`
+ * is the guard's context cost and `count` its firings. Never throws: a metric must not stop a command.
  */
 export function recordGuardVerdict(options: {
     payload: HookPayload;
@@ -55,8 +67,11 @@ export function recordGuardVerdict(options: {
 
     const target = options.recorder ?? hookRecorder();
     const delivered = config.shadow ? [] : verdict.seenRules;
-    const tokens = delivered.length > 0 ? Math.ceil(verdict.message.length / 4) : 0;
-    const share = delivered.length > 0 ? Math.round(tokens / delivered.length) : 0;
+    // The rules that get an event and showed text: each once, in violation order.
+    const shownRules = [...new Set(verdict.violations.map((violation) => violation.ruleId))].filter((rule) =>
+        delivered.includes(rule)
+    );
+    const shares = tokenShares(shownRules.length > 0 ? Math.ceil(verdict.message.length / 4) : 0, shownRules);
     const seen = new Set<string>();
 
     for (const violation of verdict.violations) {
@@ -71,7 +86,7 @@ export function recordGuardVerdict(options: {
         target.record(
             GUARD_METRIC.project,
             GUARD_METRIC.metric,
-            shown ? share : 0,
+            shares.get(violation.ruleId) ?? 0,
             {
                 session: payload.sessionId ?? null,
                 agent: guardLoop(payload),
