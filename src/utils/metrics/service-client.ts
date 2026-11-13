@@ -18,6 +18,9 @@ const { log } = logger.scoped("metrics-client");
 
 /** A connection to the running metrics service. */
 export class MetricsServiceClient {
+    /** Counts the subscribe calls: only the latest one's stop function ends the connection's subscription. */
+    private subscription = 0;
+
     private constructor(
         readonly socket: RpcSocketClient,
         readonly entry: ServiceEntry
@@ -44,7 +47,9 @@ export class MetricsServiceClient {
 
     /**
      * Hears the events the service takes in, of one project and metric when given, until the function it returns.
-     * `withCheckpoint` labels each event with the checkpoint it falls under.
+     * `withCheckpoint` labels each event with the checkpoint it falls under. The subscription belongs to the
+     * connection, so a second call replaces the first one's filter; the function of the latest call also ends the
+     * service's subscription, and the service stops sending (and labelling) events to this connection.
      */
     async subscribe(
         filter: { project?: string; metric?: string; withCheckpoint?: boolean },
@@ -63,8 +68,19 @@ export class MetricsServiceClient {
                 log.debug({ issue: parsed.error.issues[0] }, "a metrics event notification does not read");
             }
         });
+        const mine = ++this.subscription;
         await this.socket.call("subscribe", { events: [METRICS_EVENT], ...filter });
-        return stop;
+        return () => {
+            stop();
+
+            if (this.subscription !== mine) {
+                return;
+            }
+
+            this.socket.call("unsubscribe", {}).catch((error) => {
+                log.debug({ error }, "the metrics unsubscribe did not reach the service");
+            });
+        };
     }
 
     close(): void {
