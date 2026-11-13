@@ -7001,4 +7001,47 @@ describe("the rule that decides whose a changed file is", () => {
         expect(rows[2]?.foreign).toEqual({ session: "theirs", at: at(10_000) });
         expect(summarizeAudit(rows)).toMatchObject({ printed: 4, dropped: 2, declined: 0, recovered: 0 });
     });
+
+    it("another session's failed call in the root, read back from the log, makes the root shared in the audit", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-audit-log-"));
+        const log = join(dir, "hooks.jsonl");
+        const at = (offset: number) => new Date(since + offset).toISOString();
+        const records = [
+            // Their call began in the same root and never got a post record (it failed, or still runs).
+            {
+                at: at(-minutes(20)),
+                phase: "pre",
+                harness: "claude",
+                session: "theirs",
+                toolUseId: "t0",
+                roots: [root],
+            },
+            { at: at(0), phase: "pre", harness: "claude", session: "mine", toolUseId: "t1", roots: [root] },
+            {
+                at: at(40_000),
+                phase: "post",
+                harness: "claude",
+                session: "mine",
+                toolUseId: "t1",
+                decision: "emitted",
+                reason: "rendered",
+                files: [file],
+                attributed: { [file]: "runner" },
+            },
+        ];
+
+        writeFileSync(log, `${records.map((record) => SafeJSON.stringify(record)).join("\n")}\n`);
+
+        try {
+            const rows = auditDiffLog({
+                entries: readDiffLog({ logPath: log, since: since - minutes(30) }),
+                writes: new Map(),
+                mentionsFor: () => mentionsFrom([]),
+            });
+
+            expect(rows.map((row) => [row.file, row.replayed])).toEqual([[file, "unproven"]]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });
