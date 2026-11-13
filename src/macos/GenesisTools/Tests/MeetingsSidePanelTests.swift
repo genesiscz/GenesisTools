@@ -82,6 +82,18 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertEqual(saved.value, .flag(false))
     }
 
+    /// The Screen tab's "Only frames with new text" is a window setting: the reader's pick outlives the tab.
+    func testTheScreenTabsQuietFrameFilterIsAPersistedSetting() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = MeetingsPreferences.Screen.onlyNewText.key
+        let row = try XCTUnwrap(SidePanelCatalog.windowSections(defaults).first { $0.id == "panes" }?.rows.first { $0.id == key })
+        XCTAssertEqual(row.value, .flag(true), "the default hides the quiet frames")
+        SidePanelCatalog.write(.flag(false), key: key, to: defaults)
+        let reopened = try XCTUnwrap(UserDefaults(suiteName: suite))
+        XCTAssertFalse(MeetingsPreferences.Screen.onlyNewText.value(reopened))
+    }
+
     func testPausedSeekResumePolicyHasBothChoicesAndPersists() throws {
         let (defaults, suite) = try defaults()
         defer { defaults.removePersistentDomain(forName: suite) }
