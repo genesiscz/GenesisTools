@@ -3,6 +3,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
+import { collectEcho } from "@genesiscz/utils/meetings/echo";
 import { type ChannelCalibration, channelEnergy, type SilentCallSpan } from "@genesiscz/utils/meetings/energy";
 import { AttendanceUnavailableError } from "@genesiscz/utils/meetings/platform";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
@@ -350,6 +351,15 @@ export class OpenedMeeting {
             return undefined;
         }
 
+        const source = await this.sourceEvidence();
+        if (source?.audioPath) {
+            await collectEcho({
+                audioPath: source.audioPath,
+                cachePath: join(this.store.folder(this.current.id), "evidence", "echo.json"),
+                layout: energy.calibration.layout,
+            });
+            this.energyOnce = undefined;
+        }
         this.current = await storeCalibration({
             store: this.store,
             record: this.current,

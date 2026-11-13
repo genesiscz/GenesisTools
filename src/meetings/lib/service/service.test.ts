@@ -2037,6 +2037,40 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meeting.audio", { meeting: REVIEW.id }, "One track: the window plays the file itself.");
     await ask(
         window,
+        "acoustic.inspect",
+        { meeting: "missing", fromSec: 0, toSec: 5 },
+        "Missing meeting never manufactures acoustic evidence."
+    );
+    await ask(
+        window,
+        "acoustic.clip",
+        { meeting: "missing", fromSec: 0, toSec: 5 },
+        "Missing recording never creates tracks."
+    );
+    await ask(
+        window,
+        "voice.score",
+        { meeting: "missing", fromSec: 0, toSec: 5, channel: 1 },
+        "Missing recording never names a voice."
+    );
+    await ask(window, "voice.enroll", {
+        meeting: "missing",
+        fromSec: 0,
+        toSec: 5,
+        channel: 1,
+        person: "Alice Example",
+        confirmed: true,
+    });
+    await ask(
+        window,
+        "voice.prepare",
+        { download: false },
+        "Model provisioning requires an explicit download action, no model is fetched by this fixture."
+    );
+    await ask(window, "voice.collect", { meeting: "missing" });
+    await ask(window, "acoustic.collect", { meeting: "missing" });
+    await ask(
+        window,
         "meeting.audio",
         { meeting: RETRO.id },
         "No source keeps the recording: unplayable with reason no-audio."

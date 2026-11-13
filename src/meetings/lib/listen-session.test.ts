@@ -653,6 +653,8 @@ test("ad-hoc questions persist, selected rounds answer and undo through the norm
     expect(reopened.items.find((item) => item.id === "i1")?.status).toBe("suggested");
     expect(reopened.items.find((item) => item.id === "i2")?.status).toBe("suggested");
     expect(reopened.items.find((item) => item.id === selected[0])).toMatchObject({ answer: "Bob", decides: [] });
+    expect(reopened.items).toHaveLength(4);
+    expect(reopened.items.some((item) => item.kind === "speaker-range")).toBe(false);
     expect(fx.events()).toContain("answered");
     expect(fx.events()).toContain("reopened");
     expect(() =>

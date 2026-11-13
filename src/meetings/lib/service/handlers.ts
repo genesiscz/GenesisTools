@@ -420,6 +420,17 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "tone.preview": async (params) => (await moments()).previewTone(params, deps),
         "tone.presets": async () => (await moments()).listTonePresets(),
         "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
+        "acoustic.inspect": async (params) =>
+            (await import("../acoustic")).inspectAcoustic({ store: storeOf(), ...params }),
+        "acoustic.clip": async (params) => (await import("../acoustic")).acousticClip({ store: storeOf(), ...params }),
+        "voice.score": async (params) => (await import("../acoustic")).voiceMeeting({ store: storeOf(), ...params }),
+        "voice.prepare": async () => ({
+            path: await (await import("@genesiscz/utils/meetings/voice")).prepareVoiceModel(),
+        }),
+        "voice.enroll": async (params) => (await import("../acoustic")).voiceMeeting({ store: storeOf(), ...params }),
+        "acoustic.collect": async (params) => (await import("../acoustic")).collectAcoustic(storeOf(), params.meeting),
+        "voice.collect": async (params) =>
+            (await import("../acoustic")).collectVoiceEvidence(storeOf(), params.meeting),
         "meeting.speakers": async (params) => (await reads()).readSpeakers(params, storeOf(), deps),
         "meeting.screen": async (params) => (await reads()).readScreen(params, storeOf()),
         "meeting.timeline": async (params) => (await reads()).readTimeline(params, storeOf()),

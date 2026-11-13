@@ -14,6 +14,7 @@ struct TimelineDock: View {
     let title: String?
     let window: MeetingsWindowModel?
     var collapsed = false
+    @State private var showsAcousticEvidence = false
 
     @AppStorage(MeetingsPreferences.Panes.screenBesidePlayback.key) private var screenBeside =
         MeetingsPreferences.Panes.screenBesidePlayback.defaultValue
@@ -64,6 +65,13 @@ struct TimelineDock: View {
                 pinLanes: pinLanes > 0 ? pinLanes : MeetingsPreferences.Panes.pinLanes.defaultValue,
                 toneEnabled: window?.settingsRaw?.at(["global", "playback", "listen", "tone", "enabled"]) != .bool(false))
             dockBody(state: state, screen: screen, meeting: meeting, top: top)
+                .contextMenu {
+                    Button("Channel and voice evidence…") { showsAcousticEvidence = true }
+                }
+                .sheet(isPresented: $showsAcousticEvidence) {
+                    AcousticEvidenceView(service: window?.service, meeting: meeting,
+                                         fromSec: top.startSec, toSec: min(top.endSec, top.startSec + 60))
+                }
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
                 .modifier(PinCardPresenter(hovered: dock.hoveredPin, openDelayMs: hoverDelayMs,
                                            anchorX: { anchorX(of: $0, rows: rows, view: view, duration: duration, screen: screen != nil) },

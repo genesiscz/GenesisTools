@@ -15,6 +15,8 @@ import { rejectFilterIds } from "@app/meetings/lib/reject-filter";
 import { reviewRow } from "@app/meetings/lib/review-rows";
 import { withMeetingsClient } from "@app/meetings/lib/service/client";
 import {
+    acousticClip,
+    acousticInspect,
     add,
     assignApply,
     assignAsk,
@@ -53,7 +55,9 @@ import {
     set,
     speakers,
     suggest,
+    voiceEnroll,
     voiceFeatures,
+    voiceScore,
 } from "@app/meetings/lib/service/toolset-api";
 import { applyLocalSourceAudio, planLocalSourceAudio } from "@app/meetings/lib/source-audio-backfill";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
@@ -363,6 +367,28 @@ export class MeetingsToolset extends ReplToolset {
                 }
                 return opened().evidence();
             },
+            acousticCollect: () =>
+                withMeetingsClient((client) =>
+                    client.call("acoustic.collect", { meeting: id }, { timeoutMs: 300_000 })
+                ),
+            voiceCollect: () =>
+                withMeetingsClient((client) => client.call("voice.collect", { meeting: id }, { timeoutMs: 3_600_000 })),
+            voiceEnroll: (params: z.input<typeof voiceEnroll.params>) =>
+                withMeetingsClient((client) =>
+                    client.call("voice.enroll", { meeting: id, ...voiceEnroll.params.parse(params) })
+                ),
+            acousticInspect: (params: z.input<typeof acousticInspect.params>) =>
+                withMeetingsClient((client) =>
+                    client.call("acoustic.inspect", { meeting: id, ...acousticInspect.params.parse(params) })
+                ),
+            acousticClip: (params: z.input<typeof acousticClip.params>) =>
+                withMeetingsClient((client) =>
+                    client.call("acoustic.clip", { meeting: id, ...acousticClip.params.parse(params) })
+                ),
+            voiceScore: (params: z.input<typeof voiceScore.params>) =>
+                withMeetingsClient((client) =>
+                    client.call("voice.score", { meeting: id, ...voiceScore.params.parse(params) })
+                ),
             transcript: async () => (await opened().meeting()).transcript,
             lines: async (input: z.input<typeof lines.params> = {}) => {
                 const options = lines.params.parse(input);
