@@ -178,5 +178,6 @@ registerDriver({
     id: "webview-ttyd",
     label: "ttyd (WebView)",
     blurb: "Loads the agent's ttyd page directly. Lowest setup; inherits the server's mobile shell.",
+    needsPlainUrls: true,
     component: WebViewTtydRenderer,
 });

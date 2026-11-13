@@ -1,6 +1,7 @@
 import { Pressable, Text, View } from "react-native";
 import { useDriverStore } from "@/features/terminals/driver-store";
-import { listDrivers } from "@/features/terminals/registry";
+import { driverUsable, listDrivers, usableDriver } from "@/features/terminals/registry";
+import { useTierCapabilities } from "@/state/connection-store";
 import { useThemeColors } from "@/theme/colors";
 
 /**
@@ -12,11 +13,16 @@ import { useThemeColors } from "@/theme/colors";
  *
  * `listDrivers()` is non-empty because the Terminal screen imports `components/drivers.ts`, whose
  * module-load side-effects register both drivers (see that barrel's note).
+ *
+ * A driver the connection's tier cannot run (ttyd's plain page on the managed relay) is shown disabled with the
+ * reason, and the highlight marks the driver the terminal really runs (`usableDriver`).
  */
 export function DriverSwitcher() {
     const c = useThemeColors();
-    const driver = useDriverStore((s) => s.driver);
+    const saved = useDriverStore((s) => s.driver);
     const setDriver = useDriverStore((s) => s.setDriver);
+    const plainUrls = useTierCapabilities()?.plainUrls ?? true;
+    const driver = usableDriver({ id: saved, plainUrls })?.id ?? saved;
     const drivers = listDrivers();
 
     return (
@@ -36,6 +42,7 @@ export function DriverSwitcher() {
             <View style={{ flexDirection: "row", gap: 8 }}>
                 {drivers.map((d) => {
                     const isActive = d.id === driver;
+                    const usable = driverUsable(d, plainUrls);
 
                     return (
                         <Pressable
@@ -43,9 +50,11 @@ export function DriverSwitcher() {
                             testID={`driver-option-${d.id}`}
                             accessibilityLabel={`driver-option-${d.id}`}
                             accessibilityRole="button"
-                            accessibilityState={{ selected: isActive }}
+                            accessibilityState={{ selected: isActive, disabled: !usable }}
+                            disabled={!usable}
                             onPress={() => setDriver(d.id)}
                             style={{
+                                opacity: usable ? 1 : 0.5,
                                 flex: 1,
                                 paddingVertical: 10,
                                 paddingHorizontal: 12,
@@ -65,7 +74,9 @@ export function DriverSwitcher() {
                             >
                                 {d.label}
                             </Text>
-                            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>{d.blurb}</Text>
+                            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
+                                {usable ? d.blurb : "Not on this connection: it cannot load the Mac's pages by plain URL."}
+                            </Text>
                         </Pressable>
                     );
                 })}

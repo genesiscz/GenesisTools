@@ -26,6 +26,11 @@ export interface DriverMeta {
     label: string;
     /** One-line description shown in the in-app switcher. */
     blurb: string;
+    /**
+     * Whether the driver loads the Mac's pages by a plain URL (ttyd's own page). A tier without plain URLs (the managed
+     * relay, `TierCapabilities.plainUrls`) cannot run it.
+     */
+    needsPlainUrls: boolean;
     component: TerminalDriverComponent;
 }
 
@@ -52,4 +57,24 @@ export function getDriverMeta(id: TerminalDriverId): DriverMeta | undefined {
 /** The driver component for `id`, falling back to the first registered driver if `id` is unknown. */
 export function resolveDriver(id: TerminalDriverId): DriverMeta | undefined {
     return DRIVERS.get(id) ?? listDrivers()[0];
+}
+
+/** Whether the connection can run a driver: one that needs plain URLs runs only on a tier that allows them. */
+export function driverUsable(driver: DriverMeta, plainUrls: boolean): boolean {
+    return plainUrls || !driver.needsPlainUrls;
+}
+
+/**
+ * The driver the terminal runs on this connection: the saved one, unless the tier cannot run it (the managed relay
+ * serves no plain ttyd page), then the first registered driver it can run. The saved choice stays as it was, so it
+ * comes back on a tier that allows it.
+ */
+export function usableDriver({ id, plainUrls }: { id: TerminalDriverId; plainUrls: boolean }): DriverMeta | undefined {
+    const saved = resolveDriver(id);
+
+    if (!saved || driverUsable(saved, plainUrls)) {
+        return saved;
+    }
+
+    return listDrivers().find((driver) => driverUsable(driver, plainUrls));
 }
