@@ -3,6 +3,7 @@ import type { DetectedProvider, ModelInfo, ProviderConfig } from "@ask/types";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { ephemeralEnvAccounts } from "@genesiscz/utils/ai/config/migrations/2026-08-seedEnvAccounts";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { parseModelRef } from "@genesiscz/utils/ai/core/model-ref";
 import { describeCredential } from "@genesiscz/utils/ai/providers/credentials";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
@@ -44,6 +45,53 @@ export function detectApiKeyFor(
     return aiConfig.getProviderApiKey(config.name) ?? env.ai.getByEnvKey(config.envKey);
 }
 
+/** What ask starts with when the command line names no provider or model. */
+export interface AskChatDefault {
+    provider?: string;
+    /** A model ref as written, for the fuzzy matcher. */
+    model?: string;
+    /** The account an `@account/<id>[:<model>]` default names: ask bills it. */
+    accountId?: string;
+}
+
+/**
+ * Ask's chat default (`defaults.app.ask.chat`). An `@account/<id>[:<model>]` model names the account to bill and,
+ * after the colon, the model; the account's provider is the provider, as in `fromTaskDefault` of the shared resolver
+ * (src/utils/ai/core/resolve.ts). Any other model ref is kept as written.
+ */
+export function askChatDefault(store: AiConfigStore): AskChatDefault {
+    const config = store.data();
+    const chat = config.defaults.app?.ask?.chat;
+    const provider = chat?.provider ? { provider: chat.provider } : {};
+    if (!chat?.model) {
+        return provider;
+    }
+
+    let parsed: ReturnType<typeof parseModelRef>;
+    try {
+        parsed = parseModelRef(chat.model, config);
+    } catch (error) {
+        logger.warn({ error, model: chat.model }, "defaults.app.ask.chat.model is not a model ref; ask ignores it");
+        return provider;
+    }
+
+    if (parsed.kind !== "account" || !parsed.accountId) {
+        return { ...provider, model: chat.model };
+    }
+
+    const account = store.account(parsed.accountId);
+    if (!account) {
+        logger.warn({ account: parsed.accountId }, "defaults.app.ask.chat.model names an account that does not exist");
+        return provider;
+    }
+
+    return {
+        provider: providerNameFor(account.provider),
+        accountId: account.id,
+        ...(parsed.modelId ? { model: parsed.modelId } : {}),
+    };
+}
+
 /** Priority from the compat table, so the familiar openai → groq → … order survives. */
 function providerPriority(providerName: string): number {
     const config = getProviderConfigs().find((entry) => entry.name === providerName);
@@ -61,6 +109,24 @@ export class ProviderManager {
      * enough — left `/api/v1/models` serving an xai-only catalog until restart.
      */
     private scannedAll = false;
+
+    /** The account an app default names; it outranks `defaults.account.chat` (see `preferAccount`). */
+    private preferredAccountId?: string;
+
+    /**
+     * Bill this account when several accounts serve one provider: the account an app default names (`ask`'s
+     * `@account/` chat default) outranks `defaults.account.chat`. A change drops what an earlier scan detected,
+     * because detection keeps one account per provider.
+     */
+    preferAccount(accountId: string): void {
+        if (this.preferredAccountId === accountId) {
+            return;
+        }
+
+        this.preferredAccountId = accountId;
+        this.detectedProviders.clear();
+        this.scannedAll = false;
+    }
 
     async detectProviders(targetProvider?: string): Promise<DetectedProvider[]> {
         if (this.scannedAll || (targetProvider && this.detectedProviders.has(targetProvider))) {
@@ -127,7 +193,7 @@ export class ProviderManager {
      * per-vendor branch spelled out by hand for anthropic alone.
      */
     private candidateAccounts(store: AiConfigStore, config: ReturnType<AiConfigStore["data"]>): AccountEntry[] {
-        const preferred = config.defaults.account?.chat?.slice("@account/".length);
+        const preferred = this.preferredAccountId ?? config.defaults.account?.chat?.slice("@account/".length);
         const real = store.accounts({ enabled: true }).sort((a, b) => {
             if ((a.id === preferred) !== (b.id === preferred)) {
                 return a.id === preferred ? -1 : 1;
