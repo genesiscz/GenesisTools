@@ -34,10 +34,10 @@ export const dictionaryEntrySchema = z.discriminatedUnion("type", [
 ]);
 export type DictionaryEntry = z.infer<typeof dictionaryEntrySchema>;
 
-/** A pattern that matches only as whole words. JavaScript's `\b` treats "í" or "ž" as a word edge, so it cannot. */
+/** Whole tokens keep internal hyphens; JavaScript's `\b` also splits Czech letters, so it cannot define them. */
 function wholeWord(text: string, flags = "gu"): RegExp {
     const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, flags);
+    return new RegExp(`(?<![\\p{L}\\p{N}-])${escaped}(?![\\p{L}\\p{N}-])`, flags);
 }
 
 /** One level of the dictionary: global, a project, or one meeting. */
@@ -137,7 +137,7 @@ export function fuzzyMatches(entries: TranscriptEntry[], dictionary: ResolvedDic
     const matches: FuzzyMatch[] = [];
 
     entries.forEach((entry, line) => {
-        for (const word of entry.text.match(/[\p{L}\p{N}]+/gu) ?? []) {
+        for (const word of entry.text.match(/[\p{L}\p{N}-]+/gu) ?? []) {
             const stem = stemOf(word);
 
             if (stem.length < MIN_STEM || exact.has(word.toLowerCase())) {

@@ -334,6 +334,55 @@ describe("dictionary", () => {
         ).toEqual({ type: "fix", value: "a", substitution: "b", caseSensitive: true });
     });
 
+    test("hyphenated words keep a short dictionary fix inside their token", () => {
+        const applied = applyDictionary([line("Alice Example", 0, "Tavo-taa; pre-Tavo; Tavo.")], {
+            abbrExpansion: "every",
+            entries: [{ type: "fix", value: "Tavo", substitution: "Nero" }],
+        });
+        expect(applied.entries[0]!.text).toBe("Tavo-taa; pre-Tavo; Nero.");
+        expect(applied.fixes).toBe(1);
+    });
+
+    test("hyphenated tokens protect spoken forms, abbreviations and meanings", () => {
+        const applied = applyDictionary(
+            [line("Alice Example", 0, "neksa-tools tools-neksa neksa API-gw gw-API API Orion-led led-Orion Orion.")],
+            {
+                abbrExpansion: "every",
+                entries: [
+                    { type: "term", value: "Nexa", spoken: ["neksa"] },
+                    { type: "abbr", value: "API", substitution: "API (application interface)" },
+                    { type: "term", value: "Orion", meaning: "fixture service" },
+                ],
+            }
+        );
+        expect(applied.entries[0]!.text).toBe(
+            "neksa-tools tools-neksa Nexa API-gw gw-API API (application interface) Orion-led led-Orion Orion (fixture service)."
+        );
+        expect(applied).toMatchObject({ spoken: 1, expansions: 1, meanings: 1 });
+    });
+
+    test("a dictionary fix may itself be a whole hyphenated token", () => {
+        const applied = applyDictionary([line("Alice Example", 0, "pre-nexa-client nexa-client post-nexa-client.")], {
+            abbrExpansion: "every",
+            entries: [{ type: "fix", value: "nexa-client", substitution: "orion-client" }],
+        });
+        expect(applied.entries[0]!.text).toBe("pre-nexa-client orion-client post-nexa-client.");
+        expect(applied.fixes).toBe(1);
+    });
+
+    test("fuzzy dictionary candidates keep the whole hyphenated token", () => {
+        const dictionary = {
+            abbrExpansion: "every" as const,
+            fuzzy: { apply: 0.8, suggest: 0.8 },
+            entries: [{ type: "term" as const, value: "Quorix" }],
+        };
+        const source = [line("Alice Example", 0, "Quoriz-tail head-Quoriz Quoriz.")];
+        expect(fuzzyMatches(source, dictionary).map((match) => match.heard)).toEqual(["Quoriz"]);
+        const applied = applyDictionary(source, dictionary);
+        expect(applied.entries[0]!.text).toBe("Quoriz-tail head-Quoriz Quorix.");
+        expect(applied.fuzzy).toBe(1);
+    });
+
     test("first mention only, and off", () => {
         const first = applyDictionary(lines, { abbrExpansion: "first", entries: [mop] });
         const off = applyDictionary(lines, { abbrExpansion: "off", entries: [mop] });
