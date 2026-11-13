@@ -524,25 +524,27 @@ export function sessionWrites({
             mine.set(path, at);
         }
     };
-    let sawOwn = false;
 
     try {
-        for (const { sessionId, rows } of walkChangeLogs({ since: from, ...(dir ? { dir } : {}) })) {
-            sawOwn ||= sessionId === session;
+        // Another session's write counts only inside the window, so its log is read from the end back to `from` and
+        // no further: a long-lived session's history is never read on this hot path.
+        for (const { sessionId, rows } of walkChangeLogs({ since: from, rowsSince: from, ...(dir ? { dir } : {}) })) {
+            if (sessionId === session) {
+                continue;
+            }
 
             for (const row of rows) {
                 const at = Date.parse(row.ts);
                 const path = canonical(row.path);
 
-                if (sessionId === session) {
-                    own(path, at);
-                } else if (Number.isFinite(at) && at >= from && at > (theirs.get(path)?.at ?? 0)) {
+                if (Number.isFinite(at) && at > (theirs.get(path)?.at ?? 0)) {
                     theirs.set(path, { session: sessionId, at });
                 }
             }
         }
 
-        if (!sawOwn && session.length > 0) {
+        // This session's own writes are proof at any age (rule `own-file`), so its own log alone is read whole.
+        if (session.length > 0) {
             for (const row of readChangeLogFile(dir ? changeLogPathIn(dir, session) : changeLogPath(session)).rows) {
                 own(canonical(row.path), Date.parse(row.ts));
             }
