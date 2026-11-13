@@ -657,6 +657,21 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertGreaterThan(stacked.width, 280, "R2-MU1: stacked, the numbers have the row's width: \(stacked)")
     }
 
+    func testASpeakerListRowComparesItsValuesAndNotItsActions() throws {
+        let speaker = try JSONDecoder().decode(SpeakerStat.self, from: Data("""
+        {"label":"Speaker 2","turns":42,"lines":42,"words":3779,"spokenSec":1440,"firstSec":375,"lastSec":3152}
+        """.utf8))
+        func row(rename: String? = nil, maxShown: Int = 3, renamed: @escaping (String) -> Void = { _ in }) -> SpeakerListRow {
+            SpeakerListRow(speaker: speaker, rename: rename, stacked: false, hints: [], longestClipSec: 30, maxShown: maxShown,
+                           actions: .init(playFirst: { _ in }, playRange: { _, _ in }, zoom: { _, _ in }, review: { _ in },
+                                          rename: renamed))
+        }
+        XCTAssertEqual(row(), row(renamed: { _ in XCTFail("never runs") }),
+                       "new closures alone keep the row's body: each parent update made new ones for every row")
+        XCTAssertNotEqual(row(), row(rename: "Alice Example"), "a rename re-runs the row")
+        XCTAssertNotEqual(row(), row(maxShown: 5), "the hint-chips setting re-runs the row")
+    }
+
     func testANarrowFrameRowKeepsItsTextReadable() throws {
         let frame = try JSONDecoder().decode(TimelineFrame.self, from: Data("""
         {"file":"f1.png","path":"/tmp/none/f1.png","at":"2026-11-05T12:00:00.000Z","meetingSec":1609,"displayId":2,
