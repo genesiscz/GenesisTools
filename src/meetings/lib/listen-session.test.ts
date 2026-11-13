@@ -157,6 +157,17 @@ describe("listen session", () => {
         expect(fx.events()).toEqual(["round-start", "answered", "round-end"]);
     });
 
+    test("a comment that leaves its question open moves the round on to the next question", async () => {
+        const fx = await fixture([question("i1"), question("i2", { fromSec: 30, toSec: 40 })]);
+        const adapter = new ScriptedAdapter([{ answer: "", comment: "Check the slides" }, { answer: "Bob Example" }]);
+        expect(await fx.session(adapter).run()).toBe("done");
+        const asked = adapter.asked.map((one) => one.question.id);
+        expect(asked).toHaveLength(2);
+        expect(new Set(asked).size).toBe(2);
+        expect(fx.item(asked[0]!)).toMatchObject({ status: "suggested", comment: "Check the slides" });
+        expect(fx.item(asked[1]!)).toMatchObject({ status: "confirmed", answer: "Bob Example" });
+    });
+
     test("ledger failure does not replace the adapter error", async () => {
         const fx = await fixture([question("i1")]);
         const adapter = new ScriptedAdapter([]);
