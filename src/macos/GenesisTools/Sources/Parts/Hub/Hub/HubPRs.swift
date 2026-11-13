@@ -2814,13 +2814,22 @@ struct PRDetailView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .textSelection(.enabled)
-                    .instantTooltip(pr.title)
-                    .contextMenu {
-                        Button("Copy title") { Clipboard.copy(pr.title, what: "title") }
-                        Button("Copy \(pr.label) and title") { Clipboard.copy("\(pr.label) \(pr.title)", what: "title") }
-                    }
+                    // Plain text in the title bar row: no selection, tooltip or menu takes the strip's pointer, so a
+                    // double-click on it zooms the window. The copies are the control beside it.
+                    .titlebarLabel()
                     .layoutPriority(1)
+                MenuButton(style: .genHoverIcon()) {
+                    [
+                        .action("Copy Title") { Clipboard.copy(pr.title, what: "title") },
+                        .action("Copy \(pr.label) and Title") { Clipboard.copy("\(pr.label) \(pr.title)", what: "title") },
+                    ]
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 11))
+                        .foregroundColor(ReviewPalette.dim)
+                }
+                .instantTooltip("Copy the title")
+                .accessibilityLabel(Text("Copy the PR title"))
                 // One merge state: "Draft, not mergeable", or the state and the readiness verdict (C15).
                 PRHeaderState(pr: pr, mergeable: detail.flatMap { $0.headSha == nil || pr.headSha == nil || $0.headSha == pr.headSha ? $0.mergeable : nil })
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
