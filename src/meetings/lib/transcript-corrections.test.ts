@@ -535,8 +535,8 @@ describe("question-owned transcript uncertainty", () => {
                 dictionary: false,
             });
         expect(render("suggested", 0.6, false).entries[0]?.speaker).toBe("Voice");
-        expect(render("suggested", 0.6, true).entries[0]?.speaker).toBe("B Example");
-        expect(render("suggested", 0.4, true).entries[0]?.speaker).toContain("B Example 40 %");
+        expect(render("suggested", 0.6, true).entries[0]?.speaker).toBe("[B Example: 60 %]");
+        expect(render("suggested", 0.4, true).entries[0]?.speaker).toBe("[B Example: 40 %]");
         expect(render("confirmed", 0.4, false).entries[0]?.speaker).toBe("B Example");
     });
 

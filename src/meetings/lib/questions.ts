@@ -14,6 +14,7 @@ import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { citesPoint, keyWords, type SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { parsePersonAnswer, personPresent, recordPeople, sentenceSegments } from "./listen-answers";
 import { anchorScores, speakerScoresOf } from "./speaker-scores";
 import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 
@@ -159,7 +160,7 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
         }
 
         const present = (context.presence ?? [])
-            .filter((stay) => stay.fromSec <= toSec && stay.toSec >= item.fromSec)
+            .filter((stay) => stay.fromSec <= item.fromSec && stay.toSec > item.fromSec)
             .map((stay) => stay.name);
         const absent = (context.presence ?? [])
             .filter((stay) => !present.some((name) => sameName(name, stay.name)))
@@ -192,7 +193,10 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             rules: item.rules,
             ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
             ...(longest ? { clip: { fromSec: longest.startSec, toSec: longest.endSec } } : {}),
-            signature: `${choices.slice(0, 2).sort().join("+")}|${[...new Set(present)].sort().join(",")}`,
+            // Missing indicator evidence never establishes a shared voice identity for propagation.
+            signature: item.evidence?.sharedCallUnknown
+                ? undefined
+                : `${choices.slice(0, 2).sort().join("+")}|${[...new Set(present)].sort().join(",")}`,
             evidence: { words: importance.words, impact, labels: [item.label] },
         };
     }
@@ -284,7 +288,7 @@ const PROPAGATED_BONUS = 0.3;
 const PROPAGATED_MAX = 0.9;
 
 /**
- * One answer settles compatible open speaker questions for the same single label and exact range. They must share
+ * One answer settles compatible open speaker questions for the same single label and evidence group. They must share
  * its signature and offer the answer, which raises their items by +0.3 up to 0.9. A question that reaches
  * `listenBelow` is closed as settled; the others stay, scored higher. Returns the questions it closed. Mutates `record`.
  */
@@ -313,8 +317,6 @@ export function propagateAnswer(
             options.except?.includes(question.id) ||
             question.signature !== answered.signature ||
             !offers ||
-            question.fromSec !== answered.fromSec ||
-            question.toSec !== answered.toSec ||
             !Array.isArray(otherLabels) ||
             otherLabels.length !== 1 ||
             otherLabels[0] !== labels[0]
@@ -365,6 +367,37 @@ export function propagateAnswer(
             question.comment = `settled by the answer to ${answered.id}`;
             settled.push(question.id);
         }
+    }
+
+    const askedTargets = new Set(record.items.flatMap((item) => (item.kind === "question" ? item.decides : [])));
+    for (const item of record.items) {
+        if (
+            item.kind !== "speaker-range" ||
+            item.status !== "suggested" ||
+            askedTargets.has(item.id) ||
+            options.except?.includes(item.id) ||
+            item.label !== labels[0] ||
+            item.evidence?.signature !== answered.signature ||
+            !Array.isArray(item.evidence?.choices) ||
+            !item.evidence.choices.some((name) => typeof name === "string" && sameName(name, options.answer))
+        ) {
+            continue;
+        }
+        item.speaker = options.answer;
+        item.confidence = Math.min(PROPAGATED_MAX, Math.round(((item.confidence ?? 0) + PROPAGATED_BONUS) * 100) / 100);
+        item.rules = [...new Set([...item.rules, MeetingRule.User])];
+        const scores = speakerScoresOf(item);
+        item.evidence = {
+            ...item.evidence,
+            propagatedFrom: answered.id,
+            ...(scores.length
+                ? {
+                      candidateScores: anchorScores(scores, options.answer, item.confidence, [
+                          { kind: "answer", rule: MeetingRule.User },
+                      ]),
+                  }
+                : {}),
+        };
     }
 
     return settled;
@@ -523,7 +556,15 @@ function detachTargets(options: { question: QuestionItem; except?: readonly stri
 export function answerQuestion(
     record: MeetingRecord,
     id: string,
-    options: { answer: string; comment?: string; now: string; except?: readonly string[] }
+    options: {
+        answer: string;
+        comment?: string;
+        now: string;
+        except?: readonly string[];
+        transcript?: readonly TranscriptEntry[];
+        people?: readonly string[];
+        segments?: Array<{ fromWord: number; speaker: string }>;
+    }
 ): Correction[] {
     const question = record.items.find((item): item is QuestionItem => item.id === id && item.kind === "question");
 
@@ -531,13 +572,78 @@ export function answerQuestion(
         throw new Error(`${record.id} has no question ${id}`);
     }
 
-    const answer = options.answer.trim();
+    let answer = options.answer.trim();
+    if (!answer && options.comment?.trim()) {
+        question.comment = [question.comment, options.comment.trim()].filter(Boolean).join("\n");
+        return [];
+    }
+    if (!answer) {
+        throw new Error("An empty answer decides nothing: answer with a person, word or comment");
+    }
+    const parsed =
+        question.about === "speaker" && answer.toLowerCase() !== NONE_OF_THESE
+            ? parsePersonAnswer({
+                  text: answer,
+                  people: [...question.choices, ...recordPeople(record), ...(options.people ?? [])].filter((name) =>
+                      personPresent(record, name, question.fromSec)
+                  ),
+                  self: record.participants.find((person) => person.self)?.name,
+              })
+            : undefined;
+    if (parsed?.kind === "comment") {
+        question.comment = [question.comment, parsed.text, options.comment].filter(Boolean).join("\n");
+        return [];
+    }
+    const voices = parsed?.kind === "people" ? parsed.people : undefined;
+    if (
+        options.segments &&
+        (!voices ||
+            options.segments[0]?.fromWord !== 0 ||
+            options.segments.some(
+                (segment, index) =>
+                    !voices.includes(segment.speaker) ||
+                    (index > 0 && segment.fromWord <= options.segments![index - 1]!.fromWord)
+            ))
+    ) {
+        throw new Error("Voice segments need known speakers, start at word zero and increase strictly");
+    }
+    if (voices) {
+        answer = voices.join(" + ");
+    }
 
     if (!answer) {
         throw new Error(`An empty answer decides nothing: answer ${id} with a name or a word, or "${NONE_OF_THESE}"`);
     }
 
     const none = answer.toLowerCase() === NONE_OF_THESE;
+    if (
+        question.about === "speaker" &&
+        (question.group === "spot-check" || question.group === "long-stretch") &&
+        !none &&
+        question.decides.length === 0 &&
+        options.transcript
+    ) {
+        const lines = new TranscriptLines(options.transcript);
+        const at = options.transcript.findLastIndex(
+            (entry) => entry.startSec !== undefined && entry.startSec <= question.fromSec
+        );
+        const source = options.transcript[at];
+        if (source?.startSec !== undefined && (lines.end(at) ?? source.startSec) >= question.fromSec) {
+            const target = meetingItemSchema.parse({
+                id: nextId("i", record.items),
+                kind: "speaker-range",
+                label: source.speaker,
+                fromSec: source.startSec,
+                toSec: source.startSec,
+                status: "suggested",
+                rules: question.rules,
+                suggestedAt: options.now,
+                evidence: { transcriptLine: at, endSec: lines.end(at), splitQuestion: question.id },
+            });
+            record.items.push(target);
+            question.decides.push(target.id);
+        }
+    }
     question.status = "confirmed";
     question.answer = answer;
     question.decidedAt = options.now;
@@ -569,6 +675,19 @@ export function answerQuestion(
 
         if (item.kind === "speaker-range" || item.kind === "join") {
             item.speaker = answer;
+            if (item.kind === "speaker-range" && voices && voices.length > 1) {
+                const source = options.transcript?.find(
+                    (line) => line.speaker === item.label && line.startSec === item.fromSec
+                );
+                item.voices = voices;
+                item.segments = options.segments ?? (source ? sentenceSegments(source.text, voices) : undefined);
+                if (
+                    source &&
+                    item.segments?.some((segment) => segment.fromWord >= source.text.trim().split(/\s+/).length)
+                ) {
+                    throw new Error("Voice split is outside the source words");
+                }
+            }
         }
 
         if (item.kind === "term") {
@@ -605,6 +724,7 @@ export function answerVocabulary(record: MeetingRecord, dictionaryValues: string
         ...(record.attendance?.people.map((person) => person.name) ?? []),
         ...record.participants.map((person) => person.name),
         ...(record.calendar?.attendees ?? []),
+        ...recordPeople(record),
     ];
     const keys = new Set(values.map((value) => nameKey(value)));
     const others = known.filter((name) => !keys.has(nameKey(name)));
@@ -726,7 +846,7 @@ function spokenIn(
             (entry) =>
                 entry.startSec !== undefined &&
                 entry.startSec >= question.fromSec - 0.5 &&
-                (entry.startSec < question.toSec || entry.startSec === question.fromSec)
+                (entry.startSec <= question.toSec || entry.startSec === question.fromSec)
         )
         .map((entry) => entry.text)
         .join(" ");

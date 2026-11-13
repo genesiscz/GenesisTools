@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -583,4 +583,44 @@ test("all opened readers share independently identified goodbye windows without 
     expect(presence?.find((stay) => stay.name === "Carol Example")?.toSec).toBe(10);
     expect(presence?.find((stay) => stay.name === "Bob Example")?.toSec).toBe(90);
     expect(SafeJSON.stringify(new MeetingStore(store.storage).read(record.id))).toBe(before);
+});
+
+test("collect persists only a canonically identified departure and read-only presence retains it", async () => {
+    const { store, record } = await newRecord({
+        participants: [
+            { name: "Alice Example", self: true, firstSeenSec: 0, from: ["platform-roster"] },
+            { name: "Bob Example", firstSeenSec: 0, from: ["platform-roster"] },
+        ],
+    });
+    const source = fakeSource({
+        evidence: {
+            selfName: "Alice Example",
+            segments: [{ startSec: 0, endSec: 100, channel: "system" }],
+            speaking: [],
+            files: [],
+        },
+    });
+    const base = await source.load("abc");
+    source.load = async () => ({
+        ...base,
+        transcript: [
+            { speaker: "Alice Example", startSec: 0, text: "Začneme." },
+            { speaker: "Voice", startSec: 40, text: "Hele, já už musím, mějte se." },
+            { speaker: "Alice Example", startSec: 45, text: "Díky, čau." },
+            { speaker: "Voice", startSec: 90, text: "Tak budeme pokračovat." },
+        ],
+    });
+    const opened = OpenedMeeting.of(store, record, { source, sourceMeetingId: "abc" });
+    await opened.collect();
+    const reopened = new MeetingStore(store.storage).read(record.id)!;
+    expect(reopened.participants.find((one) => one.name === "Bob Example")?.stays).toEqual([
+        { fromSec: 0, toSec: 40, source: "goodbye", confidence: 0.8 },
+    ]);
+    const before = readFileSync(store.path(record.id), "utf8");
+    expect(
+        (await OpenedMeeting.of(store, reopened, { source, sourceMeetingId: "abc" }).presence())?.find(
+            (stay) => stay.name === "Bob Example"
+        )?.toSec
+    ).toBe(40);
+    expect(readFileSync(store.path(record.id), "utf8")).toBe(before);
 });

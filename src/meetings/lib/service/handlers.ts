@@ -230,6 +230,38 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
             return { added: result.fresh.length, warnings: result.warnings };
         },
+        "meeting.listen.prepare": async (params, context) => {
+            const store = storeOf();
+            const record = recordOf(store, params.meeting);
+            const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
+            const { addQualityQuestions, qualityVoiceFeatures } = await import("../listen-quality");
+            const entries = (await opened.meeting()).transcript;
+            const features = params.group === "long-stretch" ? await qualityVoiceFeatures(opened) : undefined;
+            let questions: string[] = [];
+            await store.update(record.id, { command: "listen", change: "prepare " + params.group }, (current) => {
+                questions = addQualityQuestions({
+                    record: current,
+                    entries,
+                    features,
+                    spotCheck: params.group === "spot-check" ? (params.count ?? 20) : undefined,
+                    longStretchWords: params.group === "long-stretch" ? (params.words ?? 50) : undefined,
+                    channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
+                });
+            });
+            context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "transcript"] });
+            return { meeting: record.id, questions };
+        },
+        "meeting.voice.enrol": async (params, context) => {
+            const store = storeOf();
+            const record = recordOf(store, params.meeting);
+            const { enrolMeetingVoices } = await import("../voice-enrolment");
+            const result = await enrolMeetingVoices({
+                store,
+                opened: OpenedMeeting.of(store, record, deps.linkedSource?.(record)),
+            });
+            context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "transcript", "speakers"] });
+            return result;
+        },
         "meeting.people.edit": async (params, context) => {
             const store = storeOf();
             const current = recordOf(store, params.meeting);

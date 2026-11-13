@@ -40,6 +40,8 @@ export interface ChoiceSelectOptions<T> {
     formatSubmitted?: (row: ChoiceRow<T>) => string;
     /** The key footer. */
     footer?: string;
+    onSpace?: () => void;
+    liveContext?: () => string[];
 }
 
 export const CHOICE_FOOTER = `${pc.dim("↑↓")} move  ${pc.dim("enter")} pick  ${pc.dim("esc")} back`;
@@ -177,14 +179,43 @@ export function renderChoiceFrame<T>(
 
 /** Shows the select. Returns the picked row's value, or the cancel symbol on Esc (test it with `isCancel`). */
 export async function choiceSelect<T>(opts: ChoiceSelectOptions<T>): Promise<T | symbol> {
+    const liveOutput = opts.liveContext
+        ? new Writable({
+              write(chunk, encoding, callback) {
+                  process.stderr.write(chunk, encoding, callback);
+              },
+          })
+        : undefined;
     const prompt = new SelectPrompt({
+        ...(liveOutput ? { output: liveOutput } : {}),
         options: opts.rows.map((row) => ({ value: row.value })),
         initialValue: opts.initialValue ?? opts.rows[0]?.value,
         render() {
-            return renderChoiceFrame(opts, this.state, this.cursor, terminalSize());
+            return renderChoiceFrame(
+                opts.liveContext ? { ...opts, context: [...(opts.context ?? []), ...opts.liveContext()] } : opts,
+                this.state,
+                this.cursor,
+                terminalSize()
+            );
         },
     });
-    const result = await prompt.prompt();
+    const keypress = (text: string) => {
+        if (text === " ") {
+            opts.onSpace?.();
+        }
+    };
+    if (opts.onSpace) {
+        process.stdin.on("keypress", keypress);
+    }
+    const refresh = liveOutput ? setInterval(() => liveOutput.emit("resize"), 200) : undefined;
+    let result: unknown;
+    try {
+        result = await prompt.prompt();
+    } finally {
+        process.stdin.off("keypress", keypress);
+        clearInterval(refresh);
+        liveOutput?.end();
+    }
 
     if (isCancel(result)) {
         return result;

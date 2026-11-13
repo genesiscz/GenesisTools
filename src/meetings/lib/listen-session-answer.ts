@@ -33,6 +33,6 @@ export class GivenAnswerAdapter implements ListenAdapter {
             this.print(`the same answer settled ${note.settled.length} more: ${note.settled.join(" ")}`, "dim");
         }
 
-        this.print(`${note.label} answered: ${note.outcome.answer}`, "ok");
+        this.print("✓ " + note.label + " → " + (note.outcome.answer || "comment saved; still open") + "\n", "ok");
     }
 }

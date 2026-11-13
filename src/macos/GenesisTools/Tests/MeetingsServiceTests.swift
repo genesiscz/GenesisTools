@@ -283,6 +283,18 @@ final class MeetingsServiceTests: XCTestCase {
                     XCTAssertEqual(record.id, params["ref"] as? String)
                     XCTAssertFalse(record.items.isEmpty, "the record's items decode")
                 }
+            case MeetingsAPI.ListenPrepare.name:
+                try roundTrip(MeetingsAPI.ListenPrepare.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.ListenPrepare.Result.self, result) }
+            case MeetingsAPI.VoiceEnrol.name:
+                try roundTrip(MeetingsAPI.VoiceEnrol.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.VoiceEnrol.Result.self, result) }
+            case MeetingsAPI.MeetingPeopleEdit.name:
+                try roundTrip(MeetingsAPI.MeetingPeopleEdit.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.MeetingPeopleEdit.Result.self, result) }
+            case MeetingsAPI.Voice.name:
+                try roundTrip(MeetingsAPI.Voice.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.Voice.Result.self, result) }
             case MeetingsAPI.Transcript.name:
                 try roundTrip(MeetingsAPI.Transcript.Params.self, params, label)
                 if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.Transcript.Result.self, result).entries.isEmpty) }
@@ -513,7 +525,7 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(record.args, ["show", "m1", "--json"])
         let transcript = MeetingDetailModel.transcriptRead("m1")
         XCTAssertEqual(transcript.method, "meeting.transcript")
-        XCTAssertEqual(transcript.args, ["transcript", "m1", "--format", "json"])
+        XCTAssertEqual(transcript.args, ["transcript", "m1", "--with-suggested", "--format", "json"])
         XCTAssertEqual(transcript.timeoutSeconds, 120)
         let revisions = MeetingDetailModel.revisionsRead("m1")
         XCTAssertEqual(revisions.method, "meeting.revisions")
@@ -1236,5 +1248,44 @@ extension MeetingsServiceTests {
         XCTAssertNotNil(model.settingsRaw, "the source switches must load through the fixture")
         XCTAssertGreaterThan(fake.count("people.known"), 0)
         XCTAssertGreaterThan(fake.count("config.read"), 0)
+    }
+}
+
+extension MeetingsServiceTests {
+    func testCanonicalVoiceScoresDecodeAndMarkOnlyTheirNamedTranscriptLine() throws {
+        let voice = try MeetingsService.decode(MeetingRecordView.Evidence.Voice.Match.self,
+            ["model": "fixture", "quality": "matched", "person": "Bob Example", "reason": "gate passed", "candidates": [["person": "Bob Example", "score": 0.8]]])
+        XCTAssertEqual(voice.candidates.first?.score, 0.8)
+        let item = try MeetingsService.decode(MeetingItem.self, ["id": "i1", "kind": "speaker-range", "status": "suggested", "speaker": "Bob Example", "fromSec": 0, "toSec": 0, "rules": ["voice-embedding"]])
+        let entry = TranscriptLine(id: "voice-line", startSec: 0, speaker: "Bob Example", text: "A call sentence.")
+        XCTAssertTrue(MeetingDetailModel.lineMarks(entries: [entry], hints: [], items: [item], comments: [])[entry.rowID]?.contains(.byVoice) == true)
+    }
+
+    func testListenPersonKeysIgnoreAccentsOrderAndAffiliation() {
+        XCTAssertEqual(PeopleText.personKey("Éxample Alice (Engineering)"), PeopleText.personKey("alice example"))
+    }
+
+    func testLocalListenProbeConservesLinesAndDoesNotAskAlreadyQuestionedLines() {
+        let entries = (0..<5).map { index in
+            TranscriptLine(id: String(index), startSec: Double(index), speaker: "[Alice Example: 55 %]", text: "one two three four five",
+                confidence: 0.55, suggestedSpeaker: "Alice Example", questioned: index == 0, guess: true, band: "guess")
+        }
+        XCTAssertEqual(ListenTranscriptQuality.probe(entries, percent: 50, minimumWords: 10), .init(applied: 5, guesses: 0, open: 0, questions: 0))
+        XCTAssertEqual(ListenTranscriptQuality.probe(entries, percent: 70, minimumWords: 10), .init(applied: 0, guesses: 5, open: 5, questions: 1))
+    }
+
+    func testListenMetadataAndExplicitVoiceSegmentsRoundTrip() throws {
+        let line = try MeetingsService.decode(TranscriptLine.self, ["startSec": 12, "speaker": "[Alice Example: 55 %]", "text": "A sentence.",
+            "confidence": 0.55, "suggestedSpeaker": "Alice Example", "guess": true, "band": "guess"])
+        XCTAssertEqual(line.suggestedSpeaker, "Alice Example")
+        XCTAssertEqual(line.confidence, 0.55)
+        XCTAssertEqual(line.guess, true)
+        let action = DecisionAction.answer("i1", "Alice Example, then Bob Example", segments: [
+            .init(fromWord: 0, speaker: "Alice Example"), .init(fromWord: 3, speaker: "Bob Example")])
+        let encoded = try MeetingsService.paramsObject(action)
+        let segments = try XCTUnwrap(encoded["segments"] as? [[String: Any]])
+        XCTAssertEqual(segments.count, 2)
+        XCTAssertEqual(segments[1]["fromWord"] as? Int, 3)
+        XCTAssertEqual(segments[1]["speaker"] as? String, "Bob Example")
     }
 }

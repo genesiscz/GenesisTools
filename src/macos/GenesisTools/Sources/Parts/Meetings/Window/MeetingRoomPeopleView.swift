@@ -9,6 +9,7 @@ struct MeetingRoomPeopleView: View {
     @State private var atMic = true
     @State private var owner = ""
     @State private var failure: String?
+    @State private var voiceStatus: String?
     @State private var busy = false
     @State private var voice: [MeetingsAPI.Voice.Line] = []
     @State private var count = 3
@@ -38,6 +39,16 @@ struct MeetingRoomPeopleView: View {
                     Stepper("\(count) voices", value: $count, in: 1...16).fixedSize()
                     Picker("Channel", selection: $channel) { Text("Left").tag(0); Text("Right").tag(1) }.fixedSize()
                     Button("Voice features") { readVoice() }.disabled(busy)
+                    Button("Enrol remote voices") {
+                        Task {
+                            busy = true
+                            defer { busy = false }
+                            do {
+                                let result = try await detail.enrolListenVoices()
+                                voiceStatus = "\(result.matched) matched, \(result.unknown) unknown, \(result.samples) enrolment samples"
+                            } catch { failure = error.localizedDescription }
+                        }
+                    }.disabled(busy)
                 }.font(.caption)
             }
             ForEach(detail.record.value?.seats?.microphones ?? [], id: \.id) { group in
@@ -45,6 +56,7 @@ struct MeetingRoomPeopleView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if let failure { Text(failure).font(.caption).foregroundStyle(.red) }
+            if let voiceStatus { Text(voiceStatus).font(.caption).foregroundStyle(.secondary) }
             if !voice.isEmpty {
                 DisclosureGroup("Voice features, \(voice.count) lines, raw physical channels") {
                     ScrollView {
@@ -72,8 +84,9 @@ struct MeetingRoomPeopleView: View {
     private func edit(_ person: String) {
         name = person
         let stay = detail.record.value?.attendance?.people.first { $0.name == person }
-        from = stay.map { String($0.fromSec) } ?? "0"
-        to = stay.map { String($0.toSec) } ?? ""
+        let participant = detail.record.value?.participants?.first { $0.name == person }
+        from = String(stay?.fromSec ?? participant?.stays?.first?.fromSec ?? participant?.firstSeenSec ?? 0)
+        to = (stay?.toSec ?? participant?.stays?.last?.toSec).map { String($0) } ?? ""
         let group = detail.record.value?.seats?.microphones?.first { $0.people.contains(person) }
         atMic = group?.id == "self" || person.isEmpty
         owner = group?.deviceId ?? ""

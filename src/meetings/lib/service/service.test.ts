@@ -1857,9 +1857,17 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meeting.people.edit", { meeting: "nope", action: "add", name: "Dana Example" });
     await ask(window, "meeting.voice", { meeting: "nope" });
     await ask(window, "meeting.suggest", { meeting: "nope" });
+    await ask(window, "meeting.listen.prepare", { meeting: "nope", group: "spot-check" });
+    await ask(window, "meeting.voice.enrol", { meeting: "nope" });
     await ask(window, "meeting.show", { ref: "nope" }, "No meeting: meeting-not-found.");
     await ask(window, "meeting.show", { ref: "2026-11-03" }, "A prefix of two meetings: meeting-ref.");
     await ask(window, "meeting.transcript", { ref: REVIEW.id });
+    await ask(
+        window,
+        "meeting.transcript",
+        { ref: REVIEW.id, withSuggested: true },
+        "The native transcript keeps confidence and guess metadata for its local threshold."
+    );
     await ask(window, "meeting.wordTimings.generate", {
         ref: REVIEW.id,
         fromSec: 0,
@@ -1867,6 +1875,12 @@ async function captureExamples(): Promise<Example[]> {
         model: "fixture/words",
     });
     await ask(window, "meeting.transcript", { ref: RETRO.id }, "No transcript source: a meeting state.");
+    await ask(
+        window,
+        "meeting.transcript",
+        { ref: RETRO.id, withSuggested: true },
+        "No transcript source with the native preview flags."
+    );
     await ask(window, "meeting.revisions", { ref: REVIEW.id });
     await ask(window, "meetings.list", { limit: 0 }, "A bad param: -32602 before any handler.");
     await ask(window, SUBSCRIBE, { meeting: REVIEW.id, events: ["meeting.changed"] });

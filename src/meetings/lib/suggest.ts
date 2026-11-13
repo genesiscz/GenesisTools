@@ -5,6 +5,7 @@ import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from 
 import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import type { VoiceMatch } from "@genesiscz/utils/meetings/voice";
 import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import {
     docIdentifiers,
@@ -38,6 +39,7 @@ import { arrivalItems } from "./arrival";
 import { contextEntryText } from "./context-file";
 import { identifiedDepartures } from "./departure";
 import { indicatorFacts } from "./indicator-facts";
+import { uncertainSharedCallRanges } from "./listen-quality";
 import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
 import { assessIndicator } from "./speaker-indicator";
@@ -804,6 +806,9 @@ function micConfidence(line: LineEvidence): {
 
 /** The names the platform showed speaking during a line, most often first. */
 function speakingNames(line: LineEvidence): string[] {
+    if (line.speakingUnknown) {
+        return [];
+    }
     return Object.entries(line.speaking)
         .sort((a, b) => b[1] - a[1])
         .map(([name]) => name);
@@ -1407,6 +1412,7 @@ function evidenceItems(options: {
     evidence: MeetingEvidence;
     presence?: Presence[];
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
+    voiceMatches?: Readonly<Record<string, VoiceMatch>>;
     /** The record's items: an agent's speaker ranges over the same lines score their speaker (the polish). */
     items?: readonly MeetingItem[];
     samePerson?: SamePerson;
@@ -1414,7 +1420,7 @@ function evidenceItems(options: {
 }): { items: NewItem[]; swaps: SwapStretch[] } {
     const selfName = options.evidence.selfName;
 
-    if (!selfName || options.evidence.segments.length === 0) {
+    if (!selfName || (options.evidence.segments.length === 0 && !options.voiceMatches)) {
         log.debug({ selfName, segments: options.evidence.segments.length }, "no channel evidence");
         return { items: [], swaps: [] };
     }
@@ -1578,6 +1584,50 @@ function evidenceItems(options: {
             );
             if (skippedSwap) {
                 close();
+                continue;
+            }
+            const voice = options.voiceMatches?.[String(line.index)];
+            const present =
+                !presence ||
+                presence.some(
+                    (stay) =>
+                        sameName(stay.name, voice?.person ?? "") &&
+                        line.startSec >= stay.fromSec &&
+                        line.startSec < stay.toSec
+                );
+            const confirmed = options.items?.some(
+                (item) =>
+                    item.kind === "speaker-range" &&
+                    item.status === "confirmed" &&
+                    item.label === line.label &&
+                    line.startSec >= item.fromSec &&
+                    line.startSec <= item.toSec
+            );
+            if (
+                !confirmed &&
+                voice?.quality === "matched" &&
+                voice.person &&
+                !sameName(voice.person, selfName) &&
+                present &&
+                (line.energyMic ?? line.micShare ?? 1) <= 0.35
+            ) {
+                close();
+                items.push({
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label,
+                    fromSec: line.startSec,
+                    toSec: line.startSec,
+                    speaker: voice.person,
+                    confidence: 0.8,
+                    rules: [MeetingRule.VoiceEmbedding],
+                    evidence: {
+                        endSec: line.endSec,
+                        voice,
+                        decisionGate: "cosine and margin",
+                        confidenceMeaning: "rule gate passed; cosine is not probability",
+                    },
+                });
                 continue;
             }
             // R20 already said who the line is.
@@ -1895,6 +1945,7 @@ export function suggestItems(options: {
             energyMicShare: options.energyMicShare,
             items: record.items,
             record,
+            voiceMatches: record.evidence?.voice?.lines,
             samePerson: options.samePerson,
         });
         const arrivals = arrivalItems({
@@ -1904,7 +1955,14 @@ export function suggestItems(options: {
             speakingReadings: options.evidence.speaking,
         });
         // A greeting inside a swapped stretch is under a swapped label: R20 already names its speaker.
-        found.push(...channel.items, ...arrivals.filter((item) => !inSwap(channel.swaps, item.label, item.fromSec)));
+        found.push(
+            ...channel.items,
+            ...arrivals.filter((item) => !inSwap(channel.swaps, item.label, item.fromSec)),
+            ...uncertainSharedCallRanges({
+                record,
+                lines: lineEvidence(meeting.transcript, options.evidence, options.presence, options.energyMicShare),
+            })
+        );
     }
 
     found.splice(0, found.length, ...found.map(unlabeled.restore));
@@ -1960,6 +2018,21 @@ export function suggestItems(options: {
     const candidates = taken
         .filter((item) => !askedItems.has(item.id))
         .flatMap((item) => questionFor(item, context) ?? []);
+
+    // Keep the same evidence identity on unasked ranges, so a later answer can improve the whole compatible group.
+    const signatureQuestions = taken.flatMap(
+        (item) => questionFor(item, { ...context, listenBelow: Math.max(0.7, context.listenBelow) }) ?? []
+    );
+    for (const question of signatureQuestions) {
+        if (question.about !== "speaker" || !question.signature) {
+            continue;
+        }
+        for (const target of taken) {
+            if (target.kind === "speaker-range" && question.decides.includes(target.id)) {
+                target.evidence = { ...target.evidence, signature: question.signature, choices: question.choices };
+            }
+        }
+    }
 
     // One budget for speakers and terms together, for the meeting and not per run: a question still open counts, so a
     // second suggest asks nothing new until some are answered (MC4: a second run added 11, 23 open of a cap of 12).

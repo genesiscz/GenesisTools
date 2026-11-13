@@ -12,6 +12,7 @@ import { projectNameSchema } from "./config";
 import { CHANNEL_LAYOUTS } from "./energy";
 import { MEETING_PLATFORM_IDS } from "./platform";
 import { meetingSeatsSchema } from "./seats";
+import { voiceEvidenceSchema } from "./voice";
 
 const { log } = logger.scoped("meetings-record");
 
@@ -292,6 +293,7 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         fromSec: z.number(),
         toSec: z.number(),
         question: z.string().min(1),
+        group: z.enum(["rules", "spot-check", "long-stretch"]).optional(),
         /** The words in question (about a term or text), as the transcript shows them; marked until answered. */
         heard: z.string().min(1).optional(),
         choices: z.array(z.string()).default([]),
@@ -445,6 +447,24 @@ export const meetingRecordSchema = z.object({
     calendar: calendarSchema.optional(),
     participants: z.array(participantSchema).default([]),
     seats: meetingSeatsSchema.optional(),
+    review: z
+        .object({
+            listen: z
+                .object({
+                    spotChecks: z
+                        .array(
+                            z.object({
+                                at: z.string(),
+                                answered: z.number().int(),
+                                changed: z.number().int(),
+                                questionIds: z.array(z.string()),
+                            })
+                        )
+                        .optional(),
+                })
+                .optional(),
+        })
+        .optional(),
     context: z.array(contextSchema).default([]),
     /**
      * Renames for this meeting, and stretches given to a person (the decision journal's `assign`). Both are a
@@ -483,6 +503,19 @@ export const meetingRecordSchema = z.object({
     /** What was measured about the recording itself. */
     evidence: z
         .object({
+            voice: voiceEvidenceSchema.optional(),
+            indicator: z
+                .array(
+                    z.object({
+                        tSec: z.number(),
+                        speaking: z.array(z.string()),
+                        muted: z.array(z.string()).optional(),
+                        speakingUnknown: z.boolean().optional(),
+                        reason: z.string().optional(),
+                        validUntilSec: z.number().optional(),
+                    })
+                )
+                .optional(),
             /** Which audio channel is the user's microphone, calibrated on this recording's tagged segments. */
             channels: z
                 .object({

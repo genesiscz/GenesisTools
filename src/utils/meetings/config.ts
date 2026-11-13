@@ -498,6 +498,9 @@ const storedConfigSchema = z
                     .object({
                         /** An item under this confidence that matters (enough words, or a decision) becomes a question. */
                         listenBelow: z.number().min(0).max(1).default(0.6),
+                        longStretchWords: z.number().int().min(1).default(50),
+                        /** Derive a low-confidence leave only after this many observed silent call minutes. */
+                        leaveSilenceMinutes: z.number().min(1).max(120).default(10),
                         /** `--with-suggested` applies a suggested item at this confidence or more; a lower one is marked unclear. */
                         applyAbove: z.number().min(0).max(1).default(0.5),
                         /** Questions one `items suggest` run makes at most, speakers and terms together; the rest stay marked. */

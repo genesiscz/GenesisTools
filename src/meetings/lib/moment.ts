@@ -235,7 +235,24 @@ function questionSpan(record: MeetingRecord, question: QuestionItem, lines: Tran
     const asked = (question.about === "speaker" ? undefined : heardClip(question, lines, occurrence)) ??
         question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
     const heard =
-        question.about === "speaker" ? { ...asked, toSec: voiceEnd(lines, asked.fromSec, asked.toSec) } : asked;
+        question.about === "speaker"
+            ? {
+                  ...asked,
+                  toSec:
+                      question.clip || question.question.startsWith('Who says "')
+                          ? asked.toSec
+                          : Math.max(
+                                asked.toSec,
+                                ...lines.entries.flatMap((entry, index) =>
+                                    entry.startSec !== undefined &&
+                                    entry.startSec >= asked.fromSec &&
+                                    entry.startSec <= asked.toSec
+                                        ? [lines.end(index) ?? asked.toSec]
+                                        : []
+                                )
+                            ),
+              }
+            : asked;
     return {
         ...heard,
         spotSec: askedSpotSec(question, lines, occurrence),
@@ -448,7 +465,15 @@ function toneSoundOf(input: MomentInput): ToneSound {
 
 function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment {
     const { listen } = input;
-    const voicePad = listen.tone.leadSec + SPEAKER_PAD_SEC;
+    const splitPart =
+        target.kind === "item" &&
+        input.record.items.some(
+            (item) =>
+                item.id === questionIdOf(input.record, target.id) &&
+                item.kind === "question" &&
+                item.question.startsWith('Who says "')
+        );
+    const voicePad = Math.max(splitPart ? 1.5 : 0, listen.tone.leadSec + SPEAKER_PAD_SEC);
     const pads = span.pad === "voice" ? { beforeSec: voicePad, afterSec: voicePad } : aroundPads(input);
     // The tone marks the spot when the clip holds it, else the start of what is heard.
     const inClip = span.spotSec >= span.fromSec - pads.beforeSec && span.spotSec <= span.toSec + pads.afterSec;
@@ -816,8 +841,33 @@ export async function clipMoment(
     const { store, record } = options;
     options.control?.signal?.throwIfAborted();
     const opened = options.opened ?? OpenedMeeting.of(store, record);
-    const moment = await momentIn(opened, options);
+    let moment = await momentIn(opened, options);
     const audioPath = await opened.audioPath();
+    const itemId = options.target.kind === "item" ? questionIdOf(record, options.target.id) : undefined;
+    const item = record.items.find((one) => one.id === itemId);
+    if (item?.kind === "question" && item.question.startsWith('Who says "')) {
+        const { refineSplitClip, questionClip } = await import("./listen-clips");
+        const refined = await refineSplitClip({
+            plan: questionClip({
+                record,
+                question: item,
+                transcript: (await opened.meeting()).transcript,
+                listen: (await opened.config()).global.playback.listen,
+                pads: { beforeSec: moment.padSec, afterSec: moment.padAfterSec ?? moment.padSec },
+                ...(moment.tone ? { toneSound: moment.tone.sound } : {}),
+            }),
+            question: item,
+            audioPath,
+        });
+        moment = {
+            ...moment,
+            fromSec: refined.fromSec,
+            toSec: refined.toSec,
+            padSec: refined.padSec,
+            startSec: Math.max(0, refined.fromSec - refined.padSec),
+            endSec: refined.toSec + (refined.padAfterSec ?? refined.padSec),
+        };
+    }
     const stat = statSync(audioPath);
     const path = momentCachePath(moment, { path: audioPath, mtimeMs: stat.mtimeMs, size: stat.size });
 

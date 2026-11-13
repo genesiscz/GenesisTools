@@ -7,6 +7,7 @@ import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { RawTermEvidence } from "@genesiscz/utils/transcribe/terms";
 import { type IndicatorGap, indicatorFacts, type LabelPrehistory } from "./indicator-facts";
+import { rosterPresence } from "./person-stays";
 import { assessIndicator } from "./speaker-indicator";
 
 /**
@@ -15,6 +16,7 @@ import { assessIndicator } from "./speaker-indicator";
  * No rule, no weight, no confidence: the agent decides, and writes items with its own reasons.
  */
 export interface RawMeeting {
+    indicator?: { knownLines: number; unknownLines: number };
     meeting: {
         id: string;
         title: string;
@@ -34,7 +36,8 @@ export interface RawMeeting {
         name: string;
         origin?: string;
         self?: boolean;
-        stays: Array<{ fromSec: number; toSec: number }>;
+        firstSeenSec?: number;
+        stays: Array<{ fromSec: number; toSec: number; source?: string; confidence?: number }>;
     }>;
     lines: Array<{
         index: number;
@@ -73,9 +76,7 @@ function presentAt(record: MeetingRecord, presence: Presence[] | undefined, sec:
     }
 
     return [
-        ...new Set(
-            (presence ?? []).filter((stay) => sec >= stay.fromSec && sec <= stay.toSec).map((stay) => stay.name)
-        ),
+        ...new Set((presence ?? []).filter((stay) => sec >= stay.fromSec && sec < stay.toSec).map((stay) => stay.name)),
     ];
 }
 
@@ -90,12 +91,14 @@ export function rawMeeting(options: {
     terms?: RawTermEvidence;
 }): RawMeeting {
     const { record, meeting, evidence } = options;
+    const roster = rosterPresence(record, Math.max(...meeting.transcript.map((entry) => (entry.startSec ?? 0) + 5), 0));
+    const presence = options.presence ?? (roster.length ? roster : record.attendance?.people);
     const originOf = (label: string) =>
         meeting.speakers.find((speaker) => sameName(speaker.name, label))?.origin ?? undefined;
     const lines = lineEvidence(
         meeting.transcript,
         evidence ?? { segments: [], speaking: [] },
-        options.presence,
+        presence,
         options.energyMicShare
     );
     const selfName = record.participants.find((person) => person.self)?.name;
@@ -107,7 +110,7 @@ export function rawMeeting(options: {
     });
     const names = [
         ...new Set([
-            ...((options.presence ?? record.attendance?.people)?.map((person) => person.name) ?? []),
+            ...(presence?.map((person) => person.name) ?? []),
             ...record.participants.map((person) => person.name),
             ...meeting.speakers.map((speaker) => speaker.name),
             ...facts.people.filter(
@@ -132,19 +135,37 @@ export function rawMeeting(options: {
             indicatorGaps: facts.gaps,
             labels: facts.labels,
         },
+        indicator: {
+            knownLines: lines.filter((line) => !line.speakingUnknown).length,
+            unknownLines: lines.filter((line) => line.speakingUnknown).length,
+        },
         people: names.map((name) => {
             const origin = record.participants
                 .find((person) => sameName(person.name, name))
                 ?.from.includes("platform-roster")
                 ? "platform-roster"
                 : (originOf(name) ?? (facts.people.some((person) => sameName(person, name)) ? "indicator" : undefined));
+            const person = record.participants.find((one) => sameName(one.name, name));
             return {
                 name,
+                ...(person?.firstSeenSec === undefined ? {} : { firstSeenSec: person.firstSeenSec }),
                 ...(origin ? { origin } : {}),
                 ...(selfName && sameName(name, selfName) ? { self: true } : {}),
-                stays: (options.presence ?? record.attendance?.people ?? [])
+                stays: (presence ?? [])
                     .filter((stay) => sameName(stay.name, name))
-                    .map((stay) => ({ fromSec: stay.fromSec, toSec: stay.toSec })),
+                    .map((stay) => {
+                        const stored = person?.stays?.find((one) => one.fromSec === stay.fromSec);
+                        return {
+                            fromSec: stay.fromSec,
+                            toSec: stay.toSec,
+                            ...(stored
+                                ? {
+                                      source: stored.source,
+                                      ...(stored.confidence === undefined ? {} : { confidence: stored.confidence }),
+                                  }
+                                : {}),
+                        };
+                    }),
             };
         }),
         lines: lines.map((line) => {
@@ -168,7 +189,7 @@ export function rawMeeting(options: {
                 muted: line.muted ?? [],
                 ...(assessment.reasons.has(line.index) ? { indicatorIgnored: assessment.reasons.get(line.index) } : {}),
                 ...(assessment.reasons.has(line.index) ? { indicatorReason: assessment.reasons.get(line.index) } : {}),
-                present: presentAt(record, options.presence, line.startSec),
+                present: presentAt(record, presence, line.startSec),
             };
         }),
         ...(options.terms === undefined ? {} : { terms: options.terms }),

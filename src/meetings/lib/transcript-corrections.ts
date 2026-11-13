@@ -72,6 +72,9 @@ function unclearPassages(
                           fromSec: item.fromSec,
                           toSec: item.toSec,
                           speaker: item.label,
+                          ...(opts.guesses && item.speaker
+                              ? { guess: { name: item.speaker, confidence: item.confidence } }
+                              : {}),
                           readings: item.speaker
                               ? withConfidence([item.speaker], item.confidence)
                               : (item.candidates ?? []),
@@ -141,9 +144,19 @@ export function lineOf(item: MeetingItem): number | undefined {
 export function correctionsOf(
     record: MeetingRecord,
     config: MeetingsConfig,
-    opts: { withSuggested?: boolean; dictionary?: boolean; format: TranscriptFormat; include?: string[] }
+    opts: {
+        withSuggested?: boolean;
+        dictionary?: boolean;
+        format: TranscriptFormat;
+        include?: string[];
+        applyAbove?: number;
+    }
 ): TranscriptCorrections {
-    const applyAbove = config.global.suggest.applyAbove;
+    const applyAbove = opts.applyAbove ?? config.global.suggest.applyAbove;
+    if (!Number.isFinite(applyAbove) || applyAbove < 0 || applyAbove > 1) {
+        throw new RangeError("applyAbove must be between 0 and 1");
+    }
+    const markBelow = opts.applyAbove ?? Math.max(0.7, applyAbove);
     const questionOwned = new Set(
         openQuestions(record)
             .filter((question) => question.about === "speaker")
@@ -156,7 +169,8 @@ export function correctionsOf(
         (opts.withSuggested === true &&
             item.status === "suggested" &&
             !(item.kind === "speaker-range" && questionOwned.has(item.id)) &&
-            (item.confidence === undefined || item.confidence >= applyAbove));
+            (item.confidence === undefined ||
+                item.confidence >= (item.kind === "speaker-range" ? markBelow : applyAbove)));
     const used = record.items
         .filter(applies)
         .sort((a, b) => Number(a.status === "confirmed") - Number(b.status === "confirmed"));
@@ -166,7 +180,7 @@ export function correctionsOf(
     );
     const passages = [
         ...(opts.withSuggested
-            ? unclearPassages(record, { below: applyAbove, applied: applies, guesses: true, unclearLabel })
+            ? unclearPassages(record, { below: markBelow, applied: applies, guesses: true, unclearLabel })
             : unclearPassages(record, { below: config.global.suggest.listenBelow, unclearLabel })),
         ...unlabeled,
     ];
@@ -286,6 +300,7 @@ export function correctTranscript(options: {
     config: MeetingsConfig;
     format: TranscriptFormat;
     withSuggested?: boolean;
+    applyAbove?: number;
     dictionary?: boolean;
     include?: string[];
 }): CorrectedTranscript {
@@ -296,7 +311,79 @@ export function correctTranscript(options: {
     // person under two keys (src/meetings/index.ts). Every speaker is counted and rendered composed.
     const applied = {
         ...corrected,
-        entries: corrected.entries.map((entry) => ({ ...entry, speaker: entry.speaker.normalize("NFC") })),
+        entries: corrected.entries.flatMap((rawEntry) => {
+            let sourceIndex = rawEntry.id ? transcript.findIndex((source) => source.id === rawEntry.id) : -1;
+            if (sourceIndex < 0) {
+                sourceIndex = transcript.findIndex((source) => source.startSec === rawEntry.startSec);
+            }
+            const entry =
+                sourceIndex >= 0 && record.evidence?.voice?.lines[String(sourceIndex)]
+                    ? { ...rawEntry, sourceIndex }
+                    : rawEntry;
+            const finding = record.items.findLast(
+                (item) =>
+                    item.kind === "speaker-range" &&
+                    item.status === "confirmed" &&
+                    item.voices &&
+                    entry.startSec !== undefined &&
+                    entry.startSec >= item.fromSec &&
+                    entry.startSec <= item.toSec &&
+                    transcript.some((source) => source.startSec === entry.startSec && source.speaker === item.label)
+            );
+            if (finding?.kind === "speaker-range" && finding.voices) {
+                if (finding.segments?.length) {
+                    const words = entry.text.trim().split(/\s+/);
+                    return finding.segments.map((segment, index) => ({
+                        ...entry,
+                        speaker: segment.speaker,
+                        text: words.slice(segment.fromWord, finding.segments?.[index + 1]?.fromWord).join(" "),
+                    }));
+                }
+                return [{ ...entry, speaker: `[nejasné: ${finding.voices.join(" + ")}]` }];
+            }
+            const proposals = record.items.filter(
+                (item) =>
+                    item.kind === "speaker-range" &&
+                    item.status !== "rejected" &&
+                    entry.startSec !== undefined &&
+                    entry.startSec >= item.fromSec &&
+                    entry.startSec <= item.toSec &&
+                    transcript.some((source) => source.startSec === entry.startSec && source.speaker === item.label)
+            );
+            const proposal = proposals.findLast((item) => item.status === "confirmed") ?? proposals.at(-1);
+            const confidence = proposal?.confidence;
+            const guess = entry.speaker.includes(" %]");
+            return [
+                {
+                    ...entry,
+                    speaker: entry.speaker.normalize("NFC"),
+                    ...(record.items.some(
+                        (item) =>
+                            item.kind === "question" &&
+                            entry.startSec !== undefined &&
+                            entry.startSec >= item.fromSec &&
+                            entry.startSec <= item.toSec
+                    )
+                        ? { questioned: true }
+                        : {}),
+                    ...(proposal
+                        ? {
+                              ...(confidence === undefined ? {} : { confidence }),
+                              ...(proposal.kind === "speaker-range" && proposal.speaker
+                                  ? { suggestedSpeaker: proposal.speaker }
+                                  : {}),
+                              guess,
+                              band:
+                                  proposal.status === "confirmed"
+                                      ? ("confirmed" as const)
+                                      : guess
+                                        ? ("guess" as const)
+                                        : ("applied" as const),
+                          }
+                        : {}),
+                },
+            ];
+        }),
     };
     const outcomes = [...applied.outcomes, ...labelOutcomes(record, transcript, applied.outcomes, corrections)];
     for (const outcome of outcomes) {

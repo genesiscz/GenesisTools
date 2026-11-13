@@ -278,7 +278,7 @@ export class ListenSession {
     }
 
     private inScope(question: QuestionItem): boolean {
-        const { only, minPriority } = this.options;
+        const { only, minPriority, selected } = this.options;
 
         if (this.parentOf.has(question.id)) {
             return true;
@@ -287,9 +287,8 @@ export class ListenSession {
         if (only) {
             return question.id === only;
         }
-
-        if (this.options.selected) {
-            return this.options.selected.includes(question.id);
+        if (selected) {
+            return selected.includes(question.id);
         }
 
         return (question.priority ?? minPriority) >= minPriority;

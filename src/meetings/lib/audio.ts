@@ -58,6 +58,8 @@ export async function meetingAudio(record: MeetingRecord): Promise<MeetingAudio>
 
 /** What one clip holds: the heard stretch, the audio around it, and where its tone sounds (a time in the recording). */
 export interface ClipPlan {
+    /** The split boundary came from accepted acoustic word timings, so quiet-gap refinement must keep it. */
+    wordTimed?: true;
     fromSec: number;
     toSec: number;
     /** Audio before the heard stretch, and after it unless `padAfterSec` says otherwise. */
@@ -282,6 +284,9 @@ export function clipPlayer(preferred: ListenPlayer, all: readonly ListenPlayer[]
 
 /** A clip that plays now or after a delay; `stop` cancels it before it starts, or ends it while it plays. */
 export interface PlayingClip {
+    readonly positionSec: number;
+    pause(): void;
+    resume(): void;
     stop(): void;
 }
 
@@ -299,10 +304,24 @@ export function playClip(
     let proc: Bun.Subprocess | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
+    let startedAt: number | undefined;
+    let pausedAt: number | undefined;
+    let elapsed = 0;
     const start = (): void => {
+        if (pausedAt !== undefined || stopped) {
+            return;
+        }
+        elapsed = 0;
+        startedAt = Date.now();
         log.debug({ argv }, "clip playing");
         const current = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
         proc = current;
+        void current.exited.then(() => {
+            if (proc === current && startedAt !== undefined) {
+                elapsed += (Date.now() - startedAt) / 1000;
+                startedAt = undefined;
+            }
+        });
 
         if (repeatGapMs === undefined) {
             return;
@@ -323,9 +342,39 @@ export function playClip(
     }
 
     return {
+        get positionSec() {
+            return elapsed + (startedAt === undefined ? 0 : (Date.now() - startedAt) / 1000);
+        },
+        pause: () => {
+            if (stopped || pausedAt !== undefined) {
+                return;
+            }
+            pausedAt = Date.now();
+            elapsed += startedAt === undefined ? 0 : (pausedAt - startedAt) / 1000;
+            startedAt = undefined;
+            clearTimeout(timer);
+            proc?.kill("SIGSTOP");
+        },
+        resume: () => {
+            if (stopped || pausedAt === undefined) {
+                return;
+            }
+            pausedAt = undefined;
+            if (proc && proc.exitCode === null) {
+                startedAt = Date.now();
+                proc.kill("SIGCONT");
+            } else {
+                start();
+            }
+        },
         stop: () => {
+            elapsed += startedAt === undefined ? 0 : (Date.now() - startedAt) / 1000;
+            startedAt = undefined;
             stopped = true;
             clearTimeout(timer);
+            if (pausedAt !== undefined) {
+                proc?.kill("SIGCONT");
+            }
             proc?.kill();
         },
     };

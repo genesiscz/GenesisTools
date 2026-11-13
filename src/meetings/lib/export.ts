@@ -29,6 +29,7 @@ export interface TranscriptMarkdownOptions {
     transcript: TranscriptEntry[];
     config: MeetingsConfig;
     withSuggested?: boolean;
+    applyAbove?: number;
     dictionary?: boolean;
     frontmatter: boolean;
     timestamps: boolean;
@@ -53,6 +54,7 @@ export function transcriptMarkdown(options: TranscriptMarkdownOptions): {
         config: options.config,
         format: "md",
         ...(options.withSuggested !== undefined ? { withSuggested: options.withSuggested } : {}),
+        ...(options.applyAbove !== undefined ? { applyAbove: options.applyAbove } : {}),
         ...(options.dictionary !== undefined ? { dictionary: options.dictionary } : {}),
     });
     // The links are written even while the router preset is off; the warning says how to make them open.

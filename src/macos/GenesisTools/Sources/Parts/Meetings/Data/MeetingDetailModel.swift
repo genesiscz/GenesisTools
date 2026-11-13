@@ -251,7 +251,7 @@ final class MeetingDetailModel {
 
     /// The corrected transcript: `meeting.transcript`, or `transcript <id> --format json`.
     static func transcriptRead(_ id: String) -> MeetingsRead<MeetingTranscript> {
-        .service(MeetingsAPI.Transcript.self, .init(previewThresholds: [0.5, 0.6, 0.7, 0.8, 0.9, 1], ref: id), orRun: ["transcript", id, "--format", "json"], timeoutSeconds: 120)
+        .service(MeetingsAPI.Transcript.self, .init(previewThresholds: [0.5, 0.6, 0.7, 0.8, 0.9, 1], ref: id, withSuggested: true), orRun: ["transcript", id, "--with-suggested", "--format", "json"], timeoutSeconds: 120)
     }
 
     /// The revision token per part: `meeting.revisions`, or `revisions <id> --json`.

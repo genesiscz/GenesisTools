@@ -684,3 +684,46 @@ The Meetings window offers Add question or term, clean duplication, question pri
 The transcript's native confidence selector defaults to 70 percent. The service loads the available threshold previews together, and changing the selector chooses a loaded result without a new source read. The selector is saved per app; it changes no meeting or global suggestion configuration. CLI `transcript --with-suggested --apply-above 0.7` uses the same corrections engine for a one-off preview. Open question ranges keep their guessed speaker percentage until answered.
 
 For a meeting-local room person, use `attendance <meeting> --add "Alice Example" --from 0 --to 600 --at-mic`. `--via "Bob Example"` instead names a remote device owner. These finite stays and canonical microphone groups reopen from the meeting record. The native people strip and `meeting.people.edit` use the same implementation. Imported platform speaking and muted names also join automatic question candidates. `Meeting.editPerson` exposes the same operation in the REPL.
+
+## Listening with uncertain evidence
+
+Suggested speaker names under 70% remain explicit guesses by default. `transcript <meeting> --with-suggested
+--apply-above 80` and `rows <meeting> --apply-above 80` change the read's threshold; they do not change saved
+confidences. The Meetings transcript has the same local threshold picker and Probe. Confirmed answers remain applied.
+
+`transcript <meeting> --probe-thresholds 50,60,70,80` prints the applied, guessed, open and long-stretch counts at each threshold.
+`--spot-check 20` samples distinct lines at 50–69%, asks a short round and keeps its changed/answered result.
+`--long-stretch-words 50` prepares longer uncertain stretches, split at canonical call-channel pitch/level or turn
+changes. `--prepare-only` saves questions without playback. `--group rules|spot-check|long-stretch|all` selects a group.
+The native Items tab has the same preparation controls, group counts, sample result and history. Preparation counts
+are adjustable there. `global.suggest.longStretchWords` sets automatic long-stretch preparation.
+
+A speaker answer must match a known person. Accents, name order and parenthetical affiliations do not affect matching.
+Unmatched prose is kept as a comment and the question remains open. Somebody else chooses a person; Something else
+writes a comment. Multiple names in speaking order store ordered voices; sentence boundaries split turns when they
+are available. Native Two voices also accepts an explicit word boundary. Ambiguous boundaries retain both names in
+an unclear mark. Space pauses/resumes the terminal clip at its current position; entering text pauses playback.
+Split clips use saved acoustic word timings when available, otherwise a bounded quiet-gap search, with at least
+1.5 seconds before the split. All question clips include the final quoted line through its end.
+
+The source roster keeps self, first-seen times and finite manual windows. A failed, obscured or missing speaking read
+is unknown, never an empty-room observation or a repeated speaker. A good read expires at the earlier of the next
+read and ten seconds, exclusively. `collect` persists person stays from canonical identified departure events;
+later valid speaking observations or confirmed voice assignments veto the inferred leave. Silence requires an
+observed quiet call window, with `global.suggest.leaveSilenceMinutes` (10 by default); its confidence remains 50%.
+Manual `attendance --add/--remove`, `--from/--to` and the native people strip use the same room-person editor.
+
+`listen <meeting> --enrol-voices` explicitly extracts isolated-call voice embeddings using an already installed
+canonical model. Calibrate physical channels and set remote seats first. Enrollment uses solo remote windows or
+human-confirmed single-voice lines. A held-out window cannot score itself. Cosine similarity is not a probability;
+ambiguous, unavailable or below-gate lines stay unknown with provenance in `voice-embeddings.json`. The original
+source audio is never rewritten. The native people controls show enrollment results and canonical voice features.
+No model is downloaded by a read or ordinary listening command.
+
+The REPL Meeting handle exposes `editPerson`, `voiceFeatures`, `prepareListen`, and `enrolVoices`, routed through the
+same service contracts. `lines({withSuggested:true,applyAbove:0.8})` and `items.rows({applyAbove:0.8})` accept thresholds
+as fractions. The CLI threshold uses percentages. Set the project before polishing so its dictionary can apply;
+project suggestions use earlier shared attendees/title words, and an unassigned meeting warns when dictionaries exist.
+Agent findings may attach an explicit `signature` and `candidates` to speaker ranges and the same `signature` to their
+question. Only matching labels and evidence identities propagate an answer to unasked ranges. Unknown call-channel
+observations produce unresolved candidate ranges, never an inferred shared voice identity or propagated answer.

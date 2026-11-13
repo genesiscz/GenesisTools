@@ -21,8 +21,8 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
-import type { cutClip } from "./audio";
-import { writeQuestionClips } from "./listen-clips";
+import { type cutClip, playClip } from "./audio";
+import { questionClip, refineSplitClip, writeQuestionClips } from "./listen-clips";
 import {
     clipMoment,
     clipPlan,
@@ -119,7 +119,7 @@ describe("a Moment of an item", () => {
     test("a speaker question plays only the voice: its pad is the tone's lead plus the speaker pad", () => {
         expect(plan({ kind: "item", id: "i2" })).toMatchObject({
             fromSec: 30,
-            toSec: 40,
+            toSec: 60,
             spotSec: 30,
             padSec: listen.tone.leadSec + SPEAKER_PAD_SEC,
             tone: { atSec: 30 - listen.tone.leadSec },
@@ -173,7 +173,7 @@ describe("a Moment of an item", () => {
         expect(at("i2")).toMatchObject({ fromSec: 40, toSec: 55 });
         expect(at("i3")).toMatchObject({ fromSec: 20, toSec: 30 });
         // A stretch of a second or more is the asker's own span.
-        expect(at("i4")).toMatchObject({ fromSec: 30, toSec: 31 });
+        expect(at("i4")).toMatchObject({ fromSec: 30, toSec: 40 });
     });
 });
 
@@ -541,7 +541,7 @@ describe("cutting a Moment", () => {
             id: "i2",
             clip: "/clips/out/Q2.wav",
             fromSec: 30,
-            toSec: 40,
+            toSec: 60,
             padSec: listen.tone.leadSec + SPEAKER_PAD_SEC,
             toneAtSec: 30 - listen.tone.leadSec,
         });
@@ -963,4 +963,70 @@ describe("tools meetings play: what the flags name", () => {
         const [line] = await refusal("m1", "--target", '{"kind":"range","fromSec":-1,"toSec":5}');
         expect(line).toStartWith("--target is not a Moment target (");
     });
+});
+
+test("split clips keep accepted acoustic word boundaries and at least one and a half seconds before them", async () => {
+    const saved = record([
+        {
+            id: "i1",
+            kind: "question",
+            about: "speaker",
+            fromSec: 10,
+            toSec: 14,
+            question: 'Who says "Second sentence"?',
+        },
+    ]);
+    const question = saved.items[0] as QuestionItem;
+    const timed = [
+        {
+            speaker: "Voice",
+            startSec: 10,
+            text: "First sentence. Second sentence",
+            words: [
+                { range: { location: 16, length: 6 }, startSec: 12.3, endSec: 12.6, sourceId: "fixture" },
+                { range: { location: 23, length: 8 }, startSec: 12.7, endSec: 13.1, sourceId: "fixture" },
+            ],
+        },
+    ];
+    const plan = questionClip({
+        record: saved,
+        question,
+        transcript: timed,
+        listen,
+        pads: { beforeSec: 0, afterSec: 0 },
+    });
+    expect(plan).toMatchObject({ fromSec: 12.3, toSec: 13.1, padSec: 1.5, wordTimed: true });
+    // No audio access is needed for an accepted boundary.
+    expect(await refineSplitClip({ plan, question, audioPath: "/unreadable.wav" })).toEqual(plan);
+});
+
+test("manual clip pause holds its position and resumes the same process without replaying", () => {
+    let clock = 1000;
+    const signals: Array<string | number | undefined> = [];
+    const now = spyOn(Date, "now").mockImplementation(() => clock);
+    const fake = {
+        exitCode: null,
+        exited: new Promise<number>(() => {}),
+        kill: (signal?: string | number) => {
+            signals.push(signal);
+        },
+    };
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => fake as unknown as ReturnType<typeof Bun.spawn>);
+    try {
+        const clip = playClip("afplay", "/fixture-never-played.wav");
+        clock = 2500;
+        clip.pause();
+        clock = 5000;
+        expect(clip.positionSec).toBe(1.5);
+        clip.resume();
+        clock = 6000;
+        expect(clip.positionSec).toBe(2.5);
+        clip.stop();
+        expect(clip.positionSec).toBe(2.5);
+        expect(signals).toEqual(["SIGSTOP", "SIGCONT", undefined]);
+        expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+        spawn.mockRestore();
+        now.mockRestore();
+    }
 });

@@ -28,12 +28,17 @@ extension MeetingDetailModel {
             }
         }
         var marks: [String: Set<TranscriptLineMark>] = [:]
-        guard !unclear.isEmpty || !corrected.isEmpty || !commented.isEmpty else { return marks }
+        let voiced = items.filter { $0.kind == "speaker-range" && $0.status != "rejected" && $0.rules?.contains("voice-embedding") == true }
+        guard !unclear.isEmpty || !corrected.isEmpty || !commented.isEmpty || !voiced.isEmpty else { return marks }
         for entry in entries {
             guard let start = entry.startSec else { continue }
             var set: Set<TranscriptLineMark> = []
             if unclear.contains(where: { $0.contains(start) }) { set.insert(.unclearSpeaker) }
             if corrected.contains(where: { $0.contains(start) }) { set.insert(.corrected) }
+            if voiced.contains(where: { item in
+                start >= (item.fromSec ?? .infinity) && start <= (item.toSec ?? -.infinity) &&
+                (item.speaker == entry.speaker || item.speaker == entry.suggestedSpeaker)
+            }) { set.insert(.byVoice) }
             if commented.contains(where: { $0.contains(start) }) { set.insert(.commented) }
             if !set.isEmpty { marks[entry.rowID] = set }
         }

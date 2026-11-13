@@ -1,6 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { readCorrections, teachesDictionary } from "@genesiscz/utils/meetings/corrections";
+import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
 import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { Decided, DecisionAction, JournalEntry } from "../decision-actions";
@@ -209,6 +210,12 @@ function splitInputsOf(store: MeetingStore, deps: MeetingsHandlerDeps): SplitInp
     };
     return {
         transcript: async (record) => (await (await opened(record)).meeting()).transcript,
+        people: async (record) =>
+            meetingPeopleNames({
+                store,
+                meeting: record.id,
+                config: await (deps.config ?? (() => new MeetingsConfigStore().read()))(),
+            }),
         micShare: async (record) => (await (await opened(record)).energy()).share,
     };
 }
