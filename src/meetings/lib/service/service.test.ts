@@ -427,6 +427,39 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect((await client.call("meetings.list", { limit: 1 })).map((row) => row.id)).toEqual([RETRO.id]);
     });
 
+    test("meeting-local people edit persists stays and canonical device groups through either adapter", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const saved = await client.call("meeting.people.edit", {
+            meeting: REVIEW.id,
+            name: "Eli Example",
+            action: "add",
+            atMic: true,
+            fromSec: 60,
+            toSec: 120,
+        });
+        expect(saved.seats?.microphones?.find((group) => group.id === "self")?.people).toEqual([
+            "Dana Example",
+            "Eli Example",
+        ]);
+        const reopened = new MeetingStore(store.storage).resolve(REVIEW.id)!;
+        expect(reopened.participants.find((person) => person.name === "Eli Example")?.stays).toEqual([
+            { fromSec: 60, toSec: 120, source: "hand", confidence: 1 },
+        ]);
+        expect(reopened.attendance?.people).toContainEqual({
+            name: "Eli Example",
+            fromSec: 60,
+            toSec: 120,
+            joinedAtExact: true,
+            leftAtExact: true,
+        });
+        await client.call("meeting.people.edit", { meeting: REVIEW.id, name: "Eli Example", action: "remove" });
+        expect(
+            new MeetingStore(store.storage)
+                .resolve(REVIEW.id)!
+                .participants.some((person) => person.name === "Eli Example")
+        ).toBe(false);
+    });
+
     test("meeting.show answers the record by id or prefix; a missing or ambiguous ref is refused with its code", async () => {
         const { client } = await ADAPTERS[kind]();
         const record = await client.call("meeting.show", { ref: "2026-11-03-10" });

@@ -207,7 +207,7 @@ export function clusterVoices(options: {
     }
     const usable = options.lines.filter((line) => (line.channels[options.channel]?.rms ?? 0) > 0.002);
     if (!usable.length) {
-        return options.lines.map((line) => ({ ...line }));
+        return options.lines.map(({ cluster: _previous, ...line }) => line);
     }
     const vector = (line: LineVoice) => {
         const v = line.channels[options.channel]!;
@@ -218,7 +218,9 @@ export function clusterVoices(options: {
     const scales = means.map(
         (mean, d) => Math.sqrt(vectors.reduce((sum, v) => sum + (v[d]! - mean) ** 2, 0) / vectors.length) || 1
     );
-    const points = vectors.map((v) => v.map((x, d) => (x - means[d]!) / scales[d]!));
+    // Level varies with distance to the device. Pitch carries more identity information than gain.
+    const weights = [0.1, 0.5, 0.5, 2];
+    const points = vectors.map((v) => v.map((x, d) => ((x - means[d]!) / scales[d]!) * weights[d]!));
     const distance = (a: number[], b: number[]) => a.reduce((sum, x, d) => sum + (x - b[d]!) ** 2, 0);
     const names = [...new Set(usable.flatMap((line) => options.anchors?.get(line.index) ?? []))].sort();
     if (names.length > options.voices) {
@@ -227,7 +229,7 @@ export function clusterVoices(options: {
     const k = Math.min(options.voices, points.length);
     const centers = names.map((name) => {
         const group = points.filter((_, i) => options.anchors?.get(usable[i]!.index) === name);
-        return means.map((_, d) => group.reduce((sum, v) => sum + v[d]!, 0) / group.length);
+        return means.map((_, d) => median(group.map((v) => v[d]!)));
     });
     if (!centers.length) {
         centers.push([...points[0]!]);
@@ -267,7 +269,7 @@ export function clusterVoices(options: {
             return [line.index, { id, confidence, ...(names[id] ? { speaker: names[id] } : {}) }] as const;
         })
     );
-    return options.lines.map((line) => ({
+    return options.lines.map(({ cluster: _previous, ...line }) => ({
         ...line,
         ...(clusters.has(line.index) ? { cluster: clusters.get(line.index)! } : {}),
     }));

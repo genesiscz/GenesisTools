@@ -3,6 +3,7 @@ import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
 import { clusterVoices, type LineVoice, lineVoices, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
+import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { OpenedMeeting } from "./opened-meeting";
 
 /** Audio and confirmed speaker anchors, with physical channels preserved (0 left, 1 right). */
@@ -19,7 +20,34 @@ export async function meetingVoices(options: {
     if (options.voices === undefined) {
         return measured;
     }
-    const record = options.opened.record;
+    const calibration = (await options.opened.energy()).calibration;
+    const micChannel = calibration?.layout === "right-mic" ? 1 : 0;
+    return anchoredMeetingVoices({
+        record: options.opened.record,
+        transcript: meeting.transcript,
+        features: measured,
+        voices: options.voices,
+        channel: options.channel ?? micChannel,
+        micChannel,
+    });
+}
+
+/** Reuse measured features when a caller changes the requested voice count or confirms a speaker anchor. */
+export function anchoredMeetingVoices(options: {
+    record: MeetingRecord;
+    transcript: TranscriptEntry[];
+    features: LineVoice[];
+    voices: number;
+    channel: number;
+    micChannel: number;
+}): LineVoice[] {
+    const { record, channel, micChannel } = options;
+    const lines = lineEvidence(options.transcript, { segments: [], speaking: [] });
+    const allowed = record.seats
+        ? channel === micChannel
+            ? record.seats.room
+            : record.seats.remote.map((person) => person.name)
+        : undefined;
     const anchors = new Map<number, string>();
     for (const line of lines) {
         const assignments =
@@ -42,13 +70,12 @@ export async function meetingVoices(options: {
             ...assignments.map((item) => item.person),
             ...confirmed.flatMap((item) => (item.kind === "speaker-range" && item.speaker ? [item.speaker] : [])),
         ]);
-        if (names.size === 1) {
-            anchors.set(line.index, [...names][0]!);
+        const speaker = names.size === 1 ? [...names][0] : undefined;
+        if (speaker && (!allowed || allowed.some((name) => sameName(name, speaker)))) {
+            anchors.set(line.index, speaker);
         }
     }
-    const calibration = (await options.opened.energy()).calibration;
-    const channel = options.channel ?? (calibration?.layout === "right-mic" ? 1 : 0);
-    return clusterVoices({ lines: measured, voices: options.voices, channel, anchors });
+    return clusterVoices({ lines: options.features, voices: options.voices, channel, anchors });
 }
 
 export function lineDeviceCandidates(options: {
@@ -60,6 +87,6 @@ export function lineDeviceCandidates(options: {
     return microphoneCandidates(
         options.record,
         options.atSec,
-        (options.micShare ?? 0) >= 0.9 ? "self" : (options.liveName ?? "")
+        (options.micShare ?? 0) >= 0.65 ? "self" : (options.liveName ?? "")
     );
 }

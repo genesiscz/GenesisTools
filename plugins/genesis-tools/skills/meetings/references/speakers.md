@@ -183,3 +183,13 @@ attributes the whole sentence (E1 first).
 + **[Tomáš Dvořák: 99 %]:** `52:10` Dobře, tak já to ještě projdu s Petrem a pošlu vám to zítra.
 // E1: 100 % mic (live.ndjson), energy 100 % on the mic channel; the user is Tomáš. E2: Pavel left at 22:10.
 ```
+
+## Shared microphones and local voice features
+
+Use `attendance <meeting> --add "Dana Example" --at-mic --from 0 --to 01:14:13` to add a room person and their stay. Use `--via "Robin Example"` for a person sharing a remote device. `--remove` removes meeting-local membership. These commands do not add somebody to the global people book. `attendance <meeting> --from teams --id <chat-id>` selects the exact attendance chat.
+
+A microphone or speaking indicator identifies a device group. When several active people share it, offer all group members as candidates. Never equate high mic share with the recording user, or the indicator's owner with the voice. Presence bounds are from inclusive, to exclusive.
+
+Use `evidence <meeting> --json --voices 3` instead of writing an audio feature script. JSON includes per-line `voice.channels` for physical left/right channels with RMS, low-band share below 300 Hz, differential-energy tilt, pitchHz or null, and voicedShare. `--channel 0|1` chooses the cluster channel; otherwise it uses the calibrated microphone side and falls back to physical left. `--voice-features --json` measures without clustering. Confirmed speaker assignments and confirmed speaker ranges anchor names. Cluster confidence measures feature separation, not the probability of a correct person. An unnamed cluster stays unnamed. Echo-clean audio and speaker embeddings belong to the separate echo/voice backend; raw channel features are preserved.
+
+The shared streaming utility decodes once into 50 ms features, retains no whole-file PCM, limits a read to eight hours and writes no durable cache. No model is downloaded by evidence. The REPL meeting handle exposes `voice({voices:3,channel:0})` and `editPerson({name:"Dana Example",action:"add",atMic:true,fromSec:0,toSec:4453})`; the Meetings window's people strip offers the same editor and raw feature inspection.

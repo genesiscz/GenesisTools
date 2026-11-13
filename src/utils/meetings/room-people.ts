@@ -51,12 +51,19 @@ export async function editMeetingPerson(options: {
     if (edit.atMic && edit.via) {
         throw new Error("Choose --at-mic or --via, not both.");
     }
+    const atMic = edit.atMic ?? (!edit.via && record.seats?.room.some((person) => sameName(person, name)));
+    const via =
+        edit.via ??
+        (edit.atMic === undefined && !atMic
+            ? record.seats?.microphones?.find((group) => group.people.some((person) => sameName(person, name)))
+                  ?.deviceId
+            : undefined);
     return store.update(
         record.id,
         { command: "attendance", change: `${edit.action} meeting person ${name}` },
         (next) => {
             const same = (value: string) => sameName(value, name);
-            if (options.selfName && !next.participants.some((person) => person.self)) {
+            if (options.selfName && !same(options.selfName) && !next.participants.some((person) => person.self)) {
                 next.participants.push({ name: options.selfName, self: true, from: ["source"] });
             }
             next.participants = next.participants.filter((person) => !same(person.name));
@@ -72,12 +79,13 @@ export async function editMeetingPerson(options: {
                 next.participants.push({
                     ...prior,
                     name,
+                    ...(prior?.self || (options.selfName && sameName(options.selfName, name)) ? { self: true } : {}),
                     from: [...new Set([...(prior?.from ?? []), "user"])],
                     firstSeenSec: Math.min(prior?.firstSeenSec ?? fromSec, fromSec),
                     stays: [{ fromSec, toSec: toSec!, source: "hand", confidence: 1 }],
                 });
                 stays.push({ name, fromSec, toSec: toSec!, joinedAtExact: true, leftAtExact: true });
-                if (edit.atMic) {
+                if (atMic) {
                     const self = next.participants.find((person) => person.self)?.name;
                     seats.room = [...new Set([...seats.room, ...(self ? [self] : []), name])];
                     const group = seats.microphones.find((one) => one.id === "self");
@@ -87,9 +95,10 @@ export async function editMeetingPerson(options: {
                         seats.microphones.push({ id: "self", people: [...new Set([...(self ? [self] : []), name])] });
                     }
                 } else {
-                    seats.remote.push({ name, fromSec, toSec: toSec! });
-                    if (edit.via) {
-                        const owner = edit.via.trim();
+                    const priorSeat = record.seats?.remote.find((person) => same(person.name));
+                    seats.remote.push({ ...priorSeat, name, fromSec, toSec: toSec! });
+                    if (via) {
+                        const owner = via.trim();
                         if (!owner) {
                             throw new Error("Device owner must be nonempty.");
                         }
