@@ -14,7 +14,7 @@ import { lastRecordingActivity, readRecorderState } from "./recorder-shared";
 import { pruneCapturesDaily } from "./retention";
 import { preservedSourceAudio } from "./source-audio";
 import { discoverSourceAudio } from "./source-audio-discovery";
-import { localSourceAudio, meetingSource, sourceRefOf } from "./sources";
+import { liveSourceMeetingId, localSourceAudio, meetingSource, sourceRefOf } from "./sources";
 import {
     type AutoRecording,
     clearAuto,
@@ -290,8 +290,7 @@ export async function archiveAvailableSourceAudio(store: MeetingStore): Promise<
     for (const id of enabled) {
         try {
             const source = await localSourceAudio(id);
-            const live = await (await meetingSource(id)).liveRecording();
-            await discoverSourceAudio({ store, source, liveSourceMeetingId: live?.sourceMeetingId });
+            await discoverSourceAudio({ store, source, live: liveSourceMeetingId });
         } catch (error) {
             log.debug({ error, source: id }, "local audio discovery unavailable; next tick retries");
         }

@@ -70,8 +70,12 @@ export async function preserveSourceAudio(options: {
     ref: SourceRef;
     sourcePath: string;
     signal?: AbortSignal;
+    /** The digest an approved plan hashed: a copy of any other bytes is refused before anything is published. */
+    expected?: { sha256: string; bytes: number };
+    /** Runs after the copy is verified and before it is published, for a check whose answer can change meanwhile. */
+    beforePublish?: () => Promise<void>;
 }): Promise<PreserveSourceAudioResult> {
-    const { store, meetingId, ref, sourcePath, signal } = options;
+    const { store, meetingId, ref, sourcePath, signal, expected } = options;
     const current = store.read(meetingId);
     if (!current || !sourceStillLinked(current, ref)) {
         throw new Error("The meeting's linked source changed before audio preservation; read it again and retry.");
@@ -84,7 +88,12 @@ export async function preserveSourceAudio(options: {
     const key = `${store.root}\0${meetingId}\0${ref.sourceId}`;
     const old = preservedSourceAudio(current, ref);
     const cached = fingerprints.get(key);
-    if (old && cached?.source === fingerprint(before) && cached.sha256 === old.sha256) {
+    if (
+        old &&
+        (!expected || expected.sha256 === old.sha256) &&
+        cached?.source === fingerprint(before) &&
+        cached.sha256 === old.sha256
+    ) {
         const saved = await stat(old.path);
         if (cached.saved === fingerprint(saved)) {
             return { record: current, audio: old, status: "already-preserved" };
@@ -118,6 +127,12 @@ export async function preserveSourceAudio(options: {
                 "Source audio changed while it was being preserved; retry after the source finishes writing."
             );
         }
+
+        if (expected && (sha256 !== expected.sha256 || copied.size !== expected.bytes)) {
+            throw new Error("Source audio changed since the plan approved it; plan again.");
+        }
+
+        await options.beforePublish?.();
         const suffix = extname(sourcePath).toLowerCase();
         const extension = /^\.[a-z0-9]{1,6}$/.test(suffix) ? suffix : ".audio";
         const destination = join(folder, `${sha256}${extension}`);

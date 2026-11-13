@@ -261,7 +261,7 @@ const SKY = {
 /** The pid of a `listen --subscribe-answers --with-comments` the tests say runs; every other pid is gone. */
 const LISTENER_PID = 4343;
 const quietDeps: MeetingsHandlerDeps = {
-    localSourceAudio: [],
+    localSourceAudio: { sources: [], live: async () => undefined },
     now: () => NOW,
     listenerAlive: (pid) => pid === LISTENER_PID,
     ledger: () => undefined,

@@ -55,6 +55,11 @@ export async function meetingSource(id: string): Promise<TranscriptSource> {
     return { ...source, load: async (sourceMeetingId) => composedMeeting(await source.load(sourceMeetingId)) };
 }
 
+/** The meeting this Mac's provider records right now (the source-audio passes' live lookup in production). */
+export async function liveSourceMeetingId(id: MeetingSourceId): Promise<string | undefined> {
+    return (await (await meetingSource(id)).liveRecording())?.sourceMeetingId;
+}
+
 /**
  * The meeting with its speaker labels and names composed (NFC). The CLI composes its arguments (`src/meetings/index.ts`),
  * so a label typed or answered in the window matches a source label only when the source's is composed too.
