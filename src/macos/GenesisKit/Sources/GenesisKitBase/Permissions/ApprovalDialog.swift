@@ -325,18 +325,20 @@ public struct ApprovalDialogView: View {
             }
 
             if !model.items.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ApprovalItemList(items: model.items, identifier: model.identifier,
-                                     selection: model.selectable ? selectionBinding : nil, hovered: $hoveredPath)
-                    if let summary = model.summary {
-                        Text(summary)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
-                            .accessibilityIdentifier("\(model.identifier)-summary")
-                    }
-                }
-                .padding(.leading, 66)
+                ApprovalItemList(items: model.items, identifier: model.identifier,
+                                 selection: model.selectable ? selectionBinding : nil, hovered: $hoveredPath)
+                    .padding(.leading, 66)
+            }
+
+            // Drawn with or without items: a request of no items (the vault window) puts its state here, such as the
+            // caller having exited.
+            if let summary = model.summary {
+                Text(summary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 66)
+                    .accessibilityIdentifier("\(model.identifier)-summary")
             }
 
             if !model.details.isEmpty {
