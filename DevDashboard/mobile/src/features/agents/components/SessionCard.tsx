@@ -29,7 +29,8 @@ export function ago(ms: number | null, now: number): string {
     return `${Math.round(minutes / 60)} h ago`;
 }
 
-function ChildRow({ child, depth }: { child: AgentBoardChild; depth: number }) {
+/** One sub-agent and, indented under it, its own sub-agents: the board card and the session screen list them. */
+export function ChildRow({ child, depth }: { child: AgentBoardChild; depth: number }) {
     const c = useThemeColors();
 
     return (

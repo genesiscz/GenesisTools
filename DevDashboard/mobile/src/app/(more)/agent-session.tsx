@@ -16,7 +16,7 @@ import {
 } from "react-native";
 import { PhaseBadge } from "@/features/agents/components/PhaseBadge";
 import { PingButton } from "@/features/agents/components/PingButton";
-import { ago } from "@/features/agents/components/SessionCard";
+import { ago, ChildRow } from "@/features/agents/components/SessionCard";
 import { SteerComposer } from "@/features/agents/components/SteerComposer";
 import { useAgentsBoard, useAgentTranscript, useStopSession } from "@/features/agents/hooks";
 import { confirmWithFaceId } from "@/lib/face-id";
@@ -237,6 +237,16 @@ function SessionHeader({ session, onStopReceipt }: { session: AgentBoardSession;
                 <Text testID="session-stuck" style={{ color: c.danger, fontSize: 12 }}>
                     {`Stuck (${session.stuck.kind}): ${session.stuck.detail}`}
                 </Text>
+            ) : null}
+            {session.children.length > 0 ? (
+                <View testID="session-children" className="gap-1">
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                        {session.children.length === 1 ? "1 sub-agent" : `${session.children.length} sub-agents`}
+                    </Text>
+                    {session.children.map((child) => (
+                        <ChildRow key={child.id} child={child} depth={0} />
+                    ))}
+                </View>
             ) : null}
             <PingButton session={session} />
             <StopButton session={session} onReceipt={onStopReceipt} />

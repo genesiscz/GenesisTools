@@ -64,7 +64,11 @@ mock.module("@/features/agents/hooks", () => ({
 }));
 mock.module("@/features/agents/components/PhaseBadge", () => ({ PhaseBadge: () => null }));
 mock.module("@/features/agents/components/PingButton", () => ({ PingButton: () => null }));
-mock.module("@/features/agents/components/SessionCard", () => ({ ago: () => "1 min" }));
+mock.module("@/features/agents/components/SessionCard", () => ({
+    ago: () => "1 min",
+    ChildRow: ({ child }: { child: { id: string; name: string | null } }) =>
+        createElement("Text", { testID: `agent-child-${child.id}` }, child.name),
+}));
 // Remembers the session it first mounted for, as the real composer's unsent text does.
 mock.module("@/features/agents/components/SteerComposer", () => ({
     SteerComposer: ({ session: mountedFor }: { session: AgentBoardSession }) => {
@@ -126,6 +130,18 @@ it("follows new turns only while the reader is at the end, and offers a jump bac
     await fireEvent.scroll(transcript, scrolled(1_400));
     await fireEvent(transcript, "contentSizeChange");
     expect(scrolledToEnd).toHaveLength(3);
+});
+
+it("lists the session's sub-agents under its header", async () => {
+    board = live("claude:a");
+    const screen = await render(createElement(AgentSessionScreen));
+    expect(screen.queryByTestId("session-children")).toBeNull();
+
+    const child = MOCK_BOARD.sessions[0].children[0];
+    board = { ...live("claude:a"), data: { sessions: [{ ...session("claude:a"), children: [child] }] } };
+    await screen.rerender(createElement(AgentSessionScreen));
+    expect(screen.getByTestId(`agent-child-${child.id}`).props.children).toBe(child.name);
+    expect(screen.getByText("1 sub-agent")).toBeTruthy();
 });
 
 it("keeps a stop's receipt after the stopped session leaves the board", async () => {
