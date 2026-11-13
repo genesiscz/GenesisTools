@@ -93,6 +93,9 @@ struct PrivateDataSection: View {
     @State private var busy = false
     @State private var failure: String?
     @State private var phrase = ""
+    /// Off: the text is hidden in a fixed header too. A fixed area can hold a name or a contract number, so leaving
+    /// it visible is the reader's explicit choice, never the default.
+    @State private var keepFixedAreas = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -108,6 +111,11 @@ struct PrivateDataSection: View {
                     .instantTooltip("Finds every place the words show (OCR on this Mac) and blurs each one while it shows; the blur follows a scroll and leaves a toast over it visible")
                     .accessibilityIdentifier("recorder.hide.textButton")
             }
+            Toggle("Leave fixed areas visible", isOn: $keepFixedAreas)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11.5))
+                .instantTooltip("On: a header or bar that stays still while the page scrolls keeps the text. Leave it off when such an area can show a name or a number")
+                .accessibilityIdentifier("recorder.hide.keepFixed")
             SectionLabel(text: "Private data", value: hits.map { Plural.count($0.count, "hit") })
             Text("Emails, tokens and keys, phone numbers, IBANs and card numbers on the screen. The text is read on this Mac with Vision; nothing leaves it.")
                 .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
@@ -127,7 +135,7 @@ struct PrivateDataSection: View {
                 ForEach(hits) { hit in row(hit) }
                 let open = hits.filter { picked.contains($0.id) && !$0.hidden }
                 if !hits.isEmpty {
-                    WideButton(title: open.isEmpty ? "All Hidden" : "Hide \(Plural.count(open.count, "Hit"))", systemImage: "eye.slash") {
+                    WideButton(title: Self.hideTitle(hits: hits, picked: picked), systemImage: "eye.slash") {
                         hide(open.map(\.id))
                     }
                     .disabled(open.isEmpty || busy)
@@ -136,6 +144,14 @@ struct PrivateDataSection: View {
                 }
             }
         }
+    }
+
+    /// The hide button's title: what a click hides; "Pick a Hit" while every hit still shows but none is ticked; "All
+    /// Hidden" only when every hit is hidden. On this surface an empty selection must never read as done.
+    static func hideTitle(hits: [PrivateHitRow], picked: Set<String>) -> String {
+        if hits.allSatisfy(\.hidden) { return "All Hidden" }
+        let open = hits.filter { picked.contains($0.id) && !$0.hidden }.count
+        return open == 0 ? "Pick a Hit" : "Hide \(Plural.count(open, "Hit"))"
     }
 
     private func row(_ hit: PrivateHitRow) -> some View {
@@ -178,11 +194,14 @@ struct PrivateDataSection: View {
         let text = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !busy else { return }
         busy = true
-        model.applyOps(EditOp.json([.hideText(EditOp.HideText(text: text, excludeFixed: true))])) { result in
+        let leaveFixed = keepFixedAreas
+        model.applyOps(EditOp.json([.hideText(EditOp.HideText(text: text, excludeFixed: leaveFixed))])) { result in
             busy = false
             switch result {
             case .success:
-                model.show("Hid every place “\(text)” shows. ⌘Z brings it back.", error: false)
+                model.show(leaveFixed
+                    ? "Hid “\(text)” where it moves; a header or bar that stays still was left visible. ⌘Z brings it back."
+                    : "Hid every place “\(text)” shows. ⌘Z brings it back.", error: false)
                 phrase = ""
             case let .failure(failure):
                 model.show("Nothing was hidden: \(failure.reason)", error: true)

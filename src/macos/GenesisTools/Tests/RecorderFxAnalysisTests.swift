@@ -128,6 +128,22 @@ final class RecorderFxAnalysisTests: XCTestCase {
                        #"[{"excludeFixed":true,"op":"hideText","text":"alice@example.com"}]"#)
     }
 
+    // Regression test: PR #507 review — with every checkbox unticked the button said "All Hidden" while every hit still
+    // showed in the movie.
+    @MainActor
+    func testTheHideButtonSaysAllHiddenOnlyWhenEveryHitIs() {
+        func hit(_ id: String, hidden: Bool) -> PrivateHitRow {
+            PrivateHitRow(id: id, kind: "email", label: "Email", masked: "al…om", from: 1, to: 2, plays: 1,
+                          box: .init(x: 0.1, y: 0.1, width: 0.2, height: 0.05), hidden: hidden)
+        }
+        let hits = [hit("p1", hidden: false), hit("p2", hidden: false)]
+        XCTAssertEqual(PrivateDataSection.hideTitle(hits: hits, picked: ["p1", "p2"]), "Hide 2 Hits")
+        XCTAssertEqual(PrivateDataSection.hideTitle(hits: hits, picked: []), "Pick a Hit", "nothing ticked is not hidden")
+        XCTAssertEqual(PrivateDataSection.hideTitle(hits: [hit("p1", hidden: true), hit("p2", hidden: false)], picked: ["p1"]),
+                       "Pick a Hit", "a hidden hit's tick hides nothing more")
+        XCTAssertEqual(PrivateDataSection.hideTitle(hits: hits.map { hit($0.id, hidden: true) }, picked: []), "All Hidden")
+    }
+
     private func trackedRedaction() -> EditProject.Redaction {
         EditProject.Redaction(id: "r1", startUs: 0, endUs: 4_000_000, x: 0.1, y: 0.8, width: 0.4, height: 0.1,
                               track: [EditProject.TrackKey(atUs: 1_000_000, x: 0.1, y: 0.8, width: 0.4, height: 0.1),
