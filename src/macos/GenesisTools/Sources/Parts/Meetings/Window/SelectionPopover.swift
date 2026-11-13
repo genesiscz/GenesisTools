@@ -215,6 +215,7 @@ enum CommentDelivery: Equatable {
             return "Sending \(Plural.count(count, "comment"))…"
         case .sent(let comments, let listeners):
             if listeners == 0 { return "Nobody is listening. Kept \(Plural.count(comments, "comment")) staged." }
+            if comments == 0 { return "Nothing was sent: another window sent or removed these comments already" }
             return "Sent \(Plural.count(comments, "comment")) to \(Plural.count(listeners, "listener"))"
         case .failed(let message):
             return "Not sent: \(message). The comments stay staged."

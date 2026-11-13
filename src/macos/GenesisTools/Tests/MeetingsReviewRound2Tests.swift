@@ -65,4 +65,22 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         XCTAssertNotEqual(row(alex), row(hidden))
         XCTAssertNotEqual(row(alex), row(alex, unmerge: {}), "a row that gains Split Merge draws again")
     }
+
+    // MARK: A send reports what the service sent (PR 799)
+
+    func testASendReportsTheCountTheServiceSent() throws {
+        func result(sent: Int, listeners: Int) throws -> MeetingsAPI.CommentSend.Result {
+            let listener = #"{"pid":42,"at":"2026-11-09T17:32:38.000Z","actor":{"kind":"agent"}}"#
+            let comment = #"{"id":"c1","at":"2026-11-09T17:32:38.000Z","target":{"kind":"range","fromSec":1,"toSec":2},"text":"Hi","actor":{"kind":"window"},"state":"sent"}"#
+            let json = #"{"sent":[\#(Array(repeating: comment, count: sent).joined(separator: ","))],"listeners":[\#(Array(repeating: listener, count: listeners).joined(separator: ","))]}"#
+            return try JSONDecoder().decode(MeetingsAPI.CommentSend.Result.self, from: Data(json.utf8))
+        }
+        XCTAssertEqual(MeetingDetailModel.delivery(after: try result(sent: 0, listeners: 1), staged: 3), .sent(comments: 0, listeners: 1),
+                       "another window sent them first: this send sent nothing")
+        XCTAssertEqual(CommentDelivery.sent(comments: 0, listeners: 1).text,
+                       "Nothing was sent: another window sent or removed these comments already")
+        XCTAssertEqual(MeetingDetailModel.delivery(after: try result(sent: 2, listeners: 1), staged: 3), .sent(comments: 2, listeners: 1))
+        XCTAssertEqual(MeetingDetailModel.delivery(after: try result(sent: 0, listeners: 0), staged: 3), .sent(comments: 3, listeners: 0),
+                       "nobody listens: the staged comments stay staged")
+    }
 }
