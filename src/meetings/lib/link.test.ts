@@ -25,7 +25,7 @@ import { env } from "@genesiscz/utils/env";
 import * as cloneFiles from "@genesiscz/utils/fs/clone";
 import * as hashFiles from "@genesiscz/utils/fs/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
@@ -39,7 +39,7 @@ import { meetingAudioPath } from "./audio";
 import { COMMENTS_FILE, MeetingComments } from "./comments";
 import { DecisionJournal, JOURNAL_FILE } from "./decision-journal";
 import { copyTitle, duplicateMeeting } from "./duplicate";
-import { applySource, assertSourceFree, playLinksFor, sourceHolders } from "./link";
+import { applySource, assertSourceFree, linkSource, playLinksFor, sourceHolders } from "./link";
 import { meetingListRow } from "./list-rows";
 import * as mergeFiles from "./merge";
 import { mergeMeetings } from "./merge";
@@ -58,6 +58,7 @@ import {
     type LocalSourceAudio,
     planSourceAudio,
 } from "./source-audio-discovery";
+import * as sources from "./sources";
 
 /**
  * A merge refusal awaited with every file move and clone made to throw: a move the merge undid later would leave the
@@ -1357,6 +1358,49 @@ describe("permanent source audio", () => {
         const evidence = withPreservedSourceAudio(reopened, null);
         expect(evidence?.audioPath).toBe(preservedSourceAudio(reopened)?.path);
         expect(readFileSync(evidence!.audioPath!, "utf8")).toBe("source audio bytes");
+    });
+
+    test("linking or refreshing a finished meeting copies its audio only while the source preserves audio", async () => {
+        const f = await fixture();
+        const config = new MeetingsConfigStore(new Storage(`source-audio-config-${process.pid}-${stores}`));
+        await config.update((raw) => {
+            raw.sources = { wisprflow: { preserveAudio: false } };
+        });
+        const meeting = (sourceMeetingId: string): SourceMeeting => ({
+            sourceMeetingId,
+            title: "Planning",
+            start: "2026-11-12T14:00:00.000Z",
+            participants: [],
+            speakers: [],
+            transcript: [],
+            folders: [],
+        });
+        const source = {
+            ...wisprflowSource,
+            load: async (sourceMeetingId: string) => meeting(sourceMeetingId),
+            liveRecording: async () => null,
+            evidence: async () => ({ audioPath: f.sourcePath, segments: [], speaking: [], files: [] }),
+        };
+        const pick = spyOn(sources, "meetingSource").mockResolvedValue(source);
+        const link = (sourceRef: string) =>
+            linkSource({ store: f.store, config, sourceRef, command: "test", createdBy: "link", quiet: true });
+
+        try {
+            // A new record, then a refresh of the fixture's record: neither keeps a copy.
+            for (const sourceRef of ["wisprflow:source-two", "wisprflow:source-one"]) {
+                const result = await link(sourceRef);
+                expect(result.audio).toBeUndefined();
+                expect(new MeetingStore(f.store.storage).read(result.record.id)?.audio).toBeUndefined();
+                expect(existsSync(join(f.store.folder(result.record.id), SOURCE_AUDIO_FOLDER))).toBe(false);
+            }
+
+            await config.update((raw) => {
+                raw.sources = { wisprflow: { preserveAudio: true } };
+            });
+            expect((await link("wisprflow:source-one")).audio).toBe("preserved");
+        } finally {
+            pick.mockRestore();
+        }
     });
 
     test("a stopgap file is preserved without changing it when the provider has already deleted its copy", async () => {
