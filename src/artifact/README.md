@@ -257,21 +257,36 @@ bodies render as markdown.
   `src/artifact/gallery/document-look.tsx`. For a full page, build any `.tsx` with `-t paper`.
 - Data: `StatGrid` (`delta` against a baseline, `edge` accent, auto-fit `min`), `EditableTable` (input cells with
   drafts, add/remove, validation, totals), `ChangeLedger` + `FieldDiff` + `diffFields` (sync history with added,
-  removed and changed fields), `DataTable` (filter, `rowTone`, toned and markdown cells), `SeriesTable`, `Timeline`,
+  removed and changed fields), `DataTable` (filter, `rowTone`; a cell may be `{ text, tone, md: true, mono }`
+  to set its own tone and markdown independently), `SeriesTable`, `Timeline`,
   `Bullets`, `QA` (per-item `open`/`featured`/`meta`).
 - Charts: `DayChart` (bars, lines and stacks over labeled points, log scales, reference markers) and `DonutChart`,
   both backed by recharts and colored by theme tones. `ChartJs` renders a raw Chart.js v4 `config` for anything
   they do not cover.
-- Evidence: `CodeBlock` (copy button, `lang` syntax highlighting, `highlightLines`/`badLines`), `FileMark`, `Claim`
-  (`[NN%]` badge), `Quote`, `Callout`, `Badge`, `Chips`, `Note`, `Superseded`.
+- Evidence: `CodeBlock` (copy button, `lang` syntax highlighting, `highlightLines`/`badLines`; JSON `maxString`
+  shortens string values with full text in their title; copy keeps the original). `surface="auto"` shares its
+  Card's surface; `"framed"` keeps an independent box and `"plain"` removes it everywhere. `Claim` accepts inline
+  markdown `proof` and `marks={[{ path, lines }]}` source chips. `ClaimList facts` renders the same evidence for
+  a list of `{ text, confidence?, proof?, marks? }`. Also `FileMark`, `Quote`, `Callout`, `Badge`, `Chips`, `Note`,
+  and `Superseded`.
 - Markdown: `Md`, `MdInline`, `MdViewer` (`src` fetches a sibling `.md` live, with a TOC and a section filter; it
   replaces build-time markdown inlining). Fenced code is highlighted (highlight.js core with 19 languages, toned by
   the theme), and a ```` ```mermaid ```` fence renders as a diagram.
 - Diagrams: `Mermaid` (`chart` is the mermaid source; zoom toolbar, copy source, download SVG), `ZoomPane` (scroll
   and zoom frame for an oversized SVG or image), `LayerDiagram` (a layered architecture drawn as SVG in the page,
   offline: bands of boxes on a column grid with weights, row and column spans, dashed and tinted boxes, labelled
-  arrows, bus lines between bands; `layoutLayerDiagram` is the pure geometry).
-- Diff: `DiffView` (`before`/`after` or a unified `patch`; `unified` or `split`; +/- counts).
+  arrows, bus lines between bands; `layoutLayerDiagram` is the pure geometry). `DiagramNode.col` leaves leading
+  or middle cells empty. Edges automatically detour around intermediate boxes; `lane` selects a 1-based column
+  gap or `"left"`/`"right"`. A blocked explicit lane draws above boxes with a halo and reports `crosses`.
+  `routing="direct"` retains the previous straight routing for comparison.
+- UML: `UmlDiagram` draws class, primitive, data, enumeration, interface and note elements with typed connectors,
+  role labels, multiplicities and marks. `look="modern"|"classic"` selects theme tokens or the EA palette.
+  `ModelBrowser` shows model packages and elements, and `PropertyGrid` shows grouped property rows, optional tab
+  contents and a footer. `UmlInspector` renders the selected element's fields and generated code.
+  `UmlWorkbench` owns state and selection for a diagram-plus-inspector recipe, with a render function.
+- Diff: `DiffView` (`before`/`after` or a unified `patch`; `unified` or `split`; +/- counts). `beforeValue` and
+  `afterValue` accept JSON values and sort nested object keys, preserving array order. Split context rows use
+  each file's own line number, and `wrap` uses normal break opportunities.
 - Structure: `TreeView` + `treeFromPaths` (file trees; `variant="ascii"` prints a command tree with ├─ guides,
   per-group badge columns and one comment column, `color` inherited), `Steps` (status stepper), `Compare` (A vs B
   columns), `KeyValue` (definition grid), `MappingList` (old name to new name: `arrow` rows with a note, or
@@ -288,13 +303,44 @@ bodies render as markdown.
   lanes, baseline ghosts with a shift label, milestones, today line, drag and keyboard editing), `CapacityGrid`
   (load against capacity).
 - Interactive: `Simulator` (step player), `ParametricSimulator` (sliders, segments and toggles, a pure
-  `generate(params)` and presets), `SegmentedControl`, `FilterChips` (`single` filters by one category),
+  `generate(params)` and presets), `DecisionBoard` (decision points, presets, URL-restorable choices and a pure
+  render function), `StickyControls` (any controls, sticky below the measured TopNav), `SegmentedControl`
+  (`disabled` on an option is its reason, shown as a tooltip and a struck label; arrow keys skip disabled options),
+  `FilterChips` (`single` filters by one category),
   `SortableList`, `Wizard`, `Tooltip`/`useTooltip` (one shared hover card, dark in every theme).
 - Forms: `Button`, `Field`, `TextInput`, `NumberInput`, `DateInput`, `Select`, `Textarea`, `FileInput` (dates are
   `YYYY-MM-DD` strings; every control has a 2 px focus ring).
-- Theme: `ThemeToggle`/`useTheme` (opt-in override for the `auto` and `paper` templates; `variant="cycle"` is one
+- Theme: `ThemeToggle`/`useTheme` (override for the `auto` and `paper` templates; TopNav shows a toggle by default,
+  opt out with `theme={false}`; `variant="cycle"` is one
   pill button), `SERIES_COLOR` (8 lane colours from the shared `--series-*` tokens),
   `contrastRatio`/`readableTextOn`.
+
+### Decision controls
+
+```tsx
+<DecisionBoard
+    points={[
+        { key: "read", number: "1", title: "Read source", tone: "warn",
+          options: [{ value: "cache", label: "Cache" }, { value: "live", label: "Live" }] },
+    ]}
+    initial={{ read: "cache" }}
+    presets={[{ id: "direct", label: "Direct", choices: { read: "live" } }]}
+>
+    {(choices, api) => <Note>{`Read from ${choices.read}; changed: ${api.changed.join(", ")}`}</Note>}
+</DecisionBoard>
+```
+
+The compact panel is sticky by default. Expand it for full cards and notes, with its own scroll capped at 62vh.
+`sticky={false}` disables pinning, `initialExpanded` opens the cards initially, and `columns` picks two or three
+columns. A point's `disabledWhen(choices)` returns its mootness reason; an option's `disabledWhen` disables that
+option alone. `locked` requires an explicit Unlock before controls or presets can change the point. A URL link
+restores saved choices, including previously unlocked values. `normalize` applies domain constraints.
+
+`hash={false}` opts out of persistence; `hash="scenario"` gives a second board its own namespace. Writes retain
+other boards, tabs and chart state. `copy={false}` hides copying, and `labels` localizes the panel actions. Partial
+presets fill unspecified choices from `initial`. `api.changed` compares with the last chosen preset or the initial
+choices, and `api.preset` identifies an exact match. To drive several page sections, use `controlsPlacement="slot"`
+and render `api.controls` in the desired section while the render function wraps the whole page.
 
 ### The gallery source
 

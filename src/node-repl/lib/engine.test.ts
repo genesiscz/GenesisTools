@@ -9,6 +9,7 @@ import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
+import type { ReplToolsetRow } from "@genesiscz/utils/repl/toolset";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { jsDescription, jsResetDescription, parseJsArguments } from "../mcp/server";
 import {
@@ -507,7 +508,7 @@ describe("toolsets", () => {
     it("every toolset declares who its calls reach, and no read method reaches anyone", async () => {
         const reaching: Record<string, string> = {};
 
-        for (const toolset of await createToolsets(REPL_TOOLSET_IDS)) {
+        for (const toolset of (await createToolsets(REPL_TOOLSET_IDS)).loaded) {
             const owners = [
                 { owner: toolset.api.global, methods: toolset.api.methods },
                 ...(toolset.api.handles ?? []).map((handle) => ({
@@ -683,6 +684,51 @@ describe("toolsets", () => {
         }
     });
 
+    // C07: --help, id parsing and the MCP start line read each row's summary and global without loading the toolset,
+    // so a row must say what its loaded toolset says.
+    it("every table row carries its loaded toolset's summary and global", async () => {
+        const { loaded, failed } = await createToolsets(REPL_TOOLSET_IDS);
+        expect(failed).toEqual([]);
+        expect(loaded.map((toolset) => toolset.id)).toEqual(REPL_TOOLSET_IDS);
+
+        for (const id of REPL_TOOLSET_IDS) {
+            const row: ReplToolsetRow = REPL_TOOLSETS[id];
+            const toolset = loaded.find((one) => one.id === id);
+            expect(row.summary).toBe(toolset?.api.summary ?? "");
+            expect(row.global ?? id).toBe(toolset?.api.global ?? "");
+        }
+    });
+
+    // C07 / NR2: a row whose module throws at import fails alone; the other rows and plain turns keep working.
+    it("a row whose load rejects fails alone, and the other toolsets and plain turns still work", async () => {
+        const broken: ReplToolsetRow = {
+            summary: "Never loads.",
+            load: () => Promise.reject(new Error("the module threw at import")),
+        };
+        Reflect.set(REPL_TOOLSETS, "broken", broken);
+
+        try {
+            const { loaded, failed } = await createToolsets(["broken", "hub"]);
+            expect(failed).toEqual([{ id: "broken", reason: "the module threw at import" }]);
+            expect(loaded.map((toolset) => toolset.id)).toEqual(["hub"]);
+        } finally {
+            Reflect.deleteProperty(REPL_TOOLSETS, "broken");
+        }
+
+        // The worker's own table has no broken row, so a module entry whose import rejects stands in for one there.
+        const missing = join(tmpdir(), "no-such-toolset-module.ts");
+        const engine = new ReplEngine({ toolsets: [`${missing}#Missing`, "presets"] });
+        try {
+            const first = await engine.run("1 + 1");
+            expect(first.ok).toBe(true);
+            expect(first.text).toEndWith("2");
+            expect((await engine.run("typeof presets.list")).text).toBe("function");
+            expect((await engine.run("help()")).text).toContain(`${missing}#Missing: did not load:`);
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
     it("an engine without toolsets still has help and show", async () => {
         const engine = new ReplEngine();
         try {
@@ -699,7 +745,7 @@ describe("toolsets", () => {
 
     // NR14: control is computer's API under another name, and with both loaded every search hit came twice.
     it("toolsets that overlap say which to use, and computer with control is refused", () => {
-        const summary = (id: ReplToolsetId) => REPL_TOOLSETS[id]().api.summary;
+        const summary = (id: ReplToolsetId) => REPL_TOOLSETS[id].summary;
         expect(summary("control")).toContain("The computer toolset's API under the name control");
         expect(summary("recorder")).toContain("movies.record");
         expect(summary("editor")).toContain("movies.open");
@@ -774,7 +820,7 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
 
 // NR26: four methods and no close or screenshot; a closed port said "Unable to connect" without the port.
 it("the browser toolset closes and screenshots tabs, and a port nobody answers on is named", async () => {
-    const [browserApi] = (await createToolsets(["browser"])).map((toolset) => toolset.api);
+    const [browserApi] = (await createToolsets(["browser"])).loaded.map((toolset) => toolset.api);
     expect(browserApi.methods.map((method) => method.name)).toEqual([
         "tabs",
         "open",
@@ -792,7 +838,7 @@ it("the browser toolset closes and screenshots tabs, and a port nobody answers o
 
 // NR27: hub.prs() and hub.pr() were "→ unknown", and github.review() refused the URL that hub.pr() takes.
 it("hub and github name their result shapes, and github.review takes a PR URL or owner/repo#n", async () => {
-    const apis = (await createToolsets(["hub", "github"])).map((toolset) => toolset.api);
+    const apis = (await createToolsets(["hub", "github"])).loaded.map((toolset) => toolset.api);
     expect(searchMethods(apis, "hub.prs")).toContain("→ { prs: ");
     expect(searchMethods(apis, "hub.pr")).toContain("→ HubPrDetail");
     expect(githubPrRef("https://github.com/acme/widgets/pull/42/files")).toEqual({
@@ -805,7 +851,7 @@ it("hub and github name their result shapes, and github.review takes a PR URL or
 });
 
 it("discovery covers handle names, missing names and ambiguous names", async () => {
-    const apis = (await createToolsets(["meetings", "browser", "control"])).map((toolset) => toolset.api);
+    const apis = (await createToolsets(["meetings", "browser", "control"])).loaded.map((toolset) => toolset.api);
     expect(searchMethods(apis, "items.add")).toContain("meetings.Meeting.items.add");
     // R2-NR6: the source transcript was "→ unknown", so its shape was known only after a call.
     expect(searchMethods(apis, "meetings.Meeting.transcript")).toContain(
@@ -823,7 +869,7 @@ it("discovery covers handle names, missing names and ambiguous names", async () 
 // NR15: search("cut") listed run_workflow ("execution") and movies.record ("shortcuts") before movies.Movie.cut.
 // R2-NR1: and it answered 15,532 chars, each hit with its whole doc.
 it("search ranks an exact method name first, then whole words, then substrings, and names what is past ten lines", async () => {
-    const apis = (await createToolsets(["computer", "movies"])).map((toolset) => toolset.api);
+    const apis = (await createToolsets(["computer", "movies"])).loaded.map((toolset) => toolset.api);
     const answer = searchMethods(apis, "cut");
     const lines = answer.split("\n");
     expect(lines[0]).toStartWith("movies.Movie.cut(");

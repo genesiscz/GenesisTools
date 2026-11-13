@@ -18,12 +18,12 @@ import {
     parseTimesheetArg,
     type TimesheetWeek,
 } from "@app/clarity/lib/timesheet-weeks";
-import * as p from "@clack/prompts";
 import type { ClarityApi } from "@genesiscz/utils/clarity";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { addDay, formatLocalDate } from "@genesiscz/utils/date";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -388,7 +388,7 @@ async function confirmWrite({ message, yes }: { message: string; yes?: boolean }
         process.exit(1);
     }
 
-    const confirmed = await p.confirm({ message });
+    const confirmed = await p.confirm({ message, cancel: "back" });
 
     if (p.isCancel(confirmed) || !confirmed) {
         p.cancel("Cancelled");

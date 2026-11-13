@@ -9,10 +9,10 @@ import {
 } from "@app/macos/lib/mail/format";
 import { saveAttachment } from "@app/macos/lib/mail/jxa";
 import { truncateBody } from "@app/macos/lib/mail/transform";
-import * as p from "@clack/prompts";
 import { logger } from "@genesiscz/utils/logger";
 import type { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
 import type { MailMessage } from "@genesiscz/utils/macos/mail/types";
+import * as p from "@genesiscz/utils/prompts/p";
 
 export interface ExportOptions {
     messages: MailMessage[];
@@ -68,6 +68,7 @@ export async function exportMessages(options: ExportOptions): Promise<ExportResu
                     { value: "append", label: "Append" },
                     { value: "skip", label: "Cancel" },
                 ],
+                cancel: "back",
             });
 
             if (p.isCancel(action) || action === "skip") {
@@ -90,7 +91,10 @@ export async function exportMessages(options: ExportOptions): Promise<ExportResu
             throw new Error(`${messages.length} messages to export. Use --yes to confirm.`);
         }
 
-        const proceed = await p.confirm({ message: `Export ${messages.length} emails? This may take a while.` });
+        const proceed = await p.confirm({
+            message: `Export ${messages.length} emails? This may take a while.`,
+            cancel: "back",
+        });
 
         if (p.isCancel(proceed) || !proceed) {
             p.cancel("Export cancelled.");

@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { capture } from "@genesiscz/utils/process/capture";
+import { batchCwd, batchCwdViaLsof } from "@genesiscz/utils/process/cwd";
 import { parseLaunchctlList } from "@genesiscz/utils/process/launchctl";
 import {
     commandOfRow,
@@ -15,9 +17,6 @@ import {
     readPsCommand,
 } from "@genesiscz/utils/process/libproc-table";
 import {
-    batchCwd,
-    batchCwdViaLsof,
-    capture,
     chunk,
     collectProcessTree,
     PS_BATCH_SIZE,

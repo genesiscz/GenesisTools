@@ -1,6 +1,6 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
-import { batchPsInfo } from "@genesiscz/utils/process/ps";
+import { readProcessRows } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { type ProcsSources, readProcsReport, realProcsSources } from "./sources";
 import type { ProcGroup, ProcsReport } from "./tree";
@@ -30,7 +30,7 @@ export interface StopOutcome {
 export interface SignalOps {
     signal(pid: number, signal: "SIGTERM" | "SIGKILL"): void;
     alive(pid: number): boolean;
-    /** Start time and command of each pid still running (one batched `ps -p`). */
+    /** Start time and command of each pid still running (one read of the process rows, `readProcessRows`). */
     identity(pids: number[]): Map<number, { startedAt: string | null; command: string }>;
     sleep(ms: number): Promise<void>;
     now(): number;
@@ -46,7 +46,7 @@ export const realSignalOps: SignalOps = {
     identity: (pids) => {
         const found = new Map<number, { startedAt: string | null; command: string }>();
 
-        for (const [pid, row] of batchPsInfo(pids)) {
+        for (const [pid, row] of readProcessRows(pids)) {
             found.set(pid, { startedAt: row.startTime?.toISOString() ?? null, command: row.command });
         }
 

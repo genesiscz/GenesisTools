@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 
 import { resolve } from "node:path";
-import * as p from "@clack/prompts";
 import { execToolInteractive } from "@genesiscz/utils/cli";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { out } from "@genesiscz/utils/logger";
 import { renderMarkdownToCli } from "@genesiscz/utils/markdown/index.js";
 import { searchSelect, searchSelectCancelSymbol } from "@genesiscz/utils/prompts/clack/search-select.js";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import { discoverTools, getReadme, type ToolInfo } from "./lib/discovery.js";
 import { introspectTool } from "./lib/introspect.js";
@@ -35,6 +35,7 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
     const action = await p.select({
         message: `${pc.bold(tool.name)} \u2014 what do you want to do?`,
         options,
+        cancel: "back",
     });
 
     if (p.isCancel(action) || action === "back") {
@@ -85,6 +86,7 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
             const cmd = await p.select({
                 message: `${pc.bold(tool.name)} subcommands:`,
                 options: cmdOptions,
+                cancel: "back",
             });
 
             if (!p.isCancel(cmd) && cmd !== "__back__") {

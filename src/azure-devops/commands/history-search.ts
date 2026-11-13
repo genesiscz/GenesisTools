@@ -12,11 +12,11 @@ import { periodEndTime, resolveUser, userMatches } from "@app/azure-devops/histo
 import type { AzureConfig, WorkItem, WorkItemCache } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import { buildCombinedQuery } from "@app/azure-devops/wiql-builder";
-import * as p from "@clack/prompts";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { formatLocalDate, formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { formatDuration as _formatDuration } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 // ============= Types =============
@@ -78,7 +78,7 @@ function pad(str: string, width: number): string {
     return str.length >= width ? str.slice(0, width) : str + " ".repeat(width - str.length);
 }
 
-interface WiqlSearchRow extends WorkItem {
+export interface WiqlSearchRow extends WorkItem {
     type: string;
     project: string;
 }
@@ -145,27 +145,11 @@ async function wiqlSearch(options: SearchOptions, api: Api, config: AzureConfig)
         return;
     }
 
-    // Batch-fetch work item details (max 200 per request)
-    const ids = response.workItems.map((wi) => wi.id);
-    const fields = [
-        "System.Id",
-        "System.Title",
-        "System.State",
-        "System.AssignedTo",
-        "System.ChangedDate",
-        "System.WorkItemType",
-        "System.TeamProject",
-    ].join(",");
-
-    const allItems: WiqlSearchRow[] = [];
-    const batchSize = 200;
-
-    for (let i = 0; i < ids.length; i += batchSize) {
-        const batchIds = ids.slice(i, i + batchSize);
-        const idsParam = batchIds.join(",");
-        const result = await fetchWorkItemsBatch(config, idsParam, fields);
-        allItems.push(...result);
-    }
+    const allItems = await fetchSearchRows(
+        api,
+        config,
+        response.workItems.map((wi) => wi.id)
+    );
 
     // Output
     if (options.output === "json") {
@@ -175,29 +159,21 @@ async function wiqlSearch(options: SearchOptions, api: Api, config: AzureConfig)
     }
 }
 
-/** Fetch work items by IDs using az rest (since Api.get is private) */
-async function fetchWorkItemsBatch(config: AzureConfig, idsParam: string, fields: string): Promise<WiqlSearchRow[]> {
-    const { $ } = await import("bun");
-    const url = Api.orgUrl(config, ["wit", "workitems"], { ids: idsParam, fields });
+const SEARCH_FIELDS = [
+    "System.Id",
+    "System.Title",
+    "System.State",
+    "System.AssignedTo",
+    "System.ChangedDate",
+    "System.WorkItemType",
+    "System.TeamProject",
+];
 
-    // Get a token via az CLI
-    const tokenResult =
-        await $`az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv`.quiet();
-    const token = tokenResult.text().trim();
+/** The WIQL hits as table rows, read in batches of 200 with their `rev` through `Api`. */
+export async function fetchSearchRows(api: Api, config: AzureConfig, ids: number[]): Promise<WiqlSearchRow[]> {
+    const items = await api.getWorkItemFieldRows(ids, SEARCH_FIELDS);
 
-    const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to fetch work items: ${response.status} ${response.statusText}`);
-    }
-
-    const data = (await response.json()) as {
-        value: Array<{ id: number; rev: number; fields: Record<string, unknown> }>;
-    };
-
-    return data.value.map((item) => {
+    return items.map((item) => {
         const f = item.fields;
         const project = (f["System.TeamProject"] as string) ?? config.project;
 

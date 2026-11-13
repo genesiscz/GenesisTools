@@ -16,6 +16,7 @@ import { type ShellScan, scanShell } from "../scan";
 import { biomeRules } from "./biome";
 import { destructiveRules } from "./destructive";
 import { devnullRules } from "./devnull";
+import { type CorrectedLimits, correctedPart } from "./excerpt";
 import { findRules } from "./find";
 import { gitRules } from "./git";
 import { pipelineRules } from "./pipeline";
@@ -93,31 +94,70 @@ export function detectShellViolations(
     return violations.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.index - b.index);
 }
 
-// One violation as the model reads it: what, where, why, and what to write.
-// Nothing is clipped: the corrected command is meant to be copied back
-// verbatim, and a cut one cannot be (Martin, 2026-09-16: "include ALL input /
-// output without slicing").
-export function renderViolation(violation: ShellViolation): string {
+export interface RenderOptions {
+    /** The command the violations came from. A long corrected command is then cut to the part that changed. */
+    command?: string;
+    /** Rules this loop already read in full since its last compaction: they get the compact form. */
+    explained?: ReadonlySet<string>;
+    /** The command did not run: the compact form keeps the reason, so the message is enough to act on alone. */
+    denied?: boolean;
+    /** When a corrected command prints whole, and how long its cut part may be (`guard.corrected`). */
+    corrected?: CorrectedLimits;
+}
+
+/** The first sentence of a rule's `why`. A `$?` or `e.g.` inside it is no end, because no capital follows. */
+export function firstSentence(text: string): string {
+    return text.match(/^[\s\S]*?[.!?](?=\s+[A-Z]|\s*$)/)?.[0] ?? text;
+}
+
+// One violation as the model reads it: what, where, why, and what to write. The first time a loop meets a rule it
+// reads `why`, `wrong` and `right`; later it reads the compact form (2026-11-11: the long text repeated on every
+// firing). The corrected command is printed whole when it is short, else the part that changed, uncut, because
+// that is the part to copy back (Martin, 2026-09-16: "include ALL input / output without slicing").
+export function renderViolation(violation: ShellViolation, options: RenderOptions = {}): string {
+    const compact = options.explained?.has(violation.ruleId) ?? false;
     const lines = [
-        `[${violation.severity}] ${violation.title} (rule ${violation.ruleId})`,
+        `[${violation.severity}] ${violation.title} (rule ${violation.ruleId})${compact ? " (explained earlier in this session)" : ""}`,
         `  matched (offset ${violation.index}): ${violation.matched}`,
         ...(violation.detail !== undefined ? [`  here: ${violation.detail}`] : []),
-        `  why: ${violation.why}`,
-        `  wrong: ${violation.wrong}`,
-        `  right: ${violation.right}`,
     ];
 
+    if (!compact) {
+        lines.push(`  why: ${violation.why}`, `  wrong: ${violation.wrong}`, `  right: ${violation.right}`);
+    } else if (options.denied) {
+        lines.push(`  why: ${firstSentence(violation.why)}`);
+
+        if (violation.suggestion === undefined) {
+            lines.push(`  right: ${violation.right}`);
+        }
+    }
+
     if (violation.suggestion !== undefined) {
-        lines.push(`  your command, corrected:\n${violation.suggestion}`);
+        const part = correctedPart({
+            command: options.command,
+            suggestion: violation.suggestion,
+            matched: { index: violation.index, length: violation.matched.length },
+            limits: options.corrected,
+        });
+
+        lines.push(
+            part.whole
+                ? `  your command, corrected:\n${part.text}`
+                : `  corrected part (the rest stays as you wrote it):\n${part.text}`
+        );
     }
 
     return lines.join("\n");
 }
 
-export function renderViolations(violations: readonly ShellViolation[], heading: string): string {
+export function renderViolations(
+    violations: readonly ShellViolation[],
+    heading: string,
+    options: RenderOptions = {}
+): string {
     if (violations.length === 0) {
         return "";
     }
 
-    return `${heading}\n${violations.map(renderViolation).join("\n")}`;
+    return `${heading}\n${violations.map((violation) => renderViolation(violation, options)).join("\n")}`;
 }

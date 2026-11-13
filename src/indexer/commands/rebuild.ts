@@ -1,7 +1,7 @@
-import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { IndexerManager } from "../lib/manager";
@@ -32,6 +32,7 @@ export function registerRebuildCommand(program: Command): void {
                         const selected = await p.select({
                             message: "Select index to rebuild",
                             options: names.map((n) => ({ value: n, label: n })),
+                            cancel: "back",
                         });
 
                         if (p.isCancel(selected)) {
@@ -51,6 +52,7 @@ export function registerRebuildCommand(program: Command): void {
                 if (isInteractive()) {
                     const confirmed = await p.confirm({
                         message: `Rebuild "${targetName}"? This will re-scan all source files and re-chunk.`,
+                        cancel: "back",
                     });
 
                     if (p.isCancel(confirmed) || !confirmed) {

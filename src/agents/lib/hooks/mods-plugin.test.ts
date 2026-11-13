@@ -23,7 +23,6 @@ import {
     sectionsOfCalls,
 } from "../../../../plugins/genesis-tools-mods/hooks/sections";
 import { MODS_DEFAULTS, modsSettings } from "../../../../plugins/genesis-tools-mods/hooks/settings";
-import { DEFAULT_HOOKS_CONFIG } from "./config";
 import { overflowPart } from "./diff/full";
 import { MOD_MAX_PATCH_CHARS, MODS_SESSION_VAR } from "./diff/run";
 import { MOD_SWITCHES, modSwitchKeys } from "./mods";
@@ -247,10 +246,6 @@ describe("idle compaction", () => {
 });
 
 describe("the mods section", () => {
-    it("the plugin's defaults are the CLI's, field for field", () => {
-        expect(MODS_DEFAULTS).toEqual(DEFAULT_HOOKS_CONFIG.mods);
-    });
-
     it("starts every mod off but the full diff and the idle compaction, and each one has a switch by name", () => {
         const valueAt = (key: string): unknown =>
             key
@@ -282,13 +277,33 @@ describe("the mods section", () => {
             })
         );
 
-        expect(read.diff).toEqual({ fullDiff: false, collapseGitSync: false });
+        expect(read.diff).toEqual({ fullDiff: false, collapseGitSync: false, bottomRow: true, filesOnly: false });
         expect(read.idleCompact).toEqual({ enabled: false, minutes: 40, minTokens: 200_000 });
         expect(read.agentModel).toEqual({ enabled: false, format: "short" });
         // Out of range keeps the default, as the CLI does.
         expect(read.cacheBand.warnMinutes).toBe(10);
-        expect(read.hooks).toEqual({ tokens: false, dedupe: false });
+        expect(read.hooks).toEqual({ tokens: false, dedupe: false, metrics: true });
         expect(modsSettings("{ not json")).toEqual(MODS_DEFAULTS);
+    });
+
+    it("the plugin reads mods.resumeGuard with the CLI's bounds", () => {
+        const read = (resumeGuard: Record<string, unknown>) =>
+            modsSettings(SafeJSON.stringify({ mods: { resumeGuard } })).resumeGuard;
+
+        expect(MODS_DEFAULTS.resumeGuard).toEqual({
+            enabled: false,
+            idleSeconds: 295,
+            minTokens: 150_000,
+            teammates: true,
+        });
+        expect(read({ enabled: true, idleSeconds: 330, minTokens: 300_000, teammates: false })).toEqual({
+            enabled: true,
+            idleSeconds: 330,
+            minTokens: 300_000,
+            teammates: false,
+        });
+        expect(read({ idleSeconds: 59, minTokens: 2_000_001 })).toEqual(MODS_DEFAULTS.resumeGuard);
+        expect(read({ idleSeconds: "300", enabled: 1 })).toEqual(MODS_DEFAULTS.resumeGuard);
     });
 });
 

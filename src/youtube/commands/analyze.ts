@@ -9,10 +9,10 @@ import {
 } from "@app/youtube/commands/_shared/utils";
 import { answerOverVideos, formatCitationLines } from "@app/youtube/lib/ask-answer";
 import type { TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
-import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli/executor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -216,7 +216,7 @@ async function confirmLlmCall(opts: ConfirmLlmOpts): Promise<boolean> {
         return false;
     }
 
-    const answer = await p.confirm({ message: "Proceed with the LLM call?", initialValue: false });
+    const answer = await p.confirm({ message: "Proceed with the LLM call?", initialValue: false, cancel: "back" });
     if (p.isCancel(answer)) {
         return false;
     }

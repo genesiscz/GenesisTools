@@ -68,10 +68,10 @@ function detailsFor(provider: AiProxyProviderType): UsageSummary["details"] {
 
 // Spread the real module: other importers in this graph need `buildProviderMap`
 // and friends, and a bare replacement makes them vanish.
-const realRegistry = await import("@app/ai-proxy/lib/providers/registry");
+const realPool = await import("@app/ai-proxy/lib/providers/pool");
 
-mock.module("@app/ai-proxy/lib/providers/registry", () => ({
-    ...realRegistry,
+mock.module("@app/ai-proxy/lib/providers/pool", () => ({
+    ...realPool,
     createProvider: async (account: AiProxyAccountConfig) => {
         built.push(account.name);
 

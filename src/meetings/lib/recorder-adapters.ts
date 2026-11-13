@@ -27,7 +27,7 @@ const { log } = logger.scoped("meetings-recorder");
  */
 export async function claimRecorderPid(path: string): Promise<{ release: () => void }> {
     const claim = await claimPidFile(path, {
-        reclaimable: (state) => state.status === "dead" || state.status === "foreign" || state.status === "none",
+        reclaimable: (state) => state.status === "dead" || state.status === "foreign",
     });
 
     if (claim.status !== "claimed") {

@@ -6,11 +6,9 @@ import { registerUiCommand } from "@app/monitor/commands/ui";
 import { registerWatcherCommands } from "@app/monitor/commands/watchers";
 import { monitorServerApp } from "@app/monitor/lib/server/app";
 import { MONITOR_VERSION } from "@app/monitor/lib/types";
-import { WatcherValidationError } from "@app/monitor/lib/validate";
 import { runTool } from "@genesiscz/utils/cli";
 import { enhanceHelp } from "@genesiscz/utils/cli/executor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 export function buildMonitorProgram(): Command {
@@ -63,13 +61,5 @@ Reading commands take --json: list, show, status, uptime, history, check, run, i
 // a helper out of this module would otherwise launch the whole program while
 // bun is still collecting the suite.
 if (import.meta.main) {
-    await runTool(buildMonitorProgram(), { tool: "monitor" }).catch((error) => {
-        if (error instanceof WatcherValidationError) {
-            out.error(error.message);
-        } else {
-            out.error(error instanceof Error ? error.message : String(error));
-        }
-
-        process.exitCode = 1;
-    });
+    await runTool(buildMonitorProgram(), { tool: "monitor" });
 }

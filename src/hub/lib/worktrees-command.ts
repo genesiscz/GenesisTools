@@ -1,9 +1,9 @@
-import * as p from "@clack/prompts";
 import { isInteractive, parseNonNegativeInt, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import { moveAsideRoot } from "@genesiscz/utils/fs/move-aside";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
@@ -189,6 +189,7 @@ export function registerWorktreesCommand(program: Command): void {
                 const ok = await p.confirm({
                     message: `Remove ${paths.length} worktree folder(s)? Ignored files in them (node_modules, .env) go too.`,
                     initialValue: false,
+                    cancel: "back",
                 });
 
                 if (p.isCancel(ok) || !ok) {
@@ -260,6 +261,7 @@ export function registerWorktreesCommand(program: Command): void {
                 const ok = await p.confirm({
                     message: `Move ${paths.length} worktree folder(s) into ${moveAsideRoot({ context: MOVE_ASIDE_CONTEXT })}? They stay working worktrees there until /tmp is cleared at reboot.`,
                     initialValue: false,
+                    cancel: "back",
                 });
 
                 if (p.isCancel(ok) || !ok) {

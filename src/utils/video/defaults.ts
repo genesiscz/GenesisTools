@@ -1,4 +1,4 @@
-import { MAX_SHEET_WIDTH } from "../image/grid";
+import { MAX_SHEET_WIDTH } from "../image/sheet-size";
 import { VIDEO_GROUPS, type VideoSettings } from "./types";
 
 /**

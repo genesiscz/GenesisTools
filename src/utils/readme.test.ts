@@ -25,12 +25,12 @@ async function readmeThroughAPipe(markdown: string): Promise<{ stdout: string; e
 }
 
 describe("printReadmeAndExit", () => {
-    // Plan Task 12 asserted `handleReadme`; the real, 33-caller transitional
-    // export is `handleReadmeFlag(importMetaUrl)` — assert that one is kept.
-    it("is exported as a callable (prints + exits); handleReadmeFlag kept transitional", async () => {
+    // The transitional `handleReadmeFlag` went: runTool and `answerReadmeFlag` (cli/readme-flag.ts) are the
+    // only doors, so the module exports the print+exit body alone.
+    it("is exported as a callable (prints + exits); handleReadmeFlag is gone", async () => {
         const mod = await import("./readme");
         expect(typeof printReadmeAndExit).toBe("function");
-        expect(typeof (mod as Record<string, unknown>).handleReadmeFlag).toBe("function");
+        expect((mod as Record<string, unknown>).handleReadmeFlag).toBeUndefined();
     });
 
     /**

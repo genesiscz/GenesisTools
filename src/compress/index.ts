@@ -5,6 +5,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
 import { registerFileCommands } from "./commands/files";
 import { registerLedgerCommands } from "./commands/ledger";
+import { registerTransparentCommands } from "./commands/transparent";
 
 const program = new Command()
     .name(toolCommand("compress"))
@@ -12,5 +13,6 @@ const program = new Command()
 
 registerFileCommands(program);
 registerLedgerCommands(program);
+registerTransparentCommands(program);
 
 await runTool(program, { tool: "compress" });

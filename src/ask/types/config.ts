@@ -35,9 +35,9 @@ export interface Args extends CLIOptions {
 }
 
 export interface AppConfig {
-    /** @deprecated Use AIConfig.getAppDefaults("ask").provider */
+    /** @deprecated Use the AI config: `defaults.app.ask.chat.provider` */
     defaultProvider?: string;
-    /** @deprecated Use AIConfig.getAppDefaults("ask").model */
+    /** @deprecated Use the AI config: `defaults.app.ask.chat.model` */
     defaultModel?: string;
     maxTokens?: number;
     temperature?: number;
@@ -59,8 +59,8 @@ export interface EnvTokenConfig {
 }
 
 export interface AskConfig extends AppConfig {
-    /** @deprecated Tokens and accounts are now in AIConfig. Kept for migration compat. */
+    /** @deprecated Tokens and accounts are now in the AI config. Kept for migration compat. */
     claude?: ClaudeSubscriptionConfig;
-    /** @deprecated Provider enablement is now in AIConfig.providers. Kept for migration compat. */
+    /** @deprecated Provider enablement is now the AI config's `disabledProviders`. Kept for migration compat. */
     envTokens?: EnvTokenConfig;
 }

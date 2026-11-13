@@ -1,5 +1,6 @@
 import { execTool } from "@genesiscz/utils/cli/tools";
 import { logger } from "@genesiscz/utils/logger";
+import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import type { ChannelDefinition, SayChannelConfig } from "../types";
 
 /**
@@ -9,7 +10,10 @@ import type { ChannelDefinition, SayChannelConfig } from "../types";
  */
 export const SAY_DISPATCH_TIMEOUT_MS = 120_000;
 
-/** True when `tools say` spoke the message (or there was nothing to say). Never throws. */
+/**
+ * True when `tools say` spoke the message (or there was nothing to say). Never throws, except that it rejects in a
+ * test process (and a child a test spawns) when it would speak out loud.
+ */
 export async function dispatchSay(
     message: string,
     config: SayChannelConfig,
@@ -18,6 +22,8 @@ export async function dispatchSay(
     if (!config.enabled) {
         return true;
     }
+
+    refuseHostEffectInTest("The say notification channel", "Assert the message instead of speaking it out loud.");
 
     const voice = config.voice ?? "Samantha";
     const args = ["say", message, "--voice", voice];

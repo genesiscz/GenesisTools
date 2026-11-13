@@ -1,9 +1,9 @@
 import { paths } from "@app/dev-dashboard/contract/endpoints";
-import type { LiveChannel, LiveFrame } from "@app/dev-dashboard/lib/live/types";
+import type { LiveChannel, LiveDataFrame, LiveFrame } from "@app/dev-dashboard/lib/live/types";
 import type { PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePageVisible } from "@/hooks/usePageVisible";
 
 function portKey(p: PortInfo): string {
@@ -47,8 +47,8 @@ export function channelsFromKey(key: string): LiveChannel[] {
 }
 
 /**
- * Single multiplexed EventSource to `/api/live`. Merges frames into React Query.
- * Mid-session channel changes: POST /api/live/subscribe (SSE cannot receive).
+ * One multiplexed EventSource to `/api/live` per page, shared by every `useLive` (`LiveConnectionManager`). Merges
+ * frames into React Query.
  *
  * The stream is open only while the page is visible and at least one channel is asked for.
  * The server runs a channel's producer (the ports `lsof` scan and its HTTP classify probes,
@@ -63,6 +63,16 @@ export interface LiveConnectionDeps {
     setLastError: (message: string | null) => void;
     /** A fake in tests; the browser global otherwise. */
     EventSourceCtor?: typeof EventSource;
+    /** Every data frame, before the built-in cache writes: for a caller that folds a channel itself. */
+    onFrame?: (frame: LiveDataFrame) => void;
+    /** `true` when the stream dropped, `false` once it delivers again. */
+    onStatus?: (down: boolean) => void;
+}
+
+/** What a caller of `useLive` adds to the built-in cache writes. Read through a ref, so a fresh closure is fine. */
+export interface LiveListeners {
+    onFrame?: (frame: LiveDataFrame) => void;
+    onStatus?: (down: boolean) => void;
 }
 
 /**
@@ -85,6 +95,8 @@ export function openLiveConnection(
     const es = new ESCtor(paths.live(channelsFromKey(channelsKey)));
 
     es.onmessage = (ev) => {
+        deps.onStatus?.(false);
+
         try {
             const frame = SafeJSON.parse(ev.data, { strict: true }) as LiveFrame;
 
@@ -99,6 +111,12 @@ export function openLiveConnection(
                 setLastError(frame.payload.message);
                 return;
             }
+
+            if (frame.channel === "system") {
+                return;
+            }
+
+            deps.onFrame?.(frame);
 
             if (frame.channel === "ports" && frame.type === "snapshot") {
                 qc.setQueryData(["ports"], frame.payload);
@@ -126,12 +144,6 @@ export function openLiveConnection(
 
                 return;
             }
-
-            if (frame.channel === "qa" && frame.type === "entry") {
-                qc.setQueryData(["qa", "live-entry"], frame.payload);
-                // Let QA page listeners also invalidate list
-                void qc.invalidateQueries({ queryKey: ["qa"] });
-            }
         } catch {
             // ignore malformed
         }
@@ -139,6 +151,7 @@ export function openLiveConnection(
 
     es.onerror = () => {
         setLastError("live stream disconnected");
+        deps.onStatus?.(true);
     };
 
     return () => {
@@ -148,41 +161,143 @@ export function openLiveConnection(
     };
 }
 
-export function useLive(channels: LiveChannel[]): {
+/** One `useLive` call as the shared stream sees it. */
+export interface LiveConsumer {
+    channels: readonly LiveChannel[];
+    /** Read at each frame, so the caller's latest closures run. */
+    listeners: () => LiveListeners;
+    setConnId: (id: string | null) => void;
+    setLastError: (message: string | null) => void;
+}
+
+export interface LiveConnectionManagerDeps {
+    qc: QueryClient;
+    /** A fake in tests; the browser global otherwise. */
+    EventSourceCtor?: typeof EventSource;
+    /** Runs the reconcile after the registrations of one render; a microtask by default, a manual queue in tests. */
+    schedule?: (run: () => void) => void;
+}
+
+/**
+ * The one `/api/live` stream of a page. Every `useLive` registers its channels and listeners here; the stream carries
+ * the union of their channels, and each data frame goes to the consumers that asked for its channel. A change of the
+ * union reopens the stream with the new set, once per batch: the hooks of one render all register before it opens.
+ * A consumer that joins a stream which already carries its channels gets no replay of their snapshots: it reads them
+ * from the query cache the stream fills, or from its own fetch.
+ */
+export class LiveConnectionManager {
+    private readonly consumers = new Set<LiveConsumer>();
+    private readonly connIdRef: { current: string | null } = { current: null };
+    private open: { key: string; close: () => void } | undefined;
+    private scheduled = false;
+
+    constructor(private readonly deps: LiveConnectionManagerDeps) {}
+
+    /** Adds a consumer; the returned function removes it. The stream follows on the next reconcile. */
+    register(consumer: LiveConsumer): () => void {
+        this.consumers.add(consumer);
+        consumer.setConnId(this.connIdRef.current);
+        this.schedule();
+
+        return () => {
+            this.consumers.delete(consumer);
+            consumer.setConnId(null);
+            this.schedule();
+        };
+    }
+
+    private schedule(): void {
+        if (this.scheduled) {
+            return;
+        }
+
+        this.scheduled = true;
+        (this.deps.schedule ?? queueMicrotask)(() => {
+            this.scheduled = false;
+            this.reconcile();
+        });
+    }
+
+    private reconcile(): void {
+        const key = liveChannelsKey([...new Set([...this.consumers].flatMap((consumer) => consumer.channels))]);
+
+        if (key === (this.open?.key ?? "")) {
+            return;
+        }
+
+        this.open?.close();
+        this.open = undefined;
+        const close = openLiveConnection(key, true, {
+            qc: this.deps.qc,
+            connIdRef: this.connIdRef,
+            EventSourceCtor: this.deps.EventSourceCtor,
+            setConnId: (id) => this.each((consumer) => consumer.setConnId(id)),
+            setLastError: (message) => this.each((consumer) => consumer.setLastError(message)),
+            onFrame: (frame) =>
+                this.each((consumer) => {
+                    if (consumer.channels.includes(frame.channel)) {
+                        consumer.listeners().onFrame?.(frame);
+                    }
+                }),
+            onStatus: (down) => this.each((consumer) => consumer.listeners().onStatus?.(down)),
+        });
+
+        if (close) {
+            this.open = { key, close };
+        }
+    }
+
+    private each(run: (consumer: LiveConsumer) => void): void {
+        for (const consumer of [...this.consumers]) {
+            run(consumer);
+        }
+    }
+}
+
+/** One manager per query client, so the whole app (one client) shares one stream. */
+const managers = new WeakMap<QueryClient, LiveConnectionManager>();
+
+export function liveConnectionFor(qc: QueryClient): LiveConnectionManager {
+    let manager = managers.get(qc);
+
+    if (!manager) {
+        manager = new LiveConnectionManager({ qc });
+        managers.set(qc, manager);
+    }
+
+    return manager;
+}
+
+export function useLive(
+    channels: LiveChannel[],
+    listeners: LiveListeners = {}
+): {
     connId: string | null;
-    setChannels: (ch: LiveChannel[]) => Promise<void>;
     lastError: string | null;
 } {
     const qc = useQueryClient();
     const [connId, setConnId] = useState<string | null>(null);
     const [lastError, setLastError] = useState<string | null>(null);
-    const connIdRef = useRef<string | null>(null);
     const channelsKey = liveChannelsKey(channels);
     const visible = usePageVisible();
+    const listenersRef = useRef(listeners);
+    listenersRef.current = listeners;
 
     useEffect(() => {
-        return openLiveConnection(channelsKey, visible, { qc, connIdRef, setConnId, setLastError });
+        if (!visible || channelsKey === "") {
+            return undefined;
+        }
+
+        return liveConnectionFor(qc).register({
+            channels: channelsFromKey(channelsKey),
+            listeners: () => listenersRef.current,
+            setConnId,
+            setLastError,
+        });
         // `channels` is deliberately absent: the array identity changes every
         // render, and depending on it reopened the stream about eight times a
         // second. `channelsKey` carries the same information and is stable.
     }, [channelsKey, qc, visible]);
 
-    const setChannels = useCallback(async (ch: LiveChannel[]) => {
-        const id = connIdRef.current;
-        if (!id) {
-            throw new Error("live stream not connected");
-        }
-
-        const res = await fetch(paths.liveSubscribe(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: SafeJSON.stringify({ connId: id, channels: ch }),
-        });
-
-        if (!res.ok) {
-            throw new Error(`subscribe failed: ${res.status}`);
-        }
-    }, []);
-
-    return { connId, setChannels, lastError };
+    return { connId, lastError };
 }

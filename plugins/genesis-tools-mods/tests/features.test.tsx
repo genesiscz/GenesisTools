@@ -979,6 +979,9 @@ function checkoutHost(): Host {
         async sessionId() {
             return "sess-1";
         },
+        async model() {
+            return "claude-test-model";
+        },
         async messages() {
             return [];
         },

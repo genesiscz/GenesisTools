@@ -1,5 +1,4 @@
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
-import { OpenRouterApiKeyProvider } from "@app/ai-proxy/lib/providers/openrouter-api-key";
 import { listOpenRouterProxyModels } from "@app/ai-proxy/lib/providers/openrouter-api-key.models";
 
 export const openRouterApiKeyDefinition: ProviderDefinition = {
@@ -24,7 +23,8 @@ export const openRouterApiKeyDefinition: ProviderDefinition = {
     // No Responses upstream (it answers 501), yet its chat answer carries reasoning a client must render.
     routes: { chatViaResponses: false, reshapesChat: true, recoversCompaction: false },
     upstreamEndpoints: null,
-    create: (account) => OpenRouterApiKeyProvider.create(account),
+    create: async (account) =>
+        (await import("@app/ai-proxy/lib/providers/openrouter-api-key")).OpenRouterApiKeyProvider.create(account),
     // Three segments plus the slash inside the OpenRouter id: the fully qualified form `resolve-model.ts` parses
     // without ambiguity.
     suggestedModel: (account) => `${account.name}/${account.providerSlug}/anthropic/claude-sonnet-5.5`,

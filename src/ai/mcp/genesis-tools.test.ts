@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { answerText } from "@app/genesis-tools-mcp/lib/tool-entry";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { usageToolEntries } from "./genesis-tools";
+import { answerText } from "@genesiscz/utils/mcp/tool-entry";
+import { toolGroup } from "./genesis-tools";
 
 /** The test sandbox home has no accounts, no poll file and no history: every answer is empty, never an error. */
 describe("usage MCP tools", () => {
-    const entries = usageToolEntries();
+    const { entries } = toolGroup();
 
     test("expose the four read-only tools", () => {
         expect(Object.keys(entries).sort()).toEqual(["usage_advise", "usage_forecast", "usage_limits", "usage_series"]);

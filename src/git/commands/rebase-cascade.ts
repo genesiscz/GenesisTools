@@ -21,7 +21,6 @@ import {
     type StepResult,
 } from "@app/git/lib/cascade/execute";
 import { loadState, saveState } from "@app/git/lib/cascade/state";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
@@ -35,6 +34,7 @@ import {
     originDriver,
 } from "@genesiscz/utils/git";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -269,7 +269,11 @@ async function run(parentArg: string | undefined, opts: Options): Promise<number
             return 2;
         }
 
-        const ok = await p.confirm({ message: "Run this plan? (backups first, no push)", initialValue: false });
+        const ok = await p.confirm({
+            message: "Run this plan? (backups first, no push)",
+            initialValue: false,
+            cancel: "back",
+        });
 
         if (p.isCancel(ok) || !ok) {
             out.log.info("Cancelled. Nothing moved.");

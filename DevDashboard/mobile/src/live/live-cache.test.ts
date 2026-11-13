@@ -4,8 +4,10 @@ import {
     createDashboardClient,
     type EventSourceLike,
     type LiveDataFrame,
+    type LiveFrameOf,
     type PortInfo,
     type PortsRes,
+    type QaRow,
 } from "@dd/contract";
 import { QueryClient } from "@tanstack/react-query";
 import { mockPulse } from "@/api/fixtures/data";
@@ -13,6 +15,15 @@ import { MOCK_BOARD } from "@/api/fixtures/agents";
 import { agentsKeys } from "@/features/agents/queries";
 import { answerQueueKeys } from "@/features/answer-queue/queries";
 import { portKillerKeys } from "@/features/port-killer/queries";
+import {
+    EMPTY_QA_LIVE_WINDOW,
+    pushLiveRow,
+    QA_LIVE_WINDOW,
+    QA_SEEN_LIMIT,
+    type QaLiveWindow,
+    qaLiveStatus,
+} from "@/features/qa/live-feed";
+import { qaKeys } from "@/features/qa/queries";
 import { pulseKeys } from "@/features/pulse/queries";
 import { LIVE_CACHE_TABLE } from "@/live/cache-table";
 import { applyLiveFrame, createLiveCache } from "@/live/live-cache";
@@ -144,6 +155,105 @@ describe("the live cache table", () => {
         );
 
         expect(queryClient.getQueryState(agentsKeys.board)?.isInvalidated).toBe(true);
+    });
+});
+
+/** A QA row with only the fields the window reads (id). */
+function qaRow(id: string): QaRow {
+    return { id, question: "q", answerMd: "a", project: "P", tag: "question", refs: [] } as unknown as QaRow;
+}
+
+function qaEntryFrame(id: string): LiveDataFrame {
+    return { v: 1, channel: "qa", type: "entry", payload: qaRow(id) as unknown as LiveFrameOf<"qa">["payload"] };
+}
+
+function qaWindow(queryClient: QueryClient): QaLiveWindow | undefined {
+    return queryClient.getQueryData<QaLiveWindow>(qaKeys.live);
+}
+
+describe("the qa channel's live window (was features/qa/subscription.test.ts)", () => {
+    it("caps the live window newest-first and still dedupes", () => {
+        let live = EMPTY_QA_LIVE_WINDOW;
+        for (let i = 0; i < QA_LIVE_WINDOW + 5; i++) {
+            live = pushLiveRow(live, qaRow(String(i)));
+        }
+
+        expect(live.rows).toHaveLength(QA_LIVE_WINDOW);
+        expect(live.rows[0]?.id).toBe(String(QA_LIVE_WINDOW + 4));
+        expect(pushLiveRow(live, qaRow(String(QA_LIVE_WINDOW + 4)))).toBe(live);
+    });
+
+    it("forgets the oldest seen id once the dedupe window is full", () => {
+        const queryClient = new QueryClient();
+        for (let i = 0; i <= QA_SEEN_LIMIT; i++) {
+            applyLiveFrame(LIVE_CACHE_TABLE, qaEntryFrame(String(i)), queryClient);
+        }
+
+        applyLiveFrame(LIVE_CACHE_TABLE, qaEntryFrame("0"), queryClient);
+        expect(qaWindow(queryClient)?.rows[0]?.id).toBe("0");
+        const afterForgotten = qaWindow(queryClient);
+        applyLiveFrame(LIVE_CACHE_TABLE, qaEntryFrame(String(QA_SEEN_LIMIT)), queryClient);
+        expect(qaWindow(queryClient)).toBe(afterForgotten);
+    });
+
+    it("an entry joins the window newest first and refetches the log", () => {
+        const queryClient = new QueryClient();
+        queryClient.setQueryData(qaKeys.log(), []);
+        applyLiveFrame(LIVE_CACHE_TABLE, qaEntryFrame("1"), queryClient);
+        applyLiveFrame(LIVE_CACHE_TABLE, qaEntryFrame("2"), queryClient);
+
+        expect(qaWindow(queryClient)?.rows.map((row) => row.id)).toEqual(["2", "1"]);
+        expect(queryClient.getQueryState(qaKeys.log())?.isInvalidated).toBe(true);
+    });
+
+    it("drops a re-delivered id", () => {
+        const queryClient = new QueryClient();
+        applyLiveFrame(LIVE_CACHE_TABLE, qaEntryFrame("1"), queryClient);
+        applyLiveFrame(LIVE_CACHE_TABLE, qaEntryFrame("1"), queryClient);
+        applyLiveFrame(LIVE_CACHE_TABLE, qaEntryFrame("2"), queryClient);
+
+        expect(qaWindow(queryClient)?.rows.map((row) => row.id)).toEqual(["2", "1"]);
+    });
+
+    it("reports 'connecting' until the stream carries qa, then 'open', then 'live' after the first row", () => {
+        expect(qaLiveStatus("off", false, 0)).toBe("connecting");
+        expect(qaLiveStatus("connecting", false, 0)).toBe("connecting");
+        expect(qaLiveStatus("live", true, 0)).toBe("open");
+        expect(qaLiveStatus("live", true, 1)).toBe("live");
+    });
+
+    it("reports a drop as down, and a reconnect refetches the log", async () => {
+        expect(qaLiveStatus("down", false, 3)).toBe("down");
+        const fake = fakeClient();
+        const queryClient = new QueryClient();
+        const cache = createLiveCache({ client: fake.client, queryClient });
+        cache.demand("qa");
+        await tick();
+        fake.hello("c1", ["qa"]);
+        fake.send(qaEntryFrame("1"));
+        fake.sources[0]?.onerror?.(new Error("down"));
+        expect(cache.status()).toBe("down");
+        queryClient.setQueryData(qaKeys.log(), []);
+        fake.hello("c2", ["qa"]);
+
+        expect(cache.status()).toBe("live");
+        expect(queryClient.getQueryState(qaKeys.log())?.isInvalidated).toBe(true);
+        expect(qaWindow(queryClient)?.rows.map((row) => row.id)).toEqual(["1"]);
+        cache.close();
+    });
+
+    it("drops entries that arrive after close()", async () => {
+        const fake = fakeClient();
+        const queryClient = new QueryClient();
+        const cache = createLiveCache({ client: fake.client, queryClient });
+        cache.demand("qa");
+        await tick();
+        fake.hello("c1", ["qa"]);
+        fake.send(qaEntryFrame("1"));
+        cache.close();
+        fake.send(qaEntryFrame("2"));
+
+        expect(qaWindow(queryClient)?.rows.map((row) => row.id)).toEqual(["1"]);
     });
 });
 

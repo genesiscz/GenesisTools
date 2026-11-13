@@ -16,8 +16,10 @@ public final class GitGutterModel: ObservableObject {
     private var url: URL?
     private var text = ""
     private var head: String?
-    /// A commit or a checkout changes HEAD's copy; a stage does not, but reading it again is cheap.
-    private lazy var follower = GitRepoFollower(skipFirst: true) { [weak self] in self?.loadHead() }
+    /// A commit or a checkout changes HEAD's copy; a stage does not.
+    private lazy var follower = GitRepoFollower(skipFirst: true) { [weak self] in self?.repositoryChanged() }
+    /// The commit HEAD named when HEAD's copy was last read: a repository change that left HEAD there reads nothing.
+    private var readAtHead: String?
     private var pending: DispatchWorkItem?
     /// One per kind of load, so a text change never drops a HEAD read in flight, nor the reverse.
     private var headTicket = 0
@@ -38,6 +40,7 @@ public final class GitGutterModel: ObservableObject {
         pending?.cancel()
         self.url = url
         head = nil
+        readAtHead = nil
         hunks = []
         follower.follow(url)
         if url != nil { loadHead() }
@@ -50,15 +53,27 @@ public final class GitGutterModel: ObservableObject {
         schedule()
     }
 
+    private func repositoryChanged() {
+        guard let readAtHead, readAtHead == currentHead() else { return loadHead() }
+    }
+
+    /// The commit HEAD names in the shared status of the file's repository.
+    private func currentHead() -> String? {
+        guard let url else { return nil }
+        return GitRepos.shared.model(for: url.deletingLastPathComponent())?.status?.head
+    }
+
     private func loadHead() {
         guard let url else { return }
         headTicket += 1
         let ticket = headTicket
         let provider = GenesisKitGT.provider
+        let at = currentHead()
         DispatchQueue.global(qos: .utility).async {
             let head = (try? provider.contents(of: url, at: .head)) ?? nil
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.headTicket == ticket, self.url == url else { return }
+                self.readAtHead = at
                 self.head = head
                 self.compute()
             }

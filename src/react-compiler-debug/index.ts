@@ -11,25 +11,20 @@
  *   echo "code" | tools react-compiler-debug --stdin
  */
 
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import * as babel from "@babel/core";
 import generate from "@babel/generator";
 import { parse } from "@babel/parser";
 import traverse from "@babel/traverse";
 import * as t from "@babel/types";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
-import chalk from "chalk";
-import { Command } from "commander";
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
-
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { isVerbose, runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import chalk from "chalk";
+import { Command } from "commander";
 
 // Resolve babel-plugin-react-compiler from GenesisTools installation
 const __filename = fileURLToPath(import.meta.url);

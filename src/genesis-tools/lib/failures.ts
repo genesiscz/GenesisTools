@@ -14,7 +14,7 @@ export interface FailureFilter {
     /** A session id or its leading part. */
     session?: string;
     exitCodes?: number[];
-    /** Substring of the message, the arguments or the stderr tail, case-insensitive. */
+    /** Substring of the message, the arguments, the stderr tail or a deadline's child command, case-insensitive. */
     grep?: string;
     /** Interrupts (Ctrl-C, SIGTERM) are left out unless asked for. */
     interrupts?: boolean;
@@ -55,7 +55,12 @@ export function matchesFailure(failure: ToolFailure, filter: FailureFilter): boo
 
     if (filter.grep) {
         const needle = filter.grep.toLowerCase();
-        const haystack = [failure.message ?? "", failure.argv.join(" "), failure.stderrTail ?? ""].join("\n");
+        const haystack = [
+            failure.message ?? "",
+            failure.argv.join(" "),
+            failure.stderrTail ?? "",
+            failure.child?.command.join(" ") ?? "",
+        ].join("\n");
         if (!haystack.toLowerCase().includes(needle)) {
             return false;
         }

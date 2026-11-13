@@ -15,7 +15,6 @@ import { registerUiCommand } from "@app/youtube/commands/ui";
 import { registerVideosCommand } from "@app/youtube/commands/videos";
 import { runTool } from "@genesiscz/utils/cli";
 import { enhanceHelp } from "@genesiscz/utils/cli/executor";
-import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 export function buildYoutubeProgram(): Command {
@@ -51,7 +50,4 @@ export function buildYoutubeProgram(): Command {
 
 const program = buildYoutubeProgram();
 
-await runTool(program, { tool: "youtube" }).catch((error) => {
-    out.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-});
+await runTool(program, { tool: "youtube" });

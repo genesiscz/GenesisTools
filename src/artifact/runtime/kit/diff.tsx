@@ -1,3 +1,5 @@
+import { SafeJSON } from "@genesiscz/utils/json";
+import { stableStringify } from "@genesiscz/utils/json2md/value";
 import { parsePatch, type StructuredPatch, structuredPatch } from "diff";
 import { useMemo } from "react";
 
@@ -108,6 +110,9 @@ export function pairDiffRows(rows: DiffRow[]): DiffSplitRow[] {
 export interface DiffViewProps {
     before?: string;
     after?: string;
+    /** JSON values with recursively sorted object keys. A supplied value takes precedence over its text prop. */
+    beforeValue?: unknown;
+    afterValue?: unknown;
     /** A unified diff (`git diff` output) instead of before/after; may hold several files. */
     patch?: string;
     mode?: "unified" | "split";
@@ -128,18 +133,19 @@ const ROW_CLASS: Record<DiffRowKind, string> = {
 
 const MARK: Record<DiffRowKind, string> = { ctx: " ", add: "+", del: "-" };
 
-const GUTTER = "w-10 select-none border-r border-line/60 px-1.5 text-right text-dim/70";
+const GUTTER = "w-px whitespace-nowrap select-none border-r border-line/60 px-1.5 text-right text-ink-2";
+const WRAPPED_CODE = "whitespace-pre-wrap break-normal [overflow-wrap:anywhere]";
 
-function Cell({ row, wrap, empty }: { row?: DiffRow; wrap: boolean; empty?: boolean }) {
+function Cell({ row, wrap, side }: { row?: DiffRow; wrap: boolean; side: "left" | "right" }) {
     if (!row) {
-        return <td className={`${empty ? "bg-panel/40" : ""} px-2`} colSpan={2} />;
+        return <td className="bg-panel/40 px-2" colSpan={2} />;
     }
 
     return (
         <>
-            <td className={GUTTER}>{row.kind === "add" ? row.newNo : row.oldNo}</td>
-            <td className={`px-2 ${wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre"} ${ROW_CLASS[row.kind]}`}>
-                <span className="mr-2 inline-block w-3 select-none opacity-70">{MARK[row.kind]}</span>
+            <td className={GUTTER}>{side === "right" ? row.newNo : row.oldNo}</td>
+            <td className={`px-2 ${wrap ? WRAPPED_CODE : "whitespace-pre"} ${ROW_CLASS[row.kind]}`}>
+                <span className="mr-2 inline-block w-3 select-none">{MARK[row.kind]}</span>
                 {row.text || " "}
             </td>
         </>
@@ -170,8 +176,8 @@ function HunkRows({ hunk, wrap }: { hunk: DiffHunk; wrap: boolean }) {
                 <tr key={`${row.kind}-${row.oldNo ?? ""}-${row.newNo ?? ""}-${i}`} className={ROW_CLASS[row.kind]}>
                     <td className={GUTTER}>{row.oldNo ?? ""}</td>
                     <td className={GUTTER}>{row.newNo ?? ""}</td>
-                    <td className={`px-2 ${wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`}>
-                        <span className="mr-2 inline-block w-3 select-none opacity-70">{MARK[row.kind]}</span>
+                    <td className={`px-2 ${wrap ? WRAPPED_CODE : "whitespace-pre"}`}>
+                        <span className="mr-2 inline-block w-3 select-none">{MARK[row.kind]}</span>
                         {row.text || " "}
                     </td>
                 </tr>
@@ -181,8 +187,20 @@ function HunkRows({ hunk, wrap }: { hunk: DiffHunk; wrap: boolean }) {
 }
 
 function SplitTable({ file, wrap, labels }: { file: DiffFile; wrap: boolean; labels?: [string, string] }) {
+    const maxLine = file.hunks.reduce(
+        (max, hunk) => hunk.rows.reduce((line, row) => Math.max(line, row.oldNo ?? 0, row.newNo ?? 0), max),
+        1
+    );
+    const gutter = `${String(maxLine).length + 3}ch`;
+
     return (
         <table className="w-full table-fixed border-collapse font-mono text-[0.78rem] leading-relaxed">
+            <colgroup>
+                <col style={{ width: gutter }} />
+                <col style={{ width: `calc(50% - ${gutter})` }} />
+                <col style={{ width: gutter }} />
+                <col style={{ width: `calc(50% - ${gutter})` }} />
+            </colgroup>
             {labels ? (
                 <thead>
                     <tr className="bg-panel text-dim">
@@ -216,8 +234,8 @@ function SplitHunkRows({ hunk, wrap }: { hunk: DiffHunk; wrap: boolean }) {
             </tr>
             {pairs.map((pair, i) => (
                 <tr key={`${pair.left?.oldNo ?? ""}-${pair.right?.newNo ?? ""}-${i}`}>
-                    <Cell row={pair.left} wrap={wrap} empty />
-                    <Cell row={pair.right} wrap={wrap} empty />
+                    <Cell row={pair.left} wrap={wrap} side="left" />
+                    <Cell row={pair.right} wrap={wrap} side="right" />
                 </tr>
             ))}
         </>
@@ -228,6 +246,8 @@ function SplitHunkRows({ hunk, wrap }: { hunk: DiffHunk; wrap: boolean }) {
 export function DiffView({
     before,
     after,
+    beforeValue,
+    afterValue,
     patch,
     mode = "unified",
     labels,
@@ -246,10 +266,22 @@ export function DiffView({
 
         return [
             diffFileFromPatch(
-                structuredPatch(oldName, newName, before ?? "", after ?? "", undefined, undefined, { context })
+                structuredPatch(
+                    oldName,
+                    newName,
+                    beforeValue === undefined
+                        ? (before ?? "")
+                        : SafeJSON.stringify(SafeJSON.parse(stableStringify(beforeValue)), null, 2),
+                    afterValue === undefined
+                        ? (after ?? "")
+                        : SafeJSON.stringify(SafeJSON.parse(stableStringify(afterValue)), null, 2),
+                    undefined,
+                    undefined,
+                    { context }
+                )
             ),
         ];
-    }, [before, after, patch, oldName, newName, context]);
+    }, [before, after, beforeValue, afterValue, patch, oldName, newName, context]);
     const added = files.reduce((n, f) => n + f.added, 0);
     const removed = files.reduce((n, f) => n + f.removed, 0);
     const showNames = patch !== undefined || Boolean(title);

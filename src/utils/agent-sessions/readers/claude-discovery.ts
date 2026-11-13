@@ -1,3 +1,4 @@
+import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { open, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { bytesEqualStreaming } from "@genesiscz/utils/fs/disk-usage";
@@ -30,12 +31,16 @@ const STUB_MAX_BYTES = 64 * 1024;
  * one byte over it is answered from the bound, not from a whole transcript (PR #383 review).
  */
 async function isMetadataStub(path: string, size: number): Promise<boolean> {
-    if (size > STUB_MAX_BYTES) {
-        return false;
-    }
+    return size <= STUB_MAX_BYTES && holdsOnlySidecars(await readBounded(path, STUB_MAX_BYTES));
+}
 
-    const content = await readBounded(path, STUB_MAX_BYTES);
+/** {@link isMetadataStub} for a synchronous caller (`NativeSessionReader.readChanges`), with the same bound. */
+function isMetadataStubSync(path: string, size: number): boolean {
+    return size <= STUB_MAX_BYTES && holdsOnlySidecars(readBoundedSync(path, STUB_MAX_BYTES));
+}
 
+/** True when every line of a bounded read is a sidecar record; null (the file outgrew the bound) is not a stub. */
+function holdsOnlySidecars(content: string | null): boolean {
     if (content === null) {
         return false;
     }
@@ -63,7 +68,7 @@ async function isMetadataStub(path: string, size: number): Promise<boolean> {
 }
 
 /** One copy of a Claude session's main transcript, with the facts duplicates are ranked by. */
-interface ClaudeCopy {
+export interface ClaudeCopy {
     path: string;
     size: number;
     mtimeMs: number;
@@ -74,7 +79,7 @@ interface ClaudeCopy {
  * The order of the copies of one session: a copy that holds conversation before a sidecar stub whatever their
  * sizes (a stub with a long title used to beat a short real transcript on bytes alone), then larger, newer, by path.
  */
-function byCanonicalCopy(left: ClaudeCopy, right: ClaudeCopy): number {
+export function preferTranscriptCopy(left: ClaudeCopy, right: ClaudeCopy): number {
     return (
         Number(left.stub) - Number(right.stub) ||
         right.size - left.size ||
@@ -99,7 +104,23 @@ export async function canonicalClaudeCopy(paths: readonly string[]): Promise<str
         })
     );
 
-    return copies.filter((copy): copy is ClaudeCopy => copy !== undefined).sort(byCanonicalCopy)[0]?.path;
+    return copies.filter((copy): copy is ClaudeCopy => copy !== undefined).sort(preferTranscriptCopy)[0]?.path;
+}
+
+/** {@link canonicalClaudeCopy} for a synchronous caller: the same facts, read synchronously, in the same order. */
+export function canonicalClaudeCopySync(paths: readonly string[]): string | undefined {
+    const copies: ClaudeCopy[] = [];
+
+    for (const path of paths) {
+        try {
+            const stats = statSync(path);
+            copies.push({ path, size: stats.size, mtimeMs: stats.mtimeMs, stub: isMetadataStubSync(path, stats.size) });
+        } catch {
+            // A copy removed since it was listed is no candidate.
+        }
+    }
+
+    return copies.sort(preferTranscriptCopy)[0]?.path;
 }
 
 /** The first `maxBytes` of a file, or null when it holds more than that. */
@@ -113,6 +134,20 @@ export async function readBounded(path: string, maxBytes: number): Promise<strin
         return bytesRead > maxBytes ? null : buffer.toString("utf8", 0, bytesRead);
     } finally {
         await handle.close();
+    }
+}
+
+/** {@link readBounded} for a synchronous caller. */
+function readBoundedSync(path: string, maxBytes: number): string | null {
+    const fd = openSync(path, "r");
+
+    try {
+        const buffer = Buffer.alloc(maxBytes + 1);
+        const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
+
+        return bytesRead > maxBytes ? null : buffer.toString("utf8", 0, bytesRead);
+    } finally {
+        closeSync(fd);
     }
 }
 
@@ -261,7 +296,7 @@ export async function discoverClaudeHistorySources(
             profiler.detail === "all"
                 ? await profiler.scope("agent-sessions").measureAsync("discover.claude-dedup-group", rank)
                 : await rank();
-        ranked.sort(byCanonicalCopy);
+        ranked.sort(preferTranscriptCopy);
         const selected = ranked[0];
 
         if (selected) {

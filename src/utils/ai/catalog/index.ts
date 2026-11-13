@@ -1,4 +1,5 @@
 export { perTokenToPer1M } from "./decimal";
+export { defaultModelIdFor } from "./defaults";
 export { catalogKeysFor, providerNameFor } from "./keys";
 export {
     DEFAULT_OPENROUTER_EXCLUDE,

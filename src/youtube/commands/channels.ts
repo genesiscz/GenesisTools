@@ -6,10 +6,10 @@ import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { normaliseHandle, validateHandle } from "@app/youtube/commands/_shared/utils";
 import { withConsoleContext } from "@app/youtube/lib/service-user";
 import type { ChannelHandle } from "@app/youtube/lib/types";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -56,6 +56,7 @@ export function registerChannelsCommand(program: Command): void {
                 const result = await p.text({
                     message: "Channel handle to add (e.g. @mkbhd):",
                     validate: validateHandle,
+                    cancel: "back",
                 });
                 if (p.isCancel(result)) {
                     return;
@@ -256,6 +257,7 @@ async function resolveSyncTargets({
             label: channel.title ?? channel.handle,
             hint: channel.handle,
         })),
+        cancel: "back",
     });
 
     return p.isCancel(answer) ? [] : [answer];

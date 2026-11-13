@@ -39,13 +39,7 @@ program.addCommand(createImportCommand());
 enhanceHelp(program);
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "todo" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        out.error(`Error: ${message}`);
-        process.exit(1);
-    }
+    await runTool(program, { tool: "todo" });
 }
 
 main().catch((err) => {

@@ -1,4 +1,4 @@
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import { BUILTIN_SUITES, getCustomSuites, saveCustomSuites } from "../lib/suites";
 

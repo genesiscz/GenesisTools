@@ -45,6 +45,17 @@ test("one proven Claude resume result still works without a TTY", async () => {
     expect(selected).toEqual({ action: "resume", session: session("first") });
 });
 
+test("a lone Claude candidate is refused, not resumed, when cmux did not answer the running scan", async () => {
+    await expect(
+        chooseClaudeResumeSession({
+            candidates: [session("first")],
+            query: "invoice",
+            interactive: true,
+            runningUnknown: "cmux tree timed out after 3500 ms",
+        })
+    ).rejects.toThrow(/cmux did not answer.*not resuming/);
+});
+
 test("resume falls back to the current directory when the recorded one is gone", () => {
     // 629 of 1,617 indexed sessions here name a directory that no longer exists. Bun.spawn
     // rejects a missing cwd with `ENOENT ... posix_spawn '/bin/zsh'`, which reads as a broken

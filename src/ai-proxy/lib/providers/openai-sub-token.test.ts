@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveOpenAiSubToken } from "@app/ai-proxy/lib/providers/openai-sub-token";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { codexOAuth } from "@genesiscz/utils/ai/openai/codex-auth";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -66,14 +66,14 @@ describe("resolveOpenAiSubToken — single-flight refresh", () => {
         ]);
         _resetSecretsForTest();
         writeAiConfig(tempHome);
-        AIConfig.invalidate();
+        AiConfigStore.invalidate();
         // Prime the singleton (and run migrations) serially so the two concurrent
-        // resolves race only inside withLock, not inside AIConfig.load().
-        await AIConfig.load();
+        // resolves race only inside withLock, not inside the first load.
+        await AiConfigStore.load();
     });
 
     afterEach(() => {
-        AIConfig.invalidate();
+        AiConfigStore.invalidate();
         mock.restore();
         _resetMasterKeyProviders();
         _resetSecretsForTest();

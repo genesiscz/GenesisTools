@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { setupInquirerMock } from "./inquirer-mock.js";
 
 setupInquirerMock();
-setupStorageSandbox();
 
 const { readUnifiedConfig, setGlobalOptions, writeUnifiedConfig } = await import(
     "@app/mcp-manager/utils/config.utils.js"

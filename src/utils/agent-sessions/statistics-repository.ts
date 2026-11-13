@@ -2,9 +2,9 @@ import type { Database } from "bun:sqlite";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { TokenUsage } from "./cache-types";
 import { HistoryRepository, type HistorySourceSnapshot } from "./repository";
-import type { HistoryStatisticsRead } from "./types";
+import type { SupportedHistoryStatistics } from "./types";
 
-type Contribution = HistoryStatisticsRead["days"][number];
+type Contribution = SupportedHistoryStatistics["days"][number];
 
 /** `complete` = every expected source contributed; `partial` = some did; `refused` = none written. */
 export type HistoryPublishOutcome = "complete" | "partial" | "refused";
@@ -102,7 +102,7 @@ export class HistoryStatisticsRepository {
         revision: string;
         inputsRevision?: string;
         parserVersion: string;
-        statistics: HistoryStatisticsRead;
+        statistics: SupportedHistoryStatistics;
         sourceMtime: number;
         verifyRevision: () => boolean;
     }): boolean {

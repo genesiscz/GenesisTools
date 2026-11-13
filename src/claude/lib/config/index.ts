@@ -243,39 +243,43 @@ export function updateConfig(updater: (config: ClaudeConfig) => void): Promise<C
  */
 export async function refreshAccountLabels(): Promise<void> {
     const { fetchOAuthProfile } = await import("@genesiscz/utils/claude/auth");
-    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
+    const { AiConfigStore } = await import("@genesiscz/utils/ai/config/AiConfigStore");
+    const { resolveSecret } = await import("@genesiscz/utils/security");
 
-    const config = await AIConfig.load();
-    const accounts = config.getAccountsByProvider("anthropic-sub");
+    const store = await AiConfigStore.load();
+    const accounts = store.accounts({ provider: "anthropic-sub" });
 
     if (accounts.length === 0) {
         return;
     }
 
     const profiles = await Promise.all(
-        accounts.map((acc) =>
-            fetchOAuthProfile(acc.tokens.accessToken ?? "").catch((err) => {
+        accounts.map(async (acc) => {
+            try {
+                // Resolved here, where the profile request spends it.
+                return await fetchOAuthProfile((await resolveSecret(acc.credentials.accessToken)) ?? "");
+            } catch (err) {
                 logger.debug({ err, account: acc.name }, "[claude] refreshAccountLabels: per-account fetch failed");
                 return undefined;
-            })
-        )
+            }
+        })
     );
 
-    // Batch all label updates into a single disk write
+    // Batch all label updates into a single disk write, keyed by the immutable id
     const updates = new Map<string, string>();
 
     for (let i = 0; i < accounts.length; i++) {
         const newLabel = determineAccountLabel(profiles[i]);
 
         if (newLabel && newLabel !== accounts[i].label) {
-            updates.set(accounts[i].name, newLabel);
+            updates.set(accounts[i].id, newLabel);
         }
     }
 
     if (updates.size > 0) {
-        await config.mutate((data) => {
-            for (const [name, label] of updates) {
-                const acc = data.accounts.find((a) => a.name === name);
+        await store.mutate((data) => {
+            for (const [id, label] of updates) {
+                const acc = data.accounts.find((a) => a.id === id);
 
                 if (acc) {
                     acc.label = label;

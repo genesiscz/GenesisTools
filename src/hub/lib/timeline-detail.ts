@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
+import { readChangeLog } from "@genesiscz/utils/agents/change-log";
 import {
     allTranscriptTurns,
     cleanTranscriptText,
@@ -610,7 +611,8 @@ export const realTimelineDetailDeps: TimelineDetailDeps = {
         return { resolved, turns: await allTranscriptTurns(resolved) };
     },
     changes: (sessionId) => {
-        const loaded = loadSessionChanges({ sessionId });
+        // The change log holds what a Bash command changed; the transcript alone names only the file tools' files.
+        const loaded = loadSessionChanges({ sessionId, log: readChangeLog(sessionId) });
         return loaded.transcriptPath ? loaded : null;
     },
     subagents: (resolved) => listSubagents(resolved).subagents,

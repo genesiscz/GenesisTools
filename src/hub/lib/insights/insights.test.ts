@@ -60,6 +60,23 @@ describe("catalogPricer", () => {
         expect(price({ ...call, model: "grok-4.6-build" })).not.toBeNull();
         expect(price({ ...call, model: "grok-4.6-build" })).toBe(price({ ...call, model: "grok-4.6" }));
     });
+
+    test("a recorded list-price cost replaces the catalog price, for a listed and for an unlisted model", () => {
+        const price = catalogPricer("claude");
+        const call = { input: 100_000, output: 10_000, cacheRead: 0, cacheWrite: 0, reasoning: 0, at: iso(0) };
+
+        expect(price({ ...call, model: "claude-sonnet-4-5-20250929", recordedCostUsd: 1.23 })).toBe(1.23);
+        expect(price({ ...call, model: "invented-model-9", recordedCostUsd: 0.5 })).toBe(0.5);
+    });
+
+    test("a recorded metering figure stands only where the catalog has no price", () => {
+        const price = catalogPricer("grok");
+        const call = { input: 100_000, output: 10_000, cacheRead: 0, cacheWrite: 0, reasoning: 0, at: iso(0) };
+        const listed = price({ ...call, model: "grok-4.6" });
+
+        expect(price({ ...call, model: "grok-4.6", recordedCostUsd: 9.99 })).toBe(listed);
+        expect(price({ ...call, model: "invented-model-9", recordedCostUsd: 0.5 })).toBe(0.5);
+    });
 });
 
 describe("stuckVerdict", () => {
@@ -509,11 +526,12 @@ describe("insights cache identity", () => {
         expect(insightsCacheKey(resolved("claude", claude))).toBe(insightsCacheKey(resolved("claude", claude)));
     });
 
-    test("an entry cached before Claude's fast-tier rates (v3) misses, so its costs are computed again", () => {
+    test("an entry cached before Claude's fast-tier rates (v3) or before priceUsage (v4) misses, so its costs are computed again", () => {
         const dir = mkdtempSync(join(tmpdir(), "hub-insights-"));
         const key = insightsCacheKey(resolved("claude", transcript(dir, "session.jsonl", "aaaa\n")));
 
-        expect(key.endsWith("-v4.json")).toBe(true);
+        expect(key.endsWith("-v5.json")).toBe(true);
+        expect(key.endsWith("-v4.json")).toBe(false);
         expect(key.endsWith("-v3.json")).toBe(false);
     });
 

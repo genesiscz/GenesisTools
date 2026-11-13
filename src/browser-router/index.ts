@@ -447,6 +447,7 @@ async function configurePresets(): Promise<void> {
         options: offered.map((preset) => ({ value: preset.id, label: preset.title, hint: preset.description })),
         initialValues: offered.filter((preset) => preset.enabled).map((preset) => preset.id),
         required: false,
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
@@ -474,6 +475,7 @@ async function configurePresets(): Promise<void> {
                 message: `${preset.id}: ${OPTION_PROMPTS[name].message}`,
                 placeholder: OPTION_PROMPTS[name].placeholder,
                 initialValue: optionText(name, options),
+                cancel: "back",
             });
 
             if (p.isCancel(answer)) {
@@ -511,7 +513,7 @@ async function acceptLinkHostRisk(host: string, accepted: boolean): Promise<bool
         return false;
     }
 
-    const answer = await p.confirm({ message: `Build every link on ${host}?`, initialValue: false });
+    const answer = await p.confirm({ message: `Build every link on ${host}?`, initialValue: false, cancel: "back" });
     return !p.isCancel(answer) && answer === true;
 }
 
@@ -528,7 +530,11 @@ async function offerLinkHost(): Promise<void> {
         return;
     }
 
-    const host = await p.text({ message: "Host to build links on (empty to skip)", placeholder: "links.example.com" });
+    const host = await p.text({
+        message: "Host to build links on (empty to skip)",
+        placeholder: "links.example.com",
+        cancel: "back",
+    });
 
     if (p.isCancel(host) || host.trim() === "") {
         out.println(`No link host set. Later: ${command}`);

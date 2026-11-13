@@ -5,15 +5,14 @@ import { unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { registerAiProxyRefScanner } from "@app/ai-proxy/lib/account-refs";
-import * as p from "@clack/prompts";
 import { runTool } from "@genesiscz/utils/cli";
-import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard, readFromClipboard } from "@genesiscz/utils/clipboard.ts";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format.ts";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers.ts";
+import * as p from "@genesiscz/utils/prompts/p";
 import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -38,7 +37,31 @@ interface TranslateFlags {
     to?: string;
     from?: string;
     provider?: string;
+    model?: string;
     clipboard?: boolean;
+}
+
+/**
+ * One text-task call through the facade, retried on a transient failure.
+ *
+ * `--provider` and `--model` choose for this call only; nothing is saved
+ * (`tools ai config` owns the defaults).
+ */
+async function callTextTask<T>(
+    call: (ai: typeof import("@genesiscz/utils/ai/tasks/facade.ts").ai) => Promise<T>
+): Promise<T> {
+    // lazy: the facade loads the provider plugins, and only translate and summarize need them
+    const [{ ai }, { isTransientAiError }, { rateLimitAwareDelay, retry }] = await Promise.all([
+        import("@genesiscz/utils/ai/tasks/facade.ts"),
+        import("@genesiscz/utils/ai/core/retry.ts"),
+        import("@genesiscz/utils/async.ts"),
+    ]);
+
+    return retry(() => call(ai), {
+        maxAttempts: 3,
+        getDelay: rateLimitAwareDelay(),
+        shouldRetry: isTransientAiError,
+    });
 }
 
 /**
@@ -87,29 +110,19 @@ async function cmdTranslate(text: string | undefined, opts: TranslateFlags): Pro
     s.start("Translating...");
 
     try {
-        // lazy: saves 122 ms cold import (tools ts imports lazy, 2026-09-16) — the ai barrel evaluates every provider plugin and only translate and summarize need it
-        const { AI } = await import("@genesiscz/utils/ai/index.ts");
-        const translator = await AI.Translator.create({
-            provider: opts.provider,
-        });
+        const to = opts.to;
+        const result = await callTextTask((ai) =>
+            ai.translate(input, { from: fromLang, to, provider: opts.provider, model: opts.model })
+        );
 
-        try {
-            const result = await translator.translate(input, {
-                from: fromLang,
-                to: opts.to,
-            });
+        s.stop(pc.green("Translation complete"));
+        out.error(pc.dim(`${result.from} → ${result.to}`));
 
-            s.stop(pc.green("Translation complete"));
-            out.error(pc.dim(`${result.from} → ${result.to}`));
-
-            if (opts.clipboard) {
-                await copyToClipboard(result.text, { label: "translation" });
-            }
-
-            out.println(result.text);
-        } finally {
-            translator.dispose();
+        if (opts.clipboard) {
+            await copyToClipboard(result.text, { label: "translation" });
         }
+
+        out.println(result.text);
     } catch (error) {
         s.stop(pc.red("Translation failed"));
         out.error(pc.red(error instanceof Error ? error.message : String(error)));
@@ -124,6 +137,7 @@ async function cmdTranslate(text: string | undefined, opts: TranslateFlags): Pro
 interface SummarizeFlags {
     maxLength?: string;
     provider?: string;
+    model?: string;
     clipboard?: boolean;
 }
 
@@ -162,9 +176,10 @@ async function cmdSummarize(file: string | undefined, opts: SummarizeFlags): Pro
     s.start("Summarizing...");
 
     try {
-        // lazy: saves 122 ms cold import (tools ts imports lazy, 2026-09-16) — the ai barrel evaluates every provider plugin and only translate and summarize need it
-        const { AI } = await import("@genesiscz/utils/ai/index.ts");
-        const result = await AI.summarize(input, { maxLength });
+        const text = input;
+        const result = await callTextTask((ai) =>
+            ai.summarize(text, { maxLength, provider: opts.provider, model: opts.model })
+        );
 
         s.stop(pc.green("Summarization complete"));
         out.error(pc.dim(`Original: ${formatBytes(input.length)} → Summary: ${formatBytes(result.summary.length)}`));
@@ -191,10 +206,9 @@ interface ImageFlags {
 }
 
 async function cmdImage(prompt: string, opts: ImageFlags): Promise<void> {
-    // lazy: saves 51.6 ms cold import (scripts/benchmarks/startup/import-cost, 2026-09-16) — the deprecated config facade, wanted by image alone
-    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig.ts");
-    const config = await AIConfig.load();
-    const token = config.getHfToken() ?? env.hf.getKey();
+    // lazy: the provider key resolver loads the plugin barrel, wanted by image alone
+    const { providerApiKey } = await import("@genesiscz/utils/ai/providers/resolve");
+    const token = await providerApiKey("huggingface").catch(() => env.hf.getKey());
 
     if (!token) {
         out.error(pc.red("Hugging Face token required."));
@@ -385,6 +399,7 @@ async function interactiveMode(): Promise<void> {
                 { value: "models", label: "Manage models" },
                 { value: "config", label: "Configure AI settings" },
             ],
+            cancel: "back",
         })
     );
 
@@ -402,9 +417,11 @@ async function interactiveMode(): Promise<void> {
     }
 
     if (action === "translate") {
-        const text = await withCancel(p.text({ message: "Text to translate:", placeholder: "Enter text..." }));
+        const text = await withCancel(
+            p.text({ message: "Text to translate:", placeholder: "Enter text...", cancel: "back" })
+        );
 
-        const to = await withCancel(p.text({ message: "Target language:", placeholder: "en" }));
+        const to = await withCancel(p.text({ message: "Target language:", placeholder: "en", cancel: "back" }));
 
         await cmdTranslate(text, { to });
         p.outro(pc.green("Done."));
@@ -420,6 +437,7 @@ async function interactiveMode(): Promise<void> {
                     { value: "clipboard", label: "Clipboard" },
                     { value: "file", label: "File" },
                 ],
+                cancel: "back",
             })
         );
 
@@ -442,6 +460,7 @@ async function interactiveMode(): Promise<void> {
                             return `File not found: ${value}`;
                         }
                     },
+                    cancel: "back",
                 })
             );
 
@@ -450,7 +469,9 @@ async function interactiveMode(): Promise<void> {
             return;
         }
 
-        const text = await withCancel(p.text({ message: "Text to summarize:", placeholder: "Paste text..." }));
+        const text = await withCancel(
+            p.text({ message: "Text to summarize:", placeholder: "Paste text...", cancel: "back" })
+        );
 
         // Write to temp file for the summarizer, clean up after
         const tmpPath = join(tmpdir(), `ai-summarize-${Date.now()}.txt`);
@@ -469,7 +490,7 @@ async function interactiveMode(): Promise<void> {
 
     if (action === "image") {
         const prompt = await withCancel(
-            p.text({ message: "Image prompt:", placeholder: "A futuristic cityscape at sunset..." })
+            p.text({ message: "Image prompt:", placeholder: "A futuristic cityscape at sunset...", cancel: "back" })
         );
 
         const output = await withCancel(
@@ -477,6 +498,7 @@ async function interactiveMode(): Promise<void> {
                 message: "Output file path:",
                 placeholder: "./image.png",
                 defaultValue: `./ai-image-${Date.now()}.png`,
+                cancel: "back",
             })
         );
 
@@ -486,7 +508,9 @@ async function interactiveMode(): Promise<void> {
     }
 
     if (action === "classify") {
-        const text = await withCancel(p.text({ message: "Text to classify:", placeholder: "Enter text..." }));
+        const text = await withCancel(
+            p.text({ message: "Text to classify:", placeholder: "Enter text...", cancel: "back" })
+        );
 
         const categories = await withCancel(
             p.text({
@@ -502,6 +526,7 @@ async function interactiveMode(): Promise<void> {
                         return "At least 2 categories required";
                     }
                 },
+                cancel: "back",
             })
         );
 
@@ -530,7 +555,8 @@ program
     .argument("[text]", "Text to translate (or pipe via stdin)")
     .option("--to <lang>", "Target language (required)")
     .option("--from <lang>", "Source language (auto-detect if omitted)")
-    .option("--provider <provider>", "AI provider (local-hf, cloud, darwinkit)")
+    .option("--provider <provider>", "AI provider for this call (not saved)")
+    .option("--model <model>", "Model for this call (not saved)")
     .option("-c, --clipboard", "Copy result to clipboard")
     .action(async (text: string | undefined, opts: TranslateFlags) => {
         await cmdTranslate(text, opts);
@@ -541,7 +567,8 @@ program
     .description("Summarize text from file, stdin, or clipboard")
     .argument("[file]", 'File to summarize (use "-" for stdin, omit for clipboard)')
     .option("--max-length <n>", "Maximum summary length")
-    .option("--provider <provider>", "AI provider")
+    .option("--provider <provider>", "AI provider for this call (not saved)")
+    .option("--model <model>", "Model for this call (not saved)")
     .option("-c, --clipboard", "Copy result to clipboard")
     .action(async (file: string | undefined, opts: SummarizeFlags) => {
         await cmdSummarize(file, opts);
@@ -593,34 +620,8 @@ modelsCmd
         await cmdModelsClean(opts);
     });
 
-await registerRequestedTrees({
-    program,
-    registrars: AI_REGISTRARS,
-    requested: requestedCommandFromArgv(process.argv),
-});
-
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "ai" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-
-        // An aborted prompt is not a failure. `tools claude login` has always
-        // exited 0 quietly on Ctrl-C, and the login flows now throw the same
-        // `Cancelled` through this entrypoint, so `tools ai accounts login`
-        // reported the abort as `error: Cancelled` with exit 1 (gap/cli).
-        if (message.includes("ExitPromptError") || message === "Cancelled") {
-            await out.flush();
-            process.exit(0);
-        }
-
-        p.log.error(message);
-        // Drain before exiting: `out.*` and clack both write fire-and-forget, so
-        // exiting in the same tick can tear the pipe down with the diagnostic
-        // still queued and leave the user an empty exit 1 (PR #360 review t12).
-        await out.flush();
-        process.exit(1);
-    }
+    await runTool(program, { tool: "ai", registrars: AI_REGISTRARS });
 }
 
 try {

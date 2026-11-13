@@ -1,13 +1,12 @@
-import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
-import { requireTimeLogConfig } from "@app/azure-devops/utils";
 import { getConfig, getMappingForWorkItem, requireConfig } from "@app/clarity/config";
 import { getClarityApi } from "@app/clarity/lib/api";
 import { MappingStore } from "@app/clarity/lib/mapping-store";
+import { connectTimeLog } from "@app/clarity/lib/month-fill";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
 import { getTimelogWorkItems, type TimelogWorkItemGroup } from "@app/clarity/lib/timelog-workitems";
 import { type IdentifiedTimesheetWeek, loadTimesheetPeriods } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
-import * as clack from "@clack/prompts";
+import * as clack from "@genesiscz/utils/prompts/p";
 
 import pc from "picocolors";
 
@@ -46,8 +45,7 @@ export async function runInteractiveLinking(): Promise<void> {
     clack.intro(pc.bgCyan(pc.black(" Link ADO Work Items to Clarity Tasks ")));
 
     const api = getClarityApi();
-    const adoConfig = requireTimeLogConfig();
-    const adoApi = getTimeLogApi({ config: adoConfig });
+    const { api: adoApi, config: adoConfig } = connectTimeLog();
     const adoUser = adoApi.user;
 
     const now = new Date();
@@ -62,6 +60,7 @@ export async function runInteractiveLinking(): Promise<void> {
             hint: i + 1 === currentMonth ? "current" : undefined,
         })),
         initialValue: currentMonth,
+        cancel: "back",
     });
 
     if (clack.isCancel(monthResult)) {
@@ -79,6 +78,7 @@ export async function runInteractiveLinking(): Promise<void> {
             hint: y === currentYear ? "current" : undefined,
         })),
         initialValue: currentYear,
+        cancel: "back",
     });
 
     if (clack.isCancel(yearResult)) {
@@ -126,6 +126,7 @@ export async function runInteractiveLinking(): Promise<void> {
                     label: formatWeekLabel(w),
                     hint: `${w.totalHours}h – ${w.status}`,
                 })),
+                cancel: "back",
             });
 
             if (clack.isCancel(result)) {
@@ -199,6 +200,7 @@ export async function runInteractiveLinking(): Promise<void> {
                     label: `${task.taskName} [${task.investmentName}]`,
                     hint: `code: ${task.taskCode}`,
                 })),
+                cancel: "back",
             });
 
             if (clack.isCancel(result)) {
@@ -236,6 +238,7 @@ export async function runInteractiveLinking(): Promise<void> {
                 const showAll = await clack.confirm({
                     message: `Show ${mapped.length} already-mapped items to re-assign?`,
                     initialValue: false,
+                    cancel: "back",
                 });
 
                 if (clack.isCancel(showAll) || !showAll) {
@@ -258,6 +261,7 @@ export async function runInteractiveLinking(): Promise<void> {
                     return { value: wi, label: `#${wi.id} ${wi.title}`, hint };
                 }),
                 required: false,
+                cancel: "back",
             });
 
             if (clack.isCancel(result)) {
@@ -289,6 +293,7 @@ export async function runInteractiveLinking(): Promise<void> {
 
             const confirmed = await clack.confirm({
                 message: `Map ${selected.length} work item${selected.length > 1 ? "s" : ""} to ${chosenTask.taskName}?`,
+                cancel: "back",
             });
 
             if (clack.isCancel(confirmed) || !confirmed) {
@@ -310,7 +315,7 @@ export async function runInteractiveLinking(): Promise<void> {
                 clack.log.success(`Linked: ADO #${wi.id} → ${chosenTask.taskName}`);
             }
 
-            const again = await clack.confirm({ message: "Add more mappings?", initialValue: false });
+            const again = await clack.confirm({ message: "Add more mappings?", initialValue: false, cancel: "back" });
 
             if (clack.isCancel(again) || !again) {
                 step = 0;

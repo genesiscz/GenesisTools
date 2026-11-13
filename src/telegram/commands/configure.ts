@@ -1,6 +1,6 @@
 import { ModelSelector } from "@app/ask/index.lib";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import type { Api } from "telegram";
@@ -40,6 +40,7 @@ async function promptCredentials(
                 return "Must be a number";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(apiId)) {
@@ -54,6 +55,7 @@ async function promptCredentials(
                 return "Must be 32 hex chars";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(apiHash)) {
@@ -75,6 +77,7 @@ async function runAuthFlow(client: TGClient): Promise<boolean> {
                 const phone = await p.text({
                     message: "Phone number (with country code):",
                     placeholder: "+420123456789",
+                    cancel: "back",
                 });
 
                 if (p.isCancel(phone)) {
@@ -87,6 +90,7 @@ async function runAuthFlow(client: TGClient): Promise<boolean> {
                 const code = await p.text({
                     message: "Verification code (check Telegram):",
                     placeholder: "12345",
+                    cancel: "back",
                 });
 
                 if (p.isCancel(code)) {
@@ -98,6 +102,7 @@ async function runAuthFlow(client: TGClient): Promise<boolean> {
             password: async () => {
                 const pass = await p.password({
                     message: "2FA password (if enabled):",
+                    cancel: "back",
                 });
 
                 if (p.isCancel(pass)) {
@@ -193,6 +198,7 @@ async function selectDialogs(options: DialogOption[], existingContacts: Telegram
         options: options.map((o) => ({ value: o.dialogKey, label: o.label, hint: o.hint })),
         initialValues: options.filter((o) => existingDialogKeys.has(o.dialogKey)).map((o) => o.dialogKey),
         required: false,
+        cancel: "back",
     });
 
     if (p.isCancel(selected)) {
@@ -219,6 +225,7 @@ async function configureContactModes(
         ],
         initialValues: getExistingEnabledModes(existing),
         required: false,
+        cancel: "back",
     });
 
     if (p.isCancel(modeChoices)) {
@@ -238,6 +245,7 @@ async function configureContactModes(
         const configureModel = await p.confirm({
             message: `Configure custom model for ${mode}?`,
             initialValue: false,
+            cancel: "back",
         });
 
         if (p.isCancel(configureModel)) {
@@ -319,6 +327,7 @@ async function configureContactActions(
         ],
         initialValues: existing?.actions ?? ["notify"],
         required: true,
+        cancel: "back",
     });
 
     if (p.isCancel(actions)) {
@@ -333,6 +342,7 @@ async function configureContactActions(
         const prompt = await p.text({
             message: `System prompt for auto-replies to ${opt.label}:`,
             initialValue: existing?.modes?.autoReply?.systemPrompt || DEFAULTS.askSystemPrompt,
+            cancel: "back",
         });
 
         if (p.isCancel(prompt)) {
@@ -366,6 +376,7 @@ async function configureContactActions(
                 return "Must be 1-500";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(contextLength)) {

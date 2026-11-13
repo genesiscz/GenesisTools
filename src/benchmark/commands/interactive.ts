@@ -1,8 +1,8 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import { displayComparison, displayResults } from "../lib/display";
 import { getLastResult } from "../lib/results";
@@ -39,6 +39,7 @@ export async function interactiveMode(): Promise<void> {
                 value: s.name,
                 label: `${s.name} ${pc.dim(`(${s.commands.length} commands${s.builtIn ? ", built-in" : ""})`)}`,
             })),
+            cancel: "back",
         })
     );
 
@@ -64,11 +65,12 @@ export async function interactiveMode(): Promise<void> {
         p.select({
             message: "What would you like to do?",
             options: actionOptions,
+            cancel: "back",
         })
     );
 
     if (action === "delete") {
-        const confirmed = await withCancel(p.confirm({ message: `Delete suite "${suite.name}"?` }));
+        const confirmed = await withCancel(p.confirm({ message: `Delete suite "${suite.name}"?`, cancel: "back" }));
 
         if (confirmed) {
             await cmdRemove(suite.name);
@@ -102,6 +104,7 @@ export async function interactiveMode(): Promise<void> {
                     { value: "defaults", label: "Default runs/warmup" },
                     { value: "commands", label: "Add/remove commands" },
                 ],
+                cancel: "back",
             })
         );
 
@@ -124,6 +127,7 @@ export async function interactiveMode(): Promise<void> {
                             label: `Cleanup${suite.cleanup ? pc.dim(` (current: ${suite.cleanup})`) : ""}`,
                         },
                     ],
+                    cancel: "back",
                 })
             );
 
@@ -134,6 +138,7 @@ export async function interactiveMode(): Promise<void> {
                         { value: "set", label: "Set new value" },
                         { value: "clear", label: "Clear (remove)" },
                     ],
+                    cancel: "back",
                 })
             );
 
@@ -143,6 +148,7 @@ export async function interactiveMode(): Promise<void> {
                     p.text({
                         message: `Enter ${hookType} command:`,
                         placeholder: suite[hookKey] ?? "",
+                        cancel: "back",
                     })
                 );
 
@@ -157,6 +163,7 @@ export async function interactiveMode(): Promise<void> {
                     message: "Working directory (empty to clear):",
                     placeholder: suite.cwd ?? "",
                     defaultValue: "",
+                    cancel: "back",
                 })
             );
 
@@ -171,6 +178,7 @@ export async function interactiveMode(): Promise<void> {
                     message: "Default runs (empty for auto):",
                     placeholder: suite.runs?.toString() ?? "auto",
                     defaultValue: "",
+                    cancel: "back",
                 })
             );
 
@@ -179,6 +187,7 @@ export async function interactiveMode(): Promise<void> {
                     message: "Default warmup:",
                     placeholder: suite.warmup?.toString() ?? "3",
                     defaultValue: "",
+                    cancel: "back",
                 })
             );
 
@@ -211,6 +220,7 @@ export async function interactiveMode(): Promise<void> {
                         { value: "add", label: "Add a new command" },
                         { value: "remove", label: "Remove a command" },
                     ],
+                    cancel: "back",
                 })
             );
 
@@ -219,6 +229,7 @@ export async function interactiveMode(): Promise<void> {
                     p.text({
                         message: "New command (label:command):",
                         placeholder: "my-label:echo hello",
+                        cancel: "back",
                     })
                 );
 
@@ -231,6 +242,7 @@ export async function interactiveMode(): Promise<void> {
                             value: c.label,
                             label: `${c.label} ${pc.dim(`(${c.cmd})`)}`,
                         })),
+                        cancel: "back",
                     })
                 );
 
@@ -251,6 +263,7 @@ export async function interactiveMode(): Promise<void> {
             message: "Number of runs (leave empty for auto)",
             placeholder: "auto",
             defaultValue: "",
+            cancel: "back",
         })
     );
 
@@ -259,6 +272,7 @@ export async function interactiveMode(): Promise<void> {
             message: "Warmup runs",
             placeholder: "3",
             defaultValue: "3",
+            cancel: "back",
         })
     );
 

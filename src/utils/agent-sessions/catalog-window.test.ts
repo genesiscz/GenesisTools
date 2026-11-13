@@ -72,6 +72,63 @@ test("a windowed catalog refreshes and returns the window plus the newest top-up
     }
 });
 
+/** A Claude sub-agent transcript under its lead; it carries the lead's session id, as Claude writes it. */
+function subagent(root: string, lead: string, agent: string, ageMs: number): void {
+    const directory = join(root, lead, "subagents");
+    mkdirSync(directory, { recursive: true });
+    const file = join(directory, `agent-${agent}.jsonl`);
+    writeFileSync(
+        file,
+        `${SafeJSON.stringify({ type: "user", sessionId: lead, agentId: agent, isSidechain: true, cwd: "/projects/fixture", timestamp: new Date(NOW - ageMs).toISOString(), message: { content: `agent ${agent}` } })}\n`
+    );
+    utimesSync(file, new Date(NOW - ageMs), new Date(NOW - ageMs));
+}
+
+test("a catalog returns only the rows its agent flags and limit name, and counts the whole scope apart", async () => {
+    const root = mkdtempSync(join(tmpdir(), "history-catalog-filters-"));
+    const older = "11111111-2222-4333-8444-000000000031";
+    const newer = "11111111-2222-4333-8444-000000000032";
+    const old = "11111111-2222-4333-8444-000000000033";
+    session(root, older, 3 * HOUR);
+    session(root, newer, 2 * HOUR);
+    session(root, old, 30 * 24 * HOUR);
+    subagent(root, older, "a1b2c3", HOUR);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: claudeHistoryReader,
+        now: () => new Date(NOW),
+    });
+    const rows = (listing: { metadata: Array<{ nativeId: string | null; isSubagent: boolean }> }) =>
+        listing.metadata.map((row) => (row.isSubagent ? "agent" : row.nativeId));
+
+    try {
+        expect(rows(await service.catalog({}))).toEqual(["agent", newer, older, old]);
+        expect(rows(await service.catalog({ excludeAgents: true }, { refresh: false }))).toEqual([newer, older, old]);
+        expect(rows(await service.catalog({ agentsOnly: true }, { refresh: false }))).toEqual(["agent"]);
+        // The limit cuts after the first-timestamp sort and after the agent filter, so no sub-agent eats a slot.
+        expect(rows(await service.catalog({ excludeAgents: true, limit: 2 }, { refresh: false }))).toEqual([
+            newer,
+            older,
+        ]);
+        // A top-up row older than the window joins the sort before the cut, rather than trailing the window.
+        const window = { excludeAgents: true, mtimeFrom: NOW - 150 * 60_000, newest: 3 };
+        expect(rows(await service.catalog(window, { refresh: false }))).toEqual([newer, older, old]);
+        expect(rows(await service.catalog({ ...window, limit: 1 }, { refresh: false }))).toEqual([newer]);
+
+        expect(await service.catalogCounts({ excludeAgents: true, limit: 1 }, { refresh: false })).toEqual({
+            total: 4,
+            subagents: 1,
+        });
+    } finally {
+        database.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test("an exact-path catalog refreshes and queries only the requested transcripts", async () => {
     const root = mkdtempSync(join(tmpdir(), "history-catalog-paths-"));
     const ids = [

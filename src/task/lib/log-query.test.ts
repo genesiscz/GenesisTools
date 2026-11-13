@@ -1,7 +1,3 @@
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-
-setupStorageSandbox();
-
 import { describe, expect, it } from "bun:test";
 import { jsonlPath } from "@app/task/lib/paths";
 import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";

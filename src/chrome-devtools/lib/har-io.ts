@@ -327,14 +327,15 @@ export function sanitizeHar(har: HarFile): HarFile {
 
             if (!handled) {
                 postData.text = postData.text.replace(
-                    /(password|passwd|pwd|secret|token|code)=([^&]*)/gi,
-                    "$1=[REDACTED]"
+                    /(^|&)([^=&]+)=([^&]*)/g,
+                    (pair, separator: string, name: string) =>
+                        isSensitiveParam(name) ? `${separator}${name}=[REDACTED]` : pair
                 );
             }
         }
 
         for (const param of postData?.params ?? []) {
-            if (SENSITIVE_PARAM.test(param.name)) {
+            if (isSensitiveParam(param.name)) {
                 param.value = "[REDACTED]";
             }
         }

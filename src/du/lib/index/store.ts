@@ -143,13 +143,16 @@ export function finishScan(
 export function prepareUpsert(db: Database): Statement<{ id: number }> {
     return db.prepare<{ id: number }, (string | number | null)[]>(
         `INSERT INTO dirs (parent_id, name, fileid, alloc_bytes, logical_bytes, private_bytes, files, dirs,
-                           max_file_bytes, newest_mtime_s, dir_mtime_ms, flags, scan_id, first_scan_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
+                           max_file_bytes, newest_mtime_s, dir_mtime_ms, flags, scan_id, first_scan_id,
+                           compressed_files, compressed_logical_bytes, compressed_allocated_bytes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14, ?15, ?16)
          ON CONFLICT(parent_id, name) DO UPDATE SET
            fileid = excluded.fileid, alloc_bytes = excluded.alloc_bytes, logical_bytes = excluded.logical_bytes,
            private_bytes = excluded.private_bytes, files = excluded.files, dirs = excluded.dirs,
            max_file_bytes = excluded.max_file_bytes, newest_mtime_s = excluded.newest_mtime_s,
            dir_mtime_ms = excluded.dir_mtime_ms,
+           compressed_files = excluded.compressed_files, compressed_logical_bytes = excluded.compressed_logical_bytes,
+           compressed_allocated_bytes = excluded.compressed_allocated_bytes,
            first_scan_id = CASE WHEN (dirs.flags & ${DIR_FLAGS.gone}) != 0 THEN excluded.first_scan_id ELSE dirs.first_scan_id END,
            flags = excluded.flags, scan_id = excluded.scan_id
          RETURNING id`
@@ -174,7 +177,10 @@ export function upsertNode(
         n.m,
         n.dm,
         n.fl,
-        opts.scanId
+        opts.scanId,
+        n.cf ?? null,
+        n.cl ?? null,
+        n.ca ?? null
     );
     if (!row) {
         throw new Error(`upsert of ${opts.name} returned no id`);
@@ -373,6 +379,15 @@ export function findStored(db: Database, root: DirRow, path: string): StoredLook
 
 export function nodeOut(row: DirRow, path: string, storedChildren: number): NodeOut {
     return {
+        ...(row.compressed_files != null
+            ? {
+                  compressed: {
+                      files: row.compressed_files,
+                      logical_bytes: row.compressed_logical_bytes ?? 0,
+                      allocated_bytes: row.compressed_allocated_bytes ?? 0,
+                  },
+              }
+            : {}),
         id: row.id,
         parent_id: row.parent_id,
         name: row.name,

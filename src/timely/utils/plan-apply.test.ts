@@ -5,10 +5,7 @@ import type { Duration, TimelyEntry } from "@app/timely/types/api";
 import type { CreatePlanV1 } from "@app/timely/types/plan";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { applyPlan, applyReceiptPath } from "./plan-apply";
-
-setupStorageSandbox();
 
 const realFetch = globalThis.fetch;
 

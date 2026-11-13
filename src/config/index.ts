@@ -1,6 +1,3 @@
-#!/usr/bin/env bun
-
-import * as clack from "@clack/prompts";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { getProfilingConfig } from "@genesiscz/utils/GenesisTools";
@@ -27,49 +24,51 @@ export function buildConfigProgram(): Command {
             const rejected = await listRejectedPackages();
 
             if (rejected.length === 0) {
-                clack.log.info("No packages are rejected. All optional packages will prompt on first use.");
+                p.log.info("No packages are rejected. All optional packages will prompt on first use.");
                 return;
             }
 
-            clack.log.info(`${rejected.length} package(s) currently rejected:`);
+            p.log.info(`${rejected.length} package(s) currently rejected:`);
 
             for (const pkg of rejected) {
                 out.println(`  ${chalk.red("✗")} ${pkg}`);
             }
 
             if (!isInteractive()) {
-                clack.log.info(
+                p.log.info(
                     `Run \`${toolCommand("config packages")}\` in a terminal to re-enable them or clear every rejection.`
                 );
                 return;
             }
 
-            const action = await clack.select({
+            const action = await p.select({
                 message: "What would you like to do?",
                 options: [
                     { value: "re-enable", label: "Re-enable specific packages" },
                     { value: "clear-all", label: "Clear all rejections (re-prompt everything)" },
                     { value: "exit", label: "Exit" },
                 ],
+                cancel: "back",
             });
 
-            if (clack.isCancel(action) || action === "exit") {
+            if (p.isCancel(action) || action === "exit") {
                 return;
             }
 
             if (action === "clear-all") {
                 await clearRejectedPackages();
-                clack.log.success("All package rejections cleared. You'll be prompted again on next use.");
+                p.log.success("All package rejections cleared. You'll be prompted again on next use.");
                 return;
             }
 
             if (action === "re-enable") {
-                const toEnable = await clack.multiselect({
+                const toEnable = await p.multiselect({
                     message: "Select packages to re-enable",
                     options: rejected.map((pkg) => ({ value: pkg, label: pkg })),
+                    cancel: "back",
                 });
 
-                if (clack.isCancel(toEnable)) {
+                if (p.isCancel(toEnable)) {
                     return;
                 }
 
@@ -77,7 +76,7 @@ export function buildConfigProgram(): Command {
                     await removeRejectedPackage(pkg);
                 }
 
-                clack.log.success(`Re-enabled ${(toEnable as string[]).length} package(s).`);
+                p.log.success(`Re-enabled ${(toEnable as string[]).length} package(s).`);
             }
         });
 
@@ -141,6 +140,7 @@ export async function runConfigAreaPicker(program: Command): Promise<void> {
     const picked = await p.select({
         message: "Which area?",
         options: areas.map((area) => ({ value: area.id, label: area.id, hint: area.hint })),
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {

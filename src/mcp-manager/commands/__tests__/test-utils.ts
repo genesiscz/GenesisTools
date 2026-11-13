@@ -7,7 +7,7 @@ import type {
 import { MCPProvider, WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 
 /**
- * Mock MCP Provider for testing
+ * Mock MCP Provider for testing: the ten abstract members, plus the optional hooks the command tests drive.
  */
 export class MockMCPProvider extends MCPProvider {
     public configExistsResult: boolean = true;
@@ -16,8 +16,6 @@ export class MockMCPProvider extends MCPProvider {
     public listPluginServersResult: MCPServerInfo[] = [];
     public getServerConfigResult: UnifiedMCPServerConfig | null = null;
     public getProjectsResult: string[] = [];
-    public enableServerCalls: Array<{ serverName: string; projectPath?: string | null }> = [];
-    public disableServerCalls: Array<{ serverName: string; projectPath?: string | null }> = [];
     public enableServersCalls: Array<{
         serverNames: string[];
         projectPath?: string | null;
@@ -27,7 +25,6 @@ export class MockMCPProvider extends MCPProvider {
     public installServerCalls: Array<{ serverName: string; config: UnifiedMCPServerConfig }> = [];
     public removeServersCalls: Array<{ serverNames: string[] }> = [];
     public syncServersCalls: Array<{ servers: Record<string, UnifiedMCPServerConfig> }> = [];
-    public writeConfigCalls: unknown[] = [];
     public errors: Map<string, Error> = new Map();
 
     constructor(providerName: string, configPath: string = `/mock/${providerName}.json`) {
@@ -41,23 +38,11 @@ export class MockMCPProvider extends MCPProvider {
         return this.configExistsResult;
     }
 
-    supportsDisabledState(): boolean {
-        return true; // Default mock behavior - can be overridden for testing
-    }
-
     async readConfig(): Promise<unknown> {
         if (this.errors.has("readConfig")) {
             throw this.errors.get("readConfig")!;
         }
         return this.readConfigResult;
-    }
-
-    async writeConfig(config: unknown): Promise<WriteResult> {
-        if (this.errors.has("writeConfig")) {
-            throw this.errors.get("writeConfig")!;
-        }
-        this.writeConfigCalls.push(config);
-        return WriteResult.Applied;
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -76,26 +61,6 @@ export class MockMCPProvider extends MCPProvider {
             throw this.errors.get("getServerConfig")!;
         }
         return this.getServerConfigResult;
-    }
-
-    async enableServer(serverName: string, projectPath?: string | null): Promise<void> {
-        if (this.errors.has("enableServer")) {
-            throw this.errors.get("enableServer")!;
-        }
-        this.enableServerCalls.push({ serverName, projectPath });
-    }
-
-    async disableServer(serverName: string, projectPath?: string | null): Promise<void> {
-        if (this.errors.has("disableServer")) {
-            throw this.errors.get("disableServer")!;
-        }
-        this.disableServerCalls.push({ serverName, projectPath });
-    }
-
-    async disableServerForAllProjects(_serverName: string): Promise<void> {
-        if (this.errors.has("disableServerForAllProjects")) {
-            throw this.errors.get("disableServerForAllProjects")!;
-        }
     }
 
     async enableServers(
@@ -155,25 +120,6 @@ export class MockMCPProvider extends MCPProvider {
         return {};
     }
 
-    fromUnifiedConfig(_servers: Record<string, UnifiedMCPServerConfig>): unknown {
-        return {};
-    }
-
-    isServerEnabledInMeta(serverConfig: UnifiedMCPServerConfig, projectPath?: string | null): boolean {
-        const enabledState =
-            serverConfig._meta?.enabled?.[this.providerName as keyof typeof serverConfig._meta.enabled];
-        if (enabledState === undefined) {
-            return false;
-        }
-        if (typeof enabledState === "boolean") {
-            return enabledState;
-        }
-        if (projectPath === null || projectPath === undefined) {
-            return false;
-        }
-        return enabledState[projectPath] === true;
-    }
-
     reset(): void {
         this.configExistsResult = true;
         this.readConfigResult = {};
@@ -181,14 +127,11 @@ export class MockMCPProvider extends MCPProvider {
         this.listPluginServersResult = [];
         this.getServerConfigResult = null;
         this.getProjectsResult = [];
-        this.enableServerCalls = [];
-        this.disableServerCalls = [];
         this.enableServersCalls = [];
         this.disableServersCalls = [];
         this.installServerCalls = [];
         this.removeServersCalls = [];
         this.syncServersCalls = [];
-        this.writeConfigCalls = [];
         this.errors.clear();
     }
 }

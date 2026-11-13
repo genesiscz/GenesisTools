@@ -4,6 +4,11 @@ import { env } from "@genesiscz/utils/env";
 
 export const XAI_API_BASE_URL = "https://api.x.ai/v1";
 
+/** Alias-aware: an account relying on the legacy `X_AI_API_KEY` is told the variable that was actually read. */
+export function xaiApiKeyEnvName(): string {
+    return env.x.getApiEnvKey() ?? "XAI_API_KEY";
+}
+
 /**
  * Resolve the inference API key for an xai-api-key account: the shared
  * precedence, with the XAI aliases (`XAI_API_KEY` / `X_AI_API_KEY`) as this

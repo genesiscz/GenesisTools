@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { CMUX_TREE_TIMEOUT_MS } from "../tree-read";
 import { DEFAULT_CMUX_TIMEOUT_MS } from "./cli";
-import { fetchCmuxLiveSnapshot, TREE_TIMEOUT_MS } from "./live-snapshot";
+import { fetchCmuxLiveSnapshot } from "./live-snapshot";
 
 describe("fetchCmuxLiveSnapshot", () => {
     /**
@@ -98,8 +99,8 @@ describe("fetchCmuxLiveSnapshot", () => {
         });
 
         expect(snapshot.available).toBe(true);
-        expect(treeTimeout).toBe(TREE_TIMEOUT_MS);
-        expect(TREE_TIMEOUT_MS).toBeLessThan(DEFAULT_CMUX_TIMEOUT_MS);
+        expect(treeTimeout).toBe(CMUX_TREE_TIMEOUT_MS);
+        expect(CMUX_TREE_TIMEOUT_MS).toBeLessThan(DEFAULT_CMUX_TIMEOUT_MS);
     });
 
     test("allWindows lists every window and keeps each workspace with its own", async () => {

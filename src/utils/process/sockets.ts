@@ -4,9 +4,10 @@
  * Windows, one `lsof` where none of those works. macOS and Linux read only this user's processes, which is what a
  * non-root `lsof` reads as well.
  */
+
+import { captureSync } from "./capture";
 import { listProcPids, scanProcNet, socketInodeOwners, TCP_STATE_NAMES } from "./linux-proc";
 import { darwinKernel, processPlatform } from "./os";
-import { captureSync } from "./ps";
 import { listInetSockets } from "./socket-owner";
 import { scanNetstatTcp } from "./windows-cim";
 

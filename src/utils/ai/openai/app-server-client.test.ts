@@ -8,9 +8,13 @@ function createProcessHarness(): {
     process: AppServerProcess;
     writes: string[];
     push: (message: Record<string, unknown>) => void;
+    /** Settles `exited` only; the end of stdout is `endStdout`, as the two reach a real parent apart. */
+    exit: (code: number) => void;
+    endStdout: () => void;
 } {
     const writes: string[] = [];
     let stdoutController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let stdoutOpen = true;
     const encoder = new TextEncoder();
     const stdout = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -42,13 +46,23 @@ function createProcessHarness(): {
             exited,
             kill() {
                 exit(0);
+                endStdout();
             },
         },
         writes,
         push(message) {
             stdoutController?.enqueue(encoder.encode(`${SafeJSON.stringify(message, { strict: true })}\n`));
         },
+        exit: (code) => exit(code),
+        endStdout,
     };
+
+    function endStdout(): void {
+        if (stdoutOpen) {
+            stdoutOpen = false;
+            stdoutController?.close();
+        }
+    }
 }
 
 describe("AppServerClient", () => {
@@ -180,24 +194,6 @@ describe("AppServerClient", () => {
         } finally {
             await client.close();
         }
-    });
-
-    test("correlates request responses by id", async () => {
-        const harness = createProcessHarness();
-        const client = new AppServerClient(harness.process);
-        const resultPromise = client.request<{ thread: { id: string } }>("thread/read", { threadId: "thread-1" });
-
-        await Bun.sleep(0);
-        const request = SafeJSON.parse(harness.writes[0] ?? "", { strict: true }) as {
-            id: number;
-            method: string;
-        };
-        expect(request.method).toBe("thread/read");
-
-        harness.push({ id: request.id, result: { thread: { id: "thread-1" } } });
-
-        await expect(resultPromise).resolves.toEqual({ thread: { id: "thread-1" } });
-        await client.close();
     });
 
     test("dispatches notifications and server requests", async () => {
@@ -350,17 +346,42 @@ describe("AppServerClient", () => {
     });
 
     test("rejects pending requests when the child exits", async () => {
-        let resolveExit: (code: number) => void = () => {};
         const harness = createProcessHarness();
-        harness.process.exited = new Promise<number>((resolve) => {
-            resolveExit = resolve;
-        });
         const client = new AppServerClient(harness.process);
         const pending = client.request("thread/read", { threadId: "thread-1" });
 
-        resolveExit(17);
+        harness.exit(17);
+        harness.endStdout();
 
         await expect(pending).rejects.toThrow("exited with code 17");
+        await client.close();
+    });
+
+    test("a reply still in stdout when the exit settles resolves its call, and onExit comes after it", async () => {
+        const harness = createProcessHarness();
+        const events: string[] = [];
+        const client = new AppServerClient(harness.process, {
+            onExit: (code) => {
+                events.push(`exit ${code}`);
+            },
+        });
+        const answered = client.request("thread/read", { threadId: "thread-1" }).then((value) => {
+            events.push("reply");
+            return value;
+        });
+        const left = client.request("thread/list");
+
+        await Bun.sleep(0);
+        const request = SafeJSON.parse(harness.writes[0] ?? "", { strict: true }) as { id: number };
+        harness.exit(0);
+        await Bun.sleep(0);
+        harness.push({ id: request.id, result: { thread: { id: "thread-1" } } });
+        harness.endStdout();
+
+        expect(await answered).toEqual({ thread: { id: "thread-1" } });
+        await expect(left).rejects.toThrow("exited with code 0");
+        await Bun.sleep(0);
+        expect(events).toEqual(["reply", "exit 0"]);
         await client.close();
     });
 });

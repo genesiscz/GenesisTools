@@ -359,7 +359,10 @@ async function runRebase({
 }): Promise<StepResult | null> {
     const cwd = cwdFor(run.plan, branch);
     run.report(`$ git -C ${cwd} ${args.join(" ")}`);
-    const res = await run.git.executor.exec(args, { cwd });
+    const res = await run.git.executor.exec(args, {
+        cwd,
+        timeout: { ms: 600_000, reason: "a rebase replays every commit of the branch onto its new base" },
+    });
 
     if (res.success) {
         return null;

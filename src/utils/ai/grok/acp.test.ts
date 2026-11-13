@@ -22,14 +22,18 @@ function fakeAgent(respond: (request: Request, reply: Reply) => void): {
     spawn: (argv: string[]) => GrokAcpTransport;
     argv: string[][];
     requests: Request[];
+    /** Writes a line on the stdout of a transport this agent spawned. */
+    reply: (transport: GrokAcpTransport, message: Record<string, unknown>) => void;
 } {
     const argv: string[][] = [];
     const requests: Request[] = [];
     const encoder = new TextEncoder();
+    const replies = new WeakMap<GrokAcpTransport, Reply>();
 
     return {
         argv,
         requests,
+        reply: (transport, message) => replies.get(transport)?.(message),
         spawn(args) {
             argv.push(args);
             let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -43,7 +47,7 @@ function fakeAgent(respond: (request: Request, reply: Reply) => void): {
             };
             let exitCode: number | null = null;
 
-            return {
+            const transport: GrokAcpTransport = {
                 stdout,
                 get exitCode() {
                     return exitCode;
@@ -64,6 +68,8 @@ function fakeAgent(respond: (request: Request, reply: Reply) => void): {
                     },
                 },
             };
+            replies.set(transport, reply);
+            return transport;
         },
     };
 }
@@ -254,6 +260,63 @@ describe("GrokAcpClient plain form", () => {
         ]);
         client.reset();
     });
+});
+
+test("an agent request that carries the id of a waiting call is answered, and the call waits for its own reply", async () => {
+    const answers: Record<string, unknown>[] = [];
+    const agent = leaderAgent(() => undefined);
+    const spawn = (argv: string[]): GrokAcpTransport => {
+        const transport = agent.spawn(argv);
+        const write = transport.stdin.write.bind(transport.stdin);
+        return {
+            ...transport,
+            get exitCode() {
+                return transport.exitCode;
+            },
+            kill: () => transport.kill(),
+            stdin: {
+                write(chunk: string) {
+                    for (const line of chunk.split("\n").filter(Boolean)) {
+                        const message = SafeJSON.parse(line, { strict: true }) as Record<string, unknown>;
+
+                        // The client's answers to the agent's own requests carry no method.
+                        if (typeof message.method !== "string") {
+                            answers.push(message);
+                            continue;
+                        }
+
+                        if (message.method === "session/list") {
+                            const id = message.id;
+                            const reply = (body: Record<string, unknown>) =>
+                                queueMicrotask(() => agent.reply(transport, { id, ...body }));
+                            // The agent asks something of its own under the same id, then answers the list.
+                            reply({ method: "session/request_permission", params: { sessionId: SESSION_ID } });
+                            reply({ result: { sessions: [{ sessionId: SESSION_ID, title: "Fixture" }] } });
+                            continue;
+                        }
+
+                        write(`${line}\n`);
+                    }
+                },
+                flush: () => transport.stdin.flush(),
+            },
+        };
+    };
+    const client = new GrokAcpClient(0, { leader: { socket: "/state/leader.sock" }, spawn });
+
+    try {
+        expect(await client.listSessions()).toEqual([{ sessionId: SESSION_ID, title: "Fixture" }]);
+        await Bun.sleep(10);
+        expect(answers).toEqual([
+            {
+                jsonrpc: "2.0",
+                id: 3,
+                error: { code: -32601, message: "grok-acp does not answer session/request_permission" },
+            },
+        ]);
+    } finally {
+        client.reset();
+    }
 });
 
 test("the session list and queue notices are read field by field", () => {

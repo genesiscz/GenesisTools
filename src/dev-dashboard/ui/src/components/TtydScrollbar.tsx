@@ -1,7 +1,8 @@
+import type { TmuxScrollState } from "@genesiscz/utils/tmux/sessions";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
-import { ttydApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 import { scrollIframeTerminal } from "@/lib/iframe-keys";
 
 interface Props {
@@ -60,7 +61,14 @@ export function TtydScrollbar({ ttydId, iframeRef }: Props) {
 
     const { data } = useQuery({
         queryKey: ["ttyd", "scroll-state", ttydId],
-        queryFn: () => (ttydId ? ttydApi.scrollState(ttydId) : Promise.resolve({ state: null })),
+        // No server route answers the scroll pair today (a 404, so `state` stays null); they are not endpoint-table
+        // rows for that reason and go through the client's path call.
+        queryFn: () =>
+            ttydId
+                ? dashboard.get<{ state: TmuxScrollState | null }>(
+                      `/api/ttyd/scroll-state?id=${encodeURIComponent(ttydId)}`
+                  )
+                : Promise.resolve({ state: null }),
         enabled: open && Boolean(ttydId),
         refetchInterval: 900,
     });
@@ -84,7 +92,7 @@ export function TtydScrollbar({ ttydId, iframeRef }: Props) {
     const sendFraction = useCallback(
         (fraction: number) => {
             if (ttydId) {
-                ttydApi.scrollTo(ttydId, fraction).catch((error) => {
+                dashboard.post<{ ok: boolean }>("/api/ttyd/scroll-to", { id: ttydId, fraction }).catch((error) => {
                     // Transient backend/tmux hiccup — the next poll re-syncs the
                     // thumb. Logged for triage only.
                     console.debug("TtydScrollbar: scrollTo failed", { error, ttydId, fraction });

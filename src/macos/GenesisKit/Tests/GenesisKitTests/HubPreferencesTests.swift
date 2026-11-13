@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Observation
 import XCTest
 
 @testable import GenesisKitBase
@@ -16,6 +17,76 @@ final class HubPreferencesTests: XCTestCase {
                              observe: Bool = false) -> HubPreferences {
         HubPreferences(defaults: defaults, notificationNamespace: namespace, broadcasts: broadcasts,
                        observeExternalChanges: observe)
+    }
+
+    func testLayoutDefaultsAndSavedChoicesSurviveReopeningTheDomain() {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        for area in HubLayout.Area.allCases {
+            XCTAssertEqual(HubLayout.choice(area, defaults: defaults), .classic)
+            defaults.set(HubLayout.Choice.compact.rawValue, forKey: area.key)
+        }
+        defaults.synchronize()
+        let reopened = UserDefaults(suiteName: name)!
+        for area in HubLayout.Area.allCases {
+            XCTAssertEqual(HubLayout.choice(area, defaults: reopened), .compact)
+            reopened.set("unknown", forKey: area.key)
+            XCTAssertEqual(HubLayout.choice(area, defaults: reopened), .classic)
+            reopened.set("classic", forKey: area.key)
+            XCTAssertEqual(HubLayout.choice(area, defaults: reopened), .classic)
+        }
+    }
+
+    func testLayoutOverridesAreValidatedAndDoNotWritePreferences() {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set("b", forKey: HubLayout.Area.prDetail.key)
+        let parsed = HubLayout.parse(["app", "--sketch", "prDetail=a", "--sketch", "prDetail=classic",
+                                      "--sketch", "lists=unknown", "--sketch", "unknown=a", "--sketch"])
+        XCTAssertEqual(parsed, ["prDetail": "classic"])
+        XCTAssertEqual(defaults.string(forKey: HubLayout.Area.prDetail.key), "b")
+    }
+
+    func testLayoutChangeInvalidatesAnOpenReaderAcrossTheNotificationBoundary() async {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let writer = HubLayoutState(defaults: defaults, namespace: name, observeChanges: false)
+        let reader = HubLayoutState(defaults: UserDefaults(suiteName: name)!, namespace: name, broadcasts: false)
+        for choice in [HubLayout.Choice.focused, .compact, .classic] {
+            let changed = expectation(description: "open view observes \(choice.rawValue)")
+            // lint-rules-ignore: one shot on purpose, each loop iteration arms a new expectation before its change.
+            withObservationTracking {
+                XCTAssertNotEqual(reader.choice(.prDetail), choice)
+            } onChange: {
+                changed.fulfill()
+            }
+            writer.set(choice, for: .prDetail)
+            await fulfillment(of: [changed], timeout: 3)
+            XCTAssertEqual(reader.choice(.prDetail), choice)
+            XCTAssertEqual(reader.choice(.transcript), .classic)
+            XCTAssertEqual(defaults.string(forKey: HubLayout.Area.prDetail.key), choice.rawValue)
+        }
+    }
+
+    func testScriptedLayoutChangesStayIsolatedFromTheOpenReader() async throws {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let scripted = HubLayoutState(defaults: defaults, namespace: name, broadcasts: false, observeChanges: false)
+        let reader = HubLayoutState(defaults: defaults, namespace: name, broadcasts: false)
+        scripted.set(.compact, for: .lists)
+        XCTAssertEqual(scripted.choice(.lists), .compact)
+        let changed = expectation(description: "scripted changes do not reach an open reader")
+        changed.isInverted = true
+        // lint-rules-ignore: one-shot inverted observation; any notification is a failure.
+        withObservationTracking {
+            _ = reader.choice(.lists)
+        } onChange: {
+            changed.fulfill()
+        }
+        await fulfillment(of: [changed], timeout: 0.25)
+        XCTAssertEqual(reader.choice(.lists), .classic)
+        reader.reload()
+        XCTAssertEqual(reader.choice(.lists), .compact)
     }
 
     func testAFreshDomainReadsTheHubLookWithoutGlassEnergyOrAnIdleRule() {
@@ -155,14 +226,4 @@ final class HubPreferencesTests: XCTestCase {
         XCTAssertEqual(order.firstIndex(of: "hub"), order.firstIndex(of: "widgets").map { $0 + 1 })
     }
 
-    /// `--sketch <area>=<option>` picks one redesign option per area for one run: a later pair for an area wins, a
-    /// malformed pair is skipped, and a run without the flag draws every current view.
-    func testDesignSketchReadsOnePickPerAreaFromTheArguments() {
-        XCTAssertEqual(DesignSketch.parse(["GenesisTools", "--hub", "--sketch", "prDetail=a", "--sketch", "lists=b"]),
-                       ["prDetail": "a", "lists": "b"])
-        XCTAssertEqual(DesignSketch.parse(["--sketch", "prDetail=a", "--sketch", "prDetail=b"]), ["prDetail": "b"])
-        XCTAssertEqual(DesignSketch.parse(["--sketch", "prDetail", "--sketch", "=a", "--sketch", "lists=", "--sketch"]), [:])
-        XCTAssertEqual(DesignSketch.parse(["--sketch", "transcript=a=b"]), ["transcript": "a=b"])
-        XCTAssertNil(DesignSketch.option("prDetail"), "the test run has no --sketch")
-    }
 }

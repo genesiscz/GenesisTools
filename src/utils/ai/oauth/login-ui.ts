@@ -1,7 +1,7 @@
-import * as p from "@clack/prompts";
 import { Browser } from "@genesiscz/utils/browser";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 /** What the user asked us to do with the authorization URL. */
@@ -21,6 +21,7 @@ const terminalInteraction: AuthorizationInteraction = {
                 { value: "copy" as const, label: "Copy the URL to my clipboard", hint: "overwrites whatever is in it" },
                 { value: "none" as const, label: "Neither — I already have the code", hint: "clipboard untouched" },
             ],
+            cancel: "back",
         });
         return p.isCancel(action) ? null : action;
     },
@@ -29,6 +30,7 @@ const terminalInteraction: AuthorizationInteraction = {
             message: "Paste the authorization code or callback URL:",
             placeholder: "code#state",
             validate: (value) => validate(value ?? ""),
+            cancel: "back",
         });
         return p.isCancel(value) ? null : value;
     },
