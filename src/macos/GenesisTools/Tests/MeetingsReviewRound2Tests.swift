@@ -186,4 +186,23 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         XCTAssertEqual(draft.members, [])
         XCTAssertEqual(draft.parsed.microphones, [])
     }
+
+    // MARK: The presence strip draws each stay apart (PR 807)
+
+    func testThePresenceStripDrawsEachStayAndNotTheGapBetween() {
+        let back = MeetingRecordView.Person(name: "Alex Example", from: ["roster"], stays: [
+            .init(fromSec: 0, toSec: 60, source: "roster", confidence: 1), .init(fromSec: 300, toSec: 360, source: "roster", confidence: 1),
+        ])
+        XCTAssertEqual(ListenPresenceStrip.spans(back, duration: 600), [0...60, 300...360], "the 240 s absence is not drawn as present")
+        let open = MeetingRecordView.Person(name: "Robin Example", from: nil, firstSeenSec: 120)
+        XCTAssertEqual(ListenPresenceStrip.spans(open, duration: 600), [120...600])
+    }
+
+    // MARK: The voice split slider says where the second voice starts (PR 807)
+
+    func testTheVoiceSplitNamesItsBoundaryWord() {
+        let words = ["we", "moved", "the", "button"]
+        XCTAssertEqual(ListenVoicesEditor.boundary(words, cut: 2), "Word 3 of 4, “the”: after “we moved”, before “the button”")
+        XCTAssertEqual(ListenVoicesEditor.boundary(words, cut: 1), "Word 2 of 4, “moved”: after “we”, before “moved the”")
+    }
 }
