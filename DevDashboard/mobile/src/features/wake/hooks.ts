@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import * as SecureStore from "expo-secure-store";
 import { useEffect, useState } from "react";
 import { useDashboardClient, useDashboardConnectionId } from "@/api/client-provider";
-import { HEALTH_INTERVAL_MS, healthQuery, relayQuery, sendWake } from "@/features/wake/queries";
+import { HEALTH_INTERVAL_MS, healthQuery, relayQuery, sendWake, WAKE_PATIENCE_MS } from "@/features/wake/queries";
 import { createRelayStore, type RelayStore } from "@/features/wake/relay-store";
 
 const secureRelayStore = createRelayStore(SecureStore);
@@ -42,6 +42,27 @@ export function useWakeRelay(store: RelayStore = secureRelayStore): {
         fromMac: query.data !== undefined,
         isPending: query.isPending && !fallback,
     };
+}
+
+/**
+ * The wait after a wake was sent at `sentAt`: `waiting` until a timer reaches the deadline, then `expired`. A timer
+ * ends it, not a render: a health poll that keeps failing changes nothing the screen reads, so a deadline checked
+ * only during render could keep the screen at "Waking…" and keep polling forever.
+ */
+export function useWakeDeadline(sentAt: number | null, patienceMs: number = WAKE_PATIENCE_MS) {
+    const [expiredFor, setExpiredFor] = useState<number | null>(null);
+
+    useEffect(() => {
+        if (sentAt === null) {
+            return;
+        }
+
+        const timer = setTimeout(() => setExpiredFor(sentAt), Math.max(0, sentAt + patienceMs - Date.now()));
+        return () => clearTimeout(timer);
+    }, [sentAt, patienceMs]);
+
+    const expired = sentAt !== null && expiredFor === sentAt;
+    return { waiting: sentAt !== null && !expired, expired };
 }
 
 /** Whether the Mac answers; polled while `watching` (after a wake was sent). */
