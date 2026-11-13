@@ -224,6 +224,9 @@ describe("isTransientAiError", () => {
             new NotImplementedError("ai.realtime", "a later phase"),
             new Error("invalid api key"),
             new Error("model not found: grok-9"),
+            // Fetch-shaped failures that are plain objects: their message is only `[object Object]`.
+            { status: 401 },
+            { statusCode: 400 },
         ];
 
         for (const error of permanent) {
@@ -238,6 +241,7 @@ describe("isTransientAiError", () => {
             new Error("Rate limit reached, retry after 2s"),
             new UpstreamStatusError(429, "slow down"),
             Object.assign(new Error("Service Unavailable"), { statusCode: 503 }),
+            { status: 503 },
             "timeout",
         ];
 
