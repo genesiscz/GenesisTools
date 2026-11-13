@@ -17,11 +17,12 @@ import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import { applyFixes, buildVocabulary, findSuspectTerms, selectFixes } from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
-import { parseObservations, participantName } from "./evidence";
+import { parseObservations, parseRoster, participantName } from "./evidence";
 import { completeTranscript, parseLive } from "./live";
 import * as local from "./local";
 import * as mcp from "./mcp";
 import { pageText, parseMcpTranscript } from "./mcp";
+import { mergeRoster } from "./meeting-source";
 import { mergeFrontmatter, writeGuarded } from "./output";
 import { renderMarkdown, renderSrt, showMarkdown } from "./render";
 import { loadMeeting } from "./source";
@@ -756,5 +757,31 @@ describe("local Wispr audio", () => {
         expect(await access.load("m1")).toMatchObject({ sourceMeetingId: "m1", participants: [], transcript: [] });
         expect(await access.load("m2")).toBeNull();
         expect(await access.load("m3")).toBeNull();
+    });
+});
+
+describe("the platform roster of a Wispr meeting", () => {
+    test("a roster row without the self field keeps the self marker the speaker list set", () => {
+        const merged = mergeRoster(
+            [{ name: "Alice Example", self: true, from: ["wisprflow"] }],
+            [
+                { name: "Alice Example", firstSeenSec: 3, from: ["platform-roster"] },
+                { name: "Bob Example", firstSeenSec: 5, from: ["platform-roster"] },
+            ]
+        );
+
+        expect(merged).toEqual([
+            { name: "Alice Example", self: true, firstSeenSec: 3, from: ["wisprflow", "platform-roster"] },
+            { name: "Bob Example", firstSeenSec: 5, from: ["platform-roster"] },
+        ]);
+    });
+
+    test("a roster line without self yields no self key", () => {
+        const roster = parseRoster(
+            SafeJSON.stringify({ participant: { pid: "p1", name: "Bob Example", firstSeenMs: 5000 } })
+        );
+
+        expect(roster).toHaveLength(1);
+        expect("self" in (roster[0] ?? {})).toBe(false);
     });
 });
