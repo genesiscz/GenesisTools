@@ -311,16 +311,16 @@ export class Api {
         url: string,
         options: { body?: unknown; contentType?: string; description?: string } = {}
     ): Promise<T> {
-        const response = await this.send(method, url, options);
-
-        return response.json();
+        return this.send(method, url, options, (response) => response.json());
     }
 
-    private async send(
+    /** Send one request and `read` its body, both under the request timeout (`underTimeout`). */
+    private async send<T>(
         method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH",
         url: string,
-        options: { body?: unknown; rawBody?: Uint8Array; contentType?: string; description?: string } = {}
-    ): Promise<Response> {
+        options: { body?: unknown; rawBody?: Uint8Array; contentType?: string; description?: string },
+        read: (response: Response) => Promise<T>
+    ): Promise<T> {
         const { body, rawBody, contentType = "application/json", description } = options;
         const shortUrl = url.replace(this.config.org, "").slice(0, 80);
 
@@ -355,46 +355,52 @@ export class Api {
             payload = SafeJSON.stringify(body);
         }
 
-        const response = await this.fetchWithTimeout(url, { method, headers, body: payload }, `${method} ${shortUrl}`);
+        return this.underTimeout(`${method} ${shortUrl}`, async (signal) => {
+            const response = await this.http(url, { method, headers, body: payload, signal });
 
-        const elapsed = Date.now() - startTime;
-        logger.debug(`[api] ${method} response: ${response.status} ${response.statusText} (${elapsed}ms)`);
+            const elapsed = Date.now() - startTime;
+            logger.debug(`[api] ${method} response: ${response.status} ${response.statusText} (${elapsed}ms)`);
 
-        // A token the org no longer accepts gets 401, 203 (sign-in page), or a redirect to /_signout.
-        const signedOut = response.redirected && response.url.includes("/_signout");
+            // A token the org no longer accepts gets 401, 203 (sign-in page), or a redirect to /_signout.
+            const signedOut = response.redirected && response.url.includes("/_signout");
 
-        if (response.status === 401 || response.status === 203 || signedOut) {
-            this.cachedToken = null;
-            const how = signedOut ? "redirected to /_signout" : `HTTP ${response.status}`;
-            throw new AzAuthError(
-                `Azure DevOps rejected the access token (${how}) for ${method} ${shortUrl}. The az session is no longer valid; sign in again with az login.`,
-                "",
-                null
-            );
-        }
+            if (response.status === 401 || response.status === 203 || signedOut) {
+                this.cachedToken = null;
+                const how = signedOut ? "redirected to /_signout" : `HTTP ${response.status}`;
+                throw new AzAuthError(
+                    `Azure DevOps rejected the access token (${how}) for ${method} ${shortUrl}. The az session is no longer valid; sign in again with az login.`,
+                    "",
+                    null
+                );
+            }
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            logger.debug(`[api] Error response body: ${errorText.slice(0, 200)}`);
-            throw new AdoHttpError({ method, url, status: response.status, body: errorText });
-        }
+            if (!response.ok) {
+                const errorText = await response.text();
+                logger.debug(`[api] Error response body: ${errorText.slice(0, 200)}`);
+                throw new AdoHttpError({ method, url, status: response.status, body: errorText });
+            }
 
-        const type = response.headers.get("content-type") ?? "";
+            const type = response.headers.get("content-type") ?? "";
 
-        if (type.includes("text/html")) {
-            const preview = (await response.text()).replace(/\s+/g, " ").slice(0, 160);
-            throw new Error(
-                `Azure DevOps returned HTML instead of JSON for ${method} ${shortUrl} (HTTP ${response.status}): ${preview}`
-            );
-        }
+            if (type.includes("text/html")) {
+                const preview = (await response.text()).replace(/\s+/g, " ").slice(0, 160);
+                throw new Error(
+                    `Azure DevOps returned HTML instead of JSON for ${method} ${shortUrl} (HTTP ${response.status}): ${preview}`
+                );
+            }
 
-        return response;
+            return read(response);
+        });
     }
 
-    /** The one place a request leaves: the injected `fetch` with the request timeout as its signal. */
-    private async fetchWithTimeout(url: string, init: RequestInit, label: string): Promise<Response> {
+    /**
+     * One request under the request timeout, from the injected `fetch` to the last body read: `work` passes the
+     * signal to `fetch` and reads the body inside, so a body that stalls past the timeout also reads as "did not
+     * answer" with the request named.
+     */
+    private async underTimeout<T>(label: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
         try {
-            return await this.http(url, { ...init, signal: AbortSignal.timeout(this.timeoutMs) });
+            return await work(AbortSignal.timeout(this.timeoutMs));
         } catch (error) {
             if (isTimeoutError(error)) {
                 throw new Error(`Azure DevOps did not answer ${label} within ${this.timeoutMs / 1000} s`, {
@@ -411,15 +417,18 @@ export class Api {
      * for an empty one (a DELETE answers 204), and the `x-ms-continuationtoken` header of a paged list.
      */
     async call<T>(request: AdoRequest): Promise<AdoResponse<T>> {
-        const response = await this.send(request.method, request.url, {
-            body: request.body,
-            contentType: request.contentType,
-            description: request.description,
-        });
-        const text = await response.text();
+        const { text, continuationToken } = await this.send(
+            request.method,
+            request.url,
+            { body: request.body, contentType: request.contentType, description: request.description },
+            async (response) => ({
+                text: await response.text(),
+                continuationToken: response.headers.get("x-ms-continuationtoken") ?? undefined,
+            })
+        );
         const data: T | null = text.trim() ? SafeJSON.parse(text, { strict: true }) : null;
 
-        return { data, continuationToken: response.headers.get("x-ms-continuationtoken") ?? undefined };
+        return { data, continuationToken };
     }
 
     /**
@@ -468,26 +477,29 @@ export class Api {
         }
 
         const token = await this.getAccessToken();
-        // A redirect would carry the Authorization header to a host the check above never saw.
-        const response = await this.fetchWithTimeout(
-            url,
-            { method: "GET", headers: { Authorization: `Bearer ${token}` }, redirect: "manual" },
-            `GET binary ${shortUrl}`
-        );
+        return this.underTimeout(`GET binary ${shortUrl}`, async (signal) => {
+            // A redirect would carry the Authorization header to a host the check above never saw.
+            const response = await this.http(url, {
+                method: "GET",
+                headers: { Authorization: `Bearer ${token}` },
+                redirect: "manual",
+                signal,
+            });
 
-        const elapsed = Date.now() - startTime;
-        logger.debug(`[api] GET binary response: ${response.status} ${response.statusText} (${elapsed}ms)`);
+            const elapsed = Date.now() - startTime;
+            logger.debug(`[api] GET binary response: ${response.status} ${response.statusText} (${elapsed}ms)`);
 
-        if (response.status >= 300 && response.status < 400) {
-            throw new Error(`Refusing to follow a redirect for ${shortUrl} (HTTP ${response.status})`);
-        }
+            if (response.status >= 300 && response.status < 400) {
+                throw new Error(`Refusing to follow a redirect for ${shortUrl} (HTTP ${response.status})`);
+            }
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new AdoHttpError({ method: "GET", url, status: response.status, body: errorText });
-        }
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new AdoHttpError({ method: "GET", url, status: response.status, body: errorText });
+            }
 
-        return response.arrayBuffer();
+            return response.arrayBuffer();
+        });
     }
 
     /**
@@ -768,7 +780,7 @@ export class Api {
 
     async deleteComment({ workItemId, commentId }: { workItemId: number; commentId: number }): Promise<void> {
         const url = Api.commentsUrl(this.config, workItemId, { commentId });
-        await this.send("DELETE", url, { description: `delete comment ${commentId}` });
+        await this.send("DELETE", url, { description: `delete comment ${commentId}` }, (response) => response.text());
     }
 
     private async fetchComments(ids: number[]): Promise<Map<number, Comment[]>> {
@@ -1162,12 +1174,13 @@ export class Api {
     /** Upload bytes as a work-item attachment. The returned URL is what an `<img src>` stores. */
     async uploadAttachment(fileName: string, bytes: Uint8Array): Promise<string> {
         const url = Api.witUrl(this.config, "attachments", { fileName });
-        const response = await this.send("POST", url, {
-            rawBody: bytes,
-            contentType: "application/octet-stream",
-            description: `attachment ${fileName}`,
-        });
-        const created: AttachmentReferenceApi | null = SafeJSON.parse(await response.text());
+        const text = await this.send(
+            "POST",
+            url,
+            { rawBody: bytes, contentType: "application/octet-stream", description: `attachment ${fileName}` },
+            (response) => response.text()
+        );
+        const created: AttachmentReferenceApi | null = SafeJSON.parse(text);
 
         if (!created?.url) {
             throw new Error(`attachment upload of ${fileName} returned no url`);
