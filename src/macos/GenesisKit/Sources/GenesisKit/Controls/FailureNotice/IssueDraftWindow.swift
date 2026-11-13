@@ -41,6 +41,7 @@ public struct IssueDraftView: View {
                         .font(.system(size: 11.5, design: .monospaced))
                         .scrollContentBackground(.hidden)
                         .disabled(!editable)
+                        .accessibilityLabel("Issue body, Markdown")
                         .accessibilityIdentifier("issue-draft.body")
                 }
                 pane("Preview") {
