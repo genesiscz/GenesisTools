@@ -1979,6 +1979,7 @@ async function captureExamples(): Promise<Example[]> {
     const modelFiles = [wordTimingFile(model)];
     const { service, store, config } = await startService({
         deps: {
+            voiceFrames: async () => FIXTURE_VOICE_FRAMES,
             wordTimings: {
                 cache: new WordTimingCache(join(timingRoot, "cache")),
                 modelFiles: async () => modelFiles,
@@ -2496,8 +2497,53 @@ async function captureExamples(): Promise<Example[]> {
         { meeting: REVIEW.id, target: { kind: "range", fromSec: 2, toSec: 4 }, quote: "Saved words" },
         "Keep audio outside the temporary clip cache and publish its Context entry."
     );
+    // Successes last, so the record they change is read by no example before them.
+    await ask(
+        window,
+        "meeting.voice",
+        { meeting: REVIEW.id },
+        "Each line's features per channel; a silent channel has no pitch."
+    );
+    await ask(
+        window,
+        "meeting.voice",
+        { meeting: REVIEW.id, voices: 2 },
+        "Voices asked: each line also carries its cluster, with a speaker only when a confirmed line anchors it."
+    );
+    await ask(
+        window,
+        "acoustic.inspect",
+        { meeting: REVIEW.id, fromSec: 0, toSec: 5 },
+        "No calibrated channels: unknown, with the reason and no metric."
+    );
+    await ask(
+        window,
+        "voice.score",
+        { meeting: REVIEW.id, fromSec: 0, toSec: 1, channel: 0 },
+        "A sample under 1.5 seconds is an unknown voice, not a refusal."
+    );
+    await ask(
+        window,
+        "meeting.people.edit",
+        { meeting: REVIEW.id, action: "add", name: "Robin Example", fromSec: 0, toSec: 30 },
+        "The record with the person and the stay."
+    );
+    await ask(
+        window,
+        "meeting.people.edit",
+        { meeting: REVIEW.id, action: "remove", name: "Robin Example" },
+        "The record without the person."
+    );
     return examples;
 }
+
+/** Voice frames of the fixture's recording, as ffmpeg would decode them: the left channel speaks low for the first
+ * 20 seconds, the right one high after that, and the quiet side has no pitch. One frame is 50 ms. */
+const FIXTURE_VOICE_FRAMES = Array.from({ length: 900 }, (_, index) => {
+    const voiced = (pitchHz: number) => ({ rms: 0.2, lowBandShare: 0.6, tilt: -4, pitchHz, voicedShare: 1 });
+    const quiet = { rms: 0.002, lowBandShare: 0.1, tilt: 0, pitchHz: null, voicedShare: 0 };
+    return { channels: index * 0.05 < 20 ? [voiced(120), quiet] : [quiet, voiced(210)] };
+});
 
 /**
  * Revision tokens hash file identities (inode, times), and a decision's token is a fresh UUID, so they differ each run;
@@ -2519,6 +2565,9 @@ function normalized(examples: Example[]): unknown {
             )
             // A removed project's backup: under the sandbox home, named by the local time of the removal.
             .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
+            // A record's history line carries the wall clock of its write, and a saved clip's line names its key.
+            .replace(/"at":"[^"]*","command":/g, '"at":"<now>","command":')
+            .replace(/"change":"([^"]*?)-[0-9a-z]+\.wav"/g, '"change":"$1-<key>.wav"')
             .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"')
             .replace(
                 /"(cacheRevision|revision|audioFingerprint|modelFingerprint|id)":"[a-f0-9]{64}"/g,

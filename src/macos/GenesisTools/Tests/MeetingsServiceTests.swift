@@ -264,14 +264,15 @@ final class MeetingsServiceTests: XCTestCase {
     private static func checkVoice(_ result: Any, params: [String: Any], _ label: String) throws {
         let lines = try MeetingsService.decode(MeetingsAPI.Voice.Result.self, result)
         XCTAssertFalse(lines.isEmpty, label)
-        XCTAssertTrue(lines.allSatisfy { !$0.channels.isEmpty }, "\(label): every line carries its channels")
+        XCTAssertTrue(lines.allSatisfy { $0.channels.count == 2 }, "\(label): every line carries both channels")
+        let pitched = Set(lines.flatMap { $0.channels.map { $0.pitchHz != nil } })
+        XCTAssertEqual(pitched, [true, false], "\(label): a voiced channel has a pitch, a quiet one none")
         if params["voices"] != nil { XCTAssertTrue(lines.contains { $0.cluster != nil }, "\(label): the voices are clustered") }
     }
 
-    /// The protocol fixture holds only refusals of these two methods so far (their success needs a recording), so
-    /// replies shaped as `src/meetings/lib/service/api.ts` and `src/utils/meetings/voice-features.ts` declare them
-    /// check the Swift side of a success: a record with its participants, and lines with a null pitch and an
-    /// optional cluster.
+    /// The protocol fixture's successes of these two methods come from the scratch store, whose clusters name no
+    /// speaker; replies shaped as `src/meetings/lib/service/api.ts` and `src/utils/meetings/voice-features.ts`
+    /// declare them also check a cluster anchored to a speaker and one that is not.
     func testSuccessfulPeopleEditAndVoiceRepliesDecode() throws {
         let record: [String: Any] = [
             "id": Self.design, "title": "Design review", "labels": [], "start": "2026-11-03T10:00:00Z", "items": [],
@@ -294,6 +295,7 @@ final class MeetingsServiceTests: XCTestCase {
 
     func testEveryFixtureExampleDecodesWithTheSwiftTypes() throws {
         var decoded: [String: Int] = [:]
+        var succeeded: [String: Int] = [:]
         var refusals: [String] = []
         for example in try MeetingsFixture.examples() {
             let method = try XCTUnwrap(example["method"] as? String)
@@ -340,7 +342,7 @@ final class MeetingsServiceTests: XCTestCase {
                 if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.Transcript.Result.self, result).entries.isEmpty) }
             case MeetingsAPI.AcousticInspect.name:
                 try roundTrip(MeetingsAPI.AcousticInspect.Params.self, params, label)
-                if let result { _ = try MeetingsService.decode(MeetingsAPI.AcousticInspect.Result.self, result) }
+                if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.AcousticInspect.Result.self, result).reason.isEmpty, label) }
             case MeetingsAPI.AcousticClip.name:
                 try roundTrip(MeetingsAPI.AcousticClip.Params.self, params, label)
                 if let result { _ = try MeetingsService.decode(MeetingsAPI.AcousticClip.Result.self, result) }
@@ -349,7 +351,11 @@ final class MeetingsServiceTests: XCTestCase {
                 if let result { _ = try MeetingsService.decode(MeetingsAPI.AcousticCollect.Result.self, result) }
             case MeetingsAPI.VoiceScore.name:
                 try roundTrip(MeetingsAPI.VoiceScore.Params.self, params, label)
-                if let result { _ = try MeetingsService.decode(MeetingsAPI.VoiceScore.Result.self, result) }
+                if let result {
+                    let score = try MeetingsService.decode(MeetingsAPI.VoiceScore.Result.self, result)
+                    XCTAssertTrue(["matched", "unknown"].contains(score.quality), label)
+                    XCTAssertFalse(score.model.isEmpty, label)
+                }
             case MeetingsAPI.VoiceEnroll.name:
                 try roundTrip(MeetingsAPI.VoiceEnroll.Params.self, params, label)
                 if let result { _ = try MeetingsService.decode(MeetingsAPI.VoiceEnroll.Result.self, result) }
@@ -521,6 +527,14 @@ final class MeetingsServiceTests: XCTestCase {
                 refusals.append(try MeetingsService.decode(MeetingsAPI.ErrorData.self, data).code)
             }
             decoded[method, default: 0] += 1
+            if result != nil { succeeded[method, default: 0] += 1 }
+        }
+        // A success of each, so a drift of what the native people and voice controls read fails here: people.edit
+        // adds and removes, meeting.voice answers with and without clusters.
+        let successes = [MeetingsAPI.MeetingPeopleEdit.name: 2, MeetingsAPI.Voice.name: 2,
+                         MeetingsAPI.AcousticInspect.name: 1, MeetingsAPI.VoiceScore.name: 1]
+        for (method, count) in successes {
+            XCTAssertGreaterThanOrEqual(succeeded[method] ?? 0, count, "the fixture has \(count) successful \(method)")
         }
         for method in [MeetingsAPI.Hello.name, MeetingsAPI.List.name, MeetingsAPI.Show.name, MeetingsAPI.Transcript.name,
                        MeetingsAPI.Revisions.name, MeetingsAPI.Subscribe.name, MeetingsAPI.MeetingChanged.name]

@@ -6123,6 +6123,532 @@
           "created": true
         }
       }
+    },
+    {
+      "method": "meeting.voice",
+      "direction": "client→service",
+      "note": "Each line's features per channel; a silent channel has no pitch.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 103,
+        "method": "meeting.voice",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 103,
+        "result": [
+          {
+            "index": 0,
+            "channels": [
+              {
+                "rms": 0.20000000000000007,
+                "lowBandShare": 0.6,
+                "tilt": -4,
+                "pitchHz": 120,
+                "voicedShare": 1
+              },
+              {
+                "rms": 0.001999999999999998,
+                "lowBandShare": 0.10000000000000049,
+                "tilt": 0,
+                "pitchHz": null,
+                "voicedShare": 0
+              }
+            ]
+          },
+          {
+            "index": 1,
+            "channels": [
+              {
+                "rms": 0.20000000000000007,
+                "lowBandShare": 0.6,
+                "tilt": -4,
+                "pitchHz": 120,
+                "voicedShare": 1
+              },
+              {
+                "rms": 0.001999999999999998,
+                "lowBandShare": 0.1000000000000003,
+                "tilt": 0,
+                "pitchHz": null,
+                "voicedShare": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "method": "meeting.voice",
+      "direction": "client→service",
+      "note": "Voices asked: each line also carries its cluster, with a speaker only when a confirmed line anchors it.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 104,
+        "method": "meeting.voice",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "voices": 2
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 104,
+        "result": [
+          {
+            "index": 0,
+            "channels": [
+              {
+                "rms": 0.20000000000000007,
+                "lowBandShare": 0.6,
+                "tilt": -4,
+                "pitchHz": 120,
+                "voicedShare": 1
+              },
+              {
+                "rms": 0.001999999999999998,
+                "lowBandShare": 0.10000000000000049,
+                "tilt": 0,
+                "pitchHz": null,
+                "voicedShare": 0
+              }
+            ],
+            "cluster": {
+              "id": 0,
+              "confidence": 0
+            }
+          },
+          {
+            "index": 1,
+            "channels": [
+              {
+                "rms": 0.20000000000000007,
+                "lowBandShare": 0.6,
+                "tilt": -4,
+                "pitchHz": 120,
+                "voicedShare": 1
+              },
+              {
+                "rms": 0.001999999999999998,
+                "lowBandShare": 0.1000000000000003,
+                "tilt": 0,
+                "pitchHz": null,
+                "voicedShare": 0
+              }
+            ],
+            "cluster": {
+              "id": 0,
+              "confidence": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "acoustic.inspect",
+      "direction": "client→service",
+      "note": "No calibrated channels: unknown, with the reason and no metric.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 105,
+        "method": "acoustic.inspect",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "fromSec": 0,
+          "toSec": 5
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 105,
+        "result": {
+          "quality": "unknown",
+          "reason": "channel layout is unknown"
+        }
+      }
+    },
+    {
+      "method": "voice.score",
+      "direction": "client→service",
+      "note": "A sample under 1.5 seconds is an unknown voice, not a refusal.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 106,
+        "method": "voice.score",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "fromSec": 0,
+          "toSec": 1,
+          "channel": 0
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 106,
+        "result": {
+          "model": "unavailable",
+          "quality": "unknown",
+          "candidates": [],
+          "reason": "Voice sample needs at least 1.5 seconds of confirmed single-speaker speech"
+        }
+      }
+    },
+    {
+      "method": "meeting.people.edit",
+      "direction": "client→service",
+      "note": "The record with the person and the stay.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 107,
+        "method": "meeting.people.edit",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": "add",
+          "name": "Robin Example",
+          "fromSec": 0,
+          "toSec": 30
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 107,
+        "result": {
+          "version": 1,
+          "id": "2026-11-03-1000-design-review",
+          "title": "Design review",
+          "labels": [
+            "Checkout"
+          ],
+          "start": "2026-11-03T09:00:00.000Z",
+          "end": "2026-11-03T09:45:00.000Z",
+          "createdAt": "2026-11-03T09:46:00.000Z",
+          "createdBy": "link",
+          "sources": {
+            "wisprflow": {
+              "meetingId": "wf-2041"
+            }
+          },
+          "participants": [
+            {
+              "name": "Dana Example",
+              "self": true,
+              "from": [
+                "wisprflow"
+              ]
+            },
+            {
+              "name": "Alex Example",
+              "from": [
+                "calendar"
+              ]
+            },
+            {
+              "name": "Robin Example",
+              "firstSeenSec": 0,
+              "stays": [
+                {
+                  "fromSec": 0,
+                  "toSec": 30,
+                  "source": "hand",
+                  "confidence": 1
+                }
+              ],
+              "from": [
+                "user"
+              ]
+            }
+          ],
+          "seats": {
+            "room": [],
+            "remote": [
+              {
+                "name": "Robin Example",
+                "fromSec": 0,
+                "toSec": 30
+              }
+            ],
+            "microphones": []
+          },
+          "context": [
+            {
+              "id": "c1",
+              "kind": "file",
+              "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-<key>.wav",
+              "title": "Clip 00:02–00:04",
+              "note": "Saved words",
+              "addedAt": "2026-11-03T10:00:00.000Z",
+              "addedBy": "user"
+            }
+          ],
+          "speakers": {
+            "labels": {
+              "Speaker 2": "Alex Example"
+            }
+          },
+          "items": [
+            {
+              "kind": "speaker-range",
+              "label": "Speaker 3",
+              "fromSec": 12,
+              "toSec": 30,
+              "speaker": "Alex Example",
+              "candidates": [
+                "Alex Example",
+                "Dana Example"
+              ],
+              "id": "i1",
+              "status": "confirmed",
+              "confidence": 0.82,
+              "rules": [
+                "presence"
+              ],
+              "suggestedAt": "2026-11-03T09:47:00.000Z",
+              "decidedAt": "2026-11-03T10:00:00.000Z",
+              "decision": {
+                "token": "7c530479-c018-4bcf-b2d8-b01ea0fd2f29",
+                "previous": {
+                  "status": "suggested",
+                  "speaker": "Alex Example"
+                },
+                "actor": {
+                  "kind": "agent",
+                  "harness": "claude-code",
+                  "session": "11111111-2222-4333-8444-555555555555"
+                },
+                "entry": {
+                  "action": "confirm"
+                }
+              }
+            }
+          ],
+          "attendance": {
+            "from": "user",
+            "people": [
+              {
+                "name": "Robin Example",
+                "fromSec": 0,
+                "toSec": 30,
+                "joinedAtExact": true,
+                "leftAtExact": true
+              }
+            ]
+          },
+          "sections": [
+            {
+              "fromSec": 0,
+              "toSec": 30,
+              "present": [
+                "Robin Example"
+              ]
+            }
+          ],
+          "history": [
+            {
+              "at": "2026-11-03T09:46:00.000Z",
+              "command": "link",
+              "change": "linked wisprflow:wf-2041"
+            },
+            {
+              "at": "2026-11-13T22:32:59.950Z",
+              "command": "confirm",
+              "change": "i1"
+            },
+            {
+              "at": "2026-11-13T22:32:59.957Z",
+              "command": "reopen",
+              "change": "i1"
+            },
+            {
+              "at": "2026-11-13T22:32:59.958Z",
+              "command": "confirm",
+              "change": "i1"
+            },
+            {
+              "at": "2026-11-13T22:33:00.035Z",
+              "command": "projects rename",
+              "change": "project Atlas → Harbor"
+            },
+            {
+              "at": "2026-11-13T22:33:00.038Z",
+              "command": "projects remove",
+              "change": "project Harbor removed"
+            },
+            {
+              "at": "2026-11-13T22:33:00.041Z",
+              "command": "clip save",
+              "change": "00-02-00-04-1ebd9gpfjjfhq.wav"
+            },
+            {
+              "at": "2026-11-13T22:33:00.045Z",
+              "command": "attendance",
+              "change": "add meeting person Robin Example"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "meeting.people.edit",
+      "direction": "client→service",
+      "note": "The record without the person.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 108,
+        "method": "meeting.people.edit",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review",
+          "action": "remove",
+          "name": "Robin Example"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 108,
+        "result": {
+          "version": 1,
+          "id": "2026-11-03-1000-design-review",
+          "title": "Design review",
+          "labels": [
+            "Checkout"
+          ],
+          "start": "2026-11-03T09:00:00.000Z",
+          "end": "2026-11-03T09:45:00.000Z",
+          "createdAt": "2026-11-03T09:46:00.000Z",
+          "createdBy": "link",
+          "sources": {
+            "wisprflow": {
+              "meetingId": "wf-2041"
+            }
+          },
+          "participants": [
+            {
+              "name": "Dana Example",
+              "self": true,
+              "from": [
+                "wisprflow"
+              ]
+            },
+            {
+              "name": "Alex Example",
+              "from": [
+                "calendar"
+              ]
+            }
+          ],
+          "seats": {
+            "room": [],
+            "remote": [],
+            "microphones": []
+          },
+          "context": [
+            {
+              "id": "c1",
+              "kind": "file",
+              "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-<key>.wav",
+              "title": "Clip 00:02–00:04",
+              "note": "Saved words",
+              "addedAt": "2026-11-03T10:00:00.000Z",
+              "addedBy": "user"
+            }
+          ],
+          "speakers": {
+            "labels": {
+              "Speaker 2": "Alex Example"
+            }
+          },
+          "items": [
+            {
+              "kind": "speaker-range",
+              "label": "Speaker 3",
+              "fromSec": 12,
+              "toSec": 30,
+              "speaker": "Alex Example",
+              "candidates": [
+                "Alex Example",
+                "Dana Example"
+              ],
+              "id": "i1",
+              "status": "confirmed",
+              "confidence": 0.82,
+              "rules": [
+                "presence"
+              ],
+              "suggestedAt": "2026-11-03T09:47:00.000Z",
+              "decidedAt": "2026-11-03T10:00:00.000Z",
+              "decision": {
+                "token": "7c530479-c018-4bcf-b2d8-b01ea0fd2f29",
+                "previous": {
+                  "status": "suggested",
+                  "speaker": "Alex Example"
+                },
+                "actor": {
+                  "kind": "agent",
+                  "harness": "claude-code",
+                  "session": "11111111-2222-4333-8444-555555555555"
+                },
+                "entry": {
+                  "action": "confirm"
+                }
+              }
+            }
+          ],
+          "attendance": {
+            "from": "user",
+            "people": []
+          },
+          "sections": [],
+          "history": [
+            {
+              "at": "2026-11-03T09:46:00.000Z",
+              "command": "link",
+              "change": "linked wisprflow:wf-2041"
+            },
+            {
+              "at": "2026-11-13T22:32:59.950Z",
+              "command": "confirm",
+              "change": "i1"
+            },
+            {
+              "at": "2026-11-13T22:32:59.957Z",
+              "command": "reopen",
+              "change": "i1"
+            },
+            {
+              "at": "2026-11-13T22:32:59.958Z",
+              "command": "confirm",
+              "change": "i1"
+            },
+            {
+              "at": "2026-11-13T22:33:00.035Z",
+              "command": "projects rename",
+              "change": "project Atlas → Harbor"
+            },
+            {
+              "at": "2026-11-13T22:33:00.038Z",
+              "command": "projects remove",
+              "change": "project Harbor removed"
+            },
+            {
+              "at": "2026-11-13T22:33:00.041Z",
+              "command": "clip save",
+              "change": "00-02-00-04-1ebd9gpfjjfhq.wav"
+            },
+            {
+              "at": "2026-11-13T22:33:00.045Z",
+              "command": "attendance",
+              "change": "add meeting person Robin Example"
+            },
+            {
+              "at": "2026-11-13T22:33:00.047Z",
+              "command": "attendance",
+              "change": "remove meeting person Robin Example"
+            }
+          ]
+        }
+      }
     }
   ]
 }

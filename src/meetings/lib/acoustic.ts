@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { toFloat32AudioWindow } from "@genesiscz/utils/audio/converter";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { correlateEcho, echoForRange, readEchoCache } from "@genesiscz/utils/meetings/echo";
-import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import {
     embedVoice,
     embedVoiceLines,
@@ -17,31 +17,35 @@ import {
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { OpenedMeeting } from "./opened-meeting";
+import type { LinkedSource } from "./sources";
 
-export async function acousticMeeting(store: MeetingStore, ref: string) {
-    const record = store.resolve(ref);
+/** The meeting an acoustic call reads, with the source the caller opens it with (the service's; the record's own). */
+export interface AcousticTarget {
+    store: MeetingStore;
+    meeting: string;
+    linkedSource?: (record: MeetingRecord) => LinkedSource | undefined;
+}
+
+export async function acousticMeeting(target: AcousticTarget) {
+    const { store, meeting } = target;
+    const record = store.resolve(meeting);
     if (!record) {
-        throw new Error(`Unknown meeting ${ref}`);
+        throw new Error(`Unknown meeting ${meeting}`);
     }
-    const opened = OpenedMeeting.of(store, record);
+    const opened = OpenedMeeting.of(store, record, target.linkedSource?.(record));
     const audioPath = await opened.audioPath();
     const layout = (await opened.energy()).calibration?.layout ?? "unknown";
     return { record, opened, audioPath, layout, folder: join(store.folder(record.id), "evidence") };
 }
-export async function collectAcoustic(store: MeetingStore, meeting: string) {
-    const c = await acousticMeeting(store, meeting);
+export async function collectAcoustic(target: AcousticTarget) {
+    const c = await acousticMeeting(target);
     await c.opened.calibrate();
     const layout = (await c.opened.energy()).calibration?.layout ?? "unknown";
     const cache = await readEchoCache({ audioPath: c.audioPath, cachePath: join(c.folder, "echo.json"), layout });
     return { blocks: cache?.blocks.length ?? 0, layout };
 }
-export async function inspectAcoustic(options: {
-    store: MeetingStore;
-    meeting: string;
-    fromSec: number;
-    toSec: number;
-}) {
-    const context = await acousticMeeting(options.store, options.meeting);
+export async function inspectAcoustic(options: AcousticTarget & { fromSec: number; toSec: number }) {
+    const context = await acousticMeeting(options);
     const { audioPath, folder, layout } = context;
     if (layout === "unknown") {
         return { quality: "unknown" as const, reason: "channel layout is unknown" };
@@ -55,19 +59,19 @@ export async function inspectAcoustic(options: {
         metric,
     };
 }
-export async function voiceMeeting(options: {
-    store: MeetingStore;
-    meeting: string;
-    fromSec: number;
-    toSec: number;
-    channel: 0 | 1;
-    person?: string;
-}) {
-    const { folder, audioPath, record } = await acousticMeeting(options.store, options.meeting);
+export async function voiceMeeting(
+    options: AcousticTarget & { fromSec: number; toSec: number; channel: 0 | 1; person?: string }
+) {
+    const { folder, audioPath, record } = await acousticMeeting(options);
     const file = join(folder, "voices.json");
     let voice: Awaited<ReturnType<typeof embedVoice>>;
     try {
-        voice = await embedVoice({ audioPath, ...options });
+        voice = await embedVoice({
+            audioPath,
+            channel: options.channel,
+            fromSec: options.fromSec,
+            toSec: options.toSec,
+        });
     } catch (error) {
         // Scoring a sample that cannot be scored is an unknown voice; enrolling one stays a refusal to act on.
         if (options.person || !(error instanceof VoiceUnavailableError)) {
@@ -122,15 +126,16 @@ function recordingFingerprint(audioPath: string): string {
 }
 
 /** All three tracks are returned, even for a cleaned preview. Originals are never rewritten. */
-export async function acousticClip(options: { store: MeetingStore; meeting: string; fromSec: number; toSec: number }) {
-    const { audioPath, folder, layout } = await acousticMeeting(options.store, options.meeting);
+export async function acousticClip(options: AcousticTarget & { fromSec: number; toSec: number }) {
+    const { audioPath, folder, layout } = await acousticMeeting(options);
     if (layout === "unknown") {
         throw new Error("Cannot isolate tracks: channel layout is unknown");
     }
     const channel = layout === "left-mic" ? 0 : 1;
+    const span = { fromSec: options.fromSec, toSec: options.toSec };
     const [mic, call] = await Promise.all([
-        toFloat32AudioWindow(audioPath, { ...options, channel }),
-        toFloat32AudioWindow(audioPath, { ...options, channel: channel === 0 ? 1 : 0 }),
+        toFloat32AudioWindow(audioPath, { ...span, channel }),
+        toFloat32AudioWindow(audioPath, { ...span, channel: channel === 0 ? 1 : 0 }),
     ]);
     // The lag and gain come from a 2 kHz copy, as the cache collector measures them: the exhaustive search at 16 kHz
     // took about 476 million sample steps for a minute, on the service's one thread.
@@ -172,8 +177,8 @@ export async function acousticClip(options: { store: MeetingStore; meeting: stri
 }
 
 /** Explicit collection after confirmed enrolment. The two channel results never share an identity by label. */
-export async function collectVoiceEvidence(store: MeetingStore, meeting: string) {
-    const { folder, audioPath, opened, layout } = await acousticMeeting(store, meeting);
+export async function collectVoiceEvidence(target: AcousticTarget) {
+    const { folder, audioPath, opened, layout } = await acousticMeeting(target);
     if (layout === "unknown") {
         throw new Error("Voice evidence needs calibrated channels");
     }
