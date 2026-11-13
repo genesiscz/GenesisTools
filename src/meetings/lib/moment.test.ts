@@ -146,6 +146,29 @@ describe("a Moment of an item", () => {
             padSec: listen.tone.leadSec + SPEAKER_PAD_SEC,
         });
     });
+
+    test("a voice asked at one instant is heard to the end of its line, as a single time is", () => {
+        // A stretch of 0 s played only its two pads: a 1.4 s clip for "who says this?".
+        const instant = record([
+            { id: "i1", kind: "question", about: "speaker", fromSec: 30, toSec: 30, question: "Who says this?" },
+            { id: "i2", kind: "speaker-range", label: "Speaker 2", fromSec: 40, toSec: 40 },
+            { id: "i3", kind: "question", about: "speaker", fromSec: 20, toSec: 20.4, question: "Who says this?" },
+            { id: "i4", kind: "question", about: "speaker", fromSec: 30, toSec: 31, question: "Who says this?" },
+        ]);
+        const at = (id: string) => planMoment({ record: instant, transcript, listen, target: { kind: "item", id } });
+
+        expect(at("i1")).toMatchObject({
+            fromSec: 30,
+            toSec: 40,
+            spotSec: 30,
+            padSec: listen.tone.leadSec + SPEAKER_PAD_SEC,
+        });
+        // The line at 40 runs to 60: a single time hears at most 15 s of it.
+        expect(at("i2")).toMatchObject({ fromSec: 40, toSec: 55 });
+        expect(at("i3")).toMatchObject({ fromSec: 20, toSec: 30 });
+        // A stretch of a second or more is the asker's own span.
+        expect(at("i4")).toMatchObject({ fromSec: 30, toSec: 31 });
+    });
 });
 
 describe("a Moment of a time, a range, a selection or a stretch", () => {

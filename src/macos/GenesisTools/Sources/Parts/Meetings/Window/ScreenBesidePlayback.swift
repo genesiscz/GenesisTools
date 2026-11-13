@@ -79,6 +79,9 @@ struct ScreenBesidePlayback: View {
     let image: NSImage?
     /// The frame's time on the meeting clock.
     var atSec: Double? = nil
+    /// The capture does not cover the time that plays: how far the frame is from it (`TimelineDockModel.apart`). The
+    /// caption then says so and the picture dims, because "Screen at 17:28" beside a Moment at 54:35 reads as a fault.
+    var apartSec: Double? = nil
     /// The OCR hit that named the spot, drawn as an outline (Vision's normalized box, origin bottom left).
     var hit: MomentFrame.Hit? = nil
     let displays: [ScreenDisplayChoice]
@@ -105,6 +108,7 @@ struct ScreenBesidePlayback: View {
     private var header: some View {
         HStack(spacing: 6) {
             Text(verbatim: caption).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                .instantTooltip(Self.sentence(atSec: atSec, apartSec: apartSec) ?? "")
             Spacer(minLength: 4)
             if displays.count > 1 {
                 MenuButton(style: .genHoverPlain(), items: menuItems) {
@@ -138,7 +142,8 @@ struct ScreenBesidePlayback: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .overlay { hitOverlay(imageSize: image.size) }
-                    .accessibilityLabel(hit.map { "Screen at \(timeText), showing “\($0.text)”" } ?? "Screen at \(timeText)")
+                    .opacity(apartSec == nil ? 1 : 0.45)
+                    .accessibilityLabel(hit.map { "\(spoken), showing “\($0.text)”" } ?? spoken)
             } else {
                 Label("Reading the frame…", systemImage: "photo")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -164,11 +169,29 @@ struct ScreenBesidePlayback: View {
         .accessibilityHidden(true)
     }
 
-    private var timeText: String { atSec.map(MeetingsFormat.clock) ?? "the spot" }
+    private var caption: String { Self.caption(atSec: atSec, apartSec: apartSec) }
 
-    private var caption: String {
+    /// What VoiceOver reads for the picture: the full sentence outside the capture, else the caption.
+    private var spoken: String { Self.sentence(atSec: atSec, apartSec: apartSec) ?? caption }
+
+    /// "Screen at 54:35"; outside the capture "Last frame, 37 min earlier" or "First frame, 55 s later". Short on
+    /// purpose: the pane's header is 290 pt wide with its display menu and two buttons, and a longer caption was cut.
+    static func caption(atSec: Double?, apartSec: Double?) -> String {
         guard let atSec else { return "Screen" }
-        return "Screen at \(MeetingsFormat.clock(atSec))"
+        guard let apartSec else { return "Screen at \(MeetingsFormat.clock(atSec))" }
+        return apartSec > 0 ? "Last frame, \(gap(apartSec)) earlier" : "First frame, \(gap(apartSec)) later"
+    }
+
+    /// The caption's full sentence, for the tooltip and VoiceOver; nil inside the capture.
+    static func sentence(atSec: Double?, apartSec: Double?) -> String? {
+        guard let atSec, let apartSec else { return nil }
+        let at = MeetingsFormat.clock(atSec)
+        return apartSec > 0 ? "The screen capture ended at \(at), \(gap(apartSec)) before this spot. This is its last frame."
+            : "The screen capture starts at \(at), \(gap(apartSec)) after this spot. This is its first frame."
+    }
+
+    private static func gap(_ apartSec: Double) -> String {
+        abs(apartSec) < 90 ? "\(Int(abs(apartSec).rounded())) s" : "\(Int((abs(apartSec) / 60).rounded())) min"
     }
 
     private var selectedName: String {

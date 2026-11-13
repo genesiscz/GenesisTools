@@ -99,6 +99,9 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(TranscriptAvatar.initials("Mira Holt"), "MH")
         XCTAssertEqual(TranscriptAvatar.initials("Speaker 4"), "S4")
         XCTAssertEqual(TranscriptAvatar.initials(""), "?")
+        XCTAssertEqual(TranscriptAvatar.initials("[unclear: \"…\"]"), "UN", "D3: a note in brackets showed [\" as its initials")
+        XCTAssertEqual(TranscriptAvatar.initials("Mira Holt (QA)"), "MH")
+        XCTAssertEqual(TranscriptAvatar.initials("…"), "?")
     }
 
     func testSnapshotTranscriptBlocks() throws {
@@ -143,7 +146,8 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(StagedCommentsBar.receiverText([]), "Nobody listens on this meeting")
         let agent = CommentListener(pid: 4211, at: "2026-11-09T14:32:00Z",
                                     actor: DecisionActor(kind: "listen", harness: "claude-code", session: "7f3a92"))
-        XCTAssertEqual(StagedCommentsBar.receiverText([agent]), "claude-code agent, session 7f3a, pid 4211")
+        XCTAssertEqual(StagedCommentsBar.receiverText([agent]), "Claude Code agent, session 7f3a, pid 4211",
+                       "the harness by its name, as every other line names it")
     }
 
     func testSnapshotSelectionPopoverAndStagedComments() throws {
@@ -183,9 +187,18 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         let questions = [TalkTimeQuestion(id: "q1", atSec: 100, label: "Q12"), TalkTimeQuestion(id: "q2", atSec: 110),
                          TalkTimeQuestion(id: "q3", atSec: 600)]
         let banners = TalkTimeLayout.banners(questions, durationSec: 1000, width: 500)
-        XCTAssertEqual(banners.map(\.text), ["? 2", "?"])
+        XCTAssertEqual(banners.map(\.text), ["? ×2", "?"])
         XCTAssertEqual(banners[0].ids, ["q1", "q2"])
         XCTAssertEqual(TalkTimeLayout.banners([questions[0]], durationSec: 1000, width: 500).map(\.text), ["? Q12"])
+
+        // D7: two labelled banners 30 pt apart are one banner; they drew over each other ("? Q ? Q9").
+        let near = [TalkTimeQuestion(id: "q7", atSec: 400, label: "Q7"), TalkTimeQuestion(id: "q9", atSec: 460, label: "Q9"),
+                    TalkTimeQuestion(id: "q1", atSec: 700, label: "Q1")]
+        let merged = TalkTimeLayout.banners(near, durationSec: 1000, width: 500)
+        XCTAssertEqual(merged.map(\.text), ["? ×2", "? Q1"])
+        for (before, after) in zip(merged, merged.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(after.x - before.x, TalkTimeLayout.bannerWidth)
+        }
     }
 
     func testRulerMarksUseARoundStep() {

@@ -18,18 +18,64 @@ final class MeetingsTimelineTests: XCTestCase {
         XCTAssertEqual(TimelineFixture.span.flagSeekTarget, 3275.7, accuracy: 0.0001)
     }
 
-    /// G-PLAY-8: pins closer than 6 pt merge into one mark with a count; a chain merges whole; 6 pt apart stay two.
-    func testPinsCloserThanSixPointsMergeIntoOneCountAndAChainMergesWhole() {
-        let pins = [10, 14, 17, 40, 46, 300, 900].enumerated().map { index, sec in
+    /// G-PLAY-8: pins within one mark's width merge into one mark with a count, and no two marks overlap.
+    func testPinsWithinAMarksWidthMergeIntoOneCountAndMarksNeverOverlap() {
+        let pins = [10, 14, 17, 40, 46, 70, 300, 900].enumerated().map { index, sec in
             TimelinePin(id: "i\(index)", sec: Double(sec), text: "item \(index)", state: .open)
         }
         // 600 s over 600 pt: one second is one point; the pin at 900 s is outside the view.
         let clusters = PinCluster.clusters(pins, in: 0...600, width: 600)
-        XCTAssertEqual(clusters.map { $0.pins.map(\.id) }, [["i0", "i1", "i2"], ["i3"], ["i4"], ["i5"]])
+        XCTAssertEqual(clusters.map { $0.pins.map(\.id) }, [["i0", "i1", "i2"], ["i3", "i4"], ["i5"], ["i6"]],
+                       "40 and 46 are 6 pt apart: two 16 pt marks there drew over each other")
         XCTAssertEqual(clusters[0].x, 13.5)
         XCTAssertEqual(clusters[0].range, 10...17)
-        XCTAssertEqual(clusters[1].room, 6)
+        XCTAssertEqual(clusters[1].x, 43)
+        XCTAssertEqual(clusters[1].room, 27)
         XCTAssertEqual(clusters[3].room, 300)
+
+        // A dense stretch (a pin every 8 pt) is a row of counts, never one count for all of it, and never an overlap.
+        let dense = stride(from: 100.0, through: 300, by: 8).enumerated().map { index, sec in
+            TimelinePin(id: "d\(index)", sec: sec, text: "d", state: .done)
+        }
+        let marks = PinCluster.clusters(dense, in: 0...600, width: 600)
+        XCTAssertGreaterThan(marks.count, 5)
+        for (before, after) in zip(marks, marks.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(after.x - before.x, PinMark.markWidth, "\(before.id) and \(after.id) overlap")
+        }
+        for mark in marks {
+            XCTAssertLessThanOrEqual(abs(mark.x - (mark.range.lowerBound + mark.range.upperBound) / 2), PinMark.markWidth,
+                                     "a mark stays at its pins")
+        }
+
+        // A pin just past a mark's reach is pushed clear of it, not drawn into it.
+        let edge = PinCluster.clusters([100, 119, 120].enumerated().map { TimelinePin(id: "e\($0)", sec: Double($1), text: "e", state: .open) },
+                                       in: 0...600, width: 600)
+        XCTAssertEqual(edge.map(\.x), [109.5, 129.5])
+    }
+
+    /// D8: outside the capture the screen pane says that its picture is from another time.
+    func testTheScreenPaneSaysWhenItsFrameIsFromAnotherTime() throws {
+        let json = Data("""
+        {"meeting":"m","recorded":true,"displays":[],"frames":[
+         {"file":"a.png","path":"/x/a.png","meetingSec":60,"width":10,"height":10,"lineCount":0},
+         {"file":"b.png","path":"/x/b.png","meetingSec":600,"width":10,"height":10,"lineCount":0},
+         {"file":"c.png","path":"/x/c.png","meetingSec":1048,"width":10,"height":10,"lineCount":0}]}
+        """.utf8)
+        let screen = try JSONDecoder().decode(MeetingsAPI.MeetingScreen.Result.self, from: json)
+        let last = try XCTUnwrap(TimelineDockModel.frame(in: screen, at: 3275, display: nil))
+        XCTAssertEqual(last.file, "c.png")
+        XCTAssertEqual(TimelineDockModel.apart(last, in: screen, at: 3275, display: nil), 2227, "the capture ended 37 min before the Moment")
+        XCTAssertNil(TimelineDockModel.apart(last, in: screen, at: 1060, display: nil), "12 s after the last frame is still that screen")
+        let middle = try XCTUnwrap(TimelineDockModel.frame(in: screen, at: 500, display: nil))
+        XCTAssertNil(TimelineDockModel.apart(middle, in: screen, at: 500, display: nil), "inside the capture an older frame is an unchanged screen")
+        let first = try XCTUnwrap(TimelineDockModel.frame(in: screen, at: 5, display: nil))
+        XCTAssertEqual(TimelineDockModel.apart(first, in: screen, at: 5, display: nil), -55)
+        XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 1048, apartSec: 2227), "Last frame, 37 min earlier")
+        XCTAssertEqual(ScreenBesidePlayback.sentence(atSec: 1048, apartSec: 2227),
+                       "The screen capture ended at 17:28, 37 min before this spot. This is its last frame.")
+        XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 60, apartSec: -55), "First frame, 55 s later")
+        XCTAssertNil(ScreenBesidePlayback.sentence(atSec: 3275, apartSec: nil))
+        XCTAssertEqual(ScreenBesidePlayback.caption(atSec: 3275, apartSec: nil), "Screen at 54:35")
     }
 
     /// G-PLAY-5: a mark is dimmed only when every pin in it is filtered out; its state is the strongest of its pins.

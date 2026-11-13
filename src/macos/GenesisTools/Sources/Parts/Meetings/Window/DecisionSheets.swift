@@ -21,9 +21,11 @@ struct ReachSheet: View {
                         ForEach(pending.reach.items, id: \.id) { item in
                             HStack(spacing: 8) {
                                 if let player = detail.window?.player {
-                                    MomentButton(player: player, meeting: detail.id, target: .item(item.id), label: item.id, source: .speakerChip)
+                                    MomentButton(player: player, meeting: detail.id, target: .item(item.id), label: detail.rowLabel(item.id), source: .speakerChip)
                                 }
-                                Text(verbatim: detail.rows.value?.rows.first { $0.id == item.id }?.what ?? item.id)
+                                // What the question asks: its one-line text starts with the time the button beside
+                                // it already shows.
+                                Text(verbatim: detail.rows.value?.rows.first { $0.id == item.id }.map(ReviewRowView.title) ?? item.id)
                                     .font(.system(size: 12.5)).lineLimit(2)
                             }
                         }
@@ -46,6 +48,10 @@ struct ReachSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { detail.cancelReach() }.keyboardShortcut(.cancelAction)
+                if !detail.lookAlikes(of: pending).isEmpty {
+                    Button("Only this question") { detail.applyOnlyThis(pending) }
+                        .instantTooltip("Answer \(pending.row.label) and what it decides. The questions that look alike stay open.")
+                }
                 Button("Save") { detail.applyReach(pending, askAgain: askAgain) }.keyboardShortcut(.defaultAction)
             }
         }
@@ -64,7 +70,7 @@ struct HistorySheetView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(history.item.map { "History of \($0)" } ?? "History of this meeting").font(.system(size: 15, weight: .semibold))
+                Text(history.item.map { "History of \(detail.rowName($0))" } ?? "History of this meeting").font(.system(size: 15, weight: .semibold))
                 Spacer()
                 Button("Done") { detail.history = nil }.keyboardShortcut(.defaultAction)
             }
@@ -119,7 +125,7 @@ private struct HistoryRow: View {
 
     private var sentence: String {
         let who = MeetingsWords.actor(entry.actor)
-        return who.prefix(1).uppercased() + who.dropFirst() + " " + MeetingsWords.entryAction(entry)
+        return who.prefix(1).uppercased() + who.dropFirst() + " " + MeetingsWords.entryAction(entry, label: detail.rowName)
     }
 }
 

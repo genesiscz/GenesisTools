@@ -14,23 +14,36 @@ struct PinCard: View {
     var onSelect: () -> Void = {}
     /// Open a typed source: the document at its line, the commit, the work item, the URL, the transcript line.
     var onShowSource: (RowSource) -> Void = { _ in }
+    /// The words for a row this one settles ("Speaker range 1:45:15–1:53:22"), by its id; nil when it is not known.
+    var reference: (String) -> String? = { _ in nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            Text(verbatim: row.what)
+            Text(verbatim: ReviewRowView.title(row))
                 .font(.system(size: 14, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
+            if !row.isOpen {
+                // How it was decided stands under the title: at the card's end, in small grey text under five
+                // choices, a decided row read as an open one.
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: row.status == "confirmed" ? "checkmark.circle.fill" : "xmark.circle")
+                        .foregroundStyle(row.status == "confirmed" ? KitPalette.added : KitPalette.faint)
+                        .accessibilityHidden(true)
+                    if let answer = ReviewRowView.foldedAnswer(row) {
+                        Text(verbatim: "→ \(answer)").font(.system(size: 12.5, weight: .semibold))
+                    }
+                    // The row's own words ("Confirmed by you: …"): the journal's action name ("Answer by you") was
+                    // the data talking.
+                    Text(verbatim: ReviewRowView.decidedWords(row)).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
             ForEach(Array(row.parts.enumerated()), id: \.offset) { _, part in
                 partView(part)
             }
-            if !row.choices.isEmpty { choices }
+            if !Self.shownChoices(row).isEmpty { choices }
             if !shownSources.isEmpty { sources }
-            if let decision = row.decision {
-                Text(verbatim: "\(decision.action.capitalized) by \(decision.by)\(decision.reason.map { ": \($0)" } ?? "")")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
         .padding(14)
         .frame(width: width, alignment: .leading)
@@ -42,12 +55,12 @@ struct PinCard: View {
     private var header: some View {
         HStack(spacing: 8) {
             Badge(row.label, color: row.isQuestion ? .purple : .accentColor, monospaced: true)
-            Text(verbatim: row.kind.capitalized).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(verbatim: ReviewRowView.kindWord(row.kind)).font(.system(size: 11)).foregroundStyle(.secondary)
             if let time = whenText {
                 Text(verbatim: time).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             }
-            if let confidence = row.confidence {
-                Text(verbatim: "\(Int((confidence * 100).rounded())) %")
+            if let confidence = row.confidence, let words = MeetingsWords.confidence(confidence) {
+                Text(verbatim: words)
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
                     .accessibilityLabel("Confidence \(Int((confidence * 100).rounded())) percent")
             }
@@ -70,7 +83,7 @@ struct PinCard: View {
     private func partView(_ part: RowPart) -> some View {
         switch part {
         case .who(let text):
-            line("Who", text)
+            if row.isQuestion || !ReviewRowView.whoRepeatsTitle(text, title: row.what, when: row.whenText) { line("Who", text) }
         case .said(let text, let speaker, _):
             VStack(alignment: .leading, spacing: 2) {
                 if let speaker { Text(verbatim: speaker).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary) }
@@ -83,9 +96,12 @@ struct PinCard: View {
         case .when:
             EmptyView()
         case .asks(let pieces):
-            line("Asks", pieces.map(\.text).joined())
-        case .settles(let text, _):
-            line("Settles", text)
+            // A question's title is what it asks: the same sentence again under "Asks" said it twice.
+            if !row.isQuestion { line("Asks", pieces.map(\.text).joined()) }
+        case .settles(let text, let items):
+            // The rows by their words where the list knows them: "It settles 1 item" did not say which.
+            let names = items.compactMap(reference)
+            line("Settles", names.count == items.count && !names.isEmpty ? names.joined(separator: ", ") : text)
         case .reason(let pieces):
             line("Why", pieces.map(\.text).joined())
         case .other:
@@ -100,9 +116,16 @@ struct PinCard: View {
         }
     }
 
+    /// The answers the card lists: the candidates of an open row. The card does not answer, so the actions ("None of
+    /// these", "Several voices", "Skip") are left out, and a decided row shows its decision instead.
+    static func shownChoices(_ row: ReviewRow) -> [RowChoice] {
+        guard row.isOpen else { return [] }
+        return row.choices.filter { !["none", "split", "skip"].contains($0.role) }
+    }
+
     /// The choices, highest confidence first (R49); a choice without a confidence keeps its place after them.
     private var choices: some View {
-        let sorted = row.choices.enumerated().sorted { lhs, rhs in
+        let sorted = Self.shownChoices(row).enumerated().sorted { lhs, rhs in
             switch (lhs.element.confidence, rhs.element.confidence) {
             case let (l?, r?): return l == r ? lhs.offset < rhs.offset : l > r
             case (.some, nil): return true
@@ -111,7 +134,7 @@ struct PinCard: View {
             }
         }.map(\.element)
         return PinChoiceChips(items: sorted.map { choice in
-            choice.confidence.map { "\(choice.label) \(Int(($0 * 100).rounded())) %" } ?? choice.label
+            MeetingsWords.confidence(choice.confidence).map { "\(choice.label) \($0)" } ?? choice.label
         })
     }
 

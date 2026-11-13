@@ -33,6 +33,7 @@ A meeting argument is a meeting id, a unique prefix of it, `last`, or a source r
 
 | Command | What it does |
 |---|---|
+| `speakers stats <meeting> [--attendance <platform>\|<file>]` | Per label: origin, turns, spoken time, spans, with hints. A span joins turns up to `--gap` apart (2 minutes): it says when the label was there. `--json` also lists each turn by itself as `talk`, which the Meetings window draws as the talk-time lanes |
 | `people [query] [--meeting <meeting> [--at <time>]] [--limit <n>] [--hidden] [--json]` | The people directory: everyone the meetings, the projects, Contacts and the people book name, one row per person, matched with case and accents ignored and ranked (see [People](#people)). `--json` prints `{ query, people, total, sources }`; a source that is off or refused says why in `sources` |
 | `people add <name> [--email <address>] [--note <text>]`, `people hide <person> [--show]` | Add a person to the people book, or give one it has an email or a note; hide a person from every list, or show them again |
 | `people merge <a> <b> [--name <name>] [--yes]`, `people unmerge <token>` | Show two people as one. Without `--yes` it prints the meetings that name either of them and the speaker labels renamed to them, and writes nothing; with `--yes` it writes the merge and prints its token, which `unmerge` takes. No meeting record changes |
@@ -744,6 +745,10 @@ sure of"):
 A meeting has at most `global.suggest.questionCap` (12) open questions, whatever the number of `suggest` runs.
 `listen` asks by priority, at most `playback.listen.roundCap` (12) per round and none under `minPriority` (0.5). A
 split uses no budget: its parts come next and share their parent's unit, so the header shows `3/12 · part 2/4`.
+
+Through the service an answer can leave its look-alikes open: `decision.apply` with
+`{ kind: "answer", question, answer, lookAlikes: "leave" }` decides the question and what it decides, nothing more
+(the window's "Only this question" in its "This also affects" sheet). `listen` always settles them.
 
 Each answer settles compatible look-alikes. A speaker answer requires the same single label, exact range and
 signature, and an offered answer; its items gain +0.3 up to 0.9, closing questions that reach the threshold. A word

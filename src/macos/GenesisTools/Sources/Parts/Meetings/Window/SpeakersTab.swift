@@ -33,29 +33,25 @@ struct SpeakersTab: View {
                         lanes(stats, names: renames)
                             .listRowSeparator(.hidden)
                         ForEach(speakers) { speaker in
-                            VStack(alignment: .leading, spacing: 4) {
-                                SpeakerRow(speaker: SpeakerStat(speaker), rename: renames[speaker.label], stacked: stacked,
-                                           hints: MeetingsWords.speakerHints(stats.hints, for: speaker.label),
-                                           play: speaker.firstSec.map { first in { detail.play(at: first, from: .speakerChip) } }) {
-                                    detail.rename(label: speaker.label, to: $0)
-                                }
-                                ForEach(Array(stats.hints.filter { $0.label == speaker.label && !($0.ranges ?? []).isEmpty }.enumerated()),
-                                        id: \.offset) { _, hint in
-                                    SpeakerHintChips(ranges: hint.ranges ?? [], longestClipSec: longestClipSec,
-                                                     maxShown: hintChips > 0 ? hintChips : MeetingsPreferences.Speakers.hintChips.defaultValue,
-                                                     play: { from, to in playRange(from, to) },
-                                                     zoom: { from, to in zoom(from, to) },
-                                                     review: { reviewing = speaker.label })
-                                        .padding(.leading, 4)
-                                }
-                            }
+                            SpeakerRow(speaker: SpeakerStat(speaker), rename: renames[speaker.label], stacked: stacked,
+                                       hints: MeetingsWords.speakerHintLines(stats.hints, for: speaker.label),
+                                       play: speaker.firstSec.map { first in { detail.play(at: first, from: .speakerChip) } },
+                                       chips: { line in
+                                           if !line.ranges.isEmpty {
+                                               SpeakerHintChips(ranges: line.ranges, longestClipSec: longestClipSec,
+                                                                maxShown: hintChips > 0 ? hintChips : MeetingsPreferences.Speakers.hintChips.defaultValue,
+                                                                play: { from, to in playRange(from, to) },
+                                                                zoom: { from, to in zoom(from, to) },
+                                                                review: { reviewing = speaker.label })
+                                           }
+                                       }, commit: { detail.rename(label: speaker.label, to: $0) })
                         }
                     }
                     .listStyle(.inset)
                 }
                 .sheet(item: Binding(get: { reviewing.map(ReviewLabel.init) }, set: { reviewing = $0?.label })) { review in
                     HintRangesSheet(label: review.label, names: renames,
-                                    ranges: stats.hints.filter { $0.label == review.label }.flatMap { $0.ranges ?? [] },
+                                    ranges: MeetingsWords.speakerHintLines(stats.hints, for: review.label).flatMap(\.ranges),
                                     longestClipSec: longestClipSec,
                                     play: { from, to in playRange(from, to) },
                                     zoom: { from, to in zoom(from, to) },

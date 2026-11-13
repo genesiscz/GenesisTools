@@ -27,7 +27,7 @@ struct TalkTimeBlock: Equatable, Hashable {
     var isJoined: Bool { spans > 1 }
 }
 
-/// A banner in points: one question, or several closer than a banner's width merged into "? N".
+/// A banner in points: one question, or several closer than a banner's width merged into "? ×N".
 struct TalkTimeBanner: Equatable, Hashable {
     let x: CGFloat
     let ids: [String]
@@ -63,9 +63,25 @@ enum TalkTimeLayout {
         }
     }
 
-    /// The banners at `width` points; questions closer than `mergeWidth` merge into one "? N" banner.
+    /// The turn ticks a joined block draws: each at least `gap` points from the tick before it and from the block's
+    /// ends. A block that joins hundreds of short turns drew a tick every point or two, which read as a barcode.
+    static func shownTicks(_ block: TalkTimeBlock, gap: CGFloat = 6) -> [CGFloat] {
+        var shown: [CGFloat] = []
+        var last = block.x
+        for tick in block.ticks where tick - last >= gap && block.x + block.width - tick >= gap {
+            shown.append(tick)
+            last = tick
+        }
+        return shown
+    }
+
+    /// The room a banner with a label takes ("? Q12" in bold 10.5 pt with its padding, and a gap).
+    static let bannerWidth: CGFloat = 46
+
+    /// The banners at `width` points; questions closer than `mergeWidth` merge into one "? ×N" banner ("? 2" read as question 2). The merge
+    /// distance is a banner's own width: at 22 pt two labelled banners 22 to 45 pt apart drew over each other.
     static func banners(_ questions: [TalkTimeQuestion], durationSec: Double, width: CGFloat,
-                        mergeWidth: CGFloat = 22) -> [TalkTimeBanner] {
+                        mergeWidth: CGFloat = TalkTimeLayout.bannerWidth) -> [TalkTimeBanner] {
         guard durationSec > 0, width > 0 else { return [] }
         let scale = width / CGFloat(durationSec)
         var groups: [[TalkTimeQuestion]] = []
@@ -77,7 +93,7 @@ enum TalkTimeLayout {
             }
         }
         return groups.map { group in
-            let text = group.count == 1 ? (group[0].label.map { "? \($0)" } ?? "?") : "? \(group.count)"
+            let text = group.count == 1 ? (group[0].label.map { "? \($0)" } ?? "?") : "? ×\(group.count)"
             return TalkTimeBanner(x: CGFloat(group[0].atSec) * scale, ids: group.map(\.id), text: text, atSec: group[0].atSec)
         }
     }
@@ -146,13 +162,13 @@ struct SpeakerTalkTimeLanes: View {
                     .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.compactWidth }) { compact = $0 }
                 if showsQuestions && !questions.isEmpty {
                     row(name: Text("Open questions").font(.system(size: 11)).foregroundStyle(.secondary)) { width in
-                        bannerLane(width: width)
+                        bannerLane(width: width).frameProbe("meetings.lanes.banners")
                     } share: { EmptyView() }
                     .frame(height: 26)
                 }
                 ForEach(sortedSpeakers) { speaker in
                     row(name: nameLabel(speaker)) { width in
-                        lane(speaker, width: width)
+                        lane(speaker, width: width).frameProbe("meetings.lanes.lane")
                     } share: {
                         Text(verbatim: shareText(speaker))
                             .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
@@ -162,10 +178,10 @@ struct SpeakerTalkTimeLanes: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(accessibilityText(speaker))
                     .accessibilityAction(named: "Play the first stretch") {
-                        if let first = speaker.spans.first { playSpan(first.fromSec, first.toSec) }
+                        if let first = speaker.talkSpans.first { playSpan(first.fromSec, first.toSec) }
                     }
                 }
-                row(name: EmptyView()) { _ in ruler } share: { EmptyView() }
+                row(name: EmptyView()) { _ in ruler.frameProbe("meetings.lanes.ruler") } share: { EmptyView() }
                     .frame(height: 16)
             }
         }
@@ -177,10 +193,15 @@ struct SpeakerTalkTimeLanes: View {
 
     private func row<Name: View, Lane: View, Share: View>(name: Name, @ViewBuilder lane: @escaping (CGFloat) -> Lane,
                                                          @ViewBuilder share: () -> Share) -> some View {
+        // Each side column is a stack of its own: a width on an empty name or share is a width on nothing, so the row
+        // of the questions and the row of the ruler had a wider lane than the speakers, and neither a banner nor a
+        // clock time stood over the second it names.
         HStack(spacing: 12) {
-            name.frame(width: compact ? Self.compactNameWidth : Self.nameWidth, alignment: .leading)
+            ZStack(alignment: .leading) { name }
+                .frame(width: compact ? Self.compactNameWidth : Self.nameWidth, alignment: .leading)
             GeometryReader { proxy in lane(proxy.size.width) }
-            share().frame(width: compact ? Self.compactShareWidth : Self.shareWidth, alignment: .trailing)
+            ZStack(alignment: .trailing) { share() }
+                .frame(width: compact ? Self.compactShareWidth : Self.shareWidth, alignment: .trailing)
         }
     }
 
@@ -196,7 +217,9 @@ struct SpeakerTalkTimeLanes: View {
     }
 
     private func lane(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker, width: CGFloat) -> some View {
-        let blocks = TalkTimeLayout.blocks(speaker.spans, durationSec: durationSec, width: width)
+        // The turns, not the spans: a span joins turns up to two minutes apart, so two people who took turns for
+        // 43 seconds each drew as one bar over the whole meeting.
+        let blocks = TalkTimeLayout.blocks(speaker.talkSpans, durationSec: durationSec, width: width)
         let selected = speaker.label == selectedLabel
         let active = activeRange
         return Canvas { context, size in
@@ -207,9 +230,10 @@ struct SpeakerTalkTimeLanes: View {
                 let isActive = active.map { $0.overlaps(block.fromSec...block.toSec) } ?? false
                 let color: Color = isActive ? .accentColor : Color.secondary.opacity(selected ? 0.75 : 0.5)
                 context.fill(Path(roundedRect: rect, cornerRadius: 2.5), with: .color(color))
-                for tick in block.ticks {
+                for tick in TalkTimeLayout.shownTicks(block) {
                     let line = Path(CGRect(x: tick, y: rect.minY + 1.5, width: 1, height: rect.height - 3))
-                    context.fill(line, with: .color(Color(nsColor: .windowBackgroundColor).opacity(0.7)))
+                    // Quiet: at 0.7 the ticks of a long meeting drew over the turns they divide.
+                    context.fill(line, with: .color(Color(nsColor: .windowBackgroundColor).opacity(0.4)))
                 }
             }
         }
@@ -300,6 +324,6 @@ struct SpeakerTalkTimeLanes: View {
     }
 
     private func accessibilityText(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker) -> String {
-        "\(displayName(speaker)), \(shareText(speaker, full: true)), \(Plural.count(speaker.turns, "turn")), \(Plural.count(speaker.spans.count, "stretch", "stretches"))"
+        "\(displayName(speaker)), \(shareText(speaker, full: true)), \(Plural.count(speaker.turns, "turn")), \(Plural.count(speaker.talkSpans.count, "stretch", "stretches"))"
     }
 }

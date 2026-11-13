@@ -67,6 +67,43 @@ final class JSONRPCSocketClientTests: XCTestCase {
         XCTAssertNil(error as? JSONRPCSocketClient.RemoteError)
     }
 
+    /// A socket path longer than a Unix socket address holds (a service in a home deep in a temporary folder) is
+    /// reached through a short link; the first client refused it, so a window in a test home never met its service.
+    func testAPathLongerThanASocketAddressConnectsThroughAShortLink() throws {
+        let files = FileManager.default
+        let deep = files.temporaryDirectory
+            .appendingPathComponent("gt-socket-test-\(UUID().uuidString)")
+            .appendingPathComponent(String(repeating: "a", count: 60))
+        try files.createDirectory(at: deep, withIntermediateDirectories: true)
+        defer { try? files.removeItem(at: deep.deletingLastPathComponent()) }
+        let long = deep.appendingPathComponent("service.sock").path
+        // A peer of its own: the fake peer serves one connection, and the set-up client holds the first one's.
+        let other = FakeRPCPeer()
+        try other.start()
+        defer { other.stop() }
+        try files.createSymbolicLink(atPath: long, withDestinationPath: other.path)
+        XCTAssertGreaterThan(long.utf8.count, 103)
+
+        XCTAssertEqual(JSONRPCSocketClient.connectablePath(peer.path, limit: 104), peer.path, "a path that fits is used as it is")
+        let link = try XCTUnwrap(JSONRPCSocketClient.connectablePath(long, limit: 104))
+        defer { try? files.removeItem(atPath: link) }
+        XCTAssertLessThan(link.utf8.count, 104)
+        XCTAssertEqual(try files.destinationOfSymbolicLink(atPath: link), long)
+        XCTAssertEqual(JSONRPCSocketClient.connectablePath(long, limit: 104), link, "the same path keeps its link")
+        XCTAssertNil(JSONRPCSocketClient.connectablePath(long, limit: 104, linkFolder: deep), "a link folder that is too deep cannot help")
+
+        let far = JSONRPCSocketClient(path: long, callbackQueue: DispatchQueue(label: "test.socket-client.long"))
+        defer { far.close() }
+        XCTAssertNoThrow(try far.connect())
+        let answered = expectation(description: "the peer answered through the link")
+        let id = far.request("hello", params: [:], timeout: 3, errorData: false) { result in
+            if case .success = result { answered.fulfill() }
+        }
+        _ = try other.line { $0["method"] as? String == "hello" }
+        other.send(["jsonrpc": "2.0", "id": id, "result": ["ok": true]])
+        wait(for: [answered], timeout: 2)
+    }
+
     func testTheRecordersOldNameIsTheSameType() {
         XCTAssertTrue(LiveRecordingRPCClient.self == JSONRPCSocketClient.self)
         let old: LiveRecordingRPCClient = client

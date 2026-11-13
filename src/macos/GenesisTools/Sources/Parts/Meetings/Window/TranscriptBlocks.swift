@@ -205,6 +205,9 @@ struct TranscriptBlockView: View, Equatable {
     private var isHeard: Bool { heardLineID != nil }
     private var isSelected: Bool { !selected.isEmpty }
 
+    /// The widest a block's lines run: about 100 characters of the 13 pt text.
+    static let measure: CGFloat = 680
+
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             if showsAvatar {
@@ -219,6 +222,8 @@ struct TranscriptBlockView: View, Equatable {
                     )
                 }
             }
+            // A reader loses the way back to the start of a line of 180 characters, which a wide window drew.
+            .frame(maxWidth: Self.measure, alignment: .leading)
             Spacer(minLength: 0)
         }
         .padding(.vertical, 7)
@@ -259,9 +264,12 @@ struct TranscriptAvatar: View {
             .accessibilityHidden(true)
     }
 
-    /// "Mira Holt" is "MH", "Speaker 4" is "S4", an empty label is "?".
+    /// "Mira Holt" is "MH", "Speaker 4" is "S4", an empty label is "?". Only letters and digits count, so a label that
+    /// is a note in brackets ("[unclear: …]") is "UN", not "[\"".
     static func initials(_ speaker: String) -> String {
-        let words = speaker.split(whereSeparator: { $0.isWhitespace || $0 == "-" }).map(String.init)
+        let words = speaker.split(whereSeparator: { $0.isWhitespace || $0 == "-" })
+            .map { String($0.filter { $0.isLetter || $0.isNumber }) }
+            .filter { !$0.isEmpty }
         guard let first = words.first else { return "?" }
         if words.count == 1 { return String(first.prefix(2)).uppercased() }
         let second = words[1]

@@ -907,9 +907,35 @@ extension MeetingDetailModel {
 extension MeetingsWords {
     /// The signs about one label, as sentences under it.
     static func speakerHints(_ hints: [SpeakerHint], for label: String) -> [String] {
-        hints.filter { $0.label == label }.map { hint in
-            hintSentence(hint) + (hint.strength.map { " (\($0) sign)" } ?? "")
+        speakerHintLines(hints, for: label).map(\.text)
+    }
+
+    /// The signs of one label as lines, each with the stretches its chips play or show. Several silences of one label
+    /// are one line with a chip each: three "Silent from … to …" sentences in a row read as a wall, and their times
+    /// were plain text nobody could click.
+    static func speakerHintLines(_ hints: [SpeakerHint], for label: String) -> [SpeakerHintLine] {
+        let own = hints.filter { $0.label == label }
+        let silences = own.filter { $0.kind == "label-drift" && $0.fromSec != nil && $0.toSec != nil }
+        var lines: [SpeakerHintLine] = []
+        var silenceShown = false
+        for hint in own {
+            let isSilence = silences.contains(hint)
+            if isSilence, silenceShown { continue }
+            if isSilence {
+                silenceShown = true
+                let ranges = silences.map { SpeakerHint.Range(lines: 0, fromSec: $0.fromSec, toSec: $0.toSec) }
+                let levels: [String] = ["strong", "normal", "weak"]
+                let strength = levels.first { level in silences.contains { $0.strength == level } }
+                let sentence = silences.count == 1 ? hintSentence(hint)
+                    : "Silent \(silences.count) times while in the call, so the voice is under other labels"
+                lines.append(SpeakerHintLine(sentence: sentence, strength: strength, ranges: ranges))
+            } else {
+                lines.append(SpeakerHintLine(sentence: hintSentence(hint), strength: hint.strength, ranges: hint.ranges ?? []))
+            }
         }
+        // The strongest sign first, each weight in the engine's order: a weak note stood above the warning it sat with.
+        let weight = { (line: SpeakerHintLine) in ["strong", "normal", "weak"].firstIndex(of: line.strength ?? "") ?? 3 }
+        return lines.enumerated().sorted { (weight($0.element), $0.offset) < (weight($1.element), $1.offset) }.map(\.element)
     }
 
     /// What one sign means for the label it sits under. A kind this build does not know shows its name.
@@ -939,6 +965,12 @@ extension MeetingsWords {
     }
 
     /// "0:12 to 25:40": where a label speaks first and last.
+    /// Facts joined by " · " that wrap only between facts. A narrow column broke "00:03 to 2:25:58" after its first time
+    /// and "1 h 02 min" after "1 h", so one fact read as two.
+    static func factsLine(_ facts: [String]) -> String {
+        facts.map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: " · ")
+    }
+
     static func speakerSpan(_ speaker: SpeakerStat) -> String? {
         guard let first = speaker.firstSec, let last = speaker.lastSec else { return nil }
         return "\(MeetingsFormat.clock(first)) to \(MeetingsFormat.clock(last))"

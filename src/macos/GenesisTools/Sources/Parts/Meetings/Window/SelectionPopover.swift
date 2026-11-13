@@ -265,11 +265,11 @@ struct StagedCommentsBar: View {
         }
     }
 
-    /// "listen agent", "claude-code agent, session 7f3a".
+    /// "listen agent", "Claude Code agent, session 7f3a": the harness by its name, not by its id.
     static func listenerName(_ actor: DecisionActor) -> String {
         if let harness = actor.harness {
             let session = actor.session.map { ", session \($0.prefix(4))" } ?? ""
-            return "\(harness) agent\(session)"
+            return "\(Harness(runtimeAgent: harness)?.label ?? harness) agent\(session)"
         }
         return "\(actor.kind) agent"
     }

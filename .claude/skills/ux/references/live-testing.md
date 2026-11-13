@@ -72,3 +72,23 @@
   and files in the user's apps.
 - When a whole window stops reacting, first read its unified log for an exception (`command log show --predicate
   'processID == <pid>' --last 10m | rg -i "exception|raise"`), then theorise.
+
+## A window on a sandbox home (2026-11-10)
+
+For a window that talks to a service of its own (Meetings), a live check on copied data:
+
+- The home goes through a SHORT path: `GENESIS_TOOLS_HOME` under `/tmp/cc/<project>/<session>/…` gives a service
+  socket path over 104 bytes, which a Unix socket cannot hold. The client now connects through a short link, but any
+  other tool that opens the socket may not; a symlink such as `/tmp/cc/<project>/lf-<session prefix>` to the home
+  keeps every path short.
+- `GENESIS_TOOLS_BIN=<worktree>/tools` makes the app start the worktree's service, not the main checkout's.
+- Off-screen pictures: `<build>/GenesisTools --meetings --width 1400 --height 900 --snapshot <png> --meeting <id>
+  --tab items`, with `--play '{"kind":"item","id":"i12"}'` for the playing dock. Keep one script that also appends
+  each command to a `capture.txt` beside the pictures.
+- Before trusting a picture, read the sandbox's `logs/app-perf.log` for a fallback line ("the command answers
+  it", "Live updates off"): on its fallback path the window draws less and proves nothing about the service path.
+- Take the "before" pictures before the first build of the change, or keep a copy of the old executable. On
+  2026-11-10 the old executable was unusable once the change's first test build had run (a new modification time,
+  and the system killed it at start), so the "before" pictures had to come from an older run with other row states.
+- An accessibility `AXValue` write does not reach a SwiftUI text field's binding, and a popover is a window of its
+  own: type with real keys (the app in front), and capture the popover's window, not the main one.

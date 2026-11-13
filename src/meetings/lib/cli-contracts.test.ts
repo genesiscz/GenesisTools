@@ -439,6 +439,19 @@ describe("rows --json: the review rows (F3)", () => {
         expect(all.hidden.lowPriority).toBe(0);
     });
 
+    test("a decided row says what it was decided as (the answer, the spelling, the speaker); an open or rejected row says nothing", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const decided = (index: number, status: "confirmed" | "rejected") =>
+            reviewRow(record, { ...record.items[index]!, status });
+
+        expect(reviewRow(record, record.items[5]!).answer).toBe("EMP");
+        expect(decided(0, "confirmed").answer).toBe("EMP");
+        expect(decided(1, "confirmed").answer).toBe("Alice Example");
+        expect(decided(0, "rejected").answer).toBeUndefined();
+        expect(reviewRow(record, record.items[0]!).answer).toBeUndefined();
+        expect(reviewRow(record, record.items[2]!).answer).toBeUndefined();
+    });
+
     test("a question reads as parts: who, when, what it asks without the baked time, what it settles", async () => {
         const { reviewRow } = await import("./review-rows");
         const speaker = reviewRow(record, record.items[3]!);
@@ -488,6 +501,32 @@ describe("rows --json: the review rows (F3)", () => {
             ["split", "split", undefined],
             ["skip", "skip", undefined],
         ]);
+    });
+
+    test("a word question without a candidate offers Keep as heard: None of these named nothing there", async () => {
+        const { reviewRow } = await import("./review-rows");
+        const bare = meetingRecordSchema.parse({
+            id: "2026-11-05-bare",
+            title: "Bare",
+            start: at,
+            createdAt: at,
+            createdBy: "new",
+            items: [
+                question("i1", { question: 'What is "Hohem"?', heard: "Hohem" }),
+                question("i2", { about: "speaker", question: 'Who speaks under "Speaker 2"?' }),
+            ],
+        });
+        const labels = (index: number) =>
+            reviewRow(bare, bare.items[index]!).choices.map((choice) => [choice.label, choice.role, choice.value]);
+
+        expect(labels(0)).toEqual([
+            ["Keep as heard", "none", "none of these"],
+            ["Skip", "skip", "skip"],
+        ]);
+        expect(labels(1)[0]).toEqual(["None of these", "none", "none of these"]);
+        expect(reviewRow(record, record.items[2]!).choices.find((choice) => choice.role === "none")?.label).toBe(
+            "None of these"
+        );
     });
 
     test("typed candidate scores win over the saved strings, best first, and a score that does not read is left out", async () => {

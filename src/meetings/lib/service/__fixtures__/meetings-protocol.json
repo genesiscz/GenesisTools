@@ -1855,6 +1855,13 @@
                   "turns": 1
                 }
               ],
+              "talk": [
+                {
+                  "fromSec": 2,
+                  "toSec": 6.800000000000001,
+                  "turns": 1
+                }
+              ],
               "leaves": [],
               "firstSec": 2,
               "lastSec": 6.800000000000001
@@ -1868,6 +1875,13 @@
               "words": 6,
               "spokenSec": 2.4000000000000004,
               "spans": [
+                {
+                  "fromSec": 9,
+                  "toSec": 11.4,
+                  "turns": 1
+                }
+              ],
+              "talk": [
                 {
                   "fromSec": 9,
                   "toSec": 11.4,
@@ -2209,7 +2223,8 @@
                 "by": "an agent (Claude Code, session 11111111)",
                 "action": "confirm",
                 "at": "2026-11-03T10:00:00.000Z"
-              }
+              },
+              "answer": "Alex Example"
             }
           ],
           "hidden": {

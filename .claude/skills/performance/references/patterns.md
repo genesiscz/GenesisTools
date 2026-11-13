@@ -48,6 +48,21 @@ slowness is one of these shapes again.
   417 ms with its default threads, for the same output (c468a81cd3). Threads that each stat the tree can cost more
   CPU than they save in wall time.
 
+## A fallback nobody sees
+
+The Meetings window reads through a resident service on a socket and falls back to one `tools meetings` process per
+read when the service does not answer. In a sandbox home the socket path was too long for a Swift client, so every
+read took the process path (about 250 ms of runtime start per call, the figure of the swift skill's fix table), two
+reads that exist only on the service returned nothing, and the window started the service again every 30 to 60 s for
+as long as it was open (the live check of 2026-11-10; nothing was measured beyond the log lines). No test and no
+picture said "slow path".
+
+- A fallback logs once with its reason and shows in the surface that uses it. A reader of a benchmark or a live
+  check asserts first which path served the call.
+- Classify the failure before retrying. "Not up yet" earns a start and a retry. A failure that cannot heal by
+  itself (a path too long, a protocol mismatch, a missing binary) earns one clear message and no timer.
+- A start that costs a process is throttled, and its throttle state is visible (`failedStarts` in the perf log).
+
 ## Schedulers, ticks and daemons
 
 - **Overlap independent legs.** The session-rows walk runs beside the usage poll, so a tick lasts as long as the

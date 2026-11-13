@@ -149,6 +149,11 @@ export const reviewRowSchema = z.object({
             at: z.string().optional(),
         })
         .optional(),
+    /**
+     * What a decided row was decided as: a question's answer, a confirmed word's spelling, a confirmed range's
+     * speaker. `what` ends in it, but a one-line reader cuts `what` before its end.
+     */
+    answer: z.string().optional(),
 });
 export type ReviewRow = z.infer<typeof reviewRowSchema>;
 

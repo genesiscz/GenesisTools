@@ -98,22 +98,30 @@ struct PinCluster: Identifiable, Equatable {
         return order.first { state in pins.contains { $0.state == state } } ?? .done
     }
 
-    /// Pins of a view of `range` that is `width` wide, merged where a pin sits closer than `minGap` points to the one
-    /// before it (a chain merges whole). Pins outside the view are left out.
-    static func clusters(_ pins: [TimelinePin], in range: ClosedRange<Double>, width: CGFloat, minGap: CGFloat = 6) -> [PinCluster] {
+    /// Pins of a view of `range` that is `width` wide, merged so that no two marks overlap: a pin joins the mark before
+    /// it while it sits within `markWidth` points of that mark's first pin, and a mark never comes closer than
+    /// `markWidth` to the one before it. A mark so stays within `markWidth` of its pins, and a dense stretch reads as a
+    /// row of counts, not as one count for the whole meeting. Pins outside the view are left out.
+    ///
+    /// The first rule merged pins closer than 6 pt. A mark is 16 pt wide, so marks 6 to 16 pt apart drew over each
+    /// other on a long meeting's strip.
+    static func clusters(_ pins: [TimelinePin], in range: ClosedRange<Double>, width: CGFloat,
+                         markWidth: CGFloat = PinMark.markWidth) -> [PinCluster] {
         let placed = pins.filter { range.contains($0.sec) }
             .map { (pin: $0, x: TimelineGeometry.x($0.sec, in: range, width: width)) }
             .sorted { $0.x < $1.x }
         var groups: [[(pin: TimelinePin, x: CGFloat)]] = []
         for item in placed {
-            if let last = groups.last?.last, item.x - last.x < minGap {
+            if let first = groups.last?.first, item.x - first.x < markWidth {
                 groups[groups.count - 1].append(item)
             } else {
                 groups.append([item])
             }
         }
-        let marks = groups.map { group in
-            (pins: group.map(\.pin), x: ((group.first?.x ?? 0) + (group.last?.x ?? 0)) / 2)
+        var marks: [(pins: [TimelinePin], x: CGFloat)] = []
+        for group in groups {
+            let middle = ((group.first?.x ?? 0) + (group.last?.x ?? 0)) / 2
+            marks.append((pins: group.map(\.pin), x: marks.last.map { max(middle, $0.x + markWidth) } ?? middle))
         }
         return marks.enumerated().map { index, mark in
             let next = index + 1 < marks.count ? marks[index + 1].x : width
@@ -139,11 +147,10 @@ struct TimelinePinsRow: View {
     var actions: Actions = .init()
     /// Show the short text beside a pin when there is room (R6).
     var showsText: Bool = true
-    var minGap: CGFloat = 6
 
     var body: some View {
         GeometryReader { proxy in
-            let clusters = PinCluster.clusters(pins, in: view, width: proxy.size.width, minGap: minGap)
+            let clusters = PinCluster.clusters(pins, in: view, width: proxy.size.width)
             ZStack(alignment: .topLeading) {
                 ForEach(clusters) { cluster in
                     PinMark(cluster: cluster, showsText: showsText, actions: actions)
@@ -160,6 +167,8 @@ struct TimelinePinsRow: View {
 /// One pin, or one merged mark with its count.
 struct PinMark: View {
     static let iconWidth: CGFloat = 16
+    /// The room one mark takes on its lane: the icon, or a two-digit count in its capsule, and a gap.
+    static let markWidth: CGFloat = 20
 
     let cluster: PinCluster
     let showsText: Bool
@@ -167,7 +176,7 @@ struct PinMark: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        // lint-rules-ignore: short list (pins closer than 6 pt merge, so a lane holds at most its width / 6 marks; each stays a focusable button, because the keyboard focus opens its card, G-CARD-1)
+        // lint-rules-ignore: short list (marks keep 20 pt apart, so a lane holds at most its width / 20 of them; each stays a focusable button, because the keyboard focus opens its card, G-CARD-1)
         Button {
             if cluster.isSingle, let pin = cluster.pins.first { actions.select(pin.id) } else { actions.expand(cluster.range) }
         } label: {
@@ -179,7 +188,9 @@ struct PinMark: View {
                 } else {
                     Text(verbatim: "\(cluster.pins.count)")
                         .font(.system(size: 9, weight: .bold).monospacedDigit())
-                        .foregroundStyle(.white)
+                        // The playing group's capsule is the text colour (white in the dark look), so its count
+                        // takes the window's colour; white on white showed an empty capsule.
+                        .foregroundStyle(cluster.state == .playing ? Color(nsColor: .windowBackgroundColor) : .white)
                         .padding(.horizontal, 4)
                         .frame(minWidth: Self.iconWidth, minHeight: 14)
                         .background(Capsule().fill(tint))

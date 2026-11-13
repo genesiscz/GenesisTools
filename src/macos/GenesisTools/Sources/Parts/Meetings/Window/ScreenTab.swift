@@ -81,6 +81,20 @@ struct FrameRow: View, Equatable {
         a.frame == b.frame && a.displayName == b.displayName && a.showAll == b.showAll && a.stacked == b.stacked
     }
 
+    /// The lines a row lists before "N more lines…": with its header about as tall as the picture beside it (a
+    /// 220 pt thumbnail of a 16:10 screen is 138 pt). At 14 lines each row was two pictures tall, most of it menu words.
+    static let shownLines = 6
+
+    /// The lines in reading order, with the band at the frame's top (the menu bar: its top 4 %) moved to the end. The
+    /// OCR reads top down, so a display's first frame listed "Messages, Edit, View, Conversation…" in all six places,
+    /// and the content that changed stood behind "N more lines…". Nothing is left out; the sheet still boxes every line.
+    static func listed(_ lines: [OcrBox], frameHeight: Double) -> [OcrBox] {
+        let band = frameHeight * 0.04
+        let top = lines.filter { $0.y + $0.height / 2 < band }
+        guard !top.isEmpty, top.count < lines.count else { return lines }
+        return lines.filter { $0.y + $0.height / 2 >= band } + top
+    }
+
     var body: some View {
         let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
                              : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
@@ -98,13 +112,13 @@ struct FrameRow: View, Equatable {
                     Text(verbatim: frame.changed.isEmpty ? "no new text" : Plural.count(frame.changed.count, "changed line"))
                         .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1).layoutPriority(1)
                 }
-                let lines = showAll ? (frame.lines ?? frame.changed) : frame.changed
-                ForEach(Array(lines.prefix(14).enumerated()), id: \.offset) { _, line in
+                let lines = Self.listed(showAll ? (frame.lines ?? frame.changed) : frame.changed, frameHeight: frame.height)
+                ForEach(Array(lines.prefix(Self.shownLines).enumerated()), id: \.offset) { _, line in
                     Text(verbatim: line.text).font(.system(size: 12)).lineLimit(1).textSelection(.enabled)
                 }
-                if lines.count > 14 {
+                if lines.count > Self.shownLines {
                     LiveButton(tooltip: "Show the frame large, with every line boxed", action: open) {
-                        Text(verbatim: "\(lines.count - 14) more lines…").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text(verbatim: "\(lines.count - Self.shownLines) more lines…").font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
             }

@@ -353,7 +353,7 @@ struct FlagMark: View {
                 Color.clear.frame(width: Self.hitWidth, height: max(22, lineHeight)).contentShape(Rectangle())
                 Rectangle().fill(Color.accentColor).frame(width: 2, height: lineHeight)
                     .offset(x: Self.lineX)
-                Text(verbatim: "⚑ \(text)")
+                Text(verbatim: text.isEmpty ? "⚑" : "⚑ \(text)")
                     .font(.system(size: compact ? 9 : 11, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.white)
                     .lineLimit(1)

@@ -4857,6 +4857,7 @@ describe("speakers stats text", () => {
             firstSec: 10,
             lastSec: 14,
             spans: [],
+            talk: [],
             leaves: [],
         });
         const printed: string[] = [];

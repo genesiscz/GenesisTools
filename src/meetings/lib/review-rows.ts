@@ -377,7 +377,13 @@ function questionChoices(record: MeetingRecord, question: QuestionItem): RowChoi
 
     return [
         ...ordered(answers),
-        { value: NONE_OF_THESE, label: "None of these", role: "none", action: answer(NONE_OF_THESE) },
+        {
+            value: NONE_OF_THESE,
+            // A word question without a candidate has no "these": the same answer reads as what it does to the word.
+            label: answers.length === 0 && question.about !== "speaker" ? "Keep as heard" : "None of these",
+            role: "none",
+            action: answer(NONE_OF_THESE),
+        },
         ...(question.about === "speaker"
             ? [{ value: "split", label: "Several voices", role: "split" as const, action: { kind: "split" as const } }]
             : []),
@@ -563,6 +569,23 @@ function choicesOf(record: MeetingRecord, item: MeetingItem): RowChoice[] {
     }
 }
 
+/** What a decided item was decided as; nothing for an open or rejected one, and for a kind that decides no value. */
+function decidedAs(item: MeetingItem): string | undefined {
+    if (item.kind === "question") {
+        return item.answer;
+    }
+
+    if (item.status !== "confirmed") {
+        return undefined;
+    }
+
+    if (item.kind === "term") {
+        return item.proposed;
+    }
+
+    return item.kind === "speaker-range" ? item.speaker : undefined;
+}
+
 /** One item's row. `transcript`: the meeting's lines, for what was said; without it a row names no words. */
 export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?: Transcript): ReviewRow {
     const lines = transcript ? linesOf(transcript) : undefined;
@@ -570,6 +593,7 @@ export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?:
     const needs = inputNeeded(item) ?? (item.kind === "question" && item.status === "suggested" ? "listen" : undefined);
     const decision = item.decision;
     const actor = decision?.actor ?? { kind: "unknown" as const };
+    const answer = decidedAs(item);
     return {
         id: item.id,
         label: item.kind === "question" ? questionLabel(record, item.id) : item.id,
@@ -597,6 +621,7 @@ export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?:
                   },
               }
             : {}),
+        ...(answer ? { answer } : {}),
     };
 }
 

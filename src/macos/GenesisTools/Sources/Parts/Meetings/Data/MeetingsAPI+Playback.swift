@@ -262,7 +262,12 @@ extension MeetingsAPI {
             let firstSec: Double?
             let lastSec: Double?
             let spans: [Span]
+            /// Each turn by itself (`talk`): what a lane draws. `spans` join turns up to two minutes apart.
+            var talk: [Span]? = nil
             var id: String { label }
+
+            /// When the label talks: its turns, or its spans from a service that does not send the turns yet.
+            var talkSpans: [Span] { talk ?? spans }
         }
 
         struct Result: Decodable, Equatable {

@@ -55,7 +55,7 @@ final class MeetingsReviewFixTests: XCTestCase {
             ("meetings.transcript.dimPast", .flag(true)), ("meetings.transcript.avatars", .flag(true)),
             ("meetings.transcript.blockBreakSec", .number(0)), ("meetings.selection.clipSec", .number(5)),
             ("meetings.speakers.showQuestions", .flag(true)), ("meetings.speakers.hintChips", .number(3)),
-            ("meetings.screen.height", .number(150)), ("meetings.timeline.collapseHeight", .number(560)),
+            ("meetings.screen.height", .number(150)), ("meetings.timeline.collapseHeight", .number(700)),
             ("meetings.rows.openPersonPicker", .flag(true)), ("meetings.playback.keys", .flag(true)),
         ]
         for (key, value) in picks {
@@ -69,6 +69,8 @@ final class MeetingsReviewFixTests: XCTestCase {
         XCTAssertEqual(MeetingsPreferences.Transcript.breakAfterGapSec(10), 10)
         XCTAssertTrue(MeetingsPlayerBar.collapses(timelineShown: true, windowHeight: 500, collapseHeight: 560))
         XCTAssertFalse(MeetingsPlayerBar.collapses(timelineShown: true, windowHeight: 500, collapseHeight: 0), "Never folds")
+        XCTAssertTrue(MeetingsPlayerBar.collapses(timelineShown: true, windowHeight: 600),
+                      "D13: at the smallest window the full dock left about 90 pt of rows, so the default folds it")
         SidePanelCatalog.write(.number(0), key: MeetingsPreferences.Panes.collapseHeight.key, to: defaults)
         XCTAssertEqual(MeetingsPreferences.Panes.collapseHeight.value(defaults), 0, "Never is stored as a whole number and read back")
     }

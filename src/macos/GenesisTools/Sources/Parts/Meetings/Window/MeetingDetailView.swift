@@ -27,9 +27,11 @@ struct MeetingDetailView: View {
     static let transcriptPaneMinWidth: CGFloat = 820
 
     static func trailingPane(tab: MeetingDetailModel.Tab, width: CGFloat, setting: MeetingsPreferences.Panes.TranscriptPane,
-                             sidePanelOpen: Bool) -> TrailingPane? {
+                             sidePanelOpen: Bool, hasTranscript: Bool = true) -> TrailingPane? {
         if sidePanelOpen { return .settings }
-        guard tab == .items else { return nil }
+        // A meeting without a transcript has nothing for the pane: beside "No items yet" it was a second empty state
+        // that said the same thing at another height.
+        guard tab == .items, hasTranscript else { return nil }
         switch setting {
         case .always: return .transcript
         case .never: return nil
@@ -70,7 +72,7 @@ struct MeetingDetailView: View {
     private var trailingPane: TrailingPane? {
         Self.trailingPane(tab: detail.tab, width: width,
                           setting: MeetingsPreferences.Panes.TranscriptPane(rawValue: transcriptPaneSetting) ?? .auto,
-                          sidePanelOpen: window.sidePanelOpen)
+                          sidePanelOpen: window.sidePanelOpen, hasTranscript: window.meeting(detail.id)?.hasTranscript ?? true)
     }
 
     @ViewBuilder
@@ -114,6 +116,8 @@ struct MeetingDetailView: View {
                         .accessibilityIdentifier("meetings.detail.reload")
                 }
             }
+            // The time, the badges, the project and the labels share one wrapping line. The project and the labels had a
+            // line of their own, so a 900 x 600 window spent about 240 of its 600 pt on the header.
             WrapLayout(spacing: 8, lineSpacing: 8) {
                 Text(verbatim: whenLine(overview)).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
                 if let overview { MeetingBadgesView(meeting: overview, open: { detail.show($0) }) }
@@ -121,11 +125,10 @@ struct MeetingDetailView: View {
                     Badge("Recording failed", color: KitPalette.removed, symbol: "exclamationmark.triangle")
                         .instantTooltip("The screen recording stopped by itself (\(reason)); the frames until then are kept.")
                 }
-            }
-            HStack(spacing: 10) {
                 projectPicker(record)
-                labelsPicker(record).frame(maxWidth: .infinity, alignment: .leading)
+                labelsPicker(record)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             if let failure = detail.record.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
                            fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.reloadRecord() }])
@@ -225,9 +228,9 @@ struct MeetingDetailView: View {
         let labels = record?.labels ?? []
         let known = record?.project.flatMap { window.settings.value?.projects[$0]?.labels } ?? []
         let all = (known + labels.filter { !known.contains($0) })
-        // A project with many labels wraps them to a new row; in an HStack the last ones were squeezed until
-        // "+ Label" broke into two lines (2026-11-05).
-        return WrapLayout(spacing: 6, lineSpacing: 6) {
+        // The labels are items of the header's wrapping line, so many labels wrap to a new row; in an HStack the last
+        // ones were squeezed until "+ Label" broke into two lines (2026-11-05).
+        return Group {
             ForEach(all, id: \.self) { label in
                 let on = labels.contains(label)
                 Button {
@@ -369,7 +372,8 @@ struct LoadablePane<Value: Equatable, Content: View>: View {
     var body: some View {
         if let noSource, state.failure?.code == NoTranscriptSource.code {
             EmptyState(symbol: "waveform.slash", text: "This meeting has no \(noSource.what)",
-                       detail: "It has no linked source with a transcript or audio, so there is nothing to list yet. Linking its Wispr Flow meeting brings both.",
+                       // The window has no link action, so the text names the command: it said only that linking helps.
+                       detail: "It has no linked source with a transcript or audio, so there is nothing to list yet. Its Wispr Flow meeting brings both. Link it in a terminal:\ntools meetings link <meeting> wisprflow:<id>",
                        actionTitle: noSource.showScreen == nil ? nil : "Show the screen recording", action: noSource.showScreen)
         } else {
             pane

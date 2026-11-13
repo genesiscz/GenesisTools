@@ -38,13 +38,17 @@ struct ItemsTab: View {
                                                    keeping: detail.heldFolds)
         let ids = shown.map(\.id)
         let open = rows.rows.filter(\.isOpen).count
+        let items = detail.record.value?.items ?? []
+        // The bar above the list says how many rows wait when it shows; the list's own title says it when it does not.
+        let barShows = BulkConfirmBar.shows(items)
         return ScrollViewReader { proxy in
             ScrollView {
                 // A lazy stack, not a List: for an accessibility client a List built, measured and recycled every row
                 // it held (2026-11-06/07). The stack holds only the rows near the viewport.
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    ItemsHeader(text: open == 0 ? "Nothing waits for you in this meeting"
-                                    : "\(Plural.count(open, "row")) \(open == 1 ? "waits" : "wait") for you")
+                    if !barShows {
+                        ItemsHeader(text: Self.waitingWords(open: open))
+                    }
                     if rows.hidden.lowPriority > 0 {
                         HStack(spacing: 8) {
                             Text(verbatim: "\(Plural.count(rows.hidden.lowPriority, "low-priority question")) hidden, as the terminal hides them")
@@ -55,9 +59,11 @@ struct ItemsTab: View {
                         .padding(.horizontal, 16)
                     }
                     ForEach(shown) { row in
+                        let ruled = Self.ruleAbove(row, first: shown.first?.id, held: detail.heldFolds.contains(row.id))
                         ReviewRowView(row: row, detail: detail, player: detail.window?.player, selected: detail.selectedRow == row.id,
                                       editing: detail.editingRow == row.id, busy: detail.busyItems.contains(row.id),
-                                      meanwhile: detail.decidedMeanwhile[row.id], choiceKeys: choiceKeys == "on")
+                                      meanwhile: detail.decidedMeanwhile[row.id], choiceKeys: choiceKeys == "on",
+                                      held: detail.heldFolds.contains(row.id))
                             // G33: a row this window just answered keeps its open height until the reader scrolls, so
                             // the next row does not move up under the eye.
                             .frame(minHeight: detail.heldFolds.contains(row.id) ? layout.heights[row.id] : nil, alignment: .top)
@@ -72,6 +78,14 @@ struct ItemsTab: View {
                             }
                             .id(row.id)
                             .padding(.horizontal, 6)
+                            // A hairline above each open row: 430 rows of four to six lines each ran into one another,
+                            // and the eye could not find where a row starts. It is drawn on the row, not as a view of
+                            // its own before it: a second view of the same list element took the row's id, and a jump
+                            // to the row stopped at its hairline, with the row below the fold.
+                            .padding(.top, ruled ? 7 : 0)
+                            .overlay(alignment: .top) {
+                                if ruled { Divider().opacity(0.6).padding(.horizontal, 16).padding(.top, 3) }
+                            }
                             .frameProbe("meetings.row.\(row.id)")
                     }
                     if open == 0, !rows.rows.isEmpty {
@@ -104,27 +118,81 @@ struct ItemsTab: View {
             }
             .onKeyPress(characters: .decimalDigits) { press in pickNumber(press.characters, in: shown) }
             // A pin's click on a meeting that was not open selects its row before the rows land (G-PLAY-6).
-            .onAppear { if let id = detail.selectedRow { proxy.scrollTo(id) } }
+            .onAppear { if let id = detail.selectedRow { keepInView(id, proxy: proxy) } }
             .onChange(of: detail.selectedRow) { _, id in
                 guard let id else { return }
-                layout.expectScroll()
-                proxy.scrollTo(id)
+                keepInView(id, proxy: proxy)
                 if let row = shown.first(where: { $0.id == id }), row.isOpen { detail.window?.player.precut(row.target, in: detail.id) }
             }
         }
+        // The notices float over the list's bottom (or top) edge. That edge's room is kept clear while they show, so a
+        // row the list keeps in view after a Skip or an answer stands above them, not under "Skipped Q2 · Undo". The
+        // rows do not move when a notice comes or goes: only how far the list scrolls to show a row changes.
+        .safeAreaInset(edge: noticeEdge, spacing: 0) { Color.clear.frame(height: noticeRoom) }
         .safeAreaInset(edge: .top, spacing: 0) {
-            BulkConfirmBar(detail: detail, items: detail.record.value?.items ?? [],
+            BulkConfirmBar(detail: detail, items: items, open: open,
                            applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)
         }
+    }
+
+    /// The edge the window's notices float at.
+    private var noticeEdge: VerticalEdge {
+        detail.window?.noticePlace.alignment.vertical == .top ? .top : .bottom
+    }
+
+    /// The room the notices take at their edge, so a row kept in view stays clear of them. The stack does not tell its
+    /// height, so this counts its pills.
+    private var noticeRoom: CGFloat {
+        Self.noticeRoom(count: detail.notices.notices.count, limit: detail.notices.visibleLimit)
+    }
+
+    /// A pill with an Undo is about 60 pt (its words, then the Undo under them; 59 pt in a 900 pt window); the stack adds
+    /// 6 pt between pills and about 18 pt to the edge (its own padding and the overlay's). Folded notices add one
+    /// "+N more" chip.
+    static func noticeRoom(count: Int, limit: Int?) -> CGFloat {
+        guard count > 0 else { return 0 }
+        let shown = min(count, limit ?? count)
+        let chip: CGFloat = shown < count ? 28 : 0
+        return 18 + CGFloat(shown) * 60 + CGFloat(shown - 1) * 6 + chip
+    }
+
+    /// "430 rows wait for you", "1 row waits for you", or that nothing waits.
+    static func waitingWords(open: Int) -> String {
+        open == 0 ? "Nothing waits for you in this meeting" : "\(Plural.count(open, "row")) \(open == 1 ? "waits" : "wait") for you"
+    }
+
+    /// The bar's one line: the rows that wait, then the suggestions at the apply line. `compact` is the form a narrow
+    /// column takes. One line, because the count as a title under the bar cost a second line at every size.
+    static func barWords(open: Int, atLine: Int, line: String, compact: Bool) -> String {
+        let suggestions = atLine > 0 ? (compact ? "\(atLine) at \(line) or more" : "\(Plural.count(atLine, "suggestion")) at \(line) or more")
+                                     : "none at \(line) or more"
+        guard open > 0 else { return atLine > 0 ? suggestions : "No suggestion at \(line) or more" }
+        return compact ? "\(open) wait · \(suggestions)" : "\(waitingWords(open: open)) · \(suggestions)"
+    }
+
+    /// A hairline stands above an open row, except the list's first row and a row that keeps its place after an answer.
+    static func ruleAbove(_ row: ReviewRow, first: String?, held: Bool) -> Bool {
+        row.isOpen && !held && row.id != first
     }
 
     /// Up and Down: the next row in list order, kept in view.
     private func step(_ offset: Int, rows: [String], proxy: ScrollViewProxy) -> KeyPress.Result {
         guard let next = Self.step(from: detail.selectedRow, by: offset, in: rows) else { return .ignored }
         detail.selectedRow = next
-        layout.expectScroll()
-        proxy.scrollTo(next)
+        keepInView(next, proxy: proxy)
         return .handled
+    }
+
+    /// Scrolls a row into view. A lazy stack places a far row by an estimate of the rows before it, so the row is
+    /// asked for once more when the rows around it are laid out: a row a pin or a reference jumped to stopped below
+    /// the fold.
+    private func keepInView(_ id: String, proxy: ScrollViewProxy) {
+        layout.expectScroll()
+        proxy.scrollTo(id)
+        DispatchQueue.main.async {
+            layout.expectScroll()
+            proxy.scrollTo(id)
+        }
     }
 
     private static let scrollSpace = "meetings.items.scroll"
@@ -212,19 +280,26 @@ private struct ItemsHeader: View {
 private struct BulkConfirmBar: View {
     let detail: MeetingDetailModel
     let items: [MeetingItem]
+    /// The review rows that wait (questions and suggestions).
+    let open: Int
     /// The config's apply line (`assign.applyAbove`), the default threshold.
     let applyAbove: Double
 
+    /// The bar shows while a suggestion waits (a question is answered by ear, not confirmed in bulk).
+    static func shows(_ items: [MeetingItem]) -> Bool {
+        items.contains { $0.status == "suggested" && $0.kind != "question" }
+    }
+
     var body: some View {
-        let waiting = items.filter { $0.status == "suggested" && $0.kind != "question" }
-        if !waiting.isEmpty {
+        if Self.shows(items) {
             let atLine = MeetingDetailModel.confirmable(items, atOrAbove: applyAbove).count
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
-                    Text(atLine > 0
-                         ? "\(Plural.count(atLine, "suggestion")) at \(pct(applyAbove)) or more"
-                         : "No suggestion at \(pct(applyAbove)) or more")
-                        .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    ViewThatFits(in: .horizontal) {
+                        words(compact: false, atLine: atLine)
+                        words(compact: true, atLine: atLine)
+                    }
+                    .accessibilityAddTraits(.isHeader)
                     Spacer(minLength: 8)
                     MenuButton(items: { menu() }) {
                         Label("Confirm all…", systemImage: "checkmark.circle").font(.system(size: 12))
@@ -241,6 +316,11 @@ private struct BulkConfirmBar: View {
     }
 
     private func pct(_ value: Double) -> String { MeetingsWords.confidence(value) ?? "" }
+
+    private func words(compact: Bool, atLine: Int) -> some View {
+        Text(verbatim: ItemsTab.barWords(open: open, atLine: atLine, line: pct(applyAbove), compact: compact))
+            .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+    }
 
     private func menu() -> [MenuButtonItem] {
         var lines = [0.9, 0.8]

@@ -310,9 +310,25 @@ final class MeetingsUXTests: XCTestCase {
     func testTheOpenMeetingHasItsRowInNeedsYou() throws {
         let needs = try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()).needsYou
         XCTAssertEqual(needs.row(for: "a"), "q:a", "a meeting opened by its id selects its first row (MU6)")
-        XCTAssertEqual(needs.row(for: "s:a"), "s:a")
+        XCTAssertEqual(needs.row(for: "s:a"), "q:a", "a meeting has one row, so its suggestions lead to that row")
         XCTAssertEqual(needs.row(for: "b"), "b")
         XCTAssertNil(needs.row(for: "c"), "a meeting outside Needs you has no row, and the list says so")
+    }
+
+    func testNeedsYouListsAMeetingOnceWithAllItWaitsFor() throws {
+        let needs = try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()).needsYou
+        XCTAssertEqual(needs.groups.map(\.title), ["Without a project", "Questions to answer"],
+                       "the meeting with questions and suggestions stands once, so no group is left for its suggestions")
+        XCTAssertEqual(needs.groups.flatMap(\.rows).count, needs.total, "the list has as many rows as the sidebar counts")
+        let both = try XCTUnwrap(needs.groups.last?.rows.first)
+        XCTAssertEqual(both.reason(applyAbove: 0.5), "2 questions · 3 suggestions at 50 % or more")
+        typealias Row = MeetingsOverview.NeedsYou.Row
+        XCTAssertEqual(Row(id: "x", noProject: false, questions: 1, suggestions: 0).reason(applyAbove: 0.5), "1 question to answer by ear")
+        XCTAssertEqual(Row(id: "x", noProject: false, questions: 0, suggestions: 3).reason(applyAbove: 0.5), "3 suggestions at 50 % or more")
+        XCTAssertEqual(Row(id: "x", noProject: true, questions: 2, suggestions: 3).reason(applyAbove: 0.5),
+                       "Choose its project · 2 questions · 3 suggestions")
+        XCTAssertEqual(Row(id: "x", noProject: true, questions: 0, suggestions: 0).tag, "x", "a bare id opens the meeting's first tab")
+        XCTAssertEqual(Row(id: "x", noProject: true, questions: 0, suggestions: 3).tag, "s:x", "suggestions open Items")
     }
 
     func testARangeReadsFromAndToWithNoDash() throws {
@@ -338,8 +354,11 @@ final class MeetingsUXTests: XCTestCase {
         """.utf8))
         XCTAssertEqual(MeetingsWords.speakerSpan(stats.speakers[0]), "00:12 to 25:40", "MU8")
         XCTAssertNil(MeetingsWords.speakerSpan(stats.speakers[1]))
+        let line = MeetingsWords.factsLine(["1 h 02 min spoken", "00:03 to 2:25:58"])
+        XCTAssertEqual(line.components(separatedBy: " "), ["1\u{00A0}h\u{00A0}02\u{00A0}min\u{00A0}spoken", "·", "00:03\u{00A0}to\u{00A0}2:25:58"],
+                       "the line may break only around the dot between two facts")
         XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 2"),
-                       ["May hold several people (weak sign)", "Silent while in the call, so the voice is under other labels"])
+                       ["May hold several people (weak evidence)", "Silent while in the call, so the voice is under other labels"])
         XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 1"), [])
     }
 
@@ -493,6 +512,68 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertLessThanOrEqual(picker.width, 401, "R2-MU4: the picker fits the column: \(picker)")
     }
 
+    /// The questions' row and the ruler's row had a wider lane than the speakers' rows (a width set on an empty
+    /// name or share is a width on nothing), so no banner and no clock time stood over the second it names.
+    func testTheQuestionsAndTheRulerShareTheSpeakersLane() throws {
+        let speakers = try JSONDecoder().decode([MeetingsAPI.MeetingSpeakers.Speaker].self, from: Data("""
+        [{"label":"Alice","origin":"call","turns":2,"lines":2,"words":40,"spokenSec":600,"firstSec":0,"lastSec":3600,
+          "spans":[{"fromSec":0,"toSec":300,"turns":1},{"fromSec":3300,"toSec":3600,"turns":1}]}]
+        """.utf8))
+        for width in [900.0, 440.0] {
+            let lanes = SpeakerTalkTimeLanes(speakers: speakers, durationSec: 3600, timed: true,
+                                             questions: [TalkTimeQuestion(id: "i1", atSec: 1800, label: "Q1")],
+                                             playSpan: { _, _ in }, zoom: { _, _ in })
+            let lane = try probe("meetings.lanes.lane", width: width, lanes)
+            let banners = try probe("meetings.lanes.banners", width: width, lanes)
+            let ruler = try probe("meetings.lanes.ruler", width: width, lanes)
+            XCTAssertGreaterThan(lane.width, 100, "the lane has room at \(width) pt: \(lane)")
+            XCTAssertEqual(banners.minX, lane.minX, accuracy: 0.5, "the banners start where the lane starts at \(width) pt")
+            XCTAssertEqual(banners.width, lane.width, accuracy: 0.5, "and end where it ends: \(banners) against \(lane)")
+            XCTAssertEqual(ruler.minX, lane.minX, accuracy: 0.5, "the ruler starts where the lane starts at \(width) pt")
+            XCTAssertEqual(ruler.width, lane.width, accuracy: 0.5, "and ends where it ends: \(ruler) against \(lane)")
+        }
+    }
+
+    func testAStretchOfOneSecondNamesOneTime() {
+        XCTAssertEqual(HintChip(fromSec: 7632, toSec: 7632.4, lines: 1, action: .play, present: []).rangeText, "2:07:12",
+                       "2:07:12 to 2:07:12 read as a mistake")
+        XCTAssertEqual(HintChip(fromSec: 724, toSec: 751, lines: 3, action: .play, present: []).rangeText, "12:04 to 12:31")
+    }
+
+    /// Two people who take turns: the lanes draw the turns. From the spans (turns up to two minutes apart joined)
+    /// each drew as one bar over the whole meeting.
+    func testALaneDrawsTheTurnsNotTheJoinedSpans() throws {
+        let speaker = try JSONDecoder().decode(MeetingsAPI.MeetingSpeakers.Speaker.self, from: Data("""
+        {"label":"Alice","origin":"call","turns":3,"lines":3,"words":30,"spokenSec":12,"firstSec":0,"lastSec":40,
+         "spans":[{"fromSec":0,"toSec":42,"turns":3}],
+         "talk":[{"fromSec":0,"toSec":5,"turns":1},{"fromSec":26,"toSec":31,"turns":1},{"fromSec":40,"toSec":42,"turns":1}]}
+        """.utf8))
+        XCTAssertEqual(speaker.talkSpans.count, 3)
+        let blocks = TalkTimeLayout.blocks(speaker.talkSpans, durationSec: 43, width: 430)
+        XCTAssertEqual(blocks.map(\.x), [0, 260, 400], "three blocks where the label talks, with the pauses between them")
+        XCTAssertEqual(TalkTimeLayout.blocks(speaker.spans, durationSec: 43, width: 430).count, 1, "the cause: one span over the meeting")
+        let old = try JSONDecoder().decode(MeetingsAPI.MeetingSpeakers.Speaker.self, from: Data("""
+        {"label":"Bob","origin":"call","turns":1,"lines":1,"words":3,"spokenSec":2,"spans":[{"fromSec":0,"toSec":2,"turns":1}]}
+        """.utf8))
+        XCTAssertEqual(old.talkSpans, old.spans, "a service that does not send the turns still draws its spans")
+    }
+
+    func testAJoinedBlockDrawsItsTurnTicksApart() {
+        let dense = TalkTimeBlock(fromSec: 0, toSec: 100, x: 10, width: 40, spans: 9, ticks: [11, 12, 14, 17, 20, 24, 30, 44, 48])
+        XCTAssertEqual(TalkTimeLayout.shownTicks(dense), [17, 24, 30, 44],
+                       "a tick every point or two read as a barcode: ticks keep 6 pt from each other and from the block's ends")
+        let few = TalkTimeBlock(fromSec: 0, toSec: 100, x: 0, width: 100, spans: 3, ticks: [30, 60])
+        XCTAssertEqual(TalkTimeLayout.shownTicks(few), [30, 60])
+    }
+
+    func testAProjectListsOnlyTheRulesItHas() {
+        XCTAssertTrue(ProjectSummary.rules(folders: [], calendars: [], words: [], labels: []).isEmpty,
+                      "four lines that each said none told nothing: a project without a rule says so in one sentence")
+        let rules = ProjectSummary.rules(folders: [], calendars: ["Work"], words: [], labels: ["design", "ops"])
+        XCTAssertEqual(rules.map(\.title), ["Calendars", "Labels"])
+        XCTAssertEqual(rules.map(\.values), [["Work"], ["design", "ops"]])
+    }
+
     func testANarrowSpeakerRowKeepsItsNumbersReadable() throws {
         let speaker = try JSONDecoder().decode(SpeakerStat.self, from: Data("""
         {"label":"Speaker 2","turns":42,"lines":42,"words":3779,"spokenSec":1440,"firstSec":375,"lastSec":3152}
@@ -535,15 +616,52 @@ final class MeetingsUXTests: XCTestCase {
          {"kind":"a-future-kind","label":"Dan"}]
         """.utf8))
         func words(_ label: String) -> [String] { MeetingsWords.speakerHints(hints, for: label) }
-        XCTAssertEqual(words("Alice"), ["Silent from 06:15 to 30:00 while in the call, so the voice is under other labels (weak sign)"],
+        XCTAssertEqual(words("Alice"), ["Silent from 06:15 to 30:00 while in the call, so the voice is under other labels (weak evidence)"],
                        "R2-MU7: label-drift is the person's own label staying silent, not a switch partway")
-        XCTAssertEqual(words("Bob"), ["Speaks while not in the call, so 3 lines are someone else (strong sign)"])
-        XCTAssertEqual(words("Speaker 1"), ["Only you were in the call, so its 12 lines are you (strong sign)"])
-        XCTAssertEqual(words("Speaker 2"), ["Only Bob was in the call, so its 1 line is Bob (normal sign)"])
-        XCTAssertEqual(words("Carol"), ["Says goodbye and speaks again 2 times, so another voice may follow (normal sign)"])
-        XCTAssertEqual(words("Speaker 3"), ["One turn next to Speaker 4, maybe one voice split in two (weak sign)"])
-        XCTAssertEqual(words("Speaker 5"), ["May hold several people (normal sign)"])
+        XCTAssertEqual(words("Bob"), ["Speaks while not in the call, so 3 lines are someone else (strong evidence)"])
+        XCTAssertEqual(words("Speaker 1"), ["Only you were in the call, so its 12 lines are you (strong evidence)"])
+        XCTAssertEqual(words("Speaker 2"), ["Only Bob was in the call, so its 1 line is Bob"])
+        XCTAssertEqual(words("Carol"), ["Says goodbye and speaks again 2 times, so another voice may follow"])
+        XCTAssertEqual(words("Speaker 3"), ["One turn next to Speaker 4, maybe one voice split in two (weak evidence)"])
+        XCTAssertEqual(words("Speaker 5"), ["May hold several people"])
         XCTAssertEqual(words("Dan"), ["A future kind"], "a kind this build does not know still shows its name")
+
+        // Each line carries the stretches its chips play or show; a silence's times are a chip, not plain text.
+        XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Alice").map(\.ranges),
+                       [[SpeakerHint.Range(lines: 0, fromSec: 375, toSec: 1800)]])
+        XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Bob")[0].ranges.count, 2)
+        XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Carol")[0].ranges, [])
+    }
+
+    func testSeveralSilencesOfOneLabelAreOneLineWithAChipEach() throws {
+        let hints = try JSONDecoder().decode([SpeakerHint].self, from: Data("""
+        [{"kind":"label-drift","label":"Alice","strength":"normal","fromSec":74,"toSec":3128},
+         {"kind":"several-people","label":"Alice","strength":"weak"},
+         {"kind":"label-drift","label":"Alice","strength":"weak","fromSec":3167,"toSec":4561},
+         {"kind":"label-drift","label":"Alice","strength":"normal","fromSec":4594,"toSec":8769},
+         {"kind":"label-drift","label":"Bob","strength":"normal","fromSec":10,"toSec":20}]
+        """.utf8))
+        let lines = MeetingsWords.speakerHintLines(hints, for: "Alice")
+        XCTAssertEqual(lines.map(\.text), ["Silent 3 times while in the call, so the voice is under other labels",
+                                           "May hold several people (weak evidence)"],
+                       "three sentences with the same words were a wall of text; the line takes the strongest of their signs")
+        XCTAssertEqual(lines.map(\.sentence), ["Silent 3 times while in the call, so the voice is under other labels", "May hold several people"],
+                       "the weight is not part of the sentence: it draws after it, quieter")
+        XCTAssertEqual(lines.map(\.isWeak), [false, true], "a weak sign draws as a note, so a stronger one stands out")
+        XCTAssertEqual(lines.map(\.symbol), ["exclamationmark.triangle", "info.circle"])
+        XCTAssertEqual(SpeakerHintLine(sentence: "Speaks while not in the call", strength: "strong", ranges: []).symbol,
+                       "exclamationmark.triangle.fill")
+        let mixed = try JSONDecoder().decode([SpeakerHint].self, from: Data("""
+        [{"kind":"leave-then-continues","label":"Alice","strength":"weak","leaves":[{"atSec":10}]},
+         {"kind":"several-people","label":"Alice","strength":"normal"},
+         {"kind":"absent-speaker","label":"Alice","strength":"strong","ranges":[{"lines":2,"fromSec":5,"toSec":9}]}]
+        """.utf8))
+        XCTAssertEqual(MeetingsWords.speakerHintLines(mixed, for: "Alice").map(\.strength), ["strong", "normal", "weak"],
+                       "the strongest sign stands first; a weak note stood above the warning it sat with")
+        XCTAssertEqual(lines[0].ranges.map(\.fromSec), [74, 3167, 4594])
+        XCTAssertEqual(HintChip.chips(for: lines[0].ranges).chips.map(\.action), [.show, .show, .show], "a long silence zooms the timeline")
+        XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Bob").map(\.text),
+                       ["Silent from 00:10 to 00:20 while in the call, so the voice is under other labels"])
     }
 
     /// "Notices float at" changed on the Settings page: the open pane read the place from the defaults on each draw, and

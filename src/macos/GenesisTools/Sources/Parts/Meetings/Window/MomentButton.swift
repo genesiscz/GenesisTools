@@ -25,7 +25,8 @@ struct MomentButton: View {
                     .font(.system(size: 8.5, weight: .bold))
                     .accessibilityHidden(true)
                 if let label {
-                    Text(verbatim: label).font(.system(size: 11.5, design: .monospaced))
+                    // One line at its own width: in a squeezed header a range wrapped at its dash.
+                    Text(verbatim: label).font(.system(size: 11.5, design: .monospaced)).lineLimit(1).fixedSize()
                 }
             }
             .foregroundStyle(reason == nil ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.tertiary))

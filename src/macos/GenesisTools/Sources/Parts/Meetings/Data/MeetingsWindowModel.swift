@@ -493,8 +493,10 @@ final class MeetingsWindowModel {
         next.items.formUnion(items)
         next.at = now
         bursts[key] = next
+        let open = detail.flatMap { $0.id == meeting ? $0 : nil }
         let text = Self.decisionNotice(entry, items: next.items.count, decisions: next.tokens.count,
-                                       meetingTitle: meeting == selectedMeetingID ? nil : self.meeting(meeting)?.displayTitle ?? meeting)
+                                       meetingTitle: meeting == selectedMeetingID ? nil : self.meeting(meeting)?.displayTitle ?? meeting,
+                                       label: { open?.rowName($0) ?? $0 })
         let tokens = next.tokens
         let notice = StackedNotice(id: next.notice, text: text, detail: entry.reason.map { "Why: \($0)" },
                                    actions: [.undo { [weak self] id in self?.revert(tokens, in: meeting, replacing: id) }])
@@ -503,13 +505,14 @@ final class MeetingsWindowModel {
 
     /// "An agent (Claude Code, session 3f98b772) confirmed i3", or for a burst "… decided 7 items", with the meeting
     /// named when it is not the open one.
-    static func decisionNotice(_ entry: JournalEntry, items: Int, decisions: Int, meetingTitle: String?) -> String {
+    static func decisionNotice(_ entry: JournalEntry, items: Int, decisions: Int, meetingTitle: String?,
+                               label: (String) -> String = { $0 }) -> String {
         let who = MeetingsWords.actor(entry.actor)
         let what: String
         if decisions > 1 {
             what = "decided \(Plural.count(items, "item"))"
         } else {
-            what = MeetingsWords.entryAction(entry)
+            what = MeetingsWords.entryAction(entry, label: label)
         }
         let sentence = who.prefix(1).uppercased() + who.dropFirst() + " " + what
         return meetingTitle.map { "\($0): \(sentence)" } ?? sentence

@@ -33,6 +33,8 @@ struct TranscriptBlocksPane: View {
     /// The pane's own header ("Transcript", Follows playback, Jump to now); the tab has its filter field instead and
     /// shows the follow controls in a slimmer line.
     var showsHeader = false
+    /// The tab's filter field, which takes the header's free room.
+    var headerField: AnyView?
 
     @AppStorage(MeetingsPreferences.Panes.followPlayback.key) private var followSetting =
         MeetingsPreferences.Panes.followPlayback.defaultValue
@@ -95,7 +97,11 @@ struct TranscriptBlocksPane: View {
             if showsHeader {
                 Text("Transcript").font(.system(size: 12, weight: .semibold))
             }
-            Spacer(minLength: 6)
+            if let headerField {
+                headerField.frame(maxWidth: .infinity)
+            } else {
+                Spacer(minLength: 6)
+            }
             Toggle(isOn: Binding(get: { isFollowing }, set: { following = $0; if $0 { jump += 1 } })) {
                 Label("Follows playback", systemImage: "arrow.down.to.line")
             }
@@ -111,7 +117,7 @@ struct TranscriptBlocksPane: View {
                 }
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, showsHeader ? 8 : 5)
+        .padding(.horizontal, 14).padding(.vertical, showsHeader || headerField != nil ? 8 : 5)
     }
 
     // MARK: Selection (R43)
@@ -212,6 +218,12 @@ private struct FollowingBlocks: View {
             .onChange(of: heard?.blockID) { _, block in
                 guard follows, let block else { return }
                 scroll(proxy, to: block)
+            }
+            // A pane that opens while a Moment plays starts at the heard line: it scrolled only when the heard block
+            // changed, so beside a clip that stays in one block it showed the meeting's first lines to the end.
+            .onAppear {
+                guard follows, let block = heard?.blockID else { return }
+                DispatchQueue.main.async { proxy.scrollTo(block, anchor: .center) }
             }
             .onChange(of: jump) { _, _ in
                 if let block = heard?.blockID { scroll(proxy, to: block) }

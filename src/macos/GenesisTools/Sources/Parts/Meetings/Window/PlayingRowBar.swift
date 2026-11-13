@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The bar that replaces a playing row's subtitle line, at the same height (G-ROW-1): the clip from its start to its
 /// end, the pad dim, the asked span bright, the flag on the boundary where the asked part begins (R46), the playhead,
-/// and "54:31 → 54:46" at the end. The flag has a 22 pt hit area and plays from just before the tone (G-PLAY-3); a
+/// and the clip's length ("15 s clip") at the end. The flag has a 22 pt hit area and plays from just before the tone (G-PLAY-3); a
 /// click on the bar seeks there. VoiceOver reads one adjustable element: swipe up or down seeks by `stepSec`.
 struct PlayingRowBar: View {
     let span: ZoomSpan
@@ -13,8 +13,20 @@ struct PlayingRowBar: View {
     /// The subtitle line's height, so the row does not change height when it starts or stops playing.
     var height: CGFloat = 17
     var stepSec: Double = 5
+    /// "15 s clip" after the bar. A narrow header leaves it out: the row's own time stands beside the bar.
+    var showsLength = true
     var onFlag: (Double) -> Void = { _ in }
     var onSeek: (Double) -> Void = { _ in }
+
+    /// The least width the bar is readable at: room for the pad, the asked span and the flag, and for the clip's
+    /// length when it shows it ("12 min clip").
+    static func smallestWidth(length: Bool) -> CGFloat { length ? 160 : 90 }
+
+    /// "7 s clip": how long the clip plays. The clip's two ends stood here ("1:49:47 → 1:49:54"), one second from the
+    /// row's own span beside the bar ("1:49:48–1:49:54"), and nothing said why the two ranges differ.
+    static func lengthText(_ span: ZoomSpan) -> String {
+        "\(MeetingsFormat.length(span.endSec - span.startSec) ?? "0 s") clip"
+    }
 
     private var clip: ClosedRange<Double> { span.startSec...max(span.startSec + 0.1, span.endSec) }
 
@@ -33,7 +45,9 @@ struct PlayingRowBar: View {
                         .frame(width: max(2, askEnd - askX), height: 10).offset(x: askX, y: mid - 5)
                     TimelinePlayhead(position: position, view: clip)
                         .frame(width: width, height: height - 2).offset(y: 1)
-                    FlagMark(text: MeetingsFormat.clock(span.fromSec), lineHeight: height, accessibility:
+                    // The flag alone: the row's time button beside the bar already says the asked time, and the
+                    // time on the flag covered half of a short bar.
+                    FlagMark(text: "", lineHeight: height, accessibility:
                              "Asked spot at \(MeetingsFormat.clock(span.spotSec)). Plays from there.", compact: true) {
                         onFlag(span.flagSeekTarget)
                     }
@@ -59,11 +73,13 @@ struct PlayingRowBar: View {
             }
             .accessibilityAction(named: "Play from the asked spot") { onFlag(span.flagSeekTarget) }
             .accessibilityIdentifier("meetings.row.minibar")
-            Text(verbatim: "\(MeetingsFormat.clock(span.startSec)) → \(MeetingsFormat.clock(span.endSec))")
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .fixedSize()
-                .accessibilityHidden(true)
+            if showsLength {
+                Text(verbatim: Self.lengthText(span))
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                    .accessibilityHidden(true)
+            }
         }
         .frame(height: height)
     }

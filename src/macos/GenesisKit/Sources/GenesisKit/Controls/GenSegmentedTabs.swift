@@ -46,11 +46,24 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     }
 
     public var body: some View {
+        if fillsWidth {
+            // Every title at its full size while they fit the width: a long title takes the room it needs from the
+            // short ones. Equal segments shrank only the long titles, so one strip drew two text sizes.
+            ViewThatFits(in: .horizontal) {
+                strip(scales: false)
+                strip(scales: true)
+            }
+        } else {
+            strip(scales: false)
+        }
+    }
+
+    private func strip(scales: Bool) -> some View {
         // The buttons: hit areas, hover fills and the frames the pill and the titles follow. Their own titles are
         // clear; the visible ones are the two layers above.
         HStack(spacing: 2) {
             ForEach(items, id: \.id) { item in
-                segment(item)
+                segment(item, scales: scales)
             }
         }
         .padding(2)
@@ -61,13 +74,13 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         }
         .overlayPreferenceValue(GenSegmentFrames.self) { frames in
             ZStack {
-                titles(ink.opacity(0.68))
+                titles(ink.opacity(0.68), scales: scales)
                     .mask {
                         Rectangle()
                             .overlay { pill(frames, fill: .black).blendMode(.destinationOut) }
                             .compositingGroup()
                     }
-                titles(.white)
+                titles(.white, scales: scales)
                     .mask { pill(frames, fill: .black) }
             }
             .allowsHitTesting(false)
@@ -81,12 +94,12 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         .chartAccessibilityIdentifier(identifier)
     }
 
-    private func segment(_ item: Item) -> some View {
+    private func segment(_ item: Item, scales: Bool) -> some View {
         let selected = item.id == selection
         return Button {
             selection = item.id
         } label: {
-            title(item, color: .clear)
+            title(item, color: .clear, scales: scales)
                 .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(GenSegmentStyle(selected: selected, ink: ink))
@@ -97,20 +110,21 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     }
 
     /// Every title in one colour, laid out exactly as the buttons are.
-    private func titles(_ color: Color) -> some View {
+    private func titles(_ color: Color, scales: Bool) -> some View {
         HStack(spacing: 2) {
             ForEach(items, id: \.id) { item in
-                title(item, color: color)
+                title(item, color: color, scales: scales)
             }
         }
         .padding(2)
     }
 
-    private func title(_ item: Item, color: Color) -> some View {
+    private func title(_ item: Item, color: Color, scales: Bool) -> some View {
         Text(item.title)
             .font(.system(size: 12, weight: item.id == selection ? .semibold : .medium))
             .lineLimit(1)
-            .minimumScaleFactor(fillsWidth ? 0.85 : 1)
+            .minimumScaleFactor(scales ? 0.85 : 1)
+            .fixedSize(horizontal: fillsWidth && !scales, vertical: false)
             .foregroundStyle(color)
             .padding(.horizontal, fillsWidth ? 4 : 10)
             .frame(minWidth: fillsWidth ? 0 : minSegmentWidth, maxWidth: fillsWidth ? .infinity : nil, minHeight: 24)

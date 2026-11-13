@@ -75,6 +75,21 @@ async function fixture(items: Record<string, unknown>[], labels: Record<string, 
 const person = { kind: "listen" } as const;
 
 describe("decision journal", () => {
+    test('an answer that leaves its look-alikes decides only its own question (the window\'s "Only this question")', async () => {
+        const fx = await fixture(lookAlikes());
+        const action = { kind: "answer", question: "Q1", answer: "ADO", lookAlikes: "leave" } as const;
+        const planned = await fx.journal.plan({ meeting: fx.meeting.id, action, actor: person });
+
+        expect(planned.entry).toMatchObject({ settled: [], decided: ["i1", "i3"] });
+
+        const { entry } = await fx.journal.apply({ meeting: fx.meeting.id, action, actor: person });
+
+        expect(entry).toMatchObject({ question: "i3", settled: [], decided: ["i1", "i3"] });
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADO" });
+        expect(fx.item("i4")).toMatchObject({ status: "suggested" });
+        expect(fx.item("i2")).toMatchObject({ status: "suggested", proposed: "ADA" });
+    });
+
     test("an answer and the look-alike it settled are one entry, and its token reverts both", async () => {
         const fx = await fixture(lookAlikes());
         const { entry } = await fx.journal.apply({

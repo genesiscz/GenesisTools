@@ -18,8 +18,8 @@ struct MeetingsPlayerBar: View {
         MeetingsPreferences.Panes.collapseHeight.defaultValue
     @State private var windowHeight: CGFloat = 0
 
-    /// Below `collapseHeight` (`meetings.timeline.collapseHeight`, 560 pt) the dock folds to one line: the full dock is
-    /// about 280 pt, and the rows keep the rest. 0 never folds it.
+    /// Below `collapseHeight` (`meetings.timeline.collapseHeight`, 700 pt) the dock folds to one line: the full dock is
+    /// about 330 pt with the strip and the screen, and the rows keep the rest. 0 never folds it.
     static func collapses(timelineShown: Bool, windowHeight: CGFloat,
                           collapseHeight: Int = MeetingsPreferences.Panes.collapseHeight.defaultValue) -> Bool {
         !timelineShown || (windowHeight > 0 && windowHeight < CGFloat(collapseHeight))
