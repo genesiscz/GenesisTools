@@ -140,10 +140,6 @@ export async function synchronizeHistory(options: {
 }> {
     const { reader, repository, providerId, signal } = options;
 
-    if (!reader.readMetadata) {
-        throw new Error(`${providerId} does not implement compact metadata reading`);
-    }
-
     signal?.throwIfAborted();
     const roots = [...new Set(options.roots.map(canonicalRoot))];
     const filtered = Boolean(
@@ -403,7 +399,7 @@ export async function synchronizeHistory(options: {
                 fullMetadataSnapshot: true,
             });
             readAttempts++;
-            const read = await reader.readMetadata!(source, { signal });
+            const read = await reader.readMetadata(source, { signal });
             issues.push(...read.issues);
             signal?.throwIfAborted();
 

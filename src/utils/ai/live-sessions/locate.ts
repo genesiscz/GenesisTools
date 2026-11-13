@@ -5,7 +5,7 @@ import {
     isAccountProviderAlias,
 } from "@genesiscz/utils/ai/providers/alias-list";
 import { findSessionsByTitle, type TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
-import { type CmuxTreeView, liveTree } from "@genesiscz/utils/cmux/live-layout";
+import { type CmuxTreeView, cmuxTreeView } from "@genesiscz/utils/cmux/live-layout";
 import {
     joinTmuxPanes,
     type LiveAgentSurface,
@@ -14,6 +14,7 @@ import {
     ttyName,
 } from "@genesiscz/utils/cmux/live-surfaces";
 import { loadAllSessionCmuxRefs, resolveRefsProvider, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import { type ReadCmuxTreeOptions, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyCommand, runsAgent } from "@genesiscz/utils/process/classify";
 import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
@@ -75,7 +76,8 @@ export interface LiveSessionReads {
     titles(query: string, provider: AccountProviderAlias): TitledSession[];
 }
 
-const EMPTY_TREE: CmuxTreeView = { caller: null, callerId: null, surfaces: new Map() };
+/** No surfaces: the tree when cmux answered that it has none, or did not answer a read that may go without it. */
+export const EMPTY_TREE: CmuxTreeView = { caller: null, callerId: null, surfaces: new Map() };
 
 /**
  * Which cmux surface shows each tmux pane. The listings are bounded; when tmux does not answer, no tmux-only session
@@ -95,16 +97,26 @@ export async function readTmuxJoin(tree: CmuxTreeView): Promise<Map<string, Tmux
     return joinTmuxPanes({ panes: panes.items, clients: clients.items, tree });
 }
 
-/** The real reads. No cmux means an empty tree: processes still answer. */
-export function liveSessionReads(): LiveSessionReads {
+/**
+ * The real reads. A failed tree read (cmux timed out, failed, or is backed off after it stopped answering) leaves
+ * the surfaces out, logged with its reason, and the processes still answer: every session then shows as a process
+ * row. The read is bounded (`tree-read.ts`), so a wedged cmux costs the first refresh the tree timeout and the
+ * next ones nothing. `tree` passes options to that read; a test injects its runner.
+ */
+export function liveSessionReads(tree: ReadCmuxTreeOptions = {}): LiveSessionReads {
     return {
         tree: async () => {
-            try {
-                return await liveTree();
-            } catch (error) {
-                log.debug({ error }, "cmux tree unavailable; only processes locate sessions");
+            const read = await readCmuxTree(tree);
+
+            if (!read.ok) {
+                log.debug(
+                    { reason: read.reason, error: read.error },
+                    "cmux tree unavailable; only processes locate sessions"
+                );
                 return EMPTY_TREE;
             }
+
+            return cmuxTreeView(read.tree);
         },
         tmux: readTmuxJoin,
         journal: () => loadAllSessionCmuxRefs().values(),

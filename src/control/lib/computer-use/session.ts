@@ -17,13 +17,11 @@ import { type ControlDriver, NativeControlDriver } from "../decision/native";
 import {
     candidatesFor,
     elementLabel,
-    expectedValueArgs,
     hasAncestorRole,
     type Observation,
     observationSchema,
     primaryWebArea,
     sameScope,
-    targetOrdinalArgs,
 } from "../decision/observation";
 import { NativeObservationSource } from "../decision/observation-source";
 import { runNativeSequence } from "../decision/sequence";
@@ -31,6 +29,16 @@ import { ControlSession } from "../decision/session";
 import { resolveVisualTarget, type VisualObservation, visualObservationSchema } from "../decision/visual";
 import { regionsCoveredByElements } from "../decision/visual-merge";
 import { replayWorkflow } from "../decision/workflow";
+import {
+    actArguments,
+    expectedValueArgs,
+    pinArguments,
+    type SeeRequest,
+    seeArguments,
+    webActivationKey,
+    webDispatchArguments,
+    withElement,
+} from "../native-protocol";
 import { type AxResult, runAxAsync } from "../runner";
 import { diffSnapshots, type SnapshotDiff } from "../snapshot-diff";
 import { NativeMenuSession } from "./menu";
@@ -253,25 +261,6 @@ function describeElements({
 }
 
 /**
- * An unprepared row, pinned by identity, so a window that re-renders between observe and act (a live
- * transcript, a clock) is re-resolved instead of refused with "UI changed; run see again". The stable
- * key goes first: targetKey folds in sibling text, so a clock beside the target changes it, while a
- * shared stable key is already promoted to the unique targetKey natively (promoteSharedStableKeys).
- */
-function rowPin(row: Observation["elements"][number], rows: Observation["elements"]): string[] {
-    const pin = row.stableKey ?? row.targetKey;
-    return pin
-        ? [
-              "--target-key",
-              pin,
-              "--revalidate-scope",
-              "element",
-              ...targetOrdinalArgs({ rows, row, key: pin, fields: ["targetKey", "stableKey"] }),
-          ]
-        : [];
-}
-
-/**
  * A right-click on an observed row. 🛑 Never `--prepare` and never in front: a context menu needs
  * neither the app in front nor the pointer, and preparing activated the target, which took the
  * user's focus every time an agent opened a menu (Martin, 2026-10-13). Native code opens the menu
@@ -297,21 +286,7 @@ export function secondaryClickArgs({
         ...(options.click_count === 2 ? ["--double"] : []),
         ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
         "--background",
-        ...rowPin(row, rows),
-    ];
-}
-
-/** `--prepare` with the row's targetKey, and its position when identical twins share that key. */
-function preparedPin(row: Observation["elements"][number], rows: Observation["elements"]): string[] {
-    return [
-        "--prepare",
-        ...(row.targetKey
-            ? [
-                  "--target-key",
-                  row.targetKey,
-                  ...targetOrdinalArgs({ rows, row, key: row.targetKey, fields: ["targetKey"] }),
-              ]
-            : []),
+        ...pinArguments({ action: "click", row, rows, prepare: false }),
     ];
 }
 
@@ -379,9 +354,9 @@ function describeWindowCandidates(result: AxResult): string | undefined {
 type ListedWindow<Window> = Omit<Window, "unavailable"> & { window_index: number; reason?: string };
 
 /** The `see` scope flags, including the query a query-scoped observation re-reads. */
-function observationScopeArgs(scope: string, query: AppRecord["query"]): string[] {
+function observedScope(scope: string, query: AppRecord["query"]): Pick<SeeRequest, "scope" | "query"> {
     if (scope !== "query") {
-        return ["--scope", scope];
+        return { scope };
     }
 
     if (!query) {
@@ -391,7 +366,7 @@ function observationScopeArgs(scope: string, query: AppRecord["query"]): string[
         );
     }
 
-    return ["--scope", "query", "--query", query.text, ...(query.role ? ["--query-role", query.role] : [])];
+    return { scope, query };
 }
 
 /** The scope a follow-up observation inherits; a query without its text cannot be inherited. */
@@ -413,18 +388,6 @@ function describeQueryWalk(query: NonNullable<Snapshot["query"]>): string {
     return `Query "${query.text}"${role}: ${query.matches} matches among ${query.walked} walked elements; rows are the matches, their ancestors and any sheet or modal container only.${hidden}`;
 }
 
-function webActivationKey(rows: Observation["elements"], target: Observation["elements"][number]) {
-    if (!hasAncestorRole(rows, target, "AXWebArea")) {
-        return undefined;
-    }
-    if (target.role === "AXLink") {
-        return "return";
-    }
-    if (["AXButton", "AXCheckBox", "AXRadioButton", "AXSwitch"].includes(target.role)) {
-        return "space";
-    }
-    return undefined;
-}
 /**
  * The computer-use API: stateful sessions over the native core, the class behind
  * `tools computer-use mcp|run` and `tools control mcp`. Its API reference is
@@ -718,43 +681,29 @@ export class ComputerUse {
                     : options.scope === undefined
                       ? prior?.query
                       : undefined;
-            const args = [
-                "see",
-                "--app",
-                options.app,
-                ...observationScopeArgs(query ? "query" : (options.scope ?? priorScope(prior)), query),
-                "--depth",
-                "50",
-            ];
-            if (!options.image) {
-                args.push("--no-image");
-            }
-            if (options.perception) {
-                args.push("--perception", options.perception);
-            }
-
             // A repeat OCR observation of the same window re-reads only the regions that changed.
+            let perceptionReuse: string | undefined;
             if (options.perception === "ocr") {
-                let cache = this.ocrCacheByApp.get(options.app);
-                if (!cache) {
-                    cache = this.ocrCaches.allocate("ocr");
-                    this.ocrCacheByApp.set(options.app, cache);
+                perceptionReuse = this.ocrCacheByApp.get(options.app);
+                if (!perceptionReuse) {
+                    perceptionReuse = this.ocrCaches.allocate("ocr");
+                    this.ocrCacheByApp.set(options.app, perceptionReuse);
                 }
-
-                args.push("--perception-reuse", cache);
             }
 
-            if (options.window_id !== undefined) {
-                args.push("--window-id", String(options.window_id));
-            } else if (options.window_index !== undefined) {
-                args.push("--window-index", String(options.window_index));
-            } else if (prior) {
-                args.push("--window-id", String(prior.snapshot.window.id));
-            }
             const capturePath = options.image ? this.artifacts.allocate("png") : undefined;
-            if (capturePath) {
-                args.push("--path", capturePath);
-            }
+            const args = seeArguments({
+                app: options.app,
+                ...observedScope(query ? "query" : (options.scope ?? priorScope(prior)), query),
+                depth: 50,
+                image: options.image,
+                perception: options.perception || undefined,
+                perceptionReuse,
+                windowId:
+                    options.window_id ?? (options.window_index === undefined ? prior?.snapshot.window.id : undefined),
+                windowIndex: options.window_index,
+                path: capturePath,
+            });
             try {
                 const budget = new OperationBudget({
                     timeoutMs: options.timeout_ms ?? this.timeoutMs,
@@ -1091,21 +1040,15 @@ export class ComputerUse {
             assertObservedWindow({ record, app: input.app, windowId: input.window_id });
             const argv = build(record);
             this.menus.close(input.app);
-            const args = [
-                "act",
-                "--app",
-                input.app,
-                "--snapshot",
-                record.snapshot.snapshot,
-                ...argv,
-                ...(input.allow_foreground ? ["--allow-foreground"] : []),
-                "--refresh",
-                ...(!record.image ? ["--no-image"] : []),
-            ];
             const capturePath = record.image ? this.artifacts.allocate("png") : undefined;
-            if (capturePath) {
-                args.push("--path", capturePath);
-            }
+            const args = actArguments({
+                app: input.app,
+                snapshot: record.snapshot.snapshot,
+                action: argv,
+                allowForeground: input.allow_foreground,
+                image: record.image,
+                path: capturePath,
+            });
             record.implicitActionAllowed = false;
             let result: AxResult;
             try {
@@ -1298,9 +1241,12 @@ export class ComputerUse {
                         ...(activationKey ? ["--keys", activationKey] : []),
                         // Unprepared, AXPress is pinned like a background click: a default left click on
                         // a row that exposes AXPress lands here and never reaches that branch.
-                        ...(options.prepare
-                            ? preparedPin(row, record.snapshot.elements)
-                            : rowPin(row, record.snapshot.elements)),
+                        ...pinArguments({
+                            action: activationKey ? "key" : "press",
+                            row,
+                            rows: record.snapshot.elements,
+                            prepare: options.prepare,
+                        }),
                     ];
                 }
                 // A browser page ignores a window-addressed click, so a page element that exposes no
@@ -1321,11 +1267,19 @@ export class ComputerUse {
                     ...(options.click_count === 2 ? ["--double"] : []),
                     ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
                     ...(options.prepare || foreground
-                        ? preparedPin(row, record.snapshot.elements)
+                        ? pinArguments({ action: "click", row, rows: record.snapshot.elements, prepare: true })
                         : (options.background ?? true)
                           ? // The post-feedback check resolves by stableKey anyway (SnapshotWorkflow
                             // validateAfterFeedback), so the pin adds no new way to fail.
-                            ["--background", ...rowPin(row, record.snapshot.elements)]
+                            [
+                                "--background",
+                                ...pinArguments({
+                                    action: "click",
+                                    row,
+                                    rows: record.snapshot.elements,
+                                    prepare: false,
+                                }),
+                            ]
                           : []),
                 ];
             },
@@ -1407,7 +1361,7 @@ export class ComputerUse {
                             y: options.y,
                             coordinateSpace: options.coordinate_space,
                         }),
-                        ...(windowRow ? rowPin(windowRow, rows) : []),
+                        ...pinArguments({ action: "scroll", row: windowRow, rows, prepare: false }),
                     ];
                 } else {
                     target = [
@@ -1474,9 +1428,7 @@ export class ComputerUse {
                     String(row.index),
                     ...flags,
                     ...(action === "key" ? expectedValueArgs(row) : []),
-                    ...(input.prepare
-                        ? preparedPin(row, record.snapshot.elements)
-                        : rowPin(row, record.snapshot.elements)),
+                    ...pinArguments({ action, row, rows: record.snapshot.elements, prepare: input.prepare === true }),
                 ];
             },
             signal,
@@ -1489,31 +1441,15 @@ export class ComputerUse {
                 input: options,
                 build: (record) => {
                     const row = this.select({ record, input: options });
-                    if (
-                        hasAncestorRole(safeRows(record.snapshot.elements), row, "AXWebArea") &&
-                        ["AXTextField", "AXTextArea", "AXComboBox"].includes(row.role)
-                    ) {
-                        return [
-                            "--action",
-                            "paste",
-                            "--element",
-                            String(row.index),
-                            "--text",
-                            options.value,
-                            "--format",
-                            "text",
-                            "--replace",
-                            ...preparedPin(row, record.snapshot.elements),
-                        ];
-                    }
+                    const action = webDispatchArguments({
+                        action: "set",
+                        row,
+                        rows: safeRows(record.snapshot.elements),
+                        value: options.value,
+                    }) ?? ["--action", "set", "--value", options.value];
                     return [
-                        "--action",
-                        "set",
-                        "--element",
-                        String(row.index),
-                        "--value",
-                        options.value,
-                        ...preparedPin(row, record.snapshot.elements),
+                        ...withElement(action, row.index),
+                        ...pinArguments({ action: action[1], row, rows: record.snapshot.elements, prepare: true }),
                     ];
                 },
                 signal,
@@ -1847,17 +1783,13 @@ export class ComputerUse {
                 }
                 this.forget(options.app);
                 const result = await this.native.run({
-                    args: [
-                        "see",
-                        "--app",
-                        options.app,
-                        "--window-id",
-                        String(record.snapshot.window.id),
-                        ...observationScopeArgs(record.snapshot.scope, record.query),
-                        "--depth",
-                        "50",
-                        "--no-image",
-                    ],
+                    args: seeArguments({
+                        app: options.app,
+                        windowId: record.snapshot.window.id,
+                        ...observedScope(record.snapshot.scope, record.query),
+                        depth: 50,
+                        image: false,
+                    }),
                     timeoutMs: options.timeout_ms ?? this.timeoutMs,
                     signal,
                 });

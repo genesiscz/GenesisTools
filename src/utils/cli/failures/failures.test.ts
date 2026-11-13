@@ -1,13 +1,16 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import { whoIsCalling } from "@genesiscz/utils/agent/identity";
+import { deadlineRecording, Executor } from "@genesiscz/utils/cli/executor";
 import { compressFile } from "@genesiscz/utils/compress/file";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
-import { claudeProjectFolder, failureCaller, transcriptOf } from "./caller";
+import { claudeProjectFolder, failureCaller, failureCallerOf, transcriptOf } from "./caller";
+import { deadlineCaller } from "./deadline";
 import { recordSignalEnd, signalEnd, signalOfStatus, WITHHELD_ARGV } from "./launcher";
 import { appendFailure, failureDays, failureLogPath, readFailures, type ToolFailure } from "./record";
 import { RUN_ID_ENV } from "./run-id";
@@ -1013,5 +1016,86 @@ describe("the failure record's caller facts", () => {
                 "worktreePath",
             ].sort()
         );
+    });
+});
+
+describe("a command deadline record", () => {
+    const today = () => formatLocalDate(new Date());
+    const deadlines = (marker: string) =>
+        [...readFailures({ fromDay: today(), toDay: today() })].filter(
+            (failure) => failure.kind === "deadline" && failure.child?.command.includes(marker)
+        );
+    const seams = { record: deadlineRecording.boundMs, caller: deadlineCaller.boundMs, lookup: deadlineCaller.lookup };
+
+    afterEach(() => {
+        deadlineRecording.boundMs = seams.record;
+        deadlineCaller.boundMs = seams.caller;
+        deadlineCaller.lookup = seams.lookup;
+    });
+
+    it("writes one record per expiry with the call's stack and the child, and no caller when the read hangs", async () => {
+        deadlineCaller.boundMs = 100;
+        deadlineCaller.lookup = () => new Promise(() => {});
+        const marker = `marker-${process.pid}-a`;
+
+        await expect(
+            new Executor({ timeout: 200 }).exec(["sh", "-c", "sleep 5", marker], { cwd: tmpdir() })
+        ).rejects.toThrow("Command timed out after 200ms (its Executor's bound)");
+
+        const records = deadlines(marker);
+        expect(records).toHaveLength(1);
+        const [record] = records;
+        expect(record).toMatchObject({
+            kind: "deadline",
+            fatal: false,
+            exitCode: null,
+            caller: null,
+            pid: process.pid,
+            child: {
+                command: ["sh", "-c", "sleep 5", marker],
+                cwd: tmpdir(),
+                timeoutMs: 200,
+                defaulted: false,
+                reason: null,
+            },
+        });
+        expect(record.message).toBe(`Command timed out after 200ms (its Executor's bound): sh -c sleep 5 ${marker}`);
+        expect(record.stack).toContain("failures.test.ts");
+        expect(record.durationMs).toBeGreaterThanOrEqual(150);
+        expect(record.runId).toBeUndefined();
+    });
+
+    it("keeps the reason of an explicit { ms, reason } and the caller the lookup gives", async () => {
+        deadlineCaller.lookup = async () => failureCallerOf(whoIsCalling({ origin: "local", env: {} }));
+        const marker = `marker-${process.pid}-b`;
+
+        await expect(
+            new Executor().exec(["sh", "-c", "sleep 5", marker], { timeout: { ms: 200, reason: "a test bound" } })
+        ).rejects.toThrow("this call's bound: a test bound");
+
+        const [record] = deadlines(marker);
+        expect(record?.child).toMatchObject({ timeoutMs: 200, defaulted: false, reason: "a test bound" });
+        expect(record?.caller?.agent).toBe("unknown");
+    });
+
+    it("throws within the record bound when the record step hangs", async () => {
+        deadlineRecording.boundMs = 300;
+        deadlineCaller.boundMs = 2_500;
+        deadlineCaller.lookup = () => new Promise(() => {});
+        const started = performance.now();
+
+        await expect(
+            new Executor({ timeout: 200 }).exec(["sh", "-c", "sleep 5", `marker-${process.pid}-c`])
+        ).rejects.toThrow("Command timed out after 200ms");
+        // 200 ms of child, 300 ms of record bound, and the group kill's own escalation (up to 600 ms).
+        expect(performance.now() - started).toBeLessThan(1_500);
+    });
+
+    it("writes no record for a command that ends in time", async () => {
+        const before = [...readFailures({ fromDay: today(), toDay: today() })].length;
+
+        await new Executor({ timeout: 2_000 }).exec(["sh", "-c", "true", `marker-${process.pid}-d`]);
+
+        expect([...readFailures({ fromDay: today(), toDay: today() })]).toHaveLength(before);
     });
 });

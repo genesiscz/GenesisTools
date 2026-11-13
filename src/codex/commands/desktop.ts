@@ -149,6 +149,7 @@ export function registerDesktopCommand(program: Command): void {
                     })),
                     initialValues: [...active],
                     required: false,
+                    cancel: "back",
                 });
                 if (p.isCancel(picked)) {
                     p.cancel("Left the desktop patches unchanged.");
@@ -162,6 +163,7 @@ export function registerDesktopCommand(program: Command): void {
                             ? "Restore the original app and its signature?"
                             : "Re-sign the app and write the checked patches? Privacy grants for ChatGPT need to be given again until you revert.",
                     initialValue: false,
+                    cancel: "back",
                 });
                 if (p.isCancel(confirmed) || !confirmed) {
                     p.cancel("Left the desktop patches unchanged.");

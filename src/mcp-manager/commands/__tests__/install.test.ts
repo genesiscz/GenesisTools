@@ -1,10 +1,8 @@
 import { beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { setMockResponses, setupInquirerMock } from "./inquirer-mock.js";
 
 // Setup @inquirer/prompts mock BEFORE importing command modules
 setupInquirerMock();
-setupStorageSandbox();
 
 // Now import after mocking
 const { installServer } = await import("../install.js");

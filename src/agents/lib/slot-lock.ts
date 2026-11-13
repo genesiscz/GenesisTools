@@ -37,8 +37,19 @@ export function tryAcquireSlot(lockPath: string, payload: SlotLockPayload): bool
     }
 }
 
+/**
+ * Remove the slot when it still names this process. A login whose dead-looking slot was reaped and then claimed by a
+ * new login must not delete the new holder's claim on its way out.
+ */
 export function releaseSlot(lockPath: string): void {
     try {
+        const holder = readSlotPayload(lockPath);
+
+        if (holder?.pid !== process.pid) {
+            log.debug({ lockPath, holder: holder?.pid }, "slot names another process; leaving it");
+            return;
+        }
+
         unlinkSync(lockPath);
     } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
@@ -61,6 +72,7 @@ export function readSlotPayload(lockPath: string): SlotLockPayload | null {
     }
 }
 
+/** Reap dead logins' slots through the shared fenced takeover (`sweepStaleLocks`), then report each one on the feed. */
 export async function runStaleSweep(paths: SessionPaths): Promise<void> {
     const report = sweepStaleLocks(paths.slotsDir);
 

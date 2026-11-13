@@ -7,7 +7,6 @@ import {
     type SessionTargetsResult,
     tmuxMissHint,
 } from "@app/claude/lib/cmux/resolve";
-import * as p from "@clack/prompts";
 import type { RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
@@ -17,6 +16,7 @@ import { isCmuxNotFound } from "@genesiscz/utils/cmux/lib/socket";
 import { type CmuxTree, fetchCmuxTree } from "@genesiscz/utils/cmux/tree";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
 
@@ -270,6 +270,7 @@ async function pickTarget(targets: FocusTarget[]): Promise<FocusTarget | null> {
             label: `${target.workspaceName} · ${target.paneId}`,
             hint: `${describeMatch(target)}${target.sessionIds.length > 0 ? ` · ${target.sessionIds[0].slice(0, 8)}` : ""}`,
         })),
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {

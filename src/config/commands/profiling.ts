@@ -1,4 +1,3 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import {
     getGenesisToolsConfigPath,
@@ -15,6 +14,7 @@ import {
     PROFILING_DETAIL_VALUES,
     reloadProfiler,
 } from "@genesiscz/utils/profile";
+import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -94,6 +94,7 @@ async function defaultPromptScopes(): Promise<string[] | null> {
         message: "Profiler scopes (empty scopes means all)",
         options,
         required: true,
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
@@ -110,6 +111,7 @@ async function defaultPromptDetail(): Promise<ProfilingDetail | null> {
             { value: "phases", label: "phases — a few timers per command" },
             { value: "all", label: "all — also time each file parse" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {
@@ -121,13 +123,13 @@ async function defaultPromptDetail(): Promise<ProfilingDetail | null> {
 
 async function defaultPromptEdit(): Promise<Partial<ProfilingConfig> | null> {
     const current = getProfilingConfig();
-    const want = await p.confirm({ message: "Change profiling settings?", initialValue: false });
+    const want = await p.confirm({ message: "Change profiling settings?", initialValue: false, cancel: "back" });
 
     if (p.isCancel(want) || !want) {
         return null;
     }
 
-    const enabled = await p.confirm({ message: "Enable profiling?", initialValue: current.enabled });
+    const enabled = await p.confirm({ message: "Enable profiling?", initialValue: current.enabled, cancel: "back" });
 
     if (p.isCancel(enabled)) {
         return null;
@@ -139,7 +141,7 @@ async function defaultPromptEdit(): Promise<Partial<ProfilingConfig> | null> {
         return null;
     }
 
-    const stderr = await p.confirm({ message: "Also write to stderr?", initialValue: current.stderr });
+    const stderr = await p.confirm({ message: "Also write to stderr?", initialValue: current.stderr, cancel: "back" });
 
     if (p.isCancel(stderr)) {
         return null;
@@ -154,6 +156,7 @@ async function defaultPromptEdit(): Promise<Partial<ProfilingConfig> | null> {
     const summaryOnExit = await p.confirm({
         message: "Print a summary when the process exits?",
         initialValue: current.summaryOnExit,
+        cancel: "back",
     });
 
     if (p.isCancel(summaryOnExit)) {

@@ -1,10 +1,10 @@
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { setProviderApiKey } from "@genesiscz/utils/ai/config/account-ops";
 import { type AccountEntry, TASK_NAMES } from "@genesiscz/utils/ai/config/schema";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import * as p from "@genesiscz/utils/prompts/p";
-import { secrets } from "@genesiscz/utils/security";
+import { resolveSecret, secrets } from "@genesiscz/utils/security";
 import pc from "picocolors";
 import {
     addAccountInteractive,
@@ -40,8 +40,9 @@ async function currentAccounts(): Promise<AccountEntry[]> {
 }
 
 async function huggingFaceMenu(): Promise<void> {
-    const config = await AIConfig.load();
-    const existing = config.getHfToken();
+    const stored = (await AiConfigStore.load()).accounts({ provider: "huggingface" })[0];
+    // Resolved only to show its first characters back to the user who set it.
+    const existing = await resolveSecret(stored?.credentials.apiKey);
 
     p.log.info(existing ? `A Hugging Face token is set (${existing.slice(0, 6)}…).` : "No Hugging Face token set.");
 
@@ -50,7 +51,7 @@ async function huggingFaceMenu(): Promise<void> {
         validate: (value) => (value.trim().startsWith("hf_") ? undefined : 'The token should start with "hf_"'),
     });
 
-    await config.setHfToken(token.trim());
+    await setProviderApiKey({ provider: "huggingface", name: "hf-cloud", apiKey: token.trim() });
     p.log.success("Token saved.");
 }
 

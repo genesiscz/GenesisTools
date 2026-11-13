@@ -1,7 +1,7 @@
 import { savePreset } from "@app/automate/lib/storage.ts";
 import type { Preset, PresetStep } from "@app/automate/lib/types.ts";
-import * as p from "@clack/prompts";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -16,6 +16,7 @@ export function registerCreateCommand(program: Command): void {
                 message: "Preset name:",
                 placeholder: "My Automation",
                 validate: (v) => (!v || v.length === 0 ? "Name is required" : undefined),
+                cancel: "back",
             });
             if (p.isCancel(name)) {
                 p.cancel("Cancelled");
@@ -26,6 +27,7 @@ export function registerCreateCommand(program: Command): void {
             const description = await p.text({
                 message: "Description (optional):",
                 placeholder: "What does this preset do?",
+                cancel: "back",
             });
             if (p.isCancel(description)) {
                 p.cancel("Cancelled");
@@ -50,6 +52,7 @@ export function registerCreateCommand(program: Command): void {
                         { value: "prompt", label: "Ask user a question" },
                         { value: "set", label: "Set a variable" },
                     ],
+                    cancel: "back",
                 });
                 if (p.isCancel(actionType)) {
                     p.cancel("Cancelled");
@@ -70,6 +73,7 @@ export function registerCreateCommand(program: Command): void {
                         }
                         return undefined;
                     },
+                    cancel: "back",
                 });
                 if (p.isCancel(stepId)) {
                     p.cancel("Cancelled");
@@ -80,6 +84,7 @@ export function registerCreateCommand(program: Command): void {
                 const stepName = await p.text({
                     message: "Step display name:",
                     placeholder: "What this step does",
+                    cancel: "back",
                 });
                 if (p.isCancel(stepName)) {
                     p.cancel("Cancelled");
@@ -93,6 +98,7 @@ export function registerCreateCommand(program: Command): void {
                     const action = await p.text({
                         message: "Tools command (without 'tools' prefix):",
                         placeholder: "github search",
+                        cancel: "back",
                     });
                     if (p.isCancel(action)) {
                         p.cancel("Cancelled");
@@ -104,6 +110,7 @@ export function registerCreateCommand(program: Command): void {
                     const command = await p.text({
                         message: "Shell command:",
                         placeholder: "ls -la",
+                        cancel: "back",
                     });
                     if (p.isCancel(command)) {
                         p.cancel("Cancelled");
@@ -115,6 +122,7 @@ export function registerCreateCommand(program: Command): void {
                     const condition = await p.text({
                         message: "Condition expression (without {{ }}):",
                         placeholder: "steps.prev.output.count > 0",
+                        cancel: "back",
                     });
                     if (p.isCancel(condition)) {
                         p.cancel("Cancelled");
@@ -125,6 +133,7 @@ export function registerCreateCommand(program: Command): void {
                     const thenStep = await p.text({
                         message: "Jump to step on TRUE (step ID):",
                         placeholder: "step-3",
+                        cancel: "back",
                     });
                     if (p.isCancel(thenStep)) {
                         p.cancel("Cancelled");
@@ -135,6 +144,7 @@ export function registerCreateCommand(program: Command): void {
                     const elseStep = await p.text({
                         message: "Jump to step on FALSE (optional, step ID):",
                         placeholder: "step-4",
+                        cancel: "back",
                     });
                     if (p.isCancel(elseStep)) {
                         p.cancel("Cancelled");
@@ -155,6 +165,7 @@ export function registerCreateCommand(program: Command): void {
                     const message = await p.text({
                         message: "Message to log:",
                         placeholder: "Processing {{ vars.name }}...",
+                        cancel: "back",
                     });
                     if (p.isCancel(message)) {
                         p.cancel("Cancelled");
@@ -166,6 +177,7 @@ export function registerCreateCommand(program: Command): void {
                     const message = await p.text({
                         message: "Prompt message:",
                         placeholder: "Enter your name:",
+                        cancel: "back",
                     });
                     if (p.isCancel(message)) {
                         p.cancel("Cancelled");
@@ -178,6 +190,7 @@ export function registerCreateCommand(program: Command): void {
                     const setKey = await p.text({
                         message: "Variable name to set:",
                         placeholder: "myVar",
+                        cancel: "back",
                     });
                     if (p.isCancel(setKey)) {
                         p.cancel("Cancelled");
@@ -188,6 +201,7 @@ export function registerCreateCommand(program: Command): void {
                     const setValue = await p.text({
                         message: "Value (can use {{ expressions }}):",
                         placeholder: "{{ steps.prev.output }}",
+                        cancel: "back",
                     });
                     if (p.isCancel(setValue)) {
                         p.cancel("Cancelled");
@@ -201,6 +215,7 @@ export function registerCreateCommand(program: Command): void {
                 const storeOutput = await p.confirm({
                     message: "Store step output in a variable?",
                     initialValue: false,
+                    cancel: "back",
                 });
                 if (p.isCancel(storeOutput)) {
                     p.cancel("Cancelled");
@@ -213,6 +228,7 @@ export function registerCreateCommand(program: Command): void {
                         message: "Output variable name:",
                         placeholder: stepId,
                         defaultValue: stepId,
+                        cancel: "back",
                     });
                     if (p.isCancel(outputName)) {
                         p.cancel("Cancelled");
@@ -227,6 +243,7 @@ export function registerCreateCommand(program: Command): void {
                 const continueAdding = await p.confirm({
                     message: "Add another step?",
                     initialValue: true,
+                    cancel: "back",
                 });
                 if (p.isCancel(continueAdding)) {
                     p.cancel("Cancelled");
@@ -253,6 +270,7 @@ export function registerCreateCommand(program: Command): void {
             const shouldSave = await p.confirm({
                 message: "Save this preset?",
                 initialValue: true,
+                cancel: "back",
             });
             if (p.isCancel(shouldSave) || !shouldSave) {
                 p.cancel("Preset not saved");

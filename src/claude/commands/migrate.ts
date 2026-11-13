@@ -13,9 +13,9 @@ import {
     summarizeExecution,
     summarizePlan,
 } from "@app/claude/lib/migrate-to-codex";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { DiffUtil } from "@genesiscz/utils/diff";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -148,6 +148,7 @@ async function runMigrateToCodex(options: MigrateCodexOptions): Promise<void> {
         const confirmed = await p.confirm({
             message: options.dryRun ? "Run dry run?" : "Apply migration now?",
             initialValue: true,
+            cancel: "back",
         });
 
         if (p.isCancel(confirmed) || !confirmed) {
@@ -238,6 +239,7 @@ async function runWizard(
                     },
                 ],
                 initialValue: state.sourceScope,
+                cancel: "back",
             });
 
             if (p.isCancel(choice)) {
@@ -272,6 +274,7 @@ async function runWizard(
                 ],
                 initialValues: state.components,
                 required: false,
+                cancel: "back",
             });
 
             if (p.isCancel(selected)) {
@@ -299,6 +302,7 @@ async function runWizard(
                     { value: "both", label: "Project + global" },
                 ],
                 initialValue: state.targetScope,
+                cancel: "back",
             });
 
             if (p.isCancel(choice)) {
@@ -327,6 +331,7 @@ async function runWizard(
                     },
                 ],
                 initialValue: state.mode,
+                cancel: "back",
             });
 
             if (p.isCancel(choice)) {
@@ -355,6 +360,7 @@ async function runWizard(
                     },
                 ],
                 initialValue: state.nameStyle,
+                cancel: "back",
             });
 
             if (p.isCancel(choice)) {
@@ -397,6 +403,7 @@ async function runWizard(
         const confirmed = await p.confirm({
             message: options.dryRun ? "Run dry run with this plan?" : "Apply this migration plan?",
             initialValue: true,
+            cancel: "back",
         });
 
         if (p.isCancel(confirmed)) {
@@ -610,6 +617,7 @@ async function promptConflictChoice(
                 { value: "rename", label: "Use different target name/path" },
                 { value: "diff", label: "Show diff and decide again" },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(choice)) {
@@ -642,6 +650,7 @@ async function promptRenamePath(targetPath: string): Promise<string | null> {
                 return "Path already exists, choose a different name";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(renamed)) {

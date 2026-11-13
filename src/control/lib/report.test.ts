@@ -17,7 +17,7 @@ import {
 type Rect = { x: number; y: number; w: number; h: number };
 
 /** A 200x120 grey screen with dark boxes painted on it, as PNG bytes. */
-function screen(boxes: Rect[]): Buffer {
+async function screen(boxes: Rect[]): Promise<Buffer> {
     const width = 200;
     const height = 120;
     const data = new Uint8ClampedArray(width * height * 4);
@@ -82,8 +82,8 @@ const buttonBefore = { x: 140, y: 80, w: 40, h: 20 };
 const buttonAfter = { x: 140, y: 50, w: 40, h: 20 };
 
 async function writePair(folder: string, stem: string, { tree }: { tree: boolean }): Promise<void> {
-    await Bun.write(join(folder, `${stem}-before.png`), screen([title, buttonBefore]));
-    await Bun.write(join(folder, `${stem}-after.png`), screen([longerTitle, buttonAfter]));
+    await Bun.write(join(folder, `${stem}-before.png`), await screen([title, buttonBefore]));
+    await Bun.write(join(folder, `${stem}-after.png`), await screen([longerTitle, buttonAfter]));
     if (tree) {
         await Bun.write(join(folder, `${stem}-before.tree.json`), treeJson(buttonBefore));
         await Bun.write(join(folder, `${stem}-after.tree.json`), treeJson(buttonAfter));
@@ -232,7 +232,7 @@ describe("control report", () => {
     it("reads a shot list and a folder of pairs, and writes the note, the order and the open command", async () => {
         const folder = mkdtempSync(join(tmpdir(), "control-report-"));
         await writePair(folder, "01-agents", { tree: false });
-        await Bun.write(join(folder, "02-lonely-before.png"), screen([]));
+        await Bun.write(join(folder, "02-lonely-before.png"), await screen([]));
 
         const pairs = await pairsInFolder(folder);
         expect(pairs.map((pair) => pair.screen)).toEqual(["agents"]);

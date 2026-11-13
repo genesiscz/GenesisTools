@@ -9,7 +9,8 @@ import {
     type WorkspaceCreateResult,
     workspaceCreate,
 } from "@genesiscz/utils/cmux/lib/socket";
-import { sameCmuxId } from "@genesiscz/utils/cmux/lib/target";
+import { sameCmuxId, surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
+import { writeSurfaceInput } from "@genesiscz/utils/cmux/surface-input";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
@@ -243,9 +244,27 @@ export async function openSurfaceInPane(
     return options.background ? create() : withFocusedWorkspace(workspaceId, create);
 }
 
+/**
+ * Type a shell command line into a terminal surface. The line is pasted, so a backslash or a quote that `shellQuote`
+ * wrote arrives as written (`cmux send` reads `\n`, `\r` and `\t` in its text as keys); a trailing newline is not
+ * pasted but pressed as Enter after it. cmux's own draft check applies: it refuses over a person's agent-prompt draft.
+ */
+export async function pasteCommandLine(where: readonly string[], payload: string): Promise<void> {
+    const enter = payload.endsWith("\n");
+    const command = enter ? payload.slice(0, -1) : payload;
+    const wrote = await writeSurfaceInput({
+        where,
+        ...(command ? { text: command } : {}),
+        keys: enter ? ["enter"] : [],
+    });
+
+    if (!wrote.ok) {
+        throw new Error(wrote.detail);
+    }
+}
+
 async function sendShellCommand(workspaceId: string, surfaceId: string, command: string): Promise<void> {
-    const payload = `${localeExportPrefix()}${command}\n`;
-    await runCmuxOk(["send", "--workspace", workspaceId, "--surface", surfaceId, payload]);
+    await pasteCommandLine(surfaceTargetArgs(surfaceId, workspaceId), `${localeExportPrefix()}${command}\n`);
 }
 
 /** Replace the target terminal shell with a quoted attachment to the named tmux session. */

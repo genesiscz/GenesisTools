@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import { getIndexerStorage } from "../lib/storage";
 

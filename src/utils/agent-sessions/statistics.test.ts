@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { initializeCompactHistorySchema } from "./migrations";
 import { HistoryService } from "./service";
 import { HistoryStatisticsRepository } from "./statistics-repository";
 import { HistorySyncRepository } from "./sync-repository";
+import { noStatistics } from "./testing/no-backward-read";
 import type { NativeSessionReader } from "./types";
 
 const PROVIDER = "anthropic-sub";
@@ -41,7 +42,7 @@ function rows(id: string, dates: string[]): string {
         .join("\n")}\n`;
 }
 
-function fixture() {
+function fixture(providerId = PROVIDER) {
     const home = mkdtempSync(join(tmpdir(), "history-statistics-service-"));
     const root = join(home, "projects");
     const project = join(root, "-invented-statistics");
@@ -54,7 +55,7 @@ function fixture() {
     initializeCompactHistorySchema(db);
     const reader: NativeSessionReader<string> = { ...claudeHistoryReader, roots: () => [root] };
     const service = new HistoryService({
-        providerId: PROVIDER,
+        providerId,
         reader,
         repository: new HistorySyncRepository(db),
         statistics: new HistoryStatisticsRepository(db),
@@ -64,10 +65,10 @@ function fixture() {
     return { db, firstPath, reader, root, secondPath, service };
 }
 
-function totals(db: Database) {
+function totals(db: Database, providerId = PROVIDER) {
     return db
         .query("SELECT total_conversations,total_messages FROM totals_cache WHERE provider=? AND scope='__all__'")
-        .get(PROVIDER);
+        .get(providerId);
 }
 
 test("ordinary search leaves statistics empty while explicit refresh builds and skips identical Claude sources", async () => {
@@ -130,7 +131,7 @@ test("statistics refresh replaces changed dates and retains published values for
             { date: "2026-09-03", messages: 1 },
         ]);
         const beforePartial = totals(fixtureOwner.db);
-        const original = fixtureOwner.reader.readStatistics!;
+        const original = fixtureOwner.reader.readStatistics;
         fixtureOwner.reader.readStatistics = async (source, options) => ({
             ...(await original(source, options)),
             complete: false,
@@ -197,4 +198,62 @@ test("the indexed message count is absent until the statistics pass runs, then r
     } finally {
         fixtureOwner.db.close();
     }
+});
+
+describe.each(["anthropic-sub", "fixture-sub"])("the statistics pipeline for provider %s", (providerId) => {
+    test("publishes every source's contribution under the provider", async () => {
+        const fixtureOwner = fixture(providerId);
+        try {
+            const refreshed = await fixtureOwner.service.refreshStatistics();
+
+            expect(refreshed).toMatchObject({ parsed: 2, sources: 2, coverage: "complete", issues: [] });
+            expect(totals(fixtureOwner.db, providerId)).toEqual({ total_conversations: 2, total_messages: 2 });
+        } finally {
+            fixtureOwner.db.close();
+        }
+    });
+
+    test("keeps going and names the source whose statistics could not be read", async () => {
+        const fixtureOwner = fixture(providerId);
+        const original = fixtureOwner.reader.readStatistics;
+        fixtureOwner.reader.readStatistics = async (source, options) => {
+            if (source.filePath.endsWith(`${SECOND_ID}.jsonl`)) {
+                throw new Error("parse failed");
+            }
+
+            return original(source, options);
+        };
+        try {
+            const refreshed = await fixtureOwner.service.refreshStatistics();
+
+            expect(refreshed).toMatchObject({ parsed: 1, coverage: "partial" });
+            expect(refreshed.issues).toEqual([
+                { path: expect.stringMatching(new RegExp(`${SECOND_ID}\\.jsonl$`)), message: "parse failed" },
+            ]);
+            expect(totals(fixtureOwner.db, providerId)).toEqual({ total_conversations: 1, total_messages: 1 });
+        } finally {
+            fixtureOwner.db.close();
+        }
+    });
+
+    test("reports unsupported coverage when the reader answers that it keeps no statistics", async () => {
+        const fixtureOwner = fixture(providerId);
+        fixtureOwner.reader.readStatistics = noStatistics;
+        try {
+            const refreshed = await fixtureOwner.service.refreshStatistics();
+
+            // The metadata sync still indexes both sessions; none of them gets a statistics contribution.
+            expect(refreshed).toEqual({
+                parsed: 0,
+                unchanged: 0,
+                sources: 2,
+                completeSources: 0,
+                coverage: "unsupported",
+                issues: [],
+            });
+            expect(totals(fixtureOwner.db, providerId)).toBeNull();
+        } finally {
+            fixtureOwner.db.close();
+        }
+    });
 });

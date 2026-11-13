@@ -1,7 +1,3 @@
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-
-setupStorageSandbox();
-
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -18,7 +14,7 @@ let server: ReturnType<typeof startServer>["server"];
 beforeAll(() => {
     const homeDir = env.tools.getHome();
     if (!homeDir) {
-        throw new Error("GENESIS_TOOLS_HOME must be set by setupStorageSandbox");
+        throw new Error("GENESIS_TOOLS_HOME must be set by the test preload");
     }
 
     mkdirSync(join(homeDir, ".genesis-tools", "task", "sessions"), { recursive: true });

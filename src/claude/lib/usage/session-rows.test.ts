@@ -91,11 +91,9 @@ mock.module("@genesiscz/utils/cmux/session-refs", () => ({
 import {
     __forgetTailCacheForTests,
     CACHE_TTL_MS,
-    CODEX_CACHE_TTL_MS,
     COOLING_THRESHOLD_MS,
     CRITICAL_THRESHOLD_MS,
     computeCacheStatus,
-    GROK_CACHE_TTL_MS,
     hostedMtimeFloor,
     listSessionRows,
     listSessionRowsWithTimings,
@@ -152,21 +150,6 @@ describe("computeCacheStatus", () => {
         expect(computeCacheStatus(NOW - CRITICAL_THRESHOLD_MS, NOW).status).toBe("CRITICAL");
         expect(computeCacheStatus(NOW - (CACHE_TTL_MS - 1), NOW).status).toBe("CRITICAL");
         expect(computeCacheStatus(NOW - CACHE_TTL_MS, NOW).status).toBe("COLD");
-    });
-
-    test("codex 30m ttl cools at 20m idle and dies at 30m", () => {
-        const ttl = CODEX_CACHE_TTL_MS;
-        expect(computeCacheStatus(NOW - (20 * MIN - 1), NOW, ttl).status).toBe("HOT");
-        expect(computeCacheStatus(NOW - 20 * MIN, NOW, ttl).status).toBe("COOLING");
-        expect(computeCacheStatus(NOW - 25 * MIN, NOW, ttl).status).toBe("CRITICAL");
-        expect(computeCacheStatus(NOW - 30 * MIN, NOW, ttl).status).toBe("COLD");
-        expect(computeCacheStatus(NOW - 20 * MIN, NOW, ttl).ttlSec).toBe(600);
-    });
-
-    test("grok uses the same 30m warning clock as codex", () => {
-        expect(GROK_CACHE_TTL_MS).toBe(CODEX_CACHE_TTL_MS);
-        expect(computeCacheStatus(NOW - 20 * MIN, NOW, GROK_CACHE_TTL_MS).status).toBe("COOLING");
-        expect(computeCacheStatus(NOW - 30 * MIN, NOW, GROK_CACHE_TTL_MS).status).toBe("COLD");
     });
 });
 

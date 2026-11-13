@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { bashWriteLookup, type ChangeLogRow, changeLogPath, readChangeLog } from "@genesiscz/utils/agents/change-log";
 import {
     CHANGE_LOG_CHUNK_BYTES,
     countObjects,
@@ -41,15 +42,12 @@ import { reportDailyPass } from "../../../compress/commands/ledger";
 import { rawLogFiles, rawTransition, resolveSessionArgument } from "../../commands/changes";
 import { fileDiff, readBlobs } from "./diff";
 import {
-    bashWriteLookup,
-    type ChangeEvent,
     commandEditsFiles,
     fileToolSource,
     lastTurnIds,
     recordChange,
     recordFileToolEdit,
     recordScriptedEdits,
-    sessionChangesPath,
 } from "./log";
 import { gitObjectSink } from "./objects";
 import { changeStatus, diffsFor, selectTurns, toolCallFiles } from "./tool-changes";
@@ -129,7 +127,7 @@ describe("the Bash writes a session recorded", () => {
 
     test("lists every Bash row of a path with its command's start and end; an Edit row or another path gives none", () => {
         const session = `bash-writes-${process.pid}`;
-        const log = sessionChangesPath(session);
+        const log = changeLogPath(session);
         mkdirSync(dirname(log), { recursive: true });
         writeFileSync(
             log,
@@ -163,7 +161,7 @@ describe("the Bash writes a session recorded", () => {
         const event = { provider: "claude", session, turn: "t1", tool: "Bash", cwd: dir, began };
 
         recordScriptedEdits(
-            sessionChangesPath(session),
+            changeLogPath(session),
             `cp a ${made}`,
             event,
             [{ path: made, after: Buffer.from("new") }],
@@ -177,7 +175,7 @@ describe("the Bash writes a session recorded", () => {
 
     test("a path rewritten in 40,000 rows keeps every write in order, in linear time", () => {
         const session = `bash-writes-many-${process.pid}`;
-        const log = sessionChangesPath(session);
+        const log = changeLogPath(session);
         const rows = 40_000;
         const at = (index: number) => new Date(Date.UTC(2026, 10, 1) + index * 1000).toISOString();
         mkdirSync(dirname(log), { recursive: true });
@@ -199,7 +197,7 @@ describe("the Bash writes a session recorded", () => {
 
     test("only the log's last maxBytes are read, from the first whole row on", () => {
         const session = `bash-writes-cap-${process.pid}`;
-        const log = sessionChangesPath(session);
+        const log = changeLogPath(session);
         mkdirSync(dirname(log), { recursive: true });
         const old = row(session, "/w/old.txt", "bash", "2026-11-01T09:00:00.000Z", "2026-11-01T08:59:00.000Z");
         const recent = row(session, "/w/recent.txt", "bash", "2026-11-01T10:00:00.000Z", "2026-11-01T09:59:00.000Z");
@@ -214,7 +212,7 @@ describe("the Bash writes a session recorded", () => {
 
     test("50,000 Bash rows of one path index in linear time, in log order", () => {
         const session = `bash-writes-hot-${process.pid}`;
-        const log = sessionChangesPath(session);
+        const log = changeLogPath(session);
         mkdirSync(dirname(log), { recursive: true });
         const rows = 50_000;
         const hot = row(session, "/w/hot.txt", "bash", "2026-11-01T10:00:00.000Z", "2026-11-01T09:59:59.000Z");
@@ -237,7 +235,7 @@ describe("the Bash writes a session recorded", () => {
 
     test("a lookup made after the log grew sees the new row; one made before keeps what it read", () => {
         const session = `bash-writes-grow-${process.pid}`;
-        const log = sessionChangesPath(session);
+        const log = changeLogPath(session);
         mkdirSync(dirname(log), { recursive: true });
         writeFileSync(
             log,
@@ -259,11 +257,36 @@ describe("the Bash writes a session recorded", () => {
 
 describe("session change log path", () => {
     test("a session id that is not one plain segment is refused", () => {
-        expect(sessionChangesPath("sess-9")).toEndWith(join("agents", "sess-9", "changes.jsonl"));
+        expect(changeLogPath("sess-9")).toEndWith(join("agents", "sess-9", "changes.jsonl"));
 
         for (const bad of ["../../x", "a/b", "..", "", "."]) {
-            expect(() => sessionChangesPath(bad)).toThrow(/not a session id/);
+            expect(() => changeLogPath(bad)).toThrow(/not a session id/);
         }
+    });
+
+    test("what the writer appends, the utils read side reads back as the same row", () => {
+        const session = `round-trip-${process.pid}`;
+        const sink = { hash: (bytes: Buffer) => `oid-${bytes.toString("utf8")}`, log: () => undefined };
+        const event = { provider: "codex", session, turn: "t1", tool: "Bash", cwd: "/w", path: "/w/big.bin" };
+        recordChange(
+            changeLogPath(session),
+            { ...event, ts: "2026-11-01T10:00:00.000Z", source: "bash", began: "2026-11-01T09:59:59.000Z" },
+            { before: Buffer.from("old"), afterSkipped: "large" },
+            sink
+        );
+
+        expect(readChangeLog(session)).toEqual([
+            {
+                ...event,
+                ts: "2026-11-01T10:00:00.000Z",
+                source: "bash",
+                began: "2026-11-01T09:59:59.000Z",
+                beforeOid: "oid-old",
+                afterOid: null,
+                skipped: "large",
+                afterSkipped: "large",
+            },
+        ]);
     });
 });
 
@@ -373,7 +396,7 @@ describe("recordChange", () => {
         const rows = readFileSync(file, "utf8")
             .trim()
             .split("\n")
-            .map((line) => SafeJSON.parse(line) as ChangeEvent);
+            .map((line) => SafeJSON.parse(line) as ChangeLogRow);
         expect(hashes).toEqual(["a", "b", "c"]);
         // Only the before side was too large: the after side keeps its oid, and each side says so.
         expect(rows[2]).toMatchObject({ skipped: "large", beforeSkipped: "large", beforeOid: null, afterOid: "c" });
@@ -383,7 +406,7 @@ describe("recordChange", () => {
     });
 
     test("a row from before the per-side fields still prints its one skip reason", () => {
-        const legacy: ChangeEvent = {
+        const legacy: ChangeLogRow = {
             ts: "2026-09-20T10:00:00Z",
             provider: "claude",
             session: "s1",
@@ -492,7 +515,7 @@ describe("scripted editors", () => {
         recordScriptedEdits(file, command, { ...event, since: Date.now() - 60_000 }, [], sink);
 
         // The output is the positive control: the named pass ran and logged the file it may read.
-        expect(readJsonlRows<ChangeEvent>(file).rows.map((row) => row.path)).toEqual([output]);
+        expect(readJsonlRows<ChangeLogRow>(file).rows.map((row) => row.path)).toEqual([output]);
         expect(lines.join("\n")).toContain(`${placeholder} not logged: under a cloud storage folder`);
     });
 
@@ -510,7 +533,7 @@ describe("scripted editors", () => {
         expect(existsSync(file)).toBe(false);
 
         recordScriptedEdits(file, command, { ...event, since }, [], sink);
-        expect(readJsonlRows<ChangeEvent>(file).rows.map((row) => row.path)).toEqual([output]);
+        expect(readJsonlRows<ChangeLogRow>(file).rows.map((row) => row.path)).toEqual([output]);
     });
 
     test("delete, move, copy, working-tree git verbs and formatter writes are edits; a mention is not", () => {
@@ -650,7 +673,7 @@ describe("per-call rows and diffs", () => {
             sink
         );
 
-        const rows = readJsonlRows<ChangeEvent>(file).rows;
+        const rows = readJsonlRows<ChangeLogRow>(file).rows;
         expect(rows).toHaveLength(1);
         expect(rows[0]).toMatchObject({ toolUseId: "toolu_fable", turn: "turn-1" });
         expect(rawLogFiles(rows).map((row) => row.toolUseIds)).toEqual([["toolu_fable"]]);
@@ -806,7 +829,7 @@ describe("per-call rows and diffs", () => {
             [{ path: scripted, before: Buffer.from("sed before\n"), after: Buffer.from("sed after\n") }],
             sink
         );
-        const log = readJsonlRows<ChangeEvent>(file).rows;
+        const log = readJsonlRows<ChangeLogRow>(file).rows;
 
         // No transcript (a session from another machine), and a transcript that has not flushed
         // the Bash call yet (the hub asks right after the call returns): the log's own id decides.

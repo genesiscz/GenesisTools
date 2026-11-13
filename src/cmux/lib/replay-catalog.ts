@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
-import { getSessionListing } from "@app/claude/lib/history/search";
 import type { Profile } from "@app/cmux/lib/types";
 import { grokSessionsRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";
 import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
+import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
@@ -80,7 +80,7 @@ export async function loadClaudeCatalog(options: { cached?: boolean } = {}): Pro
               summary: undefined,
               firstPrompt: session.prompt,
           }))
-        : (await getSessionListing({ excludeSubagents: true })).sessions;
+        : (await catalogHistory({ provider: "claude", filters: { excludeAgents: true } })).metadata;
 
     for (const record of records) {
         // The cached index also lists subagent transcripts, whose id is a path

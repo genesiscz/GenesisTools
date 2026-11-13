@@ -57,6 +57,7 @@ export async function resolveEnum<T extends string>(options: {
         const picked = await p.select({
             message: `${flag}`,
             options: values.map((v) => ({ value: v, label: v })),
+            cancel: "back",
         });
 
         if (p.isCancel(picked)) {

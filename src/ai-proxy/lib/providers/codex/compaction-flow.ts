@@ -8,23 +8,32 @@ import {
     backgroundInFlight,
     backgroundResult,
     clearBackground,
+    compactionPoint,
     estimateItemTokens,
     matchBackground,
     prefixHash,
     setPendingNotice,
+    shouldStartBackground,
+    takePendingNotice,
+    trackBackground,
+    withUserReminder,
 } from "@app/ai-proxy/lib/sessions/background-compaction";
 import {
     type CompactionRecord,
     compactionFromSse,
+    compactionMarkers,
     compactionNote,
+    compactionRecoveryMessage,
     expandCompactionMarkers,
     hasCompactionFallback,
     loadCompaction,
     newCompactionId,
     saveCompaction,
 } from "@app/ai-proxy/lib/sessions/codex-compaction";
-import { type CompactionTrace, recordCompactionEvent } from "@app/ai-proxy/lib/sessions/compaction-events";
-import type { BackgroundCompactionSettings } from "@app/ai-proxy/lib/sessions/settings";
+import { CompactionTrace, recordCompactionEvent } from "@app/ai-proxy/lib/sessions/compaction-events";
+import { noteBlockedCompaction, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
+import { type CompactionPolicy, compactionPolicy } from "@app/ai-proxy/lib/sessions/settings";
+import type { ClaudeCodeTurn } from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
 import {
     accountHash8,
@@ -35,7 +44,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 
-export class CompactionRestoreError extends Error {
+class CompactionRestoreError extends Error {
     constructor(
         readonly marker: string,
         readonly permanent: boolean,
@@ -47,7 +56,7 @@ export class CompactionRestoreError extends Error {
     }
 }
 
-export function inputHasFallback(input: unknown[], id: string): boolean {
+function inputHasFallback(input: unknown[], id: string): boolean {
     return input.some(
         (item) =>
             isObject(item) &&
@@ -338,6 +347,113 @@ export interface CompactionFlowDeps {
 }
 
 /**
+ * One Claude Code request on a Codex model, as the compaction flow sees it. Built once per request by
+ * `compactionTurn`; the settings and the session record are read there, so a config reload during the request
+ * cannot change its path midway.
+ */
+export interface CompactionTurn {
+    req: Request;
+    /** The model the client asked for (the proxy name). */
+    model: string;
+    /** The WHAM slug it resolves to. */
+    concreteModel: string;
+    bodyText: string;
+    context: ProviderRequestContext | undefined;
+    /** The client's body as parsed, before any compaction shaping. */
+    parsed: Record<string, unknown>;
+    claudeTurn: ClaudeCodeTurn;
+    stamp: ReasoningEnvelopeStamp;
+    /** The provider's failure client: `respond` fills the login that served the request. */
+    client: FailureClient;
+    trace: CompactionTrace;
+    policy: CompactionPolicy;
+    /** Claude Code asked for its compaction summary. */
+    compaction: boolean;
+    /** This run writes the text summary because a native compaction gave no item. */
+    written: boolean;
+    /** The compaction turn is answered on the Codex side (native), not by the model writing the summary. */
+    native: boolean;
+    /** The thread's background compaction: set in a ccx session whose record knows the compaction point. */
+    background?: { key: string; point: number };
+    /** The efforts the model accepts; undefined when the catalog does not know the model. */
+    efforts?: readonly string[];
+}
+
+/** The compaction's part of the request that the provider builds: it applies these and nothing else. */
+export interface CompactionShaping {
+    /** The client's body: without the summary prompt (native), or with the summary limit (written summary). */
+    parsed: Record<string, unknown>;
+    /** A written summary allows no tool call: Claude Code refuses one, and three refused compactions end the session. */
+    toolChoice?: "none";
+    /** The written summary's effort, already checked against the model's efforts; wins over the client's. */
+    effort?: string;
+}
+
+/** The provider's Responses body for the shaping, plus whatever the provider needs back from its own build. */
+export interface BuiltRequest {
+    body: Record<string, unknown>;
+}
+
+/** What `beforeUpstream` decided: answer the client now, or send this body upstream. */
+export type CompactionDecision<B extends BuiltRequest> =
+    | { answer: Response }
+    | {
+          answer?: undefined;
+          built: B;
+          /** The body to send: the built one with the markers restored and a pending notice added. */
+          body: Record<string, unknown>;
+          /** The client's body after the shaping, for what the provider still reads from it. */
+          parsed: Record<string, unknown>;
+          /** The usage hook: called with the upstream answer's usage when the thread may start a background run. */
+          onUsage?: (usage: Record<string, unknown>) => void;
+      };
+
+/** The one `CompactionTurn` of a request. */
+export function compactionTurn(input: {
+    req: Request;
+    model: string;
+    concreteModel: string;
+    bodyText: string;
+    context: ProviderRequestContext | undefined;
+    parsed: Record<string, unknown>;
+    claudeTurn: ClaudeCodeTurn;
+    stamp: ReasoningEnvelopeStamp;
+    client: FailureClient;
+    efforts?: readonly string[];
+    written?: boolean;
+}): CompactionTurn {
+    const { context, claudeTurn } = input;
+    const written = input.written === true;
+    const compaction = claudeTurn.isCompaction;
+    const policy = compactionPolicy("codex", context?.sessionsIn);
+    const clientAgent = input.req.headers.get("user-agent") ?? undefined;
+    const claudeSessionId = claudeTurn.sessionId;
+    const trace = new CompactionTrace({
+        ...(context?.sessionId ? { session: context.sessionId } : {}),
+        ...(claudeSessionId ? { claudeSession: claudeSessionId } : {}),
+        model: input.concreteModel,
+        ...(clientAgent ? { client: clientAgent } : {}),
+    });
+    // Background compaction runs only for a ccx session, whose record knows where Claude Code will compact.
+    const point = compactionPoint(context?.sessionId ? readSessionRecord(context.sessionId) : undefined);
+    const key = point && policy.background.enabled ? claudeTurn.threadKey : undefined;
+
+    if (key) {
+        trace.setThread(key.slice(key.lastIndexOf(":") + 1, key.lastIndexOf(":") + 9));
+    }
+
+    return {
+        ...input,
+        trace,
+        policy,
+        compaction,
+        written,
+        native: compaction && !written && policy.mode === "native",
+        ...(key && point ? { background: { key, point } } : {}),
+    };
+}
+
+/**
  * Claude Code's compaction on a Codex model, end to end: the native compaction of a turn, the background run near the
  * compaction point and the answer from it, and the item behind a marker for the login that serves the next turn. The
  * provider gives it one upstream call and the written-summary fallback; records and usage go through the ports.
@@ -346,32 +462,261 @@ export class CodexCompactionFlow {
     constructor(private readonly deps: CompactionFlowDeps) {}
 
     /**
+     * The compaction's whole part of a turn before the upstream request. It logs the turn, shapes the client's body
+     * (summary prompt off for a native compaction; the summary limit, `tool_choice: none` and the compaction effort
+     * for a written one), has the provider build the Responses body from that, restores the compaction items behind
+     * the markers, and answers a native compaction itself (from the background run or with a compaction request).
+     * Otherwise the provider sends the returned body and calls `onUsage` with the answer's usage.
+     */
+    async beforeUpstream<B extends BuiltRequest>(
+        turn: CompactionTurn,
+        build: (shaping: CompactionShaping) => B
+    ): Promise<CompactionDecision<B>> {
+        const { claudeTurn, trace, policy } = turn;
+
+        if (turn.compaction && !turn.written) {
+            trace.record("turn", { mode: turn.native ? "native" : "summary" });
+
+            if (claudeTurn.isCompactionRetry) {
+                trace.record("retry", {
+                    reason: "Claude Code asked for the summary again: the last reply had no <summary> tag",
+                });
+            }
+        }
+
+        const summary = turn.compaction && !turn.native;
+        const words = summary ? policy.words : undefined;
+        // Native: the server compacts what came before; Claude Code's summary prompt would only end the cached prefix.
+        const parsed = turn.native
+            ? claudeTurn.withoutCompactionPrompt()
+            : words
+              ? claudeTurn.withSummaryLimit(words)
+              : turn.parsed;
+        // A compaction turn writes a summary of what is already known: the session's xhigh only made it slower (6 to 8
+        // minutes per compaction on 2026-10-27), so it runs at the compaction effort when the model has that effort.
+        const effort = summary ? policy.effort : undefined;
+        const built = build({
+            parsed,
+            ...(summary ? { toolChoice: "none" as const } : {}),
+            ...(effort && (!turn.efforts || turn.efforts.includes(effort)) ? { effort } : {}),
+        });
+        let body = built.body;
+        const rawInput = Array.isArray(body.input) ? body.input : [];
+
+        if (compactionMarkers(rawInput).length > 0) {
+            const restored = await this.restoreMarkers(turn, body, rawInput);
+
+            if ("answer" in restored) {
+                return restored;
+            }
+
+            body = { ...body, input: restored.input };
+        }
+
+        if (turn.native) {
+            const startedAt = Date.now();
+            let notice: ((durationMs: number) => string) | undefined;
+
+            if (turn.background) {
+                const answered = await this.answerFromBackground(turn, turn.background, {
+                    rawInput,
+                    stream: parsed.stream === true,
+                    startedAt,
+                });
+
+                if (answered.response) {
+                    return { answer: answered.response };
+                }
+
+                notice = answered.notice;
+            }
+
+            return {
+                answer: await this.compactNatively(turn, {
+                    body,
+                    rawInput,
+                    stream: parsed.stream === true,
+                    startedAt,
+                    notice,
+                }),
+            };
+        }
+
+        const pending = turn.background ? takePendingNotice(turn.background.key) : undefined;
+
+        if (pending && Array.isArray(body.input)) {
+            body = { ...body, input: withUserReminder(body.input, pending) };
+        }
+
+        const sent = body;
+
+        return {
+            built,
+            body,
+            parsed,
+            ...(turn.background ? { onUsage: (usage) => this.startBackgroundIfDue(turn, sent, rawInput, usage) } : {}),
+        };
+    }
+
+    /** A turn near the compaction point starts the background compaction of what it sent, once its usage is in. */
+    private startBackgroundIfDue(
+        turn: CompactionTurn,
+        sent: Record<string, unknown>,
+        rawInput: unknown[],
+        usage: Record<string, unknown>
+    ): void {
+        if (!turn.background) {
+            return;
+        }
+
+        const { key, point } = turn.background;
+        const contextTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
+
+        if (!shouldStartBackground({ key, contextTokens, point, settings: turn.policy.background })) {
+            return;
+        }
+
+        const { trace } = turn;
+        trackBackground(
+            key,
+            contextTokens,
+            this.runBackgroundCompaction(turn, { body: sent, rawInput, contextTokens }),
+            (unused, reason) =>
+                trace.record("background-wasted", {
+                    reason,
+                    inputTokens: unused.inputTokens,
+                    cachedTokens: unused.cachedTokens,
+                    outputTokens: unused.outputTokens,
+                })
+        );
+    }
+
+    /**
+     * The items behind the turn's compaction markers, for the login that serves it. A marker this login cannot get
+     * answers the client: a transient failure as it came, a lost record as a 400 that names the session's way out.
+     */
+    private async restoreMarkers(
+        turn: CompactionTurn,
+        template: Record<string, unknown>,
+        rawInput: unknown[]
+    ): Promise<{ answer: Response } | { input: unknown[] }> {
+        const { req, model } = turn;
+        let expanded = rawInput;
+
+        try {
+            const restored = await compactionDispatch({
+                signal: req.signal,
+                stream: false,
+                timeoutMs: 120_000,
+                run: async (signal) => {
+                    const restoreReq = requestWithSignal(req, turn.bodyText, signal);
+                    expanded = await expandCompactionMarkers(rawInput, async (id) => {
+                        try {
+                            return await this.compactionItem({
+                                id,
+                                req: restoreReq,
+                                model,
+                                template,
+                                accountHash: turn.stamp.accountHash,
+                                client: turn.client,
+                            });
+                        } catch (error) {
+                            if (
+                                error instanceof CompactionRestoreError &&
+                                !signal.aborted &&
+                                inputHasFallback(rawInput, id)
+                            ) {
+                                logger.warn({ error, id }, "ai-proxy: using the readable compaction fallback");
+                                return undefined;
+                            }
+
+                            if (error instanceof CompactionRestoreError) {
+                                throw new CompactionRestoreError(
+                                    id,
+                                    error.permanent,
+                                    error.message,
+                                    error.missingId,
+                                    error.upstreamResponse
+                                );
+                            }
+
+                            throw error;
+                        }
+                    });
+                    return new Response(null, { status: 204 });
+                },
+            });
+
+            if (!restored.ok) {
+                return { answer: await toAnthropicErrorResponse(restored) };
+            }
+
+            return { input: expanded };
+        } catch (error) {
+            if (!(error instanceof CompactionRestoreError)) {
+                throw error;
+            }
+
+            if (error.upstreamResponse) {
+                return { answer: await toAnthropicErrorResponse(error.upstreamResponse) };
+            }
+
+            if (!error.permanent) {
+                return { answer: await toAnthropicErrorResponse(jsonError(503, error.message)) };
+            }
+
+            const sessionId = turn.context?.sessionId;
+            const session = sessionId ? await noteBlockedCompaction(sessionId, error.marker) : undefined;
+
+            if (session && error.missingId !== error.marker) {
+                await noteBlockedCompaction(session.id, error.missingId);
+            }
+
+            turn.trace.record("blocked", { id: error.marker, reason: error.message });
+
+            return {
+                answer: await toAnthropicErrorResponse(
+                    jsonError(
+                        400,
+                        `${error.message} ${compactionRecoveryMessage(session?.id, error.marker, error.missingId)}`
+                    )
+                ),
+            };
+        }
+    }
+
+    /**
      * Claude Code's compaction turn, compacted the Codex way: the turn's request plus `compaction_trigger`, at the
      * session's effort, so the cached prefix holds. Claude Code gets a note with a marker; the item and the history it
      * compacted go to disk for the later turns. Any failure writes the text summary instead, as before.
      */
-    async compactNatively(input: {
-        req: Request;
-        model: string;
-        bodyText: string;
-        context: ProviderRequestContext | undefined;
-        parsed: Record<string, unknown>;
-        responsesBody: Record<string, unknown>;
-        rawInput: unknown[];
-        stamp: ReasoningEnvelopeStamp;
-        client: FailureClient;
-        trace: CompactionTrace;
-        startedAt: number;
-        /** Why a background result could not answer this turn, for the agent to tell the user. */
-        notice?: (durationMs: number) => string;
-        threadKey?: string;
-    }): Promise<Response> {
-        const { req, model, client } = input;
-        const sent = Array.isArray(input.responsesBody.input) ? input.responsesBody.input : [];
+    private async compactNatively(
+        turn: CompactionTurn,
+        sending: {
+            /** The turn's body with its markers restored. */
+            body: Record<string, unknown>;
+            /** The history it compacts, as the client sent it (markers unexpanded). */
+            rawInput: unknown[];
+            stream: boolean;
+            startedAt: number;
+            /** Why a background result could not answer this turn, for the agent to tell the user. */
+            notice?: (durationMs: number) => string;
+        }
+    ): Promise<Response> {
+        const { req, model, client } = turn;
+        const input = {
+            ...sending,
+            bodyText: turn.bodyText,
+            context: turn.context,
+            stamp: turn.stamp,
+            trace: turn.trace,
+        };
+        const threadKey = turn.background?.key;
+        const sent = Array.isArray(input.body.input) ? input.body.input : [];
         const response = await this.deps.upstream(
             req,
             model,
-            { ...input.responsesBody, input: [...sent, { type: "compaction_trigger" }], stream: true },
+            { ...input.body, input: [...sent, { type: "compaction_trigger" }], stream: true },
             client
         );
         const { item, usage, summary } = response.ok ? compactionFromSse(await readCompactionText(response)) : {};
@@ -403,12 +748,12 @@ export class CodexCompactionFlow {
         const tokens = usageTokens(usage);
         const notice = input.notice?.(durationMs);
 
-        if (input.threadKey) {
-            clearBackground(input.threadKey);
+        if (threadKey) {
+            clearBackground(threadKey);
 
             if (notice) {
                 setPendingNotice(
-                    input.threadKey,
+                    threadKey,
                     `${notice} Start your next reply with one sentence that tells the user this.`
                 );
             }
@@ -420,7 +765,7 @@ export class CodexCompactionFlow {
             model,
             text: `<summary>\n${compactionNote(id, summary)}${notice ? `\n${notice}` : ""}\n</summary>`,
             tokens,
-            stream: input.parsed.stream === true,
+            stream: input.stream,
         });
     }
 
@@ -428,17 +773,19 @@ export class CodexCompactionFlow {
      * A compaction turn answered from the background run of its thread, when that run can stand for it. A run in
      * flight is awaited (the turn's keepalives are already running), like Codex does, instead of a second request.
      */
-    async answerFromBackground(input: {
-        key: string;
-        point: number;
-        rawInput: unknown[];
-        accountHash: string;
-        model: string;
-        stream: boolean;
-        trace: CompactionTrace;
-        startedAt: number;
-        settings: BackgroundCompactionSettings;
-    }): Promise<{ response?: Response; notice?: (durationMs: number) => string }> {
+    private async answerFromBackground(
+        turn: CompactionTurn,
+        background: { key: string; point: number },
+        answering: { rawInput: unknown[]; stream: boolean; startedAt: number }
+    ): Promise<{ response?: Response; notice?: (durationMs: number) => string }> {
+        const input = {
+            ...background,
+            ...answering,
+            accountHash: turn.stamp.accountHash,
+            model: turn.model,
+            trace: turn.trace,
+            settings: turn.policy.background,
+        };
         await backgroundInFlight(input.key);
         const result = backgroundResult(input.key);
 
@@ -498,17 +845,19 @@ export class CodexCompactionFlow {
      * Compacts what one turn sent, in the background: the same request plus `compaction_trigger`, at its effort and
      * on its cached prefix, on a request of its own that the client's hang-up does not cancel. Never throws.
      */
-    async runBackgroundCompaction(input: {
-        req: Request;
-        model: string;
-        concreteModel: string;
-        body: Record<string, unknown>;
-        rawInput: unknown[];
-        stamp: ReasoningEnvelopeStamp;
-        contextTokens: number;
-        sessionId?: string;
-        trace: CompactionTrace;
-    }): Promise<BackgroundResult | undefined> {
+    private async runBackgroundCompaction(
+        turn: CompactionTurn,
+        what: { body: Record<string, unknown>; rawInput: unknown[]; contextTokens: number }
+    ): Promise<BackgroundResult | undefined> {
+        const input = {
+            ...what,
+            req: turn.req,
+            model: turn.model,
+            concreteModel: turn.concreteModel,
+            stamp: turn.stamp,
+            sessionId: turn.context?.sessionId,
+            trace: turn.trace,
+        };
         const startedAt = Date.now();
         const abort = new AbortController();
         const timer = setTimeout(() => abort.abort(), BACKGROUND_COMPACTION_TIMEOUT_MS);
@@ -610,7 +959,7 @@ export class CodexCompactionFlow {
      * serves after a switch compacts the saved history once more there (one uncached read, which the switch costs
      * anyway) and keeps that item too.
      */
-    async compactionItem(input: {
+    private async compactionItem(input: {
         id: string;
         req: Request;
         model: string;

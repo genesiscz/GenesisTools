@@ -49,15 +49,14 @@ import { passthroughSets } from "@app/claude/lib/passthrough";
 import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { pickSmart } from "@app/claude/lib/usage/smart-alias";
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { mergeCodexModelRecords, readCodexModelsCache } from "@genesiscz/utils/ai/openai/codex-models";
 import { resolveOpenAiSubModel } from "@genesiscz/utils/ai/openai/sub-models";
 import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
 import { isInteractive } from "@genesiscz/utils/cli";
-
 import { logger, out } from "@genesiscz/utils/logger";
 import { processStartMs } from "@genesiscz/utils/process-identity";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { pickSessionForResume } from "./resume";
@@ -197,7 +196,11 @@ async function confirmMetered(choices: SessionAccountChoice[], allowed: string[]
             await fail(`Refusing to bill "${name}" per token without --allow-metered ${name}.`);
         }
 
-        const answer = await p.confirm({ message: `Bill "${name}" per token for this session?`, initialValue: false });
+        const answer = await p.confirm({
+            message: `Bill "${name}" per token for this session?`,
+            initialValue: false,
+            cancel: "back",
+        });
 
         if (p.isCancel(answer) || answer !== true) {
             await fail(`Not launched: "${name}" is billed per token.`);

@@ -1,11 +1,12 @@
 import { AGG_VALUES, queryAdvice, queryLimitsNow, querySeries } from "@app/ai/lib/usage/limits-query";
-import type { ToolEntry } from "@app/genesis-tools-mcp/lib/server";
 import { LIMIT_KIND_VALUES } from "@genesiscz/utils/ai/providers/account-features";
 import { UsageQueryError } from "@genesiscz/utils/ai/usage/contract";
 import { buildForecast } from "@genesiscz/utils/ai/usage/forecast/forecast";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import type { ToolEntry } from "@genesiscz/utils/mcp/tool-entry";
+import type { LoadedToolGroup } from "@genesiscz/utils/mcp/tool-group";
 import { z } from "zod";
 
 const { log } = logger.scoped("usage-mcp");
@@ -71,7 +72,11 @@ async function answer(tool: string, run: () => Promise<unknown>): Promise<string
  * limits ...`. Every tool reads the last poll's snapshots file and the history store; none polls a provider, so a call
  * never spends a rate-limited request or a credential.
  */
-export function usageToolEntries(): Record<string, ToolEntry> {
+export function toolGroup(): LoadedToolGroup {
+    return { entries: usageToolEntries() };
+}
+
+function usageToolEntries(): Record<string, ToolEntry> {
     return {
         usage_limits: {
             description: `Every AI account's limit windows now (Claude, Codex, Grok), from the last usage poll: one usage.limits@1 envelope {schema, generatedAt, selector, data:{accounts, ranked?}, warnings}. Same core as \`${toolCommand("ai usage limits --cached --json")}\`.`,

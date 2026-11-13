@@ -1,10 +1,9 @@
 import { billingAnchor, formatRenewsAtFull, nextRenewalDate } from "@app/claude/lib/usage/subscription";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { calendarDay } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription";
 import { stampSnapshotsRenewal } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -41,7 +40,7 @@ export function parseAnchor(input: string): string | null {
     return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
-function sourceOf(account: AIAccountEntry): string {
+function sourceOf(account: AccountEntry): string {
     if (account.subscriptionAnchorOverride) {
         return "manual";
     }
@@ -57,7 +56,7 @@ function sourceOf(account: AIAccountEntry): string {
     return "profile";
 }
 
-function listAnchors(accounts: AIAccountEntry[], now: Date): void {
+function listAnchors(accounts: AccountEntry[], now: Date): void {
     out.println(pc.dim("  Billing anchors — the day every projected renewal is derived from.\n"));
 
     for (const account of accounts) {
@@ -96,8 +95,7 @@ export function registerAnchorCommand(program: Command): void {
             "Drop the manual anchor; the later of a watched reactivation and the profile signup stamp applies again"
         )
         .action(async (name: string | undefined, date: string | undefined, opts: { clear?: boolean }) => {
-            const config = await AIConfig.load();
-            const accounts = config.getAccountsByProvider("anthropic-sub");
+            const accounts = (await AiConfigStore.load()).accounts({ provider: "anthropic-sub" });
             const now = new Date();
 
             if (!name) {
@@ -105,7 +103,7 @@ export function registerAnchorCommand(program: Command): void {
                 return;
             }
 
-            const target = accounts.find((account) => account.name === name);
+            const target = accounts.find((account) => account.id === name) ?? accounts.find((a) => a.name === name);
 
             if (!target) {
                 out.log.error(`No Claude account named "${name}".`);
@@ -122,7 +120,7 @@ export function registerAnchorCommand(program: Command): void {
             }
 
             // The config is the record; the snapshots cache only mirrors it, so it is written second.
-            await saveAnchorOverride(name, plan.override);
+            await saveAnchorOverride(target.id, plan.override);
             out.println(
                 opts.clear
                     ? `Cleared the manual anchor for ${name}.`
@@ -147,17 +145,16 @@ export function registerAnchorCommand(program: Command): void {
 }
 
 /**
- * Writes the override on the ANTHROPIC account of that name, in the v4 store. The v3 facade's
- * `updateAccount` matches a name across every provider, so a same-named account of another
- * provider could have received the Claude billing anchor.
+ * Writes the override on the account with that immutable id, in the v4 store. A name may be shared
+ * across providers, so a name match could have given another provider's account the Claude anchor.
  */
-async function saveAnchorOverride(name: string, override: string | undefined): Promise<void> {
+async function saveAnchorOverride(accountId: string, override: string | undefined): Promise<void> {
     const store = await AiConfigStore.load();
     await store.mutate((config) => {
-        const account = config.accounts.find((entry) => entry.provider === "anthropic-sub" && entry.name === name);
+        const account = config.accounts.find((entry) => entry.id === accountId);
 
         if (!account) {
-            throw new Error(`No Claude account named "${name}".`);
+            throw new Error(`No Claude account with id "${accountId}".`);
         }
 
         if (override) {
@@ -177,7 +174,7 @@ export type AnchorPlan =
  * the anchor that then applies (a clear falls back to the profile stamps), and the next renewal.
  */
 export function planAnchor(
-    account: AIAccountEntry,
+    account: Pick<AccountEntry, "subscriptionAnchorOverride" | "subscriptionCreatedAt" | "subscriptionReactivatedAt">,
     { date, clear, now }: { date?: string; clear: boolean; now: Date }
 ): AnchorPlan {
     if (!clear && !date) {

@@ -2,23 +2,23 @@
  * Helpers for @clack/prompts
  */
 import * as p from "@clack/prompts";
+import { exitCancelled, promptCancelSymbol } from "@genesiscz/utils/prompts/cancel";
 import pc from "picocolors";
 import { inputCancelSymbol } from "./input";
 
 /**
  * Check if a value is a cancel symbol (user pressed Escape/Ctrl+C).
- * Detects both clack's internal cancel symbol and the light-mode inputCancelSymbol.
+ * Detects clack's internal cancel symbol, the light-mode inputCancelSymbol and the facade's promptCancelSymbol.
  */
 export function isCancelled(value: unknown): value is symbol {
-    return p.isCancel(value) || value === inputCancelSymbol;
+    return p.isCancel(value) || value === inputCancelSymbol || value === promptCancelSymbol;
 }
 
 /**
- * Handle cancellation with consistent messaging and exit
+ * Handle cancellation with consistent messaging and exit (inside a test it throws PromptCancelledError instead)
  */
 export function handleCancel(message = "Operation cancelled"): never {
-    p.cancel(message);
-    process.exit(0);
+    exitCancelled((text) => p.cancel(text), message);
 }
 
 /**

@@ -1,4 +1,3 @@
-import type { ChangeEvent } from "@app/agents/lib/changes/log";
 import { asResult } from "@genesiscz/utils/cli/result";
 import { parseArgv, stringFlag } from "../argv";
 import { type CallDoor, failed, ok } from "./types";
@@ -40,11 +39,10 @@ export const agentsToolChangesDoor: CallDoor<{ session: string; toolIds: string[
     async run({ session, toolIds }, { signal }) {
         try {
             signal.throwIfAborted();
-            const { readJsonlRows } = await import("@genesiscz/utils/jsonl");
-            const { sessionChangesPath } = await import("@app/agents/lib/changes/log");
+            const { changeLogPath, readChangeLogFile } = await import("@genesiscz/utils/agents/change-log");
             const { toolChangesJson } = await import("@app/agents/lib/changes/tool-changes");
-            const file = sessionChangesPath(session);
-            const read = readJsonlRows<ChangeEvent>(file);
+            const file = changeLogPath(session);
+            const read = readChangeLogFile(file);
             const warning = read.skipped > 0 ? `Skipped ${read.skipped} unreadable line(s) in ${file}\n` : "";
             const outcome = await toolChangesJson({ session, toolIds, file, rows: read.rows, storeBlobs: false });
             if ("error" in outcome) {
@@ -93,11 +91,10 @@ export const agentsTurnChangesDoor: CallDoor<{ session: string; lastTurns: numbe
     async run({ session, lastTurns, storeBlobs }, { signal }) {
         try {
             signal.throwIfAborted();
-            const { readJsonlRows } = await import("@genesiscz/utils/jsonl");
-            const { sessionChangesPath } = await import("@app/agents/lib/changes/log");
+            const { changeLogPath, readChangeLogFile } = await import("@genesiscz/utils/agents/change-log");
             const { sessionTurnChanges, turnChangesJson } = await import("@app/agents/lib/changes/tool-changes");
-            const file = sessionChangesPath(session);
-            const read = readJsonlRows<ChangeEvent>(file);
+            const file = changeLogPath(session);
+            const read = readChangeLogFile(file);
             const warning = read.skipped > 0 ? `Skipped ${read.skipped} unreadable line(s) in ${file}\n` : "";
             const options = { json: true, lastTurns: String(lastTurns), storeBlobs };
             const result = await sessionTurnChanges({ session, file, rows: read.rows, options, count: lastTurns });

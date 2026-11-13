@@ -11,9 +11,9 @@
  *   tools git configure-authors    # interactive (default)
  */
 
-import * as p from "@clack/prompts";
 import { Executor } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -112,6 +112,7 @@ async function handleConfigureAuthors(storage: Storage, options: ConfigureAuthor
             label: author,
         })),
         initialValues: currentAuthors.filter((a) => repoAuthors.includes(a)),
+        cancel: "back",
     });
 
     if (p.isCancel(selected)) {

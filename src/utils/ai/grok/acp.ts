@@ -27,6 +27,9 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { connectChildStdio } from "@genesiscz/utils/rpc/child-stdio";
+import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
+import type { RpcDialect, RpcPeer } from "@genesiscz/utils/rpc/peer";
 import { resolveGrokHome } from "./paths";
 
 export class GrokAcpError extends Error {}
@@ -39,15 +42,13 @@ interface RpcReply {
     error?: unknown;
 }
 
-interface PendingRpc {
-    resolve: (reply: RpcReply) => void;
-}
-
 /** The pipes of a spawned `grok agent … stdio`; a Bun subprocess fits, and tests pass a fake agent. */
 export interface GrokAcpTransport {
     stdin: { write(chunk: string): unknown; flush(): unknown };
     stdout: ReadableStream<Uint8Array>;
     exitCode: number | null;
+    /** Settles with the exit code; a Bun subprocess has it, and without it the end of stdout ends the connection. */
+    exited?: Promise<number>;
     kill(): void;
 }
 
@@ -146,11 +147,29 @@ export function queuedPromptId(params: unknown, sessionId: string, text: string)
 function defaultSpawn(argv: string[], environment: Record<string, string | undefined>): GrokAcpTransport {
     return Bun.spawn(argv, { stdin: "pipe", stdout: "pipe", stderr: "ignore", env: environment });
 }
+/**
+ * What `grok agent stdio` speaks: JSON-RPC 2.0 with the `jsonrpc` field, without `$/cancel` or `$/progress`. Every call
+ * names its own deadline. A session/load or a long chat history can pass the default 8 MiB line, so the limit is higher.
+ */
+export const GROK_ACP_DIALECT: Partial<RpcDialect> = {
+    jsonrpcField: true,
+    cancel: false,
+    progress: false,
+    defaultDeadlineMs: 240_000,
+    maxLineBytes: 256 * 1024 * 1024,
+};
+
+function errorBody(error: RpcError): Record<string, unknown> {
+    return { code: error.code, message: error.message, ...(error.data !== undefined ? { data: error.data } : {}) };
+}
+
+function reason(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
 
 export class GrokAcpClient {
     private proc: GrokAcpTransport | undefined;
-    private nextId = 0;
-    private readonly pending = new Map<number, PendingRpc>();
+    private peer: RpcPeer | undefined;
     private collector: ((text: string) => void) | undefined;
     private readonly queueWatchers = new Set<QueueWatcher>();
     private chain: Promise<unknown> = Promise.resolve();
@@ -176,8 +195,10 @@ export class GrokAcpClient {
             : [this.bin, "agent", "stdio"];
     }
 
-    /** Kill the backend so the next call respawns (used after errors). */
+    /** Kill the backend so the next call respawns (used after errors); a call still waiting rejects. */
     reset(): void {
+        this.peer?.close("grok-acp backend reset");
+
         try {
             this.proc?.kill();
         } catch {
@@ -185,22 +206,33 @@ export class GrokAcpClient {
         }
 
         this.proc = undefined;
-        this.pending.clear();
+        this.peer = undefined;
         this.collector = undefined;
         this.queueWatchers.clear();
     }
 
     private async ensure(): Promise<void> {
-        if (this.proc && this.proc.exitCode === null) {
+        if (this.proc && this.proc.exitCode === null && this.peer && !this.peer.closed) {
             return;
         }
 
         const started = performance.now();
         const argv = this.argv();
         this.proc = this.spawnAgent(argv, this.environment ?? env.getProcessEnv());
-        this.readLoop(this.proc).catch((err) => {
-            logger.debug({ bid: this.bid, error: err }, "grok-acp read loop ended");
-        });
+        this.peer = connectChildStdio({
+            child: this.proc,
+            dialect: GROK_ACP_DIALECT,
+            exitReason: (code) => `grok-acp agent exited with code ${code}`,
+            invalid: "ignore",
+            log: logger.scoped("grok-acp").log,
+            label: "grok-acp agent",
+            logFields: { bid: this.bid },
+            onNotification: (notification) => this.notification(notification.method, notification.params),
+            // A message with a method is the agent's own request, whatever its id; this client serves none of them.
+            handle: async ({ method }) => {
+                throw new RpcError(JSON_RPC_ERRORS.methodNotFound, `grok-acp does not answer ${method}`);
+            },
+        }).peer;
 
         const handshakeTimeout = this.leader ? 15_000 : 60_000;
         const initialized = await this.rpc(
@@ -232,61 +264,19 @@ export class GrokAcpClient {
         );
     }
 
-    private async readLoop(proc: GrokAcpTransport): Promise<void> {
-        const reader = proc.stdout.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                break;
+    private notification(method: string, params: unknown): void {
+        if (method === "session/update") {
+            const update = isRecord(params) && isRecord(params.update) ? params.update : undefined;
+            const content = update && isRecord(update.content) ? update.content : undefined;
+            if (update?.sessionUpdate === "agent_message_chunk" && content?.type === "text") {
+                this.collector?.(typeof content.text === "string" ? content.text : "");
             }
 
-            buffer += decoder.decode(value, { stream: true });
-            let nl = buffer.indexOf("\n");
-            while (nl !== -1) {
-                const line = buffer.slice(0, nl).trim();
-                buffer = buffer.slice(nl + 1);
-                nl = buffer.indexOf("\n");
+            return;
+        }
 
-                if (!line) {
-                    continue;
-                }
-
-                let obj: {
-                    id?: number;
-                    method?: string;
-                    result?: unknown;
-                    error?: unknown;
-                    params?: { update?: { sessionUpdate?: string; content?: { type?: string; text?: string } } };
-                };
-                try {
-                    obj = SafeJSON.parse(line, { strict: true });
-                } catch {
-                    continue;
-                }
-
-                if (obj.method === "session/update") {
-                    const update = obj.params?.update;
-                    if (update?.sessionUpdate === "agent_message_chunk" && update.content?.type === "text") {
-                        this.collector?.(update.content.text ?? "");
-                    }
-
-                    continue;
-                }
-
-                if (obj.method === "_x.ai/queue/changed") {
-                    this.queueChanged(obj.params);
-                    continue;
-                }
-
-                if (obj.id !== undefined && this.pending.has(obj.id)) {
-                    const pending = this.pending.get(obj.id);
-                    this.pending.delete(obj.id);
-                    pending?.resolve({ result: obj.result, error: obj.error });
-                }
-            }
+        if (method === "_x.ai/queue/changed") {
+            this.queueChanged(params);
         }
     }
 
@@ -300,38 +290,27 @@ export class GrokAcpClient {
         }
     }
 
-    /** Write one request; the reply promise settles when the agent answers that id. */
-    private async send(
-        method: string,
-        params: Record<string, unknown>
-    ): Promise<{ id: number; reply: Promise<RpcReply> }> {
-        const proc = this.proc;
-        if (!proc?.stdin) {
+    private requirePeer(): RpcPeer {
+        if (!this.peer) {
             throw new GrokAcpError("grok-acp backend not running");
         }
 
-        this.nextId += 1;
-        const id = this.nextId;
-        const reply = new Promise<RpcReply>((resolve) => {
-            this.pending.set(id, { resolve });
-        });
-
-        proc.stdin.write(`${SafeJSON.stringify({ jsonrpc: "2.0", id, method, params }, { strict: true })}\n`);
-        await proc.stdin.flush();
-        return { id, reply };
+        return this.peer;
     }
 
+    /**
+     * One request: the agent's error reply comes back as `error`, for the caller to judge. No reply within
+     * `timeoutMs`, or the agent gone, throws.
+     */
     private async rpc(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<RpcReply> {
-        const { id, reply } = await this.send(method, params);
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const timeout = new Promise<RpcReply>((resolve) => {
-            timer = setTimeout(() => resolve({ error: { timeout: true, method } }), timeoutMs);
-        });
         try {
-            return await Promise.race([reply, timeout]);
-        } finally {
-            clearTimeout(timer);
-            this.pending.delete(id);
+            return { result: await this.requirePeer().request(method, params, { timeoutMs }) };
+        } catch (error) {
+            if (error instanceof RpcError) {
+                return { error: errorBody(error) };
+            }
+
+            throw new GrokAcpError(`grok-acp ${method} failed: ${reason(error)}`);
         }
     }
 
@@ -393,20 +372,37 @@ export class GrokAcpClient {
             });
 
             try {
-                const { id, reply } = await this.send("session/prompt", {
-                    sessionId,
-                    prompt: [{ type: "text", text }],
-                });
-                const replied = reply.then((value) => ({ kind: "reply" as const, value }));
+                // The request's own deadline comes after `expired`, so a silent agent reads as a timeout; a queued
+                // prompt's reply, which comes when its turn ends, is still dropped at that deadline.
+                const replied = this.requirePeer()
+                    .request(
+                        "session/prompt",
+                        { sessionId, prompt: [{ type: "text", text }] },
+                        {
+                            timeoutMs: timeoutMs + 1000,
+                        }
+                    )
+                    .then(
+                        (result) => ({ kind: "reply" as const, value: { result } as RpcReply }),
+                        (error: unknown) =>
+                            error instanceof RpcError
+                                ? { kind: "reply" as const, value: { error: errorBody(error) } as RpcReply }
+                                : { kind: "lost" as const, reason: reason(error) }
+                    );
                 const acknowledged = queued.then((promptId) => ({ kind: "queued" as const, promptId }));
                 const first = await Promise.race(
                     until === "queued" ? [replied, acknowledged, expired] : [replied, expired]
                 );
 
                 if (first === "timeout") {
-                    this.pending.delete(id);
                     throw new GrokAcpError(
                         `grok-acp session/prompt to ${sessionId} got no ${until === "queued" ? "queue acknowledgement" : "end of turn"} within ${timeoutMs} ms; it may have been accepted`
+                    );
+                }
+
+                if (first.kind === "lost") {
+                    throw new GrokAcpError(
+                        `grok-acp session/prompt to ${sessionId} lost the agent (${first.reason}); it may have been accepted`
                     );
                 }
 

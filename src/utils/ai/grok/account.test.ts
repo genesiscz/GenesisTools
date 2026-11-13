@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -13,16 +13,32 @@ import { SafeJSON } from "@genesiscz/utils/json";
 const ISSUER = "https://auth.example.test";
 const ENTRY_KEY = `${ISSUER}::11111111-2222-3333-4444-555555555555`;
 
-let account: AIAccountEntry | undefined;
+let account: AccountEntry | undefined;
 
-mock.module("@genesiscz/utils/ai/AIConfig", () => ({
-    AIConfig: {
+mock.module("@genesiscz/utils/ai/config/AiConfigStore", () => ({
+    AiConfigStore: {
         load: async () => ({
-            getAccount: (name: string) => (account?.name === name ? account : undefined),
-            getAccountsByProvider: (provider: string) => (account && account.provider === provider ? [account] : []),
+            account: (idOrName: string) =>
+                account?.name === idOrName || account?.id === idOrName ? account : undefined,
+            accounts: (filter?: { provider?: string }) =>
+                account && (!filter?.provider || account.provider === filter.provider) ? [account] : [],
         }),
     },
 }));
+
+/** A grok-sub account whose credentials are literals, so the routing is tested without a vault. */
+function grokAccount(credentials: AccountEntry["credentials"], fields: Partial<AccountEntry> = {}): AccountEntry {
+    return {
+        id: "acc_grok",
+        name: "grok",
+        provider: "grok-sub",
+        enabled: true,
+        billing: { mode: "subscription" },
+        credentials,
+        useEnvApiKey: false,
+        ...fields,
+    };
+}
 
 /** The vault path is a separate unit (stored-grant.test.ts); here only the routing to it is pinned. */
 const storedGrantCalls: Array<{ name: string; options: unknown }> = [];
@@ -107,7 +123,7 @@ beforeEach(() => {
     // `grokAuthPath()` reads GROK_HOME, so the "default" auth file the
     // stored-copy branch reaches for is this temp file, never ~/.grok/auth.json.
     env.testing.set("GROK_HOME", grokHome);
-    account = { name: "grok", provider: "grok-sub", tokens: { authFile: authPath } };
+    account = grokAccount({ authFile: authPath });
 });
 
 afterEach(() => {
@@ -152,7 +168,7 @@ describe("resolveGrokSubToken", () => {
     });
 
     it("returns a still-valid stored accessToken without touching the network", async () => {
-        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: FRESH } };
+        account = grokAccount({ accessToken: FRESH });
         const calls: string[] = [];
         stubFetch({ calls });
 
@@ -161,7 +177,7 @@ describe("resolveGrokSubToken", () => {
     });
 
     it("refuses an expired stored accessToken rather than refreshing the default auth file", async () => {
-        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: EXPIRED } };
+        account = grokAccount({ accessToken: EXPIRED });
         const calls: string[] = [];
         stubFetch({ calls });
 
@@ -185,7 +201,7 @@ describe("resolveGrokSubToken", () => {
     // (PR #360 review t1). That login belongs to whoever ran `grok login`, not
     // to this account.
     it("refuses an account holding neither a file nor a token, even with a live default auth file", async () => {
-        account = { name: "grok", provider: "grok-sub", tokens: {} };
+        account = grokAccount({});
         writeAuth({ [ENTRY_KEY]: { ...expiredEntries()[ENTRY_KEY], key: EXPIRED_MINE } });
         const calls: string[] = [];
         stubFetch({ calls });
@@ -196,7 +212,7 @@ describe("resolveGrokSubToken", () => {
     });
 
     it("NEGATIVE CONTROL: the same default file still serves an account that references it", async () => {
-        account = { name: "grok", provider: "grok-sub", tokens: { authFile: authPath } };
+        account = grokAccount({ authFile: authPath });
         writeAuth({ [ENTRY_KEY]: { ...expiredEntries()[ENTRY_KEY], key: FRESH_MINE } });
         const calls: string[] = [];
         stubFetch({ calls });
@@ -211,7 +227,7 @@ describe("resolveGrokSubToken: an expired stored copy beside the default auth fi
         // The regression: the only grok-sub account on a migrated config holds a
         // token copy and no authFile, so it could never refresh and every poll
         // threw GrokAuthExpiredError forever, while ~/.grok/auth.json stayed fresh.
-        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: EXPIRED_MINE } };
+        account = grokAccount({ accessToken: EXPIRED_MINE });
         writeAuth(expiredEntries({ key: EXPIRED_MINE, user_id: MINE }));
         const calls: string[] = [];
         stubFetch({ calls, token: { body: SafeJSON.stringify({ access_token: FRESH_MINE }) } });
@@ -224,7 +240,7 @@ describe("resolveGrokSubToken: an expired stored copy beside the default auth fi
     });
 
     it("uses a still-fresh default auth file without spending the grant", async () => {
-        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: EXPIRED_MINE } };
+        account = grokAccount({ accessToken: EXPIRED_MINE });
         writeAuth(expiredEntries({ key: FRESH_MINE }));
         const calls: string[] = [];
         stubFetch({ calls });
@@ -234,7 +250,7 @@ describe("resolveGrokSubToken: an expired stored copy beside the default auth fi
     });
 
     it("refuses the default auth file when it belongs to a DIFFERENT identity", async () => {
-        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: EXPIRED_MINE } };
+        account = grokAccount({ accessToken: EXPIRED_MINE });
         writeAuth(expiredEntries({ key: EXPIRED_THEIRS, user_id: THEIRS }));
         const calls: string[] = [];
         stubFetch({ calls });
@@ -245,7 +261,7 @@ describe("resolveGrokSubToken: an expired stored copy beside the default auth fi
     });
 
     it("refuses when neither side names an identity", async () => {
-        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: EXPIRED } };
+        account = grokAccount({ accessToken: EXPIRED });
         writeAuth(expiredEntries());
         const calls: string[] = [];
         stubFetch({ calls });
@@ -255,7 +271,7 @@ describe("resolveGrokSubToken: an expired stored copy beside the default auth fi
     });
 
     it("does not spend the grant on the identity-matched path during a probe", async () => {
-        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: EXPIRED_MINE } };
+        account = grokAccount({ accessToken: EXPIRED_MINE });
         writeAuth(expiredEntries({ key: EXPIRED_MINE, user_id: MINE }));
         const calls: string[] = [];
         stubFetch({ calls });
@@ -267,11 +283,7 @@ describe("resolveGrokSubToken: an expired stored copy beside the default auth fi
 
 describe("resolveGrokSubToken: a grant stored by tools grok login", () => {
     it("routes to the stored grant, never to an auth file, and hands back its refresh path", async () => {
-        account = {
-            name: "grok",
-            provider: "grok-sub",
-            tokens: { accessToken: FRESH, refreshToken: "refresh-stored" },
-        };
+        account = grokAccount({ accessToken: FRESH, refreshToken: "refresh-stored" });
         storedGrantCalls.length = 0;
 
         const resolved = await resolveGrokSubToken("grok", { noRefresh: true });
@@ -290,11 +302,7 @@ describe("resolveGrokSubToken: a grant stored by tools grok login", () => {
     // in as, which is the cross-account read the branch exists to prevent. The expiry the
     // login stored beside the token is what still names the shape.
     it("routes a grant the issuer gave no refresh token for, on its stored expiry", async () => {
-        account = {
-            name: "grok",
-            provider: "grok-sub",
-            tokens: { accessToken: FRESH, expiresAt: Date.now() + 3_600_000 },
-        };
+        account = grokAccount({ accessToken: FRESH, expiresAt: Date.now() + 3_600_000 });
         storedGrantCalls.length = 0;
         const calls: string[] = [];
         stubFetch({ calls });
@@ -311,7 +319,7 @@ describe("resolveGrokSubToken: a grant stored by tools grok login", () => {
     // Negative control: a plain stored token with no refresh token and no expiry is the
     // older pasted shape and keeps the identity-proof path (the describe above).
     it("a stored token without a refresh token still resolves as before", async () => {
-        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: FRESH } };
+        account = grokAccount({ accessToken: FRESH });
         storedGrantCalls.length = 0;
 
         expect((await resolveGrokSubToken("grok")).token).toBe(FRESH);

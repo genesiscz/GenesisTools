@@ -236,9 +236,8 @@ export function cmuxLocationForRow(
 /**
  * Codex and Grok rows, straight off the shared history index.
  *
- * `PR #370` made `openHistoryService` provider-generic; only `getSessionListing` in the Claude
- * tool stayed pinned to one provider, which is why nothing downstream of it had a Codex or
- * Grok equivalent.
+ * `PR #370` made `openHistoryService` provider-generic, and `catalogHistory` lists any provider; the
+ * claude tool keeps only its own CLI adapter over it.
  */
 export function nativeRows(alias: AccountProviderAlias, spec: NativeRowSpec): RowLister {
     return (options) => nativeRowsOf(alias, spec, options);
@@ -259,7 +258,6 @@ async function nativeRowsOf(
         filters: {
             excludeAgents: true,
             ...(options.filePaths === undefined ? {} : { filePaths: options.filePaths }),
-            ...(options.limit === undefined ? {} : { limit: options.limit }),
             ...(cutoff === undefined ? {} : { mtimeFrom: cutoff }),
         },
         ...(options.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
@@ -270,11 +268,7 @@ async function nativeRowsOf(
     const rows: AgentSessionRow[] = [];
 
     for (const record of metadata) {
-        // 🛑 `catalog({ excludeAgents: true })` does NOT exclude them: it uses the flag for the
-        // refresh scope and then hard-overrides it to false before filtering what it returns.
-        // Grok marks its worker sessions as subagents, so without this they were listed beside
-        // real ones. Filtered here rather than in `catalog`, which other callers depend on.
-        if (!record.sessionId || record.isSubagent || (cutoff !== undefined && record.mtime < cutoff)) {
+        if (!record.sessionId || (cutoff !== undefined && record.mtime < cutoff)) {
             continue;
         }
 
@@ -312,10 +306,9 @@ async function nativeRowsOf(
         return rows;
     }
 
-    // `catalog`'s own `limit` bounds which sources get their metadata REFRESHED; the list it
-    // returns is every indexed session for the provider, so the cap has to be applied here. After
-    // the subagent filter, not before it: passing `limit` down and letting the filter eat rows out
-    // of it is how a provider whose newest sessions are all workers contributed nothing.
+    // The cap is applied here and not passed to `catalog`: `catalog` cuts by session START
+    // (`firstTimestamp`), and "newest" here means most recently written, so a long session that is
+    // still being written must not lose its place to sessions started after it.
     return rows.sort((left, right) => right.mtime - left.mtime).slice(0, options.limit);
 }
 

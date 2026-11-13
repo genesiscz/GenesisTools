@@ -218,6 +218,7 @@ async function chooseRows(
         })),
         initialValues: rows.filter((row) => row.stale.length > 0).map((row) => row.id),
         required: false,
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {

@@ -28,8 +28,11 @@ public final class GitHistoryModel: ObservableObject {
     @Published public private(set) var failure: GitFailure?
     public let limit: Int
     private var subject: Subject?
-    private lazy var follower = GitRepoFollower { [weak self] in self?.reload() }
+    /// A history changes only when HEAD moves: a stage or a save of the repository reads nothing.
+    private lazy var follower = GitRepoFollower { [weak self] in self?.repositoryChanged() }
     private var ticket = 0
+    /// The commit HEAD named when the history was last read.
+    private var readAtHead: String?
 
     public init(limit: Int = 60) {
         self.limit = limit
@@ -42,11 +45,27 @@ public final class GitHistoryModel: ObservableObject {
         commits = []
         loaded = false
         failure = nil
+        readAtHead = nil
         switch subject {
         case .file(let url): follower.follow(url)
         case .repository(let folder): follower.follow(folder: folder)
         case nil: follower.follow(folder: nil)
         }
+    }
+
+    private func repositoryChanged() {
+        guard loaded, failure == nil, let readAtHead, readAtHead == currentHead() else { return reload() }
+    }
+
+    /// The commit HEAD names in the shared status of the subject's repository.
+    private func currentHead() -> String? {
+        let folder: URL?
+        switch subject {
+        case .file(let url): folder = url.deletingLastPathComponent()
+        case .repository(let root): folder = root
+        case nil: folder = nil
+        }
+        return folder.flatMap { GitRepos.shared.model(for: $0)?.status?.head }
     }
 
     public func reload() {
@@ -55,6 +74,7 @@ public final class GitHistoryModel: ObservableObject {
         let ticket = self.ticket
         let provider = GenesisKitGT.provider
         let limit = self.limit
+        let at = currentHead()
         DispatchQueue.global(qos: .utility).async {
             let result = Result<[GitCommit], Error> {
                 switch subject {
@@ -70,6 +90,7 @@ public final class GitHistoryModel: ObservableObject {
                 case .success(let commits):
                     self.commits = commits
                     self.failure = nil
+                    self.readAtHead = at
                 case .failure(let error):
                     self.failure = GitFailure(error, fallback: "Git could not read the history. Try again.")
                 }

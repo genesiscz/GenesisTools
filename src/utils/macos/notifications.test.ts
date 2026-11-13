@@ -4,12 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { notificationSpeaker } from "@genesiscz/utils/genesis-tools/tools/hints";
 import { systemChannelDelivered } from "@genesiscz/utils/notifications/channels/system";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import * as notifications from "./notifications";
 import { launchdSession, resolveNotificationFallbackState, sendViaTerminalNotifier } from "./notifications";
-
-setupStorageSandbox();
 
 /** Kept, one per body: a fake started and then deleted with the run's temp root is the syspolicyd trap. */
 function fakeNotifier(body: string): string {

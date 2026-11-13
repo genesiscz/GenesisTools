@@ -152,6 +152,9 @@ function printPaneSend(outcome: Exclude<PaneSendOutcome, { kind: "unavailable" }
         case "option-refused":
             out.error(pc.red(`Nothing was pressed: ${outcome.reason}.`));
             return false;
+        case "refused":
+            out.error(pc.red(outcome.reason.replace("pass force", "pass --force")));
+            return false;
         case "option-pressed":
             out.printlnErr(
                 `Option key sent to ${outcome.target.workspaceName}; submission is unconfirmed. Check the dialog before retrying.`

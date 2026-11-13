@@ -47,13 +47,6 @@ export const DESTRUCTIVE_FLAGS = new Set(["--force", "--delete", "--rm", "--push
 /** Subcommand names that never help a router. */
 const SKIPPED_COMMANDS = new Set(["help", "readme"]);
 
-/**
- * `src/` entries that `discoverTools` sees as tools because they carry an `index.ts`, but that no
- * human can run. `src/utils/index.ts` is the `@genesiscz/utils` barrel; running it prints nothing,
- * and leaving it in puts a dead option in the family question.
- */
-const NON_TOOL_DIRS = new Set(["utils", "Internal", "components", "lib"]);
-
 const COMMAND_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
 export interface RouteFlag {
@@ -222,7 +215,7 @@ function commandsOf(help: ToolHelp, toolName: string): CatalogueCommand[] {
 export function buildCatalogue(options: { srcDir: string; only?: string[]; commit?: string }): ToolCatalogue {
     const started = performance.now();
     const discovered = discoverTools(options.srcDir).filter(
-        (tool: ToolInfo) => !NON_TOOL_DIRS.has(tool.name) && (!options.only || options.only.includes(tool.name))
+        (tool: ToolInfo) => !options.only || options.only.includes(tool.name)
     );
     log.info({ toolCount: discovered.length, srcDir: options.srcDir }, "Building the Jev route catalogue");
 

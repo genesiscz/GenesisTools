@@ -5,7 +5,7 @@ export const Route = createFileRoute("/api/stats")({
 	server: {
 		handlers: {
 			GET: async () => {
-				const { getConversationStats, getQuickStatsFromCache } = await history();
+				const { getConversationStatsWithCache, getQuickStatsFromCache } = await history();
 				const cached = getQuickStatsFromCache();
 
 				if (cached) {
@@ -18,7 +18,7 @@ export const Route = createFileRoute("/api/stats")({
 					});
 				}
 
-				const stats = await getConversationStats();
+				const stats = await getConversationStatsWithCache({ forceRefresh: false });
 				return Response.json({
 					totalConversations: stats.totalConversations,
 					totalMessages: stats.totalMessages,

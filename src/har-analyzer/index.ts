@@ -1,8 +1,5 @@
 #!/usr/bin/env bun
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 program

@@ -15,9 +15,9 @@ import type { AccountRanker } from "./usage-rank";
  * decided it; a provider with nothing to declare says so with an empty list.
  *
  * Every write to the config store happens in the CLI layer through `account-ops.ts` or
- * `AiConfigStore.mutate`; a flow only RETURNS what it obtained (`LoginOutcome`). Never the
- * v3 `AIConfig` facade: its bridge matches accounts by name and deletes any account absent
- * from the projected list (`store-bridge.ts:104,164-168`).
+ * `AiConfigStore.mutate`; a flow only RETURNS what it obtained (`LoginOutcome`). The retired
+ * v3 facade matched accounts by name and deleted any account absent from its projected list,
+ * which is why a write goes through the store by account id.
  */
 
 /** Interactive context. TTY prompts go through the `p.*` facade set by the entrypoint. */

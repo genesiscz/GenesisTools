@@ -1,7 +1,8 @@
+import type { TmuxHubSession } from "@app/dev-dashboard/contract/dto";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import type { TmuxHubSession } from "@/lib/api";
-import { tmuxApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 import { backoffRefetchInterval } from "@/lib/poll-backoff";
 
 interface UseTmuxHubSessionsOptions {
@@ -48,14 +49,14 @@ export function useTmuxHubSessions(opts: UseTmuxHubSessionsOptions = {}): UseTmu
 
     const list = useQuery({
         queryKey: ["tmux", "sessions"],
-        queryFn: () => tmuxApi.sessions().then((r) => r.sessions),
+        queryFn: () => dashboard.call(ENDPOINTS.tmuxSessions, {}).then((r) => r.sessions),
         enabled,
         refetchInterval: enabled && listInterval ? backoffRefetchInterval(listInterval, listInterval * 4) : false,
     });
 
     const cmux = useQuery({
         queryKey: ["tmux", "sessions", "cmux"],
-        queryFn: () => tmuxApi.sessions({ includeCmux: true }).then((r) => r.sessions),
+        queryFn: () => dashboard.call(ENDPOINTS.tmuxSessions, { include: "cmux" }).then((r) => r.sessions),
         enabled,
         refetchInterval: enabled && cmuxInterval ? backoffRefetchInterval(cmuxInterval, cmuxInterval * 4) : false,
     });

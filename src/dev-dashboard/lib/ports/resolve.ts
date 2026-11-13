@@ -1,7 +1,6 @@
 import { basename } from "node:path";
-import { canReadProcessCwd } from "@genesiscz/utils/process/cwd";
+import { batchCwd, canReadProcessCwd } from "@genesiscz/utils/process/cwd";
 import { type ProcessEntry, readProcessesWithUsage } from "@genesiscz/utils/process/processes";
-import { batchCwd } from "@genesiscz/utils/process/ps";
 
 export type ProcessSnapshot = ReadonlyMap<number, ProcessEntry>;
 

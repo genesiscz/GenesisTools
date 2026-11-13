@@ -6,9 +6,9 @@ import { claudeAnalysis } from "./readers/claude-analysis";
 import { claudeDialog } from "./readers/claude-dialog";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
 import { claudeMidWork } from "./readers/claude-mid-work";
-import { claudeClassifyPath } from "./readers/claude-paths";
+import { claudeClassifyPath, claudeReadSpawnLink } from "./readers/claude-paths";
 import { readClaudeStatistics } from "./readers/claude-statistics";
-import { createCodexHistoryOperations } from "./readers/codex";
+import { createCodexHistoryOperations, readCodexSpawnLink } from "./readers/codex";
 import { codexAnalysis } from "./readers/codex-analysis";
 import { discoverCodexHistorySources } from "./readers/codex-discovery";
 import { importNativeCodexSession } from "./readers/codex-import";
@@ -45,6 +45,7 @@ export const claudeHistoryReader = createCompactHistoryReader({
     roots: () => nativeSessionRoots("claude"),
     discover: discoverClaudeHistorySources,
     classifyPath: claudeClassifyPath,
+    readSpawnLink: claudeReadSpawnLink,
     midWork: claudeMidWork,
     readChanges: deferredReadChanges(import.meta, "./readers/claude-changes", "claudeSessionChanges"),
     // One JSONL row per record, and a record's text reads only that row (a tool result's name,
@@ -69,6 +70,7 @@ export const codexHistoryReader = createCompactHistoryReader({
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
     classifyPath: codexClassifyPath,
+    readSpawnLink: readCodexSpawnLink,
     midWork: codexMidWork,
     readChanges: deferredReadChanges(import.meta, "./readers/codex-changes", "codexSessionChanges"),
     searchMetadata: true,
@@ -87,6 +89,9 @@ export const grokHistoryReader = createCompactHistoryReader({
     roots: () => nativeSessionRoots("grok"),
     discover: discoverGrokHistorySources,
     classifyPath: grokClassifyPath,
+    // A Grok sub-agent's `summary.json` names only itself (`agent_id`, `agent_name`, `session_kind`), never its
+    // lead, so no Grok file says which session spawned it.
+    readSpawnLink: async () => null,
     midWork: grokMidWork,
     // No Grok transcript parser reads file changes: a Grok session is judged from the change log alone.
     readChanges: () => null,

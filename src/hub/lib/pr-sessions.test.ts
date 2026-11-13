@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { ChangeEvent } from "@app/agents/lib/changes/log";
+import type { ChangeLogRow } from "@genesiscz/utils/agents/change-log";
 import {
     checkoutOf,
     commitOutputPattern,
@@ -28,7 +28,7 @@ function session(id: string, over: Partial<IndexedSession> = {}): IndexedSession
     };
 }
 
-function change(sessionId: string, path: string, ts = "2026-09-20T10:00:00Z"): ChangeEvent {
+function change(sessionId: string, path: string, ts = "2026-09-20T10:00:00Z"): ChangeLogRow {
     return {
         ts,
         provider: "claude",

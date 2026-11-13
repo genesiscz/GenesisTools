@@ -1,6 +1,6 @@
 import { colorizeProvider } from "@ask/utils/helpers";
-import * as p from "@clack/prompts";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 export interface AskUILoggerConfig {

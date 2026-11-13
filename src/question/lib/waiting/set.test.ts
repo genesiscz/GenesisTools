@@ -4,6 +4,7 @@ import { staleCrossings } from "../decisions/read";
 import type { DecisionRecord } from "../decisions/store";
 import { buildInbox } from "../inbox/build";
 import type { AskForm } from "../pending/types";
+import type { WaitingDialog } from "./set";
 import { addressedToHuman, INBOX_STALE_MS, waitingSet, waitsOnHuman } from "./set";
 
 const NOW = Date.parse("2026-03-10T12:00:00.000Z");
@@ -93,5 +94,66 @@ describe("waiting set", () => {
         const alphaSet = set.items.filter((item) => item.session === "s-alpha" && item.kind !== "todo");
         expect(alpha?.waiting).toBe(alphaSet.length);
         expect(INBOX_STALE_MS).toBe(72 * HOUR);
+    });
+
+    it("counts an old ask of a live session, which a stale session's ask does not", () => {
+        const old = [row("d1", { sessionId: "s-running", createdTs: iso(100 * HOUR), updatedTs: iso(100 * HOUR) })];
+
+        expect(waitingSet({ rows: old, now: NOW }).total).toBe(0);
+        expect(waitingSet({ rows: old, now: NOW, live: new Set(["s-running"]) }).total).toBe(1);
+    });
+
+    it("holds a dialog to the clear watermark and to its session's freshness", () => {
+        const dialog = (sessionId: string, offset: number): WaitingDialog => ({
+            provider: "claude",
+            sessionId,
+            toolCallId: `call-${sessionId}`,
+            askedAt: iso(offset),
+        });
+        const dialogs = [dialog("s-alpha", HOUR), dialog("s-quiet", 100 * HOUR)];
+        const counted = (set: ReturnType<typeof waitingSet>) =>
+            set.items.filter((item) => item.counted).map((item) => item.session);
+
+        // The quiet session asked 100 hours ago and did nothing since: its dialog stays listed and does not count.
+        expect(counted(waitingSet({ rows: [], dialogs, now: NOW }))).toEqual(["s-alpha"]);
+        // Mark all read after the ask: the fresh session's dialog stops counting too.
+        expect(counted(waitingSet({ rows: [], dialogs, now: NOW, clearedAt: NOW - HOUR / 2 }))).toEqual([]);
+        // A closed dialog is not waiting at all.
+        expect(waitingSet({ rows: [], dialogs: [{ ...dialogs[0], closedAt: iso(0) }], now: NOW }).items).toEqual([]);
+    });
+
+    it("counts a form asked after Mark all read alone, never with its session's cleared ones", () => {
+        const form = (id: string, createdAt: number): AskForm => ({ ...FORM, id, sessionHint: "s-forms", createdAt });
+        const cleared = [form("cleared-0", NOW - 3000), form("cleared-1", NOW - 2000), form("cleared-2", NOW - 1000)];
+
+        expect(waitingSet({ rows: [], forms: cleared, now: NOW }).total).toBe(3);
+        expect(waitingSet({ rows: [], forms: cleared, now: NOW, clearedAt: NOW }).total).toBe(0);
+
+        const after = waitingSet({
+            rows: [],
+            forms: [...cleared, form("after-clear", NOW + 1000)],
+            now: NOW + 2000,
+            clearedAt: NOW,
+        });
+        expect(after.total).toBe(1);
+        expect(after.sessions.map((entry) => [entry.key, entry.waiting, entry.counted])).toEqual([["s-forms", 4, 1]]);
+    });
+
+    it("clears every session's forms by the same watermark, however many sessions ask", () => {
+        const forms = Array.from(
+            { length: 258 },
+            (_, index): AskForm => ({
+                ...FORM,
+                id: `form-${index}`,
+                sessionHint: `overflow-${index}`,
+                createdAt: NOW - 10_000 + index,
+            })
+        );
+        const before = waitingSet({ rows: [], forms, now: NOW });
+        const after = waitingSet({ rows: [], forms, now: NOW, clearedAt: NOW });
+
+        expect(before.total).toBe(258);
+        expect(after.total).toBe(0);
+        expect(after.sessions.filter((entry) => entry.counted > 0)).toEqual([]);
     });
 });

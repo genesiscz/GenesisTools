@@ -12,8 +12,16 @@ import Foundation
 struct GitQueries {
     let provider: GenesisKitGTProvider
 
-    /// The repository root holding `folder`, or nil outside a repository.
+    /// The repository root holding `folder`, or nil outside a repository. A root found once is remembered for the
+    /// process (`GitRootCache`): every view asked again at every refresh.
     func root(of folder: URL) -> URL? {
+        if let known = GitRootCache.shared.root(of: folder) { return known }
+        guard let found = findRoot(of: folder) else { return nil }
+        GitRootCache.shared.remember(found, for: folder)
+        return found
+    }
+
+    private func findRoot(of folder: URL) -> URL? {
         guard let result = try? provider.git(["rev-parse", "--show-toplevel"], in: Self.existingFolder(folder), input: nil, gitDirectory: nil, environment: nil),
               result.status == 0 else { return nil }
         let path = String(decoding: result.stdout, as: UTF8.self).trimmed
@@ -58,6 +66,20 @@ struct GitQueries {
         if state.isUntracked, let from = movedFrom(path, in: root) {
             state.entry = GitStatusEntry(path: path, oldPath: from, unstaged: .renamed)
         }
+        return try counted(state, in: root)
+    }
+
+    /// The file's state from its repository's shared status (`GitRepoModel`), which already pairs moves: git runs only
+    /// for the line counts of a changed file.
+    func fileState(_ file: URL, in status: GitRepoStatus) throws -> GitFileState? {
+        guard let path = Self.relative(file, to: status.root) else { return nil }
+        let state = GitFileState(repoRoot: status.root, path: path, branch: status.branch, entry: status.entries.first { $0.path == path })
+        return try counted(state, in: status.root)
+    }
+
+    private func counted(_ state: GitFileState, in root: URL) throws -> GitFileState {
+        var state = state
+        let path = state.path
         if state.hasUnstaged, !state.isUntracked,
            let counts = Self.parseNumstat(try run(["--no-optional-locks", "diff", "--numstat", "--", path], in: root)) {
             state.unstagedAdditions = counts.additions
@@ -122,13 +144,15 @@ struct GitQueries {
             log = ""
         }
         return GitRepoStatus(root: root, branch: status.branch, upstream: status.upstream, ahead: status.ahead, behind: status.behind,
-                             entries: GitWorktreeRenames.paired(status.entries, in: root, provider: provider), commits: Self.parseLog(log))
+                             entries: GitWorktreeRenames.paired(status.entries, in: root, provider: provider), commits: Self.parseLog(log),
+                             head: status.head)
     }
 
     // MARK: Parsing
 
     struct Status {
         var unborn = false
+        var head: String?
         var branch = "(no branch)"
         var upstream: String?
         var ahead = 0
@@ -149,6 +173,7 @@ struct GitQueries {
             if field.hasPrefix("# branch.oid ") {
                 oid = String(field.dropFirst("# branch.oid ".count))
                 status.unborn = oid == "(initial)"
+                status.head = status.unborn ? nil : oid
             } else if field.hasPrefix("# branch.head ") {
                 let head = String(field.dropFirst("# branch.head ".count))
                 status.branch = head == "(detached)" ? "detached \(oid.prefix(7))" : head

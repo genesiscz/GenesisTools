@@ -1,6 +1,5 @@
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
-import * as p from "@clack/prompts";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { AgentSession } from "@genesiscz/utils/agent-sessions/types";
 import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
@@ -14,6 +13,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import * as p from "@genesiscz/utils/prompts/p";
 import { defaultNativeHome } from "@genesiscz/utils/providers/session-paths";
 import { CodexAccountBinding } from "./account";
 import { formatActiveWriter, inspectActiveWriter, isActiveWriterError } from "./active-writer";
@@ -111,6 +111,7 @@ export async function runAccountTerminal(input: {
                     { value: "copy", label: "Copy and resume" },
                     { value: "cancel", label: "Cancel" },
                 ],
+                cancel: "back",
             });
             if (p.isCancel(choice) || choice === "cancel") {
                 return;

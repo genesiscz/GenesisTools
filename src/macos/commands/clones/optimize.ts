@@ -29,12 +29,12 @@ import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clo
 import type { DuplicateSet, ProcessReport } from "@app/macos/lib/clones/render/types";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { TARGET_KIND_VALUES } from "@app/macos/lib/clones/targets";
-import * as p from "@clack/prompts";
 import { isInteractive, parseVariadic, suggestCommand } from "@genesiscz/utils/cli";
 import { printLn } from "@genesiscz/utils/cli/stdout";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import { CloneUnsupportedError } from "@genesiscz/utils/macos/apfs";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Command, Option } from "commander";
 import pc from "picocolors";
 
@@ -198,6 +198,7 @@ export function createOptimizeCommand(): Command {
                     const token = await p.text({
                         message: 'Type "rollback" to proceed',
                         validate: (v) => (v === "rollback" ? undefined : 'Type exactly "rollback" or Ctrl-C'),
+                        cancel: "back",
                     });
 
                     if (p.isCancel(token) || token !== "rollback") {
@@ -445,6 +446,7 @@ export function createOptimizeCommand(): Command {
                         const token = await p.text({
                             message: 'Type "apply" to proceed',
                             validate: (v) => (v === "apply" ? undefined : 'Type exactly "apply" or Ctrl-C'),
+                            cancel: "back",
                         });
 
                         if (p.isCancel(token) || token !== "apply") {

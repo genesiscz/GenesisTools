@@ -3,10 +3,10 @@
  * actually run, and the foreground `dev` verb that restores the installed server.
  */
 import { out } from "@genesiscz/utils/logger";
+import { isLaunchdInstalled, startLaunchd } from "@genesiscz/utils/process/launchd-agent";
 import { spawnDashboard } from "@genesiscz/utils/process/spawnDashboard";
 import { terminalLocaleEnvRecord } from "@genesiscz/utils/terminal/locale";
 import { resolveDashboardBindHost } from "./access";
-import { isLaunchdInstalled, startLaunchd } from "./launchd";
 import type { LifecycleContext } from "./lifecycle";
 import { clearPid, writePid } from "./pidFile";
 import { waitForPortFree } from "./portConflict";
