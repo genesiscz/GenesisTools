@@ -804,7 +804,9 @@ function claudeRowAnchors(): RowAnchorWalk {
 
 export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
     return {
-        parserVersion: "7",
+        // 8: cache writes count a record whose only cache-write field is the nested split (d2265034fb). The bump
+        // makes every indexed session's statistics read once more; an unchanged file keeps its old revision otherwise.
+        parserVersion: "8",
         readMetadata: readClaudeMetadata,
         scan: scanClaudeRecords,
         readRecords: readClaudeRecords,
