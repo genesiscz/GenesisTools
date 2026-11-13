@@ -331,7 +331,9 @@ extension ListsSketchA {
 
         private var shown: [HubSession] {
             let sorted = sessions.sorted { ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast) }
-            let words = query.lowercased().split(whereSeparator: \.isWhitespace)
+            // The filter field shows only with the whole list, so the folded preview ignores what it holds: a filter
+            // typed before "Show the newest 5" hid sessions with no field on screen to say why.
+            let words = showsAll ? query.lowercased().split(whereSeparator: \.isWhitespace) : []
             let matching = words.isEmpty ? sorted : sorted.filter { session in
                 let text = "\(session.displayTitle) \(session.provider) \(session.gitBranch ?? "") \(session.sessionId)".lowercased()
                 return words.allSatisfy { text.contains($0) }
