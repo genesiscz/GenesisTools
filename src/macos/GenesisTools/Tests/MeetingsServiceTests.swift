@@ -298,6 +298,27 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.Transcript.name:
                 try roundTrip(MeetingsAPI.Transcript.Params.self, params, label)
                 if let result { XCTAssertFalse(try MeetingsService.decode(MeetingsAPI.Transcript.Result.self, result).entries.isEmpty) }
+            case MeetingsAPI.AcousticInspect.name:
+                try roundTrip(MeetingsAPI.AcousticInspect.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.AcousticInspect.Result.self, result) }
+            case MeetingsAPI.AcousticClip.name:
+                try roundTrip(MeetingsAPI.AcousticClip.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.AcousticClip.Result.self, result) }
+            case MeetingsAPI.AcousticCollect.name:
+                try roundTrip(MeetingsAPI.AcousticCollect.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.AcousticCollect.Result.self, result) }
+            case MeetingsAPI.VoiceScore.name:
+                try roundTrip(MeetingsAPI.VoiceScore.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.VoiceScore.Result.self, result) }
+            case MeetingsAPI.VoiceEnroll.name:
+                try roundTrip(MeetingsAPI.VoiceEnroll.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.VoiceEnroll.Result.self, result) }
+            case MeetingsAPI.VoicePrepare.name:
+                try roundTrip(MeetingsAPI.VoicePrepare.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.VoicePrepare.Result.self, result) }
+            case MeetingsAPI.VoiceCollect.name:
+                try roundTrip(MeetingsAPI.VoiceCollect.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.VoiceCollect.Result.self, result) }
             case MeetingsAPI.WordTimings.name:
                 try roundTrip(MeetingsAPI.WordTimings.Params.self, params, label)
                 if let result {

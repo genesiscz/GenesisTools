@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { TONE_PRESET_NAMES, toneSoundSettingSchema } from "@genesiscz/utils/meetings/config";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
+import { echoMetricSchema } from "@genesiscz/utils/meetings/echo";
 import { pairedBySchema } from "@genesiscz/utils/meetings/people";
 import {
     type KnownPeople,
@@ -520,6 +521,99 @@ const tonePresets = defineMethod({
     resultName: "{ presets: { name, label, kind, volume, hz?, sec?, file?, available }[] }",
     doc: "The named tones a sound picker offers: three sines and the Mac's own alert sounds. `config.set` of `global.playback.listen.tone.sound` to `{ preset }` picks one; `tone.preview` plays it.",
     effect: "read",
+});
+
+const voicePrepare = defineMethod({
+    name: "voice.prepare",
+    params: z.object({ download: z.literal(true) }).strict(),
+    result: z.object({ path: z.string() }),
+    resultName: "{ path }",
+    effect: "reversible",
+    doc: "Explicit public model provisioning through the existing local artifact store. No credentials or paid API.",
+});
+const voiceEnroll = defineMethod({
+    name: "voice.enroll",
+    params: z
+        .object({
+            meeting: z.string().min(1),
+            fromSec: z.number().nonnegative(),
+            toSec: z.number().positive(),
+            channel: z.union([z.literal(0), z.literal(1)]),
+            person: z.string().min(1),
+            confirmed: z.literal(true),
+        })
+        .strict(),
+    result: z.unknown(),
+    resultName: "VoiceMatch",
+    effect: "reversible",
+    doc: "Enrol this explicitly confirmed single-speaker interval in the meeting-local voice store. Keeps interval, physical channel and exact model identity.",
+});
+const acousticCollect = defineMethod({
+    name: "acoustic.collect",
+    params: z.object({ meeting: z.string().min(1) }).strict(),
+    result: z.object({ blocks: z.number().int().nonnegative(), layout: z.string() }),
+    resultName: "{ blocks, layout }",
+    effect: "reversible",
+    doc: "Explicitly collect compact acoustic echo evidence. Source audio remains read-only.",
+});
+const voiceCollect = defineMethod({
+    name: "voice.collect",
+    params: z.object({ meeting: z.string().min(1) }).strict(),
+    result: z.object({ lines: z.number().int().nonnegative(), matched: z.number().int().nonnegative() }),
+    resultName: "{ lines, matched }",
+    effect: "reversible",
+    doc: "Explicitly collect model-matched voice evidence for attribution from confirmed enrolments. Unavailable and ambiguous voices remain unknown.",
+});
+
+const acousticParams = z
+    .object({ meeting: z.string().min(1), fromSec: z.number().nonnegative(), toSec: z.number().positive() })
+    .strict()
+    .refine((p) => p.toSec > p.fromSec && p.toSec - p.fromSec <= 60, "Use a positive interval of at most 60 seconds");
+const acousticInspect = defineMethod({
+    name: "acoustic.inspect",
+    params: acousticParams,
+    result: z.object({
+        quality: z.string(),
+        reason: z.string(),
+        layout: z.string().optional(),
+        metric: echoMetricSchema.optional(),
+    }),
+    resultName: "{ quality, reason, layout?, metric? }",
+    effect: "read",
+    doc: "Cached acoustic correlation, lag, raw and residual microphone energy. Unknown means collect explicitly. Linear residual quality is unverified.",
+});
+const acousticClip = defineMethod({
+    name: "acoustic.clip",
+    params: acousticParams,
+    result: z.object({
+        tracks: z.object({ rawMic: z.string(), isolatedCall: z.string(), cleanMic: z.string() }),
+        metric: echoMetricSchema,
+        quality: z.literal("linear-estimate"),
+    }),
+    resultName: "{ tracks: { rawMic, isolatedCall, cleanMic }, metric, quality }",
+    effect: "reversible",
+    doc: "Cut all three derived tracks for a bounded interval. Retains raw microphone and call alongside the linear cleaned estimate; never edits source audio.",
+});
+const voiceScore = defineMethod({
+    name: "voice.score",
+    params: z
+        .object({
+            meeting: z.string().min(1),
+            fromSec: z.number().nonnegative(),
+            toSec: z.number().positive(),
+            channel: z.union([z.literal(0), z.literal(1)]),
+        })
+        .strict(),
+    result: z.object({
+        candidates: z.array(z.object({ person: z.string(), score: z.number() })),
+        person: z.string().optional(),
+        quality: z.enum(["matched", "unknown"]),
+        reason: z.string(),
+        model: z.string(),
+    }),
+    resultName: "{ candidates, person?, quality, reason, model }",
+    effect: "read",
+    doc: "Local CAM++ scoring against confirmed enrolments. Missing model is unavailable, ambiguous identities stay unknown; cosine scores are not probabilities. Never downloads.",
 });
 
 const meetingAudio = defineMethod({
@@ -1318,6 +1412,13 @@ export const meetingsApi = defineApi({
         tonePreview,
         tonePresets,
         meetingAudio,
+        acousticInspect,
+        acousticClip,
+        voiceScore,
+        voicePrepare,
+        voiceEnroll,
+        acousticCollect,
+        voiceCollect,
         meetingSpeakers,
         meetingScreen,
         meetingTimeline,

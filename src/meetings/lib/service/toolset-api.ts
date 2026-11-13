@@ -74,6 +74,69 @@ export const editPerson = defineMethod({
     name: "editPerson",
     params: meetingPeopleEdit.params.omit({ meeting: true }),
 });
+export const acousticCollect = defineMethod({
+    name: "acousticCollect",
+    params: z.object({}).strict(),
+    result: z.unknown(),
+    resultName: "{ blocks, layout }",
+    effect: "reversible",
+    doc: "Explicitly collect acoustic evidence into this meeting's sandbox/store.",
+});
+export const voiceCollect = defineMethod({
+    name: "voiceCollect",
+    params: z.object({}).strict(),
+    result: z.unknown(),
+    resultName: "{ lines, matched }",
+    effect: "reversible",
+    doc: "Explicitly collect voice scores from confirmed enrolments for attribution.",
+});
+export const voiceEnroll = defineMethod({
+    name: "voiceEnroll",
+    params: z
+        .object({
+            fromSec: z.number().nonnegative(),
+            toSec: z.number().positive(),
+            channel: z.union([z.literal(0), z.literal(1)]),
+            person: z.string().min(1),
+            confirmed: z.literal(true),
+        })
+        .strict(),
+    result: z.unknown(),
+    resultName: "VoiceMatch",
+    effect: "reversible",
+    doc: "Enrol a confirmed single-speaker interval, retaining model and channel provenance.",
+});
+export const acousticInspect = defineMethod({
+    name: "acousticInspect",
+    params: z.object({ fromSec: z.number().nonnegative(), toSec: z.number().positive() }).strict(),
+    result: z.unknown(),
+    resultName: "{ quality, reason, layout?, metric? }",
+    effect: "read",
+    doc: "Read cached correlation, lag, raw and residual mic evidence for an interval.",
+});
+export const acousticClip = defineMethod({
+    name: "acousticClip",
+    params: acousticInspect.params,
+    result: z.unknown(),
+    resultName: "{ tracks, metric, quality }",
+    effect: "reversible",
+    doc: "Retain raw mic, isolated call and linear cleaned estimate for at most 60 seconds.",
+});
+export const voiceScore = defineMethod({
+    name: "voiceScore",
+    params: z
+        .object({
+            fromSec: z.number().nonnegative(),
+            toSec: z.number().positive(),
+            channel: z.union([z.literal(0), z.literal(1)]),
+        })
+        .strict(),
+    result: z.unknown(),
+    resultName: "VoiceMatch",
+    effect: "read",
+    doc: "Offline confirmed-enrolment speaker match; unknown without enough evidence. Never downloads a model.",
+});
+
 export const evidence = defineMethod({
     name: "evidence",
     params: z
@@ -584,6 +647,12 @@ export const meetingsToolsetApi = defineApi({
                 transcript,
                 evidence,
                 voice,
+                acousticInspect,
+                acousticCollect,
+                voiceCollect,
+                voiceEnroll,
+                acousticClip,
+                voiceScore,
                 itemsList,
                 itemsRows,
                 byChannel,

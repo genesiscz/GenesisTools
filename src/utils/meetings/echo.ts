@@ -40,7 +40,7 @@ export function correlateEcho(options: {
             cc = 0,
             mc = 0,
             count = 0;
-        for (let i = limit; i < Math.min(mic.length, call.length); i += stride) {
+        for (let i = limit; i < Math.min(mic.length, call.length) - limit; i += stride) {
             const m = mic[i]!,
                 c = call[i - lag]!;
             mm += m * m;
@@ -52,7 +52,7 @@ export function correlateEcho(options: {
     };
     let bestLag = 0,
         best = evaluate(0, 4);
-    for (let lag = 0; lag <= limit; lag += 4) {
+    for (let lag = -limit; lag <= limit; lag += 4) {
         const v = evaluate(lag, 4);
         if (Math.abs(v.correlation) > Math.abs(best.correlation)) {
             best = v;
@@ -61,7 +61,7 @@ export function correlateEcho(options: {
     }
     const coarse = bestLag;
     best = evaluate(bestLag, 1);
-    for (let lag = Math.max(0, coarse - 3); lag <= Math.min(limit, coarse + 3); lag++) {
+    for (let lag = Math.max(-limit, coarse - 3); lag <= Math.min(limit, coarse + 3); lag++) {
         const v = evaluate(lag, 1);
         if (Math.abs(v.correlation) > Math.abs(best.correlation)) {
             best = v;
@@ -88,7 +88,7 @@ export function correlateEcho(options: {
     };
 }
 const cacheSchema = z.object({
-    version: z.literal(1),
+    version: z.literal(2),
     source: z.string(),
     layout: z.enum(["left-mic", "right-mic"]),
     blocks: z.array(echoMetricSchema),
@@ -126,6 +126,36 @@ export async function collectEcho(options: {
     if (cached) {
         return cached;
     }
+    const source = sourceKey(options.audioPath);
+    const probe = Bun.spawn(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=channels",
+            "-of",
+            "json",
+            options.audioPath,
+        ],
+        { stdout: "pipe", stderr: "pipe", timeout: 30_000 }
+    );
+    const [metadata, probeError, probeCode] = await Promise.all([
+        new Response(probe.stdout).text(),
+        new Response(probe.stderr).text(),
+        probe.exited,
+    ]);
+    if (probeCode !== 0) {
+        throw new Error(`Echo channel probe failed (${probeCode}): ${probeError.slice(-500)}`);
+    }
+    const parsedProbe = z
+        .object({ streams: z.array(z.object({ channels: z.number() })) })
+        .parse(SafeJSON.parse(metadata));
+    if (parsedProbe.streams[0]?.channels !== 2) {
+        return undefined;
+    }
     mkdirSync(dirname(options.cachePath), { recursive: true });
     const pcm = join(dirname(options.cachePath), `echo-${randomUUID()}.s16`);
     try {
@@ -162,6 +192,9 @@ export async function collectEcho(options: {
                 if (read === 0) {
                     break;
                 }
+                if (blocks.length >= 8 * 60 * 60) {
+                    throw new Error("Echo collection exceeds the eight-hour audio bound");
+                }
                 const n = Math.floor(read / 4),
                     mic = new Float32Array(n),
                     call = new Float32Array(n);
@@ -175,7 +208,10 @@ export async function collectEcho(options: {
         } finally {
             closeSync(fd);
         }
-        const result: EchoCache = { version: 1, source: sourceKey(options.audioPath), layout: options.layout, blocks };
+        if (source !== sourceKey(options.audioPath)) {
+            throw new Error("Audio changed during echo collection; evidence was not published");
+        }
+        const result: EchoCache = { version: 2, source, layout: options.layout, blocks };
         atomicWriteFileSync(options.cachePath, SafeJSON.stringify(result));
         return result;
     } finally {

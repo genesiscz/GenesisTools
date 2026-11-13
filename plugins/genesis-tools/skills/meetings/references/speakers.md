@@ -65,8 +65,10 @@ answered vocative); every other line stays visibly open instead of carrying a wr
 
 ### E1 energy table
 
-`energyMicShare` in `evidence --raw` is the share of the line's energy on the microphone. The confidence that the user
-said the line, and how often it was true on one measured meeting (1,144 lines):
+After `tools meetings acoustic collect <meeting>`, `energyMicShare` in `evidence --raw` uses the linear residual
+microphone estimate. `acoustic.rawMicShare` retains the uncorrected value; `acoustic.cleanMicShare` is the residual
+share. `acoustic.quality` states the estimate's limits. Without usable collected evidence the residual share is unknown.
+The table below is a historical observation on 1,144 lines, not a calibrated confidence table for cleaned audio:
 
 | Share on the microphone | The user | Measured |
 |---|---|---|
@@ -77,6 +79,45 @@ said the line, and how often it was true on one measured meeting (1,144 lines):
 | Under 10 % | Never the user | 0 % |
 
 A line that is not the user's goes to the remote candidates, and the formula below scores them.
+
+### Offline echo and voice evidence
+
+Run `acoustic collect` explicitly to measure waveform correlation, lag and explained microphone power. Reads never
+silently download models or rewrite original audio. `evidence --json` carries `echoOfCall`, `echoLagMs` and the nested
+`acoustic` metric per measured line; `evidence --raw` carries the same metric without a guessed identity. A low
+correlation remains low even when a human confirmed that the voice is remote. Do not rewrite a measurement to fit a label.
+
+The 2026-11-13 sandbox replay measured 1,518 lines, of which 829 had a microphone segment winner. None of those 829
+reached 0.65 explained microphone power in the linear estimator. Raw versus residual shares had these counts:
+
+| Microphone share | Raw | Linear residual |
+|---|---:|---:|
+| Under 10% | 318 | 319 |
+| 10% to under 50% | 370 | 372 |
+| 50% to under 70% | 147 | 145 |
+| 70% to under 90% | 139 | 138 |
+| 90% or more | 530 | 530 |
+
+Fourteen lines had no usable measurement. The version 2 cache searches signed capture offsets, with positive lag
+meaning playback precedes the microphone and negative lag meaning the saved reference arrives later. These are energy
+distributions, not per-person accuracy measurements. This
+recording did not validate a claim of high waveform echo at the two requested remote-voice examples. Linear
+cancellation cannot establish clean speech quality; a nonlinear or clock-aware AEC remains a separate acceptance gap.
+
+`tools meetings voice prepare` explicitly provisions the existing public CAM++ model through the shared artifact store.
+`voice enroll <meeting> --from <seconds> --to <seconds> --channel 1 --person "Alice Example" --confirmed` stores a
+confirmed single-speaker example. Pick the physical channel from the calibrated layout; channel 1 is not always call.
+`voice score` reads enrolments; `voice collect` explicitly stores per-line scores for `suggest` and Listen. Weak,
+ambiguous, short, quiet or incompatible-model samples stay unknown. A cosine score is not a probability. A `voice`
+rule records accepted model evidence and its candidate scores separately from E1. Room and Listen share the canonical
+`@genesiscz/utils/meetings/voice` backend; timbre clusters do not substitute for enrolment.
+
+`acoustic clip <meeting> --from <seconds> --to <seconds>` retains raw microphone, isolated call and a cleaned estimate
+as separate derived files. In the native player, open "Channel and voice evidence" from the timeline context menu.
+It shows correlation, lag and raw/residual levels, lets the user explicitly collect evidence or prepare the public
+model, compare all three tracks, score remote voices and enrol a confirmed call voice. The cleaned estimate is
+labelled unverified. The REPL Meeting handle offers `acousticInspect`, `acousticClip`, `acousticCollect`, `voiceScore`,
+`voiceEnroll` and `voiceCollect`, using the same service methods as CLI and native clients.
 
 ## Inputs the agent still gathers
 

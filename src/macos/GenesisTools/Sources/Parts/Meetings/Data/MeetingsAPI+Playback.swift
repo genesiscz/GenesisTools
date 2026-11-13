@@ -369,3 +369,90 @@ extension MeetingsAPI {
         }
     }
 }
+
+extension MeetingsAPI {
+    struct AcousticParams: Codable, Equatable {
+
+        var meeting: String
+        var fromSec: Double
+        var toSec: Double
+    }
+    struct AcousticMetric: Decodable, Equatable {
+        let correlation: Double
+        let echoOfCall: Double
+        let lagMs: Double
+        let rawMicRms: Double
+        let cleanMicRms: Double
+        let rawMicShare: Double?
+        let cleanMicShare: Double?
+        let quality: String
+    }
+    enum AcousticCollect: MeetingsServiceMethod {
+        static let name = "acoustic.collect"
+        struct Params: Codable, Equatable { var meeting: String }
+        struct Result: Decodable, Equatable { let blocks: Int; let layout: String }
+    }
+    enum VoiceCollect: MeetingsServiceMethod {
+        static let name = "voice.collect"
+        struct Params: Codable, Equatable { var meeting: String }
+        struct Result: Decodable, Equatable { let lines: Int; let matched: Int }
+    }
+    enum VoiceEnroll: MeetingsServiceMethod {
+        static let name = "voice.enroll"
+        struct Params: Codable, Equatable {
+            var meeting: String
+            var fromSec: Double
+            var toSec: Double
+            var channel: Int
+            var person: String
+            var confirmed: Bool
+        }
+        typealias Result = VoiceScore.Result
+    }
+    enum VoicePrepare: MeetingsServiceMethod {
+        static let name = "voice.prepare"
+        struct Params: Codable, Equatable { var download: Bool }
+        struct Result: Decodable, Equatable { let path: String }
+    }
+    enum AcousticInspect: MeetingsServiceMethod {
+        static let name = "acoustic.inspect"
+        typealias Params = AcousticParams
+        struct Result: Decodable, Equatable {
+            let quality: String
+            let reason: String
+            let layout: String?
+            let metric: AcousticMetric?
+        }
+    }
+    enum AcousticClip: MeetingsServiceMethod {
+        static let name = "acoustic.clip"
+        typealias Params = AcousticParams
+        struct Result: Decodable, Equatable {
+            struct Tracks: Decodable, Equatable {
+                let rawMic: String
+                let isolatedCall: String
+                let cleanMic: String
+            }
+            let tracks: Tracks
+            let metric: AcousticMetric
+            let quality: String
+        }
+    }
+    enum VoiceScore: MeetingsServiceMethod {
+        static let name = "voice.score"
+        struct Params: Codable, Equatable {
+            var meeting: String
+            var fromSec: Double
+            var toSec: Double
+            var channel: Int
+        }
+        struct Result: Decodable, Equatable {
+            struct Candidate: Decodable, Equatable { let person: String; let score: Double }
+            let candidates: [Candidate]
+            let person: String?
+            let quality: String
+            let reason: String
+            let model: String
+        }
+    }
+}

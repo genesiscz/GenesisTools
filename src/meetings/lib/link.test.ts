@@ -1364,6 +1364,43 @@ describe("permanent source audio", () => {
     });
 });
 
+test("an already linked source warns with the duplicate command instead of claiming a new record", async () => {
+    const { Command } = await import("commander");
+    const { ui } = await import("@genesiscz/utils/cli/ui");
+    const { registerMeetingCommands } = await import("../commands/meeting");
+    const links = await import("./link");
+    const collection = await import("./collect");
+    const store = new MeetingStore();
+    const record = await store.create(
+        {
+            title: "Linked fixture",
+            start: "2026-11-05T10:00:00Z",
+            createdBy: "new",
+            sources: { wisprflow: { meetingId: "held-source-fixture" } },
+        },
+        { command: "fixture", change: "created" }
+    );
+    const before = readFileSync(store.path(record.id));
+    const link = spyOn(links, "linkSource").mockResolvedValue({ record, created: false });
+    const collect = spyOn(collection, "collectAndReport").mockResolvedValue(record);
+    const warning = spyOn(ui, "warn").mockImplementation(() => {});
+    const ok = spyOn(ui, "ok").mockImplementation(() => {});
+    try {
+        const program = new Command().exitOverride();
+        registerMeetingCommands(program);
+        await program.parseAsync(["new", "--source", "wisprflow:held-source-fixture", "--yes"], { from: "user" });
+        expect(warning).toHaveBeenCalledWith(expect.stringContaining(`duplicate ${record.id}`));
+        expect(warning).toHaveBeenCalledWith(expect.stringContaining("--without-items"));
+        expect(ok).not.toHaveBeenCalled();
+        expect(readFileSync(store.path(record.id))).toEqual(before);
+    } finally {
+        link.mockRestore();
+        collect.mockRestore();
+        warning.mockRestore();
+        ok.mockRestore();
+    }
+});
+
 describe("local source audio reconciliation", () => {
     let sequence = 0;
     async function fixture(count = 15) {
@@ -1539,41 +1576,4 @@ describe("local source audio reconciliation", () => {
         expect(statSync(join(dir, "flow.sqlite")).mtimeMs).toBe(before);
         expect(await wisprAudioAccess(join(dir, "absent")).catalog()).toEqual([]);
     });
-});
-
-test("an already linked source warns with the duplicate command instead of claiming a new record", async () => {
-    const { Command } = await import("commander");
-    const { ui } = await import("@genesiscz/utils/cli/ui");
-    const { registerMeetingCommands } = await import("../commands/meeting");
-    const links = await import("./link");
-    const collection = await import("./collect");
-    const store = new MeetingStore();
-    const record = await store.create(
-        {
-            title: "Linked fixture",
-            start: "2026-11-05T10:00:00Z",
-            createdBy: "new",
-            sources: { wisprflow: { meetingId: "held-source-fixture" } },
-        },
-        { command: "fixture", change: "created" }
-    );
-    const before = readFileSync(store.path(record.id));
-    const link = spyOn(links, "linkSource").mockResolvedValue({ record, created: false });
-    const collect = spyOn(collection, "collectAndReport").mockResolvedValue(record);
-    const warning = spyOn(ui, "warn").mockImplementation(() => {});
-    const ok = spyOn(ui, "ok").mockImplementation(() => {});
-    try {
-        const program = new Command().exitOverride();
-        registerMeetingCommands(program);
-        await program.parseAsync(["new", "--source", "wisprflow:held-source-fixture", "--yes"], { from: "user" });
-        expect(warning).toHaveBeenCalledWith(expect.stringContaining(`duplicate ${record.id}`));
-        expect(warning).toHaveBeenCalledWith(expect.stringContaining("--without-items"));
-        expect(ok).not.toHaveBeenCalled();
-        expect(readFileSync(store.path(record.id))).toEqual(before);
-    } finally {
-        link.mockRestore();
-        collect.mockRestore();
-        warning.mockRestore();
-        ok.mockRestore();
-    }
 });
