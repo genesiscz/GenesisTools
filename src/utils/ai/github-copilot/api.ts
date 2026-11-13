@@ -133,6 +133,8 @@ export class GithubCopilotApi extends ApiClient {
         let response = await this.nativeFetch(session, path, init, messages);
 
         if (isAuthHttpStatus(response.status)) {
+            // The lookup below can read credential sources and ask for keychain access: not for a cancelled request.
+            init.signal?.throwIfAborted();
             const resolved = await resolveGithubCopilotGhoToken({
                 dataDir: this.dataDir,
                 allowKeychain: true,
