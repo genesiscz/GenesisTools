@@ -181,6 +181,8 @@ tools du partners ~/Projects/app/.worktrees/feat-x --against ~/Projects/app
 that decides whether a package-manager cache is safe to delete: blocks a live `node_modules` still references are not
 freed by deleting the cache. JSON: `target_shared_bytes`, `partner_bytes` (double-counts a block that several partners
 hold), `partner_files_total`, `partner_dirs[]`, `partner_files[]`, `denied_dirs`, `denied_files`.
+A transparently compressed file (decmpfs) keeps its payload in its resource fork, so both the target and each candidate
+holder are mapped through that fork; two compressed clones name each other.
 
 ## Plain sizes for scripts: `size <paths...>`
 
