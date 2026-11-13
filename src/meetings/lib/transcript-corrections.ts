@@ -8,6 +8,7 @@ import {
     type CorrectionOutcome,
     type CorrectionsApplied,
     heardLineAt,
+    isUnclearMarker,
     joinLine,
     type TranscriptCorrections,
     type UnclearPassage,
@@ -24,7 +25,7 @@ import { openQuestions } from "./questions";
  */
 function unclearPassages(
     record: MeetingRecord,
-    opts: { below: number; applied?: (item: MeetingItem) => boolean }
+    opts: { below: number; applied?: (item: MeetingItem) => boolean; guesses?: boolean; unclearLabel: string }
 ): UnclearPassage[] {
     const applied = opts.applied ?? (() => false);
     const open = openQuestions(record);
@@ -43,7 +44,9 @@ function unclearPassages(
                       fromSec: item.scope === "line" && item.atSec !== undefined ? item.atSec : 0,
                       toSec: item.scope === "line" && item.atSec !== undefined ? item.atSec : Number.POSITIVE_INFINITY,
                       heard: item.heard,
-                      readings: withConfidence([item.proposed], item.confidence),
+                      readings: isUnclearMarker(item.proposed, opts.unclearLabel)
+                          ? [item.proposed]
+                          : withConfidence([item.proposed], item.confidence),
                   },
               ]
             : []
@@ -102,7 +105,10 @@ function unclearPassages(
                               fromSec: item.fromSec,
                               toSec: item.toSec,
                               speaker: item.label,
-                              readings: withConfidence(question.choices, item.confidence),
+                              readings: question.choices,
+                              ...(opts.guesses && item.speaker
+                                  ? { guess: { name: item.speaker, confidence: item.confidence } }
+                                  : {}),
                           },
                       ]
                     : []
@@ -137,11 +143,18 @@ export function correctionsOf(
     opts: { withSuggested?: boolean; dictionary?: boolean; format: TranscriptFormat; include?: string[] }
 ): TranscriptCorrections {
     const applyAbove = config.global.suggest.applyAbove;
+    const questionOwned = new Set(
+        openQuestions(record)
+            .filter((question) => question.about === "speaker")
+            .flatMap((question) => question.decides)
+    );
+    const unclearLabel = languageSettings(config).render.unclearLabel;
     const applies = (item: MeetingItem) =>
         item.status === "confirmed" ||
         (opts.include?.includes(item.id) === true && item.status !== "rejected") ||
         (opts.withSuggested === true &&
             item.status === "suggested" &&
+            !(item.kind === "speaker-range" && questionOwned.has(item.id)) &&
             (item.confidence === undefined || item.confidence >= applyAbove));
     const used = record.items
         .filter(applies)
@@ -152,8 +165,8 @@ export function correctionsOf(
     );
     const passages = [
         ...(opts.withSuggested
-            ? unclearPassages(record, { below: applyAbove, applied: applies })
-            : unclearPassages(record, { below: config.global.suggest.listenBelow })),
+            ? unclearPassages(record, { below: applyAbove, applied: applies, guesses: true, unclearLabel })
+            : unclearPassages(record, { below: config.global.suggest.listenBelow, unclearLabel })),
         ...unlabeled,
     ];
 
