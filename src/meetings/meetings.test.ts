@@ -6432,7 +6432,15 @@ test("canonical matched call embeddings feed speaker rules without asking, while
         candidates: [{ person: "Bob Example", score: 0.8 }],
         reason: "cosine and margin passed",
     };
-    const run = (quality: "matched" | "unknown", present = true) =>
+    const run = ({
+        quality,
+        present = true,
+        conflict = false,
+    }: {
+        quality: "matched" | "unknown";
+        present?: boolean;
+        conflict?: boolean;
+    }) =>
         suggestItems({
             record: meetingRecordSchema.parse({
                 ...record,
@@ -6445,7 +6453,13 @@ test("canonical matched call embeddings feed speaker rules without asking, while
                     },
                 },
             }),
-            meeting: { ...meeting, transcript },
+            meeting: conflict
+                ? {
+                      ...meeting,
+                      speakers: [{ speakerId: 1, name: "Bob Example", origin: "platform" }],
+                      transcript: transcript.map((entry) => ({ ...entry, speaker: "Bob Example" })),
+                  }
+                : { ...meeting, transcript },
             rules: ["evidence"],
             dictionary: { entries: [], abbrExpansion: "every" },
             sourceWords: [],
@@ -6454,10 +6468,20 @@ test("canonical matched call embeddings feed speaker rules without asking, while
                 { name: "Alice Example", self: true, fromSec: 0, toSec: 10 },
                 { name: "Bob Example", fromSec: present ? 0 : 20, toSec: 30 },
             ],
-            evidence: { selfName: "Alice Example", segments: [], speaking: [], files: [] },
+            evidence: {
+                selfName: "Alice Example",
+                segments: conflict
+                    ? [
+                          { startSec: 0, endSec: 4, channel: "mic" },
+                          { startSec: 4, endSec: 5, channel: "system" },
+                      ]
+                    : [],
+                speaking: [],
+                files: [],
+            },
             energyMicShare: () => 0.1,
         });
-    const matched = run("matched");
+    const matched = run({ quality: "matched" });
     expect(matched).toContainEqual(
         expect.objectContaining({
             kind: "speaker-range",
@@ -6467,8 +6491,17 @@ test("canonical matched call embeddings feed speaker rules without asking, while
         })
     );
     expect(matched.filter((item) => item.kind === "question")).toHaveLength(0);
-    expect(run("unknown").some((item) => item.rules.includes(MeetingRule.VoiceEmbedding))).toBe(false);
-    expect(run("matched", false).some((item) => item.rules.includes(MeetingRule.VoiceEmbedding))).toBe(false);
+    expect(run({ quality: "unknown" }).some((item) => item.rules.includes(MeetingRule.VoiceEmbedding))).toBe(false);
+    expect(
+        run({ quality: "matched", present: false }).some((item) => item.rules.includes(MeetingRule.VoiceEmbedding))
+    ).toBe(false);
+    expect(run({ quality: "matched", conflict: true })).toContainEqual(
+        expect.objectContaining({
+            speaker: "Bob Example",
+            confidence: 0.8,
+            rules: [MeetingRule.VoiceEmbedding],
+        })
+    );
 });
 
 test("question selection and review order use uncertain words without changing displayed priority", async () => {
