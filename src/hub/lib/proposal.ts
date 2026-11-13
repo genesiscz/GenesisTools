@@ -12,6 +12,7 @@ import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { Storage } from "@genesiscz/utils/storage";
 import { type JsonDocument, jsonDocument, prettyJson } from "@genesiscz/utils/storage/locked-document";
+import { fileNameSlug } from "@genesiscz/utils/string";
 
 /**
  * A review proposal: what an agent concluded about a PR/MR, pushed into the GenesisTools.app review
@@ -343,8 +344,7 @@ export function parseProposal(value: unknown, now = new Date()): ReviewProposal 
  */
 export function proposalKey(proposal: Pick<ReviewProposal, "provider" | "host" | "project" | "number">): string {
     const where = `${proposal.host}/${proposal.project}`;
-    const slug = where.replace(/[^A-Za-z0-9._-]+/g, "-");
-    return `${proposal.provider}__${slug}-${xxhash(where).slice(0, 8)}__${proposal.number}`;
+    return `${proposal.provider}__${fileNameSlug(where)}-${xxhash(where).slice(0, 8)}__${proposal.number}`;
 }
 
 /** The fields the list, the key and the sort read; a stored file without them is skipped, not fatal. */

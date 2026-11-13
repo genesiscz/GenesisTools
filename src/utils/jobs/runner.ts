@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { fileNameSlug } from "@genesiscz/utils/string";
 import { InputGuard } from "./guard";
 import type { JobInfo, JobResult, JobState, ProgressEvent, StepReport } from "./types";
 
@@ -72,7 +73,7 @@ interface Receipt {
 }
 
 function receiptPath({ dir, index, name }: { dir: string; index: number; name: string }): string {
-    return join(dir, `${String(index).padStart(2, "0")}-${name.replace(/[^A-Za-z0-9._-]+/g, "-")}.json`);
+    return join(dir, `${String(index).padStart(2, "0")}-${fileNameSlug(name)}.json`);
 }
 
 function chainKeys<S>(steps: JobStep<S>[], fingerprint: unknown): Array<string | undefined> {
