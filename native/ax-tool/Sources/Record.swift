@@ -511,6 +511,16 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         queue.sync { pendingDisplay = nil }
     }
 
+    /// Holds every frame until the switch to `display` ends (`displayChanged` or `cancelPendingDisplay`): while the
+    /// content filter changes a frame can show either display, also when both displays give the same size.
+    func holdFrames(for display: CGDirectDisplayID) {
+        queue.sync {
+            if pendingDisplay == nil {
+                pendingDisplay = (display, configuration.width, configuration.height)
+            }
+        }
+    }
+
     /// A warning from outside the frame queue; a repeat of the same text is dropped.
     func warn(_ text: String) {
         queue.async { [self] in
@@ -1409,6 +1419,8 @@ private final class ScreenStreamHost {
     /// A `stop` command or the end of stdin: end like SIGINT.
     var stopRequested = false
     private var switching = false
+    /// Which live switch may still change the stream and adopt its display (`switchLive`).
+    private let switchOwner = LiveSwitchOwner()
     private var failedSwitch: (id: CGDirectDisplayID, at: Date)?
     /// Ticks since the stream reported an error; a removed display can report it before the display list changes.
     private var deadTicks = 0
@@ -1648,9 +1660,15 @@ private final class ScreenStreamHost {
             ? recordOutputSize(options, points: geometry.bounds.size, scale: geometry.scale, maxLongSide: maxLongSide) : nil
     }
 
+    /// How long a live display switch may take: the listing (`listedContent`: 5 s for the first answer, 1 s for the
+    /// windows) and two stream updates. Past it the switch has failed and the recorder keeps its display.
+    static let liveSwitchDeadline: TimeInterval = 10
+
     @available(macOS 14.0, *)
     private func switchLive(to target: CGDirectDisplayID) {
         switching = true
+        let owner = switchOwner
+        let token = owner.begin()
         let geometry = displayGeometry(target)
         let size = outputSize(for: geometry)
         let previousDisplay = display
@@ -1659,33 +1677,71 @@ private final class ScreenStreamHost {
         let requested = options.selection.excludedWindowIDs
         let stream = self.stream
         let recorder = self.recorder
+        // ScreenCaptureKit's calls are XPC and can stall. Past the deadline the switch has failed: following and the
+        // `switch` command work again, and the late completion finds it no longer owns the stream (`LiveSwitchOwner`).
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.liveSwitchDeadline) { [self] in
+            guard owner.end(token) else { return }
+            recorder.cancelPendingDisplay()
+            let reason = "could not switch the recording to display \(target): screen capture did not finish within \(Int(Self.liveSwitchDeadline)) s"
+            recorder.warn(reason)
+            CaptureEvents.error("failed", reason)
+            failedSwitch = (target, Date())
+            switching = false
+        }
         Task {
+            var sizeChanged = false
+            var filterChanged = false
+            var restoreFilter: SCContentFilter?
             do {
                 // Keep the current display filter if the requested exclusions cannot be resolved.
                 let content = try await listedContent(requested)
+                guard owner.owns(token) else { throw LiveSwitchExpired() }
                 guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else {
                     throw NSError(domain: "ax-tool", code: 2, userInfo: [NSLocalizedDescriptionKey: "display \(target) is not shareable"])
                 }
-                let filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
+                let windows = content.windows.filter { excluded.contains($0.windowID) }
+                let filter = SCContentFilter(display: scDisplay, excludingWindows: windows)
+                restoreFilter = content.displays.first(where: { $0.displayID == previousDisplay.id })
+                    .map { SCContentFilter(display: $0, excludingWindows: windows) }
                 if let size {
+                    sizeChanged = true
                     try await stream.updateConfiguration(recorder.setOutputSize(width: Int(size.width), height: Int(size.height), for: target))
+                    guard owner.owns(token) else { throw LiveSwitchExpired() }
                 }
+                // No frame counts while the filter changes, also when both displays give one size: the size alone
+                // cannot say which display a frame shows (`displayChanged` ends the hold).
+                recorder.holdFrames(for: target)
                 try await stream.updateContentFilter(filter)
+                filterChanged = true
+                guard owner.end(token) else { throw LiveSwitchExpired() }
                 recorder.displayChanged(to: target)
                 DispatchQueue.main.async {
                     self.adopt(geometry)
                     self.switching = false
                 }
             } catch {
-                if let previousSize {
-                    do {
-                        let configuration = recorder.setOutputSize(width: Int(previousSize.width), height: Int(previousSize.height), for: previousDisplay.id)
-                        try await stream.updateConfiguration(configuration)
-                    } catch {
-                        recorder.warn("could not restore the recording size: \(error.localizedDescription)")
+                // False when the deadline already failed this switch.
+                let failsHere = owner.end(token)
+                // Undo what this switch changed, unless a newer switch began: that one sets its own size and filter.
+                if failsHere || owner.isLatest(token) {
+                    if filterChanged, let restoreFilter {
+                        do {
+                            try await answer(within: 5) { try await stream.updateContentFilter(restoreFilter) }
+                        } catch {
+                            recorder.warn("could not put the recording back on display \(previousDisplay.id): \(error.localizedDescription)")
+                        }
                     }
+                    if sizeChanged, let previousSize {
+                        do {
+                            let configuration = recorder.setOutputSize(width: Int(previousSize.width), height: Int(previousSize.height), for: previousDisplay.id)
+                            try await answer(within: 5) { try await stream.updateConfiguration(configuration) }
+                        } catch {
+                            recorder.warn("could not restore the recording size: \(error.localizedDescription)")
+                        }
+                    }
+                    recorder.cancelPendingDisplay()
                 }
-                recorder.cancelPendingDisplay()
+                guard failsHere else { return }
                 recorder.warn("could not switch the recording to display \(target): \(error.localizedDescription)")
                 CaptureEvents.error("failed", "could not switch the recording to display \(target): \(error.localizedDescription)")
                 DispatchQueue.main.async {
@@ -1733,6 +1789,12 @@ private final class ScreenStreamHost {
             displayRemoved = true
         }
     }
+}
+
+/// A live display switch that passed `liveSwitchDeadline`: its deadline already reported it, so it only undoes what it
+/// changed on the stream.
+private struct LiveSwitchExpired: LocalizedError {
+    var errorDescription: String? { "the display switch passed its deadline" }
 }
 
 /// Runs one async throwing call to completion from a plain command-line entry point.
@@ -1785,10 +1847,14 @@ private func unlistedExclusions(_ requested: Set<CGWindowID>, in content: SCShar
 
 /// The shareable content of a display switch or a restart once it lists every window in `requested`, asking again
 /// for at most `timeout` seconds (`awaitExclusionsListed`). Off-screen windows are listed too: a minimized window
-/// the movie leaves out must be in the filter when it comes back. Throws `UnresolvedExclusions` past the deadline.
-func listedContent(_ requested: Set<CGWindowID>, timeout: TimeInterval = 1) async throws -> SCShareableContent {
+/// the movie leaves out must be in the filter when it comes back. Throws `UnresolvedExclusions` past the deadline, and
+/// `ListingTimedOut` when the first listing takes longer than `firstAnswer` (inside `LiveSwitch.deadline` and the 10 s
+/// restart wait, so a listing that stalls ends with a reason instead of holding the recording).
+func listedContent(_ requested: Set<CGWindowID>, timeout: TimeInterval = 1, firstAnswer: TimeInterval = 5) async throws
+    -> SCShareableContent {
     try await awaitExclusionsListed(
         timeout: timeout,
+        firstAnswer: firstAnswer,
         sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
         fetch: { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false) },
         unresolved: { unlistedExclusions(requested, in: $0) }
