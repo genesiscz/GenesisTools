@@ -432,10 +432,22 @@ export class EditSession {
     async save(): Promise<void> {
         for (let attempt = 0; ; attempt++) {
             try {
+                // A cancel that came while this waited out another process's save leaves the change unsaved.
+                throwIfEditCancelled();
                 this.flush();
+
+                // `flush` keeps a change unsaved when the recording's folder is gone; a blocking save must not report
+                // it saved.
+                if (this.unsaved.length > 0 && this.moved) {
+                    throw new Error(`the recording's folder is gone (${dirname(this.path)}); the change was not saved`);
+                }
+
                 return;
             } catch (error) {
                 if (!isArbitrationBusy(error)) {
+                    // No retry or delayed save may land after a refusal: the caller drops this session unsaved.
+                    clearTimeout(this.timer);
+                    this.timer = undefined;
                     throw error;
                 }
 
