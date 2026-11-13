@@ -115,7 +115,7 @@ tools metrics events agent-context hook.injection --where checkpoint=pointers --
 ## Configuration
 
 - `mods.hooks.metrics` (default `true`): the mods plugin's hook ledger records each injection into the spool.
-  `tools agents hooks config set mods.hooks.metrics false` turns it off.
+  `tools agents hooks config set mods.hooks.metrics false --write` turns it off.
 - `GENESIS_TOOLS_HOME` moves the whole `~/.genesis-tools` tree (store, spool, service), as for every tool.
 
 ## For agents
