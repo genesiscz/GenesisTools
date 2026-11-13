@@ -289,6 +289,8 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "meeting.transcript": async (params) => {
             const store = storeOf();
             const record = recordOf(store, params.ref);
+            // One opened meeting for the corrections, the indicator and every preview: the source loads once.
+            const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
             const { applied } = await correctedTranscriptRead({
                 store,
                 record,
@@ -300,10 +302,9 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                     ...(params.withSuggested !== undefined ? { withSuggested: params.withSuggested } : {}),
                     ...(params.applyAbove !== undefined ? { applyAbove: params.applyAbove } : {}),
                 },
-                linked: deps.linkedSource?.(record),
+                opened,
             });
             const view = timedTranscriptView(record, applied);
-            const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
             // The indicator is optional enrichment: evidence that does not read leaves the corrected lines without it.
             let measured: LineEvidence[] = [];
             let selfName = "";

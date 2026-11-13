@@ -167,6 +167,8 @@ function scratchStore(): {
     store: MeetingStore;
     config: MeetingsConfigStore;
     linkedSource: (record: { id: string }) => LinkedSource | undefined;
+    /** REVIEW's source: a test counts its loads. */
+    source: TranscriptSource;
 } {
     stores += 1;
     const store = new MeetingStore(new Storage(`meetings-service-${process.pid}-${stores}`));
@@ -181,6 +183,7 @@ function scratchStore(): {
     return {
         store,
         config,
+        source,
         linkedSource: (record) => (record.id === REVIEW.id ? { source, sourceMeetingId: "wf-2041" } : undefined),
     };
 }
@@ -295,7 +298,7 @@ const quietDeps: MeetingsHandlerDeps = {
 async function startService(
     options: { dir?: string; watch?: MeetingsServiceOptions["watch"]; deps?: Partial<MeetingsHandlerDeps> } = {}
 ) {
-    const { store, config, linkedSource } = scratchStore();
+    const { store, config, linkedSource, source } = scratchStore();
     const dir = options.dir ?? serviceDir();
     const start = await startMeetingsService({
         dir,
@@ -314,7 +317,7 @@ async function startService(
     }
 
     closing.push(() => start.service.stop("test end"));
-    return { dir, store, config, service: start.service };
+    return { dir, store, config, source, service: start.service };
 }
 
 interface Adapter {
@@ -323,17 +326,19 @@ interface Adapter {
     store: MeetingStore;
     /** The meetings config the library methods change. */
     config: MeetingsConfigStore;
+    /** REVIEW's linked source (this process's object, also behind the socket adapter). */
+    source: TranscriptSource;
 }
 
 const ADAPTERS: Record<"socket" | "in-process", (caller?: MeetingsHello) => Promise<Adapter>> = {
     socket: async (caller = hello) => {
-        const { service, store, config } = await startService();
+        const { service, store, config, source } = await startService();
         const client = await SocketMeetingsClient.connect(service.entry, caller);
         closing.push(() => client.close());
-        return { client, store, config, emit: (event, params) => service.emit(event, params) };
+        return { client, store, config, source, emit: (event, params) => service.emit(event, params) };
     },
     "in-process": async (caller = hello) => {
-        const { store, config, linkedSource } = scratchStore();
+        const { store, config, linkedSource, source } = scratchStore();
         const events = new LocalMeetingsEvents();
         const client = new InProcessMeetingsClient({
             hello: caller,
@@ -341,7 +346,7 @@ const ADAPTERS: Record<"socket" | "in-process", (caller?: MeetingsHello) => Prom
             events,
         });
         closing.push(() => client.close());
-        return { client, store, config, emit: (event, params) => events.emit(event, params) };
+        return { client, store, config, source, emit: (event, params) => events.emit(event, params) };
     },
 };
 
@@ -366,14 +371,25 @@ async function failure(call: Promise<unknown>): Promise<Error> {
 }
 
 describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetings service, %s adapter", (kind) => {
-    test("threshold previews load together without persisting a rendering preference or record mutation", async () => {
-        const { client, store } = await ADAPTERS[kind]();
+    test("threshold previews apply only what each threshold allows, from one source load, persisting nothing", async () => {
+        const { client, store, source } = await ADAPTERS[kind]();
+        // A suggested speaker for line l2 (9 s) at 0.82: the 0.5 and 0.7 previews apply it, the 1 preview only shows it.
+        const suggested = { ...REVIEW.items[0], label: "Speaker 2", fromSec: 9, toSec: 10, speaker: "Dana Example" };
+        writeFileSync(store.path(REVIEW.id), SafeJSON.stringify({ ...REVIEW, items: [suggested] }, null, 2));
         const before = readFileSync(store.path(REVIEW.id));
+        const configBefore = SafeJSON.stringify(await new MeetingsConfigStore().read());
+        const load = spyOn(source, "load");
         const result = await client.call("meeting.transcript", { ref: REVIEW.id, previewThresholds: [0.5, 0.7, 1] });
+        // The corrections, the indicator and the three previews share one opened meeting.
+        expect(load).toHaveBeenCalledTimes(1);
+        load.mockRestore();
         expect(result.previews?.map((preview) => preview.threshold)).toEqual([0.5, 0.7, 1]);
-        expect(result.previews?.every((preview) => preview.entries.length > 0)).toBe(true);
+        expect(
+            result.previews?.map((preview) => preview.entries.find((entry) => entry.startSec === 9)?.speaker)
+        ).toEqual(["Dana Example", "Dana Example", "[Dana Example: 82 %]"]);
         expect(readFileSync(store.path(REVIEW.id))).toEqual(before);
-        expect(new MeetingStore(store.storage).read(REVIEW.id)?.id).toBe(REVIEW.id);
+        // No threshold is kept as the rendering preference.
+        expect(SafeJSON.stringify(await new MeetingsConfigStore().read())).toBe(configBefore);
     });
 
     test("meeting-local people persist device and half-open stays and remove through either adapter", async () => {
