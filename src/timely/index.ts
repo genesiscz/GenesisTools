@@ -6,7 +6,7 @@ import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
-import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
+import { clackBackend } from "@genesiscz/utils/prompts/p/clack-backend";
 import { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import { Command } from "commander";
@@ -26,7 +26,7 @@ import { registerStatusCommand } from "./commands/status";
 import { reportTimelyFailure } from "./utils/failure";
 
 // Use inquirer backend for this tool
-p.setBackend(inquirerBackend);
+p.setBackend(clackBackend);
 
 // Initialize shared dependencies
 const storage = new Storage("timely");

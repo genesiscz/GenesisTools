@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { type FileIdentity, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
+import { sha256Json } from "@genesiscz/utils/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { STORE_PACKAGES } from "@genesiscz/utils/package-store";
@@ -97,7 +97,7 @@ interface ReadBudget {
 }
 
 export function wordTimingHash(value: unknown): string {
-    return createHash("sha256").update(SafeJSON.stringify(value)).digest("hex");
+    return sha256Json(value);
 }
 
 export function wordTimingTranscriptFingerprint(lines: readonly WordTimingLine[]): string {

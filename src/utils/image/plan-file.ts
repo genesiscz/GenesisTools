@@ -9,8 +9,7 @@
  */
 import { resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { ANNOTATION_PRESETS, type Annotation, type AnnotationPlanFile } from "./annotation-plan";
-import { validateAnnotations } from "./render-plan";
+import { ANNOTATION_PRESETS, type Annotation, type AnnotationPlanFile, validateAnnotations } from "./annotation-plan";
 
 /** The module a `.ts` plan imports `defineAnnotations` from. */
 export const ANNOTATE_MODULE = "@genesis-tools/annotate";

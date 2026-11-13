@@ -5,13 +5,6 @@ import type { SessionCmuxRefs } from "../session-refs";
 import { fetchCmuxTree } from "../tree";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveWindow, CmuxLiveWorkspace } from "./live-snapshot";
 import { buildCmuxHierarchy } from "./tree";
-import {
-    type CmuxTreeBackoff,
-    TREE_BACKOFF_FIRST_MS,
-    TREE_BACKOFF_MAX_MS,
-    type TreeBackoffStore,
-    treeBackoffDelayMs,
-} from "./tree-backoff";
 
 function pane(id: string, workspaceId: string): CmuxLivePane {
     return { id, workspaceId, title: "zsh", active: false, surfaceCount: 1, surfaces: [] };
@@ -249,112 +242,39 @@ describe("fetchAgentCmuxTree", () => {
     });
 });
 
-describe("fetchCmuxTree backoff after cmux does not answer", () => {
-    const dead: CmuxLiveSnapshot = {
-        fetchedAt: "2026-11-02T11:20:09.000Z",
-        available: false,
-        error: "cmux live snapshot: the cmux app is running (pid 42) but its socket does not answer",
-        unresponsive: { state: "socket-dead", appPid: 42 },
-        workspaces: [],
-        panes: [],
-    };
-    const alive = snapshotOf([workspace("workspace:1")], [pane("pane:1", "workspace:1")]);
-
-    function memoryStore(): TreeBackoffStore & { record: CmuxTreeBackoff | null } {
-        return {
-            record: null,
-            read() {
-                return this.record;
-            },
-            write(record) {
-                this.record = record;
-            },
-        };
-    }
-
-    test("a dead socket is asked once per doubling delay, and a success clears the memory", async () => {
-        const backoff = memoryStore();
-        let clock = 1_000_000;
-        let calls = 0;
-        let next = dead;
-        const deps = {
-            backoff,
-            appPid: () => 42,
-            now: () => clock,
-            fetchSnapshot: async () => {
-                calls++;
-                return next;
-            },
-        };
-
-        expect((await fetchCmuxTree(deps)).available).toBe(false);
-        expect(calls).toBe(1);
-        expect(backoff.record?.until).toBe(clock + TREE_BACKOFF_FIRST_MS);
-
-        clock += TREE_BACKOFF_FIRST_MS - 1;
-        const skipped = await fetchCmuxTree(deps);
-        expect(calls).toBe(1);
-        expect(skipped.available).toBe(false);
-        expect(skipped.error).toContain("its socket does not answer");
-        expect(skipped.error).toContain("the next try is after");
-
-        clock += 1;
-        await fetchCmuxTree(deps);
-        expect(calls).toBe(2);
-        expect(backoff.record?.failures).toBe(2);
-        expect(backoff.record?.until).toBe(clock + 2 * TREE_BACKOFF_FIRST_MS);
-
-        clock = backoff.record?.until ?? clock;
-        next = alive;
-        expect((await fetchCmuxTree(deps)).available).toBe(true);
-        expect(calls).toBe(3);
-        expect(backoff.record).toBeNull();
-    });
-
-    test("a restarted cmux (another pid) is asked at once", async () => {
-        const backoff = memoryStore();
-        backoff.record = { failures: 3, until: Date.now() + 60_000, state: "socket-dead", appPid: 42, error: "dead" };
-        let calls = 0;
+describe("fetchCmuxTree reads the tree first", () => {
+    test("a failed tree read is the error, and the snapshot is not asked", async () => {
+        let snapshots = 0;
         const tree = await fetchCmuxTree({
-            backoff,
-            appPid: () => 43,
+            readTree: async () => ({
+                ok: false,
+                reason: "backoff",
+                error: "cmux socket-dead (cmux was not asked again)",
+            }),
             fetchSnapshot: async () => {
-                calls++;
-                return alive;
+                snapshots++;
+                return snapshotOf([workspace("workspace:1")], [pane("pane:1", "workspace:1")]);
             },
         });
 
-        expect(calls).toBe(1);
+        expect(snapshots).toBe(0);
+        expect(tree.available).toBe(false);
+        expect(tree.error).toBe("cmux socket-dead (cmux was not asked again)");
+        expect(tree.windows).toEqual([]);
+    });
+
+    test("a tree read that answered is handed to the snapshot", async () => {
+        const answered = { caller: null, windows: [] };
+        let handed: unknown;
+        const tree = await fetchCmuxTree({
+            readTree: async () => ({ ok: true, tree: answered }),
+            fetchSnapshot: async (known) => {
+                handed = known;
+                return snapshotOf([workspace("workspace:1")], [pane("pane:1", "workspace:1")]);
+            },
+        });
+
+        expect(handed).toBe(answered);
         expect(tree.available).toBe(true);
-        expect(backoff.record).toBeNull();
-    });
-
-    test("a restarted cmux that fails starts at the shortest backoff", async () => {
-        const backoff = memoryStore();
-        backoff.record = { failures: 5, until: Date.now() + 300_000, state: "socket-dead", appPid: 42, error: "dead" };
-        await fetchCmuxTree({
-            backoff,
-            appPid: () => 43,
-            fetchSnapshot: async () => ({ ...dead, unresponsive: { state: "socket-dead", appPid: 43 } }),
-        });
-        expect(backoff.record?.failures).toBe(1);
-        expect(backoff.record?.appPid).toBe(43);
-    });
-
-    test("a failure that is not cmux hanging leaves no memory", async () => {
-        const backoff = memoryStore();
-        await fetchCmuxTree({
-            backoff,
-            fetchSnapshot: async () => ({ ...dead, unresponsive: { state: "not-running" } }),
-        });
-
-        expect(backoff.record).toBeNull();
-    });
-
-    test("the delay doubles from 20 s and stops at 5 min", () => {
-        expect([1, 2, 3, 4, 5, 6, 10].map(treeBackoffDelayMs)).toEqual([
-            20_000, 40_000, 80_000, 160_000, 300_000, 300_000, 300_000,
-        ]);
-        expect(TREE_BACKOFF_MAX_MS).toBe(300_000);
     });
 });

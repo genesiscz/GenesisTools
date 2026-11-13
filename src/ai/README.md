@@ -35,9 +35,13 @@ tools ai image "a red bicycle in the rain" -o bike.png
 ```
 
 - `translate [text]`: `--to <lang>` (required), `--from <lang>` (detected when omitted),
-  `--provider local-hf|cloud|darwinkit`, `-c, --clipboard` (copy the result).
-- `summarize [file]`: `--max-length <n>`, `--provider`, `-c, --clipboard`. The file `-` reads stdin. With no file
-  it reads piped stdin, or the clipboard when stdin is a terminal.
+  `--provider <id>`, `--model <id>`, `-c, --clipboard` (copy the result).
+- `summarize [file]`: `--max-length <n>`, `--provider <id>`, `--model <id>`, `-c, --clipboard`. The file `-` reads
+  stdin. With no file it reads piped stdin, or the clipboard when stdin is a terminal.
+- `translate` and `summarize` call the AI task facade (`ai.translate`, `ai.summarize`). `--provider` and `--model`
+  choose for that call only and are never saved; a lone `--provider` uses that provider's default model for the task.
+  Change the saved default with `tools ai config default set <task> <model-ref>`. A transient failure is retried up
+  to three times.
 - `classify [text]`: `--categories <list>` (required, comma-separated, at least two; fewer exits 1), `--provider`.
 - `image <prompt>`: `-o, --output <path>` (required), `--model <id>`.
 - `translate` and `classify` read stdin when no text is given.
@@ -46,20 +50,9 @@ tools ai image "a red bicycle in the rain" -o bike.png
 - `classify` uses the macOS classification helper (semantic similarity against your categories).
 - `image` defaults to `stabilityai/stable-diffusion-xl-base-1.0` and installs `@huggingface/inference` on first use.
 
-⚠️ **`summarize` and `classify` register `--provider`, but ignore it.** `summarize` calls
-`AI.summarize(input, { maxLength })` and `classify` calls `classifyText(input, categories)`; neither receives the flag
-(`src/ai/index.ts:167` and `:288`). Passing it silently gets you the default implementation, so do not rely on it to
-steer either verb. `translate` does honour `--provider`, and it also saves that provider as the `translate` task
-default before it translates, even when the translation then fails: later translations without the flag use it too.
-That save normally also clears the task's saved model, so note the current default first
-(`tools ai config default list`). One case saves nothing: when the task default is a model with no provider and you
-pass the default provider (`--provider local-hf`), the default stays, and the translation can use that saved model
-instead of the provider you asked for.
-`tools ai config default set translate <model-ref>` sets the default back. Give it a ref that names a model
-(`@account/<id>:<model>`), or a bare `@account/<id>` together with `--provider <id>`: a bare account ref alone goes to
-`defaults.account.translate`, and the provider that `--provider` left in `defaults.task.translate` comes first. When
-the old default had its own provider and a bare model, pass that provider again with `--provider`, or the one
-`translate --provider` saved stays beside the model.
+⚠️ **`classify` registers `--provider`, but ignores it.** It calls `classifyText(input, categories)`, which does not
+receive the flag. Passing it silently gets you the default implementation. It is documented here rather than omitted
+so nobody assumes the flag works.
 
 ### Local models
 
@@ -495,6 +488,25 @@ tools ai sessions report <session-id> [--provider claude|codex|grok] [--top 10] 
   calls with their tags (`cold-cache`, `partial-cold`, `large-cache-write`, `high-output`, `subagent`), the cache
   losses with their cause, and the longest gaps. A fact a harness does not record is listed under `unsupported` with
   its reason. `--json` prints `{ schema: "sessions.report@1", session, report }`.
+- The report's calls are the session's own and those of every agent transcript it has (the agents it and its agents started, and the agents of its Workflow tool runs), each call once by its id across the files (`sessionCallsWithAgents`). The cost line names how many agent transcripts were read. The cache losses and the gaps read the main loop only. Read from the lead's transcript alone, a Claude session with agents printed sub-agents $0, because Claude Code writes each agent's calls into the agent's own file.
+
+### `ai sessions workflows`: a session's Workflow tool runs
+
+```bash
+tools ai sessions workflows list [session-id] [--agents] [--usage] [--json]
+tools ai sessions workflows show <session-id> <run> [--usage] [--json]
+tools ai sessions workflows grep <session-id> <pattern> [--run <run>] [-i] [--before <iso>] [--max-hits 3] [--context 100] [--json]
+tools ai sessions workflows result <session-id> <run> [agent]
+```
+
+- Claude Code's Workflow tool keeps a run's agents outside the session's direct sub-agents: `<session>/subagents/workflows/<runId>/` holds their transcripts and a journal, and `<session>/workflows/<runId>.json` holds the run record. `subagents` lists them after the direct agents, grouped by run, each with its label, phase, model and state. Its `--json` adds `workflow: { runId, label, phase }` to each such agent, a `workflowRuns` list (name, status, start, duration, agents, results) and `workflowReader`.
+- One agent id is one row. A workflow agent that the lead revives with SendMessage writes a second transcript directly in the sub-agent folder; the row keeps both in `files` (oldest first), `filePath` is the newest, and the run, label and phase come from the first.
+- `workflows` reads the runs through the session's reader (`NativeSessionReader.workflows`). It joins a run's agents by id from the run record, the journal and the transcript folder, and keeps which source named each one, because the three disagree: a killed run has transcripts and few results, and a run stopped before its end has transcripts and no record. `<run>` is a run id prefix or a workflow name. `<session-id>` is an id, an id prefix or a transcript path.
+- `list --agents` prints each run with its agents; with `--json` each run is the whole run that `show --json` prints, so one call returns every run of a session. `list --usage` adds each run's calls, tokens and list-price cost.
+- Each agent carries `journal: { key, startedLine, resultLine }` (1-based lines of the run's `journal.jsonl`) and `supersededBy`: the agent the run started later for the same step when this one returned no result. The RESULT column then reads `retried as <agent id>`.
+- `show --usage` reads every agent transcript for its calls, tokens, list-price cost and tool calls. The run record's own token total is far lower and is printed as recorded, not recomputed.
+- `grep` says for each hit whether the agent wrote the text (`assistant`), was shown it (`tool-result`) or was told it (`prompt`). `result` prints an agent's final structured answer from the journal; the agent is its id or a prefix, its label or a part of it. With no agent it prints `results`, one entry per agent of the run with `hasResult`. The text forms print local time; the JSON forms keep UTC instants.
+- Codex and Grok have no workflow tool. `workflows list` with no session names each provider's reader, and a session of theirs answers `no workflow reader` with the reason, never "0 runs".
 
 ### `ai statusline`: the coding-agent statusline
 
@@ -696,8 +708,7 @@ site. `doctor --live` and `account test --live` add the plugin's health probe, w
 
 ## Troubleshooting
 
-- **`--provider` on `summarize` or `classify` changes nothing.** The flag is ignored (see Text verbs). For
-  `summarize`, set a task default with `tools ai config default set summarize <model-ref>` instead. `classify` has no
+- **`--provider` on `classify` changes nothing.** The flag is ignored (see Text verbs). `classify` has no
   workaround: it always runs the macOS classification helper, and it reads no task default, account or model.
 - **`image` says "Hugging Face token required".** Export `HUGGINGFACE_TOKEN` (or `HF_TOKEN`).
 - **`tokens --method claude-api` fails at once.** It needs `ANTHROPIC_API_KEY`; it never borrows a subscription

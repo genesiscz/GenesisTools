@@ -1,4 +1,3 @@
-import type { AIAccount } from "@genesiscz/utils/ai/AIAccount";
 import type { LanguageModelUsage } from "ai";
 
 // Re-export relevant existing types
@@ -9,7 +8,6 @@ export type LogLevel = "silent" | "error" | "warn" | "info" | "debug" | "trace";
 export interface AIChatOptions {
     provider: string;
     model: string;
-    account?: AIAccount;
     systemPrompt?: string;
     temperature?: number;
     maxTokens?: number;

@@ -1,11 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import {
-    lastProviderFailure,
-    providerUnavailableResponse,
-    tryCreateProvider,
-} from "@app/ai-proxy/lib/providers/registry";
+import { resolve } from "node:path";
+import { lastProviderFailure, providerUnavailableResponse, tryCreateProvider } from "@app/ai-proxy/lib/providers/pool";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
+import { providerClassModulesLoadedByTable } from "../../../../scripts/ci/proxy-provider-ratchet";
 
 const account: AiProxyAccountConfig = {
     name: "work",
@@ -43,5 +41,12 @@ describe("provider construction failures", () => {
         } finally {
             env.testing.unset("AI_PROXY_REGISTRY_TEST_KEY");
         }
+    });
+});
+
+describe("the provider definition table", () => {
+    // A fresh process, because the tests above build providers in this one, which loads their classes.
+    it("loads no provider class when the table and the config are imported", () => {
+        expect(providerClassModulesLoadedByTable(resolve(import.meta.dir, "../../../.."))).toEqual([]);
     });
 });

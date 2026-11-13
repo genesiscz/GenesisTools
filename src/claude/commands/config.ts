@@ -18,14 +18,17 @@ import { clearPollGate } from "@app/claude/lib/usage/poll-gate";
 import { peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { ensureSubscriptionAnchors, planAllowsClaudeCode } from "@app/claude/lib/usage/subscription";
 import { formatWarmupViaHint } from "@app/claude/lib/warmup/service";
-import * as p from "@clack/prompts";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { applyLoginOutcome, removeAccount } from "@genesiscz/utils/ai/config/account-ops";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { fetchOAuthProfile, getClaudeJsonAccount } from "@genesiscz/utils/claude/auth";
 import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
+import { resolveSecret } from "@genesiscz/utils/security";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -36,14 +39,53 @@ function maskToken(token: string): string {
     return `${token.slice(0, 20)}...`;
 }
 
+/** The account a name or id selects, of any provider (a name is unique across the config). */
+function accountNamed(store: AiConfigStore, nameOrId: string): AccountEntry | undefined {
+    return store.accounts().find((a) => a.id === nameOrId || a.name === nameOrId);
+}
+
+/**
+ * A pasted OAuth access token, stored as a new Claude account that becomes the `claude` and `ask`
+ * default when those have none. The token goes to the vault through the login write.
+ */
+async function addManualTokenAccount(input: { name: string; accessToken: string; label?: string }): Promise<void> {
+    const { registerBuiltInPlugins } = await import("@genesiscz/utils/ai/providers/plugins");
+    registerBuiltInPlugins();
+    await applyLoginOutcome({
+        name: input.name,
+        guardedAgainst: null,
+        outcome: {
+            provider: "anthropic-sub",
+            credentials: { accessToken: input.accessToken },
+            ...(input.label ? { accountFields: { label: input.label } } : {}),
+        },
+        apps: ["claude", "ask"],
+        defaultForApps: ["claude", "ask"],
+    });
+}
+
+/**
+ * Remove an account the user named and confirmed. Forced: the user asked for exactly this account
+ * to go, so a default that still points at it does not keep it alive. Its vault entries go with it.
+ */
+async function removeNamedAccount(store: AiConfigStore, nameOrId: string): Promise<void> {
+    const account = accountNamed(store, nameOrId);
+
+    if (!account) {
+        throw new Error(`Account "${nameOrId}" not found`);
+    }
+
+    await removeAccount(account.id, { force: true });
+}
+
 async function interactiveConfig(): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" claude config ")));
 
     const config = await loadConfig();
-    let aiConfig = await AIConfig.load();
-
     while (true) {
-        const accounts = aiConfig.getAccountsByProvider("anthropic-sub");
+        // Re-read every round: the store re-reads the file when a login in another step wrote it.
+        const store = await AiConfigStore.load();
+        const accounts = store.accounts({ provider: "anthropic-sub" });
         const action = await p.select({
             message: "What would you like to configure?",
             options: [
@@ -53,6 +95,7 @@ async function interactiveConfig(): Promise<void> {
                 { value: "show", label: "Show current config" },
                 { value: "exit", label: "Exit" },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(action) || action === "exit") {
@@ -61,23 +104,19 @@ async function interactiveConfig(): Promise<void> {
         }
 
         if (action === "accounts") {
-            await manageAccounts(aiConfig);
-            // `AIConfig.invalidate()` drops the STATIC cache; this loop still
-            // holds the instance it loaded before the login, so the next screen
-            // would render the pre-login account list (PR #360 review t8).
-            aiConfig = await AIConfig.load();
+            await manageAccounts(store);
         } else if (action === "notifications") {
             await manageNotifications(config);
         } else if (action === "warmup") {
-            await manageWarmup(config, aiConfig);
+            await manageWarmup(config, store);
         } else if (action === "show") {
-            await showConfig(config, aiConfig);
+            await showConfig(config, store);
         }
     }
 }
 
-async function manageAccounts(aiConfig: AIConfig): Promise<void> {
-    const accounts = aiConfig.getAccountsByProvider("anthropic-sub");
+async function manageAccounts(store: AiConfigStore): Promise<void> {
+    const accounts = store.accounts({ provider: "anthropic-sub" });
 
     const action = await p.select({
         message: "Account action:",
@@ -87,6 +126,7 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
             ...(accounts.length > 0 ? [{ value: "remove", label: "Remove an account" }] : []),
             { value: "back", label: "Back" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(action) || action === "back") {
@@ -98,9 +138,6 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
         // moved into the shared lib, and losing that left the interactive path
         // unable to name an account at all (gap/cli).
         await runLogin({ provider: "anthropic-sub", tool: toolCommand("claude login"), promptName: true });
-        // The shared lib writes through the v4 store, which this menu's in-memory
-        // v3 view cannot see; re-read before the next screen renders a stale list.
-        AIConfig.invalidate();
     } else if (action === "add-manual") {
         const name = await p.text({
             message: "Name for this account:",
@@ -109,10 +146,11 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
                 if (!val?.trim()) {
                     return "Name is required";
                 }
-                if (aiConfig.getAccount(val)) {
+                if (accountNamed(store, val)) {
                     return `Account "${val}" already exists`;
                 }
             },
+            cancel: "back",
         });
         if (p.isCancel(name)) {
             return;
@@ -125,6 +163,7 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
                     return "Token is required";
                 }
             },
+            cancel: "back",
         });
         if (p.isCancel(token)) {
             return;
@@ -140,6 +179,7 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
             const proceed = await p.confirm({
                 message: "Save anyway?",
                 initialValue: false,
+                cancel: "back",
             });
             if (p.isCancel(proceed) || !proceed) {
                 return;
@@ -149,19 +189,14 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
         const label = await p.text({
             message: "Label (optional, e.g. 'work', 'max'):",
             placeholder: "max",
+            cancel: "back",
         });
 
         const accountLabel = p.isCancel(label) ? undefined : (label as string) || undefined;
         const accountName = name as string;
         const accountToken = token as string;
 
-        await aiConfig.addAccountWithDefaults({
-            name: accountName,
-            provider: "anthropic-sub",
-            tokens: { accessToken: accountToken },
-            label: accountLabel,
-            apps: ["claude", "ask"],
-        });
+        await addManualTokenAccount({ name: accountName, accessToken: accountToken, label: accountLabel });
 
         p.log.success(`Account "${name}" saved.`);
     } else if (action === "remove") {
@@ -171,6 +206,7 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
                 value: acc.name,
                 label: `${acc.name}${acc.label ? ` (${acc.label})` : ""}`,
             })),
+            cancel: "back",
         });
         if (p.isCancel(toRemove)) {
             return;
@@ -178,12 +214,13 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
 
         const confirmed = await p.confirm({
             message: `Remove account "${toRemove}"?`,
+            cancel: "back",
         });
         if (p.isCancel(confirmed) || !confirmed) {
             return;
         }
 
-        await aiConfig.removeAccount(toRemove as string);
+        await removeNamedAccount(store, toRemove as string);
         p.log.success(`Account "${toRemove}" removed.`);
     }
 }
@@ -192,6 +229,7 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
     const sessionThresholds = await p.text({
         message: "Session thresholds (comma-separated %):",
         initialValue: config.notifications.sessionThresholds.join(", "),
+        cancel: "back",
     });
     if (p.isCancel(sessionThresholds)) {
         return;
@@ -200,6 +238,7 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
     const weeklyThresholds = await p.text({
         message: "Weekly thresholds (comma-separated %):",
         initialValue: config.notifications.weeklyThresholds.join(", "),
+        cancel: "back",
     });
     if (p.isCancel(weeklyThresholds)) {
         return;
@@ -208,6 +247,7 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
     const interval = await p.text({
         message: "Watch poll interval (seconds):",
         initialValue: String(config.notifications.watchInterval),
+        cancel: "back",
     });
     if (p.isCancel(interval)) {
         return;
@@ -216,6 +256,7 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
     const macosEnabled = await p.confirm({
         message: "Enable macOS notifications?",
         initialValue: config.notifications.channels.macos,
+        cancel: "back",
     });
     if (p.isCancel(macosEnabled)) {
         return;
@@ -243,7 +284,7 @@ async function manageNotifications(config: ClaudeConfig): Promise<void> {
     p.log.success("Notification settings saved.");
 }
 
-async function manageWarmup(config: ClaudeConfig, aiConfig: AIConfig): Promise<void> {
+async function manageWarmup(config: ClaudeConfig, store: AiConfigStore): Promise<void> {
     if (!config.warmup) {
         config.warmup = structuredClone(DEFAULT_WARMUP);
     }
@@ -263,13 +304,14 @@ async function manageWarmup(config: ClaudeConfig, aiConfig: AIConfig): Promise<v
             },
             { value: "back", label: "Back" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(action) || action === "back") {
         return;
     }
 
-    const accounts = aiConfig.getAccountsByProvider("anthropic-sub");
+    const accounts = store.accounts({ provider: "anthropic-sub" });
 
     if (accounts.length === 0) {
         p.log.error(`No accounts configured. Run: ${toolCommand("claude login")}`);
@@ -279,18 +321,23 @@ async function manageWarmup(config: ClaudeConfig, aiConfig: AIConfig): Promise<v
     const accountNames = accounts.map((a) => a.name);
 
     if (action === "session") {
-        await configureSessionWarmup(config, accountNames, aiConfig);
+        await configureSessionWarmup(config, accountNames, store);
     } else if (action === "weekly") {
-        await configureWeeklyWarmup(config, accountNames, aiConfig);
+        await configureWeeklyWarmup(config, accountNames, store);
     }
 }
 
-async function configureSessionWarmup(config: ClaudeConfig, accountNames: string[], aiConfig: AIConfig): Promise<void> {
+async function configureSessionWarmup(
+    config: ClaudeConfig,
+    accountNames: string[],
+    store: AiConfigStore
+): Promise<void> {
     const warmup = config.warmup!;
 
     const enabled = await p.confirm({
         message: "Enable automatic session warmup?",
         initialValue: warmup.session.enabled,
+        cancel: "back",
     });
     if (p.isCancel(enabled)) {
         return;
@@ -323,11 +370,12 @@ async function configureSessionWarmup(config: ClaudeConfig, accountNames: string
         message: "Which accounts to warm up?",
         options: accountNames.map((name) => ({
             value: name,
-            label: `${name}${aiConfig.getAccount(name)?.label ? ` (${aiConfig.getAccount(name)?.label})` : ""}`,
+            label: `${name}${accountNamed(store, name)?.label ? ` (${accountNamed(store, name)?.label})` : ""}`,
             ...(noFiveHour.has(name) ? { hint: "no 5h limit: the session warmup skips it" } : {}),
         })),
         initialValues: warmup.session.accounts.filter((a) => accountNames.includes(a)),
         required: true,
+        cancel: "back",
     });
     if (p.isCancel(accounts)) {
         return;
@@ -345,6 +393,7 @@ async function configureSessionWarmup(config: ClaudeConfig, accountNames: string
                 return "Must be 0-23";
             }
         },
+        cancel: "back",
     });
     if (p.isCancel(startHour)) {
         return;
@@ -359,6 +408,7 @@ async function configureSessionWarmup(config: ClaudeConfig, accountNames: string
                 return "Must be 1-24";
             }
         },
+        cancel: "back",
     });
     if (p.isCancel(endHour)) {
         return;
@@ -384,6 +434,7 @@ async function configureSessionWarmup(config: ClaudeConfig, accountNames: string
     const notify = await p.confirm({
         message: "Notify on each warmup?",
         initialValue: warmup.session.notify,
+        cancel: "back",
     });
     if (p.isCancel(notify)) {
         return;
@@ -397,6 +448,7 @@ async function configureSessionWarmup(config: ClaudeConfig, accountNames: string
         const onlyIfUnused = await p.confirm({
             message: "Only notify if session was unused?",
             initialValue: warmup.session.notifyOnlyIfUnused,
+            cancel: "back",
         });
         if (p.isCancel(onlyIfUnused)) {
             return;
@@ -422,12 +474,17 @@ async function configureSessionWarmup(config: ClaudeConfig, accountNames: string
     );
 }
 
-async function configureWeeklyWarmup(config: ClaudeConfig, accountNames: string[], aiConfig: AIConfig): Promise<void> {
+async function configureWeeklyWarmup(
+    config: ClaudeConfig,
+    accountNames: string[],
+    store: AiConfigStore
+): Promise<void> {
     const warmup = config.warmup!;
 
     const enabled = await p.confirm({
         message: "Enable automatic warmup at weekly reset?",
         initialValue: warmup.weekly.enabled,
+        cancel: "back",
     });
     if (p.isCancel(enabled)) {
         return;
@@ -448,10 +505,11 @@ async function configureWeeklyWarmup(config: ClaudeConfig, accountNames: string[
         message: "Which accounts to warm up at weekly reset?",
         options: accountNames.map((name) => ({
             value: name,
-            label: `${name}${aiConfig.getAccount(name)?.label ? ` (${aiConfig.getAccount(name)?.label})` : ""}`,
+            label: `${name}${accountNamed(store, name)?.label ? ` (${accountNamed(store, name)?.label})` : ""}`,
         })),
         initialValues: warmup.weekly.accounts.filter((a) => accountNames.includes(a)),
         required: true,
+        cancel: "back",
     });
     if (p.isCancel(accounts)) {
         return;
@@ -462,6 +520,7 @@ async function configureWeeklyWarmup(config: ClaudeConfig, accountNames: string[
     const notify = await p.confirm({
         message: "Notify on weekly warmup?",
         initialValue: warmup.weekly.notify,
+        cancel: "back",
     });
     if (p.isCancel(notify)) {
         return;
@@ -482,9 +541,9 @@ function todayDateString(): string {
     return formatLocalDate(new Date());
 }
 
-async function showConfig(config: ClaudeConfig, aiConfig: AIConfig): Promise<void> {
-    const accounts = aiConfig.getAccountsByProvider("anthropic-sub");
-    const defaultAccount = aiConfig.getDefaultAccount("claude");
+async function showConfig(config: ClaudeConfig, store: AiConfigStore): Promise<void> {
+    const accounts = store.accounts({ provider: "anthropic-sub" });
+    const defaultAccount = store.defaultAccount("claude");
 
     const lines = [pc.bold("Accounts:")];
 
@@ -495,7 +554,8 @@ async function showConfig(config: ClaudeConfig, aiConfig: AIConfig): Promise<voi
         spinner.start("Fetching account profiles...");
 
         const profileResults = await Promise.allSettled(
-            accounts.map(async (acc) => fetchOAuthProfile(acc.tokens.accessToken ?? ""))
+            // Resolved here, where the profile request spends it.
+            accounts.map(async (acc) => fetchOAuthProfile((await resolveSecret(acc.credentials.accessToken)) ?? ""))
         );
         const profiles = profileResults.map((r) => (r.status === "fulfilled" ? r.value : undefined));
         const claudeJson = await getClaudeJsonAccount();
@@ -505,7 +565,7 @@ async function showConfig(config: ClaudeConfig, aiConfig: AIConfig): Promise<voi
         for (let i = 0; i < accounts.length; i++) {
             const acc = accounts[i];
             const profile = profiles[i];
-            const isDefault = defaultAccount?.name === acc.name;
+            const isDefault = defaultAccount?.id === acc.id;
 
             lines.push(`  ${pc.bold(acc.name)}${isDefault ? pc.green(" (default)") : ""}`);
 
@@ -529,12 +589,12 @@ async function showConfig(config: ClaudeConfig, aiConfig: AIConfig): Promise<voi
             }
 
             lines.push(
-                `    ${pc.dim("Label:")} ${acc.label ?? pc.dim("none")}  ${pc.dim("Token:")} ${pc.dim(maskToken(acc.tokens.accessToken ?? ""))}`
+                `    ${pc.dim("Label:")} ${acc.label ?? pc.dim("none")}  ${pc.dim("Token:")} ${pc.dim(maskToken((await resolveSecret(acc.credentials.accessToken)) ?? ""))}`
             );
 
             // A missing or truncated setup token means `cc <name>` silently
             // launches on the KEYCHAIN account instead of this one.
-            const longLived = acc.tokens.longLivedToken;
+            const longLived = await resolveSecret(acc.credentials.longLivedToken);
 
             if (!longLived) {
                 lines.push(
@@ -633,9 +693,7 @@ export function registerConfigCommand(program: Command): void {
         .description(`Add an account with a manual token (use \`${toolCommand("claude login")}\` for OAuth)`)
         .option("--token <token>", "OAuth access token")
         .action(async (name: string, opts: { token?: string }) => {
-            const aiConfig = await AIConfig.load();
-
-            if (aiConfig.getAccount(name)) {
+            if (accountNamed(await AiConfigStore.load(), name)) {
                 p.log.error(`Account "${name}" already exists.`);
                 process.exit(1);
             }
@@ -645,12 +703,7 @@ export function registerConfigCommand(program: Command): void {
                 process.exit(1);
             }
 
-            await aiConfig.addAccountWithDefaults({
-                name,
-                provider: "anthropic-sub",
-                tokens: { accessToken: opts.token },
-                apps: ["claude", "ask"],
-            });
+            await addManualTokenAccount({ name, accessToken: opts.token });
 
             p.log.success(`Account "${name}" added.`);
         });
@@ -659,14 +712,14 @@ export function registerConfigCommand(program: Command): void {
         .command("remove <name>")
         .description("Remove a configured account")
         .action(async (name: string) => {
-            const aiConfig = await AIConfig.load();
+            const store = await AiConfigStore.load();
 
-            if (!aiConfig.getAccount(name)) {
+            if (!accountNamed(store, name)) {
                 p.log.error(`Account "${name}" not found.`);
                 process.exit(1);
             }
 
-            await aiConfig.removeAccount(name);
+            await removeNamedAccount(store, name);
             p.log.success(`Account "${name}" removed.`);
         });
 
@@ -677,9 +730,9 @@ export function registerConfigCommand(program: Command): void {
         )
         .option("--to <newName>", "New account name (required in non-interactive mode)")
         .action(async (oldName: string, newName: string | undefined, opts: { to?: string }) => {
-            const aiConfig = await AIConfig.load();
+            const store = await AiConfigStore.load();
 
-            if (!aiConfig.getAccount(oldName)) {
+            if (!accountNamed(store, oldName)) {
                 p.log.error(`Account "${oldName}" not found.`);
                 process.exit(1);
             }
@@ -708,6 +761,7 @@ export function registerConfigCommand(program: Command): void {
                     message: "New name:",
                     placeholder: oldName,
                     defaultValue: oldName,
+                    cancel: "back",
                 });
 
                 if (p.isCancel(typed) || !String(typed).trim()) {
@@ -728,7 +782,7 @@ export function registerConfigCommand(program: Command): void {
                 return;
             }
 
-            if (aiConfig.getAccount(target)) {
+            if (accountNamed(store, target)) {
                 p.log.error(`Account "${target}" already exists.`);
                 process.exit(1);
             }
@@ -761,10 +815,9 @@ export function registerConfigCommand(program: Command): void {
         .command("refresh [name]")
         .description("Re-read the subscription plan from the OAuth profile (all accounts when no name is given)")
         .action(async (name?: string) => {
-            const aiConfig = await AIConfig.load();
-            const accounts = aiConfig
-                .getAccountsByProvider("anthropic-sub")
-                .filter((a) => !name || a.name === name)
+            const accounts = (await AiConfigStore.load())
+                .accounts({ provider: "anthropic-sub" })
+                .filter((a) => !name || a.name === name || a.id === name)
                 // Force a re-read: the automatic pass only refetches every 6h.
                 .map((a) => ({ ...a, subscriptionCheckedAt: undefined }));
 
@@ -773,12 +826,12 @@ export function registerConfigCommand(program: Command): void {
                 process.exit(1);
             }
 
-            await ensureSubscriptionAnchors(aiConfig, accounts, { force: true });
+            await ensureSubscriptionAnchors(accounts, { force: true });
 
-            const fresh = await AIConfig.load();
+            const fresh = await AiConfigStore.load();
 
             for (const account of accounts) {
-                const stored = fresh.getAccount(account.name);
+                const stored = fresh.account(account.id);
                 const plan = stored?.subscriptionPlan ?? "unknown";
                 const status = stored?.subscriptionStatus ?? "unknown";
                 const usable = planAllowsClaudeCode(stored ?? {});
@@ -800,8 +853,7 @@ export function registerConfigCommand(program: Command): void {
         .description("Show current configuration")
         .action(async () => {
             const config = await loadConfig();
-            const aiConfig = await AIConfig.load();
-            await showConfig(config, aiConfig);
+            await showConfig(config, await AiConfigStore.load());
         });
 
     configCmd

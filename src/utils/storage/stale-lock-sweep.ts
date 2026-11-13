@@ -1,8 +1,8 @@
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { classifyPid } from "@genesiscz/utils/process-identity";
+import { classifyPidRecord, takeOverStaleClaim } from "@genesiscz/utils/process/pidfile";
 
 const log = logger.child({ component: "storage:stale-lock-sweep" });
 
@@ -34,6 +34,12 @@ export interface SweepReport {
     inspected: number;
 }
 
+interface JudgedHolder {
+    payload: LockPayload;
+    reason: "dead_pid" | "recycled_pid";
+    command: string | null;
+}
+
 export interface SweepOptions {
     maxAgeHours?: number;
     matchExtensions?: string[];
@@ -42,9 +48,8 @@ export interface SweepOptions {
 const DEFAULT_MAX_AGE_HOURS = 24;
 const DEFAULT_EXTENSIONS = [".lock", ".login"];
 
-function parsePayload(path: string): LockPayload | null {
+function parsePayload(text: string): LockPayload | null {
     try {
-        const text = readFileSync(path, "utf8");
         const trimmed = text.trim();
 
         if (!trimmed) {
@@ -67,6 +72,12 @@ function parsePayload(path: string): LockPayload | null {
     }
 }
 
+/**
+ * Reap the dead claims in `dir` through the shared fenced takeover (`takeOverStaleClaim` in pidfile.ts): each holder is
+ * read again and judged under its arbiter, and removed only when the removed bytes are the judged ones. An empty or
+ * unreadable claim follows pidfile.ts's one rule (held inside its grace, reaped after it). Live claims older than
+ * `maxAgeHours` are reported as warnings and left in place.
+ */
 export function sweepStaleLocks(dir: string, opts: SweepOptions = {}): SweepReport {
     const maxAgeHours = opts.maxAgeHours ?? DEFAULT_MAX_AGE_HOURS;
     const extensions = opts.matchExtensions ?? DEFAULT_EXTENSIONS;
@@ -99,41 +110,43 @@ export function sweepStaleLocks(dir: string, opts: SweepOptions = {}): SweepRepo
 
         report.inspected += 1;
 
-        const payload = parsePayload(fullPath);
+        // The verdict is made by the shared takeover on what it reads under the lock's arbiter, never on an earlier
+        // read: a holder that died can be replaced by a fresh login between a read here and the unlink.
+        const seen: { holder?: JudgedHolder } = {};
+        const outcome = takeOverStaleClaim(fullPath, {
+            arbiter: fullPath,
+            holderIsStale: (holder, raw) => {
+                const identity = classifyPidRecord(holder);
+                const stale = identity.status === "dead" || identity.status === "foreign";
+                seen.holder = {
+                    payload: parsePayload(raw) ?? { pid: holder.pid },
+                    reason: identity.status === "dead" ? "dead_pid" : "recycled_pid",
+                    command: identity.command ?? null,
+                };
+                return stale;
+            },
+        });
 
-        if (!payload) {
-            // Caller contracts (e.g. agents login's slot-already-held error) promise
-            // unreadable locks are reaped on the next sweep attempt. writeFileSync
-            // writes the payload in one syscall, so a corrupt/truncated file here is
-            // a genuine fault, not a write-in-progress race — safe to reap outright.
-            try {
-                unlinkSync(fullPath);
+        if (outcome === "taken") {
+            if (seen.holder) {
+                const { payload, reason, command } = seen.holder;
+                report.reaped.push({ lock: fullPath, pid: payload.pid, reason, payload });
+                log.info({ lock: fullPath, pid: payload.pid, reason, command }, "reaped stale lock");
+            } else {
+                // A holder that names no process is taken over without a verdict, past pidfile.ts's grace.
                 report.reaped.push({ lock: fullPath, reason: "unreadable", payload: { pid: 0 } });
                 log.warn({ lock: fullPath }, "reaped unreadable lock file");
-            } catch (err) {
-                log.warn({ lock: fullPath, err }, "failed to unlink unreadable lock");
             }
 
             continue;
         }
 
-        const recordedCommand = typeof payload.command === "string" ? payload.command : undefined;
-        const identity = classifyPid(payload.pid, recordedCommand);
-
-        if (identity.status === "dead" || identity.status === "foreign") {
-            const reason = identity.status === "dead" ? "dead_pid" : "recycled_pid";
-
-            try {
-                unlinkSync(fullPath);
-                report.reaped.push({ lock: fullPath, pid: payload.pid, reason, payload });
-                log.info({ lock: fullPath, pid: payload.pid, reason, command: identity.command }, "reaped stale lock");
-            } catch (err) {
-                log.warn({ lock: fullPath, err }, "failed to unlink stale lock");
-            }
-
+        // Gone, decided by another process, or an empty claim inside its grace: nothing to warn about.
+        if (outcome === "lost-race" || !seen.holder) {
             continue;
         }
 
+        const { payload } = seen.holder;
         const ageMs = now - stat.mtimeMs;
         const ageH = ageMs / 3_600_000;
 

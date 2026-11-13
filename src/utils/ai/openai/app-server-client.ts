@@ -1,7 +1,9 @@
 import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { type ChildStdioConnection, connectChildStdio } from "@genesiscz/utils/rpc/child-stdio";
+import { RpcError } from "@genesiscz/utils/rpc/errors";
+import type { RpcDialect, RpcPeer } from "@genesiscz/utils/rpc/peer";
 import { resolveCodexBinary } from "./codex-binary";
 
 const log = logger.child({ component: "openai:app-server-client" });
@@ -37,15 +39,21 @@ interface AppServerClientOptions {
     onExit?: (code: number) => void | Promise<void>;
 }
 
-interface PendingRequest {
-    method: string;
-    resolve: (value: unknown) => void;
-    reject: (error: Error) => void;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+/**
+ * What `codex app-server` speaks: JSON-RPC without the `jsonrpc` field, no `$/cancel` or `$/progress`, and its
+ * requests answered as each handler settles, because an approval held for the lead must not hold a token refresh.
+ * The deadline only bounds a request nobody answers: the TUI bridge forwards requests whose length this side cannot
+ * know, and the callers that know theirs add a shorter one. A thread snapshot with its turns can pass the default
+ * 8 MiB line, so the limit is higher.
+ */
+export const CODEX_APP_SERVER_DIALECT: Partial<RpcDialect> = {
+    jsonrpcField: false,
+    cancel: false,
+    progress: false,
+    defaultDeadlineMs: 30 * 60_000,
+    inOrder: false,
+    maxLineBytes: 256 * 1024 * 1024,
+};
 
 /** A JSON-RPC error response, with the `code` and `data` the server sent (`data.codexErrorInfo` names the cause). */
 export class AppServerRpcError extends Error {
@@ -59,24 +67,12 @@ export class AppServerRpcError extends Error {
     }
 }
 
-function responseError(value: unknown): Error {
-    if (isRecord(value) && typeof value.message === "string") {
-        return new AppServerRpcError(
-            value.message,
-            typeof value.code === "number" ? value.code : undefined,
-            value.data
-        );
-    }
-
-    return new Error("Codex app-server returned an unknown RPC error");
-}
-
 export class AppServerClient {
-    private readonly pending = new Map<RpcId, PendingRequest>();
     /** The server requests whose answer is not on the wire yet, settled once it is (or failed to go). */
     private readonly answering = new Map<RpcId, Promise<void>>();
     private readonly options: AppServerClientOptions;
-    private nextId = 1;
+    private readonly connection: ChildStdioConnection;
+    private readonly peer: RpcPeer;
     private closed = false;
     /** Serialises `onNotification` off the stdout reader; see `queueNotification`. */
     private notificationQueue: Promise<void> = Promise.resolve();
@@ -86,7 +82,26 @@ export class AppServerClient {
         options: AppServerClientOptions = {}
     ) {
         this.options = options;
-        void this.readStdout();
+        this.connection = connectChildStdio({
+            child: process,
+            dialect: CODEX_APP_SERVER_DIALECT,
+            exitReason: (code) => `Codex app-server exited with code ${code}`,
+            invalid: "ignore",
+            log: logger.scoped("codex-app-server").log,
+            label: "Codex app-server",
+            onNotification: (notification) => this.queueNotification(notification),
+            handle: (incoming, context) => {
+                if (typeof incoming.id !== "number" && typeof incoming.id !== "string") {
+                    // A notification reaches `onNotification`; nothing without an id comes here.
+                    return Promise.resolve(null);
+                }
+
+                const request = { id: incoming.id, method: incoming.method, params: incoming.params };
+                this.trackAnswer(request.id, context.answered);
+                return this.handleServerRequest(request);
+            },
+        });
+        this.peer = this.connection.peer;
         void this.readStderr();
         void this.watchExit();
     }
@@ -96,30 +111,20 @@ export class AppServerClient {
             throw new Error("Codex app-server client is closed");
         }
 
-        const id = this.nextId;
-        this.nextId += 1;
-
-        const result = new Promise<T>((resolve, reject) => {
-            this.pending.set(id, {
-                method,
-                resolve: (value) => resolve(value as T),
-                reject,
-            });
-        });
-
         try {
-            await this.writeMessage({ id, method, ...(params === undefined ? {} : { params }) });
+            return await this.peer.request<T>(method, params);
         } catch (err) {
-            log.warn({ err, method, id }, "writing an app-server request failed");
-            this.pending.delete(id);
+            if (err instanceof RpcError) {
+                throw new AppServerRpcError(err.message, err.code, err.data);
+            }
+
             throw err;
         }
-
-        return result;
     }
 
     async notify(method: string, params?: unknown): Promise<void> {
-        await this.writeMessage({ method, ...(params === undefined ? {} : { params }) });
+        this.peer.notify(method, params);
+        await this.connection.written();
     }
 
     async close(): Promise<void> {
@@ -128,7 +133,7 @@ export class AppServerClient {
         }
 
         this.closed = true;
-        this.rejectPending(new Error("Codex app-server client closed"));
+        this.peer.close("Codex app-server client closed");
 
         try {
             // A sink whose reader is wedged never settles, and `close()` then never reaches the
@@ -165,47 +170,6 @@ export class AppServerClient {
         }
     }
 
-    private async writeMessage(message: Record<string, unknown>): Promise<void> {
-        const line = `${SafeJSON.stringify(message, { jsonl: true })}\n`;
-        await this.process.stdin.write(line);
-        await this.process.stdin.flush?.();
-    }
-
-    private async readStdout(): Promise<void> {
-        const reader = this.process.stdout.getReader();
-        const decoder = new TextDecoder();
-        let partial = "";
-
-        try {
-            for (;;) {
-                const result = await reader.read();
-                if (result.done) {
-                    break;
-                }
-
-                partial += decoder.decode(result.value, { stream: true });
-                const lines = partial.split("\n");
-                partial = lines.pop() ?? "";
-
-                for (const line of lines) {
-                    await this.handleLine(line);
-                }
-            }
-
-            partial += decoder.decode();
-            if (partial.trim()) {
-                await this.handleLine(partial);
-            }
-        } catch (err) {
-            if (!this.closed) {
-                log.error({ err }, "reading app-server stdout failed");
-                this.rejectPending(err instanceof Error ? err : new Error(String(err)));
-            }
-        } finally {
-            reader.releaseLock();
-        }
-    }
-
     private async readStderr(): Promise<void> {
         const reader = this.process.stderr.getReader();
         const decoder = new TextDecoder();
@@ -236,59 +200,6 @@ export class AppServerClient {
         }
     }
 
-    private async handleLine(line: string): Promise<void> {
-        if (!line.trim()) {
-            return;
-        }
-
-        let message: unknown;
-        try {
-            message = SafeJSON.parse(line, { strict: true });
-        } catch (err) {
-            log.warn({ err, line }, "ignoring invalid app-server JSON line");
-            return;
-        }
-
-        if (!isRecord(message)) {
-            log.warn({ message }, "ignoring non-object app-server message");
-            return;
-        }
-
-        const id = message.id;
-        const method = message.method;
-
-        if ((typeof id === "number" || typeof id === "string") && typeof method === "string") {
-            // Wait for preceding notifications, while the reader continues handling RPC responses.
-            void this.notificationQueue
-                .then(() => this.handleServerRequest({ id, method, params: message.params }))
-                .catch((err) => {
-                    log.error({ err, id, method }, "answering app-server request failed");
-                });
-            return;
-        }
-
-        if (typeof id === "number" || typeof id === "string") {
-            const pending = this.pending.get(id);
-            if (!pending) {
-                log.debug({ id }, "received response for unknown app-server request");
-                return;
-            }
-
-            this.pending.delete(id);
-            if ("error" in message) {
-                pending.reject(responseError(message.error));
-            } else {
-                pending.resolve(message.result);
-            }
-
-            return;
-        }
-
-        if (typeof method === "string") {
-            this.queueNotification({ method, params: message.params });
-        }
-    }
-
     /**
      * Notifications leave the reader loop here. Awaiting the handler inline made the
      * stdout reader wait on it, so a slow handler delayed every later response line and
@@ -315,63 +226,51 @@ export class AppServerClient {
         return this.answering.get(id) ?? Promise.resolve();
     }
 
-    private async handleServerRequest(request: RpcServerRequest): Promise<void> {
-        const written = this.answerServerRequest(request);
-        this.answering.set(request.id, written);
-
-        try {
-            await written;
-        } finally {
-            if (this.answering.get(request.id) === written) {
-                this.answering.delete(request.id);
-            }
-        }
+    /** `answered(id)` waits for the peer to send the answer, then for its write to reach stdin. */
+    private trackAnswer(id: RpcId, sent: Promise<void>): void {
+        const written = sent.then(() => this.connection.written());
+        this.answering.set(id, written);
+        written
+            .catch(() => undefined)
+            .finally(() => {
+                if (this.answering.get(id) === written) {
+                    this.answering.delete(id);
+                }
+            });
     }
 
-    private async answerServerRequest(request: RpcServerRequest): Promise<void> {
+    /**
+     * A server request waits for the notifications that came before it (an approval reads the file changes they
+     * announced), while the reader goes on settling replies. A thrown error answers with code -32000.
+     */
+    private async handleServerRequest(request: RpcServerRequest): Promise<unknown> {
+        await this.notificationQueue;
+
         if (!this.options.onServerRequest) {
-            await this.writeMessage({
-                id: request.id,
-                error: { code: -32_601, message: `No handler for server request ${request.method}` },
-            });
-            return;
+            throw new RpcError(-32_601, `No handler for server request ${request.method}`);
         }
 
-        let result: unknown;
-
         try {
-            result = await this.options.onServerRequest(request);
+            return await this.options.onServerRequest(request);
         } catch (err) {
             // The peer is told, and until now nothing else was: the text went out over the wire
             // and left no record of which handler threw.
             log.warn({ err, method: request.method }, "app-server request handler failed");
-            const message = err instanceof Error ? err.message : String(err);
-            await this.writeMessage({ id: request.id, error: { code: -32_000, message } });
-            return;
+            throw new RpcError(-32_000, err instanceof Error ? err.message : String(err));
         }
-
-        // Outside the handler's catch: a failed write is not a handler error, and answering it with an error response
-        // that does get through would let `answered` report the decision as delivered.
-        await this.writeMessage({ id: request.id, result });
     }
 
     private async watchExit(): Promise<void> {
         const code = await this.process.exited;
         const wasClosed = this.closed;
         this.closed = true;
-        this.rejectPending(new Error(`Codex app-server exited with code ${code}`));
+        // The stdio adapter reads the rest of stdout before it closes the peer with the exit reason, so a reply the
+        // server wrote just before it exited still resolves its call, and `onExit` hears of the exit after it.
+        await this.connection.ended;
 
         if (!wasClosed) {
             await this.options.onExit?.(code);
         }
-    }
-
-    private rejectPending(error: Error): void {
-        for (const pending of this.pending.values()) {
-            pending.reject(error);
-        }
-
-        this.pending.clear();
     }
 }
 

@@ -34,7 +34,7 @@ describe("question_answer images", () => {
         expect(QUESTION_ANSWER_INPUT_SCHEMA.required).toEqual(["question", "answer", "tag"]);
         const root = mkdtempSync(join(tmpdir(), "qa-mcp-images-"));
         const source = join(root, "shot.png");
-        writeFileSync(source, encodeRgbaToPng(new Uint8ClampedArray([30, 60, 90, 255]), 1, 1));
+        writeFileSync(source, await encodeRgbaToPng(new Uint8ClampedArray([30, 60, 90, 255]), 1, 1));
         const result = await handleQuestionAnswer(
             {
                 question: "Is this fixed?",
@@ -121,12 +121,15 @@ it("records the answer when native IDs arrive from a caller with no provider", a
     expect(receipt.warnings).toHaveLength(1);
 });
 
+/** A 1x1 PNG; encodeRgbaToPng is async (it loads the canvas addon lazily) and shot() below is not. */
+const SHOT_PNG = await encodeRgbaToPng(new Uint8ClampedArray([30, 60, 90, 255]), 1, 1);
+
 describe("inbox_send", () => {
     const quiet = { sinks: { obsidian: false, sound: false, notify: false } };
 
     function shot(root: string): string {
         const path = join(root, "result.png");
-        writeFileSync(path, encodeRgbaToPng(new Uint8ClampedArray([30, 60, 90, 255]), 1, 1));
+        writeFileSync(path, SHOT_PNG);
         return path;
     }
 

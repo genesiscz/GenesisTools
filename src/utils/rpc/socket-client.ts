@@ -40,7 +40,9 @@ export class RpcSocketClient {
             invalid: "ignore",
             log,
             label: options.label,
-            defaultTimeoutMs: options.defaultTimeoutMs,
+            ...(options.defaultTimeoutMs !== undefined
+                ? { dialect: { defaultDeadlineMs: options.defaultTimeoutMs } }
+                : {}),
             onNotification: (notification) => client?.deliver(notification),
             handle: async (incoming, context) => {
                 if (!options.onRequest) {

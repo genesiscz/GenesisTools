@@ -261,7 +261,7 @@ function readOcrLines(path: string, maxBytes?: number): OcrLine[] {
         return [];
     }
 
-    const text = maxBytes === undefined ? undefined : readBytes(path, 0, maxBytes);
+    const text = maxBytes === undefined ? undefined : readByteRange(path, 0, maxBytes);
     const lines = text === undefined ? readLinesSync(path) : text.split("\n");
     const out: OcrLine[] = [];
 
@@ -274,7 +274,8 @@ function readOcrLines(path: string, maxBytes?: number): OcrLine[] {
     return out;
 }
 
-function readBytes(path: string, from: number, to: number): string {
+/** The UTF-8 text of bytes `from` to `to` of a file (fewer when the file is shorter). */
+function readByteRange(path: string, from: number, to: number): string {
     const length = Math.max(0, to - from);
     const buffer = Buffer.alloc(length);
     const fd = openSync(path, "r");
@@ -285,10 +286,6 @@ function readBytes(path: string, from: number, to: number): string {
     } finally {
         closeSync(fd);
     }
-}
-
-function errorText(err: unknown): string {
-    return err instanceof Error ? err.message : String(err);
 }
 
 function readOf(row: OcrRow): OcrResult {
@@ -457,7 +454,7 @@ class OcrWorker {
             }
 
             if (restarted) {
-                const error = errorText(attempt.error);
+                const error = attempt.error instanceof Error ? attempt.error.message : String(attempt.error);
                 return { kind: "failed", row: this.failedRow(entry, error, priorAttempts + 1), error };
             }
 
@@ -532,7 +529,7 @@ class OcrWorker {
                 return;
             }
 
-            row = this.failedRow(entry, errorText(again.error), 1);
+            row = this.failedRow(entry, again.error instanceof Error ? again.error.message : String(again.error), 1);
 
             if (waited % OCR_FAILURES_BEFORE_RESTART === 0) {
                 this.restartEngine("OCR is still down; a fresh helper starts");
@@ -713,7 +710,7 @@ class OcrWorker {
             return 0;
         }
 
-        const appended = readBytes(this.ocrFile, size, statSync(this.ocrFile).size);
+        const appended = readByteRange(this.ocrFile, size, statSync(this.ocrFile).size);
         const body = `${lines.map((one) => one.line).join("\n")}\n${appended}`;
         atomicWriteFileSync(this.ocrFile, body, { mode: CAPTURE_FILE_MODE });
         this.result.reread += changed;

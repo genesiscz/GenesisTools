@@ -1,3 +1,5 @@
+import type { TmuxHubSession } from "@app/dev-dashboard/contract/dto";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { BezelCard } from "@ui/components/bezel-card";
@@ -17,8 +19,7 @@ import { useState } from "react";
 import { CmuxSendTargetDialog } from "@/components/CmuxSendTargetDialog";
 import { TmuxSessionName } from "@/components/TmuxSessionName";
 import { useTmuxHubSessions } from "@/hooks/useTmuxHubSessions";
-import type { TmuxHubSession } from "@/lib/api";
-import { cmuxApi, ttydApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 import { invalidateTmuxAndTtyd } from "@/lib/query-keys";
 import { canRemoveFromCmux } from "@/lib/view-state";
 
@@ -43,7 +44,7 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
     const { sessions, isLoading, isError, error } = useTmuxHubSessions({ enabled: open });
 
     const attach = useMutation({
-        mutationFn: (tmuxSessionName: string) => ttydApi.spawn({ tmuxSessionName }),
+        mutationFn: (tmuxSessionName: string) => dashboard.call(ENDPOINTS.ttydSpawn, { tmuxSessionName }),
         onSuccess: (data) => {
             invalidateTmuxAndTtyd(queryClient);
 
@@ -56,7 +57,7 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
     const detach = useMutation({
         mutationFn: async (ttydTabIds: string[]) => {
             for (const id of ttydTabIds) {
-                await ttydApi.kill(id, false);
+                await dashboard.call(ENDPOINTS.ttydKill, { id, killTmux: false });
             }
         },
         onSuccess: () => {
@@ -65,7 +66,8 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
     });
 
     const removeFromCmux = useMutation({
-        mutationFn: (tmuxSessionName: string) => cmuxApi.removeSession({ tmuxSessionName }).then((r) => r.removed),
+        mutationFn: (tmuxSessionName: string) =>
+            dashboard.call(ENDPOINTS.cmuxRemoveSession, { tmuxSessionName }).then((r) => r.removed),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["tmux"] });
             queryClient.invalidateQueries({ queryKey: ["cmux"] });

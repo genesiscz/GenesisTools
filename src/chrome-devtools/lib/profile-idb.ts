@@ -16,7 +16,7 @@ import {
     originStorageKey,
 } from "@genesiscz/utils/chrome-devtools/storage";
 import { logger } from "@genesiscz/utils/logger";
-import { Conn, nextLoadEvent, Page, targets } from "./cdp.ts";
+import { connect, nextLoadEvent, Page, targets } from "./cdp.ts";
 import { cdpLikeOf } from "./cdp-like-adapter.ts";
 import { launchHeadlessChrome } from "./headless.ts";
 import { CAPTURE_ROOT } from "./paths.ts";
@@ -71,7 +71,8 @@ function headlessBinary(id: BrowserId): string {
     return binary;
 }
 
-async function dumpThroughBlankDocument(options: {
+/** Picks the headless browser's first page on `port`, connects through the guarded door and dumps. */
+export async function dumpThroughBlankDocument(options: {
     port: number;
     origin: string;
     args: IdbDumpArgs;
@@ -82,7 +83,7 @@ async function dumpThroughBlankDocument(options: {
         throw new Error(`the headless browser on ${options.port} opened no page`);
     }
 
-    const page = new Page(new Conn(target.webSocketDebuggerUrl), target);
+    const page = new Page(connect(target, options.port), target);
 
     try {
         const cdp = cdpLikeOf(page);

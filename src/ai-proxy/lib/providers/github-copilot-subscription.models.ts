@@ -1,6 +1,6 @@
 import { loadCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 import { resolveCopilotModelRecords } from "@app/ai-proxy/lib/copilot-models-cache";
-import { providerKey } from "@app/ai-proxy/lib/providers/registry";
+import { providerKey } from "@app/ai-proxy/lib/providers/provider-key";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { toProxyId as toCopilotProxyId } from "@genesiscz/utils/ai/github-copilot/models";
 import { COPILOT_INDIVIDUAL_API } from "@genesiscz/utils/ai/github-copilot/paths";

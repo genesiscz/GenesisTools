@@ -1,7 +1,8 @@
 import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
-import { type ActiveAgentProcess, listActiveAgentProcesses, runCapture } from "@genesiscz/utils/ai/active-processes";
+import { type ActiveAgentProcess, listActiveAgentProcesses } from "@genesiscz/utils/ai/active-processes";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { readSessionCmuxRecords, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import { cmuxDidNotAnswer, cmuxTreeFromJson, type ParsedCmuxTree, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -106,7 +107,7 @@ export interface SessionIdAssignment {
     source: SessionIdSource;
 }
 
-/** The live terminal surfaces, from `cmux --json --id-format both tree --all`: tty by surface UUID, and each one's ref. */
+/** The live terminal surfaces, from the one cmux tree read (`tree-read.ts`): tty by surface UUID, and each one's ref. */
 export interface CmuxSurfaceTtys {
     /** Surface UUID (lower case) → tty. The journal records the UUID; a ref is renumbered at each relaunch. */
     ttyBySurfaceId: Map<string, string>;
@@ -118,28 +119,21 @@ export interface CmuxSurfaceTtys {
  * The link the hook journal is missing: it records which cmux SURFACE a session runs on, but a
  * surface means nothing to `ps`. The tty is the shared key.
  */
-export function parseCmuxTreeTtys(json: string): CmuxSurfaceTtys {
+export function cmuxSurfaceTtys(tree: ParsedCmuxTree): CmuxSurfaceTtys {
     const ttyBySurfaceId = new Map<string, string>();
     const refBySurfaceId = new Map<string, string>();
-    const parsed: unknown = SafeJSON.parse(json, { strict: true });
-    const list = (value: unknown, key: string): unknown[] => {
-        const field = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : null;
-        return Array.isArray(field) ? field : [];
-    };
 
-    for (const window of list(parsed, "windows")) {
-        for (const workspace of list(window, "workspaces")) {
-            for (const pane of list(workspace, "panes")) {
-                for (const surface of list(pane, "surfaces")) {
-                    const { id, ref, tty } = surface as { id?: unknown; ref?: unknown; tty?: unknown };
-
-                    if (typeof id !== "string" || typeof tty !== "string" || !tty) {
+    for (const window of tree.windows) {
+        for (const workspace of window.workspaces) {
+            for (const pane of workspace.panes) {
+                for (const { id, ref, tty } of pane.surfaces ?? []) {
+                    if (id === null || !tty) {
                         continue;
                     }
 
                     ttyBySurfaceId.set(id.toLowerCase(), tty);
 
-                    if (typeof ref === "string") {
+                    if (ref !== null) {
                         refBySurfaceId.set(id.toLowerCase(), ref);
                     }
                 }
@@ -148,6 +142,22 @@ export function parseCmuxTreeTtys(json: string): CmuxSurfaceTtys {
     }
 
     return { ttyBySurfaceId, refBySurfaceId };
+}
+
+/** `cmuxSurfaceTtys` over the stdout of `cmux --json --id-format both tree --all`; a fixture's way in. */
+export function parseCmuxTreeTtys(json: string): CmuxSurfaceTtys {
+    return cmuxSurfaceTtys(cmuxTreeFromJson(SafeJSON.parse(json, { strict: true })) ?? { caller: null, windows: [] });
+}
+
+/**
+ * The cmux tree read failed, so it is unknown which agent sessions run in a tab. Not the same as "none runs": a
+ * guard that refuses a second copy of a running session must not let this through as an empty list.
+ */
+export class CmuxDidNotAnswerError extends Error {
+    constructor(readonly detail: string) {
+        super(`cmux did not answer, so it is unknown which sessions run in a cmux tab: ${detail}`);
+        this.name = "CmuxDidNotAnswerError";
+    }
 }
 
 export interface SessionHint {
@@ -342,39 +352,58 @@ function journalOf(alias: AccountProviderAlias): SessionCmuxRefs[] {
 }
 
 interface CmuxContext {
+    /** Why cmux did not answer the tree read (timed out, backed off, hung), or null. Not running is an answer. */
+    unanswered: string | null;
     hints: SessionHint[];
     surfaces: CmuxSurfaceTtys;
     surfaceByTty: Map<string, string>;
 }
 
-/** Journal + live cmux surfaces. Both are optional: no cmux simply means no hints. */
+/**
+ * Journal + live cmux surfaces. Both are optional: a failed tree read means no hints (logged with its reason), and
+ * the processes still answer. `runner` is the tree read's runner, given the whole command line (`cmux ...`).
+ */
 async function readCmuxContext(
     alias: AccountProviderAlias,
-    runner: (cmd: string[]) => Promise<string>
+    runner: ((cmd: string[]) => Promise<string>) | undefined
 ): Promise<CmuxContext> {
-    const empty: CmuxContext = {
+    const empty: Omit<CmuxContext, "unanswered"> = {
         hints: [],
         surfaces: { ttyBySurfaceId: new Map(), refBySurfaceId: new Map() },
         surfaceByTty: new Map(),
     };
 
-    try {
-        const surfaces = parseCmuxTreeTtys(await runner(["cmux", "--json", "--id-format", "both", "tree", "--all"]));
-        return {
-            hints: buildSessionHints(journalOf(alias), surfaces.ttyBySurfaceId),
-            surfaces,
-            surfaceByTty: invertSurfaceTtys(surfaces),
-        };
-    } catch (error) {
-        logger.debug({ error, alias }, "[who] cmux session hints unavailable");
-        return empty;
+    const read = await readCmuxTree(
+        runner
+            ? { run: async (args) => SafeJSON.parse(await runner(["cmux", "--json", ...args]), { strict: true }) }
+            : {}
+    );
+
+    if (!read.ok) {
+        logger.debug({ reason: read.reason, error: read.error, alias }, "[who] cmux session hints unavailable");
+        return { ...empty, unanswered: cmuxDidNotAnswer(read) ? read.error : null };
     }
+
+    const surfaces = cmuxSurfaceTtys(read.tree);
+    return {
+        unanswered: null,
+        hints: buildSessionHints(journalOf(alias), surfaces.ttyBySurfaceId),
+        surfaces,
+        surfaceByTty: invertSurfaceTtys(surfaces),
+    };
 }
 
 export async function listActiveAgentSessions(
     source: AgentWhoSource,
-    /** `tails: false` skips reading each session's last message and turn clock, for a caller that shows neither. */
-    deps: { runner?: (cmd: string[]) => Promise<string>; tails?: boolean } = {}
+    /**
+     * `tails: false` skips reading each session's last message and turn clock, for a caller that shows neither.
+     * `onCmuxUnanswered` hears why cmux did not answer the tree read: every surface is then unknown, not absent.
+     */
+    deps: {
+        runner?: (cmd: string[]) => Promise<string>;
+        tails?: boolean;
+        onCmuxUnanswered?: (error: string) => void;
+    } = {}
 ): Promise<ActiveAgentSession[]> {
     const scanned = await listActiveAgentProcesses({ alias: source.alias, classify: source.classify });
 
@@ -396,7 +425,11 @@ export async function listActiveAgentSessions(
     }
 
     const factsById = new Map(active.map((session) => [session.sessionId, session]));
-    const cmux = await readCmuxContext(source.alias, deps.runner ?? runCapture);
+    const cmux = await readCmuxContext(source.alias, deps.runner);
+
+    if (cmux.unanswered !== null) {
+        deps.onCmuxUnanswered?.(cmux.unanswered);
+    }
     const assignments = assignSessionIds(
         withoutHelpers(source, procs),
         active.filter((session) => session.active !== false),
@@ -482,12 +515,26 @@ export interface RunningCmuxSession {
  * session and one unresolved process in a folder), so it is left out too: on 2026-10-29 the resumed session's
  * process was stopped, and the guess gave its id to an idle session in another tab, which "Focus" then raised.
  * Keep duplicate session IDs until the caller filters processes that have stopped, exited, or run in the caller's tab.
+ * Throws `CmuxDidNotAnswerError` when agent processes run but the cmux tree read failed: which of them runs in a tab
+ * is then unknown, and a duplicate-start guard must not read that as "none".
  */
 export async function listRunningCmuxSessions(
     source: AgentWhoSource,
     deps: { runner?: (cmd: string[]) => Promise<string> } = {}
 ): Promise<RunningCmuxSession[]> {
-    const entries = withoutHelpers(source, await listActiveAgentSessions(source, { ...deps, tails: false }));
+    const failures: string[] = [];
+    const all = await listActiveAgentSessions(source, {
+        ...deps,
+        tails: false,
+        onCmuxUnanswered: (error) => failures.push(error),
+    });
+
+    // With no tree, no process has a tab: an empty answer would claim that nothing runs.
+    if (failures.length > 0) {
+        throw new CmuxDidNotAnswerError(failures[0]);
+    }
+
+    const entries = withoutHelpers(source, all);
     const running: RunningCmuxSession[] = [];
 
     for (const entry of entries) {

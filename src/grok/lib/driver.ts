@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
-import { bookedCostLine, bookedTurnCost } from "@app/ai-spend/lib/workers/ledger";
 import { MODEL_ROLES } from "@genesiscz/utils/ai/catalog/roles";
 import { logger } from "@genesiscz/utils/logger";
 import { formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { workerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
 import type { WorkerDriver } from "@genesiscz/utils/worker/driver";
 import { runningTurnPids, signalRunningTurns } from "@genesiscz/utils/worker/ps";
+import { bookedCostLine, bookedTurnCost } from "@genesiscz/utils/worker/spend-ledger";
 import type { Command } from "commander";
 import { turnErrPath, turnLogPath } from "./paths";
 import { type GrokSessionMeta, GrokSessionStore } from "./store";

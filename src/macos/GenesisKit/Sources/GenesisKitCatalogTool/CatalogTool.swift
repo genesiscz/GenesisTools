@@ -153,18 +153,25 @@ enum CatalogTool {
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data: Data
         do {
-            let data = try encoder.encode(Manifest(
+            data = try encoder.encode(Manifest(
                 sheetWidth: Int(CatalogSheet.width), scale: Int(scale),
                 looks: KitLook.allCases.map { .init(id: $0.rawValue, title: $0.catalogTitle, pitch: $0.catalogPitch) },
                 entries: manifest))
-            write(data, to: directory.appendingPathComponent("manifest.json"))
-            write(Data(CatalogBoard.html(manifest: data).utf8), to: directory.appendingPathComponent("index.html"))
-            print("manifest.json\t\(manifest.count) entries")
-            print("index.html\tsearchable comparison board")
         } catch {
             fail("cannot encode the manifest: \(error.localizedDescription)")
         }
+        write(data, to: directory.appendingPathComponent("manifest.json"))
+        print("manifest.json\t\(manifest.count) entries")
+        do {
+            for file in try CatalogBoard.files(manifest: data) {
+                write(file.data, to: directory.appendingPathComponent(file.name))
+            }
+        } catch {
+            fail("cannot write the board: \(error.localizedDescription)")
+        }
+        print("index.html\tsearchable comparison board")
     }
 
     private static func write(_ data: Data, to url: URL) {

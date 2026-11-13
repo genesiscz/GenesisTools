@@ -8,6 +8,7 @@ import {
     ensureWorkspaceTitle,
     openSplitInWorkspace,
     openSurfaceInPane,
+    pasteCommandLine,
     pickAnchorSurface,
     renameSurfaceTab,
 } from "@genesiscz/utils/cmux/workspace";
@@ -217,6 +218,7 @@ export const PLACEMENT_SETTLE_MS = 400;
 /** Every id passed through here is a cmux UUID. */
 export interface PlacementIO {
     selectWorkspace: (workspaceId: string) => Promise<void>;
+    /** The command line, with a trailing newline when Enter must follow it (`pasteCommandLine`). */
     send: (workspaceId: string, surfaceId: string, payload: string) => Promise<void>;
     focusWindow: (windowId: string) => Promise<void>;
     identifyWindow?: (workspaceId: string) => Promise<string | undefined>;
@@ -258,7 +260,7 @@ export function livePlacementIO(): PlacementIO {
             await runCmuxOk(["select-workspace", "--workspace", workspaceId]);
         },
         send: async (workspaceId, surfaceId, payload) => {
-            await runCmuxOk(["send", ...surfaceTargetArgs(surfaceId, workspaceId), payload]);
+            await pasteCommandLine(surfaceTargetArgs(surfaceId, workspaceId), payload);
         },
         focusWindow: async (windowId) => {
             try {

@@ -1,3 +1,4 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { expandedDirsForNote, parseOpenDirs, serializeOpenDirs } from "@genesiscz/utils/obsidian/expanded-dirs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useSearch } from "@tanstack/react-router";
@@ -6,7 +7,7 @@ import { Copy, Globe, GlobeLock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { ReadingColumn } from "@/components/ReadingColumn";
-import { obsidianApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 import { useRevealFragment } from "./obsidian-fragment";
 
 interface Props {
@@ -20,7 +21,7 @@ export function ObsidianReader({ path }: Props) {
     const queryClient = useQueryClient();
     const { data, isPending, isError } = useQuery({
         queryKey: ["obsidian", "note", path],
-        queryFn: () => obsidianApi.note(path),
+        queryFn: () => dashboard.call(ENDPOINTS.obsidianNote, { path }),
     });
     const [copied, setCopied] = useState(false);
     const [viewMode, setViewMode] = useState<QaViewMode>("reading");
@@ -30,11 +31,11 @@ export function ObsidianReader({ path }: Props) {
     }, [path]);
 
     const publish = useMutation({
-        mutationFn: () => obsidianApi.publish(path),
+        mutationFn: () => dashboard.call(ENDPOINTS.obsidianPublish, { path }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["obsidian", "note", path] }),
     });
     const unpublish = useMutation({
-        mutationFn: (slug: string) => obsidianApi.unpublish(slug),
+        mutationFn: (slug: string) => dashboard.call(ENDPOINTS.obsidianUnpublish, { slug }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ["obsidian", "note", path] }),
     });
 

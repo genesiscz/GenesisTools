@@ -1,10 +1,11 @@
-import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { patchAccount } from "@genesiscz/utils/ai/config/account-ops";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { probeTokenOrg } from "@genesiscz/utils/claude/account-fingerprint";
 import { fetchOAuthProfile } from "@genesiscz/utils/claude/auth";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { claudeLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
+import { resolveSecret } from "@genesiscz/utils/security";
 
 /**
  * `organization.subscription_created_at` is when the subscription was first
@@ -87,7 +88,7 @@ export function planAllowsClaudeCode(entry: {
  * one backoff window rather than the rest of the process's life.
  */
 export function isAnchorDue(
-    account: Pick<AIAccountEntry, "name" | "subscriptionCreatedAt" | "subscriptionCheckedAt">,
+    account: Pick<AccountEntry, "name" | "subscriptionCreatedAt" | "subscriptionCheckedAt">,
     now: number = Date.now()
 ): boolean {
     if (anchorFailureIsFresh(account.name, now)) {
@@ -113,8 +114,7 @@ export function isAnchorDue(
  * previous plan reading in place. Returns whether the account was updated.
  */
 export async function refreshSubscriptionProfile(
-    config: AIConfig,
-    account: AIAccountEntry,
+    account: AccountEntry,
     token: string,
     now: number = Date.now()
 ): Promise<boolean> {
@@ -146,7 +146,7 @@ export async function refreshSubscriptionProfile(
     };
 
     try {
-        await config.updateAccount(account.name, patch);
+        await patchAccount(account.id, { fields: patch });
         logger.info(
             `[subscription:${account.name}] plan ${patch.subscriptionPlan ?? "unknown"} (${patch.subscriptionStatus ?? "unknown"}), anchor ${patch.subscriptionCreatedAt ?? "unknown"}`
         );
@@ -184,11 +184,11 @@ export async function refreshSubscriptionProfile(
  * Never throws — a failed probe leaves the stored reading exactly as it was.
  */
 export async function revalidateStalePlan(
-    config: AIConfig,
-    account: AIAccountEntry,
+    account: AccountEntry,
     now: number = Date.now()
 ): Promise<"alive" | "dead" | "unknown"> {
-    const token = account.tokens.longLivedToken;
+    // Resolved here, where the probe spends it.
+    const token = await resolveSecret(account.credentials.longLivedToken);
 
     if (!token) {
         return "unknown";
@@ -212,7 +212,7 @@ export async function revalidateStalePlan(
     };
 
     try {
-        await config.updateAccount(account.name, patch);
+        await patchAccount(account.id, { fields: patch });
     } catch (err) {
         logger.warn(
             `[subscription:${account.name}] could not record the plan contradiction: ${err instanceof Error ? err.message : err}`
@@ -236,8 +236,7 @@ export async function revalidateStalePlan(
  * calls `refreshSubscriptionProfile` with its own token instead.
  */
 export async function ensureSubscriptionAnchors(
-    config: AIConfig,
-    accounts: AIAccountEntry[],
+    accounts: AccountEntry[],
     opts: { force?: boolean } = {}
 ): Promise<void> {
     const now = Date.now();
@@ -259,10 +258,8 @@ export async function ensureSubscriptionAnchors(
     await Promise.allSettled(
         due.map(async (account) => {
             try {
-                const { token } = await resolveAccountToken(account.name, {
-                    staleAccessToken: account.tokens.accessToken,
-                });
-                await refreshSubscriptionProfile(config, account, token, now);
+                const { token } = await resolveAccountToken(account.id);
+                await refreshSubscriptionProfile(account, token, now);
             } catch (err) {
                 markAnchorFailure(account.name, now);
                 logger.debug(`[subscription:${account.name}] token unavailable for profile read: ${err}`);

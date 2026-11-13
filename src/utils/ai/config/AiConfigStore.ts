@@ -1,14 +1,23 @@
 import { statSync } from "node:fs";
 import type { AIConfigData as V3ConfigData } from "@genesiscz/utils/config/ai.types";
+import { mayPersistMigration } from "@genesiscz/utils/config/real-home-write";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { matchesSpec } from "@genesiscz/utils/string";
 import { writeDefaultsSnapshot } from "./defaults-snapshot";
 import { _resetMigrationStateForTest, ensureAiConfigMigrated } from "./migrate";
-import { assertSafeToWriteRealConfig } from "./migration-guard";
+
 import { convertConfig } from "./migrations/2026-08-configV4";
-import { type AccountRef, accountRef, type Referrer, referrersOf } from "./refs";
-import { type AccountEntry, type AiConfigData, aiConfigSchema, CONFIG_VERSION, emptyConfig } from "./schema";
+import { type AccountRef, accountRef, isAccountRef, type Referrer, referrersOf, refToId } from "./refs";
+import {
+    type AccountEntry,
+    type AiConfigData,
+    aiConfigSchema,
+    CONFIG_VERSION,
+    emptyConfig,
+    type TaskDefault,
+    type TaskName,
+} from "./schema";
 import { isGateOnly } from "./selectors";
 
 /**
@@ -79,7 +88,7 @@ function matches(account: AccountEntry, filter: AccountFilter): boolean {
 /**
  * The single reader/writer for the unified AI config.
  *
- * Unlike the v3 `AIConfig` singleton, which captured the file once per process
+ * Unlike the retired v3 facade singleton, which captured the file once per process
  * and never looked again, this store stamps the file's mtime on load and
  * re-reads when it changes. That staleness is why a long-running ai-proxy or
  * dashboard kept serving credentials that a `tools claude login` in another
@@ -109,16 +118,33 @@ export class AiConfigStore {
     /** First construction in flight, so concurrent `load()` calls share one. */
     private static loading: Promise<AiConfigStore> | null = null;
 
+    /** The config file this store's data came from. `storage` resolves the home on every use; this does not. */
+    private readonly boundPath: string;
+
     private constructor(
         private readonly storage: Storage,
         private config: AiConfigData,
         private stamp: FileStamp
-    ) {}
+    ) {
+        this.boundPath = storage.getConfigPath();
+    }
 
     static async load(): Promise<AiConfigStore> {
-        if (AiConfigStore.instance) {
-            await AiConfigStore.instance.refreshIfStale();
-            return AiConfigStore.instance;
+        const cached = AiConfigStore.instance;
+
+        // Rebinds when the resolved path moved (GENESIS_TOOLS_HOME changed), as `SecretStore.fileStore()`
+        // does: the cached data and the migration verdict belong to the old home. `ensureAiConfigMigrated`
+        // keys its own latch by path, so the next build runs the chain for the new home.
+        if (cached && cached.boundPath !== cached.storage.getConfigPath()) {
+            logger.debug(
+                { from: cached.boundPath, to: cached.storage.getConfigPath() },
+                "ai config home moved, rebinding the store"
+            );
+            AiConfigStore.instance = null;
+            AiConfigStore.loading = null;
+        } else if (cached) {
+            await cached.refreshIfStale();
+            return cached;
         }
 
         // The instance check and the read below are separated by an await, so two
@@ -279,6 +305,17 @@ export class AiConfigStore {
         return this.config.accounts.filter((account) => matches(account, filter));
     }
 
+    /**
+     * The account a context (a task or an app) defaults to, else the first account. Metadata only:
+     * it never touches the vault, so naming the default needs no master key.
+     */
+    defaultAccount(context: string): AccountEntry | undefined {
+        const id = defaultAccountIds(this.config)[context];
+        const byDefault = id ? this.config.accounts.find((entry) => entry.id === id) : undefined;
+
+        return byDefault ?? this.config.accounts[0];
+    }
+
     ref(idOrName: string): AccountRef | undefined {
         const account = this.account(idOrName);
         return account ? accountRef(account.id) : undefined;
@@ -286,6 +323,24 @@ export class AiConfigStore {
 
     referrers(id: string): Promise<Referrer[]> {
         return referrersOf(this.config, id);
+    }
+
+    /**
+     * Merge `patch` onto a task's stored default (`--persist` of a task CLI). A key the patch
+     * carries as `undefined` clears it: a new provider without a model drops the old model,
+     * which belonged to the old provider. A key the patch omits keeps its stored value.
+     */
+    async setTaskDefault(task: TaskName, patch: TaskDefault): Promise<void> {
+        await this.mutate((config) => {
+            const merged = { ...config.defaults.task?.[task], ...patch };
+            config.defaults.task = {
+                ...(config.defaults.task ?? {}),
+                [task]: {
+                    ...(merged.provider ? { provider: merged.provider } : {}),
+                    ...(merged.model ? { model: merged.model } : {}),
+                },
+            };
+        });
     }
 
     /**
@@ -320,7 +375,7 @@ export class AiConfigStore {
             // writes inside `fn` (the lock-order contract says config lock first,
             // vault second), so a worktree build that is refused the config write
             // must be refused before it can mutate the vault behind a live ref.
-            assertSafeToWriteRealConfig();
+            assertMayWriteRealConfig();
             const { config } = await AiConfigStore.readFrom(this.storage);
             const result = await fn(config);
 
@@ -328,7 +383,7 @@ export class AiConfigStore {
             const validated = { ...aiConfigSchema.parse(config), _schemaVersion: 3 as const };
             // Last line of defence: every v4 write in the codebase funnels through
             // here, so even a mis-gated migration cannot reach the real config.
-            assertSafeToWriteRealConfig();
+            assertMayWriteRealConfig();
             await this.storage.setConfig(validated);
             // Keep the copy old binaries cannot touch in step; the hybrid repair
             // restores `defaults` from it after an old-code rewrite.
@@ -338,4 +393,67 @@ export class AiConfigStore {
             return result;
         }, timeout);
     }
+}
+
+/**
+ * Every v4 write asks the shared real-home write check, so a bug in one migration's own gate cannot
+ * reach the user's real file: the installed tools may still read an older shape.
+ */
+function assertMayWriteRealConfig(): void {
+    const verdict = mayPersistMigration();
+
+    if (!verdict.allowed) {
+        throw new Error(`Refusing to write the AI config into the real ~/.genesis-tools: ${verdict.reason}`);
+    }
+}
+
+/**
+ * The account id each context defaults to: per task from `defaults.account`, then per app from
+ * an app's chat model that names an account. Metadata only, so it never unlocks the vault.
+ */
+function defaultAccountIds(config: AiConfigData): Record<string, string> {
+    const ids: Record<string, string> = {};
+    const idOf = (ref: unknown) => {
+        if (!isAccountRef(ref)) {
+            return undefined;
+        }
+
+        const id = refToId(ref);
+        return config.accounts.some((entry) => entry.id === id) ? id : undefined;
+    };
+
+    for (const [task, ref] of Object.entries(config.defaults.account ?? {})) {
+        const id = idOf(ref);
+        if (id) {
+            ids[task] = id;
+        }
+    }
+
+    for (const [app, appDefaults] of Object.entries(config.defaults.app ?? {})) {
+        const id = idOf(appDefaults?.chat?.model?.split(":")[0]);
+        if (id) {
+            ids[app] = id;
+        }
+    }
+
+    return ids;
+}
+
+/** The account name each context defaults to (see `defaultAccountIds`). */
+export function defaultAccountNames(config: AiConfigData): Record<string, string> {
+    const names: Record<string, string> = {};
+
+    for (const [context, id] of Object.entries(defaultAccountIds(config))) {
+        const name = config.accounts.find((entry) => entry.id === id)?.name;
+        if (name) {
+            names[context] = name;
+        }
+    }
+
+    return names;
+}
+
+/** The context's default account name without the vault: the context's default, else the first account. */
+export function defaultAccountName(config: AiConfigData, context: string): string | undefined {
+    return defaultAccountNames(config)[context] ?? config.accounts[0]?.name;
 }

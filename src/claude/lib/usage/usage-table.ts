@@ -1,5 +1,4 @@
 import { absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { accent, padVisible } from "@genesiscz/utils/prompts/clack/table-select";
 import pc from "picocolors";
 import { hasNoSessionLimit, type ScoredAccount } from "./account-picker";
@@ -179,7 +178,7 @@ export interface DetailBlockPace {
 
 export function detailBlock(
     scored: ScoredAccount,
-    account: AIAccountEntry | undefined,
+    account: { label?: string; secondary?: { emailAddress?: string } } | undefined,
     now: Date = new Date(),
     pace?: DetailBlockPace
 ): string[] {

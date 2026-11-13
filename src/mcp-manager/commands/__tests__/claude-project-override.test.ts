@@ -2,12 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { setupInquirerMock } from "./inquirer-mock.js";
 
 // Setup prompt mock + storage sandbox BEFORE importing modules under test
 setupInquirerMock();
-setupStorageSandbox();
 
 const { ClaudeProvider } = await import("@app/mcp-manager/utils/providers/claude.js");
 const { CursorProvider } = await import("@app/mcp-manager/utils/providers/cursor.js");
@@ -163,7 +161,7 @@ describe("claude per-project enable override for globally-disabled servers", () 
         await installOverride(provider);
         const projectsBefore = readClaudeJson().projects;
 
-        await provider.disableServer("serena", null);
+        await provider.disableServers(["serena"], null);
 
         const claude = readClaudeJson();
         expect(claude.projects?.["/proj/a"].mcpServers?.serena).toBeDefined(); // entry kept

@@ -12,7 +12,6 @@
  */
 
 import { runTool } from "@genesiscz/utils/cli";
-import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { registerControlCommands } from "./commands";
 
@@ -27,10 +26,4 @@ program
 
 registerControlCommands(program);
 
-try {
-    await runTool(program, { tool: "control" });
-} catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error(message);
-    process.exit(1);
-}
+await runTool(program, { tool: "control" });

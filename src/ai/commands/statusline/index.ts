@@ -185,6 +185,7 @@ async function configureInteractively(host: StatuslineHost): Promise<void> {
                 { value: "save", label: "Save and exit" },
                 { value: "discard", label: "Exit without saving" },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(choice) || choice === "discard") {
@@ -217,6 +218,7 @@ async function configureInteractively(host: StatuslineHost): Promise<void> {
                     ...(config.graft.enabled ? ["graft"] : []),
                     ...(config.metricsPost.enabled ? ["metricsPost"] : []),
                 ],
+                cancel: "back",
             });
 
             if (p.isCancel(picked)) {
@@ -241,6 +243,7 @@ async function configureInteractively(host: StatuslineHost): Promise<void> {
             const ms = await p.number({
                 message: "Milliseconds between git status calls",
                 initialValue: config.gitTtlMs,
+                cancel: "back",
             });
 
             if (!p.isCancel(ms)) {
@@ -254,6 +257,7 @@ async function configureInteractively(host: StatuslineHost): Promise<void> {
             const command = await p.text({
                 message: "Command to run with the payload on stdin (empty to turn off)",
                 initialValue: config.extends?.command ?? "",
+                cancel: "back",
             });
 
             if (p.isCancel(command)) {
@@ -272,6 +276,7 @@ async function configureInteractively(host: StatuslineHost): Promise<void> {
                     { value: "after", label: "After ours" },
                     { value: "before", label: "Before ours" },
                 ],
+                cancel: "back",
             });
 
             if (p.isCancel(position)) {
@@ -300,6 +305,7 @@ async function configureInteractively(host: StatuslineHost): Promise<void> {
             const ok = await p.confirm({
                 message: `Write "${command}" into ${feature.settingsPath()}? The current value is kept for uninstall.`,
                 initialValue: false,
+                cancel: "back",
             });
 
             if (p.isCancel(ok) || !ok) {

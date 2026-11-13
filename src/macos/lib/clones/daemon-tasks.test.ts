@@ -80,3 +80,16 @@ describe("clones daemon tasks", () => {
         ]);
     });
 });
+
+it("cold compression is offered disabled, low priority, and never overwrites an existing task", async () => {
+    const { ensureColdCompressTask } = await import("./daemon-tasks");
+    registerSpy.mockClear();
+    await ensureColdCompressTask();
+    expect(registerSpy.mock.calls[0]?.[0]).toMatchObject({
+        name: "du-cold-compress",
+        enabled: false,
+        priority: "low",
+        overwrite: false,
+        retries: 0,
+    });
+});

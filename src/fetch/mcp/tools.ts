@@ -1,4 +1,5 @@
 import { DEPTHS } from "@app/mcp-web-reader/lib/convert";
+import type { ToolAnswer } from "@genesiscz/utils/mcp/tool-entry";
 import { z } from "zod";
 import type { Fetcher } from "../lib/fetcher";
 import { describeTransport, type FetchResult, fetchUrl } from "../lib/read";
@@ -110,7 +111,7 @@ export const FETCH_TOOLS: FetchTool[] = [
 
 /**
  * The text an MCP client sees. JSON-LD is already a JSON document naming its transport; markdown and raw get one
- * HTML comment line first (a no-op in Markdown), because many clients never show `_meta`.
+ * HTML comment line first (a no-op in Markdown), because many clients never show `structuredContent`.
  */
 export function toolText(result: FetchResult): string {
     if (result.mode === "jsonld") {
@@ -119,4 +120,22 @@ export function toolText(result: FetchResult): string {
 
     const truncated = result.truncated ? `, truncated to ${result.tokens} tokens` : "";
     return `<!-- fetched ${result.source} (HTTP ${result.status}) via ${describeTransport(result)}${truncated} -->\n${result.text}`;
+}
+
+/**
+ * A tool's answer in both servers: the text above, and the fetch facts as `structuredContent` (source, status,
+ * transport, escalation, tokens, truncated) for a client that reads the machine result.
+ */
+export function toolAnswer(result: FetchResult): ToolAnswer {
+    return {
+        text: toolText(result),
+        structuredContent: {
+            source: result.source,
+            status: result.status,
+            transport: result.transport,
+            ...(result.escalation ? { escalation: result.escalation } : {}),
+            tokens: result.tokens,
+            truncated: result.truncated,
+        },
+    };
 }

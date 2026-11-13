@@ -1,11 +1,11 @@
 import { join } from "node:path";
-import * as p from "@clack/prompts";
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import { failPlain, printResult, withSigint } from "../lib/cli-output";
 import { loadCatalogue } from "../lib/route/cache";
@@ -83,7 +83,10 @@ async function executeDecision(decision: RouteDecision, options: RouteOptions): 
         ...(interactive && !options.yes
             ? {
                   confirm: async () =>
-                      (await p.confirm({ message: `Run the destructive command ${decision.printed}?` })) === true,
+                      (await p.confirm({
+                          message: `Run the destructive command ${decision.printed}?`,
+                          cancel: "back",
+                      })) === true,
               }
             : {}),
     });

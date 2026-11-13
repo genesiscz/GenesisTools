@@ -291,6 +291,11 @@ export interface HookFacts {
     /** Its transcript marks a compaction with a boundary row, which the plugin's `area-rules.ts` reads. */
     readonly compactBoundaryRows: boolean;
     /**
+     * Whether the transcript records a compaction at or after `sinceMs` (epoch ms), read from a bounded tail. True
+     * when it cannot tell: the shell guard then explains a rule in full again, which costs context, never a fix.
+     */
+    compactedSince(transcriptPath: string, sinceMs: number): boolean;
+    /**
      * A terminal the user opened without `tools <agent> run` is billed to the account logged in to the session's
      * home (`~/.codex-<name>`), so the account hook reads that home's login. Claude has no home binding.
      */

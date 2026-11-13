@@ -1,14 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import {
-    browser,
-    browserVersion,
-    Conn,
-    localDebuggerUrl,
-    Page,
-    type Target,
-    targets,
-} from "@app/chrome-devtools/lib/cdp";
+import { browser, browserVersion, connect, Page, type Target, targets } from "@app/chrome-devtools/lib/cdp";
 import { closeTab } from "@app/chrome-devtools/lib/tabs";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -229,7 +221,7 @@ export class BrowserTabTransport implements WazeTransport {
         }
 
         const persistKeptTab = opts.persistKeptTab !== false;
-        const page = new Page(new Conn(localDebuggerUrl(target, port)), target);
+        const page = new Page(connect(target, port), target);
         const transport = new BrowserTabTransport(
             page,
             {

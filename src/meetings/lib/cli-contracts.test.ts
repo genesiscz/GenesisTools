@@ -402,8 +402,9 @@ describe("startup imports", () => {
             'const has = () => Object.keys(require.cache).some((key) => key.includes("@napi-rs/canvas"));',
             'await import("./src/meetings/commands/record.ts");',
             "const before = has();",
-            // Loading the addon itself is the positive control for this stack's loader.
-            'await import("@napi-rs/canvas");',
+            // The positive control: since src/utils/image/canvas.ts became the one loader, the addon loads when a
+            // drawing call asks for it, not when a drawing module is imported.
+            'await (await import("@genesiscz/utils/image/canvas")).loadCanvas();',
             "console.log(JSON.stringify({ before, after: has() }));",
         ].join("\n");
         const child = Bun.spawn(["bun", "-e", probe], {

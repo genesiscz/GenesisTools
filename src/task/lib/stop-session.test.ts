@@ -1,11 +1,24 @@
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-
-setupStorageSandbox();
-
 import { describe, expect, it } from "bun:test";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { stopSession } from "@app/task/lib/stop-session";
+import { readProcess } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+
+/**
+ * Waits (at most 5 s) until `pid` runs `command`. The stop snapshots the tree and later signals only the pids that
+ * still run what the snapshot saw, so a snapshot taken before bash execs its command describes a program the pid no
+ * longer runs. The kernel reads the table within a millisecond of the spawn; a `ps` read used to take long enough
+ * for the exec to land first.
+ */
+async function waitForCommand(pid: number, command: string): Promise<void> {
+    const deadline = Date.now() + 5_000;
+
+    while (readProcess(pid)?.command !== command && Date.now() < deadline) {
+        await Bun.sleep(10);
+    }
+
+    expect(readProcess(pid)?.command).toBe(command);
+}
 
 describe("stopSession", () => {
     it("SIGTERM alone is enough for a child that honours it — no SIGKILL, marked stopped", async () => {
@@ -20,6 +33,7 @@ describe("stopSession", () => {
             env: process.env,
         });
         await store.updatePid(name, child.pid);
+        await waitForCommand(child.pid, "sleep 5");
 
         const outcome = await stopSession({ name, graceMs: 2000 });
 
@@ -53,6 +67,7 @@ describe("stopSession", () => {
             env: process.env,
         });
         await store.updatePid(name, child.pid);
+        await waitForCommand(child.pid, "sleep 5");
 
         const outcome = await stopSession({ name, graceMs: 150 });
 

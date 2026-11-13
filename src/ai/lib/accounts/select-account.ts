@@ -1,7 +1,7 @@
-import * as p from "@clack/prompts";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 /**
@@ -154,6 +154,7 @@ async function promptForAccount(input: ResolveAccountInput): Promise<AccountReso
             label: labelFor(account, duplicated.has(account.name)),
             hint: input.hintOf?.(account),
         })),
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {

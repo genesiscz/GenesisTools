@@ -26,7 +26,7 @@ export interface DriverUsageEvent {
     reasoningOutputTokens?: number;
     /**
      * Cost in USD that the agent itself recorded for this event. Whether it is the list price
-     * depends on the agent: `recordedCostIsListPrice` in ai-spend's `reports/cost.ts` decides.
+     * depends on the agent: `recordedCostIsListPrice` in `spend/priced-usage.ts` decides.
      * Absent means "derive it from the catalog rates".
      */
     recordedCostUsd?: number;

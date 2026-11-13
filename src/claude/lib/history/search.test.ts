@@ -9,14 +9,20 @@ import {
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
+    noMetadata,
     noMidWork,
+    noRecordRead,
+    noRecordScan,
     noRowAnchors,
     noSessionChanges,
+    noSpawnLink,
+    noStatistics,
+    noWorkflows,
 } from "@genesiscz/utils/agent-sessions/testing/no-backward-read";
 import type {
-    HistoryStatisticsRead,
     NativeSessionReader,
     NativeSessionSource,
+    SupportedHistoryStatistics,
 } from "@genesiscz/utils/agent-sessions/types";
 import type { FileIndexRecord } from "@genesiscz/utils/claude/history-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -37,6 +43,7 @@ interface State {
     indexedConversation: SearchResult | null;
     conversationRequests: Array<{ sessionId: string }>;
     catalogCalls: Array<Record<string, unknown>>;
+    countCalls: Array<Record<string, unknown>>;
     catalog: Catalog;
     projectDirs: Record<string, string | undefined>;
     reader: Reader | null;
@@ -62,6 +69,7 @@ const state: State = {
     indexedConversation: null,
     conversationRequests: [],
     catalogCalls: [],
+    countCalls: [],
     catalog: { metadata: [], report: { parsed: 0, removed: 0 }, reindexed: false },
     projectDirs: {},
     reader: null,
@@ -95,11 +103,27 @@ mock.module("./indexed-search", () => ({
         return state.indexedConversation;
     },
 }));
+/** The catalog's contract on the fixture rows: the agent flags on each row, newest start first, then the limit. */
+function catalogRows(filters: { excludeAgents?: boolean; agentsOnly?: boolean; limit?: number } = {}) {
+    const rows = state.catalog.metadata.filter((row) =>
+        filters.agentsOnly ? row.isSubagent === true : !(filters.excludeAgents && row.isSubagent === true)
+    );
+    rows.sort((left, right) => String(right.firstTimestamp ?? "").localeCompare(String(left.firstTimestamp ?? "")));
+    return filters.limit ? rows.slice(0, filters.limit) : rows;
+}
+
 mock.module("@genesiscz/utils/agent-sessions/open-service", () => ({
     ...realOpenService,
-    catalogHistory: async (options: Record<string, unknown>) => {
+    catalogHistory: async (options: {
+        filters?: { excludeAgents?: boolean; agentsOnly?: boolean; limit?: number };
+    }) => {
         state.catalogCalls.push(options);
-        return state.catalog;
+        return { ...state.catalog, metadata: catalogRows(options.filters) };
+    },
+    catalogHistoryCounts: async (options: Record<string, unknown>) => {
+        state.countCalls.push(options);
+        const rows = state.catalog.metadata;
+        return { total: rows.length, subagents: rows.filter((row) => row.isSubagent === true).length };
     },
     openHistoryService: (options: { roots?: string[] }) => ({
         refreshStatistics: async (refreshOptions?: Record<string, unknown>) => {
@@ -219,8 +243,12 @@ function source(filePath: string, sourceRoot = root): NativeSessionSource<string
     };
 }
 
-function statistics(messages: number, extra: Partial<HistoryStatisticsRead["summary"]> = {}): HistoryStatisticsRead {
+function statistics(
+    messages: number,
+    extra: Partial<SupportedHistoryStatistics["summary"]> = {}
+): SupportedHistoryStatistics {
     return {
+        supported: true,
         summary: {
             conversations: 1,
             messages,
@@ -258,11 +286,13 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         continuedIn: noContinuedIn,
         currentModel: noCurrentModel,
         midWork: noMidWork,
+        readSpawnLink: noSpawnLink,
         scanInsights: null,
         classifyPath: classifiesNoPath,
         readChanges: noSessionChanges,
         rowAnchors: noRowAnchors,
         analysis: noAnalysis,
+        workflows: noWorkflows,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],
@@ -270,6 +300,9 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         read: async () => {
             throw new Error("not used");
         },
+        readMetadata: noMetadata,
+        scan: noRecordScan,
+        readRecords: noRecordRead,
         readStatistics: async () => statistics(1),
         ...overrides,
     };
@@ -292,6 +325,7 @@ beforeEach(() => {
     state.indexedConversation = null;
     state.conversationRequests = [];
     state.catalogCalls = [];
+    state.countCalls = [];
     state.catalog = { metadata: [], report: { parsed: 0, removed: 0 }, reindexed: false };
     state.projectDirs = {};
     state.reader = reader();
@@ -386,8 +420,8 @@ describe("getSessionListing", () => {
         state.catalog = { metadata: [main, newer, undated, agent], report: { parsed: 3, removed: 1 }, reindexed: true };
     });
 
-    it("lists main sessions newest first, counting everything the catalog returned", async () => {
-        const listing = await search.getSessionListing();
+    it("lists main sessions newest first, counting every session of the scope", async () => {
+        const listing = await search.getSessionListing({ counts: true });
 
         expect(listing.sessions.map((s) => s.sessionId)).toEqual(["newer", "main", "undated"]);
         expect(listing).toMatchObject({
@@ -413,6 +447,21 @@ describe("getSessionListing", () => {
             maxDiscoveryAgeMs: undefined,
             refresh: undefined,
         });
+        // The counts read the index the listing just refreshed, with the listing's own filters.
+        expect(state.countCalls[0]).toEqual({
+            provider: "claude",
+            filters: state.catalogCalls[0].filters,
+            refresh: false,
+        });
+    });
+
+    it("reads no counts unless the caller asks for them", async () => {
+        const listing = await search.getSessionListing();
+
+        expect(listing.sessions.map((s) => s.sessionId)).toEqual(["newer", "main", "undated"]);
+        expect(listing.total).toBeUndefined();
+        expect(listing.subagents).toBeUndefined();
+        expect(state.countCalls).toEqual([]);
     });
 
     it("includes subagent sessions when excludeSubagents is false", async () => {
@@ -437,6 +486,7 @@ describe("getSessionListing", () => {
             newest: 5,
             maxDiscoveryAgeMs: 60_000,
             refresh: false,
+            counts: true,
         });
 
         expect(listing.sessions.map((s) => s.sessionId)).toEqual(["newer", "main"]);
@@ -475,85 +525,6 @@ describe("getSessionListing", () => {
     });
 });
 
-describe("getConversationStats", () => {
-    it("aggregates every source, newest file first, under the project name of its folder", async () => {
-        const older = transcript("-work-widgets", "old.jsonl", 1_000);
-        const newer = transcript("-work-widgets", "new.jsonl", 2_000);
-        const other = transcript("-work-gadgets", "g.jsonl", 1_500);
-        const bySource = new Map([
-            [older, statistics(5)],
-            [newer, statistics(3)],
-            [other, statistics(7)],
-        ]);
-        state.reader = reader({
-            discover: async () => ({
-                sources: [source(older), source(newer), source(other)],
-                issues: [],
-                completeRoots: [root],
-            }),
-            readStatistics: async (src) => bySource.get(src.filePath) ?? statistics(0),
-        });
-
-        const stats = await search.getConversationStats();
-
-        expect(stats.totalConversations).toBe(3);
-        expect(stats.totalMessages).toBe(15);
-        expect(stats.conversationLengths).toEqual([3, 7, 5]);
-        expect(stats.projectCounts).toEqual({ widgets: 2, gadgets: 1 });
-        expect(stats.toolCounts).toEqual({ Read: 15 });
-        expect(stats.tokenUsage).toEqual({
-            inputTokens: 15,
-            outputTokens: 30,
-            cacheCreateTokens: 0,
-            cacheReadTokens: 3,
-        });
-        expect(stats.modelCounts).toEqual({ "claude-test-1": 3 });
-        expect(warn).not.toHaveBeenCalled();
-    });
-
-    it("keeps going and logs which source could not be read or stated", async () => {
-        const good = transcript("-work-widgets", "good.jsonl", 1_000);
-        const unreadable = transcript("-work-widgets", "bad.jsonl", 900);
-        const vanished = join(root, "-work-widgets", "vanished.jsonl");
-        state.reader = reader({
-            discover: async () => ({
-                sources: [source(good), source(unreadable), source(vanished)],
-                issues: [{ path: "/tmp/p/skipped.jsonl", message: "discovery issue" }],
-                completeRoots: [root],
-            }),
-            readStatistics: async (src) => {
-                if (src.filePath === unreadable) {
-                    throw new Error("parse failed");
-                }
-
-                return statistics(4);
-            },
-        });
-
-        const stats = await search.getConversationStats();
-
-        expect(stats.totalMessages).toBe(4);
-        expect(warn).toHaveBeenCalledTimes(1);
-
-        const [fields, message] = warn.mock.calls[0] as unknown as [
-            { issues: Array<{ path: string; message: string }> },
-            string,
-        ];
-        expect(message).toBe("Claude uncached statistics skipped malformed or unavailable source records");
-        expect(fields.issues.map((i) => i.path).sort()).toEqual([unreadable, vanished, "/tmp/p/skipped.jsonl"].sort());
-        expect(fields.issues.find((i) => i.path === vanished)?.message).toStartWith("Could not stat source:");
-        expect(fields.issues.find((i) => i.path === unreadable)?.message).toContain(
-            "Could not read statistics: Error: parse failed"
-        );
-    });
-
-    it("fails clearly when the Claude reader cannot read statistics", async () => {
-        state.reader = reader({ readStatistics: undefined });
-
-        await expect(search.getConversationStats()).rejects.toThrow("Claude native history statistics are unavailable");
-    });
-});
-
 describe("file statistics", () => {
     it("computeFileStats reads the canonical file through the root that contains it", async () => {
         const file = transcript("-work-widgets", "one.jsonl", 1_000);
@@ -571,6 +542,15 @@ describe("file statistics", () => {
         expect(stats.messages).toBe(6);
         expect(stats.toolCounts).toEqual({ Read: 6 });
         expect(stats.tokenUsage).toEqual(tokens(6));
+    });
+
+    it("computeFileStats fails clearly when the Claude reader answers that it keeps no statistics", async () => {
+        const file = transcript("-work-widgets", "unsupported.jsonl", 1_000);
+        state.reader = reader({ readStatistics: noStatistics });
+
+        await expect(search.computeFileStats(file)).rejects.toThrow(
+            "Claude native history statistics are unavailable: test reader"
+        );
     });
 
     it("computeFileStats falls back to a zero token usage when the file has none", async () => {

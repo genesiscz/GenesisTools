@@ -1,14 +1,11 @@
 #!/usr/bin/env bun
 import { runTool } from "@genesiscz/utils/cli";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 import { registerAccountCommands } from "./commands/account";
 import { registerCatalogCommands } from "./commands/catalog";
 import { registerExtraCommands } from "./commands/extras";
 import { resolveStorefront } from "./commands/run";
 import { STOREFRONT_IDS } from "./lib/storefront";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command()
     .name("alza")

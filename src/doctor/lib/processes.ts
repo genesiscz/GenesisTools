@@ -1,5 +1,9 @@
-import { type ProcessEntry, listProcesses as readProcessTable } from "@genesiscz/utils/process/processes";
-import { batchCwd, processBasename } from "@genesiscz/utils/process/ps";
+import { batchCwd } from "@genesiscz/utils/process/cwd";
+import {
+    type ProcessEntry,
+    processBasename,
+    listProcesses as readProcessTable,
+} from "@genesiscz/utils/process/processes";
 
 export interface ProcInfo {
     pid: number;

@@ -1,4 +1,3 @@
-import { AnthropicSubscriptionProvider } from "@app/ai-proxy/lib/providers/anthropic-subscription";
 import { listAnthropicSubProxyModels } from "@app/ai-proxy/lib/providers/anthropic-subscription.models";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
 import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
@@ -32,7 +31,10 @@ export const anthropicSubscriptionDefinition: ProviderDefinition = {
     // No Responses upstream: chat completions is the only path.
     routes: { chatViaResponses: false, reshapesChat: false, recoversCompaction: false },
     upstreamEndpoints: null,
-    create: (account) => AnthropicSubscriptionProvider.create(account),
+    create: async (account) =>
+        (await import("@app/ai-proxy/lib/providers/anthropic-subscription")).AnthropicSubscriptionProvider.create(
+            account
+        ),
     // The short alias, not a dated id: the list always advertises `sonnet`, which follows the current model.
     suggestedModel: (account) => `${account.name}/${account.providerSlug}/sonnet`,
     introspect: async () => [],

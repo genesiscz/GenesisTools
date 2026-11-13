@@ -1,9 +1,9 @@
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import { ownFlags } from "./login-flags";
 import { resolveAccountName } from "./select-account";
@@ -99,6 +99,7 @@ export async function runLoginSecondary(opts: RunLoginSecondaryOptions): Promise
         const overwrite = await p.confirm({
             message: `"${account.name}" already has a secondary login. Overwrite?`,
             initialValue: false,
+            cancel: "back",
         });
 
         if (p.isCancel(overwrite) || !overwrite) {

@@ -1,6 +1,12 @@
 /** The files folded or opened against their default: `<row>|<call>|<path>`, the newest 500. */
 export type FlippedFiles = string[];
 
+/**
+ * The session's answer to `files only (everywhere)`: true folds every diff block to its file names, false opens
+ * them, null leaves it to `mods.diff.filesOnly`.
+ */
+export type FoldAll = boolean | null;
+
 /** The git-sync calls whose hidden diff the person opened: `<row>|<call>`, the newest 500. */
 export type ShownCalls = string[];
 
@@ -154,6 +160,7 @@ declare module "claude-code" {
     interface PluginState {
         "genesis-tools-mods": {
             flipped: FlippedFiles;
+            foldAll: FoldAll;
             shown: ShownCalls;
         };
     }

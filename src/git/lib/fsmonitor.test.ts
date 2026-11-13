@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { capture } from "@genesiscz/utils/process/ps";
+import { capture } from "@genesiscz/utils/process/capture";
 import {
     disableFsmonitor,
     enableFsmonitor,

@@ -15,10 +15,10 @@ import {
     writeCloudflaredConfig,
 } from "@app/ai-proxy/lib/tunnel/cloudflared";
 import type { AiProxyAccountConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
-import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
+import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@genesiscz/utils/prompts/p";
 
 async function ensureConfigInitialized(): Promise<AiProxyConfig> {
     const config = await loadConfig();
@@ -60,6 +60,7 @@ export async function runConfigMenu(): Promise<void> {
                 { value: "show", label: "Show current config" },
                 { value: "exit", label: "Exit" },
             ],
+            cancel: "back",
         });
 
         if (isCancel(choice) || choice === "exit") {
@@ -120,6 +121,7 @@ export async function runSetupCloudflaredTunnel(): Promise<void> {
             { value: "custom", label: "Custom public URL", hint: "you manage routing yourself" },
         ],
         initialValue: config.public?.mode === "tailscale" ? "tailscale" : "cloudflared",
+        cancel: "back",
     });
 
     if (isCancel(exposureMode)) {
@@ -142,6 +144,7 @@ export async function runSetupCloudflaredTunnel(): Promise<void> {
         const install = await confirm({
             message: "cloudflared not found. Install via Homebrew now?",
             initialValue: true,
+            cancel: "back",
         });
 
         if (isCancel(install) || !install) {
@@ -169,6 +172,7 @@ export async function runSetupCloudflaredTunnel(): Promise<void> {
         message: "Public hostname",
         placeholder: "proxy.example.dev",
         defaultValue: config.public?.hostname,
+        cancel: "back",
     });
 
     if (isCancel(hostname)) {
@@ -180,6 +184,7 @@ export async function runSetupCloudflaredTunnel(): Promise<void> {
         message: "URL path prefix on that hostname",
         placeholder: "/ai",
         defaultValue: config.public?.basePath ?? "/ai",
+        cancel: "back",
     });
 
     if (isCancel(basePathInput)) {
@@ -191,6 +196,7 @@ export async function runSetupCloudflaredTunnel(): Promise<void> {
         message: "cloudflared tunnel name",
         placeholder: "home-tunnel",
         defaultValue: config.public?.cloudflared?.tunnelName ?? parsedTunnel ?? undefined,
+        cancel: "back",
     });
 
     if (isCancel(tunnelName)) {
@@ -259,6 +265,7 @@ export async function runSetupCloudflaredTunnel(): Promise<void> {
             ? "Update ~/.cloudflared/config.yml with the ai-proxy ingress rule?"
             : "Create ~/.cloudflared/config.yml with a minimal tunnel + ai-proxy ingress?",
         initialValue: true,
+        cancel: "back",
     });
 
     if (isCancel(writeIngress) || !writeIngress) {
@@ -354,6 +361,7 @@ async function runSetupTailscaleExposure(config: AiProxyConfig): Promise<void> {
         message: "Tailscale hostname (MagicDNS)",
         placeholder: "mac.tail12345.ts.net",
         defaultValue: config.public?.tailscale?.hostname ?? config.public?.hostname,
+        cancel: "back",
     });
 
     if (isCancel(hostname)) {
@@ -365,6 +373,7 @@ async function runSetupTailscaleExposure(config: AiProxyConfig): Promise<void> {
         message: "URL path prefix",
         placeholder: "/ai",
         defaultValue: config.public?.basePath ?? "/ai",
+        cancel: "back",
     });
 
     if (isCancel(basePathInput)) {
@@ -407,6 +416,7 @@ async function runSetupCustomExposure(config: AiProxyConfig): Promise<void> {
         message: "Full Cursor Base URL (must end with /v1)",
         placeholder: "https://proxy.example.dev/ai/v1",
         defaultValue: config.public?.baseUrl ?? resolveCursorBaseUrl(config),
+        cancel: "back",
     });
 
     if (isCancel(baseUrl)) {

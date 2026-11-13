@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { env } from "@genesiscz/utils/env";
 
 /**
@@ -20,9 +20,9 @@ const revalidateCalls: string[] = [];
 let usageFetches = 0;
 
 mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
-    resolveAccountToken: async (name: string) => {
-        resolveCalls.push(name);
-        throw new Error(`resolveAccountToken(${name}) must not be reached for a suppressed account`);
+    resolveAccountToken: async (accountId: string) => {
+        resolveCalls.push(accountId);
+        throw new Error(`resolveAccountToken(${accountId}) must not be reached for a suppressed account`);
     },
 }));
 
@@ -34,11 +34,11 @@ mock.module("@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription", 
     isAnchorDue: (account: { name: string }) => anchorDueFor.has(account.name),
     planAllowsClaudeCode: (entry: { subscriptionPlan?: string; planContradictedAt?: number }) =>
         Boolean(entry.planContradictedAt) || entry.subscriptionPlan !== "claude_free",
-    refreshSubscriptionProfile: async (_config: unknown, account: { name: string }) => {
+    refreshSubscriptionProfile: async (account: { name: string }) => {
         profileCalls.push(account.name);
         return true;
     },
-    revalidateStalePlan: async (_config: unknown, account: AIAccountEntry) => {
+    revalidateStalePlan: async (account: AccountEntry) => {
         revalidateCalls.push(account.name);
 
         if (!orgAliveFor.has(account.name)) {
@@ -53,16 +53,13 @@ mock.module("@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription", 
     SUBSCRIPTION_RECHECK_MS: 6 * 60 * 60 * 1000,
 }));
 
-let accounts: AIAccountEntry[] = [];
+let accounts: AccountEntry[] = [];
 const anchorDueFor = new Set<string>();
 const orgAliveFor = new Set<string>();
 
-mock.module("@genesiscz/utils/ai/AIConfig", () => ({
-    AIConfig: {
-        load: async () => ({
-            getAccountsByProvider: () => accounts,
-            updateAccount: async () => {},
-        }),
+mock.module("@genesiscz/utils/ai/config/AiConfigStore", () => ({
+    AiConfigStore: {
+        load: async () => ({ accounts: () => accounts }),
     },
 }));
 
@@ -78,13 +75,17 @@ const originalHome = env.get("GENESIS_TOOLS_HOME");
 const originalFetch = globalThis.fetch;
 const cleanups: Array<() => void> = [];
 
-function account(name: string, extra: Partial<AIAccountEntry> = {}): AIAccountEntry {
+function account(name: string, extra: Partial<AccountEntry> = {}): AccountEntry {
     return {
+        id: `acc_${name}`,
         name,
         provider: "anthropic-sub",
-        tokens: { accessToken: `at-${name}`, refreshToken: `rt-${name}` },
+        enabled: true,
+        billing: { mode: "subscription" },
+        credentials: { accessToken: `at-${name}`, refreshToken: `rt-${name}` },
+        useEnvApiKey: false,
         ...extra,
-    } as AIAccountEntry;
+    };
 }
 
 function useTempHome(): void {
@@ -132,7 +133,7 @@ describe("poll suppression never spends a refresh token", () => {
 
     it("a plan-blocked account whose profile is not due is not polled", async () => {
         useTempHome();
-        accounts = [account("free", { subscriptionPlan: "claude_free" } as Partial<AIAccountEntry>)];
+        accounts = [account("free", { subscriptionPlan: "claude_free" })];
 
         await fetchAllAccountsUsage();
 
@@ -144,12 +145,12 @@ describe("poll suppression never spends a refresh token", () => {
     // re-read, so a due anchor must still be allowed through.
     it("a plan-blocked account whose profile IS due still reaches the token resolve", async () => {
         useTempHome();
-        accounts = [account("renewed", { subscriptionPlan: "claude_free" } as Partial<AIAccountEntry>)];
+        accounts = [account("renewed", { subscriptionPlan: "claude_free" })];
         anchorDueFor.add("renewed");
 
         await fetchAllAccountsUsage();
 
-        expect(resolveCalls).toEqual(["renewed"]);
+        expect(resolveCalls).toEqual(["acc_renewed"]);
     });
 
     // The negative control: an ordinary account must still be polled, or the guard
@@ -160,7 +161,7 @@ describe("poll suppression never spends a refresh token", () => {
 
         await fetchAllAccountsUsage();
 
-        expect(resolveCalls).toEqual(["healthy"]);
+        expect(resolveCalls).toEqual(["acc_healthy"]);
     });
 
     it("a gate-blocked dead-plan account reports the plan, not the gate reason", async () => {
@@ -169,7 +170,7 @@ describe("poll suppression never spends a refresh token", () => {
             account("shop", {
                 subscriptionPlan: "claude_free",
                 subscriptionStatus: "canceled",
-            } as Partial<AIAccountEntry>),
+            }),
         ];
         const now = Date.now();
         await savePollGate(
@@ -200,7 +201,7 @@ describe("poll suppression never spends a refresh token", () => {
             account("revived", {
                 subscriptionPlan: "claude_free",
                 subscriptionStatus: "canceled",
-            } as Partial<AIAccountEntry>),
+            }),
         ];
         anchorDueFor.add("revived");
         orgAliveFor.add("revived");
@@ -237,7 +238,7 @@ describe("poll suppression never spends a refresh token", () => {
 
     it("a suppressed account does not record a failure in the gate", async () => {
         useTempHome();
-        accounts = [account("free", { subscriptionPlan: "claude_free" } as Partial<AIAccountEntry>)];
+        accounts = [account("free", { subscriptionPlan: "claude_free" })];
 
         await fetchAllAccountsUsage();
 

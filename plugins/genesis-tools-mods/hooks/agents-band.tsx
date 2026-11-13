@@ -5,8 +5,9 @@
 // calls, what it said last, and actions (message it, ask about it, stop it, copy its id or transcript path).
 //
 // The model and start come from `agent.spawn`'s answer; for an agent spawned before this module loaded (a reload, or
-// a resumed session) from the `agent-<id>.meta.json` Claude Code writes beside its transcript. Activity comes from
-// the subagent's own `tool.call`s.
+// a resumed session) from the `agent-<id>.meta.json` Claude Code writes beside its transcript. The tool calls come
+// from the subagent's own `tool.call`s, and its idle time from the session's agent clock (`agent-clock.ts`), which the
+// resume guard reads too.
 //
 // The session's codex and grok workers (`tools codex spawn`, `tools grok spawn`) are not Claude Code subagents, so
 // `$.agent.list()` never has them. They come from `tools hub agents --session <id> --json` on the band's timer, at
@@ -15,6 +16,7 @@
 // sessions started 14 `tools hub` processes per 10 s on a Mac already at load 300.
 import type { AgentInfo, AgentSpawnInput, AgentSpawnResult, ElementTable, RenderElement } from "claude-code";
 import type { SpawnedAgents } from "../types";
+import { agentActiveAt, forgetAgentClock } from "./agent-clock";
 import { genesisProbe } from "./genesis";
 import { liveAgo, liveSince } from "./live";
 import { bareDescription, modelLabel } from "./model-label";
@@ -34,10 +36,10 @@ import { toolLabel } from "./spinner";
 
 export const AGENTS_PANE = "mods-agents";
 
-let spawned: SpawnedAgents = {};
-const activity = new Map<string, { lastAt: number; lastTool: string; tools: number; recent: Recent[] }>();
+export let spawned: SpawnedAgents = {};
+const activity = new Map<string, { lastTool: string; tools: number; recent: Recent[] }>();
 /** What `agent-<id>.meta.json` said; null once read and found without a model. */
-const metas = new Map<string, { model: string; at?: number } | null>();
+export const metas = new Map<string, { model: string; at?: number } | null>();
 const pendingMetas = new Map<string, Promise<void>>();
 const transcripts = new Map<string, string>();
 let refreshing: Promise<void> | undefined;
@@ -147,7 +149,6 @@ export const agentsBand: Feature = {
             const before = activity.get(e.agentId);
             const now = Date.now();
             activity.set(e.agentId, {
-                lastAt: now,
                 lastTool: e.tool,
                 tools: (before?.tools ?? 0) + 1,
                 recent: [...(before?.recent ?? []), { label: toolLabel(e.tool, e), at: now }].slice(-12),
@@ -472,6 +473,8 @@ interface AgentFacts {
     startedAt: number | undefined;
     late: boolean;
     seen: ReturnType<typeof activity.get>;
+    /** When it last did anything, by the session's agent clock. */
+    activeAt: number | undefined;
 }
 
 export async function factsOf(host: Host, list: readonly AgentInfo[]): Promise<AgentFacts[]> {
@@ -500,6 +503,7 @@ export async function factsOf(host: Host, list: readonly AgentInfo[]): Promise<A
                 age !== undefined &&
                 age > all.agentsBand.warnMinutes * 60_000,
             seen: activity.get(agent.id),
+            activeAt: agentActiveAt(agent.id),
         };
     });
 }
@@ -511,8 +515,12 @@ function nameOf(facts: AgentFacts): string {
 function tailOf(facts: AgentFacts, now: number): string {
     const parts = [facts.startedAt === undefined ? "" : liveSince(facts.startedAt, now)];
 
+    if (facts.activeAt !== undefined) {
+        parts.push(`idle ${liveSince(facts.activeAt, now)}`);
+    }
+
     if (facts.seen) {
-        parts.push(`idle ${liveSince(facts.seen.lastAt, now)}`, plural(facts.seen.tools, "tool"));
+        parts.push(plural(facts.seen.tools, "tool"));
     }
 
     return parts.filter(Boolean).join(" · ");
@@ -738,7 +746,7 @@ async function detailOf(host: Host, kit: Kit, facts: AgentFacts, now: number): P
     const facts2 = [
         facts.startedAt === undefined ? "" : `ran ${liveSince(facts.startedAt, now)}`,
         seen ? plural(seen.tools, "tool call") : "",
-        seen ? `last ${seen.lastTool} ${liveAgo(seen.lastAt, { now })}` : "",
+        seen ? `last ${seen.lastTool} ${liveAgo(seen.recent.at(-1)?.at ?? now, { now })}` : "",
     ]
         .filter(Boolean)
         .join(" · ");
@@ -807,6 +815,7 @@ async function detailOf(host: Host, kit: Kit, facts: AgentFacts, now: number): P
 export function forgetAgentDetails(): void {
     spawned = {};
     activity.clear();
+    forgetAgentClock();
     metas.clear();
     pendingMetas.clear();
     transcripts.clear();

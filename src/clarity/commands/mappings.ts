@@ -15,11 +15,11 @@ import { runInteractiveLinking } from "@app/clarity/lib/interactive-linking";
 import { MappingStore } from "@app/clarity/lib/mapping-store";
 import { assignReceipt, renderReceipt, unlinkReceipt } from "@app/clarity/lib/receipts";
 import { findTaskByName } from "@app/clarity/lib/tasks";
-import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -336,7 +336,10 @@ async function runAssign(date: string, options: MappingsOptions): Promise<void> 
             process.exit(1);
         }
 
-        const confirmed = await p.confirm({ message: `Overwrite ${replaced.length} existing mapping(s)?` });
+        const confirmed = await p.confirm({
+            message: `Overwrite ${replaced.length} existing mapping(s)?`,
+            cancel: "back",
+        });
 
         if (p.isCancel(confirmed) || !confirmed) {
             p.cancel("Cancelled");
@@ -405,7 +408,7 @@ async function runUnlink(options: MappingsOptions): Promise<void> {
             process.exit(1);
         }
 
-        const confirmed = await p.confirm({ message: `Remove ${removed.length} mapping(s)?` });
+        const confirmed = await p.confirm({ message: `Remove ${removed.length} mapping(s)?`, cancel: "back" });
 
         if (p.isCancel(confirmed) || !confirmed) {
             p.cancel("Cancelled");

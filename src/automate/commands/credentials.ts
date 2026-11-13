@@ -1,7 +1,7 @@
 import { deleteCredential, listCredentials, loadCredential, saveCredential } from "@app/automate/lib/credentials";
 import type { CredentialType, StoredCredential } from "@app/automate/lib/types";
-import * as p from "@clack/prompts";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -21,6 +21,7 @@ export function registerCredentialsCommand(program: Command): void {
                     { value: "apikey" as const, label: "API key (custom header)" },
                     { value: "custom" as const, label: "Custom headers" },
                 ],
+                cancel: "back",
             });
             if (p.isCancel(type)) {
                 p.cancel("Cancelled");
@@ -35,6 +36,7 @@ export function registerCredentialsCommand(program: Command): void {
                     const token = await p.text({
                         message: "Token (or {{ env.VAR }} expression):",
                         placeholder: "{{ env.GITHUB_TOKEN }}",
+                        cancel: "back",
                     });
                     if (p.isCancel(token)) {
                         p.cancel("Cancelled");
@@ -45,13 +47,13 @@ export function registerCredentialsCommand(program: Command): void {
                     break;
                 }
                 case "basic": {
-                    const username = await p.text({ message: "Username:" });
+                    const username = await p.text({ message: "Username:", cancel: "back" });
                     if (p.isCancel(username)) {
                         p.cancel("Cancelled");
 
                         process.exit(0);
                     }
-                    const password = await p.text({ message: "Password (or {{ env.VAR }}):" });
+                    const password = await p.text({ message: "Password (or {{ env.VAR }}):", cancel: "back" });
                     if (p.isCancel(password)) {
                         p.cancel("Cancelled");
 
@@ -66,13 +68,14 @@ export function registerCredentialsCommand(program: Command): void {
                         message: "Header name:",
                         placeholder: "X-API-Key",
                         defaultValue: "X-API-Key",
+                        cancel: "back",
                     });
                     if (p.isCancel(headerName)) {
                         p.cancel("Cancelled");
 
                         process.exit(0);
                     }
-                    const key = await p.text({ message: "Key value (or {{ env.VAR }}):" });
+                    const key = await p.text({ message: "Key value (or {{ env.VAR }}):", cancel: "back" });
                     if (p.isCancel(key)) {
                         p.cancel("Cancelled");
 
@@ -90,6 +93,7 @@ export function registerCredentialsCommand(program: Command): void {
                         const header = await p.text({
                             message: "Header (key=value):",
                             placeholder: "X-Custom-Header={{ env.MY_SECRET }}",
+                            cancel: "back",
                         });
                         if (p.isCancel(header)) {
                             p.cancel("Cancelled");
@@ -103,7 +107,11 @@ export function registerCredentialsCommand(program: Command): void {
                         if (eqIdx > 0) {
                             headers[header.substring(0, eqIdx)] = header.substring(eqIdx + 1);
                         }
-                        const cont = await p.confirm({ message: "Add another header?", initialValue: false });
+                        const cont = await p.confirm({
+                            message: "Add another header?",
+                            initialValue: false,
+                            cancel: "back",
+                        });
                         if (p.isCancel(cont)) {
                             p.cancel("Cancelled");
 

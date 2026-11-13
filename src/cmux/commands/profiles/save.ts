@@ -2,12 +2,12 @@ import { captureOfflineProfile } from "@app/cmux/lib/offline-snapshot";
 import { captureProfile, getCmuxVersion, type SnapshotOptions } from "@app/cmux/lib/snapshot";
 import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
 import type { ProfileScope, Window } from "@app/cmux/lib/types";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -102,7 +102,7 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
             return;
         }
         const overwrite = await withCancel(
-            p.confirm({ message: `Profile "${name}" exists. Overwrite?`, initialValue: false })
+            p.confirm({ message: `Profile "${name}" exists. Overwrite?`, initialValue: false, cancel: "back" })
         );
         if (!overwrite) {
             p.cancel("Save aborted.");
@@ -190,6 +190,7 @@ async function resolveScope(flags: SaveFlags, interactive: boolean): Promise<Pro
                 { value: "workspace", label: "Current workspace only", hint: "just the focused workspace" },
             ],
             initialValue: "all",
+            cancel: "back",
         })
     );
     return choice;
@@ -252,6 +253,7 @@ async function resolveCaptureFlags(flags: SaveFlags, interactive: boolean): Prom
             ],
             initialValues: initial,
             required: false,
+            cancel: "back",
         })
     );
 
@@ -299,6 +301,7 @@ async function resolveName(rawName: string | undefined, scope: ProfileScope, int
                 }
                 return undefined;
             },
+            cancel: "back",
         })
     );
     return validateProfileName(value);

@@ -22,7 +22,6 @@ import { registerProfiles } from "@app/spotify/commands/profiles";
 import { registerUiCommand } from "@app/spotify/commands/ui";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -85,13 +84,7 @@ ${pc.bold("Notes")}
 }
 
 async function main(): Promise<void> {
-    try {
-        await runTool(createSpotifyProgram(), { tool: "spotify" });
-    } catch (error) {
-        out.error(error instanceof Error ? error.message : String(error));
-        await out.flush();
-        process.exit(1);
-    }
+    await runTool(createSpotifyProgram(), { tool: "spotify" });
 }
 
 if (import.meta.main) {

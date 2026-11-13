@@ -1,42 +1,12 @@
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, sep } from "node:path";
+import type { ChangeLogRow } from "@genesiscz/utils/agents/change-log";
 import { cloudReadRisk } from "@genesiscz/utils/fs/cloud-placeholder";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
-import type { RmBashWrite } from "@genesiscz/utils/rm";
-import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { namedArguments } from "../hooks/diff/command-paths";
-import { safeSegment } from "../hooks/paths";
 
 const MAX_BYTES = 2_000_000;
 const SAMPLE_BYTES = 8_192;
-
-export interface ChangeEvent {
-    ts: string;
-    provider: string;
-    session: string;
-    /** The turn id from the payload; without one, the tool call's id stands in for it. */
-    turn: string;
-    tool: string;
-    /** The tool call that made the change (Claude `tool_use.id`, Codex and Grok call ids). */
-    toolUseId?: string;
-    cwd: string;
-    path: string;
-    beforeOid: string | null;
-    afterOid: string | null;
-    source: "edit" | "write" | "bash";
-    /**
-     * A Bash row: when its command began (ISO), so a reader can tell a file the command made (born after this) from
-     * one it only changed. Rows before 2026-11-02 carry none.
-     */
-    began?: string;
-    /** Set when either side was not stored (the after side's reason wins). Rows before 2026-09-25 carry only this. */
-    skipped?: "binary" | "large";
-    /** Why the before-state has no `beforeOid`. */
-    beforeSkipped?: "binary" | "large";
-    /** Why the after-state has no `afterOid`. */
-    afterSkipped?: "binary" | "large";
-}
 
 export interface ChangeSink {
     hash: (bytes: Buffer) => string;
@@ -50,180 +20,6 @@ export interface ChangeBytes {
     after?: Buffer;
     beforeSkipped?: "binary" | "large";
     afterSkipped?: "binary" | "large";
-}
-
-/**
- * One session's change log, shared by the hook that writes it and the command that reads it.
- * The id comes from a hook payload or a CLI argument, so it must be one plain path segment:
- * `../../x` would otherwise write and read outside the agents directory. Throws on anything else.
- */
-export function sessionChangesPath(session: string): string {
-    const safe = safeSegment(session);
-
-    if (safe === null) {
-        throw new Error(`not a session id: "${session}"`);
-    }
-
-    return genesisToolsDir("agents", safe, "changes.jsonl");
-}
-
-/** The tail of a change log the Bash-write lookup reads; older rows are not read, and the cap is logged. */
-export const BASH_LOOKUP_MAX_BYTES = 8 * 1024 * 1024;
-
-/** The Bash-write indexes loaded in this process, kept for this many sessions (least recently used goes first). */
-const BASH_INDEX_SESSIONS = 8;
-
-interface BashWriteIndex {
-    size: number;
-    mtimeMs: number;
-    maxBytes: number;
-    byPath: Map<string, RmBashWrite[]>;
-}
-
-/** One index per session, reused while its log keeps the same size and mtime: a sweep of many requests reads once. */
-const bashWriteIndexes = new Map<string, BashWriteIndex>();
-
-/**
- * Every Bash command of `session` that recorded writing each path (`tools rm`'s own-files rule asks), in log order:
- * when it began (rows before 2026-11-02 carry no start) and when its row was written. The log's last
- * `maxBytes` are read once, on the first lookup, into an index by path that later lookups of the same session in
- * this process share while the log is unchanged. A row of another source, a torn line, a missing log or an unsafe
- * id give no entry.
- */
-export function bashWriteLookup(
-    session: string,
-    { maxBytes = BASH_LOOKUP_MAX_BYTES }: { maxBytes?: number } = {}
-): (path: string) => RmBashWrite[] {
-    let index: Map<string, RmBashWrite[]> | null | undefined;
-
-    return (path) => {
-        if (index === undefined) {
-            index = bashWriteIndex(session, maxBytes);
-        }
-
-        return index?.get(path) ?? [];
-    };
-}
-
-function bashWriteIndex(session: string, maxBytes: number): Map<string, RmBashWrite[]> | null {
-    let file: string;
-    let size: number;
-    let mtimeMs: number;
-
-    try {
-        file = sessionChangesPath(session);
-        ({ size, mtimeMs } = statSync(file));
-    } catch (error) {
-        logger.debug({ session, error }, "agents: no change log to read Bash writes from");
-        return null;
-    }
-
-    const cached = bashWriteIndexes.get(session);
-    bashWriteIndexes.delete(session);
-
-    if (cached && cached.size === size && cached.mtimeMs === mtimeMs && cached.maxBytes === maxBytes) {
-        bashWriteIndexes.set(session, cached);
-        return cached.byPath;
-    }
-
-    let text: string;
-
-    try {
-        text = readTail(file, size, maxBytes);
-    } catch (error) {
-        logger.debug({ session, error }, "agents: cannot read the change log for Bash writes");
-        return null;
-    }
-
-    if (size > maxBytes) {
-        logger.debug(
-            { session, size, maxBytes },
-            "agents: change log over the cap: Bash writes before its last bytes are not read"
-        );
-    }
-
-    const byPath = new Map<string, RmBashWrite[]>();
-
-    for (const line of text.split("\n")) {
-        if (!line.includes('"source":"bash"')) {
-            continue;
-        }
-
-        let row: unknown;
-
-        try {
-            row = SafeJSON.parse(line, { strict: true });
-        } catch (error) {
-            logger.debug({ session, error }, "agents: skipping a torn change-log row");
-            continue;
-        }
-
-        const write = bashWriteOf(row);
-
-        if (!write) {
-            continue;
-        }
-
-        // One array per path, appended in log order: a copy per row made N writes of one path cost O(N²).
-        const writes = byPath.get(write.path);
-
-        if (writes) {
-            writes.push(write.write);
-        } else {
-            byPath.set(write.path, [write.write]);
-        }
-    }
-
-    bashWriteIndexes.set(session, { size, mtimeMs, maxBytes, byPath });
-
-    while (bashWriteIndexes.size > BASH_INDEX_SESSIONS) {
-        const oldest = bashWriteIndexes.keys().next().value;
-
-        if (oldest === undefined) {
-            break;
-        }
-
-        bashWriteIndexes.delete(oldest);
-    }
-
-    return byPath;
-}
-
-/** The last `maxBytes` of a file of `size` bytes, from the first whole line on. */
-function readTail(file: string, size: number, maxBytes: number): string {
-    if (size <= maxBytes) {
-        return readFileSync(file, "utf8");
-    }
-
-    const fd = openSync(file, "r");
-
-    try {
-        const buffer = Buffer.alloc(maxBytes);
-        const read = readSync(fd, buffer, 0, maxBytes, size - maxBytes);
-        const text = buffer.subarray(0, read).toString("utf8");
-        return text.slice(text.indexOf("\n") + 1);
-    } finally {
-        closeSync(fd);
-    }
-}
-
-/** A Bash row's path, start and end; null for any other row. */
-function bashWriteOf(row: unknown): { path: string; write: RmBashWrite } | null {
-    if (
-        typeof row !== "object" ||
-        row === null ||
-        !("source" in row) ||
-        row.source !== "bash" ||
-        !("path" in row) ||
-        typeof row.path !== "string" ||
-        !("ts" in row) ||
-        typeof row.ts !== "string"
-    ) {
-        return null;
-    }
-
-    const began = "began" in row && typeof row.began === "string" ? row.began : undefined;
-    return { path: row.path, write: { ...(began ? { began } : {}), ended: row.ts } };
 }
 
 /** The harness file tools this log records: Edit and MultiEdit as `edit`, Write as `write`. */
@@ -244,7 +40,7 @@ export function fileToolSource(tool: string): "edit" | "write" | null {
  */
 export function recordFileToolEdit(
     file: string,
-    event: Omit<ChangeEvent, "ts" | "source" | "beforeOid" | "afterOid"> & { ts?: string },
+    event: Omit<ChangeLogRow, "ts" | "source" | "beforeOid" | "afterOid"> & { ts?: string },
     original: string | null | undefined,
     sink: ChangeSink
 ): void {
@@ -481,7 +277,7 @@ export function recordScriptedEdits(
         since,
         known,
         ...event
-    }: Omit<ChangeEvent, "ts" | "source" | "path" | "beforeOid" | "afterOid"> & {
+    }: Omit<ChangeLogRow, "ts" | "source" | "path" | "beforeOid" | "afterOid"> & {
         ts?: string;
         /**
          * When the command began, in epoch ms. A path the command only NAMES is logged when
@@ -591,12 +387,12 @@ function prehashed(sink: ChangeSink, blobs: Array<Buffer | undefined>): ChangeSi
 /** Append one change. Never throws. Identical content is stored once by the hash function. */
 export function recordChange(
     file: string,
-    event: Omit<ChangeEvent, "ts" | "beforeOid" | "afterOid"> & { ts?: string },
+    event: Omit<ChangeLogRow, "ts" | "beforeOid" | "afterOid"> & { ts?: string },
     bytes: ChangeBytes | null,
     sink: ChangeSink
 ): void {
     try {
-        const row: ChangeEvent = {
+        const row: ChangeLogRow = {
             ts: event.ts ?? new Date().toISOString(),
             ...event,
             beforeOid: null,
@@ -629,7 +425,7 @@ export function recordChange(
 }
 
 /** The ids of the last `count` turns in log order (a turn's rows can interleave with the next one's). */
-export function lastTurnIds(rows: ReadonlyArray<Pick<ChangeEvent, "turn">>, count: number): string[] {
+export function lastTurnIds(rows: ReadonlyArray<Pick<ChangeLogRow, "turn">>, count: number): string[] {
     const order: string[] = [];
 
     for (const row of rows) {

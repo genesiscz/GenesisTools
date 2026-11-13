@@ -10,7 +10,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
-import { xaiApiKeyEnvName } from "@app/ai-proxy/lib/providers/xai-api-key.definition";
+import { xaiApiKeyEnvName } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";

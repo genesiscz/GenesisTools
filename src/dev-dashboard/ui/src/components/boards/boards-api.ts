@@ -14,7 +14,7 @@ import type {
 } from "@app/dev-dashboard/contract/dto";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { fetchJson } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 /** A card_versions row — not part of the type-only contract (no DTO exists yet), so declared here. */
 export interface CardVersionDto {
@@ -48,6 +48,11 @@ export interface JourneySummaryDto {
     title: string;
     passes: number;
     latest: string;
+}
+
+/** The board routes stay out of the endpoint table; they go through the client's path call with `paths`. */
+function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+    return dashboard.get<T>(path, init);
 }
 
 function jsonInit(method: string, body: unknown): RequestInit {
@@ -120,11 +125,12 @@ export const boardsApi = {
     uploadImage: (slug: string, file: Blob, name: string) =>
         fetchJson<CardDto>(paths.boardUpload({ slug, name, mime: file.type || "application/octet-stream" }), {
             method: "POST",
+            headers: { "Content-Type": file.type || "application/octet-stream" },
             body: file,
         }),
     uploadMessageImage: (slug: string, file: Blob, name: string) =>
         fetchJson<{ blobKey: string; name: string; mime: string }>(
             paths.boardMsgUploads({ slug, name, mime: file.type || "application/octet-stream" }),
-            { method: "POST", body: file }
+            { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file }
         ),
 };

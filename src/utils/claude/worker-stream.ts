@@ -1,3 +1,4 @@
+import { claudeCacheWrites } from "@genesiscz/utils/ai/usage/spend/parse";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { WorkerUsagePart } from "@genesiscz/utils/worker/cost";
@@ -230,8 +231,8 @@ export function claudeTurnUsage(text: string): ClaudeTurnUsage {
     }
 
     const usage = isRecord(result.usage) ? result.usage : null;
-    const creation = isRecord(usage?.cache_creation) ? usage.cache_creation : null;
-    let hourWrites = num(creation?.ephemeral_1h_input_tokens) ?? 0;
+    const cacheWrites = usage ? claudeCacheWrites(usage) : { total: 0, oneHour: 0 };
+    let hourWrites = cacheWrites.oneHour;
 
     if (parts.length === 0 && usage) {
         parts.push({
@@ -239,7 +240,7 @@ export function claudeTurnUsage(text: string): ClaudeTurnUsage {
             tokens: {
                 input: num(usage.input_tokens) ?? 0,
                 cacheRead: num(usage.cache_read_input_tokens) ?? 0,
-                cacheWrite: num(usage.cache_creation_input_tokens) ?? 0,
+                cacheWrite: cacheWrites.total,
                 output: num(usage.output_tokens) ?? 0,
                 reasoning: 0,
             },

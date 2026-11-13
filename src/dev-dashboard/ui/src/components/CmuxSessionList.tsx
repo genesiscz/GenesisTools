@@ -1,3 +1,4 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import type { CmuxSnapshot } from "@app/dev-dashboard/lib/cmux/types";
 import { formatClock } from "@genesiscz/utils/format";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -6,6 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@ui/components/tooltip"
 import { CircleDashed, Layers, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
+import { dashboard } from "@/lib/dashboard-client";
 import "react-mosaic-component/react-mosaic-component.css";
 import {
     buildBalancedMosaicLayout,
@@ -20,7 +22,6 @@ import { MobileTerminalShell } from "@/components/terminal-shell/MobileTerminalS
 import { ShellIconButton } from "@/components/terminal-shell/ShellIconButton";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { cmuxApi, tmuxApi } from "@/lib/api";
 import {
     mergeStoredCmuxSurfaceSelection,
     pickStoredCmuxActivePaneId,
@@ -77,14 +78,15 @@ export function CmuxSessionList({ snapshot }: Props) {
     const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
     const [surfaceSelectionByPaneId, setSurfaceSelectionByPaneId] = useState<Record<string, string>>({});
     const attach = useMutation({
-        mutationFn: (target: { workspaceId: string; paneId: string }) => cmuxApi.attach(target),
+        mutationFn: (target: { workspaceId: string; paneId: string }) => dashboard.call(ENDPOINTS.cmuxAttach, target),
     });
     const renameMut = useMutation({
-        mutationFn: (body: { workspaceId: string; surfaceId?: string; title: string }) => cmuxApi.rename(body),
+        mutationFn: (body: { workspaceId: string; surfaceId?: string; title: string }) =>
+            dashboard.call(ENDPOINTS.cmuxRename, body),
         // snapshot poll (2s, in CmuxRoute) reflects the new title — no invalidate.
     });
     const createSession = useMutation({
-        mutationFn: () => tmuxApi.create(),
+        mutationFn: () => dashboard.call(ENDPOINTS.tmuxCreate, {}),
         onSuccess: (data) => {
             queryClient.invalidateQueries({ queryKey: ["tmux"] });
             setSendTarget(data.sessionName);

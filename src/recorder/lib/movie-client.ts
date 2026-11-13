@@ -6,7 +6,8 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { EditOp } from "@genesiscz/utils/recording-editor/project";
 import { readProject } from "@genesiscz/utils/recording-editor/project";
-import { editPathOf, editProject, type OpenedProject, redoEdit, undoEdit } from "./edit";
+import { editPathOf, editProject, type OpenedProject } from "./edit";
+import { withEditSession } from "./edit-session";
 import { resolveRecording } from "./library";
 import { ServiceConnectionLost, withServiceClient } from "./service-client";
 import { readLiveService, type ServiceEntry } from "./service-protocol";
@@ -208,12 +209,14 @@ export async function applyEdit(
     });
 }
 
-/** `tools recorder undo`: through the running service (`edit.undo`), else in this process (`undoEdit`). */
+/** `tools recorder undo`: through the running service (`edit.undo`), else on a short-lived session in this process. */
 export async function undoLastEdit(value: string, options: { dir?: string } = {}): Promise<OpenedProject> {
     const entry = readLiveService(options.dir);
 
     if (!entry) {
-        return undoEdit(value);
+        const path = editPathOf(value);
+        const { project, undone } = await withEditSession(path, (session) => session.undo({ by: "agent" }));
+        return { path, project, fresh: false, undone };
     }
 
     const answer = await withServiceClient(entry, (client) =>
@@ -222,12 +225,14 @@ export async function undoLastEdit(value: string, options: { dir?: string } = {}
     return openedOf(value, answer);
 }
 
-/** `tools recorder redo`: through the running service (`edit.redo`), else in this process (`redoEdit`). */
+/** `tools recorder redo`: through the running service (`edit.redo`), else on a short-lived session in this process. */
 export async function redoLastEdit(value: string, options: { dir?: string } = {}): Promise<OpenedProject> {
     const entry = readLiveService(options.dir);
 
     if (!entry) {
-        return redoEdit(value);
+        const path = editPathOf(value);
+        const { project, redone } = await withEditSession(path, (session) => session.redo({ by: "agent" }));
+        return { path, project, fresh: false, redone };
     }
 
     const answer = await withServiceClient(entry, (client) =>

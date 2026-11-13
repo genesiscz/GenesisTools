@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
@@ -12,9 +12,9 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { defaultNativeHome } from "@genesiscz/utils/providers/session-paths";
 import * as TOML from "@iarna/toml";
-import chalk from "chalk";
 import type { CodexGenericConfig, CodexMCPServerConfig, CodexPluginConfig } from "./codex.types.js";
 import { latestVersionDir, readPluginMcpServers, splitPluginId } from "./plugins.js";
+import { deletePresent, enablePresent } from "./presence.js";
 import type { MCPServerInfo, UnifiedMCPConfig, UnifiedMCPServerConfig } from "./types.js";
 import { MCPProvider, WriteResult } from "./types.js";
 
@@ -96,8 +96,9 @@ export class CodexProvider extends MCPProvider {
         return existsSync(this.configPath);
     }
 
-    supportsDisabledState(): boolean {
-        return false; // Codex: presence in config = enabled
+    /** Presence means enabled: `sync` installs only the servers the unified config enables here. */
+    shouldBeInstalled(serverConfig: UnifiedMCPServerConfig): boolean {
+        return this.isServerEnabledInMeta(serverConfig);
     }
 
     async readConfig(): Promise<CodexGenericConfig> {
@@ -123,35 +124,18 @@ export class CodexProvider extends MCPProvider {
         return homes.map(codexConfigPathForHome);
     }
 
-    async writeConfig(config: unknown): Promise<WriteResult> {
-        // Ensure directory exists
-        const dir = path.dirname(this.configPath);
-        if (!existsSync(dir)) {
-            mkdirSync(dir, { recursive: true });
-        }
-
-        const newContent = TOML.stringify(config as TOML.JsonMap);
-
-        // Read old content (empty string if file doesn't exist)
-        const oldContent = (await this.configExists()) ? await readFile(this.configPath, "utf-8") : "";
-
-        // Early exit if no changes
-        if (oldContent === newContent) {
-            return WriteResult.NoChanges;
-        }
-
-        // Show diff and ask for confirmation
-        await this.backupManager.showDiff(oldContent, newContent, this.configPath);
-        const confirmed = await this.backupManager.askConfirmation();
-
-        if (!confirmed) {
-            return WriteResult.Rejected;
-        }
-
-        // Only now write to file (with backup)
-        await this.writeFileWithBackup(newContent);
-        logger.info(chalk.green(`✓ Configuration written to ${this.configPath}`));
-        return WriteResult.Applied;
+    /** One write of one home's config.toml; the primary `syncTo` home unless `configPath` names another. */
+    private update(
+        change: (config: CodexGenericConfig) => CodexGenericConfig | null | Promise<CodexGenericConfig | null>,
+        configPath: string = this.configPath
+    ): Promise<WriteResult> {
+        return this.writeCycle({
+            read: () => this.readConfigAt(configPath),
+            change,
+            serialize: (next) => TOML.stringify(next as TOML.JsonMap),
+            path: configPath,
+            describe: "Codex MCP servers",
+        });
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -192,97 +176,33 @@ export class CodexProvider extends MCPProvider {
         return null;
     }
 
-    async enableServer(serverName: string, _projectPath?: string | null): Promise<void> {
-        // Codex doesn't have explicit enable/disable
-        // Servers are enabled if they exist in config
-        // This is a no-op, but we ensure the server exists
-        const config = await this.readConfig();
-        if (!config.mcp_servers?.[serverName]) {
-            throw new Error(`Server ${serverName} does not exist. Use installServer to add it.`);
-        }
-    }
-
-    async disableServer(serverName: string, _projectPath?: string | null): Promise<void> {
-        const config = await this.readConfig();
-
-        // Remove the server from config (Codex doesn't have explicit disable)
-        if (config.mcp_servers?.[serverName]) {
-            delete config.mcp_servers[serverName];
-            const result = await this.writeConfig(config);
-            if (result === WriteResult.Rejected) {
-                throw new Error(`Write rejected by user for server ${serverName}`);
-            }
-        }
-    }
-
-    async disableServerForAllProjects(serverName: string): Promise<void> {
-        // Same as disableServer for Codex
-        await this.disableServer(serverName);
-    }
-
     async enableServers(serverNames: string[], _projectPath?: string | null): Promise<WriteResult> {
-        // Codex doesn't have explicit enable/disable
-        // Servers are enabled if they exist in config - this is a no-op
-        const config = await this.readConfig();
-        const missing = serverNames.filter((name) => !config.mcp_servers?.[name]);
-        if (missing.length > 0) {
-            throw new Error(`Servers do not exist: ${missing.join(", ")}. Use installServer to add them.`);
-        }
-        return WriteResult.NoChanges;
+        return enablePresent((await this.readConfig()).mcp_servers, serverNames);
     }
 
     async disableServers(serverNames: string[], _projectPath?: string | null): Promise<WriteResult> {
-        const config = await this.readConfig();
-
-        let changed = false;
-        for (const serverName of serverNames) {
-            if (config.mcp_servers?.[serverName]) {
-                delete config.mcp_servers[serverName];
-                changed = true;
-            }
-        }
-
-        if (changed) {
-            return this.writeConfig(config);
-        }
-        return WriteResult.NoChanges;
+        return this.removeServers(serverNames);
     }
 
     async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<WriteResult> {
         // Strip _meta before processing (unified utility ensures _meta never reaches providers)
         const cleanConfig = stripMeta(config);
-        const codexConfig = await this.readConfig();
 
-        if (!codexConfig.mcp_servers) {
-            codexConfig.mcp_servers = {};
-        }
+        return this.update((codexConfig) => {
+            if (!codexConfig.mcp_servers) {
+                codexConfig.mcp_servers = {};
+            }
 
-        codexConfig.mcp_servers[serverName] = this.unifiedToCodex(cleanConfig);
-
-        return this.writeConfig(codexConfig);
+            codexConfig.mcp_servers[serverName] = this.unifiedToCodex(cleanConfig);
+            return codexConfig;
+        });
     }
 
     async removeServers(serverNames: string[]): Promise<WriteResult> {
-        const config = await this.readConfig();
-        let changed = false;
-
-        for (const serverName of serverNames) {
-            if (config.mcp_servers?.[serverName]) {
-                // Deleting the parsed key drops the whole [mcp_servers.<name>]
-                // section including nested subsections ([...env],
-                // [...http_headers]); unrelated content like [projects.*] and
-                // [notice] is part of the same parsed object and survives the
-                // re-serialization untouched.
-                delete config.mcp_servers[serverName];
-                changed = true;
-            }
-        }
-
-        if (!changed) {
-            return WriteResult.NoChanges;
-        }
-
-        return this.writeConfig(config);
+        // Deleting the parsed key drops the whole [mcp_servers.<name>] section including nested
+        // subsections ([...env], [...http_headers]); unrelated content like [projects.*] and [notice]
+        // is part of the same parsed object and survives the re-serialization untouched.
+        return this.update((config) => (deletePresent(config.mcp_servers, serverNames) ? config : null));
     }
 
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
@@ -303,20 +223,18 @@ export class CodexProvider extends MCPProvider {
                 continue;
             }
 
-            const result = await this.withConfigPath(configPath, () =>
-                this.syncServersAtCurrentPath(servers, {
-                    destHome: codexHomeDir(home),
-                    allHomes: homes.map(codexHomeDir),
-                    // Every home, not only the primary. Codex has no disabled state, so
-                    // `listServers` reports whatever survives in ANY syncFrom home as enabled:
-                    // leaving a disabled server in an extra home meant the next `sync-from`
-                    // read it back as enabled and the following `sync` reinstalled it. The
-                    // deletion is keyed by a name the UNIFIED config marks disabled, so a
-                    // server only that home knows about is never touched.
-                    deleteDisabled: true,
-                    protectHomeBound: !isPrimary,
-                })
-            );
+            const result = await this.syncServersAt(configPath, servers, {
+                destHome: codexHomeDir(home),
+                allHomes: homes.map(codexHomeDir),
+                // Every home, not only the primary. Codex has no disabled state, so
+                // `listServers` reports whatever survives in ANY syncFrom home as enabled:
+                // leaving a disabled server in an extra home meant the next `sync-from`
+                // read it back as enabled and the following `sync` reinstalled it. The
+                // deletion is keyed by a name the UNIFIED config marks disabled, so a
+                // server only that home knows about is never touched.
+                deleteDisabled: true,
+                protectHomeBound: !isPrimary,
+            });
 
             if (result === WriteResult.Rejected) {
                 return result;
@@ -420,26 +338,27 @@ export class CodexProvider extends MCPProvider {
                 continue;
             }
 
-            const config = await this.readConfigAt(configPath);
-            let changed = false;
+            const result = await this.update(async (config) => {
+                let changed = false;
 
-            for (const server of await this.discoverPluginServers(config, home)) {
-                const plugin = config.plugins?.[server.pluginId];
+                for (const server of await this.discoverPluginServers(config, home)) {
+                    const plugin = config.plugins?.[server.pluginId];
 
-                if (!plugin || !serverNames.includes(server.name) || server.enabled === enabled) {
-                    continue;
+                    if (!plugin || !serverNames.includes(server.name) || server.enabled === enabled) {
+                        continue;
+                    }
+
+                    setCodexPluginServerEnabled(plugin, server.name, enabled);
+                    changed = true;
                 }
 
-                setCodexPluginServerEnabled(plugin, server.name, enabled);
-                changed = true;
-            }
+                if (!changed) {
+                    return null;
+                }
 
-            if (!changed) {
-                continue;
-            }
-
-            logger.debug({ configPath, serverNames, enabled }, "mcp-manager: writing Codex plugin MCP overrides");
-            const result = await this.withConfigPath(configPath, () => this.writeConfig(config));
+                logger.debug({ configPath, serverNames, enabled }, "mcp-manager: writing Codex plugin MCP overrides");
+                return config;
+            }, configPath);
 
             if (result === WriteResult.Rejected) {
                 return result;
@@ -453,18 +372,8 @@ export class CodexProvider extends MCPProvider {
         return applied ? WriteResult.Applied : WriteResult.NoChanges;
     }
 
-    private async withConfigPath<T>(configPath: string, fn: () => Promise<T>): Promise<T> {
-        const previous = this.configPath;
-        this.configPath = configPath;
-
-        try {
-            return await fn();
-        } finally {
-            this.configPath = previous;
-        }
-    }
-
-    private async syncServersAtCurrentPath(
+    private async syncServersAt(
+        configPath: string,
         servers: Record<string, UnifiedMCPServerConfig>,
         opts: {
             destHome: string;
@@ -473,33 +382,33 @@ export class CodexProvider extends MCPProvider {
             protectHomeBound: boolean;
         }
     ): Promise<WriteResult> {
-        const config = await this.readConfig();
-
-        if (!config.mcp_servers) {
-            config.mcp_servers = {};
-        }
-
-        const incoming: Record<string, CodexMCPServerConfig> = {};
-
-        for (const [name, serverConfig] of Object.entries(servers)) {
-            const isEnabled = this.isServerEnabledInMeta(serverConfig);
-
-            if (isEnabled) {
-                incoming[name] = this.unifiedToCodex(stripMeta(serverConfig));
-            } else if (opts.deleteDisabled) {
-                delete config.mcp_servers[name];
+        return this.update((config) => {
+            if (!config.mcp_servers) {
+                config.mcp_servers = {};
             }
-        }
 
-        config.mcp_servers = mergeCodexServersForHome({
-            dest: config.mcp_servers,
-            incoming,
-            destHome: opts.destHome,
-            allHomes: opts.allHomes,
-            protectHomeBound: opts.protectHomeBound,
-        });
+            const incoming: Record<string, CodexMCPServerConfig> = {};
 
-        return this.writeConfig(config);
+            for (const [name, serverConfig] of Object.entries(servers)) {
+                const isEnabled = this.isServerEnabledInMeta(serverConfig);
+
+                if (isEnabled) {
+                    incoming[name] = this.unifiedToCodex(stripMeta(serverConfig));
+                } else if (opts.deleteDisabled) {
+                    delete config.mcp_servers[name];
+                }
+            }
+
+            config.mcp_servers = mergeCodexServersForHome({
+                dest: config.mcp_servers,
+                incoming,
+                destHome: opts.destHome,
+                allHomes: opts.allHomes,
+                protectHomeBound: opts.protectHomeBound,
+            });
+
+            return config;
+        }, configPath);
     }
 
     toUnifiedConfig(config: unknown): Record<string, UnifiedMCPServerConfig> {
@@ -514,25 +423,6 @@ export class CodexProvider extends MCPProvider {
         }
 
         return result;
-    }
-
-    fromUnifiedConfig(servers: Record<string, UnifiedMCPServerConfig>): unknown {
-        const config: CodexGenericConfig = {
-            mcp_servers: {},
-        };
-
-        for (const [name, unified] of Object.entries(servers)) {
-            // Read enabled state using utility method
-            const isEnabled = this.isServerEnabledInMeta(unified);
-
-            // Codex doesn't have native disable - only include if enabled
-            if (isEnabled) {
-                const cleanConfig = stripMeta(unified);
-                config.mcp_servers![name] = this.unifiedToCodex(cleanConfig);
-            }
-        }
-
-        return config;
     }
 
     private codexToUnified(codex: CodexMCPServerConfig): UnifiedMCPServerConfig {
