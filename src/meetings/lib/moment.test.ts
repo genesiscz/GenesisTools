@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
     appendFileSync,
+    chmodSync,
     mkdirSync,
     mkdtempSync,
     readdirSync,
@@ -918,8 +919,42 @@ describe("a Moment of a saved meeting", () => {
         write("new.wav", 400, 100);
         write(".cutting-1.wav", 400, 400);
 
-        expect(trimMomentCache(900, root)).toBe(1);
+        expect(trimMomentCache({ capBytes: 900, root })).toBe(1);
         expect(readdirSync(join(root, "m1")).sort()).toEqual([".cutting-1.wav", "mid.wav", "new.wav"]);
+    });
+
+    test("the cache never removes the clip it is trimmed for, even when that clip alone is over the cap", () => {
+        const root = mkdtempSync(join(tmpdir(), "moment-cache-"));
+        mkdirSync(join(root, "m1"));
+        const old = join(root, "m1", "old.wav");
+        const big = join(root, "m1", "big.wav");
+        writeFileSync(old, "x".repeat(400));
+        const before = new Date(Date.now() - 300_000);
+        utimesSync(old, before, before);
+        writeFileSync(big, "x".repeat(1000));
+
+        expect(trimMomentCache({ capBytes: 900, root, keep: big })).toBe(1);
+        expect(readdirSync(join(root, "m1"))).toEqual(["big.wav"]);
+    });
+
+    test("a cache folder that cannot be listed is skipped: trimming never fails the clip it runs after", () => {
+        const root = mkdtempSync(join(tmpdir(), "moment-cache-"));
+        mkdirSync(join(root, "m1"));
+        writeFileSync(join(root, "m1", "old.wav"), "x".repeat(1000));
+        const locked = join(root, "locked");
+        mkdirSync(locked);
+        chmodSync(locked, 0o000);
+
+        try {
+            expect(trimMomentCache({ capBytes: 900, root })).toBe(1);
+        } finally {
+            chmodSync(locked, 0o755);
+        }
+
+        // A root that is not a folder lists nothing.
+        expect(trimMomentCache({ capBytes: 0, root: join(root, "m1", "gone", "x") })).toBe(0);
+        writeFileSync(join(root, "plain"), "x");
+        expect(trimMomentCache({ capBytes: 0, root: join(root, "plain") })).toBe(0);
     });
 });
 

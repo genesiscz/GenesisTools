@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, utimesSync } from "node:fs";
+import { type Dirent, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, utimesSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -666,19 +666,43 @@ export function momentCachePath(moment: Moment, source: ClipSource): string {
     return join(momentCacheDir(moment.meeting), `${clipName(moment)}-${key}.wav`);
 }
 
-/** Removes the clips used longest ago until the cache holds at most `capBytes`; returns how many went. Never throws. */
-export function trimMomentCache(capBytes = MOMENT_CACHE_BYTES, root = momentCacheDir()): number {
+/** A folder's entries; none when another process removed it or it does not read. */
+function listCacheFolder(dir: string): Dirent[] {
+    try {
+        return readdirSync(dir, { withFileTypes: true });
+    } catch (error) {
+        log.debug({ error, dir }, "a clip cache folder does not list; it is skipped");
+        return [];
+    }
+}
+
+export interface TrimMomentCacheOptions {
+    /** Default `MOMENT_CACHE_BYTES`. */
+    capBytes?: number;
+    /** Default the clip cache folder. */
+    root?: string;
+    /** The clip the caller is about to return: never removed, even when it alone is over the cap. */
+    keep?: string;
+}
+
+/**
+ * Removes the clips used longest ago until the cache holds at most `capBytes`; returns how many went. Never throws: a
+ * folder another process removed or that does not read is skipped, so cache upkeep never fails a finished clip.
+ */
+export function trimMomentCache(options: TrimMomentCacheOptions = {}): number {
+    const { capBytes = MOMENT_CACHE_BYTES, root = momentCacheDir(), keep } = options;
+
     if (!existsSync(root)) {
         return 0;
     }
 
-    const clips = readdirSync(root, { withFileTypes: true }).flatMap((folder) => {
+    const clips = listCacheFolder(root).flatMap((folder) => {
         if (!folder.isDirectory()) {
             return [];
         }
 
         const dir = join(root, folder.name);
-        return readdirSync(dir).flatMap((name) => {
+        return listCacheFolder(dir).flatMap(({ name }) => {
             // A cut still in progress is a hidden partial file: never counted, never removed here.
             if (!name.endsWith(".wav") || name.startsWith(".")) {
                 return [];
@@ -699,6 +723,10 @@ export function trimMomentCache(capBytes = MOMENT_CACHE_BYTES, root = momentCach
     for (const clip of clips.sort((a, b) => a.usedMs - b.usedMs)) {
         if (total <= capBytes) {
             break;
+        }
+
+        if (clip.path === keep) {
+            continue;
         }
 
         try {
@@ -946,7 +974,7 @@ export async function clipMoment(
         throw error;
     }
 
-    trimMomentCache();
+    trimMomentCache({ keep: path });
     return { ...moment, path };
 }
 
