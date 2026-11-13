@@ -357,7 +357,7 @@ public struct TranscriptDocument: Equatable {
 
     /// Minimal verbosity: thinking goes, and every run of consecutive tool rows becomes one group
     /// row (id `g-` + the first call's row id).
-    public static func folded(_ sections: [TranscriptSection]) -> [TranscriptSection] {
+    public static func folded(_ sections: [TranscriptSection], keepsThinking: Bool = false) -> [TranscriptSection] {
         sections.map { section in
             var copy = section
             var rows: [TranscriptRow] = []
@@ -377,7 +377,8 @@ public struct TranscriptDocument: Equatable {
             for row in section.rows {
                 switch row.kind {
                 case .tool: run.append(row)
-                case .thinking: continue
+                case .thinking:
+                    if keepsThinking { flush(); rows.append(row) }
                 default:
                     flush()
                     rows.append(row)

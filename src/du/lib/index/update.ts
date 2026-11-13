@@ -205,6 +205,9 @@ function applyRegion(
     const next = {
         alloc_bytes: r.a,
         logical_bytes: r.l,
+        compressed_files: r.cf ?? null,
+        compressed_logical_bytes: r.cl ?? null,
+        compressed_allocated_bytes: r.ca ?? null,
         private_bytes: withPrivate ? r.v : null,
         files: r.c,
         dirs: r.d,
@@ -214,6 +217,10 @@ function applyRegion(
     for (const k of kept) {
         next.alloc_bytes += k.alloc_bytes;
         next.logical_bytes += k.logical_bytes;
+        for (const column of ["compressed_files", "compressed_logical_bytes", "compressed_allocated_bytes"] as const) {
+            const prior = k[column];
+            next[column] = next[column] === null || prior == null ? null : next[column] + prior;
+        }
         if (next.private_bytes !== null) {
             next.private_bytes += k.private_bytes ?? 0;
         }
@@ -226,7 +233,8 @@ function applyRegion(
 
     db.run(
         `UPDATE dirs SET fileid = ?, dir_mtime_ms = ?, flags = ?, alloc_bytes = ?, logical_bytes = ?, private_bytes = ?,
-           files = ?, dirs = ?, max_file_bytes = ?, newest_mtime_s = ?, scan_id = ? WHERE id = ?`,
+           files = ?, dirs = ?, max_file_bytes = ?, newest_mtime_s = ?, scan_id = ?,
+           compressed_files = ?, compressed_logical_bytes = ?, compressed_allocated_bytes = ? WHERE id = ?`,
         [
             r.f,
             r.dm,
@@ -239,6 +247,9 @@ function applyRegion(
             next.max_file_bytes,
             next.newest_mtime_s,
             scanId,
+            next.compressed_files,
+            next.compressed_logical_bytes,
+            next.compressed_allocated_bytes,
             old.id,
         ]
     );
@@ -246,6 +257,18 @@ function applyRegion(
     const delta = {
         alloc_bytes: next.alloc_bytes - old.alloc_bytes,
         logical_bytes: next.logical_bytes - old.logical_bytes,
+        compressed_files:
+            next.compressed_files === null || old.compressed_files == null
+                ? null
+                : next.compressed_files - old.compressed_files,
+        compressed_logical_bytes:
+            next.compressed_logical_bytes === null || old.compressed_logical_bytes == null
+                ? null
+                : next.compressed_logical_bytes - old.compressed_logical_bytes,
+        compressed_allocated_bytes:
+            next.compressed_allocated_bytes === null || old.compressed_allocated_bytes == null
+                ? null
+                : next.compressed_allocated_bytes - old.compressed_allocated_bytes,
         private_bytes:
             next.private_bytes === null || old.private_bytes === null ? null : next.private_bytes - old.private_bytes,
         files: next.files - old.files,
@@ -253,9 +276,11 @@ function applyRegion(
     };
     // Sums move by the exact delta. The two maxima only grow until the next build
     // recomputes them, which is safe for a "changed within" prefilter.
-    const bump = db.prepare<{ parent_id: number }, number[]>(
+    const bump = db.prepare<{ parent_id: number }, (number | null)[]>(
         `UPDATE dirs SET alloc_bytes = alloc_bytes + ?, logical_bytes = logical_bytes + ?,
            private_bytes = private_bytes + ?, files = files + ?, dirs = dirs + ?,
+           compressed_files = compressed_files + ?, compressed_logical_bytes = compressed_logical_bytes + ?,
+           compressed_allocated_bytes = compressed_allocated_bytes + ?,
            max_file_bytes = MAX(max_file_bytes, ?), newest_mtime_s = MAX(newest_mtime_s, ?)
          WHERE id = ? RETURNING parent_id`
     );
@@ -269,6 +294,9 @@ function applyRegion(
             delta.private_bytes ?? 0,
             delta.files,
             delta.dirs,
+            delta.compressed_files,
+            delta.compressed_logical_bytes,
+            delta.compressed_allocated_bytes,
             next.max_file_bytes,
             next.newest_mtime_s,
             parentId
@@ -288,7 +316,13 @@ function applyRegion(
             dirs: walk.end.dirs,
             kept: walk.kept.length,
             walk_ms: walk.end.walk_ms,
-            delta,
+            delta: {
+                alloc_bytes: delta.alloc_bytes,
+                logical_bytes: delta.logical_bytes,
+                private_bytes: delta.private_bytes,
+                files: delta.files,
+                dirs: delta.dirs,
+            },
         },
         promoted,
         removed,

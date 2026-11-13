@@ -5,6 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { nonEmptyString as text } from "@genesiscz/utils/string";
 
 const { log } = logger.scoped("t3code:thread");
 
@@ -36,10 +37,6 @@ export interface T3ThreadState {
 }
 
 const SHOW_TIMEOUT_MS = 15_000;
-
-function text(value: unknown): string | null {
-    return typeof value === "string" && value.length > 0 ? value : null;
-}
 
 function parseJson(stdout: string): unknown {
     try {

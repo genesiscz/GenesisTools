@@ -127,6 +127,8 @@ export class GithubCopilotApi extends ApiClient {
         const bodyText = typeof init.body === "string" ? init.body : init.bodyText;
         const messages = this.extractMessages(bodyText);
 
+        // A cancelled request must not mint or refresh a session.
+        init.signal?.throwIfAborted();
         let session = await this.loadSession();
         let response = await this.nativeFetch(session, path, init, messages);
 
@@ -137,6 +139,7 @@ export class GithubCopilotApi extends ApiClient {
             });
 
             if (resolved?.token) {
+                init.signal?.throwIfAborted();
                 logger.debug("github-copilot: refreshing session after auth failure");
                 clearSessionCache(this.dataDir);
                 session = await this.loadSession();

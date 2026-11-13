@@ -2,7 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import type { DiffConfig } from "../config";
-import { isDeleted, isUntrackedDirectory, statusEntries, untrackedFilesIn } from "../git";
+import { isDeleted, isUntrackedDirectory, statusEntries, untrackedFilesInEach } from "../git";
 
 export interface ChangedFile {
     path: string;
@@ -55,13 +55,21 @@ export function changedFiles({
         entries.push({ path: resolve(root, name), untracked: false, deleted: !existsSync(resolve(root, name)), root });
     }
 
-    for (const entry of source?.entries ?? statusEntries(root)) {
+    const status = source?.entries ?? statusEntries(root);
+    // One git process for every untracked directory of the root, not one each.
+    const inside = untrackedFilesInEach(
+        root,
+        status.filter(isUntrackedDirectory).map((entry) => entry.path),
+        config.untrackedExpansionCap
+    );
+
+    for (const entry of status) {
         const untracked = entry.kind === "untracked";
         const deleted = isDeleted(entry);
 
         if (isUntrackedDirectory(entry)) {
             // A failed listing is already logged by `untrackedFilesIn`; nothing inside is shown.
-            for (const name of untrackedFilesIn(root, entry.path, config.untrackedExpansionCap) ?? []) {
+            for (const name of inside.get(entry.path) ?? []) {
                 entries.push({ path: resolve(root, name), untracked: true, deleted: false, root });
             }
 

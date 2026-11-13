@@ -87,5 +87,10 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
     },
 };
 
+/** A value for every harness, so a plugin file that needs a table per harness names none. */
+export function byHarness<T>(pick: (harness: Harness) => T): Readonly<Record<Harness, T>> {
+    return { claude: pick("claude"), codex: pick("codex"), grok: pick("grok") };
+}
+
 /** The harness whose journal lines (pins, cmux records) omit `provider`: a line without one is its. */
 export const JOURNAL_DEFAULT_HARNESS: Harness = "claude";

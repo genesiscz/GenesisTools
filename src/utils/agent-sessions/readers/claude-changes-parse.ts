@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import { CLAUDE_DIR } from "@genesiscz/utils/claude/projects";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
@@ -6,7 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { applyReplacement, fileToolVia, isShellTool } from "@genesiscz/utils/session-changes/tool-calls";
 import type { SessionToolCall, SessionTranscript, SessionTurn } from "@genesiscz/utils/session-changes/types";
-import { claudeSubagentFiles, claudeSubagentIdOf, claudeSubagentsDir } from "./claude-paths";
+import { claudeSubagentTranscripts } from "./claude-paths";
 
 const { log } = logger.scoped("session-changes");
 
@@ -383,27 +383,17 @@ export function parseLines(
     }
 }
 
-/** The subagent transcripts of a Claude session (`<session>/subagents/agent-<id>.jsonl`) and the call that launched each. */
+/**
+ * The subagent transcripts of a Claude session and the call that launched each: the agents in `<session>/subagents/`
+ * and the agents of its Workflow tool runs (a workflow agent's meta names no launching call).
+ */
 export function subagentFiles(
     transcriptPath: string
 ): { path: string; agentId: string; parentToolUseId: string | null }[] {
-    const dir = claudeSubagentsDir(transcriptPath);
-
-    if (!existsSync(dir)) {
-        return [];
-    }
-
     const files: { path: string; agentId: string; parentToolUseId: string | null }[] = [];
 
-    for (const name of readdirSync(dir)) {
-        const agentId = claudeSubagentIdOf(name);
-
-        if (!agentId) {
-            continue;
-        }
-
+    for (const { agentId, transcript, meta } of claudeSubagentTranscripts(transcriptPath)) {
         let parent: string | null = null;
-        const { transcript, meta } = claudeSubagentFiles(dir, agentId);
 
         if (existsSync(meta)) {
             try {

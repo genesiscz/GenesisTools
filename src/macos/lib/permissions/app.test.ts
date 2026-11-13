@@ -24,6 +24,8 @@ import * as genesisApp from "@genesiscz/utils/macos/genesis-app";
 import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import * as prompts from "@genesiscz/utils/prompts/p";
+import { CANCEL_ANSWER, makeTestBackend } from "@genesiscz/utils/prompts/p/__tests__/test-backend";
+import { getBackend, setBackend } from "@genesiscz/utils/prompts/p/backend";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { skip } from "@genesiscz/utils/test/skip";
@@ -693,6 +695,17 @@ describe("createRealBuildOfferDeps", () => {
             expect(stderr.mock.calls.map((call) => String(call[0])).join("")).toContain("hello from the offer");
         } finally {
             stderr.mockRestore();
+        }
+    });
+
+    it("treats Escape on the build question as a declined build, not an exit", async () => {
+        const before = getBackend();
+        setBackend(makeTestBackend({ confirm: CANCEL_ANSWER }));
+
+        try {
+            expect(await createRealBuildOfferDeps().confirmBuild()).toBe(false);
+        } finally {
+            setBackend(before);
         }
     });
 });

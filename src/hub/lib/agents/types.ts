@@ -51,6 +51,8 @@ export interface AgentNode {
     spawnPromptPreview: string | null;
     toolUseId: string | null;
     spawnDepth: number;
+    /** The Workflow tool run that started a Claude agent (`tools ai sessions workflows show` has the run). */
+    workflow?: { runId: string; label: string | null; phase: string | null } | null;
     children: AgentNode[];
 }
 

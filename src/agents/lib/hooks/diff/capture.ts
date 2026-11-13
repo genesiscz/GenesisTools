@@ -15,7 +15,15 @@ import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { type DiffConfig, defaultLogPath, megabytes } from "../config";
-import { gitOut, isDeleted, isUntrackedDirectory, objectId, statusEntries, untrackedFilesIn } from "../git";
+import {
+    gitOut,
+    isDeleted,
+    isUntrackedDirectory,
+    objectId,
+    statusEntries,
+    untrackedFilesIn,
+    untrackedFilesInEach,
+} from "../git";
 import { hookDiag } from "../log";
 import { callDir, hookDataRoot, safeSegment } from "../paths";
 import { HARNESS_HOOK_FACTS, type HookPayload } from "../payload";
@@ -291,19 +299,18 @@ function captureList({
     const files: string[] = [];
     const namesOnly: string[] = [];
     const tooWide: string[] = [];
+    // A dirty submodule is reported as its DIRECTORY. Handed to the capture it took the whole
+    // checkout (its own ignored files included). Its before-state is the recorded commit,
+    // which the post phase already diffs against HEAD as a `Subproject commit` change.
+    const taken = entries.filter((entry) => !isDeleted(entry) && !entry.submodule?.startsWith("S"));
+    // One git process for every untracked directory of the root, not one each.
+    const listed = untrackedFilesInEach(
+        root,
+        taken.filter(isUntrackedDirectory).map((entry) => entry.path),
+        config.maxCaptureFiles + 1
+    );
 
-    for (const entry of entries) {
-        if (isDeleted(entry)) {
-            continue;
-        }
-
-        // A dirty submodule is reported as its DIRECTORY. Handed to the capture it took the whole
-        // checkout (its own ignored files included). Its before-state is the recorded commit,
-        // which the post phase already diffs against HEAD as a `Subproject commit` change.
-        if (entry.submodule?.startsWith("S")) {
-            continue;
-        }
-
+    for (const entry of taken) {
         if (!isUntrackedDirectory(entry)) {
             files.push(entry.path);
             continue;
@@ -311,7 +318,7 @@ function captureList({
 
         // The common directory fits the capture, and its listing stays as cheap as before. Only one
         // that overflows is listed again, by name, up to the larger cap.
-        const small = untrackedFilesIn(root, entry.path, config.maxCaptureFiles + 1);
+        const small = listed.get(entry.path) ?? null;
         const inside =
             small !== null && small.length > config.maxCaptureFiles
                 ? untrackedFilesIn(root, entry.path, MAX_RECORDED_NAMES + 1)

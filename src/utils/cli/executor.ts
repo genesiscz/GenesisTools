@@ -3,6 +3,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { profiler } from "@genesiscz/utils/profile";
+import { redactSecretsInText } from "@genesiscz/utils/transclude/redact";
 import { type Command, Help, type Option } from "commander";
 import pc from "picocolors";
 import type { DeadlineExpiry } from "./failures/record";
@@ -430,21 +431,38 @@ const spawnProf = profiler.scope("spawn");
 /** An argument that names or carries a credential (a header, a token flag) never reaches a log line. */
 const SECRET_ARG = /authorization|token|password|secret|bearer|private-token/i;
 
+/** A flag whose value is `user:password` (curl `-u`, `--user`, `-U`, `--proxy-user`). */
+const USER_CREDENTIAL_FLAG = /^(?:-u|-U|--user|--proxy-user)$/;
+/** The same flag with its value in the word: `--user=alice:pw`, `-ualice:pw`. */
+const USER_CREDENTIAL_WORD = /^(?:--(?:proxy-)?user=|-[uU](?!-))[^:\s]+:/;
+
 /** `git rev-parse --show-toplevel`, `gh pr view 42 --json …`: the command, its first arguments, credentials hidden. */
 export function spawnLabel(cmd: string[]): string {
     const [program = "", ...args] = cmd;
     const name = program.split(/[\\/]/).pop() ?? program;
-    // `--token value`: the flag names the credential, the next argument carries it.
-    const shown = args
-        .slice(0, 6)
-        .map((arg, index) =>
-            SECRET_ARG.test(arg) || isSecretFlag(args[index - 1])
-                ? "***"
-                : arg.length > 80
-                  ? `${arg.slice(0, 77)}…`
-                  : arg
-        );
+    const shown = args.slice(0, 6).map((arg, index) => {
+        const masked = maskedArg(arg, args[index - 1]);
+        return masked.length > 80 ? `${masked.slice(0, 77)}…` : masked;
+    });
     return [name, ...shown, ...(args.length > 6 ? ["…"] : [])].join(" ");
+}
+
+/**
+ * One argument as a log line or a failure record shows it: `***` when it names or carries a credential (the value
+ * after `--token`, `-H` or `-u user:pw`), else the argument with every URL credential and token-shaped value in it
+ * masked (`redactSecretsInText`: `https://alice:[redacted]@host/repo`).
+ */
+function maskedArg(arg: string, previous: string | undefined): string {
+    if (
+        SECRET_ARG.test(arg) ||
+        isSecretFlag(previous) ||
+        USER_CREDENTIAL_WORD.test(arg) ||
+        (previous !== undefined && USER_CREDENTIAL_FLAG.test(previous) && /^[^:\s]+:/.test(arg))
+    ) {
+        return "***";
+    }
+
+    return redactSecretsInText(arg);
 }
 
 /** A flag that names a credential and takes its value as the next argument (`--password x`, `-H x`). */
@@ -559,9 +577,9 @@ export function resolveExecDeadline(
     return { ms: DEFAULT_EXEC_TIMEOUT_MS, reason: null, source: "default" };
 }
 
-/** Every argument of `cmd`, with the ones that name or carry a credential hidden (as in {@link spawnLabel}). */
+/** Every argument of `cmd`, with the credentials hidden as in {@link spawnLabel}: what a deadline record keeps. */
 export function maskedArgv(cmd: string[]): string[] {
-    return cmd.map((arg, index) => (index > 0 && (SECRET_ARG.test(arg) || isSecretFlag(cmd[index - 1])) ? "***" : arg));
+    return cmd.map((arg, index) => (index > 0 ? maskedArg(arg, cmd[index - 1]) : arg));
 }
 
 /** The sentence an expiry throws and records: the command, the bound, where the bound came from, and the fix. */
@@ -602,6 +620,8 @@ export interface ExecutorOptions {
 }
 
 export interface ExecCallOptions {
+    /** Cancel the owned process group and wait for it to stop. */
+    signal?: AbortSignal;
     /** Override working directory for this call */
     cwd?: string;
     /** Override/extend environment variables for this call */
@@ -716,6 +736,7 @@ export class Executor {
             timeoutMs: deadline.ms === 0 ? NO_DEADLINE_MS : deadline.ms,
             cwd,
             environment: env,
+            signal: options?.signal,
             maxBufferBytes: 64 * 1024 * 1024,
         });
 
@@ -812,9 +833,9 @@ export class Executor {
     async execOrThrow(args: string[], errorMsg?: string, options?: ExecCallOptions): Promise<ExecResult> {
         const result = await this.exec(args, options);
         if (!result.success) {
-            throw new Error(
-                errorMsg ?? `Command failed: ${this.prefix ? `${this.prefix} ` : ""}${args.join(" ")}\n${result.stderr}`
-            );
+            // The failures log keeps a thrown message; it masks URL credentials, not the value of `-u user:pw`.
+            const command = maskedArgv(this.prefix ? [this.prefix, ...args] : args).join(" ");
+            throw new Error(errorMsg ?? `Command failed: ${command}\n${result.stderr}`);
         }
         return result;
     }

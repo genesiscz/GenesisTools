@@ -599,7 +599,7 @@
         "src/utils/ai/providers/openai/AIOpenAITextToSpeechProvider.ts": 1,
         "src/utils/ai/providers/plugins/anthropic-sub/api.ts": 1,
         "src/utils/ai/providers/plugins/anthropic-sub/limits.ts": 1,
-        "src/utils/ai/providers/plugins/anthropic-sub/statusline.ts": 2,
+        "src/utils/ai/providers/plugins/anthropic-sub/statusline.ts": 1,
         "src/utils/ai/providers/plugins/openai-sub/usage.ts": 3,
         "src/utils/ai/session/backends/json-files.ts": 2,
         "src/utils/ai/transcripts/grok.ts": 1,

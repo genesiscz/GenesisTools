@@ -69,7 +69,7 @@ const TAIL_BYTES = 2 * 1024 * 1024;
 const STUCK_TURNS = 120;
 
 // The header's cost (tools ai-spend session) adds the sub-agents: for one session it read $1862 beside $548 here.
-export const INSIGHTS_PRICING_NOTE = `List prices from the model catalog (the rates ${toolCommand("ai-spend")} uses), per model call of this transcript; sub-agent transcripts are not included (the header's cost includes them); an estimate, not a bill`;
+export const INSIGHTS_PRICING_NOTE = `Priced per model call of this transcript as ${toolCommand("ai-spend")} prices it: the cost the agent recorded where it records list prices, otherwise the model catalog's list price; sub-agent transcripts are not included (the header's cost includes them); an estimate, not a bill`;
 
 /**
  * List price per call, priced as the spend reports price it (`priceUsage`): the harness's candidate ladder, the
@@ -239,7 +239,14 @@ export async function sessionInsights(options: InsightsOptions): Promise<Session
     // The same tail read as `tools hub stuck`, so both print one verdict; it depends on the clock, so never cached.
     const stuck = await stuckOf(resolved, thresholds, now);
     log.debug({ key, hit, stuck: stuck?.kind ?? null }, "insights");
-    return { ...value, stuck, thresholds, generatedAt: new Date(now).toISOString() };
+    // The note is fixed text, so a cached entry from before a rewording still shows today's wording.
+    return {
+        ...value,
+        pricingNote: INSIGHTS_PRICING_NOTE,
+        stuck,
+        thresholds,
+        generatedAt: new Date(now).toISOString(),
+    };
 }
 
 /** The cacheable part of `sessionInsights`: everything but the stuck verdict. */

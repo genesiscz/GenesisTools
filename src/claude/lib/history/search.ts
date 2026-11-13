@@ -9,6 +9,7 @@ import { toSessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-r
 import { parseHistoryDate } from "@genesiscz/utils/agent-sessions/history-date";
 import { catalogHistory, catalogHistoryCounts, openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
+import { subagentScope } from "@genesiscz/utils/agent-sessions/search-plan";
 import type { NativeSessionReader, NativeSessionSource } from "@genesiscz/utils/agent-sessions/types";
 import {
     aggregateDailyStats,
@@ -127,8 +128,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
     const project = projectDir ? basename(projectDir) : undefined;
     const filters = {
         project,
-        excludeAgents: !subagentsOnly && excludeSubagents,
-        agentsOnly: subagentsOnly,
+        ...subagentScope({ only: subagentsOnly, exclude: excludeSubagents }),
         limit,
         mtimeFrom: options.mtimeFrom,
         filePaths: options.filePaths,
