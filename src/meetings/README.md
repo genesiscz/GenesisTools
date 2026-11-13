@@ -664,3 +664,23 @@ files can be pinned with `context add <meeting> <file> --rev <commit>` or `--bef
   that event; opening Details does not run the failed command again.
 - To take back a review decision, use its journal token with `tools meetings journal <meeting>` and the Undo/reopen
   command it names. `revisions` only reports change tokens; it does not restore older transcript content.
+
+### Choosing a short listen round and adding a question
+
+`listen <meeting> --questions Q2,Q7` asks only the named open questions, including any parts split from them. Explicit selection bypasses the minimum priority filter. Unknown or closed IDs refuse the whole selection before a round starts. It also works with `--clip-out` for a read-only export of those stored questions.
+
+`listen <meeting> --questions questions.json` reads a JSON array such as:
+
+```json
+[{"from":"1:19:28","to":"1:19:40","about":"text","question":"Who owns the export?","choices":["Alice","Bob"]}]
+```
+
+The questions enter the normal decision journal once the interactive adapter and player are ready. Answers, answer subscriptions, split, and Esc use the same path as stored questions. An omitted `decides` saves an answer without changing another finding. Existing equal open questions are reused. `--questions -` accepts one JSON line pasted into the interactive terminal. A piped/noninteractive invocation cannot play an interactive round; add findings with `items add --from-file -` first, then listen by their stored IDs.
+
+Line-scoped terms with a dead or ambiguous anchor are refused. The diagnostic distinguishes a missing time, words in a different line, and words absent from the transcript. `items add --force` deliberately saves an invalid anchor and retains the diagnostic. The decision API and REPL `items.add` accept the same optional `force` flag.
+
+The Meetings window offers Add question or term, clean duplication, question priority, saved document revision, and an indicator tooltip naming a stuck signal and why it was ignored. Its dictionary editor can preview an unsaved entry on pasted transcript lines. The read-only command equivalent is `dictionary test '<lines>' --entry '<dictionary-entry JSON>' --json`.
+
+The transcript's native confidence selector defaults to 70 percent. The service loads the available threshold previews together, and changing the selector chooses a loaded result without a new source read. The selector is saved per app; it changes no meeting or global suggestion configuration. CLI `transcript --with-suggested --apply-above 0.7` uses the same corrections engine for a one-off preview. Open question ranges keep their guessed speaker percentage until answered.
+
+For a meeting-local room person, use `attendance <meeting> --add "Alice Example" --from 0 --to 600 --at-mic`. `--via "Bob Example"` instead names a remote device owner. These finite stays and canonical microphone groups reopen from the meeting record. The native people strip and `meeting.people.edit` use the same implementation. Imported platform speaking and muted names also join automatic question candidates. `Meeting.editPerson` exposes the same operation in the REPL.

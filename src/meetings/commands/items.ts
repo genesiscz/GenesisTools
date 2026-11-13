@@ -689,6 +689,7 @@ async function transcript(
         format?: string | boolean;
         json?: boolean;
         withSuggested?: boolean;
+        applyAbove?: string;
         dictionary?: boolean;
         timestamps?: boolean;
         playLinks?: boolean;
@@ -953,6 +954,10 @@ export function registerItemCommands(program: Command): void {
         .option("--format [format]", `${TRANSCRIPT_FORMATS.join(" | ")} (default md)`)
         .option("--json", "the same as --format json")
         .option("--with-suggested", "also apply the suggested items")
+        .option(
+            "--apply-above <confidence>",
+            "with --with-suggested: preview at this confidence, 0 to 1; changes no config"
+        )
         .option("--no-dictionary", "do not apply the dictionary")
         .option("--no-frontmatter", "md: omit the frontmatter")
         .option("--timestamps", "show the start time of each paragraph")

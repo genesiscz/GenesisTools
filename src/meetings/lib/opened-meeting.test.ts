@@ -537,3 +537,50 @@ test("suggest attendance recovery preserves validation and source failures", asy
         broken.mockRestore();
     }
 });
+
+test("all opened readers share independently identified goodbye windows without rewriting stored attendance", async () => {
+    const { store, record } = await newRecord({
+        platform: "teams",
+        attendance: {
+            from: "fixture",
+            people: [
+                { name: "Carol Example", fromSec: 0, toSec: 90, leftAtExact: false },
+                { name: "Bob Example", fromSec: 0, toSec: 90, leftAtExact: false },
+            ],
+        },
+    });
+    const source = fakeSource({
+        evidence: {
+            selfName: "Alice Example",
+            platform: "teams",
+            segments: [{ startSec: 0, endSec: 90, channel: "system" }],
+            speaking: [
+                { tSec: 10, speaking: ["Carol Example"] },
+                { tSec: 60, speaking: ["Bob Example"] },
+            ],
+            files: [],
+        },
+    });
+    const meeting = await source.load("abc");
+    if (!meeting) {
+        throw new Error("fixture meeting missing");
+    }
+    const modified = {
+        ...source,
+        load: async () => ({
+            ...meeting,
+            transcript: [
+                { speaker: "Alice Example", startSec: 0, text: "Začneme." },
+                { speaker: "Carol Example", startSec: 10, text: "Já vám mizím." },
+                { speaker: "Alice Example", startSec: 15, text: "Jo, čau." },
+                { speaker: "Carol Example", startSec: 60, text: "Tak to prosím pošleme zítra ráno." },
+            ],
+        }),
+    };
+    const before = SafeJSON.stringify(store.read(record.id));
+    const opened = OpenedMeeting.of(store, record, { source: modified, sourceMeetingId: "abc" });
+    const presence = await opened.presence();
+    expect(presence?.find((stay) => stay.name === "Carol Example")?.toSec).toBe(10);
+    expect(presence?.find((stay) => stay.name === "Bob Example")?.toSec).toBe(90);
+    expect(SafeJSON.stringify(new MeetingStore(store.storage).read(record.id))).toBe(before);
+});

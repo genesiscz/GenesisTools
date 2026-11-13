@@ -513,6 +513,7 @@ export const meetingsToolsetApi = defineApi({
             summary: "An opened meeting; `id` and `title` name it. Every call reads the meeting as saved now.",
             methods: [
                 info,
+                editPerson,
                 commentsList,
                 commentRead,
                 commentWithdraw,

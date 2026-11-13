@@ -2,9 +2,11 @@ import type { EchoMetric } from "@genesiscz/utils/meetings/echo";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { RawTermEvidence } from "@genesiscz/utils/transcribe/terms";
+import { type IndicatorGap, indicatorFacts, type LabelPrehistory } from "./indicator-facts";
 import { assessIndicator } from "./speaker-indicator";
 
 /**
@@ -25,6 +27,8 @@ export interface RawMeeting {
          * through the room, so the channel cannot tell the user from the others there.
          */
         callSilent?: Array<{ fromSec: number; toSec: number }>;
+        indicatorGaps?: IndicatorGap[];
+        labels?: LabelPrehistory[];
     };
     people: Array<{
         name: string;
@@ -40,7 +44,7 @@ export interface RawMeeting {
         labelOrigin?: string;
         text: string;
         /** The microphone's share of the line's channel segments; absent when no segment overlaps it. */
-        channel?: { micShare: number };
+        channel: { micShare: number | null };
         energyMicShare?: number;
         rawEnergyMicShare?: number;
         acoustic?: EchoMetric;
@@ -49,6 +53,7 @@ export interface RawMeeting {
         speaking: string[];
         speakingUnknown?: boolean;
         indicatorIgnored?: "meeting-dominance" | "stretch-stuck";
+        indicatorReason?: "meeting-dominance" | "stretch-stuck";
         muted: string[];
         present: string[];
     }>;
@@ -94,6 +99,7 @@ export function rawMeeting(options: {
         options.energyMicShare
     );
     const selfName = record.participants.find((person) => person.self)?.name;
+    const facts = indicatorFacts(options);
     const assessment = assessIndicator({
         lines,
         selfName: selfName ?? evidence?.selfName ?? "",
@@ -104,7 +110,11 @@ export function rawMeeting(options: {
             ...((options.presence ?? record.attendance?.people)?.map((person) => person.name) ?? []),
             ...record.participants.map((person) => person.name),
             ...meeting.speakers.map((speaker) => speaker.name),
-            ...(evidence?.speaking.flatMap((reading) => reading.speaking) ?? []),
+            ...facts.people.filter(
+                (name) =>
+                    !record.participants.some((person) => sameName(person.name, name)) &&
+                    !meeting.speakers.some((speaker) => sameName(speaker.name, name))
+            ),
             ...(record.seats?.room ?? []),
             ...(record.seats?.remote.map((seat) => seat.name) ?? []),
         ]),
@@ -119,16 +129,15 @@ export function rawMeeting(options: {
             ...(record.platform ? { platform: record.platform } : {}),
             ...(record.evidence?.channels ? { channelLayout: record.evidence.channels.layout } : {}),
             ...(options.callSilent ? { callSilent: options.callSilent } : {}),
+            indicatorGaps: facts.gaps,
+            labels: facts.labels,
         },
         people: names.map((name) => {
-            const origin =
-                (record.participants.find((person) => sameName(person.name, name))?.from.includes("platform-roster")
-                    ? "platform-roster"
-                    : undefined) ??
-                originOf(name) ??
-                (evidence?.speaking.some((reading) => reading.speaking.some((shown) => sameName(shown, name)))
-                    ? "indicator"
-                    : undefined);
+            const origin = record.participants
+                .find((person) => sameName(person.name, name))
+                ?.from.includes("platform-roster")
+                ? "platform-roster"
+                : (originOf(name) ?? (facts.people.some((person) => sameName(person, name)) ? "indicator" : undefined));
             return {
                 name,
                 ...(origin ? { origin } : {}),
@@ -147,9 +156,7 @@ export function rawMeeting(options: {
                 label: line.label,
                 ...(origin ? { labelOrigin: origin } : {}),
                 text: line.text,
-                ...(line.micShare !== undefined
-                    ? { channel: { micShare: Math.round(line.micShare * 1000) / 1000 } }
-                    : {}),
+                channel: { micShare: line.micShare === undefined ? null : Math.round(line.micShare * 1000) / 1000 },
                 ...(line.energyMic !== undefined ? { energyMicShare: Math.round(line.energyMic * 1000) / 1000 } : {}),
                 ...(line.energyMicRaw !== undefined ? { rawEnergyMicShare: line.energyMicRaw } : {}),
                 ...(line.acoustic ? { acoustic: line.acoustic } : {}),
@@ -157,9 +164,10 @@ export function rawMeeting(options: {
                 speaking: Object.entries(line.speaking)
                     .sort((a, b) => b[1] - a[1])
                     .map(([name]) => name),
-                muted: line.muted ?? [],
                 speakingUnknown: line.speakingUnknown,
+                muted: line.muted ?? [],
                 ...(assessment.reasons.has(line.index) ? { indicatorIgnored: assessment.reasons.get(line.index) } : {}),
+                ...(assessment.reasons.has(line.index) ? { indicatorReason: assessment.reasons.get(line.index) } : {}),
                 present: presentAt(record, options.presence, line.startSec),
             };
         }),
@@ -167,4 +175,16 @@ export function rawMeeting(options: {
         context: record.context.map((entry) => ({ kind: entry.kind, ref: entry.ref })),
         ...(meeting.summary ? { summary: { text: meeting.summary, points: options.points } } : {}),
     };
+}
+
+/** Stable short identifiers avoid ambiguous initials and delimiter-bearing person names. */
+export function compactEvidence(raw: RawMeeting): string {
+    const names = [...new Set(raw.lines.flatMap((line) => [line.label, ...line.speaking, ...line.muted]))];
+    const short = new Map(names.map((name, index) => [name, `p${index + 1}`]));
+    const legend = names.map((name) => `${short.get(name)}=${name}`).join("; ");
+    const rows = raw.lines.map(
+        (line) =>
+            `${line.index}|${formatClock(line.fromSec)}|${short.get(line.label)}|e${line.energyMicShare ?? "?"}|s[${line.speaking.map((name) => short.get(name)).join(",")}]|m[${line.muted.map((name) => short.get(name)).join(",")}]|${line.text.replace(/\r?\n/g, " ")}`
+    );
+    return [`Legend: ${legend}`, ...rows].join("\n");
 }

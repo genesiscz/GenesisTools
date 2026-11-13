@@ -10,12 +10,12 @@ import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { OpenedMeeting } from "../lib/opened-meeting";
-import { rawMeeting } from "../lib/raw";
+import { compactEvidence, rawMeeting } from "../lib/raw";
 import { fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
 import { rawTerms } from "../lib/suggest";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
-const FORMATS = ["table", "json"] as const;
+const FORMATS = ["table", "json", "lines"] as const;
 /** The user's microphone recognized this many times more words than their own label holds: they are spread over others. */
 const VOLUME_RATIO = 2;
 /** A line this sure on the microphone is the user's (the energy rule). */
@@ -72,7 +72,7 @@ async function evidence(
         const energy = await opened.energy();
 
         // The facts only, for an agent to reason over (decision 33 a): JSON whatever --format says.
-        if (opts.raw) {
+        if (opts.raw || format === "lines") {
             // Without --word-check each language uses its own provider (`languages.<code>.wordCheck`).
             const choice =
                 opts.wordCheck === undefined
@@ -109,7 +109,7 @@ async function evidence(
                     points: await opened.summaryPoints(),
                     terms,
                 });
-                out.result(SafeJSON.stringify(raw, null, 2));
+                out.result(format === "lines" ? compactEvidence(raw) : SafeJSON.stringify(raw, null, 2));
             } finally {
                 check.check?.dispose();
             }
@@ -238,7 +238,7 @@ export function registerEvidenceCommand(program: Command): void {
             "--word-check <provider>",
             `--raw: ${WORD_CHECKS.join(" | ")} for the term part (default: each language's languages.<code>.wordCheck, else ${DEFAULT_WORD_CHECK})`
         )
-        .option("--format [format]", "table | json (json has one row per line)")
+        .option("--format [format]", "table | json | lines (compact per-line facts with a name legend)")
         .option("--json", "the same as --format json")
         .action(evidence);
 }

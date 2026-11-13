@@ -12,6 +12,7 @@ import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson } from "@genesiscz/utils/meetings/room-people";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
+import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import { OpenedMeeting } from "../opened-meeting";
@@ -19,6 +20,8 @@ import type { SuggestionReads } from "../project-suggestions";
 import { TOOL } from "../shared";
 import type { LocalSourceAudio } from "../source-audio-discovery";
 import { type LinkedSource, linkedSource } from "../sources";
+import { assessIndicator } from "../speaker-indicator";
+import { correctTranscript } from "../transcript-corrections";
 import { meetingVoices } from "../voice";
 import { correctedTranscriptRead, revisionsRead, timedTranscriptView } from "../window-reads";
 import { generateWordTimings, meetingWordTimingCache, type WordTimingGenerateDeps } from "../word-timings";
@@ -214,6 +217,19 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             return params.full ? records : records.map(meetingListRow);
         },
         "meeting.show": (params) => recordOf(storeOf(), params.ref),
+        "meeting.suggest": async (params, context) => {
+            const store = storeOf();
+            const record = recordOf(store, params.meeting);
+            const { runSuggest } = await import("../suggest-run");
+            const result = await runSuggest({
+                store,
+                record,
+                rules: ["speakers", "evidence", "terms"],
+                attendance: params.attendance,
+            });
+            context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
+            return { added: result.fresh.length, warnings: result.warnings };
+        },
         "meeting.people.edit": async (params, context) => {
             const store = storeOf();
             const current = recordOf(store, params.meeting);
@@ -247,13 +263,71 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                     dictionary: params.dictionary ?? true,
                     frontmatter: true,
                     ...(params.withSuggested !== undefined ? { withSuggested: params.withSuggested } : {}),
+                    ...(params.applyAbove !== undefined ? { applyAbove: params.applyAbove } : {}),
                 },
                 linked: deps.linkedSource?.(record),
             });
             const view = timedTranscriptView(record, applied);
+            const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
+            const evidence = await opened.evidence();
+            const measured = evidence
+                ? lineEvidence((await opened.meeting()).transcript, evidence, await opened.presence())
+                : [];
+            const assessed = assessIndicator({ lines: measured, selfName: evidence?.selfName ?? "" });
+            const timed = (deps.wordTimings?.cache ?? meetingWordTimingCache(record.id)).read(view.entries);
+            const previews = params.previewThresholds
+                ? await Promise.all(
+                      params.previewThresholds.map(async (threshold) => {
+                          const config = await opened.config();
+                          const changed = {
+                              ...config,
+                              global: {
+                                  ...config.global,
+                                  suggest: { ...config.global.suggest, applyAbove: threshold },
+                              },
+                          };
+                          const preview = correctTranscript({
+                              record,
+                              transcript: (await opened.meeting()).transcript,
+                              config: changed,
+                              format: "json",
+                              withSuggested: true,
+                              dictionary: params.dictionary ?? true,
+                          });
+                          return {
+                              threshold,
+                              entries: timedTranscriptView(record, preview).entries.map((entry) => {
+                                  const line = measured.find((line) => line.startSec === entry.startSec);
+                                  return line
+                                      ? {
+                                            ...entry,
+                                            indicator: {
+                                                names: Object.keys(line.speaking),
+                                                ignored: assessed.reasons.get(line.index),
+                                            },
+                                        }
+                                      : entry;
+                              }),
+                          };
+                      })
+                  )
+                : undefined;
             return {
                 meeting: view.meeting,
-                ...(deps.wordTimings?.cache ?? meetingWordTimingCache(record.id)).read(view.entries),
+                ...timed,
+                ...(previews ? { previews } : {}),
+                entries: timed.entries.map((entry) => {
+                    const line = measured.find((line) => line.startSec === entry.startSec);
+                    return line
+                        ? {
+                              ...entry,
+                              indicator: {
+                                  names: Object.keys(line.speaking),
+                                  ignored: assessed.reasons.get(line.index),
+                              },
+                          }
+                        : entry;
+                }),
             };
         },
         "meeting.wordTimings.generate": async (params, context) => {

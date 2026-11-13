@@ -145,6 +145,8 @@ struct MeetingContextRef: Decodable, Equatable, Hashable, Identifiable {
 }
 
 struct MeetingRecordView: Decodable, Equatable {
+    struct HistoryEntry: Decodable, Equatable { let at: String; let command: String; let change: String }
+    var history: [HistoryEntry]? = nil
     struct Speakers: Decodable, Equatable { var labels: [String: String] }
     struct Recording: Decodable, Equatable {
         struct Display: Decodable, Equatable, Hashable { let id: Int; let name: String?; let frames: Int? }
@@ -213,6 +215,15 @@ struct TranscriptWordTimingStatus: Decodable, Equatable {
 }
 
 struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
+    struct Indicator: Decodable, Equatable, Hashable {
+        let names: [String]
+        let ignored: String?
+        var text: String {
+            let names = names.isEmpty ? "No named indicator" : names.joined(separator: ", ")
+            return ignored.map { "\(names) · stuck, ignored (\($0))" } ?? names
+        }
+    }
+    var indicator: Indicator? = nil
     let id: String?
     let startSec: Double?
     let speaker: String
@@ -225,6 +236,8 @@ struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
 }
 
 struct MeetingTranscript: Decodable, Equatable {
+    struct Preview: Decodable, Equatable { let threshold: Double; let entries: [TranscriptLine] }
+    var previews: [Preview]? = nil
     let meeting: String
     let entries: [TranscriptLine]
     var wordTimings: TranscriptWordTimingStatus? = nil

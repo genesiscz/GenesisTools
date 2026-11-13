@@ -6,6 +6,7 @@ import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { isEnglishWord } from "@genesiscz/utils/transcribe/terms";
 import { contextEntryText } from "./context-file";
+import { indicatorFacts } from "./indicator-facts";
 import { OpenedMeeting } from "./opened-meeting";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { type SuggestRule, settledTermItems, suggestItems } from "./suggest";
@@ -56,7 +57,10 @@ export async function runSuggest(options: {
     const collected = await opened.collectWhenIncomplete();
     const meeting = await opened.meeting();
     const config = await opened.config();
-    const evidence = rules.includes("evidence") ? await opened.evidence() : null;
+    const evidence = rules.includes("evidence") || rules.includes("speakers") ? await opened.evidence() : null;
+    for (const gap of indicatorFacts({ meeting, evidence }).gaps) {
+        warnings.push(`Speaking indicator gap ${gap.fromSec}s to ${gap.toSec}s: ${gap.reason}`);
+    }
 
     if (rules.includes("terms")) {
         warnings.push(...contextWarnings(collected));

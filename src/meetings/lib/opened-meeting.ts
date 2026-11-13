@@ -7,15 +7,19 @@ import { AttendanceUnavailableError } from "@genesiscz/utils/meetings/platform";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
+import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { Presence } from "@genesiscz/utils/transcribe/speakers";
+import { speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { type SummaryPoint, summaryPoints } from "@genesiscz/utils/transcribe/summary";
 import { loadPresence } from "./attendance";
 import { CallTimeline } from "./call-timeline";
+import { identifiedDepartures } from "./departure";
 import { callSilentSpans, energyMicShareFor, type MicEnergy, storeCalibration } from "./energy";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./platforms";
 import { preservedSourceAudio, withPreservedSourceAudio } from "./source-audio";
 import { type LinkedSource, linkedSource, type SourceRef, sourceRefOf } from "./sources";
+import { assessIndicator } from "./speaker-indicator";
 import { configuredWordChecks, type WordCheckChoice, wordCheckFor } from "./word-check";
 
 const { log } = logger.scoped("meetings-opened");
@@ -137,7 +141,7 @@ export class OpenedMeeting {
             ui.dim(
                 `attendance: ${attendance.people.length} stays, as the meeting record keeps them (${attendance.from})`
             );
-            return (await this.timeline()).named(attendance.people);
+            return this.departurePresence((await this.timeline()).named(attendance.people));
         }
 
         const duration = (await this.meeting()).transcript.reduce(
@@ -150,7 +154,38 @@ export class OpenedMeeting {
                 (person.firstSeenSec === undefined ? [] : [{ fromSec: person.firstSeenSec, toSec: undefined }]);
             return stays.map((stay) => ({ name: person.name, fromSec: stay.fromSec, toSec: stay.toSec ?? duration }));
         });
-        return roster.length > 0 ? roster : undefined;
+        return this.departurePresence(roster.length > 0 ? roster : undefined);
+    }
+
+    /** Every reader sees the same independently identified goodbye boundary, without changing stored evidence. */
+    private async departurePresence(presence: Presence[] | undefined): Promise<Presence[] | undefined> {
+        if (!presence?.length) {
+            return presence;
+        }
+        const meeting = await this.meeting();
+        const hints = speakerStats(meeting.transcript, { participants: meeting.speakers, presence }).hints;
+        if (!hints.some((hint) => hint.kind === "leave-then-continues")) {
+            return presence;
+        }
+        const evidence = await this.evidence();
+        const selfName = evidence?.selfName ?? this.current.participants.find((person) => person.self)?.name;
+        if (!evidence || !selfName) {
+            return presence;
+        }
+        const lines = lineEvidence(meeting.transcript, evidence, presence, (await this.energy()).share);
+        const departures = identifiedDepartures({
+            hints,
+            lines,
+            selfName,
+            presence,
+            ignoredIndicator: assessIndicator({ lines, selfName }).ignored,
+        });
+        return presence.map((stay) => {
+            const departure = departures.find(
+                (event) => event.name === stay.name && event.atSec >= stay.fromSec && event.atSec < stay.toSec
+            );
+            return departure ? { ...stay, toSec: departure.atSec } : stay;
+        });
     }
 
     private async loadAttendance(spec: string, attendanceId?: string) {

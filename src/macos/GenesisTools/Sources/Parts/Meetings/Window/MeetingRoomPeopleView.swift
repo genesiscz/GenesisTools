@@ -22,6 +22,12 @@ struct MeetingRoomPeopleView: View {
             ForEach((detail.record.value?.items ?? []).filter { $0.departureText != nil }) { item in
                 Text(item.departureText ?? "").font(.caption).foregroundStyle(.secondary)
             }
+            ForEach(detail.suggestionWarnings, id: \.self) { warning in
+                HStack {
+                    Text(verbatim: warning).font(.caption).foregroundStyle(.orange)
+                    Button("Add people by hand") { edit("") }
+                }
+            }
             ScrollView(.horizontal) {
                 HStack {
                     ForEach(detail.record.value?.participants ?? [], id: \.name) { person in

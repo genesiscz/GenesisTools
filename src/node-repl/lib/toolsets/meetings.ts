@@ -349,7 +349,7 @@ export class MeetingsToolset extends ReplToolset {
                     return rowsRead({ store, record: current(), ...(lowPriority ? { lowPriority } : {}) });
                 },
                 add: async (input: z.input<typeof add.params>) => {
-                    const { findings, allowDuplicates } = add.params.parse(input);
+                    const { findings, allowDuplicates, force } = add.params.parse(input);
                     // The same anchors as `items add`; with no transcript at hand, the items are added as given.
                     const source = await opened()
                         .meeting()
@@ -370,6 +370,7 @@ export class MeetingsToolset extends ReplToolset {
                                 items: current.items,
                                 transcript: source?.transcript,
                                 allowDuplicates,
+                                force,
                             });
 
                             for (const warning of prepared.warnings) {

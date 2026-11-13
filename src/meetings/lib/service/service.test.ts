@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
@@ -356,6 +356,45 @@ async function failure(call: Promise<unknown>): Promise<Error> {
 }
 
 describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetings service, %s adapter", (kind) => {
+    test("threshold previews load together without persisting a rendering preference or record mutation", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const before = readFileSync(store.path(REVIEW.id));
+        const result = await client.call("meeting.transcript", { ref: REVIEW.id, previewThresholds: [0.5, 0.7, 1] });
+        expect(result.previews?.map((preview) => preview.threshold)).toEqual([0.5, 0.7, 1]);
+        expect(result.previews?.every((preview) => preview.entries.length > 0)).toBe(true);
+        expect(readFileSync(store.path(REVIEW.id))).toEqual(before);
+        expect(new MeetingStore(store.storage).read(REVIEW.id)?.id).toBe(REVIEW.id);
+    });
+
+    test("meeting-local people persist device and half-open stays and remove through either adapter", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        await client.call("meeting.people.edit", {
+            meeting: REVIEW.id,
+            action: "add",
+            name: "River Example",
+            fromSec: 3,
+            toSec: 8,
+            atMic: true,
+        });
+        const reopened = new MeetingStore(store.storage).read(REVIEW.id)!;
+        expect(reopened.participants.find((person) => person.name === "River Example")?.from).toContain("user");
+        expect(reopened.attendance?.people).toContainEqual({
+            name: "River Example",
+            fromSec: 3,
+            toSec: 8,
+            joinedAtExact: true,
+            leftAtExact: true,
+        });
+        expect(reopened.seats?.room).toContain("River Example");
+        expect(reopened.seats?.microphones?.find((group) => group.id === "self")?.people).toContain("River Example");
+        await client.call("meeting.people.edit", { meeting: REVIEW.id, action: "remove", name: "River Example" });
+        expect(
+            new MeetingStore(store.storage)
+                .read(REVIEW.id)!
+                .participants.some((person) => person.name === "River Example")
+        ).toBe(false);
+    });
+
     test("meetings.list answers the list rows, the whole records with full, and filters like list --json", async () => {
         const { client } = await ADAPTERS[kind]();
 
@@ -1075,6 +1114,7 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             },
             { kind: "reason", pieces: [{ text: "Rules: presence" }] },
         ]);
+
         expect(rows.rows[0]?.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
             ["suggested", "Alex Example", 0.82],
             ["candidate", "Dana Example", undefined],
@@ -1816,6 +1856,7 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meeting.show", { ref: REVIEW.id });
     await ask(window, "meeting.people.edit", { meeting: "nope", action: "add", name: "Dana Example" });
     await ask(window, "meeting.voice", { meeting: "nope" });
+    await ask(window, "meeting.suggest", { meeting: "nope" });
     await ask(window, "meeting.show", { ref: "nope" }, "No meeting: meeting-not-found.");
     await ask(window, "meeting.show", { ref: "2026-11-03" }, "A prefix of two meetings: meeting-ref.");
     await ask(window, "meeting.transcript", { ref: REVIEW.id });

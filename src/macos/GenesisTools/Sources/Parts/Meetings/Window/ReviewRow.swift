@@ -344,7 +344,7 @@ struct ReviewRowView: View, Equatable {
                 }
             }
             if row.edit != "none" {
-                GhostButton(Self.editWord(row.edit), symbol: "pencil", tooltip: "Type your own \(Self.editWord(row.edit).lowercased()) (Return)") {
+                GhostButton(row.choices.contains { $0.role == "split" } ? "Somebody else…" : Self.editWord(row.edit), symbol: "pencil", tooltip: "Type your own \(Self.editWord(row.edit).lowercased()) (Return)") {
                     detail.edit(row)
                 }
                 .disabled(busy)

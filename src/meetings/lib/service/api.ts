@@ -128,6 +128,9 @@ export const meetingListRowSchema = z.object({
  * line's start, at least a moment after its own), so a player highlights the line it hears (G-TR-1).
  */
 export const transcriptLineSchema = z.object({
+    indicator: z
+        .object({ names: z.array(z.string()), ignored: z.enum(["meeting-dominance", "stretch-stuck"]).optional() })
+        .optional(),
     words: z.array(alignedWordSchema).optional(),
     id: z.string().optional(),
     startSec: z.number().optional(),
@@ -189,6 +192,8 @@ const transcript = defineMethod({
             ref: meetingRef,
             /** Also apply the suggested items at or above the apply bar (a preview). */
             withSuggested: z.boolean().optional(),
+            previewThresholds: z.array(z.number().min(0).max(1)).max(12).optional(),
+            applyAbove: z.number().min(0).max(1).optional(),
             /** False leaves the dictionary out. */
             dictionary: z.boolean().optional(),
         })
@@ -197,6 +202,7 @@ const transcript = defineMethod({
     result: z.object({
         meeting: z.string(),
         entries: z.array(transcriptLineSchema),
+        previews: z.array(z.object({ threshold: z.number(), entries: z.array(transcriptLineSchema) })).optional(),
         wordTimings: wordTimingMetadataSchema.optional(),
     }),
     resultName: "{ meeting, entries: { id?, startSec?, speakerId?, speaker, text }[] }",
@@ -1206,6 +1212,15 @@ const dictionaryTest = defineMethod({
     effect: "read",
 });
 
+const meetingSuggest = defineMethod({
+    name: "meeting.suggest",
+    params: z.object({ meeting: meetingRef, attendance: z.string().optional() }).strict(),
+    result: z.object({ added: z.number().int().nonnegative(), warnings: z.array(z.string()) }),
+    resultName: "{ added, warnings }",
+    doc: "Run the normal suggestion rules and return recoverable attendance and word-check warnings to the window.",
+    effect: "reversible",
+});
+
 export const meetingPeopleEdit = defineMethod({
     name: "meeting.people.edit",
     params: z
@@ -1251,6 +1266,7 @@ export const meetingsApi = defineApi({
         show,
         meetingPeopleEdit,
         meetingVoice,
+        meetingSuggest,
         transcript,
         wordTimingsGenerate,
         revisions,
