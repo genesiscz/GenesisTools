@@ -3,7 +3,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { Conn, Page, targets } from "../lib/cdp.ts";
+import { connect, Page, targets } from "../lib/cdp.ts";
 import { sanitizeHar } from "../lib/har-io.ts";
 import {
     AmbiguousDevToolsTargetError,
@@ -193,7 +193,7 @@ never collected at all.`
                 );
             }
 
-            const page = new Page(new Conn(pick.devtools.webSocketDebuggerUrl), pick.devtools);
+            const page = new Page(connect(pick.devtools, port), pick.devtools);
             let dump: ReturnType<typeof parsePanelDump>;
 
             try {

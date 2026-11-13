@@ -15,7 +15,9 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { defaultLogPath } from "./config";
+// From its home, not through ./config: config imports the diff section, which imports diff/full, which imports this
+// file, so a process that loaded diff/full first met FULL_DIFF_MODES before its initialization.
+import { defaultLogPath } from "./sections/core";
 
 export interface DecisionRecord {
     at: string;

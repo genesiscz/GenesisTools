@@ -26,7 +26,10 @@ import type { ModelPrice, ModelPriceEntry, PricingTable, TokenTotals } from "./t
  */
 const PRICED_PROVIDERS = ["anthropic", "openai", "openai-sub", "xai"] as const;
 
-/** $/Mtok. cacheWrite ≈ 1.25× input, cacheRead ≈ 0.1× input (Anthropic public ratios). */
+/**
+ * $/Mtok. A cache rate the catalog entry lacks after its provider family's default (`cache-rates.ts`) bills 0, as
+ * `calculateCallCostUsd` bills it, so `tools ask` and the spend reports price one call alike.
+ */
 function fromRegistry(): PricingTable {
     const table: PricingTable = {};
 
@@ -42,8 +45,8 @@ function fromRegistry(): PricingTable {
             const price: ModelPriceEntry = {
                 input: model.pricing.inputPer1M,
                 output: model.pricing.outputPer1M,
-                cacheWrite: model.pricing.cachedCreatePer1M ?? model.pricing.inputPer1M * 1.25,
-                cacheRead: model.pricing.cachedReadPer1M ?? model.pricing.inputPer1M * 0.1,
+                cacheWrite: model.pricing.cachedCreatePer1M ?? 0,
+                cacheRead: model.pricing.cachedReadPer1M ?? 0,
                 ...(model.pricing.cachedCreate1hPer1M === undefined
                     ? {}
                     : { cacheWrite1h: model.pricing.cachedCreate1hPer1M }),
@@ -123,8 +126,8 @@ export function resolvePrice(
     return {
         input: resolved.inputPer1M,
         output: resolved.outputPer1M,
-        cacheWrite: resolved.cachedCreatePer1M ?? resolved.inputPer1M * 1.25,
-        cacheRead: resolved.cachedReadPer1M ?? resolved.inputPer1M * 0.1,
+        cacheWrite: resolved.cachedCreatePer1M ?? 0,
+        cacheRead: resolved.cachedReadPer1M ?? 0,
         ...(resolved.cachedCreate1hPer1M === undefined ? {} : { cacheWrite1h: resolved.cachedCreate1hPer1M }),
     };
 }

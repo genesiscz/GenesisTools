@@ -1,6 +1,7 @@
 import { getGenesisToolsStorage } from "@genesiscz/utils/GenesisTools";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
+import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 
 export type BrowserName = "brave" | "safari" | "chrome" | "firefox" | "edge" | "arc";
 
@@ -74,7 +75,9 @@ export class Browser {
         logger.debug(`Browser preference set to: ${browser ?? "system default"}`);
     }
 
+    /** Rejects in a test process (and in a child a test spawns) before it reads the preference or spawns the opener. */
     static async open(url: string, options?: BrowserOpenOptions): Promise<OpenResult> {
+        refuseHostEffectInTest("Browser.open", "Inject the opener and assert the URL that would have been opened.");
         const browser = options?.browser ?? (await Browser.getPreferred());
         const cmd = Browser.buildCommand(url, browser);
 

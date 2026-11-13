@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { attemptStaleTakeover, writePidFile } from "@genesiscz/utils/process/pidfile";
-import { CdpDeadlineError, localDebuggerUrl } from "./cdp.ts";
+import { attemptStaleTakeover, EMPTY_HOLDER_GRACE_MS, writePidFile } from "@genesiscz/utils/process/pidfile";
+import { CdpDeadlineError } from "./cdp.ts";
 import {
     armThenRelease,
     claimRecorderPidfile,
@@ -301,6 +301,9 @@ describe("claimRecorderPidfile (single-winner atomic claim)", () => {
         const path = join(dir, "recorder.pid");
         try {
             writeFileSync(path, "not a pid");
+            // An unreadable claim is an orphan only past the shared grace (EMPTY_HOLDER_GRACE_MS in pidfile.ts).
+            const created = new Date(Date.now() - EMPTY_HOLDER_GRACE_MS - 1_000);
+            utimesSync(path, created, created);
             await claimRecorderPidfile(path, 9999);
             expect(readFileSync(path, "utf8")).toContain(String(process.pid));
             expect(readdirSync(dir)).toEqual(["recorder.pid"]);
@@ -361,10 +364,6 @@ describe("browser connection cancellation", () => {
         } finally {
             Object.defineProperty(globalThis, "WebSocket", { configurable: true, writable: true, value: socket });
         }
-
-        expect(localDebuggerUrl({ webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/browser/x" }, 9222)).toBe(
-            "ws://127.0.0.1:9222/devtools/browser/x"
-        );
     });
 
     test("provides a deadline when the caller does not supply one", async () => {

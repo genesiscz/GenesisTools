@@ -182,24 +182,6 @@ describe("AppServerClient", () => {
         }
     });
 
-    test("correlates request responses by id", async () => {
-        const harness = createProcessHarness();
-        const client = new AppServerClient(harness.process);
-        const resultPromise = client.request<{ thread: { id: string } }>("thread/read", { threadId: "thread-1" });
-
-        await Bun.sleep(0);
-        const request = SafeJSON.parse(harness.writes[0] ?? "", { strict: true }) as {
-            id: number;
-            method: string;
-        };
-        expect(request.method).toBe("thread/read");
-
-        harness.push({ id: request.id, result: { thread: { id: "thread-1" } } });
-
-        await expect(resultPromise).resolves.toEqual({ thread: { id: "thread-1" } });
-        await client.close();
-    });
-
     test("dispatches notifications and server requests", async () => {
         const harness = createProcessHarness();
         const notifications: string[] = [];

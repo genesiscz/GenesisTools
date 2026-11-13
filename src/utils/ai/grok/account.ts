@@ -1,8 +1,9 @@
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { MissingCredential } from "@genesiscz/utils/ai/providers/account-features";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { grokLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
+import { resolveSecret } from "@genesiscz/utils/security";
 import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
 import { GrokAuthExpiredError } from "./auth-errors";
 import type { StoredGrantSource } from "./client";
@@ -22,9 +23,9 @@ export interface ResolvedGrokSubToken {
 /**
  * Resolve the JWT for a `grok-sub` account in ~/.genesis-tools/ai/config.json.
  *
- * The account is a REFERENCE, not a token copy: `tokens.authFile` (default
+ * The account is a REFERENCE, not a token copy: `credentials.authFile` (default
  * `~/.grok/auth.json`) points at the Grok CLI's auth file, which the CLI keeps
- * refreshed. A stored `tokens.accessToken` wins when present (for setups
+ * refreshed. A stored `credentials.accessToken` wins when present (for setups
  * without the CLI), but goes stale on its own — the file reference is the
  * recommended mode.
  */
@@ -82,11 +83,11 @@ export async function resolveGrokSubToken(
         };
     }
 
-    const config = await AIConfig.load();
-    let account: AIAccountEntry | undefined;
+    const store = await AiConfigStore.load();
+    let account: AccountEntry | undefined;
 
     if (accountName) {
-        account = config.getAccount(accountName);
+        account = store.account(accountName);
 
         if (!account) {
             throw new Error(`Account "${accountName}" not found in AI config`);
@@ -96,7 +97,7 @@ export async function resolveGrokSubToken(
             throw new Error(`Account "${accountName}" is "${account.provider}", expected "grok-sub"`);
         }
     } else {
-        account = config.getAccountsByProvider("grok-sub")[0];
+        account = store.accounts({ provider: "grok-sub" })[0];
 
         if (!account) {
             throw new Error('No "grok-sub" account configured in ~/.genesis-tools/ai/config.json');
@@ -108,7 +109,9 @@ export async function resolveGrokSubToken(
     // entry survives without its file, and falling back to the default home
     // would silently serve (and refresh) another user's credential (PR #360
     // review t1).
-    if (!account.tokens.authFile && !account.tokens.accessToken) {
+    const credentials = account.credentials;
+
+    if (!credentials.authFile && !credentials.accessToken) {
         const refusal = grokCredentialRefusal(account.name);
         throw new Error(`${refusal.message} Run: ${refusal.remedy}`);
     }
@@ -117,14 +120,13 @@ export async function resolveGrokSubToken(
     // token, so expiry is answered by the OIDC refresh grant against THAT grant, and the
     // Grok CLI's file is never read for it: nothing in that file is this account's.
     //
-    // `expiresAt` is what tells this shape apart from a pasted JWT, and it has to be:
-    // `AIConfig` serves the v3 PROJECTION of the store (`v3-adapter.ts`), which resolves
-    // every vault ref to a plaintext string, so a `SecureRef` test here can never fire.
+    // `expiresAt` is what tells this shape apart from a pasted JWT, and it has to be: a
+    // pasted JWT is vaulted too, so a `SecureRef` test cannot tell the two apart.
     // Only a grant we performed writes an expiry beside the token, and `clearCredentials`
     // removes the two together. Keying on `refreshToken` alone would send a grant the
     // issuer returned WITHOUT one to the Grok CLI's default file, which is exactly the
     // cross-account read this branch exists to prevent.
-    if (!account.tokens.authFile && (account.tokens.expiresAt !== undefined || account.tokens.refreshToken)) {
+    if (!credentials.authFile && (credentials.expiresAt !== undefined || credentials.refreshToken)) {
         const name = account.name;
 
         return {
@@ -143,19 +145,22 @@ export async function resolveGrokSubToken(
         };
     }
 
-    const authPath = account.tokens.authFile ?? grokAuthPath();
+    const authPath = credentials.authFile ?? grokAuthPath();
 
     // An explicit `authFile` reference wins over stored tokens (which can go
     // stale on their own — the referenced file is CLI-refreshed).
-    if (account.tokens.accessToken && !account.tokens.authFile) {
+    // Resolved here, where it is spent: only the stored-token branch reads the vault.
+    const storedToken = credentials.authFile ? undefined : await resolveSecret(credentials.accessToken);
+
+    if (storedToken) {
         // A stored token carries no refresh metadata of its own, and `authPath`
         // here is only the CLI's default file — whoever the CLI happens to be
         // logged in as. Refreshing from it BLIND would hand back a DIFFERENT
         // account's token and quietly cross a billing boundary. So the default
         // file is used only when it PROVES it carries the same identity as the
         // copy that expired; without that proof, expiry stays fatal.
-        if (isTokenExpired(decodeJwtClaims(account.tokens.accessToken))) {
-            if (await holdsSameIdentity(account.tokens.accessToken, authPath)) {
+        if (isTokenExpired(decodeJwtClaims(storedToken))) {
+            if (await holdsSameIdentity(storedToken, authPath)) {
                 logger.info(
                     { account: account.name, authPath },
                     "grok: stored accessToken expired; the default auth file proves the same identity, resolving from it"
@@ -176,7 +181,7 @@ export async function resolveGrokSubToken(
             throw new GrokAuthExpiredError(authPath);
         }
 
-        return { token: account.tokens.accessToken, authPath, account: pick(account) };
+        return { token: storedToken, authPath, account: pick(account) };
     }
 
     return { token: await tokenFromAuthFile(authPath, options?.noRefresh), authPath, account: pick(account) };
@@ -239,6 +244,6 @@ async function ensureFreshToken(token: string, authPath: string, noRefresh?: boo
     });
 }
 
-function pick(account: AIAccountEntry): { name: string; label?: string } {
+function pick(account: AccountEntry): { name: string; label?: string } {
     return { name: account.name, label: account.label };
 }

@@ -34,7 +34,7 @@ function choice(name: string, type: string, modelId: string, systemPromptPrefix?
         models: [modelInfo(name, modelId)],
         config: { name, envKey: "NONE" } as DetectedProvider["config"],
         subscription: type.endsWith("-sub"),
-        account: { name: `${name}-account` },
+        account: { id: `acc_${name}`, name: `${name}-account` },
         ...(systemPromptPrefix ? { systemPromptPrefix } : {}),
     };
 

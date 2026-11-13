@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { withCacheRateDefaults } from "./cache-rates";
 import { type LiteLLMModelPricing, LiteLLMPricingFetcher } from "./litellm";
 import {
     clearPricingCache,
@@ -175,6 +176,7 @@ describe("pricing ladder", () => {
             inputPer1M: 2.5,
             outputPer1M: 15,
             cachedReadPer1M: 0.25,
+            cachedCreatePer1M: 2.5,
         });
         expect(await pricingFor("openai-sub", "gpt-5.4")).toBeUndefined();
     });
@@ -482,6 +484,21 @@ describe("catalog entries carrying rules", () => {
         }
 
         expect(effectivePricing(opus, { at: new Date("2026-07-29"), contextTokens: 900_000 })).toEqual(opus);
+    });
+});
+
+describe("withCacheRateDefaults", () => {
+    test("each provider family fills only the cache rates its price list leaves out", () => {
+        const bare: ModelPricing = { inputPer1M: 4, outputPer1M: 20 };
+
+        expect(withCacheRateDefaults(bare, "anthropic")).toEqual({
+            ...bare,
+            cachedCreatePer1M: 5,
+            cachedReadPer1M: 0.4,
+        });
+        expect(withCacheRateDefaults({ ...bare, cachedReadPer1M: 1 }, "anthropic").cachedReadPer1M).toBe(1);
+        expect(withCacheRateDefaults(bare, "openai")).toEqual({ ...bare, cachedCreatePer1M: 4 });
+        expect(withCacheRateDefaults(bare, "xai")).toEqual(bare);
     });
 });
 

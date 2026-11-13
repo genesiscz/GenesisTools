@@ -1,9 +1,6 @@
 import { installServer } from "@app/mcp-manager/commands/install";
 import { ClaudeProvider } from "@app/mcp-manager/utils/providers/claude.js";
-import { CodexProvider } from "@app/mcp-manager/utils/providers/codex.js";
-import { CursorProvider } from "@app/mcp-manager/utils/providers/cursor.js";
-import { GeminiProvider } from "@app/mcp-manager/utils/providers/gemini.js";
-import { GrokProvider } from "@app/mcp-manager/utils/providers/grok.js";
+import { defaultProviders } from "@app/mcp-manager/utils/providers/index.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -45,11 +42,6 @@ export async function genesisToolsMcpRegistration(
 
     const config = await reader.readConfig();
     return config.mcpServers?.["genesis-tools"] ? "registered" : "not-registered";
-}
-
-/** Mirrors the private getProviders() in src/mcp-manager/index.ts (not exported). */
-function buildProviders(): MCPProvider[] {
-    return [new ClaudeProvider(), new GeminiProvider(), new CodexProvider(), new CursorProvider(), new GrokProvider()];
 }
 
 /**
@@ -94,7 +86,7 @@ export async function installGenesisToolsMcp(
     options: { agent?: string; providers?: MCPProvider[] } = {}
 ): Promise<void> {
     const a = buildInstallArgs(options);
-    const providers = options.providers ?? buildProviders();
+    const providers = options.providers ?? defaultProviders();
     const target = providers.find((provider) => provider.getName().toLowerCase() === a.options.provider);
 
     if (!target || !(await target.configExists())) {

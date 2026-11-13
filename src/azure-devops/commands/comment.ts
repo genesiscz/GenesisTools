@@ -8,9 +8,9 @@ import {
     resolveWorkItemId,
 } from "@app/azure-devops/lib/comments";
 import { requireConfig } from "@app/azure-devops/utils";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -139,6 +139,7 @@ export function registerCommentCommand(program: Command): void {
                     const answer = await p.confirm({
                         message: `Delete comment ${commentId} on #${workItemId}? This cannot be undone.`,
                         initialValue: false,
+                        cancel: "back",
                     });
                     return !p.isCancel(answer) && answer === true;
                 },

@@ -126,7 +126,7 @@ export function registerCompareScreenshotCommand(program: Command): void {
                 mismatched = mismatchedPixels;
 
                 if (opts.diffOut && diff) {
-                    await Bun.write(opts.diffOut, encodeRgbaToPng(diff, a.width, a.height));
+                    await Bun.write(opts.diffOut, await encodeRgbaToPng(diff, a.width, a.height));
                 }
             }
 
@@ -134,7 +134,7 @@ export function registerCompareScreenshotCommand(program: Command): void {
 
             if (opts.annotateOut && regions) {
                 const drawn = await renderAnnotationPlan({
-                    input: resized ? encodeRgbaToPng(b.data, b.width, b.height) : bPath,
+                    input: resized ? await encodeRgbaToPng(b.data, b.width, b.height) : bPath,
                     annotations: regionAnnotations(regions),
                 });
                 await Bun.write(opts.annotateOut, drawn.png);

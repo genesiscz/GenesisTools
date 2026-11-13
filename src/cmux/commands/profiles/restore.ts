@@ -9,11 +9,11 @@ import {
 } from "@app/cmux/lib/restore";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
 import type { Profile } from "@app/cmux/lib/types";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -95,7 +95,7 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
             return;
         }
         const proceed = await withCancel(
-            p.confirm({ message: `Create ${plan.workspaces.length} workspace(s)?`, initialValue: true })
+            p.confirm({ message: `Create ${plan.workspaces.length} workspace(s)?`, initialValue: true, cancel: "back" })
         );
         if (!proceed) {
             p.cancel("Aborted.");

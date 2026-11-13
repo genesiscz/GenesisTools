@@ -25,9 +25,9 @@ import {
     sendStaged,
     stageAnswer,
     startAnswers,
-    takesSeveral,
 } from "./answers";
 import { liveAgo } from "./live";
+import { takesSeveral } from "./option-labels";
 import { type Feature, type Host, logMod, settingsOf } from "./shared";
 import {
     actionRow,
@@ -163,7 +163,7 @@ export function asksIn(text: string): OpenDecision[] {
             }
         }
 
-        const multiple = takesSeveral({ prompt: words.join("\n"), options });
+        const multiple = takesSeveral({ prompt: words.join("\n"), options: options.map((option) => option.letter) });
 
         found.push({ n: Number(match[2]), title, options, ...(multiple ? { multiple } : {}) });
         i = j - 1;

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { parseStatusPorcelainV2Z } from "@genesiscz/utils/git/porcelain";
 import { logger } from "@genesiscz/utils/logger";
-import { captureSync } from "@genesiscz/utils/process/ps";
+import { captureSync } from "@genesiscz/utils/process/capture";
 
 /** The checkout this code runs from; the services it lists run from the same tree. */
 export const REPO_ROOT = join(moduleDir(import.meta), "..", "..", "..");

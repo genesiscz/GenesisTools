@@ -14,6 +14,7 @@ import {
     unlinkSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { changeLogFolders, changeLogPathIn } from "@genesiscz/utils/agents/change-log";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -162,22 +163,18 @@ export function namedOids({
     try {
         // Every folder is asked for its change log, a session id that starts with "_" included (safeSessionId takes
         // one). The store's own `_objects` and other folders without a change log are skipped below as absent logs.
-        names = readdirSync(logsDir);
+        // A missing folder lists nothing.
+        names = changeLogFolders(logsDir);
     } catch (error) {
-        if (!isAbsent(error)) {
-            throw new Error(`cannot list the change logs in ${logsDir}, so the objects they name are unknown`, {
-                cause: error,
-            });
-        }
-
-        log.debug({ error, logsDir }, "no change logs");
-        return named;
+        throw new Error(`cannot list the change logs in ${logsDir}, so the objects they name are unknown`, {
+            cause: error,
+        });
     }
 
     const sinceIso = new Date(since).toISOString();
 
     for (const name of names) {
-        const path = join(logsDir, name, "changes.jsonl");
+        const path = changeLogPathIn(logsDir, name);
         const from = offsets?.get(path) ?? 0;
         let end: number;
 

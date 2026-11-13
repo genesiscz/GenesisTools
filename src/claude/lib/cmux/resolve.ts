@@ -85,6 +85,41 @@ function claudeContinuedIn(): (sessionId: string) => Promise<string | undefined>
     };
 }
 
+/**
+ * The live id of a full session id: the end of its continuation chain (the session continued in another id), or the
+ * id itself when it did not continue or the pointer cannot be read. An id query that types into a session follows it
+ * first, as `findSessionTargets` does.
+ */
+export async function followedSessionId(sessionId: string, deps: ResolveDeps = {}): Promise<string> {
+    // A test that injects no lookup gets none: the real one reads this machine's history index and transcripts.
+    const successorOf = deps.continuedIn ?? (isTestProcess() ? undefined : claudeContinuedIn());
+
+    if (!successorOf) {
+        return sessionId;
+    }
+
+    // Loaded here, not at the top: the reader registry costs a `send` or `focus` that resolves a recorded pane about
+    // 130 ms of start-up, and only this slower path needs it.
+    const { followSessionContinuations } = await import("@genesiscz/utils/agent-sessions/session-backward");
+    const { liveId, chain } = await followSessionContinuations(sessionId, (id) =>
+        successorOf(id).catch((err) => {
+            log.debug({ err, sessionId: id }, "continued-in lookup failed; searching for the id as named");
+            return undefined;
+        })
+    );
+
+    if (liveId !== sessionId) {
+        log.info({ query: sessionId, liveId, chain }, "the session continued in another id; searching for it");
+    }
+
+    return liveId;
+}
+
+/** A full session id (a UUID), as an id query that may skip the text matcher. */
+export function isFullSessionId(query: string): boolean {
+    return FULL_SESSION_ID.test(query.trim());
+}
+
 /** A session id (or prefix) as `focus`/`send` accept it. */
 export const SESSION_ID_QUERY = /^[0-9a-f-]{8,}$/i;
 
@@ -308,22 +343,11 @@ export async function findSessionTargets(
         sessionQuery && opts.followContinued !== false && FULL_SESSION_ID.test(queryTrim)
             ? queryTrim.toLowerCase()
             : null;
-    // A test that injects no lookup gets none: the real one reads this machine's history index and transcripts.
-    const successorOf = deps.continuedIn ?? (isTestProcess() ? undefined : claudeContinuedIn());
 
-    if (continuedFrom && successorOf) {
-        // Loaded here, not at the top: the reader registry costs a `send` or `focus` that resolves a recorded pane
-        // about 130 ms of start-up, and only this slower path needs it.
-        const { followSessionContinuations } = await import("@genesiscz/utils/agent-sessions/session-backward");
-        const { liveId, chain } = await followSessionContinuations(continuedFrom, (sessionId) =>
-            successorOf(sessionId).catch((err) => {
-                log.debug({ err, sessionId }, "continued-in lookup failed; searching for the id as named");
-                return undefined;
-            })
-        );
+    if (continuedFrom) {
+        const liveId = await followedSessionId(continuedFrom, deps);
 
         if (liveId !== continuedFrom) {
-            log.info({ query: continuedFrom, liveId, chain }, "the session continued in another id; searching for it");
             const live = await findSessionTargets(liveId, {
                 ...opts,
                 followContinued: false,

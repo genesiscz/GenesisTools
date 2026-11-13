@@ -1,15 +1,17 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import type { PortInfo } from "@app/dev-dashboard/lib/ports/types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { PortsTable } from "@/components/port-killer/PortsTable";
 import { expectedKillCommand, usePorts } from "@/hooks/usePorts";
-import { portsApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 export function PortKillerRoute() {
     const queryClient = useQueryClient();
     const { data } = usePorts();
 
     const killMutation = useMutation({
-        mutationFn: (port: PortInfo) => portsApi.kill(port.pid, expectedKillCommand(port)),
+        mutationFn: (port: PortInfo) =>
+            dashboard.call(ENDPOINTS.portsKill, { pid: port.pid, expectedCommand: expectedKillCommand(port) }),
         onSettled: () => {
             queryClient.invalidateQueries({ queryKey: ["ports"] });
         },

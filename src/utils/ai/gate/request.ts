@@ -1,4 +1,3 @@
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { GATE_ONLY_TAG, isGateOnly } from "@genesiscz/utils/ai/config/selectors";
@@ -9,6 +8,7 @@ import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import { longLivedTokenUsable } from "@genesiscz/utils/claude/token-verify";
 import { aiAccountsListCommand, aiConfigAccountAddCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
+import { resolveSecret } from "@genesiscz/utils/security";
 import { type Approver, appApprover } from "./approve";
 import { describeClient, type ProcessLookup } from "./client-identity";
 import { appendAudit, findGrant, rememberGrant } from "./grants";
@@ -50,13 +50,15 @@ export type TokenResolver = (
 export type TokenKindResolver = (provider: GateProvider, account: AccountEntry) => Promise<TokenKind>;
 
 async function longLivedFor(account: AccountEntry): Promise<{ token: string; expiresAt: number | null } | null> {
-    const tokens = (await AIConfig.load()).getAccount(account.name)?.tokens;
+    const stored = (await AiConfigStore.load()).account(account.id)?.credentials;
+    const longLivedToken = await resolveSecret(stored?.longLivedToken);
+    const expiresAt = stored?.longLivedTokenExpiresAt;
 
-    if (!tokens?.longLivedToken || !longLivedTokenUsable(tokens)) {
+    if (!longLivedToken || !longLivedTokenUsable({ longLivedToken, longLivedTokenExpiresAt: expiresAt })) {
         return null;
     }
 
-    return { token: tokens.longLivedToken, expiresAt: tokens.longLivedTokenExpiresAt ?? null };
+    return { token: longLivedToken, expiresAt: expiresAt ?? null };
 }
 
 /**

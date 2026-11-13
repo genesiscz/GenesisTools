@@ -4,9 +4,9 @@ import {
     resolveProjectRoot,
     storeForProject,
 } from "@app/todo/lib/project";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -39,6 +39,7 @@ export function createRemoveCommand(): Command {
             if (isInteractive() && !opts.yes) {
                 const confirm = await p.confirm({
                     message: `Remove "${existing.title}" (${id})?`,
+                    cancel: "back",
                 });
 
                 if (p.isCancel(confirm) || !confirm) {

@@ -37,6 +37,7 @@ const KIND_COLOR: Record<FailureKind, (text: string) => string> = {
     crash: pc.magenta,
     exit: pc.red,
     interrupt: pc.dim,
+    deadline: pc.cyan,
 };
 
 function withWindow(command: Command, since = "24h"): Command {
@@ -270,8 +271,19 @@ function registerShow(logs: Command): void {
                 }
             }
 
+            // A deadline record is about one child command of the run: which, where, and under what bound.
+            if (failure.child) {
+                const bound = failure.child.defaulted
+                    ? "the default"
+                    : (failure.child.reason ?? (failure.child.timeoutMs === 0 ? "no deadline" : "a bare number"));
+                out.println(`\n${pc.bold("child")}`);
+                out.println(`${pc.dim("command".padEnd(10))} ${failure.child.command.join(" ")}`);
+                out.println(`${pc.dim("cwd".padEnd(10))} ${failure.child.cwd}`);
+                out.println(`${pc.dim("bound".padEnd(10))} ${failure.child.timeoutMs} ms (${bound})`);
+            }
+
             if (failure.stack) {
-                out.println(`\n${pc.bold("stack")}\n${pc.dim(failure.stack)}`);
+                out.println(`\n${pc.bold(failure.child ? "stack of the call" : "stack")}\n${pc.dim(failure.stack)}`);
             }
 
             if (failure.stderrTail) {
@@ -291,6 +303,7 @@ function registerCrashes(logs: Command): void {
         "7d"
     ).action((options: WindowOptions) => {
         const window = windowOf(options);
+        // Only crashes: a command deadline killed a child, not the tool (`logs failures --kind deadline` lists those).
         const failures = loadFailures({ window, filter: { kinds: ["crash"] } });
         const reports = crashReports(window);
         if (options.json) {

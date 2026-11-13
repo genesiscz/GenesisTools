@@ -2,22 +2,34 @@ import { sessionOpenDialog, sessionOpenRecords } from "@app/claude/lib/cmux/dial
 import { describeMatch, type FocusTarget, isUnambiguous, sessionIdsIn } from "@app/claude/lib/cmux/focus";
 import {
     findSessionTargets,
+    followedSessionId,
     identifiesExactSession,
+    isFullSessionId,
     type ResolveDeps,
     retryAfterStaleRefs,
     type SessionTargetsResult,
     SOFT_SOURCES,
     tmuxMissHint,
 } from "@app/claude/lib/cmux/resolve";
+import { titleMatchKeys } from "@app/cmux/lib/title-match";
 import { dialogRefusal } from "@genesiscz/utils/agents/dialogs/guard";
 import { type DialogKeyPress, planDialogKeys } from "@genesiscz/utils/agents/dialogs/keys";
 import { type OpenDialog, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
+import type {
+    SessionInput,
+    SessionInputDeps,
+    SessionInputOutcome,
+    SessionInputRefusal,
+} from "@genesiscz/utils/ai/live-sessions/input";
 import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { isCmuxInvalidParams } from "@genesiscz/utils/cmux/lib/command-error";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
+import type { LiveAgentSurface } from "@genesiscz/utils/cmux/live-surfaces";
+import { writeSurfaceInput } from "@genesiscz/utils/cmux/surface-input";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isTestProcess } from "@genesiscz/utils/test-process";
 
 const { log } = logger.scoped("claude-cmux-send");
 
@@ -52,6 +64,11 @@ export interface SendCommandDeps extends ResolveDeps {
     openDialog?: (sessionId: string) => Promise<OpenDialog | null>;
     /** The session's open dialog records, newest first; defaults to `sessionOpenRecords`. */
     openRecords?: (sessionId: string) => OpenQuestion[];
+    /**
+     * The guarded session input a full session id types through (`sendToSession`). A test process gets none unless it
+     * injects one, because the real one reads this Mac's cmux tree, processes and tmux; the id then takes the matcher.
+     */
+    sessionInput?: (input: SessionInput, deps?: SessionInputDeps) => Promise<SessionInputOutcome>;
 }
 
 /**
@@ -85,6 +102,17 @@ export type PaneSendOutcome =
           target: FocusTarget;
           surfaceId: string;
           source: string;
+      }
+    | {
+          kind: "refused";
+          query: string;
+          sessionId: string;
+          /** The guarded session input's refusal. */
+          refusal: SessionInputRefusal;
+          reason: string;
+          /** Part of the input may be in the pane already (a write timed out, or the Enter after a typed text refused). */
+          mayHaveLanded?: boolean;
+          dialog?: OpenDialog;
       }
     | { kind: "unavailable"; reason: string };
 
@@ -227,16 +255,24 @@ function optionRefusal({
     return { kind: "option-refused", query, sessionId, reason, option: opts.option };
 }
 
+/** Dialog presses as the session input's keys: a named key, or characters typed through `cmux send`. */
+function inputKeys(presses: readonly DialogKeyPress[]): SessionInput["keys"] {
+    return presses.map((press) => ("key" in press ? press.key : { text: press.text }));
+}
+
 async function press(where: string[], presses: readonly DialogKeyPress[]): Promise<void> {
-    for (const key of presses) {
-        // `--force`: the dialog is the target here, so cmux's own draft and dialog check must not stop the press.
-        if ("key" in key) {
-            await runCmuxOk(["send-key", ...where, "--force", key.key]);
-        } else {
-            await runCmuxOk(["send", ...where, "--force", "--", key.text]);
-        }
+    // Forced: the dialog is the target here, so cmux's own draft and dialog check must not stop the press.
+    const wrote = await writeSurfaceInput({ where, keys: inputKeys(presses), force: true });
+
+    if (!wrote.ok) {
+        throw new Error(wrote.detail);
     }
 }
+
+/** The keys that answer the session's open question dialog with `--option`, or the refusal; nothing is pressed yet. */
+type OptionPlan =
+    | { ok: true; sessionId: string; dialog: string; presses: DialogKeyPress[]; index: number; label: string }
+    | { ok: false; outcome: PaneSendOutcome };
 
 /**
  * `--option`: answer the session's open question dialog by its option key, never by free text (handoff h_bgj1m68y
@@ -244,6 +280,88 @@ async function press(where: string[], presses: readonly DialogKeyPress[]): Promi
  * the letter into presses. Refuses with no open record, a record without options, an option past the list, or a
  * harness whose keys are unknown. A key write cannot prove submission, so the record stays open until acknowledgement.
  */
+function planDialogOption({
+    query,
+    opts,
+    deps,
+    paneSessionId,
+    continuedTo,
+}: {
+    query: string;
+    opts: SendOptions & { option: string };
+    deps: SendCommandDeps;
+    /** The session the matched pane runs, when the query names none. */
+    paneSessionId?: string;
+    /** The live id when the queried session continued in another one; an option press then refuses. */
+    continuedTo?: string;
+}): OptionPlan {
+    const asked = sessionIdsIn(query)[0];
+
+    // The pane runs the successor, so the old session's options would land in another dialog, and the successor's
+    // options answer a question the caller never saw. A dialog answer never follows a continuation.
+    if (continuedTo && continuedTo !== asked) {
+        return {
+            ok: false,
+            outcome: optionRefusal({
+                query,
+                sessionId: continuedTo,
+                reason: `the session continued in ${continuedTo}; answer that session's own dialog by its id`,
+                opts,
+            }),
+        };
+    }
+
+    const sessionId = asked ?? paneSessionId;
+
+    if (!sessionId) {
+        return {
+            ok: false,
+            outcome: optionRefusal({
+                query,
+                reason: "the matched pane names no session, so no dialog record can be read",
+                opts,
+            }),
+        };
+    }
+
+    const [record] = (deps.openRecords ?? sessionOpenRecords)(sessionId);
+
+    if (!record) {
+        return {
+            ok: false,
+            outcome: optionRefusal({
+                query,
+                sessionId,
+                reason: "no question dialog is open in the session; send the answer as text instead",
+                opts,
+            }),
+        };
+    }
+
+    if (opts.expectedDialog !== undefined && openQuestionKey(record) !== opts.expectedDialog) {
+        return {
+            ok: false,
+            outcome: optionRefusal({ query, sessionId, reason: "the open dialog changed; nothing was pressed", opts }),
+        };
+    }
+
+    const plan = planDialogKeys(record, opts.option);
+
+    if (!plan.ok) {
+        return { ok: false, outcome: optionRefusal({ query, sessionId, reason: plan.reason, opts }) };
+    }
+
+    return {
+        ok: true,
+        sessionId,
+        dialog: openQuestionKey(record),
+        presses: plan.presses,
+        index: plan.index,
+        label: plan.label,
+    };
+}
+
+/** The matcher path's `--option`: plan the presses, then press them in the matched surface. */
 async function pressDialogOption({
     target,
     surfaceId,
@@ -259,68 +377,195 @@ async function pressDialogOption({
     opts: SendOptions & { option: string };
     deps: SendCommandDeps;
     source: string;
-    /** The live id when the queried session continued in another one; an option press then refuses. */
     continuedTo?: string;
 }): Promise<PaneSendOutcome> {
-    const asked = sessionIdsIn(query)[0];
-
-    // The pane runs the successor, so the old session's options would land in another dialog, and the successor's
-    // options answer a question the caller never saw. A dialog answer never follows a continuation.
-    if (continuedTo && continuedTo !== asked) {
-        return optionRefusal({
-            query,
-            sessionId: continuedTo,
-            reason: `the session continued in ${continuedTo}; answer that session's own dialog by its id`,
-            opts,
-        });
-    }
-
-    const sessionId = asked ?? target.sessionIds[0];
-
-    if (!sessionId) {
-        return optionRefusal({
-            query,
-            reason: "the matched pane names no session, so no dialog record can be read",
-            opts,
-        });
-    }
-
-    const [record] = (deps.openRecords ?? sessionOpenRecords)(sessionId);
-
-    if (!record) {
-        return optionRefusal({
-            query,
-            sessionId,
-            reason: "no question dialog is open in the session; send the answer as text instead",
-            opts,
-        });
-    }
-
-    if (opts.expectedDialog !== undefined && openQuestionKey(record) !== opts.expectedDialog) {
-        return optionRefusal({ query, sessionId, reason: "the open dialog changed; nothing was pressed", opts });
-    }
-
-    const plan = planDialogKeys(record, opts.option);
+    const plan = planDialogOption({ query, opts, deps, paneSessionId: target.sessionIds[0], continuedTo });
 
     if (!plan.ok) {
-        return optionRefusal({ query, sessionId, reason: plan.reason, opts });
+        return plan.outcome;
     }
 
     await press(surfaceTargetArgs(surfaceId, target.workspaceId), plan.presses);
-    const dialog = openQuestionKey(record);
-    log.info({ sessionId, dialog, index: plan.index, presses: plan.presses, surfaceId }, "dialog option pressed");
+    log.info(
+        { sessionId: plan.sessionId, dialog: plan.dialog, index: plan.index, presses: plan.presses, surfaceId },
+        "dialog option pressed"
+    );
     return {
         kind: "option-pressed",
         query,
         option: opts.option,
         index: plan.index,
         label: plan.label,
-        dialog,
+        dialog: plan.dialog,
         presses: plan.presses,
         target,
         surfaceId,
         source,
     };
+}
+
+/** The located surface as a pane target, so the receipt and the CLI line name its workspace and tab. */
+function locatedTarget(located: LiveAgentSurface & { surface: { id: string } }, sessionId: string): FocusTarget {
+    const { surface } = located;
+    return {
+        workspaceId: surface.workspaceId ?? surface.workspace,
+        workspaceName: surface.workspaceTitle ?? surface.workspace,
+        paneId: surface.paneId ?? surface.ref,
+        paneTitle: surface.title ?? "",
+        ...(located.cwd ? { cwd: located.cwd } : {}),
+        ...(surface.windowId ? { windowId: surface.windowId } : {}),
+        surfaceId: surface.id,
+        sessionIds: [sessionId],
+        matchedOn: located.tmux ? "tmux" : located.transcriptPath ? "pane-title" : "recorded",
+        score: 0,
+        active: false,
+        ...(located.tmux ? { tmux: { session: located.tmux.session, pane: located.tmux.pane } } : {}),
+    };
+}
+
+/** A refusal of the guarded session input, as a pane send outcome. A cmux that did not answer is `unavailable`. */
+function inputRefusal(
+    query: string,
+    sessionId: string,
+    outcome: Extract<SessionInputOutcome, { delivered: false }>,
+    mayHaveLanded = outcome.mayHaveLanded === true
+): PaneSendOutcome {
+    if (outcome.reason === "timeout" && !mayHaveLanded) {
+        return { kind: "unavailable", reason: outcome.detail };
+    }
+
+    return {
+        kind: "refused",
+        query,
+        sessionId,
+        refusal: outcome.reason,
+        reason: outcome.detail,
+        ...(mayHaveLanded ? { mayHaveLanded } : {}),
+        ...(outcome.dialog ? { dialog: outcome.dialog } : {}),
+    };
+}
+
+const LOCATOR_SOURCE = "locator";
+
+/**
+ * A full session id types through the one guarded session input (`sendToSession` in
+ * `@genesiscz/utils/ai/live-sessions/input`): the locator finds its surface, and the tty, tmux, dialog and draft guards
+ * run before any key. Undefined hands the send to the text matcher: a dry run, `--include-self`, a query that is not a
+ * full id, no session input (a test that injects none), or a session the locator does not find (a session from before
+ * the hooks, found only by its screen or tmux client).
+ */
+async function sendByIdThroughInput({
+    query,
+    text,
+    option,
+    opts,
+    deps,
+    enter,
+    enterDelayMs,
+}: {
+    query: string;
+    text: string;
+    option: string | undefined;
+    opts: SendOptions;
+    deps: SendCommandDeps;
+    enter: boolean;
+    enterDelayMs: number;
+}): Promise<PaneSendOutcome | undefined> {
+    if (opts.dryRun || opts.includeSelf || !isFullSessionId(query)) {
+        return undefined;
+    }
+
+    const input =
+        deps.sessionInput ??
+        (isTestProcess() ? undefined : (await import("@genesiscz/utils/ai/live-sessions/input")).sendToSession);
+
+    if (!input) {
+        return undefined;
+    }
+
+    const asked = query.toLowerCase();
+    const sessionId = await followedSessionId(asked, deps);
+    const continuedTo = sessionId !== asked ? sessionId : undefined;
+    const provider = opts.harness && isAccountProviderAlias(opts.harness) ? opts.harness : undefined;
+    const inputDeps: SessionInputDeps = { titleKeys: titleMatchKeys };
+
+    if (option !== undefined) {
+        const plan = planDialogOption({ query, opts: { ...opts, option }, deps, continuedTo });
+
+        if (!plan.ok) {
+            return plan.outcome;
+        }
+
+        const pressed = await input(
+            { sessionId: plan.sessionId, keys: inputKeys(plan.presses), force: true, provider },
+            inputDeps
+        );
+
+        if (!pressed.delivered) {
+            return pressed.reason === "not-found" ? undefined : inputRefusal(query, plan.sessionId, pressed);
+        }
+
+        log.info(
+            { sessionId: plan.sessionId, dialog: plan.dialog, index: plan.index, surface: pressed.surface },
+            "dialog option pressed"
+        );
+        return {
+            kind: "option-pressed",
+            query,
+            option,
+            index: plan.index,
+            label: plan.label,
+            dialog: plan.dialog,
+            presses: plan.presses,
+            target: locatedTarget(pressed.target, plan.sessionId),
+            surfaceId: pressed.target.surface.id,
+            source: LOCATOR_SOURCE,
+        };
+    }
+
+    const force = opts.force === true;
+    const first = typedSend(text, opts)
+        ? await input({ sessionId, keys: [{ text }], force, provider }, inputDeps)
+        : await input({ sessionId, text, submit: enter, force, provider }, inputDeps);
+
+    if (!first.delivered) {
+        return first.reason === "not-found" ? undefined : inputRefusal(query, sessionId, first);
+    }
+
+    let last = first;
+
+    if (typedSend(text, opts) && enter) {
+        await Bun.sleep(enterDelayMs);
+        const entered = await input({ sessionId, keys: ["enter"], force, provider }, inputDeps);
+
+        if (!entered.delivered) {
+            // The text is in the prompt already; only its Enter is missing.
+            return inputRefusal(query, sessionId, entered, true);
+        }
+
+        last = entered;
+    }
+
+    return {
+        kind: "typed",
+        query,
+        target: locatedTarget(last.target, sessionId),
+        surfaceId: last.target.surface.id,
+        enter,
+        source: LOCATOR_SOURCE,
+    };
+}
+
+/**
+ * A message goes as one paste. `cmux paste` refuses while a person is typing in that prompt or a dialog is open,
+ * while typed keystrokes land in the middle of the person's draft: an agent's message was typed into an unsent prompt
+ * that way on 2026-11-01. A paste also keeps the text literal, where `cmux send` reads `\n`, `\r` and `\t` in it as
+ * Enter and Tab. Only a slash command, or --type, keeps the typed path, so the prompt sees keystrokes; text with a
+ * newline or a backslash is pasted even then.
+ */
+function typedSend(text: string, opts: SendOptions): boolean {
+    const typed = opts.type === true || (opts.paste !== true && text.trimStart().startsWith("/"));
+    return typed && !/[\n\r\\]/.test(text);
 }
 
 /**
@@ -356,6 +601,12 @@ export async function sendToSessionPane(
 
     if (opts.harness !== undefined && !isAccountProviderAlias(opts.harness)) {
         throw new Error(`--harness is one of ${ACCOUNT_PROVIDER_ALIASES.join(", ")} (got ${opts.harness})`);
+    }
+
+    const viaInput = await sendByIdThroughInput({ query: queryTrim, text, option, opts, deps, enter, enterDelayMs });
+
+    if (viaInput) {
+        return viaInput;
     }
 
     // An option press never takes the recorded pane: it names where the queried id ran, and after a continuation that
@@ -426,13 +677,7 @@ export async function sendToSessionPane(
         });
     }
 
-    // A message goes as one paste. `cmux paste` refuses while a person is typing in that prompt or a dialog is open,
-    // while typed keystrokes land in the middle of the person's draft: an agent's message was typed into an unsent
-    // prompt that way on 2026-11-01. A paste also keeps the text literal, where `cmux send` reads `\n`, `\r` and `\t`
-    // in it as Enter and Tab. Only a slash command, or --type, keeps the typed path, so the prompt sees keystrokes;
-    // text with a newline or a backslash is pasted even then.
-    const typed = opts.type === true || (opts.paste !== true && text.trimStart().startsWith("/"));
-    const paste = !typed || /[\n\r\\]/.test(text);
+    const paste = !typedSend(text, opts);
     const force = opts.force === true;
 
     if (surfaceId) {
@@ -571,6 +816,16 @@ export function paneSendReceipt(outcome: PaneSendOutcome): Record<string, unknow
                 target: outcome.target,
                 surfaceId: outcome.surfaceId,
                 source: outcome.source,
+            };
+        case "refused":
+            return {
+                query: outcome.query,
+                sent: false,
+                reason: outcome.reason,
+                refusal: outcome.refusal,
+                sessionId: outcome.sessionId,
+                ...(outcome.mayHaveLanded ? { unconfirmed: true } : {}),
+                ...(outcome.refusal === "dialog-open" ? { dialog: outcome.dialog ?? true } : {}),
             };
         case "unavailable":
             return { sent: false, unavailable: true, reason: outcome.reason };

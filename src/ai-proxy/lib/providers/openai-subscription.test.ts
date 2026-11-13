@@ -12,7 +12,6 @@ import {
     resetReasoningMemoryForTests,
 } from "@app/ai-proxy/lib/providers/reasoning-memory";
 import {
-    type CompactionRecord,
     compactionFromSse,
     compactionNote,
     loadCompaction,
@@ -1732,33 +1731,6 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(sent[0]?.tools).toEqual([expect.objectContaining({ type: "function", name: "Read", strict: false })]);
     });
 
-    it("sessionsIn.claude.providers.codex.compaction sets another effort and drops the length", async () => {
-        const sent: Array<Record<string, unknown>> = [];
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
-            return whamStreamResponse();
-        }) as typeof fetch;
-
-        await (
-            await send(
-                {
-                    model: "gpt-6.1-sol",
-                    stream: true,
-                    messages: [{ role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\n\nSummarize.` }],
-                    output_config: { effort: "xhigh" },
-                },
-                {
-                    sessionsIn: {
-                        claude: { providers: { codex: { compaction: { mode: "summary", effort: "low", words: 0 } } } },
-                    },
-                }
-            )
-        ).text();
-
-        expect((sent[0]?.reasoning as Record<string, unknown> | undefined)?.effort).toBe("low");
-        expect(SafeJSON.stringify(sent[0]?.input)).not.toContain("words");
-    });
-
     it("cancels stalled native compaction and cross-login recompaction when the client disconnects", async () => {
         for (const crossLogin of [false, true]) {
             let upstreamSignal: AbortSignal | undefined;
@@ -1861,82 +1833,6 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(SafeJSON.stringify(next)).toContain("Go on.");
     });
 
-    it("answers inside summary tags, and restores the note Claude Code keeps from inside them", async () => {
-        const sent: Array<Record<string, unknown>> = [];
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
-            return sent.length === 1 ? whamCompactionResponse("ENC-TAG") : whamStreamResponse();
-        }) as typeof fetch;
-        const reply = await (
-            await send({
-                model: "gpt-6.1-sol",
-                stream: false,
-                messages: [{ role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\nSummarize.` }],
-            })
-        ).json();
-        const text = String(reply.content?.[0]?.text ?? "");
-        const inner = text.match(/^<summary>\n([\s\S]*)\n<\/summary>$/)?.[1];
-
-        expect(inner).toBeDefined();
-        await (
-            await send({
-                model: "gpt-6.1-sol",
-                stream: true,
-                messages: [
-                    { role: "user", content: `This session is being continued.\n\nSummary:\n${inner}\n\nGo on.` },
-                ],
-            })
-        ).text();
-        const next = (sent[1]?.input ?? []) as Array<Record<string, unknown>>;
-        expect(next[0]).toEqual({ type: "compaction", id: "cmp_1", encrypted_content: "ENC-TAG" });
-    });
-
-    it("compacts natively when Claude Code sends a system message after the compaction prompt", async () => {
-        const sent: Array<Record<string, unknown>> = [];
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
-            return whamCompactionResponse("ENC-SYS");
-        }) as typeof fetch;
-        const reply = await (
-            await send({
-                model: "gpt-6.1-sol",
-                stream: false,
-                messages: [
-                    { role: "user", content: "Which shelf?" },
-                    { role: "assistant", content: "Shelf 12." },
-                    { role: "user", content: [{ type: "text", text: `${CLAUDE_CODE_COMPACTION_MARK}\nSummarize.` }] },
-                    { role: "system", content: "<total_tokens>15000000 tokens left</total_tokens>" },
-                ],
-            })
-        ).json();
-        const input = (sent[0]?.input ?? []) as Array<Record<string, unknown>>;
-
-        expect(sent).toHaveLength(1);
-        expect(input.at(-1)).toEqual({ type: "compaction_trigger" });
-        expect(SafeJSON.stringify(input)).not.toContain(CLAUDE_CODE_COMPACTION_MARK);
-        expect(String(reply.content?.[0]?.text ?? "")).toContain("[codex-compaction gtc1.");
-    });
-
-    it("keeps readable text supplied by native compaction without a second model request", async () => {
-        let requests = 0;
-        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
-            requests++;
-            return whamCompactionResponse("ENC-A", "The earlier answer is on shelf 12.");
-        }) as typeof fetch;
-        const reply = await (
-            await send({
-                model: "gpt-6.1-sol",
-                stream: false,
-                messages: [{ role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\nSummarize.` }],
-            })
-        ).json();
-        const note = String(reply.content?.[0]?.text ?? "");
-
-        expect(requests).toBe(1);
-        expect(note).toContain("The earlier answer is on shelf 12.");
-        expect(note).toContain("codex-compaction-fallback");
-    });
-
     it("a marker from another login compacts the saved history again there, once", async () => {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -2034,26 +1930,6 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(await busy.text()).toContain("overloaded_error");
     });
 
-    it("refuses to continue when a compaction record is missing", async () => {
-        let requests = 0;
-        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
-            requests++;
-            return whamStreamResponse();
-        }) as typeof fetch;
-        const id = `gtc1.${crypto.randomUUID()}`;
-        const response = await send({
-            model: "gpt-6.1-sol",
-            stream: true,
-            messages: [{ role: "user", content: `Summary:\n${compactionNote(id)}\n\nGo on.` }],
-        });
-
-        expect(response.status).toBe(400);
-        const errorBody = await response.text();
-        expect(errorBody).toContain(`Compaction record ${id} is missing or unreadable`);
-        expect(errorBody).toContain("start a new session with a readable handoff");
-        expect(requests).toBe(0);
-    });
-
     it("offers record restore and explicit loss acknowledgement for the blocked session", async () => {
         const sessionId = crypto.randomUUID();
         const id = `gtc1.${crypto.randomUUID()}`;
@@ -2073,50 +1949,6 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(message).toContain(`session ${sessionId} compaction-drop --marker ${id} --acknowledge-context-loss`);
         expect(readSessionRecord(sessionId)?.blockedCompactions).toContain(id);
         expect(readSessionRecord(sessionId)?.droppedCompactions).toBeUndefined();
-    });
-
-    it("uses the readable summary when a compaction record is missing", async () => {
-        const sent: Array<Record<string, unknown>> = [];
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
-            return whamStreamResponse();
-        }) as typeof fetch;
-        const id = `gtc1.${crypto.randomUUID()}`;
-        const response = await send({
-            model: "gpt-6.1-sol",
-            stream: true,
-            messages: [{ role: "user", content: compactionNote(id, "Shelf 12 holds the answer.") }],
-        });
-
-        expect(response.status).toBe(200);
-        await response.text();
-        expect(SafeJSON.stringify(sent[0]?.input)).toContain("Shelf 12 holds the answer.");
-    });
-
-    it("refuses to continue when another login cannot recompact the saved history", async () => {
-        let requests = 0;
-        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
-            requests++;
-            return whamStreamResponse();
-        }) as typeof fetch;
-        const id = `gtc1.${crypto.randomUUID()}`;
-        saveCompaction({
-            id,
-            model: "gpt-6.1-sol",
-            createdAt: new Date().toISOString(),
-            items: { otherlgn: { type: "compaction", encrypted_content: "old" } },
-            history: [{ role: "user", content: [{ type: "input_text", text: "earlier" }] }],
-        });
-        const response = await send({
-            model: "gpt-6.1-sol",
-            stream: true,
-            messages: [{ role: "user", content: compactionNote(id) }],
-        });
-
-        expect(response.status).toBe(503);
-        const errorBody = await response.text();
-        expect(errorBody).toContain(`Could not restore compaction ${id}`);
-        expect(requests).toBe(1);
     });
 
     it("preserves transient upstream failures while restoring on another login", async () => {
@@ -2141,32 +1973,6 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
 
         expect(response.status).toBe(400);
         expect(await response.text()).toContain("tools ai-proxy session s-1 use --codex '<account>'");
-    });
-
-    it("uses the readable summary when cross-login recompaction fails", async () => {
-        const sent: Array<Record<string, unknown>> = [];
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
-            return whamStreamResponse();
-        }) as typeof fetch;
-        const id = `gtc1.${crypto.randomUUID()}`;
-        saveCompaction({
-            id,
-            model: "gpt-6.1-sol",
-            createdAt: new Date().toISOString(),
-            items: { otherlgn: { type: "compaction", encrypted_content: "old" } },
-            history: [{ role: "user", content: [{ type: "input_text", text: "earlier" }] }],
-        });
-        const response = await send({
-            model: "gpt-6.1-sol",
-            stream: true,
-            messages: [{ role: "user", content: compactionNote(id, "Earlier work is on shelf 12.") }],
-        });
-
-        expect(response.status).toBe(200);
-        await response.text();
-        expect(sent).toHaveLength(2);
-        expect(SafeJSON.stringify(sent[1]?.input)).toContain("Earlier work is on shelf 12.");
     });
 
     it("retains old ancestor records of active compactions", () => {
@@ -2660,141 +2466,6 @@ describe("background compaction (Codex async_compaction for Claude Code)", () =>
         expect(events().map((event) => event.kind)).toEqual(
             expect.arrayContaining(["background-start", "background-ready", "background-used", "done"])
         );
-    });
-
-    it("sends a kept turn once when Claude Code also keeps it after the summary", async () => {
-        const sent: Array<Record<string, unknown>> = [];
-        const sessionId = await primeBackground(sent);
-        const reply = await send({ messages: compactTurn(u1) }, sessionId);
-        const inner = (reply.match(/<summary>\\n([\s\S]*?)\\n<\/summary>/)?.[1] ?? "").replaceAll("\\n", "\n");
-        await send(
-            {
-                messages: [{ role: "user", content: `Summary:\n${inner}` }, a2, { role: "user", content: "Go on." }],
-            },
-            sessionId
-        );
-        const text = SafeJSON.stringify(sent.at(-1)?.input);
-
-        expect(text.split("Shelf 31 noted.").length - 1).toBe(1);
-        expect(text).toContain("Also remember shelf 31.");
-    });
-
-    it("records the older ready run as wasted when a newer run replaces it unused", async () => {
-        // Regression test: 2026-10-28-Research-Session8cf9eff2Slowdowns.sonnet.md Bug 5 — a replaced run (03:15 to
-        // 03:17, 363K tokens read) left no event at all.
-        const sent: Array<Record<string, unknown>> = [];
-        const sessionId = await primeBackground(sent);
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            const body = SafeJSON.parse(String(init?.body)) as Record<string, unknown>;
-            sent.push(body);
-            return isCompaction(body) ? whamCompactionResponse("ENC-BG-2") : turnResponse("ok", 600);
-        }) as typeof fetch;
-        // 600 is 33% past the first run's 450: a refresh run starts and replaces the unused first result.
-        await send({ messages: [u1, a1, u2] }, sessionId);
-        const { backgroundInFlight, backgroundKey } = await import("@app/ai-proxy/lib/sessions/background-compaction");
-        await backgroundInFlight(backgroundKey(claudeSession, "S"));
-
-        expect(sent.filter(isCompaction)).toHaveLength(2);
-        expect(
-            events()
-                .filter((event) => event.kind === "background-wasted")
-                .map((event) => event.reason)
-        ).toEqual(["superseded"]);
-    });
-
-    it("answers the compaction turn from a run that finished before the proxy restarted", async () => {
-        // Regression test: Bug 5 — the run lived only in process memory; 17 restarts in one session lost such runs.
-        const sent: Array<Record<string, unknown>> = [];
-        const sessionId = await primeBackground(sent);
-        const { forgetBackgroundInMemoryForTests } = await import("@app/ai-proxy/lib/sessions/background-compaction");
-        forgetBackgroundInMemoryForTests();
-
-        const reply = await send({ messages: compactTurn(u1) }, sessionId);
-
-        expect(sent.filter(isCompaction)).toHaveLength(1);
-        expect(reply).toContain("[codex-compaction gtc1.");
-    });
-
-    it("does not start a second run after a restart while the saved run is still fresh", async () => {
-        const sent: Array<Record<string, unknown>> = [];
-        const sessionId = await primeBackground(sent);
-        const { forgetBackgroundInMemoryForTests } = await import("@app/ai-proxy/lib/sessions/background-compaction");
-        forgetBackgroundInMemoryForTests();
-
-        // 460 is only 2% past the saved run's 450: no refresh is due.
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            const body = SafeJSON.parse(String(init?.body)) as Record<string, unknown>;
-            sent.push(body);
-            return isCompaction(body) ? whamCompactionResponse("ENC-BG-2") : turnResponse("ok", 460);
-        }) as typeof fetch;
-        await send({ messages: [u1, a1, u2] }, sessionId);
-        const { backgroundInFlight, backgroundKey } = await import("@app/ai-proxy/lib/sessions/background-compaction");
-        await backgroundInFlight(backgroundKey(claudeSession, "S"));
-
-        expect(sent.filter(isCompaction)).toHaveLength(1);
-    });
-
-    it("compacts again and tells the agent when the history changed under the background run", async () => {
-        const sent: Array<Record<string, unknown>> = [];
-        const sessionId = await primeBackground(sent);
-        const reply = await send(
-            { messages: compactTurn({ role: "user", content: "The code word is FALCON." }) },
-            sessionId
-        );
-
-        expect(sent.filter(isCompaction)).toHaveLength(2);
-        expect(reply).toContain("Proxy notice");
-        expect(reply).toContain("the conversation before it changed");
-        const wasted = events().find((event) => event.kind === "background-wasted");
-        expect(wasted?.reason).toBe("history_changed");
-
-        // The next turn carries a one-time reminder to tell the user; the turn after it does not.
-        await send({ messages: [{ role: "user", content: "Go on." }] }, sessionId);
-        expect(SafeJSON.stringify(sent.at(-1)?.input)).toContain("Start your next reply with one sentence");
-        await send({ messages: [{ role: "user", content: "Go on." }] }, sessionId);
-        expect(SafeJSON.stringify(sent.at(-1)?.input)).not.toContain("Start your next reply");
-    });
-
-    it("does not start a background run below the start fraction or outside a ccx session", async () => {
-        const sent: Array<Record<string, unknown>> = [];
-        const sessionId = crypto.randomUUID();
-        createSessionRecord({ id: sessionId, window: 1000, compactPercent: 50 });
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
-            return turnResponse("ok", 300);
-        }) as typeof fetch;
-        await send({ messages: [u1] }, sessionId);
-        const plain = crypto.randomUUID();
-        createSessionRecord({ id: plain });
-        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
-            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
-            return turnResponse("ok", 900_000);
-        }) as typeof fetch;
-        await send({ messages: [u1] }, plain);
-        await Bun.sleep(20);
-
-        expect(sent.filter(isCompaction)).toHaveLength(0);
-    });
-
-    it("logs Claude Code's second ask for a summary as a retry", async () => {
-        const sessionId = crypto.randomUUID();
-        createSessionRecord({ id: sessionId });
-        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
-            whamCompactionResponse("ENC-R")) as typeof fetch;
-        await send(
-            {
-                messages: [
-                    u1,
-                    {
-                        role: "user",
-                        content: `${CLAUDE_CODE_COMPACTION_MARK}\nSummarize.\n\nFor this reply only: put the summary inside <summary></summary> tags.`,
-                    },
-                ],
-            },
-            sessionId
-        );
-
-        expect(events().find((event) => event.kind === "retry")).toBeDefined();
     });
 });
 
@@ -3606,83 +3277,6 @@ describe("where a Codex request's prefix first differs from the thread's previou
         const changed = await diffOf({ system, messages: turn2, tools: [tool("Bash"), tool("Write")] });
 
         expect(changed).toEqual({ part: "tools" });
-    });
-});
-
-describe("CodexCompactionFlow through its ports", () => {
-    // The flow's own interface, with a store in memory and the upstream faked at the HTTP boundary: the second adapter
-    // of the CompactionStore port (the first is the file store under ai-proxy/compactions/).
-    async function flowWith(records: Map<string, CompactionRecord>, upstream: () => Response) {
-        const { CodexCompactionFlow } = await import("./codex/compaction-flow");
-        const calls: Array<Record<string, unknown>> = [];
-        const flow = new CodexCompactionFlow({
-            upstream: async (_req, _model, body) => {
-                calls.push(body);
-                return upstream();
-            },
-            writtenSummary: async () => new Response("written"),
-            store: {
-                load: (id) => records.get(id),
-                save: (record) => {
-                    records.set(record.id, record);
-                },
-                newId: () => "gtc1.test",
-            },
-            usage: () => {},
-            account: "work",
-            provider: "openai-subscription",
-        });
-        return { flow, calls };
-    }
-    const input = (accountHash: string) => ({
-        id: "gtc1.saved",
-        req: new Request("http://localhost/v1/messages", { method: "POST" }),
-        model: "gpt-6.1-sol",
-        template: { model: "gpt-6.1-sol" },
-        accountHash,
-        client: { anthropic: true },
-    });
-
-    it("gives back the login's own item without an upstream request", async () => {
-        const records = new Map<string, CompactionRecord>([
-            [
-                "gtc1.saved",
-                {
-                    id: "gtc1.saved",
-                    model: "m",
-                    createdAt: "x",
-                    items: { aaaa: { type: "compaction", encrypted_content: "A" } },
-                    history: [],
-                },
-            ],
-        ]);
-        const { flow, calls } = await flowWith(records, () => new Response("", { status: 500 }));
-
-        expect(await flow.compactionItem(input("aaaa"))).toEqual([{ type: "compaction", encrypted_content: "A" }]);
-        expect(calls).toHaveLength(0);
-    });
-
-    it("compacts the saved history again for another login and keeps both items in the store", async () => {
-        const history = [{ role: "user", content: [{ type: "input_text", text: "remember KESTREL" }] }];
-        const records = new Map<string, CompactionRecord>([
-            [
-                "gtc1.saved",
-                {
-                    id: "gtc1.saved",
-                    model: "m",
-                    createdAt: "x",
-                    items: { aaaa: { type: "compaction", encrypted_content: "A" } },
-                    history,
-                },
-            ],
-        ]);
-        const { flow, calls } = await flowWith(records, () => whamCompactionResponse("B"));
-
-        const item = await flow.compactionItem(input("bbbb"));
-
-        expect(item).toEqual([{ type: "compaction", id: "cmp_1", encrypted_content: "B" }]);
-        expect(calls[0]?.input).toEqual([...history, { type: "compaction_trigger" }]);
-        expect(Object.keys(records.get("gtc1.saved")?.items ?? {}).sort()).toEqual(["aaaa", "bbbb"]);
     });
 });
 

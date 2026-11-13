@@ -1,14 +1,5 @@
-import {
-    type AccountRef,
-    AI_ACCOUNTS_API,
-    type AiAccountsResult,
-    type AiDaemonStatus,
-    type AiSpendSeriesResult,
-    type AiSpendTotalsResult,
-    type AiUsageResult,
-    type AiUsageSeriesResult,
-    type SpendSource,
-} from "@app/dev-dashboard/contract/ai-accounts";
+import type { AccountRef, SpendSource } from "@app/dev-dashboard/contract/ai-accounts";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
@@ -26,7 +17,7 @@ import { useLive } from "@/hooks/useLive";
 import { useSectionLayout } from "@/hooks/useSectionLayout";
 import { assignAccountColors } from "@/lib/account-color";
 import { grainForMinutes, resolveStableRange, windowStepMs } from "@/lib/ai-accounts-filters";
-import { fetchJson } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 import { providerOrder } from "@/lib/provider-meta";
 import type { SpendChartMode } from "@/lib/spend-chart-data";
 
@@ -55,17 +46,9 @@ function useClockTick(everyMs: number): number {
     return now;
 }
 
-function query(params: Record<string, string | undefined>): string {
-    const search = new URLSearchParams();
-
-    for (const [key, value] of Object.entries(params)) {
-        if (value !== undefined && value !== "") {
-            search.set(key, value);
-        }
-    }
-
-    const text = search.toString();
-    return text ? `?${text}` : "";
+/** The filters that are set: an empty filter is left out of the query, so the server reads it as "all". */
+function query(params: Record<string, string | undefined>): Record<string, string | undefined> {
+    return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined && value !== ""));
 }
 
 /**
@@ -93,7 +76,7 @@ export function AiAccountsRoute() {
 
     const accountsQuery = useQuery({
         queryKey: ["ai", "accounts"],
-        queryFn: () => fetchJson<AiAccountsResult>(AI_ACCOUNTS_API.accounts),
+        queryFn: () => dashboard.call(ENDPOINTS.aiAccounts, {}),
         refetchInterval: 60000,
     });
     // No interval: the `ai-usage` frame invalidates `["ai", "usage", …]` within 5s
@@ -103,10 +86,7 @@ export function AiAccountsRoute() {
     // that no poll of the usage cache reports.
     const usageQuery = useQuery({
         queryKey: ["ai", "usage", providersParam, accountsParam],
-        queryFn: () =>
-            fetchJson<AiUsageResult>(
-                `${AI_ACCOUNTS_API.usage}${query({ providers: providersParam, accounts: accountsParam })}`
-            ),
+        queryFn: () => dashboard.call(ENDPOINTS.aiUsage, query({ providers: providersParam, accounts: accountsParam })),
     });
 
     // One window end shared by every query and chart so their axes align. It is
@@ -134,14 +114,15 @@ export function AiAccountsRoute() {
     const totalsQuery = useQuery({
         queryKey: ["ai", "spend", "totals", fromIso, toIso, source, providersParam, accountsParam],
         queryFn: () =>
-            fetchJson<AiSpendTotalsResult>(
-                `${AI_ACCOUNTS_API.spendTotals}${query({
+            dashboard.call(
+                ENDPOINTS.aiSpendTotals,
+                query({
                     from: fromIso,
                     to: toIso,
                     source,
                     providers: providersParam,
                     accounts: accountsParam,
-                })}`
+                })
             ),
         refetchInterval: spendRefetchMs,
         retry: spendRetry,
@@ -149,15 +130,16 @@ export function AiAccountsRoute() {
     const spendSeriesQuery = useQuery({
         queryKey: ["ai", "spend", "series", fromIso, toIso, grain, source, providersParam, accountsParam],
         queryFn: () =>
-            fetchJson<AiSpendSeriesResult>(
-                `${AI_ACCOUNTS_API.spendSeries}${query({
+            dashboard.call(
+                ENDPOINTS.aiSpendSeries,
+                query({
                     from: fromIso,
                     to: toIso,
                     grain,
                     source,
                     providers: providersParam,
                     accounts: accountsParam,
-                })}`
+                })
             ),
         refetchInterval: spendRefetchMs,
         retry: spendRetry,
@@ -167,30 +149,31 @@ export function AiAccountsRoute() {
     const limitsSeriesQuery = useQuery({
         queryKey: ["ai", "usage", "series", fromIso, toIso, providersParam, accountsParam],
         queryFn: () =>
-            fetchJson<AiUsageSeriesResult>(
-                `${AI_ACCOUNTS_API.usageSeries}${query({
+            dashboard.call(
+                ENDPOINTS.aiUsageSeries,
+                query({
                     from: fromIso,
                     to: toIso,
                     providers: providersParam,
                     accounts: accountsParam,
-                })}`
+                })
             ),
     });
     const daemonQuery = useQuery({
         queryKey: ["ai", "daemon"],
-        queryFn: () => fetchJson<AiDaemonStatus>(AI_ACCOUNTS_API.daemon),
+        queryFn: () => dashboard.call(ENDPOINTS.aiDaemon, {}),
         refetchInterval: 30000,
     });
 
     const refresh = useMutation({
-        mutationFn: () => fetchJson<AiUsageResult>(AI_ACCOUNTS_API.usageRefresh, { method: "POST" }),
+        mutationFn: () => dashboard.call(ENDPOINTS.aiUsageRefresh, {}),
         onSuccess: () => {
             void queryClient.invalidateQueries({ queryKey: ["ai", "usage"] });
             void queryClient.invalidateQueries({ queryKey: ["ai", "daemon"] });
         },
     });
     const register = useMutation({
-        mutationFn: () => fetchJson<{ ok: boolean }>(AI_ACCOUNTS_API.daemonRegister, { method: "POST" }),
+        mutationFn: () => dashboard.call(ENDPOINTS.aiDaemonRegister, {}),
         onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["ai", "daemon"] }),
     });
 

@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import type { AccountFlowContext, LoginOutcome, LoginVariant } from "../../account-features";
 import {

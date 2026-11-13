@@ -1,10 +1,10 @@
 import type { RunSummary } from "@app/dev-dashboard/contract/dto";
-import { paths } from "@app/dev-dashboard/contract/endpoints";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { LogStream } from "@/components/build-log-tail/LogStream";
 import { RunPicker } from "@/components/build-log-tail/RunPicker";
-import { fetchJson } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 /**
  * Live Build/Run Log Tail (web). Pick a recent daemon run, then live-tail its log over SSE
@@ -19,7 +19,7 @@ export function BuildLogTailRoute() {
     const runsQuery = useQuery({
         queryKey: ["build-log-tail", "runs"],
         queryFn: async (): Promise<RunSummary[]> => {
-            const runs = await fetchJson<RunSummary[]>(paths.daemonRuns({ limit: 25 }));
+            const runs = await dashboard.call(ENDPOINTS.daemonRuns, { limit: 25 });
             return Array.isArray(runs) ? runs : [];
         },
         refetchInterval: 15000,

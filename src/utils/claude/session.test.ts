@@ -850,7 +850,7 @@ describe("ClaudeSession.fromSessionId", () => {
         expect(session.isSubagent).toBe(true);
     });
 
-    it("searches the current project first and then every other project when no folder is given", async () => {
+    it("searches every project folder when no folder is given", async () => {
         expect((await ClaudeSession.fromSessionId("34cd56ef")).title).toBe("current");
         expect((await ClaudeSession.fromSessionId("12ab34cd")).title).toBe("elsewhere");
     });
@@ -859,6 +859,20 @@ describe("ClaudeSession.fromSessionId", () => {
         await expect(ClaudeSession.fromSessionId("12ab34cd", "-gt-id-main")).rejects.toThrow(
             'No session file found for ID prefix "12ab34cd"'
         );
+    });
+
+    it("loads the conversation of a duplicated id, not a title-only stub in an earlier project folder", async () => {
+        const duplicatedId = "56ef78ab-0000-4000-8000-0000000000d5";
+        writeJsonl(join(projectsDir, "-gt-dup-a-moved", `${duplicatedId}.jsonl`), [
+            { type: "custom-title", customTitle: "stub", sessionId: duplicatedId },
+        ]);
+        writeJsonl(join(projectsDir, "-gt-dup-b-repo", `${duplicatedId}.jsonl`), [
+            envelope(1, { type: "user", sessionId: duplicatedId, message: { role: "user", content: "hello" } }),
+        ]);
+
+        const session = await ClaudeSession.fromSessionId(duplicatedId.slice(0, 8));
+
+        expect(basename(join(session.filePath, ".."))).toBe("-gt-dup-b-repo");
     });
 
     it("rejects an id that no project holds", async () => {

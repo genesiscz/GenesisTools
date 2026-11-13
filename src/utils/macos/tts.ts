@@ -102,13 +102,13 @@ export async function getVoiceMap(): Promise<Map<string, VoiceInfo>> {
  * (`src/say/lib/speak.ts:speakWithProfile`); this primitive intentionally has no
  * `SayConfig` knowledge so it can be reused by non-CLI callers.
  *
- * Dynamic `AI` import avoids a load-time cycle: `AIMacOSTextToSpeechProvider`
+ * Dynamic facade import avoids a load-time cycle: `AIMacOSTextToSpeechProvider`
  * imports `renderToBuffer` / `listVoicesStructured` from this file.
  */
 export async function speak(text: string, options?: SpeakOptions): Promise<void> {
     const volume = options?.volume != null ? normalizeVolume(options.volume) : undefined;
-    const { AI } = await import("@genesiscz/utils/ai/index");
-    await AI.speak(text, {
+    const { ai } = await import("@genesiscz/utils/ai/tasks/facade");
+    await ai.speak(text, {
         provider: "local",
         voice: options?.voice,
         rate: options?.rate,

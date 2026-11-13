@@ -1,7 +1,7 @@
 import { type AgentCaller, currentCaller, runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { logger } from "@genesiscz/utils/logger";
 import { createMcpHandler, type McpHttpHandler } from "@modelcontextprotocol/server";
-import { createGenesisToolsServer } from "./server";
+import { closeLoadedGroups, createGenesisToolsServer } from "./server";
 
 const log = logger.child({ component: "genesis-tools-mcp:http" });
 
@@ -48,6 +48,14 @@ function mcpHandler(): McpHttpHandler {
     }
 
     return handler;
+}
+
+/**
+ * Ends what the HTTP server's loaded tool groups hold open (Chrome workers, the Waze tab). The process that serves the
+ * requests calls it when it stops, so no child outlives it.
+ */
+export function closeGenesisToolsHttp(): Promise<void> {
+    return closeLoadedGroups();
 }
 
 /** Serve one genesis-tools MCP request as `caller`. */

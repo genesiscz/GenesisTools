@@ -34,7 +34,8 @@ export function azDevopsDefaults(config: Pick<AzureConfig, "org" | "project" | "
 
 export async function buildAdoConfig(url: string): Promise<AzureConfig & { orgId: string }> {
     const { org, project } = parseAzureDevOpsUrl(url);
-    const [projectId, orgId] = await Promise.all([Api.getProjectId(org, project), Api.getOrgId(org)]);
+    const orgApi = Api.forOrganization(org);
+    const [projectId, orgId] = await Promise.all([orgApi.getProjectId(project), orgApi.getOrgId()]);
     const team = extractTeamFromUrl(url);
     const config: AzureConfig & { orgId: string } = {
         org,

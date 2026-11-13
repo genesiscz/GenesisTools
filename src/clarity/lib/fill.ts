@@ -113,7 +113,8 @@ export function unmappedInPeriod(
  * - `write`: the replacement changes the row.
  * - `unchanged`: Clarity already holds exactly these hours.
  * - `nothing-to-clear`: no ADO minutes this week and no requested-month hours to clear.
- * - `no-row`: the timesheet has no row for the task, nor one replacement row (see `findTaskRow`).
+ * - `no-row`: the timesheet has no row for the task, nor one replacement row (see `findTaskRow`), and the task has
+ *   minutes or requested-month hours in the week. A task without a row and without work is `nothing-to-clear`.
  */
 export type FillEntryAction = "write" | "unchanged" | "nothing-to-clear" | "no-row";
 
@@ -137,10 +138,28 @@ export interface ReadyFillWeek {
     existingNotes: number;
     entries: PlannedFillEntry[];
     unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
+    /** Every row of the timesheet with the actuals Clarity holds now, the rows no mapped task books on included. */
+    clarityRows: ClarityRow[];
+}
+
+export interface ClarityRow {
+    timeEntryId: number;
+    taskName: string;
+    taskCode: string;
+    segments: TimeSegment[];
+}
+
+/**
+ * A week of the month with no mapped ADO day and nothing to clear: planned like a ready week, but a fill neither
+ * shows nor writes it. A preview still lists it, so the week of any date of the month can be found.
+ */
+export interface IdleFillWeek extends Omit<ReadyFillWeek, "status"> {
+    status: "idle";
 }
 
 export type PlannedFillWeek =
     | ReadyFillWeek
+    | IdleFillWeek
     | { status: "unreadable"; timesheetId: number; startDate: string; error: unknown }
     | { status: "missing"; timesheetId: number; startDate?: string };
 
@@ -149,23 +168,10 @@ export interface FillPlan {
     year: number;
     /** Clarity user id, the author of a timesheet note. */
     userId?: number;
+    /** The ADO month the plan was built from. */
+    fill: FillMonth;
     weeks: PlannedFillWeek[];
 }
-
-/**
- * Which weeks a plan covers.
- * - `discovered`: every opened week of the month, reusing the reads discovery made. A failed read
- *   marks the week unreadable, and a clearing-only week with nothing to write is left out.
- * - `requested`: exactly these timesheet ids, each read again. A failed read fails the plan.
- */
-export type FillWeekSelection = "discovered" | { requested: number[] };
-
-/**
- * Where a missing row is reported.
- * - `tasks-with-work`: only for a task with minutes or requested-month hours in the week.
- * - `every-task`: for every mapped task, before anything else is checked.
- */
-export type MissingRowReporting = "tasks-with-work" | "every-task";
 
 function exclusiveEnd(periodFinishInclusive: string): string {
     return `${addDay(periodFinishInclusive.split("T")[0])}T00:00:00`;
@@ -220,14 +226,12 @@ function planEntry({
     record,
     month,
     year,
-    missingRows,
 }: {
     fills: FillEntry[];
     timeEntry: TimeEntryRecord | undefined;
     record: TimesheetRecord;
     month: number;
     year: number;
-    missingRows: MissingRowReporting;
 }): PlannedFillEntry {
     const periodFinishExclusive = exclusiveEnd(record.timePeriodFinish);
     const fill = timeEntry ? mergeOnRow(fills, timeEntry) : fills[0];
@@ -242,7 +246,7 @@ function planEntry({
         requestedMonthActualSeconds(existingSegments, { year, month }) === 0;
 
     if (!timeEntry) {
-        const action = missingRows === "tasks-with-work" && nothingToClear ? "nothing-to-clear" : "no-row";
+        const action = nothingToClear ? "nothing-to-clear" : "no-row";
 
         return { fill, action, replacedTaskIds, existingSegments, segments: [] };
     }
@@ -267,15 +271,7 @@ function planEntry({
 }
 
 /** Each mapped task's row in the week; fills that land on the same row plan as one entry, in map order. */
-function planWeekEntries({
-    record,
-    fill,
-    missingRows,
-}: {
-    record: TimesheetRecord;
-    fill: FillMonth;
-    missingRows: MissingRowReporting;
-}): PlannedFillEntry[] {
+function planWeekEntries({ record, fill }: { record: TimesheetRecord; fill: FillMonth }): PlannedFillEntry[] {
     const rows = record.timeentries?._results ?? [];
     const onRow = new Map<number, { timeEntry: TimeEntryRecord; fills: FillEntry[] }>();
     const groups: Array<{ timeEntry: TimeEntryRecord | undefined; fills: FillEntry[] }> = [];
@@ -298,7 +294,7 @@ function planWeekEntries({
     }
 
     return groups.map(({ timeEntry, fills }) =>
-        planEntry({ fills, timeEntry, record, month: fill.month, year: fill.year, missingRows })
+        planEntry({ fills, timeEntry, record, month: fill.month, year: fill.year })
     );
 }
 
@@ -306,12 +302,10 @@ function planWeek({
     timesheetId,
     record,
     fill,
-    missingRows,
 }: {
     timesheetId: number;
     record: TimesheetRecord;
     fill: FillMonth;
-    missingRows: MissingRowReporting;
 }): ReadyFillWeek {
     return {
         status: "ready",
@@ -319,67 +313,59 @@ function planWeek({
         periodStart: record.timePeriodStart,
         periodFinishInclusive: record.timePeriodFinish,
         existingNotes: record.numberOfNotes ?? 0,
-        entries: planWeekEntries({ record, fill, missingRows }),
+        entries: planWeekEntries({ record, fill }),
         unmappedWorkItems: unmappedInPeriod(
             fill.unmappedEntries,
             record.timePeriodStart,
             exclusiveEnd(record.timePeriodFinish)
         ),
+        clarityRows: (record.timeentries?._results ?? []).map((row) => ({
+            timeEntryId: row._internalId,
+            taskName: row.taskName,
+            taskCode: row.taskCode,
+            segments: row.actuals?.segmentList?.segments ?? [],
+        })),
     };
 }
 
-/** Decide, per week and mapped task, what a fill would write and why. Reads Clarity, never writes. */
+/**
+ * Decide, per opened week of the month and mapped task, what a fill would write and why. Reuses the reads discovery
+ * made; a failed read marks the week unreadable, and a clearing-only week with nothing to write is idle. Reads
+ * Clarity, never writes.
+ */
 export async function planFill({
     api,
     fill,
     discovery,
-    weeks,
-    missingRows,
 }: {
     api: Pick<ClarityApi, "getTimesheet">;
     fill: FillMonth;
     discovery: FillDiscovery;
-    weeks: FillWeekSelection;
-    missingRows: MissingRowReporting;
 }): Promise<FillPlan> {
     const planned: PlannedFillWeek[] = [];
 
-    if (weeks === "discovered") {
-        for (const week of discovery.weeks) {
-            let record = discovery.periods.records.get(week.timesheetId);
+    for (const week of discovery.weeks) {
+        let record = discovery.periods.records.get(week.timesheetId);
 
-            try {
-                record ??= (await api.getTimesheet(week.timesheetId)).timesheets._results[0];
-            } catch (error) {
-                planned.push({ status: "unreadable", timesheetId: week.timesheetId, startDate: week.startDate, error });
-                continue;
-            }
-
-            if (!record) {
-                planned.push({ status: "missing", timesheetId: week.timesheetId, startDate: week.startDate });
-                continue;
-            }
-
-            const plan = planWeek({ timesheetId: record._internalId, record, fill, missingRows });
-            const idle = plan.entries.every((entry) => entry.action === "nothing-to-clear");
-
-            if (discovery.clearingOnlyWeekIds.has(week.timesheetId) && idle) {
-                continue;
-            }
-
-            planned.push(plan);
+        try {
+            record ??= (await api.getTimesheet(week.timesheetId)).timesheets._results[0];
+        } catch (error) {
+            planned.push({ status: "unreadable", timesheetId: week.timesheetId, startDate: week.startDate, error });
+            continue;
         }
-    } else {
-        for (const timesheetId of weeks.requested) {
-            const record = (await api.getTimesheet(timesheetId)).timesheets._results[0];
 
-            planned.push(
-                record ? planWeek({ timesheetId, record, fill, missingRows }) : { status: "missing", timesheetId }
-            );
+        if (!record) {
+            planned.push({ status: "missing", timesheetId: week.timesheetId, startDate: week.startDate });
+            continue;
         }
+
+        const plan = planWeek({ timesheetId: record._internalId, record, fill });
+        const idle = plan.entries.every((entry) => entry.action === "nothing-to-clear");
+
+        planned.push(discovery.clearingOnlyWeekIds.has(week.timesheetId) && idle ? { ...plan, status: "idle" } : plan);
     }
 
-    return { month: fill.month, year: fill.year, userId: discovery.periods.userId, weeks: planned };
+    return { month: fill.month, year: fill.year, userId: discovery.periods.userId, fill, weeks: planned };
 }
 
 export function readyWeeks(plan: FillPlan): ReadyFillWeek[] {

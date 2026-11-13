@@ -1,6 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { type PostedNotification, sendNotification } from "@genesiscz/utils/macos/notifications";
 import { removeNotifications } from "@genesiscz/utils/macos/notifications-app";
+import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import type { ChannelDefinition, NotificationEvent, SystemChannelConfig } from "../types";
 
 /** Whether a posted banner counts as delivered for this event; see {@link NotificationEvent.requireConfirmed}. */
@@ -11,11 +12,19 @@ export function systemChannelDelivered(
     return posted.confirmed || !event.requireConfirmed;
 }
 
-/** True when the banner was handed to the OS (or there was nothing to send), confirmed when the event requires it. Never throws. */
+/**
+ * True when the banner was handed to the OS (or there was nothing to send), confirmed when the event requires it.
+ * Never throws, except that it rejects in a test process (and a child a test spawns) when it would raise a banner.
+ */
 export async function dispatchSystem(event: NotificationEvent, config: SystemChannelConfig): Promise<boolean> {
     if (!config.enabled || process.platform !== "darwin") {
         return true;
     }
+
+    refuseHostEffectInTest(
+        "The system notification channel",
+        "Assert the event instead of raising a real notification."
+    );
 
     try {
         const posted = await sendNotification({

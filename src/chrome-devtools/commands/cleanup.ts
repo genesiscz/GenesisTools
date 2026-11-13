@@ -1,6 +1,6 @@
-import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import {
     actionsFromFindings,
@@ -116,6 +116,7 @@ and survive until reboot. Run 'doctor' first to see what needs cleaning.`
                     message: "What should be cleaned? (space toggles, enter confirms)",
                     options: actions.map((a, i) => ({ value: i, label: a.label })),
                     required: false,
+                    cancel: "back",
                 });
 
                 if (p.isCancel(picked) || (Array.isArray(picked) && picked.length === 0)) {

@@ -3,6 +3,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { KnownPerson } from "@genesiscz/utils/meetings/people-directory";
+import { personLabel } from "@genesiscz/utils/meetings/proposals";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
@@ -23,10 +24,6 @@ const RANK_TEXT: Record<KnownPerson["rank"], string> = {
     contacts: "in Contacts",
     own: "added by hand",
 };
-
-function personText(person: Pick<KnownPerson, "name" | "email">): string {
-    return person.email ? `${person.name} <${person.email}>` : person.name;
-}
 
 function printJson(value: unknown): void {
     out.result(SafeJSON.stringify(value, null, 2));
@@ -129,8 +126,8 @@ async function add(name: string, opts: { email?: string; note?: string; json?: b
         const shown = added.shown ? " (shown again)" : "";
         ui.ok(
             added.added
-                ? `Added ${personText(added.person)} to the people book${shown}.`
-                : `${personText(added.person)} was in the people book: updated${shown}.`
+                ? `Added ${personLabel(added.person)} to the people book${shown}.`
+                : `${personLabel(added.person)} was in the people book: updated${shown}.`
         );
     } catch (err) {
         fail(err);
@@ -151,8 +148,8 @@ async function hide(person: string, opts: { show?: boolean; json?: boolean }): P
         const what = opts.show ? "shown again" : "hidden from the lists";
         ui.ok(
             hidden.changed
-                ? `${personText(hidden.person)}: ${what}.`
-                : `${personText(hidden.person)} was ${opts.show ? "not hidden" : "hidden already"}.`
+                ? `${personLabel(hidden.person)}: ${what}.`
+                : `${personLabel(hidden.person)} was ${opts.show ? "not hidden" : "hidden already"}.`
         );
     } catch (err) {
         fail(err);
@@ -162,7 +159,7 @@ async function hide(person: string, opts: { show?: boolean; json?: boolean }): P
 function printPlan(plan: MeetingsResult<"people.planMerge">): void {
     const [a, b] = plan.people;
     out.println(
-        `${pc.bold("Merge")} ${personText(a)} ${pc.dim("and")} ${personText(b)} ${pc.dim("into")} ${plan.name}`
+        `${pc.bold("Merge")} ${personLabel(a)} ${pc.dim("and")} ${personLabel(b)} ${pc.dim("into")} ${plan.name}`
     );
 
     if (plan.meetings.length === 0) {
@@ -221,7 +218,7 @@ async function unmerge(token: string, opts: { json?: boolean }): Promise<void> {
             return;
         }
 
-        ui.ok(`${removed.people.map(personText).join(" and ")} are two people again.`);
+        ui.ok(`${removed.people.map(personLabel).join(" and ")} are two people again.`);
     } catch (err) {
         fail(err);
     }

@@ -113,3 +113,24 @@ export interface FolderWriteSupport {
     reason: string;
     manualStep: string;
 }
+
+export interface LocalAudioFile {
+    sourceMeetingId: string;
+    path: string;
+}
+
+export interface LocalAudioMeeting {
+    sourceMeetingId: string;
+    title: string;
+    start: string;
+    end?: string;
+}
+
+/** Local-only provider access. None of these members may load transcripts, evidence or a remote service. */
+export interface LocalSourceAudio {
+    readonly id: MeetingSourceId;
+    files(): Promise<LocalAudioFile[]>;
+    legacyFiles(meetingsRoot: string): Promise<LocalAudioFile[]>;
+    catalog(): Promise<LocalAudioMeeting[]>;
+    load(sourceMeetingId: string): Promise<SourceMeeting | null>;
+}

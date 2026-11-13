@@ -1,12 +1,13 @@
-import type { DiskUsageResult } from "@app/dev-dashboard/lib/disk/types";
+import type { DiskUsageResult } from "@app/dev-dashboard/contract/dto";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { useQuery } from "@tanstack/react-query";
 import { DiskUsageBars } from "@/components/disk-janitor/DiskUsageBars";
-import { fetchJson } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 export function DiskJanitorRoute() {
     const { data } = useQuery<DiskUsageResult>({
         queryKey: ["disk-usage"],
-        queryFn: () => fetchJson<DiskUsageResult>("/api/disk/usage"),
+        queryFn: () => dashboard.call(ENDPOINTS.diskUsage, {}),
         refetchInterval: 60000,
     });
 

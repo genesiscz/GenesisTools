@@ -18,7 +18,7 @@ import { createGit, type DetectedBase, detectBase, loadRepoConfig } from "@genes
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { ownLineage, readProcessCwd } from "@genesiscz/utils/process/cwd";
-import { listPsRows, processBasename } from "@genesiscz/utils/process/ps";
+import { listProcessRows, processBasename } from "@genesiscz/utils/process/processes";
 import { Storage } from "@genesiscz/utils/storage";
 import { escapeShellArg } from "@genesiscz/utils/string";
 
@@ -302,7 +302,7 @@ export async function readLiveUsers({ liveMinutes }: { liveMinutes: number }): P
     const own = ownLineage(32);
     const processes: LiveUsers["processes"] = [];
 
-    for (const row of await listPsRows({ timeoutMs: 10_000 })) {
+    for (const row of await listProcessRows({ timeoutMs: 10_000 })) {
         if (own.has(row.pid)) {
             continue;
         }

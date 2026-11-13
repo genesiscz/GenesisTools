@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
+import { CmuxDidNotAnswerError, type RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import * as paths from "@genesiscz/utils/paths";
@@ -590,6 +590,23 @@ describe("sessions already running in a cmux tab", () => {
 
         expect(choice).toEqual({ action: "resume", session: only });
         expect(reads).toBe(0);
+    });
+
+    test("a lone match is refused when cmux did not answer: it may already run in a tab", async () => {
+        const only = session("only", "invoice");
+        await expect(
+            chooseResume({
+                adapter: adapter([only]),
+                query: "invoice",
+                interactive: true,
+                running: async () => {
+                    throw new CmuxDidNotAnswerError("cmux tree timed out after 3500 ms");
+                },
+                pick: async () => {
+                    throw new Error("a refused lone match must not open the picker");
+                },
+            })
+        ).rejects.toThrow(/cmux did not answer.*not resuming/);
     });
 
     test("a failed running scan leaves the history resume working", async () => {

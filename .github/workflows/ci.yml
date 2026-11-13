@@ -567,6 +567,13 @@ jobs:
         timeout-minutes: 1
         run: bun scripts/ci/check-package-boundaries.ts
 
+      # The rosters that need the whole tree (scripts/ci/rosters/tree.ts): a helper of src/utils declared again
+      # under its name or a copy's name, its body copied under any name, a tool importing a tool it did not import
+      # before. A count in rosters.json only goes down; about 4 s.
+      - name: Tree roster guard
+        timeout-minutes: 2
+        run: bun scripts/ci/rosters/generate.ts --check --tree
+
       # STRICT since phase P8 of .claude/plans/2026-10-30-PlugenizeHarnesses.md (HARNESS_GUARD_STRICT in
       # scripts/ci/harness-guard.ts): a list, table or branch over the harness names outside the drivers that
       # harness-guard-allowlist.ts does not allow, a stale allowance, or an entry without a why fails the run.
@@ -579,6 +586,12 @@ jobs:
       - name: Plugin standalone guard
         timeout-minutes: 1
         run: bun scripts/ci/check-plugin-standalone.ts
+
+      # The plugin files that src writes (harness facts, scratch dirs, host markers, mods defaults, and the whole
+      # copies of process-basics.ts, process-alive.ts and option-labels.ts) must be what the generator writes today.
+      - name: Plugin vendored files are current
+        timeout-minutes: 1
+        run: bun scripts/gen-harness-plugin.ts --check
 
       # Biome reads only the root's JSON files, so a nested manifest that does not parse passed every gate
       # (d9687720a, 2026-10-14: the genesis-tools plugin failed to load for 12 hours).

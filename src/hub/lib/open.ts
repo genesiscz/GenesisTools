@@ -1,10 +1,8 @@
-import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
+import { ensureFaceReady, openFace } from "@app/macos/lib/permissions/part-readiness";
 import { type HubLinkQuery, routerLink, schemeLink } from "@genesiscz/utils/browser-router/router-link";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { expandTilde } from "@genesiscz/utils/paths";
 import { hubStatus } from "./proposal";
 
@@ -311,22 +309,8 @@ function hubLinkData(options: HubLinkOptions): HubLinkQuery {
     return query;
 }
 
-/** Why the installed app cannot serve the hub as it is, or undefined when it can. */
-export function buildReason({ staleOk = false }: { staleOk?: boolean } = {}): string | undefined {
-    const status = appStatus();
-
-    if (!status.built) {
-        return "GenesisTools.app is not built";
-    }
-
-    if (status.stale && !staleOk) {
-        return "GenesisTools.app is older than its Swift sources";
-    }
-
-    if (!status.parts.includes("hub")) {
-        return "GenesisTools.app was built without the hub part";
-    }
-
+/** The hub's own reason beyond its part: an installed build that predates the review window's resources. */
+function hubResourcesReason(): string | undefined {
     const hub = hubStatus();
     return hub.available ? undefined : hub.reason;
 }
@@ -337,29 +321,21 @@ export function buildReason({ staleOk = false }: { staleOk?: boolean } = {}): st
  * already runs takes the arguments and comes forward instead of a second window opening.
  */
 export async function openHub(options: OpenHubOptions): Promise<OpenHubResult> {
-    const reason = buildReason({ staleOk: options.build === false && options.staleOk === true });
-    let built = false;
+    const readiness = await ensureFaceReady("--hub", {
+        build: options.build === false ? "refuse" : "allow",
+        stale: options.build === false && options.staleOk === true ? "accept" : "rebuild",
+        check: hubResourcesReason,
+        onStep: options.onStep,
+        onProgress: options.onProgress,
+    });
 
-    if (reason) {
-        if (options.build === false) {
-            throw new Error(`${reason}; run without --no-build, or: ${genesisAppBuildHint()}`);
-        }
-
-        options.onStep?.(`${reason}: building it (about a minute on a cold build)`);
-        logger.info({ reason }, "hub open: building GenesisTools.app");
-        // The installed parts plus the hub (src/macos/lib/permissions/parts.ts): a host-only install gains it here.
-        await buildApp({ onStep: options.onStep, onProgress: options.onProgress, parts: { add: ["hub"] } });
-        built = true;
+    if (!readiness.ready) {
+        throw new Error(`${readiness.sentence} (or run without --no-build)`);
     }
 
     const args = hubArgs(options);
     const openArgs = ["-n", ...(options.activate === false ? ["-g"] : []), genesisAppBundlePath(), "--args", ...args];
     logger.info({ openArgs }, "hub open: open");
-    const result = spawnSync("open", openArgs, { encoding: "utf8" });
-
-    if (result.status !== 0) {
-        throw new Error(`open failed (${result.status}): ${(result.stderr || result.error?.message || "").trim()}`);
-    }
-
-    return { built, reason, args };
+    openFace(openArgs);
+    return { built: readiness.built, reason: readiness.reason, args };
 }

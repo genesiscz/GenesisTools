@@ -4,10 +4,10 @@ import { extractOrgName } from "@app/azure-devops/config";
 import { fetchTimeLogFunctionsKey } from "@app/azure-devops/lib/timelog-configure";
 import type { AzureConfigWithTimeLog, IdentityRef, TimeLogConfig } from "@app/azure-devops/types";
 import { findConfigPath, loadConfig } from "@app/azure-devops/utils";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -124,6 +124,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
         const shouldFetch = await p.confirm({
             message: "API key is missing. Fetch it from Azure DevOps now?",
             initialValue: true,
+            cancel: "back",
         });
 
         if (p.isCancel(shouldFetch)) {
@@ -147,6 +148,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
                 const manualKey = await p.text({
                     message: "Enter API key manually (or press Escape to skip):",
                     placeholder: "your-api-key",
+                    cancel: "back",
                 });
 
                 if (p.isCancel(manualKey)) {
@@ -184,6 +186,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
                     label: `${m.displayName}`,
                     hint: m.uniqueName ?? undefined,
                 })),
+                cancel: "back",
             });
 
             if (p.isCancel(selected)) {
@@ -206,6 +209,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
                         return "Display name is required";
                     }
                 },
+                cancel: "back",
             });
 
             if (p.isCancel(userName)) {
@@ -225,6 +229,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
                         return "Must be a valid email address";
                     }
                 },
+                cancel: "back",
             });
 
             if (p.isCancel(userEmail)) {
@@ -245,6 +250,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
                         return "Must be a valid GUID (e.g., xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)";
                     }
                 },
+                cancel: "back",
             });
 
             if (p.isCancel(userId)) {
@@ -277,6 +283,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
                 ? currentTypes.filter((t) => (COMMON_WORK_ITEM_TYPES as readonly string[]).includes(t))
                 : [],
         required: false,
+        cancel: "back",
     });
 
     if (p.isCancel(selectedTypes)) {
@@ -299,6 +306,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
     const shouldConfigureStates = await p.confirm({
         message: "Configure allowed states per work item type?",
         initialValue: Object.keys(currentStatesPerType).length > 0,
+        cancel: "back",
     });
 
     if (p.isCancel(shouldConfigureStates)) {
@@ -321,6 +329,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
                 })),
                 initialValues: currentStates.filter((s) => (COMMON_STATES as readonly string[]).includes(s)),
                 required: false,
+                cancel: "back",
             });
 
             if (p.isCancel(selectedStates)) {
@@ -374,6 +383,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
                     ? currentDeprioritized.filter((s) => terminalCandidates.includes(s))
                     : terminalCandidates,
             required: false,
+            cancel: "back",
         });
 
         if (p.isCancel(selectedDeprioritized)) {
@@ -396,6 +406,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
     const shouldSave = await p.confirm({
         message: "Save this configuration?",
         initialValue: true,
+        cancel: "back",
     });
 
     if (p.isCancel(shouldSave) || !shouldSave) {

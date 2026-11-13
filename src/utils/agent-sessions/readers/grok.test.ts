@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { grokHistoryReader } from "../compact-readers";
 import type { NativeSessionSource } from "../types";
 import {
     createGrokHistoryOperations,
@@ -809,4 +810,33 @@ test("rowAnchors names an update's message and turn, and a tool_call update's ca
         toolCallIds: [],
         turnIds: [],
     });
+});
+
+test("readSpawnLink answers null: a Grok sub-agent's files name no lead session", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-grok-spawn-"));
+    const root = join(home, "sessions");
+    const directory = join(root, encodeURIComponent(CWD), SESSION_ID);
+    mkdirSync(directory, { recursive: true });
+    const chatPath = join(directory, "chat_history.jsonl");
+    const summaryPath = join(directory, "summary.json");
+    writeFileSync(chatPath, line({ type: "user", content: "hello" }));
+    writeFileSync(
+        summaryPath,
+        SafeJSON.stringify({
+            info: { id: SESSION_ID },
+            agent_id: SESSION_ID,
+            agent_name: "helper",
+            session_kind: "subagent",
+        })
+    );
+    const source: NativeSessionSource<"grok"> = {
+        kind: "grok",
+        root,
+        sourceHome: home,
+        filePath: chatPath,
+        dataPaths: [chatPath],
+        metadataPaths: [summaryPath],
+    };
+
+    expect(await grokHistoryReader.readSpawnLink(source)).toBeNull();
 });

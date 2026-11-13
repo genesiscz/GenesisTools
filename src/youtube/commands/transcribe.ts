@@ -3,11 +3,11 @@ import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { extractVideoId, formatTimestamp } from "@app/youtube/commands/_shared/utils";
 import { renderTranscriptSrt as toSRT, renderTranscriptVtt as toVTT } from "@app/youtube/lib/transcript-export";
 import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -142,6 +142,7 @@ async function resolveInput(
                 return "Invalid YouTube URL or video ID";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(result)) {
@@ -156,6 +157,7 @@ async function resolveInput(
             { value: "local-hf", label: "Local (Hugging Face)", hint: "runs locally via transformers.js" },
             { value: "cloud", label: "Cloud", hint: "Groq/OpenAI Whisper API" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(providerChoice)) {
@@ -175,6 +177,7 @@ async function resolveInput(
             { value: "srt" as const, label: "SRT", hint: "SubRip subtitle format" },
             { value: "vtt" as const, label: "VTT", hint: "WebVTT subtitle format" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(formatChoice)) {
@@ -189,6 +192,7 @@ async function resolveInput(
             { value: "stdout", label: "Terminal (stdout)" },
             { value: "file", label: "File" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(destination)) {
@@ -200,6 +204,7 @@ async function resolveInput(
         const outPath = await p.text({
             message: "Output file path:",
             placeholder: "/path/to/output.txt",
+            cancel: "back",
         });
 
         if (p.isCancel(outPath)) {

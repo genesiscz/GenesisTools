@@ -3,14 +3,15 @@ import { codexHistoryReader } from "@genesiscz/utils/agent-sessions/compact-read
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
 import { primaryCodexHome } from "@genesiscz/utils/providers/session-paths";
 import { resolveSecret } from "@genesiscz/utils/security";
+import { composeAuthFetch } from "../../../core/fetch";
 import {
     CODEX_AUTH_PATH,
     extractAccountId,
     extractEmail,
     extractPlanType,
     readCodexAuthJson,
+    WHAM_BASE_URL,
 } from "../../../openai/codex-auth";
-import { OpenAISubResolver } from "../../../resolvers/OpenAISubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { discoverCodexHomes } from "./discover";
@@ -22,12 +23,13 @@ import { codexUsage } from "./usage";
 /**
  * Codex (ChatGPT plan) subscription over the WHAM endpoint.
  *
- * Wraps the existing resolver: its per-request token resolution keeps a
- * long-running process following the Codex CLI's refreshes, which is exactly the
- * behaviour that must not change while storage moves under it.
+ * `bind` makes no network request: it neither lists models (the catalog answers
+ * "is this model known", and the picker asks `listModels`) nor reads a token. The
+ * fetch it builds owns the auth: the token is read for each request, so a
+ * long-running process follows the Codex CLI's refreshes, and on a 401 it
+ * force-refreshes once (under the config lock, in `CodexAccountBinding`) and
+ * repeats the request once.
  */
-const resolver = new OpenAISubResolver();
-
 /**
  * The two plan-wide window slots the Codex app-server reports. Per-model pools
  * (`primary:codex_bengalfox`) follow in the order the account lists them.
@@ -52,13 +54,62 @@ export const openAiSubPlugin: ProviderPlugin = {
     },
 
     async bind(ctx: BindContext): Promise<ProviderBinding> {
-        const detected = await resolver.resolve(ctx.account.id, { noRefresh: ctx.probe });
+        const { CodexAccountBinding } = await import("../../../openai/account-binding");
+        const binding = await CodexAccountBinding.create(ctx.account.id, { allowRefresh: !ctx.probe });
+
+        // A diagnosis reads the stored tokens once, without a refresh, so `account test` still
+        // reports a dead credential. Real use reads them per request, where a refresh may run.
+        if (ctx.probe) {
+            await binding.tokens();
+        }
+
+        const { createOpenAI } = await import("@ai-sdk/openai");
+        const { fetchWhamResponse } = await import("../../../openai/wham-request");
+        // Per-request token resolve so a long-running process follows CLI /
+        // account refreshes instead of serving the token from bind time. The
+        // workspace id is fixed for a binding (`CodexAccountBinding` refuses an
+        // identity change), so the last one read is the one every token carries.
+        let workspace: string | undefined;
+        const remember = (tokens: { accessToken: string; chatgptAccountId: string }): string => {
+            workspace = tokens.chatgptAccountId;
+            return tokens.accessToken;
+        };
+        // WHAM requires SSE even for SDK doGenerate calls. The transport restores
+        // the requested response mode after applying the backend's request dialect.
+        const freshTokenFetch = composeAuthFetch({
+            getToken: async () => remember(await binding.tokens()),
+            // Recover from the token THIS request sent: when another request already moved the
+            // account to a newer token, that one is used and nothing is spent.
+            refresh: async (rejected) => {
+                const current = await binding.tokens();
+
+                if (current.accessToken !== rejected) {
+                    return remember(current);
+                }
+
+                return remember(await binding.tokens({ forceRefresh: true }));
+            },
+            authorize: (headers, token) => {
+                headers.set("Authorization", `Bearer ${token}`);
+
+                if (workspace) {
+                    headers.set("ChatGPT-Account-Id", workspace);
+                }
+            },
+            fetch: ((input: RequestInfo | URL, init?: RequestInit) =>
+                fetchWhamResponse({ input, init, ...(ctx.fetch ? { fetch: ctx.fetch } : {}) })) as typeof fetch,
+        });
+        const provider = createOpenAI({
+            apiKey: "codex-sub-placeholder",
+            baseURL: WHAM_BASE_URL,
+            fetch: freshTokenFetch as typeof fetch,
+        });
 
         return {
             accountId: ctx.account.id,
             providerId: "openai-sub",
             billed: false,
-            language: (modelId: string) => getLanguageModel(detected.provider, modelId, "openai-sub"),
+            language: (modelId: string) => getLanguageModel(provider, modelId, "openai-sub"),
         };
     },
 
@@ -69,11 +120,18 @@ export const openAiSubPlugin: ProviderPlugin = {
      */
     async health(ctx: BindContext) {
         try {
-            await resolver.resolve(ctx.account.id, { noRefresh: true });
+            const { CodexAccountBinding } = await import("../../../openai/account-binding");
+            const binding = await CodexAccountBinding.create(ctx.account.id, { allowRefresh: false });
+            await binding.tokens();
             return { ok: true, detail: "codex subscription token resolved" };
         } catch (err) {
             return { ok: false, detail: err instanceof Error ? err.message : String(err) };
         }
+    },
+
+    async listModels(ctx: BindContext) {
+        const { listOpenAiSubModels } = await import("./models");
+        return listOpenAiSubModels(ctx.account);
     },
 
     accounts: {

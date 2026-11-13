@@ -4,9 +4,9 @@ import { isInvertedWindow, localDay, parseDayBoundary } from "@app/azure-devops/
 import { type RequestedUser, resolveRequestedUser } from "@app/azure-devops/lib/current-user";
 import { DEFAULT_MAX_CANDIDATES, findMentions, TooManyCandidatesError } from "@app/azure-devops/lib/mentions";
 import { requireConfig } from "@app/azure-devops/utils";
-import * as p from "@clack/prompts";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
 

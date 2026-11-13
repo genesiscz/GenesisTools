@@ -1,11 +1,8 @@
 #!/usr/bin/env bun
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 import { registerGetCommand } from "./commands/get";
 import { registerMcpCommand } from "./commands/mcp";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command()
     .name("fetch")

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync } from "node:fs";
-import * as p from "@clack/prompts";
 import { env } from "@genesiscz/utils/env";
 import { getGenesisToolsConfigPath, getProfilingConfig } from "@genesiscz/utils/GenesisTools";
 import { PROFILER_SCOPE_NAMES } from "@genesiscz/utils/profile/scopes";
@@ -290,7 +289,7 @@ describe("buildConfigProgram", () => {
     it("packages lists rejected packages and does not prompt when stdin is not a terminal", async () => {
         const store = new Storage("packages");
         await store.setConfigValue("rejected", ["example-optional-pkg"]);
-        const select = spyOn(p, "select").mockImplementation(() => {
+        const select = spyOn(facade, "select").mockImplementation(() => {
             throw new Error("prompted without a terminal");
         });
         // The runner's own stdin may be a terminal (`script -q`, an interactive shell): pin "not a terminal".

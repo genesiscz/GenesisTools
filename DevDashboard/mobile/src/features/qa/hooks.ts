@@ -1,20 +1,13 @@
 import type { QaRow } from "@dd/contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, type AppStateStatus } from "react-native";
 import { useDashboardClient } from "@/api/client-provider";
-import { type QaLogParams, qaLogQuery } from "@/features/qa/queries";
-import {
-    openQaSubscription,
-    pushLiveRow,
-    type QaLiveStatus,
-    type QaSubscriptionHandle,
-} from "@/features/qa/subscription";
-import { useLiveRefetchInterval } from "@/live/provider";
+import { EMPTY_QA_LIVE_WINDOW, type QaLiveStatus, type QaLiveWindow, qaLiveStatus } from "@/features/qa/live-feed";
+import { type QaLogParams, qaKeys, qaLogQuery } from "@/features/qa/queries";
+import { useLiveChannel, useLiveRefetchInterval, useLiveStatus } from "@/live/provider";
 
 /**
  * Component-facing QA hooks (D32). Components import THESE — never raw `useQuery`/`useMutation` or
- * raw `client.qa.subscribe`. The mock↔real swap lives in the `ClientProvider`, so a screen renders
+ * a raw stream. The mock↔real swap lives in the `ClientProvider`, so a screen renders
  * fixtures or live data unchanged.
  *
  * ► REFERENCE SHAPE every feature copies: `export const useX = () => useQuery(xQuery(useDashboardClient()));`
@@ -43,67 +36,30 @@ export function useMarkRead() {
     });
 }
 
-export interface UseQaStreamResult {
-    /** Rows received live over SSE this session, newest-first (deduped by id). */
+export interface UseQaLiveResult {
+    /** Rows the live `qa` channel delivered this session, newest-first (deduped by id). */
     live: QaRow[];
-    /** Coarse liveness: "connecting" until the first row, then "live" (see subscription.ts note). */
+    /** Coarse liveness of the phone's one live stream for the `qa` channel. */
     status: QaLiveStatus;
 }
 
 /**
- * Wraps the contract's QA SSE subscription with proper React lifecycle: it opens a deduped
- * subscription on mount, tears it down on unmount, and on AppState `active` re-opens the stream and
- * refetches the persisted log (the web resync model — server/tmux hold state; we re-merge + dedupe
- * by id on resume; no `Last-Event-ID` since the server emits no `id:` lines). Backgrounding closes
- * the stream so a suspended app holds no open socket.
- *
- * `onResume` lets the screen trigger the persisted-log refetch (so the merge re-reconciles); the
- * live buffer is preserved across a resume (only the connection is re-established).
+ * The QA screen's live window. The phone's one live stream (`LiveCacheProvider`) carries the `qa` channel while this
+ * hook is mounted, and its cache table prepends each entry to the window (`qaKeys.live`). The stream owns the
+ * foreground lifecycle, and its connect resync refetches the persisted log, so a resume needs nothing here.
  */
-export function useQaStream(options: { onResume?: () => void } = {}): UseQaStreamResult {
-    const client = useDashboardClient();
-    const [live, setLive] = useState<QaRow[]>([]);
-    const [status, setStatus] = useState<QaLiveStatus>("connecting");
-    const handleRef = useRef<QaSubscriptionHandle | null>(null);
-    const onResumeRef = useRef(options.onResume);
-    onResumeRef.current = options.onResume;
+export function useQaLive(): UseQaLiveResult {
+    const queryClient = useQueryClient();
+    const streamsQa = useLiveChannel("qa");
+    const stream = useLiveStatus();
+    // No request: the cache table writes the window. The query function returns what is there, so a refetch is a
+    // no-op instead of wiping it.
+    const { data } = useQuery({
+        queryKey: qaKeys.live,
+        queryFn: () => queryClient.getQueryData<QaLiveWindow>(qaKeys.live) ?? EMPTY_QA_LIVE_WINDOW,
+        initialData: EMPTY_QA_LIVE_WINDOW,
+        staleTime: Number.POSITIVE_INFINITY,
+    });
 
-    const pushLive = useCallback((entry: QaRow) => {
-        setLive((prev) => pushLiveRow(prev, entry));
-    }, []);
-
-    useEffect(() => {
-        function open(): void {
-            handleRef.current?.close();
-            setStatus("connecting");
-            handleRef.current = openQaSubscription(client, {
-                onRow: pushLive,
-                onStatus: setStatus,
-                onReconnect: () => onResumeRef.current?.(),
-            });
-        }
-
-        function close(): void {
-            handleRef.current?.close();
-            handleRef.current = null;
-        }
-
-        open();
-
-        const sub = AppState.addEventListener("change", (next: AppStateStatus) => {
-            if (next === "active") {
-                open();
-                onResumeRef.current?.();
-            } else {
-                close();
-            }
-        });
-
-        return () => {
-            sub.remove();
-            close();
-        };
-    }, [client, pushLive]);
-
-    return { live, status };
+    return { live: data.rows, status: qaLiveStatus(stream, streamsQa, data.rows.length) };
 }

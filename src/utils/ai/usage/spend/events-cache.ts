@@ -8,9 +8,8 @@ import { atomicWriteFileSync, type Storage } from "@genesiscz/utils/storage/stor
 import { accountIdForFile, resolveDriverRoots } from "./account-roots";
 import { type AgentId, type ByAgent, MONITOR_DRIVERS, type MonitorDriver } from "./drivers";
 import { findRecentTranscripts, readTail } from "./monitor";
-import { priceForCandidates } from "./pricing";
-import { totalTokensOf } from "./reports/cost";
-import { pricedEventCost } from "./reports/load";
+import { priceUsage } from "./priced-usage";
+import { spendEventUsage, totalTokensOf } from "./reports/cost";
 import { parseNativeChunk } from "./reports/native";
 import type { PricingTable } from "./types";
 
@@ -367,13 +366,14 @@ function readAppendedBytes(options: ReadAppendedOptions): void {
         seen.add(event.id);
         entry.recentIds.push(event.id);
 
-        const priced = priceForCandidates(driver.priceCandidates(event.model), pricing) !== null;
+        const quote = priceUsage(spendEventUsage(event), { table: pricing });
         entry.events.push(
             compact(event, {
-                costUsd: pricedEventCost(event, pricing, "auto"),
+                costUsd: quote.costUSD ?? 0,
                 tokens: totalTokensOf(event),
                 source: driver.id,
-                priced,
+                // The catalog knows the model, whatever basis the cost took.
+                priced: quote.price !== null,
             })
         );
     }

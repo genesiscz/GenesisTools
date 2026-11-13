@@ -1,4 +1,3 @@
-import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import {
     backupKeychainPayload,
     deleteKeychainEntry,
@@ -33,11 +32,11 @@ export interface ForeignKeychainEntry {
  * `preSync.status` of "unreadable" means an entry exists that could not be
  * read: the caller must stop, and `writeKeychainPayload` refuses it anyway.
  */
-export async function inspectKeychainBeforeInject(aiConfig: AIConfig): Promise<{
+export async function inspectKeychainBeforeInject(): Promise<{
     preSync: KeychainSyncResult;
     foreign: ForeignKeychainEntry | null;
 }> {
-    const preSync = await syncKeychainToConfig(aiConfig);
+    const preSync = await syncKeychainToConfig();
 
     if (preSync.status === "no-match") {
         return { preSync, foreign: { uuid: preSync.uuid } };
@@ -85,11 +84,10 @@ export async function injectSecondaryLogin(
  * the user logged in directly mid-session; that login must survive.
  */
 export async function finishKeychainSession(
-    aiConfig: AIConfig,
     injectedUuid: string | undefined,
     foreignBackupPath: string | undefined
 ): Promise<KeychainSyncResult> {
-    const postSync = await syncKeychainToConfig(aiConfig);
+    const postSync = await syncKeychainToConfig();
 
     const currentUuid =
         postSync.status === "synced" || postSync.status === "unchanged" || postSync.status === "no-match"

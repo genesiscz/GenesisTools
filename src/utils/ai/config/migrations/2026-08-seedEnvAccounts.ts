@@ -1,8 +1,8 @@
-import type { ConfigMigration } from "@genesiscz/utils/config/migration";
+import { mayPersistMigration } from "@genesiscz/utils/config/real-home-write";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { migrationAllowedHere } from "../migration-guard";
+import type { ConfigMigration } from "../migrate";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "../schema";
 
 /**
@@ -89,7 +89,7 @@ export const migrateSeedEnvAccounts: ConfigMigration = {
             return false;
         }
 
-        if (!migrationAllowedHere()) {
+        if (!mayPersistMigration().allowed) {
             return false;
         }
 

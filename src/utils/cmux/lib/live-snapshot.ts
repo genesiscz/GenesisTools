@@ -1,5 +1,6 @@
 import { type CmuxRunResult, type CmuxTimeoutOpt, runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { type CmuxHealthState, CmuxUnresponsiveError, ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
+import { type CmuxTreeRead, type ParsedCmuxTree, readCmuxTree } from "@genesiscz/utils/cmux/tree-read";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -102,11 +103,6 @@ export interface CmuxLiveSnapshot {
 
 /** The old preflight's `identify` timeout, now the first state command's (see fetchCmuxLiveSnapshot). */
 const FIRST_CALL_TIMEOUT_MS = 3_500;
-/**
- * The optional `tree --all` answers in about 100 ms. Every pane waits for it before its own
- * `list-pane-surfaces` fallback, so a stalled tree must give up long before the 30 s default.
- */
-export const TREE_TIMEOUT_MS = 3_500;
 
 type CmuxJsonRunner = <T>(args: string[], opts?: CmuxTimeoutOpt) => Promise<T>;
 type CmuxRunner = (args: string[]) => Promise<CmuxRunResult>;
@@ -176,10 +172,6 @@ interface SurfaceRpc {
     tty?: string;
 }
 
-interface TreeRpc {
-    windows?: Array<{ workspaces?: Array<WorkspaceRpc & { panes?: Array<PaneRpc & { surfaces?: SurfaceRpc[] }> }> }>;
-}
-
 /** A pane's surfaces from the one `tree --all` read, or undefined when the tree does not know the pane. */
 type SurfaceLookup = (workspace: string, pane: string) => SurfaceRpc[] | undefined;
 
@@ -197,6 +189,8 @@ interface SnapshotDeps {
      * Default false: one `list-workspaces` call, which covers only the key window.
      */
     allWindows?: boolean;
+    /** A tree the caller already read (`tree.ts` reads it first, as its gate); the snapshot then reads none. */
+    tree?: ParsedCmuxTree;
 }
 
 const SECRET_LINE_PATTERNS: RegExp[] = [
@@ -399,44 +393,50 @@ async function fetchWorkspacePanes(
 }
 
 /**
- * Every pane's surfaces from one `tree --all`, keyed by workspace and pane ref. It replaced one
- * `list-pane-surfaces` spawn per pane (four of a ten-spawn snapshot on 2026-09-26). A pane the
- * tree does not know (opened in between, or a cmux without `tree`) still gets its own call.
+ * Every pane's surfaces from the one tree read (`tree-read.ts`), keyed by workspace and pane. It replaced one
+ * `list-pane-surfaces` spawn per pane (four of a ten-spawn snapshot on 2026-09-26). A pane the tree does not
+ * know (opened in between, or a failed read) still gets its own call: every pane waits for this before that
+ * fallback, which is why the read is bounded far below the 30 s default.
  */
-async function treeSurfaces(runJson: CmuxJsonRunner): Promise<SurfaceLookup> {
+async function treeSurfaces(read: Promise<CmuxTreeRead>): Promise<SurfaceLookup> {
     const byPane = new Map<string, SurfaceRpc[]>();
+    const answer = await read;
 
-    try {
-        // `--id-format both` adds each surface's UUID beside its ref. The refs renumber at every cmux
-        // relaunch; the UUIDs stay, and the session journal records them.
-        const tree = await runJson<TreeRpc>(["--id-format", "both", "tree", "--all"], { timeoutMs: TREE_TIMEOUT_MS });
+    if (!answer.ok) {
+        logger.debug(
+            { reason: answer.reason, error: answer.error },
+            "[cmux] tree read failed; surfaces fall back to one call per pane"
+        );
+        return () => undefined;
+    }
 
-        for (const window of tree.windows ?? []) {
-            for (const workspace of window.workspaces ?? []) {
-                for (const pane of workspace.panes ?? []) {
-                    if (!pane.surfaces) {
-                        continue;
-                    }
-
-                    // The fields `list-pane-surfaces` reports, so the snapshot stays the same, plus the tty:
-                    // the tree's `active` marks every pane's selected surface (that call has no focus
-                    // field, so `active` was always false), and its `url` is null for a terminal.
-                    const surfaces = pane.surfaces.map((surface) => ({
-                        id: surface.id,
-                        ref: surface.ref,
-                        index: surface.index_in_pane ?? surface.index,
-                        title: surface.title,
-                        type: surface.type,
-                        selected: surface.selected_in_pane ?? surface.selected,
-                        ...(typeof surface.url === "string" ? { url: surface.url } : {}),
-                        ...(typeof surface.tty === "string" && surface.tty ? { tty: surface.tty } : {}),
-                    }));
-                    byPane.set(`${workspaceId(workspace)}\n${paneId(pane)}`, surfaces);
+    for (const window of answer.tree.windows) {
+        for (const workspace of window.workspaces) {
+            for (const pane of workspace.panes) {
+                if (!pane.surfaces) {
+                    continue;
                 }
+
+                // The fields `list-pane-surfaces` reports, so the snapshot stays the same, plus the tty:
+                // the tree's `active` marks every pane's selected surface (that call has no focus
+                // field, so `active` was always false), and its `url` is null for a terminal.
+                const surfaces = pane.surfaces.map(
+                    (surface): SurfaceRpc => ({
+                        id: surface.id ?? undefined,
+                        ref: surface.ref ?? undefined,
+                        index: surface.index ?? undefined,
+                        title: surface.title ?? undefined,
+                        type: surface.type ?? undefined,
+                        selected: surface.selected ?? undefined,
+                        ...(surface.url !== null ? { url: surface.url } : {}),
+                        ...(surface.tty ? { tty: surface.tty } : {}),
+                    })
+                );
+                const workspaceKey = workspace.id ?? workspace.ref ?? "workspace:unknown";
+                const paneKey = pane.id ?? pane.ref ?? "pane:unknown";
+                byPane.set(`${workspaceKey}\n${paneKey}`, surfaces);
             }
         }
-    } catch (error) {
-        logger.debug({ error }, "[cmux] tree --all failed; surfaces fall back to one call per pane");
     }
 
     return (workspace, pane) => byPane.get(`${workspace}\n${pane}`);
@@ -531,8 +531,13 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
             windowRef,
         }));
 
-        // Runs beside the `list-panes` calls; each pane waits for it only after its own listing.
-        const surfaces = treeSurfaces(runJson);
+        // Runs beside the `list-panes` calls; each pane waits for it only after its own listing. An injected
+        // runner (a test) answers the tree too.
+        const surfaces = treeSurfaces(
+            deps.tree
+                ? Promise.resolve<CmuxTreeRead>({ ok: true, tree: deps.tree })
+                : readCmuxTree(deps.runJson ? { run: deps.runJson } : {})
+        );
         const paneGroups = await prof.measureAsync("list-panes+surfaces", () =>
             Promise.all(
                 rawWorkspaces.map(({ workspace }) => fetchWorkspacePanes(workspace, runJson, run, previews, surfaces))
