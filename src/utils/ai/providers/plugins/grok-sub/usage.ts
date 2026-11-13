@@ -232,10 +232,10 @@ export function grokCredentialStamp(account: AccountEntry): Promise<number | und
  * it starts, and the account is neither retried nor backed off (issue #378).
  */
 export function grokMissingCredential(account: AccountEntry): MissingCredential | undefined {
-    // Resolved, not raw. The resolver reads the v3 projection, and `toV3Account` only
-    // carries `tokens.accessToken` once `resolveSecretSync` returns a VALUE, so a vault
-    // pointer the store cannot answer (entry gone, or no master key available
-    // synchronously — the launchd daemon's normal state) is no credential to it. Testing
+    // Resolved, not raw. The resolver refuses a vault pointer that resolves to nothing
+    // with this very message, so a pointer the store cannot answer (entry gone, or no
+    // master key available synchronously — the launchd daemon's normal state) is no
+    // credential here either. Testing
     // the raw field would call that pointer a credential, and the account would be polled
     // only for the resolver to refuse it with this very message, which is issue #378.
     if (account.credentials.authFile || resolveSecretSync(account.credentials.accessToken)) {
