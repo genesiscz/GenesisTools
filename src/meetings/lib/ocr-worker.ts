@@ -849,7 +849,7 @@ class OcrWorker {
             }
         }
 
-        // A line cut short keeps the file it names at its start: its frame never gets a second row either.
+        // Every whole row the readers count is done too. A line a crash cut short is no row: its frame is read again.
         for (const file of ocrRowFiles(this.ocrFile)) {
             this.done.add(file);
         }

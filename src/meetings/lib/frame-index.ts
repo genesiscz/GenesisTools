@@ -189,8 +189,46 @@ export function hasFrameIndex(folder: string): boolean {
 }
 
 /**
+ * Whether a JSON line's first object closes exactly at the line's end: every object and array it opens is closed,
+ * outside its strings. A scan of the characters, so a long row's blocks are never parsed into objects.
+ */
+function closesAtEnd(line: string): boolean {
+    let depth = 0;
+    let inString = false;
+
+    for (let i = 0; i < line.length; i++) {
+        const code = line.charCodeAt(i);
+
+        if (inString) {
+            if (code === 0x5c) {
+                i += 1;
+            } else if (code === 0x22) {
+                inString = false;
+            }
+
+            continue;
+        }
+
+        if (code === 0x22) {
+            inString = true;
+        } else if (code === 0x7b || code === 0x5b) {
+            depth += 1;
+        } else if (code === 0x7d || code === 0x5d) {
+            depth -= 1;
+
+            if (depth <= 0 && i !== line.length - 1) {
+                return false;
+            }
+        }
+    }
+
+    return depth === 0 && !inString;
+}
+
+/**
  * The frame files `ocr.jsonl` has a row for. It reads only the start of each line: `SafeJSON.stringify` writes the
- * `file` key first, so a long row's blocks are never parsed; a line that starts otherwise is parsed whole.
+ * `file` key first, so a long row's blocks are never parsed; a line that starts otherwise, or does not close, is
+ * parsed whole.
  */
 export function ocrRowFiles(path: string): Set<string> {
     const files = new Set<string>();
@@ -207,8 +245,9 @@ export function ocrRowFiles(path: string): Set<string> {
         const head = line.match(/^\{"file":"((?:[^"\\]|\\.)*)"/)?.[1];
 
         // The fast path takes only a row that closes and holds one row: a crash can leave a row cut after its file
-        // name, and the next append then lands on the same line. Anything else is parsed whole.
-        if (head !== undefined && !head.includes("\\") && line.endsWith("}") && !line.includes('{"file":"', 1)) {
+        // name (also on a nested object's closing brace), and the next append then lands on the same line. Anything
+        // else is parsed whole.
+        if (head !== undefined && !head.includes("\\") && !line.includes('{"file":"', 1) && closesAtEnd(line)) {
             files.add(head);
             continue;
         }
