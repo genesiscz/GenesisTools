@@ -17,6 +17,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { isDir } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { readLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -34,6 +35,7 @@ import type {
     WorkflowRun,
     WorkflowSupersession,
 } from "../workflow-types";
+import { parseRow } from "./analysis-lines";
 import {
     type ClaudeSubagentFile,
     claudeSubagentFiles,
@@ -56,36 +58,18 @@ function isoFromEpochMs(value: unknown): string | null {
     return ms === null ? null : new Date(ms).toISOString();
 }
 
-function parseRow(line: string): Row | null {
-    try {
-        const value: unknown = SafeJSON.parse(line, { strict: true });
-        return isObject(value) ? value : null;
-    } catch {
-        // A run that was stopped mid-write leaves a torn last line. It is skipped, not an error.
-        return null;
-    }
-}
-
 function readJsonFile(path: string): Row | null {
     try {
-        return parseRow(readFileSync(path, "utf8"));
+        return parseRow(readFileSync(path, "utf8"), path);
     } catch (error) {
         logger.debug({ error, path }, "[claude-workflows] unreadable file");
         return null;
     }
 }
 
-function isDirectory(path: string): boolean {
-    try {
-        return statSync(path).isDirectory();
-    } catch {
-        // A missing folder is the normal case for a run that left only a record.
-        return false;
-    }
-}
-
+/** A missing folder is the normal case for a run that left only a record, so it lists nothing. */
 function listNames(dir: string): string[] {
-    return isDirectory(dir) ? readdirSync(dir).sort() : [];
+    return isDir(dir) ? readdirSync(dir).sort() : [];
 }
 
 /** The run ids that have a record: `<runId>.json` beside the `scripts/` folder. */
@@ -177,7 +161,7 @@ function journalRows(journalPath: string): Array<{ line: number; row: Row }> {
     readFileSync(journalPath, "utf8")
         .split("\n")
         .forEach((raw, index) => {
-            const row = raw.trim() ? parseRow(raw) : null;
+            const row = raw.trim() ? parseRow(raw, journalPath) : null;
 
             if (row) {
                 rows.push({ line: index + 1, row });
@@ -363,7 +347,7 @@ export function claudeWorkflowRuns(sessionTranscript: string): WorkflowRun[] {
     const runDirs = new Map<string, string>();
 
     for (const folder of claudeWorkflowRunDirs(sessionTranscript)) {
-        if (folder.runId !== null && isDirectory(folder.dir)) {
+        if (folder.runId !== null && isDir(folder.dir)) {
             runDirs.set(folder.runId, folder.dir);
         }
     }
@@ -438,7 +422,7 @@ async function grepAgent(
             continue;
         }
 
-        const row = parseRow(line) ?? {};
+        const row = parseRow(line, agent.transcript) ?? {};
         const timestamp = text(row.timestamp);
 
         if (options.before && timestamp && timestamp >= options.before) {
