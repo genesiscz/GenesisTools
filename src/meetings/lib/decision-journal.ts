@@ -918,11 +918,12 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             const { added, warnings } = prepareFindings({
                 findings: action.findings,
                 items: record.items,
+                allowDuplicates: action.allowDuplicates,
                 ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
             });
             record.items.push(...added);
             return {
-                history: { command: "items add", change: `${action.findings.length} findings` },
+                history: { command: "items add", change: `${added.length} finding${added.length === 1 ? "" : "s"}` },
                 warnings,
                 stamps: false,
             };

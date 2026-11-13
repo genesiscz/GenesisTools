@@ -54,7 +54,12 @@ import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
-import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import {
+    MEETING_UNCHANGED,
+    type MeetingItem,
+    type MeetingRecord,
+    MeetingStore,
+} from "@genesiscz/utils/meetings/record";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { type recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
 import { callRecorder, readLiveRecording } from "@genesiscz/utils/screen-recorder/live";
@@ -328,7 +333,7 @@ export class MeetingsToolset extends ReplToolset {
                     return rowsRead({ store, record: current(), ...(lowPriority ? { lowPriority } : {}) });
                 },
                 add: async (input: z.input<typeof add.params>) => {
-                    const { findings } = add.params.parse(input);
+                    const { findings, allowDuplicates } = add.params.parse(input);
                     // The same anchors as `items add`; with no transcript at hand, the items are added as given.
                     const source = await opened()
                         .meeting()
@@ -338,6 +343,7 @@ export class MeetingsToolset extends ReplToolset {
                         });
                     // NR5 (2026-11-06): this answered the whole meeting record, 88 KB with the calendar attendees.
                     let added: MeetingItem[] = [];
+                    let duplicates: MeetingItem[] = [];
                     let warnings: string[] = [];
                     const record = await store.update(
                         id,
@@ -347,6 +353,7 @@ export class MeetingsToolset extends ReplToolset {
                                 findings,
                                 items: current.items,
                                 transcript: source?.transcript,
+                                allowDuplicates,
                             });
 
                             for (const warning of prepared.warnings) {
@@ -356,9 +363,18 @@ export class MeetingsToolset extends ReplToolset {
                             current.items.push(...prepared.added);
                             added = prepared.added;
                             warnings = prepared.warnings;
+                            duplicates = prepared.duplicates;
+
+                            if (added.length === 0) {
+                                return MEETING_UNCHANGED;
+                            }
                         }
                     );
-                    return { added: added.map((item) => itemRow(record, item)), warnings };
+                    return {
+                        added: added.map((item) => itemRow(record, item)),
+                        duplicates: duplicates.map((item) => item.id),
+                        warnings,
+                    };
                 },
                 suggest: async (input: z.input<typeof suggest.params> = {}) => {
                     const asked = suggest.params.parse(input).rules ?? [...SUGGEST_RULES];

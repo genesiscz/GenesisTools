@@ -95,7 +95,11 @@ export const DECISION_ACTION_OPTIONS = [
     /** Items back to suggested, each to the state before its own last decision. */
     z.object({ kind: z.literal("reopen"), items: z.array(itemRef).min(1) }),
     /** Findings added as suggested items (`items add`): an agent's or a person's suggestions, kept with who made them. */
-    z.object({ kind: z.literal("add"), findings: z.array(findingSchema).min(1) }),
+    z.object({
+        kind: z.literal("add"),
+        findings: z.array(findingSchema).min(1),
+        allowDuplicates: z.boolean().optional(),
+    }),
     /**
      * The meeting's own fields (`set`): its project (a known name: the caller resolves it first), its title, labels
      * to add and labels to remove.

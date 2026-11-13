@@ -9,9 +9,21 @@ import {
 } from "@genesiscz/utils/meetings/sources";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 
-/** One loader per source. The table lives in the tool, because a source is implemented in its own tool. */
-const MEETING_SOURCES: Record<MeetingSourceId, () => Promise<TranscriptSource>> = {
-    wisprflow: () => import("@app/wisprflow/lib/meeting-source").then((module) => module.wisprflowSource),
+/** Source capabilities live together; a local preview must never use an automatic remote fallback. */
+const MEETING_SOURCES: Record<
+    MeetingSourceId,
+    {
+        open: () => Promise<TranscriptSource>;
+        localTranscript: (sourceMeetingId: string) => Promise<TranscriptEntry[]>;
+    }
+> = {
+    wisprflow: {
+        open: () => import("@app/wisprflow/lib/meeting-source").then((module) => module.wisprflowSource),
+        localTranscript: async (sourceMeetingId) => {
+            const { loadMeeting } = await import("@app/wisprflow/lib/source");
+            return (await loadMeeting(sourceMeetingId, { source: "local", transcript: true })).data.transcript;
+        },
+    },
 };
 
 export function isMeetingSourceId(value: string): value is MeetingSourceId {
@@ -23,7 +35,7 @@ export async function meetingSource(id: string): Promise<TranscriptSource> {
         throw new Error(`Unknown source "${id}". Known: ${MEETING_SOURCE_IDS.join(", ")}`);
     }
 
-    const source = await MEETING_SOURCES[id]();
+    const source = await MEETING_SOURCES[id].open();
     return { ...source, load: async (sourceMeetingId) => composedMeeting(await source.load(sourceMeetingId)) };
 }
 
@@ -36,7 +48,7 @@ export function composedMeeting(meeting: SourceMeeting): SourceMeeting {
         ...meeting,
         participants: meeting.participants.map((person) => ({ ...person, name: person.name.normalize("NFC") })),
         speakers: meeting.speakers.map((speaker) => ({ ...speaker, name: speaker.name.normalize("NFC") })),
-        transcript: meeting.transcript.map((entry) => ({ ...entry, speaker: entry.speaker.normalize("NFC") })),
+        transcript: composedTranscript(meeting.transcript),
     };
 }
 
@@ -80,4 +92,20 @@ export async function linkedSource(record: MeetingRecord): Promise<LinkedSource>
 export async function meetingTranscript(record: MeetingRecord): Promise<TranscriptEntry[]> {
     const { source, sourceMeetingId } = await linkedSource(record);
     return (await source.load(sourceMeetingId)).transcript;
+}
+
+function composedTranscript(entries: TranscriptEntry[]): TranscriptEntry[] {
+    return entries.map((entry) => ({ ...entry, speaker: entry.speaker.normalize("NFC") }));
+}
+
+/** Explicit local-only read for previews: the source registry owns the capability and no remote fallback runs. */
+export async function localMeetingTranscript(record: MeetingRecord): Promise<TranscriptEntry[]> {
+    const ref = sourceRefOf(record);
+    if (!ref) {
+        throw new MeetingsStateError("no-transcript-source", `${record.id} has no linked local transcript to preview.`);
+    }
+    if (!isMeetingSourceId(ref.sourceId)) {
+        throw new Error(`Unknown source "${ref.sourceId}". Known: ${MEETING_SOURCE_IDS.join(", ")}`);
+    }
+    return composedTranscript(await MEETING_SOURCES[ref.sourceId].localTranscript(ref.sourceMeetingId));
 }

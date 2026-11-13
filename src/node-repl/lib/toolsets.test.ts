@@ -1863,7 +1863,20 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(meeting.record.items).toHaveLength(1);
         // The answer is the added item, not the meeting record (NR5).
         expect(answer).toMatchObject({ added: [{ kind: "question", status: "suggested" }], warnings: [] });
-        expect(Object.keys(answer as object).sort()).toEqual(["added", "warnings"]);
+        expect(Object.keys(answer as object).sort()).toEqual(["added", "duplicates", "warnings"]);
+        const store = new MeetingStore();
+        const before = readFileSync(store.path(record.id), "utf8");
+        const retry = await meeting.items.add({
+            findings: [{ kind: "question", from: 0, to: 5, question: "Who spoke first?" }],
+        });
+        expect(retry).toMatchObject({ added: [], duplicates: ["i1"] });
+        expect(readFileSync(store.path(record.id), "utf8")).toBe(before);
+        expect(new MeetingStore().read(record.id)?.items).toHaveLength(1);
+        await meeting.items.add({
+            findings: [{ kind: "question", from: 0, to: 5, question: "Who spoke first?" }],
+            allowDuplicates: true,
+        });
+        expect(new MeetingStore().read(record.id)?.items).toHaveLength(2);
     });
 
     test("meetings: items.suggest names the items it retired beside the fresh ones", async () => {

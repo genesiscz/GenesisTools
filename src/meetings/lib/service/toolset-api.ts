@@ -94,11 +94,11 @@ export const itemsRows = defineMethod({
 });
 export const add = defineMethod({
     name: "items.add",
-    params: z.object({ findings: z.array(findingSchema).min(1) }),
+    params: z.object({ findings: z.array(findingSchema).min(1), allowDuplicates: z.boolean().optional() }),
     result: z.unknown(),
-    resultName: "{ added: items.list rows, warnings }",
+    resultName: "{ added: items.list rows, duplicates: string[], warnings }",
     effect: "reversible",
-    doc: "Add validated findings under the meeting store lock; answers the items it added (as items.list rows) and the warnings, never the whole meeting.",
+    doc: "Add validated findings under the meeting store lock. Equal open findings are retained and reported as duplicate ids; allowDuplicates appends deliberately. Answers added items.list rows, duplicate ids and warnings. An all-duplicate retry writes nothing.",
 });
 export const suggest = defineMethod({
     name: "items.suggest",

@@ -29,6 +29,7 @@ import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
+import { planFindings } from "../lib/add-findings";
 import { decideResult, decisionOf, reopenResult } from "../lib/decide";
 import { decisionActionSchema } from "../lib/decision-actions";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
@@ -38,7 +39,7 @@ import { questionLabel, questionWarnings } from "../lib/questions";
 import { type ReviewRow, type RowPart, reviewRow } from "../lib/review-rows";
 import { withMeetingsClient } from "../lib/service/client";
 import { errorText, fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
-import { meetingTranscript } from "../lib/sources";
+import { localMeetingTranscript, meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
@@ -296,6 +297,8 @@ async function items(ref: string, opts: { status?: string | boolean; kind?: stri
 
 interface AddOptions {
     kind?: string;
+    plan?: boolean;
+    allowDuplicates?: boolean;
     listen?: boolean;
     fromFile?: string;
     from?: string;
@@ -395,6 +398,23 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
         return;
     }
 
+    if (opts.plan) {
+        try {
+            const transcript = await localMeetingTranscript(record);
+            out.result(
+                planFindings({
+                    findings: parsed.data,
+                    record,
+                    transcript,
+                    config: await new MeetingsConfigStore().read(),
+                })
+            );
+        } catch (err) {
+            fail(err);
+        }
+        return;
+    }
+
     // The transcript anchors each join and line-bound term to one line; with no source at hand, items are added as given.
     const meeting = await loadTranscript(store, record).catch((err: unknown) => {
         log.debug({ err, meeting: record.id }, "no transcript to check the anchors against");
@@ -404,7 +424,14 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
     try {
         // Through the decision journal, so the history says who suggested them (an agent, a person) and an Undo removes them.
         const decided = await withMeetingsClient((client) =>
-            client.call("decision.apply", { meeting: record.id, action: { kind: "add", findings: parsed.data } })
+            client.call("decision.apply", {
+                meeting: record.id,
+                action: {
+                    kind: "add",
+                    findings: parsed.data,
+                    ...(opts.allowDuplicates ? { allowDuplicates: true } : {}),
+                },
+            })
         );
         const added = (decided.entry?.changes ?? []).flatMap((change) => (change.after ? [change.after] : []));
         const updated = store.read(record.id) ?? record;
@@ -429,6 +456,11 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
 
         for (const warning of questionWarnings(updated, added)) {
             ui.warn(warning);
+        }
+
+        if (added.length === 0) {
+            ui.info(`No new items in ${record.id}.`);
+            return;
         }
 
         if (added.length === 1 && added[0]!.kind === "question") {
@@ -811,6 +843,8 @@ export function registerItemCommands(program: Command): void {
             "--reason <text>",
             "why: the facts and context it rests on (required for speaker-range, label, join and term)"
         )
+        .option("--plan", "print each finding's affected transcript line indices and first words; write nothing")
+        .option("--allow-duplicates", "append even when an equal open finding exists")
         .action(addItems);
 
     for (const [name, status] of [
