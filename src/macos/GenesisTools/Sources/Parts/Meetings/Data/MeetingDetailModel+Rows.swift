@@ -212,13 +212,27 @@ extension MeetingDetailModel {
     /// The sheet's Save: only the items that are not struck (`pendingStruck`) go with the decision. `askAgain` false is
     /// its "Do not ask again", which turns `meetings.rows.askReach` to never.
     func applyReach(_ pending: PendingReach, askAgain: Bool = true, spelling: DecisionAction.SpellingReach? = nil) {
+        applyPending(pending, askAgain: askAgain, onlyThis: false, spelling: spelling)
+    }
+
+    /// Both of the sheet's saves: the checkbox, the struck items and the spelling choices (which lines, whether the
+    /// dictionary learns it) go with either.
+    private func applyPending(_ pending: PendingReach, askAgain: Bool, onlyThis: Bool, spelling: DecisionAction.SpellingReach?) {
         let struck = pendingStruck
         pendingReach = nil
         pendingStruck = []
         if !askAgain { defaults.set(MeetingsPreferences.Rows.AskReach.never.rawValue, forKey: MeetingsPreferences.Rows.askReach.key) }
-        var action = Self.striking(pending.action, struck)
+        apply(pending.row, Self.reachAction(pending, struck: struck, onlyThis: onlyThis, spelling: spelling), reason: pending.reason)
+    }
+
+    /// The action a save of the sheet sends: the struck items left out, the spelling choices on a confirm or respell,
+    /// and for "Only this question" the look-alikes left open.
+    static func reachAction(_ pending: PendingReach, struck: Set<String>, onlyThis: Bool,
+                            spelling: DecisionAction.SpellingReach?) -> DecisionAction {
+        var action = striking(pending.action, struck)
         if let spelling, action.kind == "confirm" || action.kind == "respell" { action.reach = spelling }
-        apply(pending.row, action, reason: pending.reason)
+        if onlyThis { action.lookAlikes = "leave" }
+        return action
     }
 
     /// Strikes one item of the sheet out of the decision, or puts a struck one back (genesiscz.md 6).
@@ -240,14 +254,8 @@ extension MeetingDetailModel {
 
     /// "Only this question" (R22): the answer goes to this question and what it decides; the questions that look
     /// alike stay open for their own answers.
-    func applyOnlyThis(_ pending: PendingReach, askAgain: Bool = true) {
-        let struck = pendingStruck
-        pendingReach = nil
-        pendingStruck = []
-        if !askAgain { defaults.set(MeetingsPreferences.Rows.AskReach.never.rawValue, forKey: MeetingsPreferences.Rows.askReach.key) }
-        var action = Self.striking(pending.action, struck)
-        action.lookAlikes = "leave"
-        apply(pending.row, action, reason: pending.reason)
+    func applyOnlyThis(_ pending: PendingReach, askAgain: Bool = true, spelling: DecisionAction.SpellingReach? = nil) {
+        applyPending(pending, askAgain: askAgain, onlyThis: true, spelling: spelling)
     }
 
     private func apply(_ row: ReviewRow, _ action: DecisionAction, reason: String?) {

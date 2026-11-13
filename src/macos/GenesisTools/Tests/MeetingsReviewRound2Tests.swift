@@ -83,4 +83,21 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         XCTAssertEqual(MeetingDetailModel.delivery(after: try result(sent: 0, listeners: 0), staged: 3), .sent(comments: 3, listeners: 0),
                        "nobody listens: the staged comments stay staged")
     }
+
+    // MARK: Both saves of the reach sheet carry the same choices (PR 766, PR 799)
+
+    func testOnlyThisQuestionCarriesTheStruckItemsAndTheSpellingChoices() throws {
+        let row = try JSONDecoder().decode(ReviewRows.self, from: MeetingsReviewRowTests.rowsJSON).rows[0]
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: MeetingsReviewRowTests.reachJSON)
+        let spelling = DecisionAction.SpellingReach(lines: [.init(atSec: 12, line: 3)], dictionary: false)
+        let respell = MeetingDetailModel.PendingReach(row: row, action: .respell("t1", to: "Atlas"), reason: nil, reach: reach)
+        let only = MeetingDetailModel.reachAction(respell, struck: [], onlyThis: true, spelling: spelling)
+        XCTAssertEqual(only.reach, spelling, "the chosen lines and the dictionary switch go with Only this question too")
+        XCTAssertEqual(only.lookAlikes, "leave")
+        XCTAssertEqual(MeetingDetailModel.reachAction(respell, struck: [], onlyThis: false, spelling: spelling).reach, spelling)
+        let answer = MeetingDetailModel.PendingReach(row: row, action: .answer("q1", "Dana Example"), reason: nil, reach: reach)
+        let struck = MeetingDetailModel.reachAction(answer, struck: ["i3"], onlyThis: true, spelling: nil)
+        XCTAssertEqual(struck.except, ["i3"], "a struck item stays out of Only this question")
+        XCTAssertNil(MeetingDetailModel.reachAction(answer, struck: [], onlyThis: false, spelling: nil).lookAlikes)
+    }
 }
