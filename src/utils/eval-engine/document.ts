@@ -193,6 +193,7 @@ export type EvalConfigErrorCode =
     | "unknown-matrix"
     | "plan-changed"
     | "unknown-run"
+    | "run-in-use"
     | "bad-option"
     | "unsupported";
 

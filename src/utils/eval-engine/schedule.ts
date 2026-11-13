@@ -288,6 +288,20 @@ export async function runPlan<TResolved, TSignals, THandle>(
     input: RunPlanInput<TResolved, TSignals, THandle>,
     options: RunOptions
 ): Promise<RunPlanResult> {
+    // Claimed before the missing keys are read: a second invocation on the same run stops here instead of playing
+    // the same conversations again.
+    const claim = await input.store.claim();
+    try {
+        return await playMissing(input, options);
+    } finally {
+        await claim.release();
+    }
+}
+
+async function playMissing<TResolved, TSignals, THandle>(
+    input: RunPlanInput<TResolved, TSignals, THandle>,
+    options: RunOptions
+): Promise<RunPlanResult> {
     const { store, plan } = input;
     const done = await store.finalKeys();
     const pending = plan.conversations.filter((c) => !done.has(c.key));

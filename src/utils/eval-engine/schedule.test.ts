@@ -276,6 +276,20 @@ describe("hardening regressions", () => {
         assert.equal(saved.records[0].attempt, 1);
     });
 
+    it("refuses a second runPlan on a run that another one is playing, so no conversation is played twice", async () => {
+        const { system, plan, input, options } = await setup(() => ({ reply: "ok" }));
+        const results = await Promise.allSettled([runPlan(input, options()), runPlan(input, options())]);
+
+        assert.deepEqual(
+            results.map((r) => r.status),
+            ["fulfilled", "rejected"]
+        );
+        const refused = results[1];
+        assert.ok(refused.status === "rejected");
+        assert.match(String(refused.reason), /being played by pid/);
+        assert.equal(system.log.opened.length, plan.conversations.length);
+    });
+
     it("stops every other conversation before a record write failure ends the run", async () => {
         const { system, input, options, store } = await setup(() => ({ reply: "ok" }));
         store.writeFinal = async () => {
