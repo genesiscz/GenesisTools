@@ -87,6 +87,6 @@ export function lineDeviceCandidates(options: {
     return microphoneCandidates(
         options.record,
         options.atSec,
-        (options.micShare ?? 0) >= 0.9 ? "self" : (options.liveName ?? "")
+        (options.micShare ?? 0) >= 0.65 ? "self" : (options.liveName ?? "")
     );
 }
