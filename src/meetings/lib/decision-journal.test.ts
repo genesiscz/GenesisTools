@@ -1545,6 +1545,54 @@ describe("workshop listen contracts", () => {
         });
     });
 
+    test("a look-alike takes the matched person's stored name, and an ordered pair of people settles none", async () => {
+        const range = (id: string, fromSec: number) => ({
+            id,
+            kind: "speaker-range",
+            status: "suggested",
+            label: "Voice",
+            fromSec,
+            toSec: fromSec,
+            confidence: 0.5,
+            rules: [],
+            suggestedAt: now,
+        });
+        const voiceQuestion = (id: string, fromSec: number, decides: string) =>
+            question(id, {
+                about: "speaker",
+                heard: undefined,
+                fromSec,
+                toSec: fromSec,
+                signature: "voice-1",
+                evidence: { labels: ["Voice"] },
+                choices: ["Alice Example", "Bob Example"],
+                decides: [decides],
+            });
+        const items = () => [
+            range("i1", 10),
+            voiceQuestion("i2", 10, "i1"),
+            range("i3", 40),
+            voiceQuestion("i4", 40, "i3"),
+        ];
+        const fx = await fixture(items());
+        const { entry } = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            actor: person,
+            action: { kind: "answer", question: "i2", answer: "example alice" },
+        });
+        expect(entry?.settled).toEqual(["i4"]);
+        expect(fx.item("i3")).toMatchObject({ speaker: "Alice Example" });
+
+        const pair = await fixture(items());
+        const ordered = await pair.journal.apply({
+            meeting: pair.meeting.id,
+            actor: person,
+            action: { kind: "answer", question: "i2", answer: "Alice Example, then Bob Example" },
+        });
+        expect(ordered.entry?.settled).toEqual([]);
+        expect(pair.item("i4")).toMatchObject({ status: "suggested" });
+    });
+
     test("ordered people persist word segments and render separate turns", async () => {
         const fx = await fixture([
             {

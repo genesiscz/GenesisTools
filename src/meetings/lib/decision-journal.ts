@@ -798,10 +798,23 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 now,
                 except,
             });
+            // The look-alikes take the answer as it was stored (a matched person's own name), and only one person:
+            // an ordered "Alice, then Bob" fits this range, not another range of the same voice.
+            const severalVoices = record.items.some(
+                (item) =>
+                    item.kind === "speaker-range" &&
+                    question.decides.includes(item.id) &&
+                    (item.voices?.length ?? 0) > 1
+            );
             const alike =
-                action.lookAlikes === "leave" || question.status !== "confirmed"
+                action.lookAlikes === "leave" || question.status !== "confirmed" || severalVoices
                     ? { settled: [], corrections: [] }
-                    : settleLookAlikes(record, propagationSource, { answer: action.answer, listenBelow, now, except });
+                    : settleLookAlikes(record, propagationSource, {
+                          answer: question.answer ?? action.answer,
+                          listenBelow,
+                          now,
+                          except,
+                      });
             return {
                 history: { command: "listen", change: `${question.id} → ${action.answer}` },
                 settled: alike.settled,
