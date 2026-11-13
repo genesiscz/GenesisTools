@@ -4,6 +4,7 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { KeptEditsContext, useKeptState, useStagePick } from "@/features/answer-queue/hooks";
 import {
+    decisionDetails,
     flushDecision,
     type NoteState,
     noteIsDirty,
@@ -99,6 +100,16 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                     {decision.prompt}
                 </Text>
             ) : null}
+            {decisionDetails(decision).map((detail) => (
+                <View key={detail.id} testID={`${testId}-${detail.id}`} className="gap-0.5">
+                    <Text className="text-xs" style={{ color: c.textMuted, fontFamily: "monospace" }}>
+                        {detail.label}
+                    </Text>
+                    <Text className="text-xs" style={{ color: c.textSecondary }}>
+                        {detail.text}
+                    </Text>
+                </View>
+            ))}
             {decision.multiple ? (
                 <Text className="text-xs" style={{ color: c.textMuted }}>
                     Pick any of these, then send.
@@ -118,6 +129,7 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                                 ...(decision.multiple ? { checked: staged } : {}),
                             }}
                             accessibilityLabel={`Option ${choice.id}: ${choice.label}${choice.recommended ? ", recommended" : ""}`}
+                            accessibilityHint={choice.rationale ?? undefined}
                             disabled={stage.isPending}
                             onPress={() => {
                                 // A multiple decision stages the whole new set; the session's Send sends it.
@@ -139,9 +151,20 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                             <Text className="font-bold" style={{ color: c.accent, fontFamily: "monospace" }}>
                                 {choice.id}
                             </Text>
-                            <Text className="flex-1 text-sm" style={{ color: c.textPrimary }}>
-                                {choice.label}
-                            </Text>
+                            <View className="flex-1 gap-0.5">
+                                <Text className="text-sm" style={{ color: c.textPrimary }}>
+                                    {choice.label}
+                                </Text>
+                                {choice.rationale ? (
+                                    <Text
+                                        testID={`${testId}-option-${choice.id}-rationale`}
+                                        className="text-xs"
+                                        style={{ color: c.textSecondary }}
+                                    >
+                                        {choice.rationale}
+                                    </Text>
+                                ) : null}
+                            </View>
                             {choice.recommended ? (
                                 <Text className="text-xs" style={{ color: c.textMuted }}>
                                     recommended

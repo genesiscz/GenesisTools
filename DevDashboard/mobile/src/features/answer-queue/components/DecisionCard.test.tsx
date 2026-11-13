@@ -122,6 +122,39 @@ it("stages the whole set for a multiple decision and the single letter for a sin
     queryClient.clear();
 });
 
+it("shows the decision's context, proposal, reasoning and each option's rationale before the user picks", async () => {
+    const queryClient = new QueryClient();
+    const base = fixtureQueue().sessions[0].items.find((item) => item.kind === "decision")!;
+    if (base.kind !== "decision") {
+        throw new Error("Expected a decision fixture");
+    }
+    const decision = {
+        ...base,
+        context: "The cache holds 2 GB.",
+        proposal: "Drop the cold half.",
+        reasoning: "Reads touch only the newest week.",
+        choices: [
+            { id: "a", label: "Drop it", rationale: "Frees 1 GB now.", recommended: true },
+            { id: "b", label: "Keep it", rationale: null, recommended: false },
+        ],
+    };
+    const card = await render(
+        createElement(QueryClientProvider, { client: queryClient },
+            createElement(KeptEditsContext.Provider, { value: keptEdits() },
+                createElement(DecisionCard, { session: "session", decision, registerFlush: () => {} })))
+    );
+    const id = `answer-queue-decision-session-${decision.number}`;
+    const text = (testID: string) => card.getByTestId(testID).props.children[1].props.children;
+
+    expect(text(`${id}-context`)).toBe("The cache holds 2 GB.");
+    expect(text(`${id}-proposal`)).toBe("Drop the cold half.");
+    expect(text(`${id}-reasoning`)).toBe("Reads touch only the newest week.");
+    expect(card.getByTestId(`${id}-option-a-rationale`).props.children).toBe("Frees 1 GB now.");
+    expect(card.queryByTestId(`${id}-option-b-rationale`)).toBeNull();
+    await card.unmount();
+    queryClient.clear();
+});
+
 it("keeps the options disabled until the queue shows the staged set, so the next tap toggles from fresh data", async () => {
     picks.length = 0;
     const { useQuery } = await import("@tanstack/react-query");

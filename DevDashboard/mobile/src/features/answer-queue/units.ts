@@ -192,6 +192,18 @@ export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
  */
 export { idempotencyKey } from "@/lib/idempotency";
 
+/** The facts a decision carries besides its question, in the order the card shows them; empty ones are left out. */
+export function decisionDetails(
+    decision: Pick<WaitingDecisionDto, "context" | "proposal" | "reasoning">
+): { id: "context" | "proposal" | "reasoning"; label: string; text: string }[] {
+    const details = [
+        { id: "context" as const, label: "Context", text: decision.context },
+        { id: "proposal" as const, label: "Proposal", text: decision.proposal },
+        { id: "reasoning" as const, label: "Reasoning", text: decision.reasoning },
+    ];
+    return details.flatMap((detail) => (detail.text?.trim() ? [{ ...detail, text: detail.text.trim() }] : []));
+}
+
 export function decisionsOf(session: WaitingSessionDto): WaitingDecisionDto[] {
     return session.items.filter((item): item is WaitingDecisionDto => item.kind === "decision");
 }

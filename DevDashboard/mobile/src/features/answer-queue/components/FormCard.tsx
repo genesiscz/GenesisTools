@@ -62,6 +62,7 @@ export function FormCard({
                                     accessibilityRole={question.multiple ? "checkbox" : "radio"}
                                     accessibilityState={{ checked: picked }}
                                     accessibilityLabel={choice.label}
+                                    accessibilityHint={choice.rationale ?? undefined}
                                     onPress={() =>
                                         update(question.itemId, {
                                             selected: togglePick({
@@ -80,6 +81,15 @@ export function FormCard({
                                     <Text className="text-sm" style={{ color: c.textPrimary }}>
                                         {choice.label}
                                     </Text>
+                                    {choice.rationale ? (
+                                        <Text
+                                            testID={`${testId}-${question.itemId}-${choice.id}-rationale`}
+                                            className="text-xs"
+                                            style={{ color: c.textSecondary }}
+                                        >
+                                            {choice.rationale}
+                                        </Text>
+                                    ) : null}
                                 </Pressable>
                             );
                         })}
