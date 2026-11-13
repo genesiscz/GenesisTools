@@ -279,7 +279,7 @@ it.skipIf(skip.integration)("persists the final audio-titled movie clock in its 
             strip: null,
             stripReview: null,
             captureFailed: false,
-            capture: { data: { stats: { durationMs: 1100, movieMs: 1100, capturedFrames: 11 } } },
+            capture: { data: { stats: { durationMs: 1100, movieMs: 1100, capturedFrames: 11, writtenFrames: 11 } } },
         };
     });
     try {

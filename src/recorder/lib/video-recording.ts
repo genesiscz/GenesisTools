@@ -161,7 +161,7 @@ export interface VideoRecordingResult {
     movie?: string;
     cursorTrack?: string;
     durationMs?: number;
-    /** Frames the movie holds and its average rate (ax-tool's capturedFrames over the movie's length). */
+    /** Frames the movie holds and its average rate (ax-tool's writtenFrames over the movie's length). */
     frames?: number;
     averageFps?: number;
     warnings: string[];

@@ -423,6 +423,9 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var reservedFrames = 0
     private var encoderBehind = 0
     private(set) var captured = 0
+    /// Frames the movie writer accepted: `captured` minus the paused, display-switch and encoder-backpressure skips
+    /// and the refused appends. The movie's frame count; `captured` stays capture telemetry.
+    private(set) var writtenFrames = 0
     private(set) var warnings: [String] = []
     private var writer: AVAssetWriter?
     /// The audio receiver, told when the movie session starts so its tracks begin at the same moment.
@@ -561,7 +564,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     func status() -> [String: Any] {
         queue.sync {
             var row: [String: Any] = ["state": paused ? "paused" : "recording", "frames": kept.count,
-                                      "capturedFrames": captured, "bytesWritten": policy.bytesWritten]
+                                      "capturedFrames": captured, "writtenFrames": writtenFrames,
+                                      "bytesWritten": policy.bytesWritten]
             if let currentDisplayID {
                 row["displayId"] = currentDisplayID
             }
@@ -731,7 +735,9 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         if let adaptor, let writerInput, writerInput.isReadyForMoreMediaData {
             // A refused append is how a dimension or format mismatch shows itself. Warn once:
             // the rest of the recording would repeat it on every frame.
-            if !adaptor.append(pixelBuffer, withPresentationTime: timestamp), !videoAppendFailed {
+            if adaptor.append(pixelBuffer, withPresentationTime: timestamp) {
+                writtenFrames += 1
+            } else if !videoAppendFailed {
                 videoAppendFailed = true
                 warnings.append("the video writer refused a frame: \(writer?.error.map { String(describing: $0) } ?? "no writer error reported")")
             }
@@ -1306,7 +1312,7 @@ func cmdCaptureScreen() {
         "options": recordedOptions,
         "frames": frames,
         "stats": withMovieLength(["durationMs": durationMs, "capturedFrames": recorder.captured,
-                                  "keptFrames": recorder.kept.count,
+                                  "writtenFrames": recorder.writtenFrames, "keptFrames": recorder.kept.count,
                                   "droppedFrames": recorder.captured - recorder.kept.count, "bytesWritten": recorder.bytesWritten,
                                   "displaySwitches": recorder.displaySwitches, "heartbeatFrames": recorder.heartbeatFrames],
                                  recorder.movieMs),

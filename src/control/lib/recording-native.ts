@@ -233,7 +233,7 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 const envelope = result.capture as {
                     error?: unknown;
                     data?: {
-                        stats?: { durationMs?: unknown; capturedFrames?: unknown; movieMs?: unknown };
+                        stats?: { durationMs?: unknown; writtenFrames?: unknown; movieMs?: unknown };
                         warnings?: unknown;
                         endedEarly?: unknown;
                         endedEarlyReason?: unknown;
@@ -244,10 +244,11 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 // The movie's own length (first frame to its end); stats.durationMs is the run's wall time.
                 const movie = envelope?.data?.stats?.movieMs;
                 let movieMs = typeof movie === "number" && movie > 0 ? { movieMs: movie } : {};
-                // A movie holds every frame ax-tool captured (capturedFrames: 152 frames in a 5 s movie, checked with
-                // ffprobe); its keptFrames and droppedFrames are the stills of a frames recording, not the movie's.
-                const captured = envelope?.data?.stats?.capturedFrames;
-                const frameStats = typeof captured === "number" ? { frames: captured } : {};
+                // The movie holds the frames its writer accepted (writtenFrames). capturedFrames also counts buffers
+                // skipped while paused or while the encoder fell behind, and keptFrames and droppedFrames are the stills
+                // of a frames recording. An ax-tool too old to report writtenFrames reports no movie frames at all.
+                const written = envelope?.data?.stats?.writtenFrames;
+                const frameStats = typeof written === "number" ? { frames: written } : {};
                 const excluded = envelope?.data?.endedEarly === EXCLUSION_UNRESOLVED;
                 const endedBy = signal.aborted ? "stop" : result.captureFailed || excluded ? "failure" : "deadline";
                 const nativeWarnings = Array.isArray(envelope?.data?.warnings)

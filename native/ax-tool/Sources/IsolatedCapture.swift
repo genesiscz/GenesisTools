@@ -603,7 +603,7 @@ func captureIsolatedWindows(_ options: RecordOptions) {
                                        "timestampMs": $0.timestampMs, "changePercent": $0.changePercent, "reason": $0.reason,
                                        "motionBoxes": $0.motionBoxesJSON] as [String: Any] },
         "stats": withMovieLength(["durationMs": Int(duration * 1000), "capturedFrames": recorder.captured,
-                                  "keptFrames": recorder.kept.count,
+                                  "writtenFrames": recorder.writtenFrames, "keptFrames": recorder.kept.count,
                                   "firstFrameAfterStartMs": compositor.firstFrameAfterStartMs ?? -1], recorder.movieMs),
         "warnings": recorder.warnings + compositor.queue.sync { compositor.layers.warnings + compositor.placementWarnings },
     ]
