@@ -88,6 +88,8 @@ export interface DrainResult {
     bad: number;
     /** Finished files of an earlier day that were deleted. */
     removed: string[];
+    /** The drain stopped at its byte budget with lines still unread; the caller drains again later. */
+    more: boolean;
 }
 
 export interface DrainOptions {
@@ -95,6 +97,11 @@ export interface DrainOptions {
     now?: number;
     chunkBytes?: number;
     staleTailMs?: number;
+    /**
+     * The most bytes one call reads, over all files; the next call goes on where it stopped (`more`). Without it a
+     * call reads every file to its end, which a large backlog turns into one long block of synchronous work.
+     */
+    maxBytes?: number;
     /** Hears each batch once it is in the store (the service's `event` subscribers). */
     onEvents?: (events: readonly StoredEvent[]) => void;
 }
@@ -251,9 +258,11 @@ function drainFile(
         now: number;
         chunkBytes: number;
         staleTail: boolean;
+        /** The bytes this drain may still read; each chunk taken counts against it. */
+        budget: { left: number };
         onEvents?: (events: readonly StoredEvent[]) => void;
     }
-): { lines: number; events: number; checkpoints: number; bad: number; atEnd: boolean } {
+): { lines: number; events: number; checkpoints: number; bad: number; atEnd: boolean; size: number } {
     const size = statSync(path).size;
     const stored = store.spoolFile(path);
     let offset = stored?.offset ?? 0;
@@ -266,7 +275,7 @@ function drainFile(
         lineNo = 0;
     }
 
-    while (offset < size) {
+    while (offset < size && options.budget.left > 0) {
         const chunk = readChunk(path, offset, Math.min(options.chunkBytes, size - offset));
         const last = chunk.lastIndexOf(NEWLINE);
         let take: number;
@@ -291,17 +300,17 @@ function drainFile(
         }
 
         offset += take;
+        options.budget.left -= take;
         lineNo += parsed.lines;
-        for (const definition of parsed.definitions) {
-            store.define(definition);
-        }
-
-        // An upsert, so a line read again after a crash before its offset was written changes nothing.
-        for (const checkpoint of parsed.checkpoints) {
-            store.addCheckpoint(checkpoint, options.now);
-        }
-
-        store.insert(parsed.events, { path, offset, lines: lineNo });
+        // The chunk's definitions, checkpoints, events and new offset commit together: a crash before the offset
+        // leaves none of them, so the chunk read again is applied once, in its own order.
+        store.ingest({
+            definitions: parsed.definitions,
+            checkpoints: parsed.checkpoints,
+            events: parsed.events,
+            cursor: { path, offset, lines: lineNo },
+            now: options.now,
+        });
 
         if (parsed.events.length > 0) {
             options.onEvents?.(parsed.events);
@@ -313,19 +322,22 @@ function drainFile(
         counts.bad += parsed.bad;
     }
 
-    return { ...counts, atEnd: offset >= size };
+    return { ...counts, atEnd: offset >= size, size };
 }
 
 /**
  * Reads every spool file from its stored offset into the store. Whole lines only: the events and the new offset are
  * written in one transaction, so a crash or a second drain never doubles an event. A finished file of an earlier day
- * is deleted (its events are in the store), then its offset is forgotten.
+ * is deleted (its events are in the store), then its offset is forgotten, but only once it is quiet: its last write
+ * is older than the stale-tail wait (a writer queues a line for seconds, never minutes), and it did not change while
+ * it was read. A file a writer still appends to stays for a later drain.
  */
 export function drainSpool(store: MetricsStore, options: DrainOptions = {}): DrainResult {
     const dir = options.dir ?? spoolDir();
     const now = options.now ?? Date.now();
     const today = formatLocalDate(new Date(now));
-    const result: DrainResult = { files: 0, lines: 0, events: 0, checkpoints: 0, bad: 0, removed: [] };
+    const result: DrainResult = { files: 0, lines: 0, events: 0, checkpoints: 0, bad: 0, removed: [], more: false };
+    const budget = { left: options.maxBytes ?? Number.POSITIVE_INFINITY };
     let names: string[];
 
     try {
@@ -342,17 +354,28 @@ export function drainSpool(store: MetricsStore, options: DrainOptions = {}): Dra
             continue;
         }
 
+        if (budget.left <= 0) {
+            result.more = true;
+            break;
+        }
+
         const path = join(dir, name);
         const earlier = (match[2] ?? today) < today;
 
         try {
-            const stale = earlier && now - statSync(path).mtimeMs > (options.staleTailMs ?? STALE_TAIL_MS);
+            const before = statSync(path);
+            const stale = earlier && now - before.mtimeMs > (options.staleTailMs ?? STALE_TAIL_MS);
             const read = drainFile(store, path, {
                 now,
                 chunkBytes: options.chunkBytes ?? DRAIN_CHUNK_BYTES,
                 staleTail: stale,
+                budget,
                 ...(options.onEvents ? { onEvents: options.onEvents } : {}),
             });
+
+            if (!read.atEnd && budget.left <= 0) {
+                result.more = true;
+            }
 
             if (read.lines > 0) {
                 result.files += 1;
@@ -363,7 +386,7 @@ export function drainSpool(store: MetricsStore, options: DrainOptions = {}): Dra
             result.checkpoints += read.checkpoints;
             result.bad += read.bad;
 
-            if (earlier && read.atEnd) {
+            if (earlier && read.atEnd && stale && unchangedSince(path, before, read.size)) {
                 unlinkSync(path);
                 store.forgetSpoolFile(path);
                 result.removed.push(path);
@@ -379,4 +402,10 @@ export function drainSpool(store: MetricsStore, options: DrainOptions = {}): Dra
     }
 
     return result;
+}
+
+/** The file still has the size the drain read to and the time of its last write before the drain. */
+function unchangedSince(path: string, before: { mtimeMs: number }, size: number): boolean {
+    const after = statSync(path);
+    return after.size === size && after.mtimeMs === before.mtimeMs;
 }

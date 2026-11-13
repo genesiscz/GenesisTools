@@ -51,7 +51,7 @@ export function dimExpr(dim: string): string {
 }
 
 /** The index name of a declared dim: the dim in hex, since SQLite index names ignore case and dim names do not. */
-function dimIndexName(metricId: number, dim: string): string {
+export function dimIndexName(metricId: number, dim: string): string {
     return `events_m${metricIdText(metricId)}_d${Buffer.from(assertDimName(dim)).toString("hex")}`;
 }
 
