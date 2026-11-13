@@ -14,6 +14,10 @@ const server = Bun.serve({
     fetch(request) {
         const url = new URL(request.url);
 
+        if (url.pathname.includes("/timeEntries/99")) {
+            return new Response("<html><body>Sign in</body></html>", { status: 200 });
+        }
+
         if (url.pathname.includes("/timeEntries/")) {
             return new Response(SafeJSON.stringify({ error: "boom" }), { status: 500 });
         }
@@ -82,6 +86,8 @@ describe("ClarityApiError", () => {
         };
 
         const error = await api.updateTimeEntryVerbose(1, 2, body).catch((err: unknown) => err);
+        // An expired session answers 200 with a login page: the fill must not count it as booked.
+        await expect(api.updateTimeEntryVerbose(1, 99, body)).rejects.toThrow(/returned a login page \(200\)/);
 
         if (!(error instanceof ClarityApiError)) {
             throw error;
