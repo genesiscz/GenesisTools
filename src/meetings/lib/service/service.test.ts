@@ -1384,8 +1384,19 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
     });
 
     test("the dictionary: add, show, test, a refused Undo's add, a rename and remove", async () => {
-        const { client } = await ADAPTERS[kind]();
+        const { client, config } = await ADAPTERS[kind]();
         const fix = { type: "fix" as const, value: "Atlass", substitution: "Atlas" };
+
+        // A new project and its entry are one write: an entry the config refuses adds no project either.
+        const badAbbr = { type: "abbr" as const, value: "MOP", substitution: "MOPsuffix" };
+        expect(
+            (await failure(client.call("dictionary.add", { entry: badAbbr, project: "Fresh", replace: "Gone" })))
+                .message
+        ).toContain('must contain "MOP" itself');
+        expect((await failure(client.call("dictionary.add", { entry: badAbbr, project: "Fresh" }))).message).toContain(
+            'must contain "MOP" itself'
+        );
+        expect(Object.keys((await config.read()).projects)).toEqual([]);
 
         expect(await client.call("dictionary.add", { entry: fix })).toEqual({
             entry: fix,

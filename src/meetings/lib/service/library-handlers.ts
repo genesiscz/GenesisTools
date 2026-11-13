@@ -213,16 +213,14 @@ export async function addDictionaryEntry(
     params: MeetingsParsedParams<"dictionary.add">,
     deps: MeetingsHandlerDeps
 ): Promise<MeetingsResult<"dictionary.add">> {
-    const config = configOf(deps);
-    const projectAdded = params.project ? await config.addProject(params.project) : false;
-    const scope = scopeOf(params.project);
     const replaced = params.replace && params.replace !== params.entry.value ? params.replace : undefined;
-
-    if (replaced) {
-        await config.replaceDictionaryEntry(scope, replaced, params.entry);
-    } else {
-        await config.putDictionaryEntry(scope, params.entry, { ifAbsent: params.ifAbsent === true });
-    }
+    // One write: a new project and its entry land together, and a refused entry adds no project.
+    const { projectAdded } = await configOf(deps).editDictionary(
+        scopeOf(params.project),
+        replaced
+            ? { rename: { previous: replaced, entry: params.entry } }
+            : { put: [params.entry], ifAbsent: params.ifAbsent === true }
+    );
 
     return { entry: params.entry, level: levelOf(params.project), projectAdded, ...(replaced ? { replaced } : {}) };
 }
