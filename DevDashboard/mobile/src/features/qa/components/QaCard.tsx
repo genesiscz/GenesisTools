@@ -2,8 +2,7 @@ import type { QaRow } from "@dd/contract";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { QaAnswerHtml } from "@/features/qa/components/QaAnswerHtml";
-import { useAppendToVault } from "@/features/vault/hooks";
-import { qaNoteTarget, qaNoteText } from "@/features/vault/queries";
+import { useSaveQaAnswer } from "@/features/vault/hooks";
 import { DASH, isAnswerTruncated, plainPreview, relativeTime, tagTone } from "@/features/qa/units";
 import { Card } from "@/ui/Card";
 import { StatusPill } from "@/ui/StatusPill";
@@ -25,7 +24,7 @@ interface QaCardProps {
 export function QaCard({ entry, unread, onToggleRead }: QaCardProps) {
     const c = useThemeColors();
     const [expanded, setExpanded] = useState(false);
-    const save = useAppendToVault();
+    const save = useSaveQaAnswer();
     const truncated = isAnswerTruncated(entry.answerMd);
     const id = entry.id ?? "";
 
@@ -99,7 +98,7 @@ export function QaCard({ entry, unread, onToggleRead }: QaCardProps) {
                         accessibilityLabel="Save the answer to the vault"
                         hitSlop={8}
                         disabled={save.isPending || save.isSuccess}
-                        onPress={() => save.mutate({ text: qaNoteText(entry), ...qaNoteTarget(entry.project) })}
+                        onPress={() => save.mutate(entry)}
                     >
                         <Text className="text-xs" style={{ color: c.accent, fontFamily: "monospace" }}>
                             {save.isSuccess ? `saved to ${save.data.note}` : save.isPending ? "saving…" : "save to vault"}

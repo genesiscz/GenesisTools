@@ -1,5 +1,17 @@
-import type { DashboardClient, QaRow } from "@dd/contract";
+import { type DashboardClient, ENDPOINTS, type QaRow } from "@dd/contract";
 import { queryOptions } from "@tanstack/react-query";
+
+/**
+ * The entry as the Mac stores it. The log and the live `qa` channel clip a long answer (`answerFullChars` is its real
+ * length), so an action that keeps the answer, such as saving it to the vault, reads the whole entry first.
+ */
+export async function fullQaEntry(client: DashboardClient, entry: QaRow): Promise<QaRow> {
+    if (entry.answerFullChars === undefined) {
+        return entry;
+    }
+
+    return (await client.call(ENDPOINTS.qaEntry, { id: entry.id })).entry;
+}
 
 /**
  * QA feature data layer (D32 + the per-feature layout from plan 05). This file owns BOTH the query

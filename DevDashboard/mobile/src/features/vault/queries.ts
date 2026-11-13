@@ -5,6 +5,20 @@ import {
     type VaultAppendReceiptDto,
     type VaultClipReceiptDto,
 } from "@dd/contract";
+import { fullQaEntry } from "@/features/qa/queries";
+
+/** Saves a Q→A answer to the project's Answers note, with the whole answer even when the feed clipped it. */
+export async function saveQaAnswer(
+    client: DashboardClient,
+    input: { entry: QaRow; idempotencyKey: string }
+): Promise<VaultAppendReceiptDto> {
+    const full = await fullQaEntry(client, input.entry);
+    return appendText(client, {
+        text: qaNoteText(full),
+        ...qaNoteTarget(full.project),
+        idempotencyKey: input.idempotencyKey,
+    });
+}
 
 export function clipLink(
     client: DashboardClient,
