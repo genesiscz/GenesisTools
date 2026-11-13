@@ -121,8 +121,8 @@ export default function TimesheetScreen() {
                         value={reminder ?? false}
                         disabled={reminder === null}
                         onValueChange={(on) => {
-                            setReminderOn(on);
-                            void setReminder(on);
+                            // The switch shows what was scheduled: a refused permission leaves it off.
+                            void setReminder(on).then(setReminderOn);
                         }}
                     />
                 </View>
