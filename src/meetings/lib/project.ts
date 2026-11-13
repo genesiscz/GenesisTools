@@ -1,4 +1,5 @@
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -21,9 +22,8 @@ export function missingProjectWarning(record: MeetingRecord, config: MeetingsCon
     return !record.project && projects.length
         ? "This meeting has no project; project dictionaries exist (" +
               projects.join(", ") +
-              "). Set it: tools meetings set " +
-              record.id +
-              " --project <name>"
+              "). Set it: " +
+              toolCommand("meetings set", record.id, "--project", "<name>")
         : undefined;
 }
 
