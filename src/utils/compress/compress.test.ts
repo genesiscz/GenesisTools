@@ -2712,6 +2712,19 @@ describe.skipIf(process.platform !== "darwin")("transparent APFS compression", (
         expect(existsSync(aside)).toBe(false);
         expect(readFileSync(c.path)).toEqual(bytes);
     });
+    it("keeps a stale aside that a writer changed after the byte comparison", async () => {
+        const c = fixture("stale-rewritten");
+        const swapped = await swapTransparent(c);
+        const stale = join(c.path, "..", ".cold-old-99998-session.jsonl");
+        renameSync(swapped.old!.path, stale);
+        const verdict = await resolveStale(stale, () => false, new Set(), {
+            afterCompare: () => appendFileSync(stale, "\nlate-writer"),
+        });
+        expect(verdict).toBe("conflict");
+        const names = readdirSync(join(c.path, "..")).filter((name) => name.includes("cold-conflict"));
+        expect(names.length).toBe(1);
+        expect(readFileSync(join(c.path, "..", names[0]!), "utf8").endsWith("\nlate-writer")).toBe(true);
+    });
     it("restores stale asides held by a descriptor instead of dropping later writes", async () => {
         const c = fixture("stale-held");
         const swapped = await swapTransparent(c);

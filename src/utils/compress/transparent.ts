@@ -552,14 +552,28 @@ export function settle(o: Outcome, openInodes: Set<number>): Outcome {
     };
 }
 
+/** The identity and timestamps of a name, compared before and after a decision so a rewrite in between is seen. */
+function nameState(path: string): { ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint } {
+    const st = lstatSync(path, { bigint: true });
+    return { ino: st.ino, size: st.size, mtimeNs: st.mtimeNs, ctimeNs: st.ctimeNs };
+}
+
+function sameNameState(a: ReturnType<typeof nameState>, b: ReturnType<typeof nameState>): boolean {
+    return a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+}
+
 /**
  * Resolve what a killed run left: a half-written copy is dropped; an original kept aside is dropped when the file
- * at its path holds the same bytes, goes back when that file is missing, and is kept as a conflict otherwise.
+ * at its path holds the same bytes, goes back when that file is missing, and is kept as a conflict otherwise. The
+ * byte comparison is the settlement's own (`equalStableFiles`: owned descriptors, identity and ctime checked after
+ * the read), and both names must still hold what was compared when the aside is removed, so a write or a replacement
+ * during or after the comparison keeps both copies. `afterCompare` is for tests: it runs between the two.
  */
 export async function resolveStale(
     path: string,
     alive: (pid: number) => boolean,
-    held: Set<number>
+    held: Set<number>,
+    options: { afterCompare?: () => void } = {}
 ): Promise<"dropped" | "restored" | "conflict" | "in use"> {
     const name = basename(path);
     const isOld = name.startsWith(OLD_PREFIX);
@@ -600,30 +614,46 @@ export async function resolveStale(
         return "restored";
     }
 
-    if ((await exec(["/usr/bin/cmp", "-s", path, target])).code === 0) {
-        const originalInode = lstatSync(path).ino;
-        const targetInode = lstatSync(target).ino;
-        if (targetInode === originalInode) {
-            drop(path);
-            return "dropped";
-        }
-
-        if (held.has(originalInode)) {
-            if (held.has(targetInode)) {
-                preserveConflict(path, target);
-                return "conflict";
-            }
-
-            renameSync(path, target);
-            return "restored";
-        }
-
+    const aside = nameState(path);
+    const current = nameState(target);
+    if (current.ino === aside.ino) {
+        // One file under two names: removing the aside name loses no byte.
         drop(path);
         return "dropped";
     }
 
-    preserveConflict(path, target);
-    return "conflict";
+    if (!equalStableFiles(path, target, Number(aside.ino), Number(current.ino))) {
+        preserveConflict(path, target);
+        return "conflict";
+    }
+
+    options.afterCompare?.();
+    let unchanged = false;
+    try {
+        unchanged = sameNameState(nameState(path), aside) && sameNameState(nameState(target), current);
+    } catch (error) {
+        logger.debug({ error, path, target }, "a stale aside or its target changed after the byte comparison");
+    }
+
+    if (!unchanged) {
+        preserveConflict(path, target);
+        return "conflict";
+    }
+
+    const originalInode = Number(aside.ino);
+    const targetInode = Number(current.ino);
+    if (held.has(originalInode)) {
+        if (held.has(targetInode)) {
+            preserveConflict(path, target);
+            return "conflict";
+        }
+
+        renameSync(path, target);
+        return "restored";
+    }
+
+    drop(path);
+    return "dropped";
 }
 
 /** The inode numbers any process has open, from one lsof pass. A pass that lists nothing throws. */
