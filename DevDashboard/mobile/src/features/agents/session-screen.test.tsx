@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, expect, it, mock } from "bun:test";
 import type { AgentBoardSession, AgentStopReceiptDto, AgentTranscriptTurnDto } from "@dd/contract";
-import { createElement, Fragment, type ReactElement, useState } from "react";
+import { createElement, Fragment, type ReactElement, type Ref, useImperativeHandle, useState } from "react";
 
 interface FlatListProps {
+    ref?: Ref<{ scrollToEnd: (options: { animated: boolean }) => void }>;
     data: AgentTranscriptTurnDto[];
     renderItem: (info: { item: AgentTranscriptTurnDto; index: number }) => ReactElement;
     keyExtractor: (item: AgentTranscriptTurnDto, index: number) => string;
     ListHeaderComponent?: ReactElement | null;
     testID?: string;
+    onScroll?: unknown;
+    onContentSizeChange?: unknown;
 }
+
+const scrolledToEnd: Array<{ animated: boolean }> = [];
 
 mock.module("react-native", () => ({
     View: "View",
@@ -20,13 +25,15 @@ mock.module("react-native", () => ({
     Platform: { OS: "ios" },
     Alert: { alert: () => undefined },
     StyleSheet: { flatten: (value: unknown) => value ?? {} },
-    FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent, testID }: FlatListProps) =>
-        createElement(
+    FlatList: ({ ref, data, renderItem, keyExtractor, ListHeaderComponent, testID, onScroll, onContentSizeChange }: FlatListProps) => {
+        useImperativeHandle(ref, () => ({ scrollToEnd: (options: { animated: boolean }) => scrolledToEnd.push(options) }));
+        return createElement(
             "FlatList",
-            { testID },
+            { testID, onScroll, onContentSizeChange },
             ListHeaderComponent ?? null,
             data.map((item, index) => createElement(Fragment, { key: keyExtractor(item, index) }, renderItem({ item, index })))
-        ),
+        );
+    },
 }));
 
 let params: { key?: string; text?: string } = { key: "claude:a" };
@@ -85,8 +92,37 @@ beforeEach(() => {
     turns = [];
     board = { isPending: true, isError: false, error: null };
     answerStop = null;
+    scrolledToEnd.length = 0;
 });
 afterEach(cleanup);
+
+function scrolled(y: number) {
+    return { nativeEvent: { contentOffset: { y }, contentSize: { height: 2_000 }, layoutMeasurement: { height: 600 } } };
+}
+
+it("follows new turns only while the reader is at the end, and offers a jump back", async () => {
+    turns = [{ id: "t1", role: "assistant", at: null, text: "first", tools: [] }];
+    board = live("claude:a");
+    const screen = await render(createElement(AgentSessionScreen));
+    const transcript = screen.getByTestId("session-transcript");
+
+    await fireEvent(transcript, "contentSizeChange");
+    expect(scrolledToEnd).toHaveLength(1);
+
+    // The reader scrolls back to an earlier turn; a new turn arrives.
+    await fireEvent.scroll(transcript, scrolled(200));
+    await fireEvent(transcript, "contentSizeChange");
+    expect(scrolledToEnd).toHaveLength(1);
+
+    await fireEvent.press(screen.getByLabelText("Jump to the newest turn"));
+    expect(scrolledToEnd).toHaveLength(2);
+    expect(screen.queryByTestId("transcript-jump-newest")).toBeNull();
+
+    // Back at the end, the list follows again.
+    await fireEvent.scroll(transcript, scrolled(1_400));
+    await fireEvent(transcript, "contentSizeChange");
+    expect(scrolledToEnd).toHaveLength(3);
+});
 
 it("keeps a stop's receipt after the stopped session leaves the board", async () => {
     board = live("claude:a");

@@ -6,6 +6,8 @@ import {
     Alert,
     FlatList,
     KeyboardAvoidingView,
+    type NativeScrollEvent,
+    type NativeSyntheticEvent,
     Platform,
     Pressable,
     Text,
@@ -240,11 +242,38 @@ function SessionHeader({ session, onStopReceipt }: { session: AgentBoardSession;
     );
 }
 
+/** How far from the end, in points, still counts as reading the newest turn. */
+const FOLLOW_SLACK_PT = 80;
+
 function Transcript({ session }: { session: AgentBoardSession }) {
     const c = useThemeColors();
     const transcript = useAgentTranscript(session);
     const list = useRef<FlatList<AgentTranscriptTurnDto>>(null);
-    const toEnd = useCallback(() => list.current?.scrollToEnd({ animated: false }), []);
+    // The list follows new turns only while the reader is at the end; a reader scrolled back keeps the place, and a
+    // "Newest" button says that more came in.
+    const following = useRef(true);
+    const [behind, setBehind] = useState(false);
+    const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+        const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+        following.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - FOLLOW_SLACK_PT;
+
+        if (following.current) {
+            setBehind(false);
+        }
+    }, []);
+    const onContentSizeChange = useCallback(() => {
+        if (following.current) {
+            list.current?.scrollToEnd({ animated: false });
+            return;
+        }
+
+        setBehind(true);
+    }, []);
+    const jumpToNewest = useCallback(() => {
+        following.current = true;
+        setBehind(false);
+        list.current?.scrollToEnd({ animated: true });
+    }, []);
 
     if (session.sessionId === null) {
         return <Empty testID="transcript-none" title="No transcript" hint="The Mac found this agent by its process only." />;
@@ -263,22 +292,38 @@ function Transcript({ session }: { session: AgentBoardSession }) {
     }
 
     return (
-        <FlatList
-            ref={list}
-            testID="session-transcript"
-            data={transcript.data.turns}
-            keyExtractor={turnKey}
-            renderItem={renderTurn}
-            onContentSizeChange={toEnd}
-            contentContainerClassName="gap-2 p-4"
-            ListHeaderComponent={
-                transcript.data.truncated ? (
-                    <Text style={{ color: c.textMuted, fontFamily: "monospace", fontSize: 11, textAlign: "center" }}>
-                        Newest turns only
-                    </Text>
-                ) : null
-            }
-        />
+        <View className="flex-1">
+            <FlatList
+                ref={list}
+                testID="session-transcript"
+                data={transcript.data.turns}
+                keyExtractor={turnKey}
+                renderItem={renderTurn}
+                onScroll={onScroll}
+                scrollEventThrottle={100}
+                onContentSizeChange={onContentSizeChange}
+                contentContainerClassName="gap-2 p-4"
+                ListHeaderComponent={
+                    transcript.data.truncated ? (
+                        <Text style={{ color: c.textMuted, fontFamily: "monospace", fontSize: 11, textAlign: "center" }}>
+                            Newest turns only
+                        </Text>
+                    ) : null
+                }
+            />
+            {behind ? (
+                <Pressable
+                    testID="transcript-jump-newest"
+                    accessibilityRole="button"
+                    accessibilityLabel="Jump to the newest turn"
+                    onPress={jumpToNewest}
+                    className="absolute bottom-3 self-center rounded-full px-3 py-1.5"
+                    style={{ backgroundColor: c.bgPanel, borderWidth: 1, borderColor: c.accentGlow }}
+                >
+                    <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Newest ↓</Text>
+                </Pressable>
+            ) : null}
+        </View>
     );
 }
 
