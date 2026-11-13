@@ -314,47 +314,42 @@ export function correctTranscript(options: {
     const corrected = applyCorrections(transcript, corrections);
     // A record written before the CLI composed its arguments keeps decomposed names from the window's answers: one
     // person under two keys (src/meetings/index.ts). Every speaker is counted and rendered composed.
+    // The source lookups and the speaker ranges are built once: rescanning the transcript and the items for every
+    // entry made each corrected read quadratic in its lines.
+    const sources = indexSources(transcript);
+    const speakerRanges = record.items.filter(
+        (item): item is Extract<MeetingItem, { kind: "speaker-range" }> => item.kind === "speaker-range"
+    );
+    const covers = (item: { fromSec: number; toSec: number; label: string }, atSec: number | undefined) =>
+        atSec !== undefined &&
+        atSec >= item.fromSec &&
+        atSec <= item.toSec &&
+        sources.labelsAt.get(atSec)?.has(item.label) === true;
+    // Only a question still open about a voice leaves a line's speaker uncertain; an answered one or a term question
+    // does not.
+    const speakerQuestions = openQuestions(record).filter((question) => question.about === "speaker");
+    const unclearLabel = languageSettings(config).render.unclearLabel;
     const applied = {
         ...corrected,
         entries: corrected.entries.flatMap((rawEntry) => {
-            let sourceIndex = rawEntry.id ? transcript.findIndex((source) => source.id === rawEntry.id) : -1;
-            if (sourceIndex < 0) {
-                sourceIndex = transcript.findIndex((source) => source.startSec === rawEntry.startSec);
-            }
+            const sourceIndex =
+                (rawEntry.id ? sources.byId.get(rawEntry.id) : undefined) ?? sources.byStart.get(rawEntry.startSec);
             const entry =
-                sourceIndex >= 0 && record.evidence?.voice?.lines[String(sourceIndex)]
+                sourceIndex !== undefined && record.evidence?.voice?.lines[String(sourceIndex)]
                     ? { ...rawEntry, sourceIndex }
                     : rawEntry;
-            const finding = record.items.findLast(
-                (item) =>
-                    item.kind === "speaker-range" &&
-                    item.status === "confirmed" &&
-                    item.voices &&
-                    entry.startSec !== undefined &&
-                    entry.startSec >= item.fromSec &&
-                    entry.startSec <= item.toSec &&
-                    transcript.some((source) => source.startSec === entry.startSec && source.speaker === item.label)
+            const atSec = entry.startSec;
+            const finding = speakerRanges.findLast(
+                (item) => item.status === "confirmed" && item.voices && covers(item, atSec)
             );
-            if (finding?.kind === "speaker-range" && finding.voices) {
-                if (finding.segments?.length) {
-                    const words = entry.text.trim().split(/\s+/);
-                    return finding.segments.map((segment, index) => ({
-                        ...entry,
-                        speaker: segment.speaker,
-                        text: words.slice(segment.fromWord, finding.segments?.[index + 1]?.fromWord).join(" "),
-                    }));
+            if (finding?.voices) {
+                // The segments count the words of the one line the answer split, the line the range starts on.
+                if (finding.segments?.length && atSec === finding.fromSec) {
+                    return splitEntry(entry, finding.segments);
                 }
-                return [{ ...entry, speaker: `[nejasné: ${finding.voices.join(" + ")}]` }];
+                return [{ ...entry, speaker: `[${unclearLabel}: ${finding.voices.join(" + ")}]` }];
             }
-            const proposals = record.items.filter(
-                (item) =>
-                    item.kind === "speaker-range" &&
-                    item.status !== "rejected" &&
-                    entry.startSec !== undefined &&
-                    entry.startSec >= item.fromSec &&
-                    entry.startSec <= item.toSec &&
-                    transcript.some((source) => source.startSec === entry.startSec && source.speaker === item.label)
-            );
+            const proposals = speakerRanges.filter((item) => item.status !== "rejected" && covers(item, atSec));
             const proposal = proposals.findLast((item) => item.status === "confirmed") ?? proposals.at(-1);
             const confidence = proposal?.confidence;
             const guess = entry.speaker.includes(" %]");
@@ -362,21 +357,14 @@ export function correctTranscript(options: {
                 {
                     ...entry,
                     speaker: entry.speaker.normalize("NFC"),
-                    ...(record.items.some(
-                        (item) =>
-                            item.kind === "question" &&
-                            entry.startSec !== undefined &&
-                            entry.startSec >= item.fromSec &&
-                            entry.startSec <= item.toSec
-                    )
+                    ...(atSec !== undefined &&
+                    speakerQuestions.some((question) => atSec >= question.fromSec && atSec <= question.toSec)
                         ? { questioned: true }
                         : {}),
                     ...(proposal
                         ? {
                               ...(confidence === undefined ? {} : { confidence }),
-                              ...(proposal.kind === "speaker-range" && proposal.speaker
-                                  ? { suggestedSpeaker: proposal.speaker }
-                                  : {}),
+                              ...(proposal.speaker ? { suggestedSpeaker: proposal.speaker } : {}),
                               guess,
                               band:
                                   proposal.status === "confirmed"
@@ -401,7 +389,7 @@ export function correctTranscript(options: {
             outcome.reason = diagnostic.message;
         }
     }
-    const unclear = `[${languageSettings(config).render.unclearLabel}:`;
+    const unclear = `[${unclearLabel}:`;
     const sourceLabels = new Set(transcript.map((entry) => entry.speaker.normalize("NFC")));
     const people = new Set(
         [
@@ -429,6 +417,70 @@ export function correctTranscript(options: {
         speakers: ranked.filter((speaker) => isPerson(speaker.name)),
         unattributed: ranked.filter((speaker) => !isPerson(speaker.name)),
     };
+}
+
+/** The source transcript's lookups: the first line of each id and of each start, and the labels heard at each start. */
+function indexSources(transcript: readonly TranscriptEntry[]): {
+    byId: Map<string, number>;
+    byStart: Map<number | undefined, number>;
+    labelsAt: Map<number, Set<string>>;
+} {
+    const byId = new Map<string, number>();
+    const byStart = new Map<number | undefined, number>();
+    const labelsAt = new Map<number, Set<string>>();
+
+    transcript.forEach((source, index) => {
+        if (source.id && !byId.has(source.id)) {
+            byId.set(source.id, index);
+        }
+
+        if (!byStart.has(source.startSec)) {
+            byStart.set(source.startSec, index);
+        }
+
+        if (source.startSec !== undefined) {
+            labelsAt.set(source.startSec, (labelsAt.get(source.startSec) ?? new Set<string>()).add(source.speaker));
+        }
+    });
+
+    return { byId, byStart, labelsAt };
+}
+
+/**
+ * One line a confirmed answer split between voices, cut at each segment's first word. Each piece keeps only its own
+ * words and their timings (rebased on its text), starts at its first timed word, and the pieces after the first get
+ * their own id, so no two rows share one identity.
+ */
+function splitEntry(entry: TranscriptEntry, segments: Array<{ fromWord: number; speaker: string }>): TranscriptEntry[] {
+    const spans = [...entry.text.matchAll(/\S+/g)].map((match) => ({
+        from: match.index,
+        to: match.index + match[0].length,
+    }));
+
+    return segments.flatMap((segment, index): TranscriptEntry[] => {
+        const first = spans[segment.fromWord];
+        const last = spans[(segments[index + 1]?.fromWord ?? spans.length) - 1];
+
+        if (!first || !last || last.to <= first.from) {
+            return [];
+        }
+
+        const words = entry.words
+            ?.filter((word) => word.range.location >= first.from && word.range.location + word.range.length <= last.to)
+            .map((word) => ({ ...word, range: { ...word.range, location: word.range.location - first.from } }));
+        const startSec = index === 0 ? entry.startSec : (words?.[0]?.startSec ?? entry.startSec);
+
+        return [
+            {
+                ...entry,
+                ...(entry.id && index > 0 ? { id: `${entry.id}#${index}` } : {}),
+                ...(startSec === undefined ? {} : { startSec }),
+                ...(words ? { words } : {}),
+                speaker: segment.speaker,
+                text: entry.text.slice(first.from, last.to),
+            },
+        ];
+    });
 }
 
 /**
