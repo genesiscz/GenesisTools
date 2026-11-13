@@ -237,6 +237,49 @@ describe("model doors: failures in each door's envelope", () => {
         });
     }
 
+    /** The server's own handler, with a body stream that errors after its first chunk (no socket can carry that). */
+    async function postBrokenBody(path: string): Promise<{ status: number; json: unknown }> {
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode('{"model":'));
+                controller.error(new Error("the client's body stream broke"));
+            },
+        });
+        const res = await proxy.fetch(
+            new Request(`${baseUrl}${path}`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${PROXY_KEY}`, "Content-Type": "application/json" },
+                body,
+            })
+        );
+        const text = await res.text();
+
+        return { status: res.status, json: text ? SafeJSON.parse(text, { strict: true }) : undefined };
+    }
+
+    const BODY_UNREADABLE: Record<DoorName, unknown> = {
+        messages: anthropicError("invalid_request_error", "Could not read the request body"),
+        chat: { error: { message: "Could not read the request body" } },
+        responses: { error: { message: "Could not read the request body" } },
+    };
+
+    for (const door of DOOR_NAMES) {
+        it(`${door}: a body stream that fails is a 400 in the door's envelope`, async () => {
+            expect(await postBrokenBody(DOORS[door].path)).toEqual({ status: 400, json: BODY_UNREADABLE[door] });
+        });
+    }
+
+    it("count_tokens and realtime client_secrets: a body stream that fails is a 400 in their envelopes", async () => {
+        expect(await postBrokenBody("/v1/messages/count_tokens")).toEqual({
+            status: 400,
+            json: BODY_UNREADABLE.messages,
+        });
+        expect(await postBrokenBody("/v1/realtime/client_secrets")).toEqual({
+            status: 400,
+            json: BODY_UNREADABLE.chat,
+        });
+    });
+
     it("count_tokens: a wrong key is a 401", async () => {
         const res = await post("/v1/messages/count_tokens", { key: "wrong-key-0123456789", body: "{}" });
 
