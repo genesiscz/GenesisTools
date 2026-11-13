@@ -214,8 +214,19 @@ export function DecisionBoard({
         return () => window.removeEventListener("hashchange", restore);
     }, [hash, namespace, points, initial, normalize, choices]);
 
+    /** Normalize a change, then put every still-locked choice back: `normalize` may not move a locked decision. */
+    const applyKeepingLocks = (current: DecisionChoices, next: DecisionChoices) => {
+        const normalized = { ...apply(next) };
+        for (const point of points) {
+            if (point.locked && !unlocked.includes(point.key)) {
+                normalized[point.key] = current[point.key];
+            }
+        }
+
+        return normalized;
+    };
     const setChoice = (point: DecisionPoint, value: string) => {
-        setChoices((current) => apply({ ...current, [point.key]: value }));
+        setChoices((current) => applyKeepingLocks(current, { ...current, [point.key]: value }));
         setCopied(false);
     };
     const controls = (point: DecisionPoint) => {
@@ -267,7 +278,7 @@ export function DecisionBoard({
                                         }
                                     }
 
-                                    return apply(next);
+                                    return applyKeepingLocks(current, next);
                                 });
                                 setBaseline(id);
                                 setCopied(false);

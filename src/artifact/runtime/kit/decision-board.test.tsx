@@ -162,6 +162,26 @@ describe("DecisionBoard", () => {
             await dom.unmount();
         }
     });
+    test("normalize cannot change a choice that is still locked", async () => {
+        const dom = await mountDom(
+            <DecisionBoard
+                points={POINTS}
+                initial={INITIAL}
+                hash={false}
+                normalize={(choices) => (choices.source === "live" ? { ...choices, format: "text" } : choices)}
+            >
+                {(choices) => <output>{`${choices.source}/${choices.format}`}</output>}
+            </DecisionBoard>
+        );
+        try {
+            await dom.click(
+                [...dom.container.querySelectorAll('[role="radio"]')].find((node) => node.textContent === "Live")
+            );
+            expect(dom.container.querySelector("output")?.textContent).toBe("live/object");
+        } finally {
+            await dom.unmount();
+        }
+    });
 
     test("copy uses human point numbers and expansion has its own bounded scroll", async () => {
         const dom = await mountDom(
