@@ -24,7 +24,7 @@ import {
 import { formatEventPretty } from "../lib/format-pretty";
 import { deriveMainAgentId, isMainId } from "../lib/id-gen";
 import {
-    announceLapses,
+    announceDueLapses,
     announceLeave,
     endsInRearm,
     foldRearms,
@@ -420,16 +420,7 @@ async function checkLapses(active: ActiveLogin): Promise<void> {
     active.lapseCheckRunning = true;
 
     try {
-        await announceLapses(active.paths);
-        const now = Date.now();
-
-        // Drop what was due: a lapse this login lost the race to write is in the feed already, and the agent_left
-        // it reads next would drop it anyway.
-        for (const [agentId, entry] of active.rearms.pending) {
-            if (Date.parse(entry.until) <= now) {
-                active.rearms.pending.delete(agentId);
-            }
-        }
+        await announceDueLapses(active.paths, active.rearms);
     } catch (err) {
         log.warn({ err }, "lapse check failed; the next check retries");
     } finally {

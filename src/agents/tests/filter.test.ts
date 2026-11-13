@@ -6,6 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { appendFeed, readFeed } from "../lib/feed";
 import { filterForAgent, isVisibleToAgent, presenceModeFor } from "../lib/filter";
 import {
+    announceDueLapses,
     announceLapses,
     announceLeave,
     foldRearms,
@@ -627,6 +628,58 @@ describe("agent_left", () => {
             expect(await announceLapses(paths, now + REARM_GRACE_MS)).toMatchObject([
                 { type: "agent_left", agent_id: "agt_beta", reason: "lapsed", login_id: "beta-b" },
             ]);
+        });
+    });
+
+    test("a lapse check forgets only the re-arms due at its own cutoff, and not one replaced meanwhile", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-rearm-cutoff-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("rearm-cutoff");
+            ensureSessionDir(paths);
+            // In the past, so a check that took a fresh time after the lock would call every entry below due.
+            const cutoff = Date.now() - 60_000;
+            const killed = (agentId: string, loginId: string, until: number) =>
+                appendFeed(paths, {
+                    type: "logged_out",
+                    agent_id: agentId,
+                    reason: "signal",
+                    mode: "stream",
+                    login_id: loginId,
+                    rearm_until: new Date(until).toISOString(),
+                });
+
+            for (const name of ["beta", "gamma", "delta"]) {
+                await logInAndAnnounceJoin(paths, {
+                    agent_id: `agt_${name}`,
+                    agent_name: name,
+                    mode: "stream",
+                    login_id: `${name}-1`,
+                });
+            }
+
+            await killed("agt_beta", "beta-1", cutoff);
+            // Falls due while the check waits for the feed lock: not announced by it, so it must stay.
+            await killed("agt_gamma", "gamma-1", cutoff + 1);
+            await killed("agt_delta", "delta-1", cutoff);
+
+            const fold = foldRearms(await readFeed(paths));
+            const check = announceDueLapses(paths, fold, cutoff);
+            // While the check waits, delta's next login ends too: the watcher folds a newer re-arm in its place.
+            const replaced = {
+                loginId: "delta-2",
+                since: new Date(cutoff).toISOString(),
+                until: new Date(cutoff + 1_000).toISOString(),
+            };
+            fold.pending.set("agt_delta", replaced);
+            const lapsed = await check;
+
+            expect(lapsed.map((event) => event.type === "agent_left" && event.agent_id).sort()).toEqual([
+                "agt_beta",
+                "agt_delta",
+            ]);
+            expect([...fold.pending.keys()].sort()).toEqual(["agt_delta", "agt_gamma"]);
+            expect(fold.pending.get("agt_delta")).toBe(replaced);
         });
     });
 });

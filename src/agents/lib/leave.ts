@@ -292,6 +292,29 @@ export async function announceLapses(paths: SessionPaths, now: number = Date.now
     return appended;
 }
 
+/**
+ * `announceLapses` for the re-arms a watching login folded, then forget exactly the entries that were due. One cutoff
+ * serves both: a re-arm that falls due while the feed lock is awaited was not announced, so it stays for the next
+ * check (with a fresh time it was dropped, and the agent stayed on the bus for good). An entry a newer event replaced
+ * meanwhile is not the one that was due, and stays too. A due lapse another login wrote first is in the feed already.
+ */
+export async function announceDueLapses(
+    paths: SessionPaths,
+    fold: RearmFold,
+    now: number = Date.now()
+): Promise<FeedEvent[]> {
+    const due = [...fold.pending].filter(([, entry]) => Date.parse(entry.until) <= now);
+    const appended = await announceLapses(paths, now);
+
+    for (const [agentId, entry] of due) {
+        if (fold.pending.get(agentId) === entry) {
+            fold.pending.delete(agentId);
+        }
+    }
+
+    return appended;
+}
+
 /** Why a recipient will not read a message now; `message` reports it to the sender. */
 export interface NotListening {
     agent_id: string;
