@@ -101,6 +101,7 @@ async function promptForParam(param: ParamDef): Promise<unknown> {
     if (param.choices && param.choices.length > 0) {
         if (param.type === "string[]") {
             const result = await p.multiselect({
+                required: true,
                 message: `${param.name} ${pc.dim(`(${param.description})`)}`,
                 options: param.choices.map((c) => ({ value: c, label: c })),
                 initialValues: param.default as string[] | undefined,

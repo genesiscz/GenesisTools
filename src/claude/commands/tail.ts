@@ -545,6 +545,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
     p.intro(pc.cyan("Configure tail output"));
 
     const categories = await p.multiselect({
+        required: true,
         message: "What to show?",
         options: [
             { value: "thinking", label: "Thinking/reasoning blocks" },
@@ -594,6 +595,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
 
     if (categories.includes("agents")) {
         const agentParts = await p.multiselect({
+            required: true,
             message: "Agent details to show?",
             options: [
                 { value: "input", label: "Agent launch prompt" },
