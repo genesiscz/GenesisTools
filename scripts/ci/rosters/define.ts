@@ -94,6 +94,58 @@ export function importFrom(specifier: RegExp): NapiConfig {
     };
 }
 
+/** Wrappers that leave a value as it is: `[…] as const`, `[…] satisfies string[]`, `([…])`, `x!`. */
+const SAME_VALUE = new Set([
+    "as_expression",
+    "satisfies_expression",
+    "parenthesized_expression",
+    "non_null_expression",
+]);
+
+/** Where an argv array is kept before a call takes it: `const args = […]`, `{ args: […] }`, `args = […]`. */
+const ARGV_HOLDERS = new Set(["variable_declarator", "pair", "assignment_expression"]);
+
+/**
+ * Whether an argv array goes to the program whose runner's name matches `program` (`/cmux/i` for `runCmuxOk`): passed
+ * straight to such a call, or kept first in a variable or an object in a file that calls such a runner or imports a
+ * module whose path names the program. The kept form is how an owner holds its argv (`const TREE_ARGS = […]` and
+ * `run(TREE_ARGS)`), so a copy of the owner is a finding too. Use it as a definition's `test`.
+ */
+export function argvFor(node: SgNode, program: RegExp): boolean {
+    let holder = node.parent();
+
+    while (holder && SAME_VALUE.has(String(holder.kind()))) {
+        holder = holder.parent();
+    }
+
+    if (!holder) {
+        return false;
+    }
+
+    if (holder.kind() === "arguments") {
+        return program.test(holder.parent()?.field("function")?.text() ?? "");
+    }
+
+    if (!ARGV_HOLDERS.has(String(holder.kind()))) {
+        return false;
+    }
+
+    const regex = `${program.flags.includes("i") ? "(?i)" : ""}${program.source}`;
+    const runner = node
+        .getRoot()
+        .root()
+        .find({
+            rule: {
+                any: [
+                    { kind: "call_expression", has: { field: "function", regex } },
+                    { kind: "import_statement", has: { field: "source", regex } },
+                ],
+            },
+        });
+
+    return runner !== null;
+}
+
 /**
  * A function, class, `const` or method declared under a name that matches: the forms the `shadowed` refactor analyser
  * reports as a private copy of a shared helper.

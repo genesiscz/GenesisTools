@@ -44,7 +44,8 @@ generated list of the places that still hold it, which only shrinks. Two kinds:
   `const { name: x } = api`, each counted at the binding),
   `literal(/^state-file\.jsonl$/)` (a string's text, in quotes or a template), `importFrom(/^axios$/)` (an import,
   an `export … from` and a dynamic `import("axios")`), `declaration(/^name$/)` (a function, class, `const` or method
-  of that name).
+  of that name), and the `test` helper `argvFor(node, /cmux/i)` (an argv array passed to a call that names the
+  program, or kept first in a variable or an object in a file that runs it, as `const TREE_ARGS = […]`).
 - A **tree roster** (`rosters/tree.ts`) needs every file at once, so it is not in lint-rules. It runs in
   `bun scripts/ci/rosters/generate.ts --check --tree` (about 4 s; the pre-push hook and CI's "Tree roster guard"):
   - `roster-shared-export-redeclared`: a function named like a two-word export of `src/utils/**`, also with a copy

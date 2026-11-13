@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { copyNames, type FunctionFact, fingerprint, isDistinctName } from "@app/ts/lib/inventory";
 import { Lang, parse } from "@ast-grep/napi";
-import { maskSwiftNonCode } from "../lint-rules";
+import { checkSource, maskSwiftNonCode } from "../lint-rules";
 import adoFetchOutsideApi from "./ado-fetch-outside-api.definition";
 import cdpSocketOutsideConnect from "./cdp-socket-outside-connect.definition";
 import cmuxSendOutsideSurfaceInput from "./cmux-send-outside-surface-input.definition";
@@ -45,10 +45,37 @@ describe("roster patterns", () => {
         [cmuxTreeOutsideReader, 'await runCmux(["tree", "--all"])', 'runAx(["tree", "--app", app])'],
         [mcpProviderWriteOutsideCycle, "writeFileSync(path, text)", "process.stdout.write(text)"],
         [cdpSocketOutsideConnect, "const socket = new WebSocket(target.webSocketDebuggerUrl)", "connect(target, port)"],
+        // An argv kept in a constant or an object first, as the owners keep theirs, in a file that runs cmux.
+        [
+            cmuxTreeOutsideReader,
+            'import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";\n' +
+                'const TREE_ARGS = ["--id-format", "both", "tree", "--all"] as const;\nawait run(TREE_ARGS);',
+            'const TREE_ARGS = ["tree", "--app", app];\nawait runAx(TREE_ARGS);',
+        ],
+        [
+            cmuxSendOutsideSurfaceInput,
+            'const steps = [{ args: ["send-key", ...where, "enter"] }];\nawait runCmuxOk(steps[0].args);',
+            'import { runCmuxOk } from "./cmux";\nconst verb = z.enum(["send", "confirm"]);',
+        ],
     ])("%#: matches the pattern and not its look-alike", (definition, bad, good) => {
         expect(matches(definition, bad)).toBe(1);
         expect(matches(definition, good)).toBe(0);
     });
+
+    test.each([
+        [cmuxTreeOutsideReader, "src/utils/cmux/tree-read.ts"],
+        [cmuxSendOutsideSurfaceInput, "src/utils/cmux/surface-input.ts"],
+    ])(
+        "%#: the owner's own argv, copied to another file, is a finding there and none in the owner",
+        (definition, owner) => {
+            const source = readFileSync(owner, "utf8");
+            const findings = (file: string) =>
+                checkSource(file, source).filter((finding) => finding.rule === definition.name);
+
+            expect(findings("src/planted/copy.ts").length).toBeGreaterThan(0);
+            expect(findings(owner)).toEqual([]);
+        }
+    );
 
     test("every definition has a unique roster- name and a candidate", () => {
         const names = ROSTER_DEFINITIONS.map((definition) => definition.name);
