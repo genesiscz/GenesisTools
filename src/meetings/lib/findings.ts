@@ -39,7 +39,8 @@ export const findingSchema = z.discriminatedUnion("kind", [
         to: clock,
         /** The source's own label of the lines, as `evidence --raw` shows it. */
         label: text,
-        speaker: text,
+        /** Absent for a range a question in the batch decides (it names the range's ref in `decides`). */
+        speaker: text.optional(),
         /** Explicit evidence identity and eligible answers for propagation across unasked ranges. */
         signature: text.optional(),
         candidates: z.array(text).optional(),
@@ -185,7 +186,14 @@ export function findingItems(findings: Finding[], items: MeetingItem[], now: str
                 ? {
                       signature: finding.signature,
                       ...(finding.kind === "speaker-range"
-                          ? { choices: [...new Set([finding.speaker, ...(finding.candidates ?? [])])] }
+                          ? {
+                                choices: [
+                                    ...new Set([
+                                        ...(finding.speaker ? [finding.speaker] : []),
+                                        ...(finding.candidates ?? []),
+                                    ]),
+                                ],
+                            }
                           : {}),
                   }
                 : {}),
@@ -211,7 +219,7 @@ function kindFields(finding: Finding, idOfRef: Map<string, string>): Record<stri
             label: finding.label,
             fromSec: finding.from,
             toSec: finding.to,
-            speaker: finding.speaker,
+            ...(finding.speaker ? { speaker: finding.speaker } : {}),
             ...(finding.candidates ? { candidates: finding.candidates } : {}),
         };
     }

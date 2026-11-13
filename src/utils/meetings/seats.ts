@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 import { nameKey } from "./people";
 
@@ -98,4 +100,12 @@ export function personForAlias<T extends PersonDetails & { name: string }>(
 /** Additive migration: old people keep unknown roles, and old remote strings become named seats. No I/O. */
 export function migrateMeetingSeats(raw: unknown): MeetingSeats | undefined {
     return raw === undefined ? undefined : meetingSeatsSchema.parse(raw);
+}
+
+/** Which seats a plan read: equal fingerprints mean the same room, remote people, their times and microphone groups. */
+export function seatsFingerprint(seats: MeetingSeats | undefined): string {
+    return createHash("sha256")
+        .update(SafeJSON.stringify(seats ?? null))
+        .digest("hex")
+        .slice(0, 16);
 }

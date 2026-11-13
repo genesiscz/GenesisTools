@@ -104,15 +104,20 @@ export const DECISION_ACTION_OPTIONS = [
     /** Findings added as suggested items (`items add`): an agent's or a person's suggestions, kept with who made them. */
     z.object({
         kind: z.literal("add"),
-        findings: z.array(findingSchema).min(1),
+        /** Empty only with `replace`: a new plan that found nothing still takes the old suggestions back. */
+        findings: z.array(findingSchema),
         allowDuplicates: z.boolean().optional(),
         force: z.boolean().optional(),
         replace: z
             .object({
                 kinds: z.array(z.enum(["speaker-range", "question", "label", "join", "term"])),
                 by: z.literal("agent"),
+                /** Only the suggestions of this transcript label (a channel plan replans one label). */
+                label: z.string().trim().min(1).optional(),
             })
             .optional(),
+        /** What the findings were planned from; refused when the record changed since (`seatsFingerprint`). */
+        fence: z.object({ seats: z.string() }).optional(),
     }),
     /**
      * The meeting's own fields (`set`): its project (a known name: the caller resolves it first), its title, labels

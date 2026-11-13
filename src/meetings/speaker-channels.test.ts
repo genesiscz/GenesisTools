@@ -7,6 +7,7 @@ import { correlateEcho } from "@genesiscz/utils/meetings/echo";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson, microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
+import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { clusterVoices, lineVoices, measureVoice, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -620,6 +621,147 @@ test("the actual byChannel dry-run door writes nothing, apply persists the same 
                 ?.items.filter((i) => i.kind === "speaker-range")
                 .map((i) => (i.kind === "speaker-range" ? i.speaker : ""))
         ).toEqual(["Carol", "Alice"]);
+    } finally {
+        load.mockRestore();
+        evidence.mockRestore();
+    }
+});
+
+test("channel plans use microphone groups, a whole line's seats, and give each room question its range", () => {
+    const text = "A sufficiently long transcript sentence.";
+    const line = (index: number, micShare: number, toSec?: number) => ({
+        index,
+        fromSec: index * 10,
+        ...(toSec === undefined ? {} : { toSec }),
+        label: "Room",
+        text,
+        channel: { micShare },
+    });
+    const seats = {
+        room: ["Alice", "Bob"],
+        remote: [{ name: "Carol" }, { name: "Dan" }],
+        microphones: [
+            { id: "self", people: ["Alice"] },
+            { id: "remote-room", label: "Room", people: ["Carol"] },
+        ],
+    };
+    const grouped = planByChannel({ lines: [line(0, 0.95), line(1, 0.05)], seats, input: { label: "Room" } });
+    expect(grouped.ranges.map((range) => [range.from, range.speaker])).toEqual([
+        [0, "Alice"],
+        [10, "Carol"],
+    ]);
+
+    // Carol leaves at 15 s and Dan joins then: a line from 10 s to 20 s has no one remote person throughout.
+    const handover = {
+        room: [],
+        remote: [
+            { name: "Carol", toSec: 15 },
+            { name: "Dan", fromSec: 15 },
+        ],
+    };
+    const crossing = planByChannel({ lines: [line(1, 0.05, 20)], seats: handover, input: { label: "Room" } });
+    expect(crossing.ranges).toEqual([]);
+    expect(crossing.unresolved).toHaveLength(1);
+    expect(
+        planByChannel({ lines: [line(1, 0.05, 14)], seats: handover, input: { label: "Room" } }).ranges[0]?.speaker
+    ).toBe("Carol");
+
+    const asked = planByChannel({
+        lines: [line(0, 0.95, 12)],
+        seats: { room: ["Alice", "Bob"], remote: [] },
+        input: { label: "Room", askRoom: { minSec: 8, max: 2 } },
+    });
+    expect(asked.targets).toEqual([expect.objectContaining({ kind: "speaker-range", ref: "room-run-1", from: 0 })]);
+    expect(asked.targets[0]).not.toHaveProperty("speaker");
+    expect(asked.questions[0]?.decides).toEqual(["room-run-1"]);
+});
+
+test("a channel replacement stays on its label, applies with an empty plan, stamps, ends the round and is fenced", async () => {
+    const store = new MeetingStore(new Storage(`channel-replace-${process.pid}`));
+    const agent = { kind: "agent", harness: "fixture", session: null } as const;
+    const journal = new DecisionJournal({ store, ledger: () => undefined });
+    const record = await store.create(
+        { title: "Replace fixture", start: START, createdBy: "new", seats: { room: ["Alice"], remote: [] } },
+        { command: "test", change: "fixture" }
+    );
+    const range = (label: string, from: number) => ({
+        kind: "speaker-range" as const,
+        from,
+        to: from,
+        label,
+        speaker: "Alice",
+        confidence: 0.6,
+        reason: "channel fixture",
+    });
+    const question = {
+        kind: "question" as const,
+        about: "speaker" as const,
+        from: 0,
+        to: 0,
+        question: "Who speaks?",
+        choices: ["Alice", "Bob"],
+        decides: ["room-range"],
+        reason: "channel fixture",
+    };
+    await journal.apply({
+        meeting: record.id,
+        actor: agent,
+        action: { kind: "add", findings: [{ ...range("Room", 0), ref: "room-range" }, range("Other", 30), question] },
+    });
+    const replace = { by: "agent" as const, kinds: ["speaker-range" as const, "question" as const], label: "Room" };
+    const fence = { seats: seatsFingerprint(store.read(record.id)!.seats) };
+    const first = await journal.apply({
+        meeting: record.id,
+        actor: agent,
+        action: { kind: "add", findings: [], replace, fence },
+    });
+    const statuses = () =>
+        store
+            .read(record.id)!
+            .items.map((item) => [item.kind, item.kind === "speaker-range" ? item.label : "", item.status]);
+    expect(statuses()).toEqual([
+        ["speaker-range", "Room", "rejected"],
+        ["speaker-range", "Other", "suggested"],
+        ["question", "", "rejected"],
+    ]);
+    expect(first.entry?.decided).toEqual(["i1", "i3"]);
+    expect(store.read(record.id)!.items[0]?.decision?.token).toBe(first.entry!.token);
+    const log = readFileSync(join(store.folder(record.id), "questions.ndjson"), "utf8");
+    expect(log).toContain('"questions-rejected"');
+
+    await journal.revert({ meeting: record.id, token: first.entry!.token, actor: { kind: "cli" } });
+    expect(statuses().map((row) => row[2])).toEqual(["suggested", "suggested", "suggested"]);
+
+    await journal.apply({
+        meeting: record.id,
+        actor: { kind: "cli" },
+        action: { kind: "set", seats: { room: ["Alice", "Bob"], remote: [] } },
+    });
+    await expect(
+        journal.apply({ meeting: record.id, actor: agent, action: { kind: "add", findings: [], replace, fence } })
+    ).rejects.toThrow("seats");
+    await expect(
+        journal.apply({ meeting: record.id, actor: agent, action: { kind: "add", findings: [] } })
+    ).rejects.toThrow("at least one finding");
+});
+
+test("byChannel decides on the measured microphone share, not the rounded one shown", async () => {
+    const store = new MeetingStore(new Storage(`by-channel-precision-${process.pid}`));
+    const record = await store.create(
+        { title: "Precision", start: START, createdBy: "new", seats: { room: ["Alice"], remote: [{ name: "Carol" }] } },
+        { command: "test", change: "fixture" }
+    );
+    const fixture = scene([{ label: "Room", mic: 0 }]);
+    fixture.evidence.segments = [
+        { startSec: 0, endSec: 2.004, channel: "mic" },
+        { startSec: 2.004, endSec: 10, channel: "system" },
+    ];
+    const load = spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue(fixture.meeting);
+    const evidence = spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue(fixture.evidence);
+    try {
+        const plan = await attributeByChannel({ store, record, input: { label: "Room", minChars: 0, dryRun: true } });
+        expect(plan.ranges).toEqual([]);
+        expect(plan.mixed).toHaveLength(1);
     } finally {
         load.mockRestore();
         evidence.mockRestore();

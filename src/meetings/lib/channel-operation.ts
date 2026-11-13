@@ -1,5 +1,7 @@
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { type ByChannelOptions, byChannelOptionsSchema, planByChannel } from "./by-channel";
+import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
+import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import { type ByChannelOptions, byChannelOptionsSchema, type ChannelLine, planByChannel } from "./by-channel";
 import { callerActor, DecisionJournal } from "./decision-journal";
 import { OpenedMeeting } from "./opened-meeting";
 import { rawMeeting } from "./raw";
@@ -15,25 +17,48 @@ export async function channelEvidence(opened: OpenedMeeting) {
     });
 }
 
+/**
+ * The lines a channel plan reads, with the microphone share at full precision: `rawMeeting` rounds it for display,
+ * and a rounded 0.2004 would pass a 0.2 threshold the measured share fails.
+ */
+export async function channelLines(opened: OpenedMeeting): Promise<ChannelLine[]> {
+    const meeting = await opened.meeting();
+    const evidence = await opened.evidence();
+    return lineEvidence(meeting.transcript, evidence ?? { segments: [], speaking: [] }).map((line) => ({
+        index: line.index,
+        fromSec: line.startSec,
+        toSec: line.endSec,
+        label: line.label,
+        text: line.text,
+        channel: { micShare: line.micShare ?? null },
+    }));
+}
+
 export async function attributeByChannel(options: {
     store: MeetingStore;
     record: MeetingRecord;
     input: ByChannelOptions;
 }) {
     const input = byChannelOptionsSchema.parse(options.input);
-    const raw = await channelEvidence(OpenedMeeting.of(options.store, options.record));
-    const plan = planByChannel({ lines: raw.lines, seats: options.record.seats, input });
+    const lines = await channelLines(OpenedMeeting.of(options.store, options.record));
+    const plan = planByChannel({ lines, seats: options.record.seats, input });
     if (input.dryRun) {
         return { ...plan, dryRun: true };
     }
-    const findings = [...plan.ranges, ...plan.questions];
-    if (findings.length === 0) {
+    const findings = [...plan.ranges, ...plan.targets, ...plan.questions];
+    // A replacement applies even when the new plan found nothing: the old suggestions of this label go.
+    if (findings.length === 0 && !input.replace) {
         return { ...plan, dryRun: false };
     }
     const decision = await new DecisionJournal({ store: options.store }).apply({
         meeting: options.record.id,
         actor: callerActor(),
-        action: { kind: "add", findings, ...(input.replace ? { replace: input.replace } : {}) },
+        action: {
+            kind: "add",
+            findings,
+            ...(input.replace ? { replace: { ...input.replace, label: input.label } } : {}),
+            fence: { seats: seatsFingerprint(options.record.seats) },
+        },
     });
     return { ...plan, dryRun: false, decision };
 }
