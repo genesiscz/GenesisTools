@@ -247,6 +247,25 @@ final class MomentPlayer {
         self.engine = engine
         self.load = load
         self.defaults = defaults
+        previewHold = PreviewHold { [weak self] in self?.pause() }
+    }
+
+    /// Posted by a sheet that plays a recording of its own (the channel evidence's Raw mic, Isolated call, Cleaned
+    /// estimate): every Moment player pauses, so two recordings never play at once. The reader resumes it.
+    static let previewWillPlay = Notification.Name("meetings.preview.willPlay")
+    @ObservationIgnored private var previewHold: PreviewHold?
+
+    /// The observer of `previewWillPlay`, removed with the player.
+    private final class PreviewHold {
+        private let token: NSObjectProtocol
+
+        init(pause: @escaping @MainActor () -> Void) {
+            token = NotificationCenter.default.addObserver(forName: MomentPlayer.previewWillPlay, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { pause() }
+            }
+        }
+
+        deinit { NotificationCenter.default.removeObserver(token) }
     }
 
     var top: MomentLayer? { stack.last }
