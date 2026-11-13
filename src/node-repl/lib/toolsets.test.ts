@@ -765,11 +765,13 @@ describe("a movie method that needs the recorder part of the app", () => {
 
         try {
             await expect(new Movie(path).still(1)).rejects.toThrow(
-                "movie.still() needs the recorder part of GenesisTools.app, and the installed GenesisTools.app has no recorder part. Nothing was started."
+                "movie.still() cannot run: GenesisTools.app was built without the recorder part, so nothing was started."
             );
             await expect(new Movie(path).export()).rejects.toThrow("macos permissions build --add-part recorder");
             status.mockReturnValue(app(false, []));
-            await expect(new Movie(path).show()).rejects.toThrow("and GenesisTools.app is not installed");
+            await expect(new Movie(path).show()).rejects.toThrow(
+                "GenesisTools.app is not built, so nothing was started."
+            );
             expect(build).not.toHaveBeenCalled();
             status.mockReturnValue(app(true, ["recorder"]));
             expect(() => requireRecorderPart("movie.still()")).not.toThrow();
