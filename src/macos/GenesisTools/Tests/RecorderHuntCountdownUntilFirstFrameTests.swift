@@ -29,6 +29,17 @@ final class RecorderHuntCountdownUntilFirstFrameTests: XCTestCase {
             [entry(startedAfter: -30, framed: true), entry(startedAfter: 0.7, framed: true)], since: start))
     }
 
+    /// The hold after the last second shows 0, and VoiceOver says the recording is starting, not "in 1 seconds".
+    @MainActor
+    func testTheHoldAfterTheLastSecondShowsZero() {
+        let model = CountdownModel()
+        model.remaining = 1
+        XCTAssertEqual(model.spoken, "Recording starts in 1 second")
+        model.lastSecondEnded()
+        XCTAssertEqual(model.remaining, 0)
+        XCTAssertEqual(model.spoken, "The recording is starting")
+    }
+
     func testAStartTimeRoundedDownToTheSecondStillCounts() {
         XCTAssertTrue(CaptureCountdown.firstFrameIn([entry(startedAfter: -0.4, framed: true)], since: start))
     }
