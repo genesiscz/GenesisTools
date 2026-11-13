@@ -51,4 +51,18 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         XCTAssertThrowsError(try MeetingDetailModel.decodeDecision(Data("[1]".utf8), command: ["listen", "m"]),
                              "an answer of neither shape is a failure, not an empty result")
     }
+
+    // MARK: A Contacts row draws again only when what it shows changes (PR 759)
+
+    func testAContactsRowComparesWhatItShowsAndIgnoresItsClosures() {
+        let alex = KnownPerson(id: "name:alex example", name: "Alex Example", sources: [.meetings], rank: .meeting)
+        func row(_ person: KnownPerson, unmerge: (() -> Void)? = nil) -> ContactsPersonRow {
+            ContactsPersonRow(person: person, mergeWith: {}, setHidden: { _ in }, unmerge: unmerge)
+        }
+        XCTAssertEqual(row(alex), row(alex), "new closures for the same person keep the row as it is")
+        var hidden = alex
+        hidden.hidden = true
+        XCTAssertNotEqual(row(alex), row(hidden))
+        XCTAssertNotEqual(row(alex), row(alex, unmerge: {}), "a row that gains Split Merge draws again")
+    }
 }
