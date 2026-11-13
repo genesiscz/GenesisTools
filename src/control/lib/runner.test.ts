@@ -248,7 +248,13 @@ test.skipIf(skip.unlessMac)(
         const live = serializePidRecord(buildPidRecord());
         writeFileSync(join(appDir, "build.lock"), live);
         writeFileSync(marker, live);
-        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: taskHome, GENESIS_TOOLS_NO_APP: undefined }, () => {
+        // The bundle and its install marker live in the app home, which a GENESIS_TOOLS_HOME sandbox does not move.
+        const overrides = {
+            GENESIS_TOOLS_HOME: taskHome,
+            GENESIS_TOOLS_APP_HOME: taskHome,
+            GENESIS_TOOLS_NO_APP: undefined,
+        };
+        await env.testing.withOverrides(overrides, () => {
             expect(() => axCommandLine("/fixture/ax-tool", ["permissions"])).toThrow(GenesisAppUpdatingError);
             expect(readFileSync(marker, "utf8")).toBe(live);
             const dir = join(taskHome, "Applications", "GenesisTools.app", "Contents", "MacOS");
@@ -314,6 +320,7 @@ test.skipIf(skip.unlessMac)("axCommandLine prepends the installed launcher, not 
             GENESIS_TOOLS_APP_BUNDLE_ID: "com.genesiscz.genesistools",
             GENESIS_TOOLS_NO_APP: undefined,
             GENESIS_TOOLS_HOME: home,
+            GENESIS_TOOLS_APP_HOME: home,
         },
         () => {
             expect(axCommandLine("/fixture/ax-tool", ["see", "--app", "Fixture"])).toEqual([
@@ -333,6 +340,7 @@ test.skipIf(skip.unlessMac)("axCommandLine stays bare when no launcher is instal
             GENESIS_TOOLS_APP_BUNDLE_ID: undefined,
             GENESIS_TOOLS_NO_APP: undefined,
             GENESIS_TOOLS_HOME: "/nonexistent",
+            GENESIS_TOOLS_APP_HOME: "/nonexistent",
         },
         () => {
             expect(axCommandLine("/fixture/ax-tool", ["see"])).toEqual(["/fixture/ax-tool", "see"]);
