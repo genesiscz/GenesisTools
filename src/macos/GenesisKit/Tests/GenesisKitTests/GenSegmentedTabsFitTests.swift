@@ -223,4 +223,13 @@ final class GenSegmentedTabsFitTests: XCTestCase {
         XCTAssertEqual(Tabs.Fit.filling(120, need: need), .scaled)
         XCTAssertEqual(Tabs.Fit.filling(0, need: need), .scaled)
     }
+
+    func testTheTextWidthCacheStaysBoundedWhileCountsChange() {
+        let first = KitTextWidth.text("Items", size: 12, weight: .medium)
+        for count in 0..<(KitTextWidth.capacity * 3) {
+            _ = KitTextWidth.text("\(count)", size: 10.5, weight: .semibold, monospacedDigits: true)
+            XCTAssertLessThanOrEqual(KitTextWidth.cachedCount, KitTextWidth.capacity)
+        }
+        XCTAssertEqual(KitTextWidth.text("Items", size: 12, weight: .medium), first, "a width measured again is the same width")
+    }
 }

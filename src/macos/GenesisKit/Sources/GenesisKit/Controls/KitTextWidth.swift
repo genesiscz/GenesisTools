@@ -12,7 +12,20 @@ public enum KitTextWidth {
         let symbol: Bool
     }
 
+    /// The most widths kept. Counts and titles that change keep adding strings, so a full cache starts again: the
+    /// labels on screen are measured once more, about a microsecond each.
+    static let capacity = 512
+
     private static var widths: [Key: CGFloat] = [:]
+
+    static var cachedCount: Int { widths.count }
+
+    private static func remember(_ width: CGFloat, for key: Key) {
+        if widths.count >= capacity {
+            widths.removeAll(keepingCapacity: true)
+        }
+        widths[key] = width
+    }
 
     /// A system-font text, as `Text(text).font(.system(size:weight:))` draws it (`.monospacedDigit()` with `monospacedDigits`).
     public static func text(_ text: String, size: CGFloat, weight: NSFont.Weight, monospacedDigits: Bool = false) -> CGFloat {
@@ -25,7 +38,7 @@ public enum KitTextWidth {
             ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
             : NSFont.systemFont(ofSize: size, weight: weight)
         let width = ((text as NSString).size(withAttributes: [.font: font]).width * 2).rounded(.up) / 2
-        widths[key] = width
+        remember(width, for: key)
         return width
     }
 
@@ -40,7 +53,7 @@ public enum KitTextWidth {
         let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: size, weight: weight))
         let width = image?.size.width ?? size
-        widths[key] = width
+        remember(width, for: key)
         return width
     }
 }
