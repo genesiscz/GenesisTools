@@ -3691,10 +3691,21 @@ struct ReviewVariantStatus: View {
     var body: some View {
         VStack(spacing: 0) {
             if let proposal = model.proposal { ProposalBanner(model: model, proposal: proposal) }
-            if let news = model.pushNews, model.dismissedNewsHead != news.newest.headSha {
-                PushNewsBanner(model: model, news: news)
+            if let news = model.pushNews {
+                if model.dismissedNewsHead != news.newest.headSha {
+                    PushNewsBanner(model: model, news: news)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                } else {
+                    // The banner's dismiss promises that the orange Reload stays: neither redesign's toolbar has the
+                    // classic header's pill, so it stays here, the one newer-push action left for that head.
+                    HStack {
+                        Spacer(minLength: 0)
+                        ReloadPill(news: news) { model.reloadToNewest() }
+                    }
                     .padding(.horizontal, 12)
-                    .padding(.top, 8)
+                    .padding(.top, 6)
+                }
             }
         }
     }
