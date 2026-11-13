@@ -35,6 +35,7 @@ import { claudeCurrentModel } from "./claude-model";
 import { scanClaudeNative } from "./claude-native-scan";
 import { claudeNativeId, claudeProjectDirectory, claudeProjectName, isClaudeSubagentPath } from "./claude-paths";
 import { claudeCustomTitleOfRow } from "./claude-title";
+import { claudeToolCalls } from "./claude-tool-calls";
 import { anchorRecord, anchorStrings, historyEntryBuilder, type ToolContext } from "./history-entry";
 
 const TOOL_INPUT_FIELD_CAP = 2_000;
@@ -815,6 +816,7 @@ export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
         readForward: readClaudeForward,
         continuedIn: readClaudeContinuedIn,
         currentModel: claudeCurrentModel,
+        readToolCalls: claudeToolCalls,
         scanInsights: (text) => ({ native: scanClaudeNative(text), defaultModel: null }),
         rowAnchors: claudeRowAnchors,
     };

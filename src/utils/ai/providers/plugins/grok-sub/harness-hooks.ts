@@ -1,11 +1,12 @@
 import { grokCompactedSince } from "@genesiscz/utils/agent-sessions/readers/grok-compaction";
 import { grokCurrentModel } from "@genesiscz/utils/agent-sessions/readers/grok-model";
+import { grokToolCalls } from "@genesiscz/utils/agent-sessions/readers/grok-tool-calls";
 import type { HookFacts } from "@genesiscz/utils/harness/parts";
 
 /** The Grok driver's `hooks` part. Grok runs Claude's hooks, and its diff-log entries are extended from its transcript. */
 export const grokHooks: HookFacts = {
     diffLogFromTranscript: true,
-    transcriptMentions: false,
+    readToolCalls: grokToolCalls,
     modsDrawDiffs: false,
     // `~/.claude/settings.json` says nothing about the model a Grok session runs (2026-09-16: every grok row read "sonnet").
     settingsModel: false,

@@ -1569,3 +1569,79 @@ test("the usage context reads the spawner through the same header parse", () => 
     expect(context).toMatchObject({ threadId: CHILD_ID, parentThreadId: PARENT_ID, agentPath: "/root/review_fixes" });
     expect(codexSpawnLink(payload)).toEqual({ parentSessionId: PARENT_ID, agentPath: "/root/review_fixes" });
 });
+
+test("readToolCalls: timed shell and patch calls from the rollout, in the session's folders, read incrementally", () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-tool-calls-"));
+    const file = join(home, "rollout.jsonl");
+    const row = (value: unknown) => `${SafeJSON.stringify(value, { strict: true })}\n`;
+    const call = (at: string, name: string, args: unknown) =>
+        row({
+            timestamp: at,
+            type: "response_item",
+            payload: {
+                type: "function_call",
+                name,
+                arguments: SafeJSON.stringify(args, { strict: true }),
+                call_id: name,
+            },
+        });
+    writeFileSync(
+        file,
+        row({ timestamp: "2026-11-13T10:00:00.000Z", type: "session_meta", payload: { cwd: "/work/app" } }) +
+            call("2026-11-13T10:00:01.000Z", "shell", { command: ["bash", "-lc", "cat src/a.ts"] }) +
+            row({ timestamp: "2026-11-13T10:00:02.000Z", type: "turn_context", payload: { cwd: "/work/lib" } }) +
+            call("2026-11-13T10:00:03.000Z", "exec_command", { cmd: "ls docs", workdir: "/work/other" }) +
+            row({
+                timestamp: "2026-11-13T10:00:04.000Z",
+                type: "response_item",
+                payload: {
+                    type: "custom_tool_call",
+                    name: "apply_patch",
+                    call_id: "p",
+                    input: "*** Begin Patch\n*** Update File: b.ts\n*** Add File: /abs/c.ts\n*** End Patch",
+                },
+            })
+    );
+    const first = codexHistoryReader.readToolCalls(file, 0);
+    expect(first.supported).toBe(true);
+    if (!first.supported) {
+        return;
+    }
+
+    expect(first.calls).toEqual([
+        {
+            tool: "shell",
+            input: { command: "cat src/a.ts" },
+            cwd: "/work/app",
+            at: Date.parse("2026-11-13T10:00:01.000Z"),
+        },
+        {
+            tool: "shell",
+            input: { command: "ls docs" },
+            cwd: "/work/other",
+            at: Date.parse("2026-11-13T10:00:03.000Z"),
+        },
+        {
+            tool: "apply_patch",
+            input: { file_path: "b.ts" },
+            cwd: "/work/lib",
+            at: Date.parse("2026-11-13T10:00:04.000Z"),
+        },
+        {
+            tool: "apply_patch",
+            input: { file_path: "/abs/c.ts" },
+            cwd: "/work/lib",
+            at: Date.parse("2026-11-13T10:00:04.000Z"),
+        },
+    ]);
+    // A later call starts at the offset; a row still being written waits, and the session_meta cwd answers again.
+    writeFileSync(
+        file,
+        `${readFileSync(file, "utf8")}${call("2026-11-13T10:00:05.000Z", "shell", { command: ["ls"] })}{"partial`
+    );
+    const next = codexHistoryReader.readToolCalls(file, first.offset);
+    expect(next.supported && next.calls).toEqual([
+        { tool: "shell", input: { command: "ls" }, cwd: "/work/app", at: Date.parse("2026-11-13T10:00:05.000Z") },
+    ]);
+    expect(next.supported && next.offset).toBe(readFileSync(file).length - '{"partial'.length);
+});

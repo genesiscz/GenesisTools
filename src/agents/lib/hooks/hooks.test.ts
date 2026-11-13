@@ -21,10 +21,13 @@ import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
 import { claudeCompactedSince } from "@genesiscz/utils/agent-sessions/readers/claude-compaction";
 import { claudeCurrentModel } from "@genesiscz/utils/agent-sessions/readers/claude-model";
+import { claudeToolCalls } from "@genesiscz/utils/agent-sessions/readers/claude-tool-calls";
 import { codexCompactedSince } from "@genesiscz/utils/agent-sessions/readers/codex-compaction";
 import { codexCurrentModel } from "@genesiscz/utils/agent-sessions/readers/codex-model";
+import { codexToolCalls } from "@genesiscz/utils/agent-sessions/readers/codex-tool-calls";
 import { grokCompactedSince } from "@genesiscz/utils/agent-sessions/readers/grok-compaction";
 import { grokCurrentModel } from "@genesiscz/utils/agent-sessions/readers/grok-model";
+import { grokToolCalls } from "@genesiscz/utils/agent-sessions/readers/grok-tool-calls";
 import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/utils/agents/hooks/config-section";
 import { env } from "@genesiscz/utils/env";
 import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
@@ -3058,7 +3061,7 @@ describe("HARNESS_HOOK_FACTS", () => {
     it("each harness names what its hooks may assume", () => {
         expect(HARNESS_HOOK_FACTS.claude).toEqual({
             diffLogFromTranscript: true,
-            transcriptMentions: true,
+            readToolCalls: claudeToolCalls,
             modsDrawDiffs: true,
             settingsModel: true,
             currentModel: claudeCurrentModel,
@@ -3078,7 +3081,7 @@ describe("HARNESS_HOOK_FACTS", () => {
         });
         expect(HARNESS_HOOK_FACTS.grok).toEqual({
             diffLogFromTranscript: true,
-            transcriptMentions: false,
+            readToolCalls: grokToolCalls,
             modsDrawDiffs: false,
             settingsModel: false,
             currentModel: grokCurrentModel,
@@ -3098,7 +3101,7 @@ describe("HARNESS_HOOK_FACTS", () => {
         });
         expect(HARNESS_HOOK_FACTS.codex).toEqual({
             diffLogFromTranscript: false,
-            transcriptMentions: false,
+            readToolCalls: codexToolCalls,
             modsDrawDiffs: false,
             settingsModel: false,
             currentModel: codexCurrentModel,

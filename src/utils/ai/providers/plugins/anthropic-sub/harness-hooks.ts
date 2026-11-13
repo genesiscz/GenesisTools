@@ -6,6 +6,7 @@ import {
     claudeSubagentFiles,
     claudeSubagentsDir,
 } from "@genesiscz/utils/agent-sessions/readers/claude-subagent-path";
+import { claudeToolCalls } from "@genesiscz/utils/agent-sessions/readers/claude-tool-calls";
 import type { HookFacts } from "@genesiscz/utils/harness/parts";
 
 /** A hook loads no logger: a folder it cannot list reads as empty, and the agent's direct path then stands. */
@@ -37,7 +38,7 @@ function claudeSubagentTranscript(sessionTranscript: string, subagentId: string)
 /** The Claude driver's `hooks` part. */
 export const claudeHooks: HookFacts = {
     diffLogFromTranscript: true,
-    transcriptMentions: true,
+    readToolCalls: claudeToolCalls,
     modsDrawDiffs: true,
     settingsModel: true,
     currentModel: claudeCurrentModel,

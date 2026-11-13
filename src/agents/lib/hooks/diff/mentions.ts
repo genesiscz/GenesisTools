@@ -1,17 +1,8 @@
-import {
-    appendFileSync,
-    closeSync,
-    fstatSync,
-    openSync,
-    readdirSync,
-    readFileSync,
-    readSync,
-    realpathSync,
-    statSync,
-    writeFileSync,
-} from "node:fs";
+import { appendFileSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import type { NativeToolCall } from "@genesiscz/utils/agent-sessions/types";
+import type { HookFacts } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { nonEmptyString as text } from "@genesiscz/utils/string";
 import { hookDiag } from "../log";
@@ -42,9 +33,6 @@ import { makePrivateDir } from "./private-dir";
  * them against `git rev-parse --show-toplevel` output, which is always canonical.
  */
 
-/** A session starting on an existing transcript reads at most its last this-many bytes, once. */
-const BACKFILL_BYTES = 16 * 1024 * 1024;
-const TOOL_USE_MARKER = Buffer.from('"type":"tool_use"');
 const GLOB_PREFIX = "glob:";
 /** Roots remembered per session; a session rarely works in more than a handful. */
 const MAX_ROOTS = 16;
@@ -55,14 +43,8 @@ export interface Mentions {
     globs: string[];
 }
 
-/** One tool input reduced to what the index needs. */
-export interface ToolMention {
-    tool: string;
-    input: unknown;
-    cwd: string;
-    /** When the transcript says the call was made (epoch ms); absent for a harness whose rows carry no time. */
-    at?: number;
-}
+/** One tool input reduced to what the index needs: the provider readers' normalized tool call. */
+export type ToolMention = NativeToolCall;
 
 /** Tools whose input names files by search or by command text: no proof that the session worked on ONE file. */
 const NOT_FILE_TOOLS = new Set(["Bash", "shell", "run_terminal_command", "Glob", "Grep"]);
@@ -551,103 +533,6 @@ export function readSessionState(session: string): SessionState {
 }
 
 /**
- * The tool inputs a Claude transcript gained since `from`, and the offset after the last
- * COMPLETE line. A line still being written is left for the next call.
- *
- * Only lines holding the literal `"type":"tool_use"` are parsed. Inside a tool RESULT that text
- * is JSON-escaped (`\"type\":\"tool_use\"`), so a transcript quoting itself cannot match.
- */
-export function transcriptToolUses(path: string, from: number): { uses: ToolMention[]; offset: number } {
-    const uses: ToolMention[] = [];
-    let fd: number;
-
-    try {
-        fd = openSync(path, "r");
-    } catch (err) {
-        hookDiag("Could not open the transcript to index its tool inputs", { err, path });
-        return { uses, offset: from };
-    }
-
-    try {
-        const size = fstatSync(fd).size;
-        // A transcript that shrank was replaced; it is read again from the start.
-        let start = from > size ? 0 : from;
-
-        if (size - start > BACKFILL_BYTES) {
-            start = size - BACKFILL_BYTES;
-        }
-
-        if (size <= start) {
-            return { uses, offset: start };
-        }
-
-        const buf = Buffer.allocUnsafe(size - start);
-        const read = readSync(fd, buf, 0, buf.length, start);
-        const data = buf.subarray(0, read);
-        const lastNewline = data.lastIndexOf(0x0a);
-
-        if (lastNewline === -1) {
-            return { uses, offset: start };
-        }
-
-        // A backfill that began mid-line skips that fragment.
-        let cursor = start === from ? 0 : data.indexOf(0x0a) + 1;
-
-        while (cursor <= lastNewline) {
-            const hit = data.indexOf(TOOL_USE_MARKER, cursor);
-
-            if (hit === -1 || hit > lastNewline) {
-                break;
-            }
-
-            const lineStart = data.lastIndexOf(0x0a, hit) + 1;
-            const lineEnd = data.indexOf(0x0a, hit);
-
-            cursor = lineEnd + 1;
-
-            if (lineStart < 0 || lineEnd === -1) {
-                break;
-            }
-
-            collectLine(data.subarray(lineStart, lineEnd).toString("utf8"), uses);
-        }
-
-        return { uses, offset: start + lastNewline + 1 };
-    } finally {
-        closeSync(fd);
-    }
-}
-
-function collectLine(line: string, into: ToolMention[]): void {
-    let parsed: unknown;
-
-    try {
-        parsed = SafeJSON.parse(line, { strict: true });
-    } catch (err) {
-        hookDiag("Skipped a transcript line that is not JSON", { err, bytes: line.length });
-        return;
-    }
-
-    const cwd = text(field(parsed, "cwd"));
-    const content = field(field(parsed, "message"), "content");
-
-    if (!cwd || !Array.isArray(content)) {
-        return;
-    }
-
-    const stamp = Date.parse(text(field(parsed, "timestamp")) ?? "");
-    const at = Number.isFinite(stamp) ? { at: stamp } : {};
-
-    for (const block of content) {
-        const name = text(field(block, "name"));
-
-        if (field(block, "type") === "tool_use" && name) {
-            into.push({ tool: name, input: field(block, "input"), cwd, ...at });
-        }
-    }
-}
-
-/**
  * Brings the index up to date for one pre phase: the transcript's new tool inputs, then this
  * call's own. Returns the index and, apart, what this call names (which reaches `deep`). Never
  * throws; a failure costs attribution, never the command.
@@ -655,6 +540,8 @@ function collectLine(line: string, into: ToolMention[]): void {
 export function refreshMentions(options: {
     sessionId: string | undefined;
     transcript: string | null;
+    /** The harness's `HookFacts.readToolCalls`: the transcript is parsed by its reader, never here. */
+    readToolCalls: HookFacts["readToolCalls"];
     current: ToolMention | null;
     roots?: string[];
 }): { index: Mentions; current: Mentions } {
@@ -682,7 +569,14 @@ export function refreshMentions(options: {
 
         if (options.transcript) {
             const from = state.transcript === options.transcript ? (state.offset ?? 0) : 0;
-            const { uses, offset } = transcriptToolUses(options.transcript, from);
+            const read = options.readToolCalls(options.transcript, from);
+            const uses = read.supported ? read.calls : [];
+
+            if (read.supported) {
+                for (const issue of read.issues) {
+                    hookDiag("The transcript's tool calls were read with a gap", { ...issue, session });
+                }
+            }
 
             for (const use of uses) {
                 entries.push(...mentionsOf(use));
@@ -704,8 +598,10 @@ export function refreshMentions(options: {
                 );
             }
 
-            next.transcript = options.transcript;
-            next.offset = offset;
+            if (read.supported) {
+                next.transcript = options.transcript;
+                next.offset = read.offset;
+            }
         }
 
         // A shared temp tree: refuse one another user planted or linked, as the capture does.

@@ -7,6 +7,7 @@ import type {
     HistoryStatisticsRead,
     RowAnchorWalk,
     SpawnLink,
+    ToolCallsRead,
 } from "../types";
 import { noWorkflowReader, type SessionWorkflowReader } from "../workflow-types";
 
@@ -33,6 +34,11 @@ export function classifiesNoPath(): null {
 /** `rowAnchors` for a test reader whose rows carry no native ids. */
 export function noRowAnchors(): RowAnchorWalk {
     return () => ({ messageIds: [], toolCallIds: [], turnIds: [] });
+}
+
+/** `readToolCalls` for a test reader whose transcripts no hook reads for tool calls. */
+export function noToolCalls(): ToolCallsRead {
+    return { supported: false, reason: "test reader" };
 }
 
 /** `readChanges` for a test reader whose sessions record no file changes. */

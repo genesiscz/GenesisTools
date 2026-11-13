@@ -1,11 +1,20 @@
 import { expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
-import { appendFileSync, mkdirSync, mkdtempSync, renameSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    renameSync,
+    truncateSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { claudeHistoryReader } from "../compact-readers";
+import { claudeHistoryReader, grokHistoryReader } from "../compact-readers";
 import { searchHistorySource } from "../search-source";
 import type { NativeSessionSource } from "../types";
 import { createClaudeHistoryOperations, readClaudeMetadata, readClaudeRecords, scanClaudeRecords } from "./claude";
@@ -929,4 +938,35 @@ test("a transcript above the full-read bound keeps its head and reads only the t
     const pair = await resumedAndCold(source);
     expect(pair.resumed).toEqual(pair.cold);
     expect(pair.resumed).toMatchObject({ summary: "Late title", firstPrompt: "message 0" });
+});
+
+test("readToolCalls: tool_use blocks with their row's cwd and time; a quoted tool_use inside a result is not a call", () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-claude-tool-calls-"));
+    const file = join(home, "session.jsonl");
+    const row = (value: unknown) => `${SafeJSON.stringify(value, { strict: true })}\n`;
+    writeFileSync(
+        file,
+        row({
+            type: "assistant",
+            cwd: "/work/app",
+            timestamp: "2026-11-13T10:00:00.000Z",
+            message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "src/a.ts" } }] },
+        }) +
+            row({
+                type: "user",
+                cwd: "/work/app",
+                message: { content: [{ type: "tool_result", tool_use_id: "t1", content: '{"type":"tool_use"}' }] },
+            })
+    );
+    const read = claudeHistoryReader.readToolCalls(file, 0);
+    expect(read.supported && read.calls).toEqual([
+        {
+            tool: "Read",
+            input: { file_path: "src/a.ts" },
+            cwd: "/work/app",
+            at: Date.parse("2026-11-13T10:00:00.000Z"),
+        },
+    ]);
+    expect(read.supported && read.offset).toBe(readFileSync(file).length);
+    expect(grokHistoryReader.readToolCalls(file, 0).supported).toBe(false);
 });

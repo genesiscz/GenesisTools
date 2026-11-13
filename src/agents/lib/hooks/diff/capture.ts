@@ -647,7 +647,8 @@ export function capturePre(
     // that a later command's post phase must recognise as this session's.
     const mentions = refreshMentions({
         sessionId: payload.sessionId,
-        transcript: HARNESS_HOOK_FACTS[payload.harness].transcriptMentions ? transcriptOf(payload) : null,
+        transcript: transcriptOf(payload),
+        readToolCalls: HARNESS_HOOK_FACTS[payload.harness].readToolCalls,
         current: { tool: "Bash", input: { command: payload.command }, cwd: payload.cwd },
         roots,
     });
