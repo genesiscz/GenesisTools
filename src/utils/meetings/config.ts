@@ -165,7 +165,11 @@ const sourceBaseShape = {
 };
 
 /** Wispr Flow's block. Only Wispr has a live recording to follow so far, so it holds no keys beyond the shared ones. */
-const wisprflowSourceSchema = z.object(sourceBaseShape);
+const wisprflowSourceSchema = z.object({
+    ...sourceBaseShape,
+    /** Preserve completed local source audio independently of screen capture. */
+    preserveAudio: z.boolean().default(true),
+});
 
 /** One block per transcript source. A new source is one entry here (MEETING_SOURCE_IDS) and one implementation. */
 const sourcesSchema = z.object({

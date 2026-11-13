@@ -251,6 +251,7 @@ const SKY = {
 /** The pid of a `listen --subscribe-answers --with-comments` the tests say runs; every other pid is gone. */
 const LISTENER_PID = 4343;
 const quietDeps: MeetingsHandlerDeps = {
+    localSourceAudio: [],
     now: () => NOW,
     listenerAlive: (pid) => pid === LISTENER_PID,
     ledger: () => undefined,
@@ -1946,6 +1947,13 @@ async function captureExamples(): Promise<Example[]> {
     );
     await ask(window, "meetings.overview", { days: 3650 }, "The meetings with what each waits for.");
     await ask(window, "config.read", { path: "global.playback.listen.longestClipSec" });
+    await ask(window, "sourceAudio.plan", {}, "Read-only reconciliation with isolated empty local catalogs.");
+    await ask(
+        window,
+        "sourceAudio.apply",
+        { plan: { version: 1, meetingsRoot: store.root, entries: [] } },
+        "Explicit apply of an empty plan."
+    );
     await ask(window, "config.set", { path: "global.playback.listen.longestClipSec", value: 25 });
     await ask(window, "config.unset", { path: "global.playback.listen.longestClipSec" }, "Back to its default.");
     await ask(window, "meeting.rows", { meeting: REVIEW.id }, "The review rows, in the order listen asks.");
@@ -2183,6 +2191,7 @@ async function captureExamples(): Promise<Example[]> {
 function normalized(examples: Example[]): unknown {
     return SafeJSON.parse(
         SafeJSON.stringify(examples, { strict: true })
+            .replace(/"meetingsRoot":"[^"]*"/g, '"meetingsRoot":"<meetings>"')
             .replace(/"(show|transcript|speakers|timeline)":"[0-9a-z]+"/g, '"$1":"<token>"')
             .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>")
             // Paths under the run's sandbox home and temp folders, and a clip's key (it hashes the recording's path).
@@ -2261,6 +2270,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
                 about: "One real request and reply per Meetings service method and event (src/meetings/lib/service/api.ts), captured over raw sockets from the TypeScript service on a scratch store with invented meetings. The Swift client tests decode these; src/meetings/lib/service/service.test.ts checks every one against the method's schemas and against a live service. Regenerate: set examples to [] and run bun run test src/meetings/lib/service/service.test.ts",
                 examples: SafeJSON.parse(
                     SafeJSON.stringify(captured, { strict: true })
+                        .replace(/"meetingsRoot":"[^"]*"/g, '"meetingsRoot":"<meetings>"')
                         .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
                         .replace(
                             /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-[0-9a-z]+\.wav"/g,

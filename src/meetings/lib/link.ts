@@ -15,6 +15,7 @@ import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { resolveProject } from "./project";
 import { type SourceAudioSync, syncSourceAudio } from "./source-audio";
+import { withSourceAudioRecordLock } from "./source-audio-discovery";
 import { meetingSource } from "./sources";
 
 const { log } = logger.scoped("meetings-link");
@@ -137,7 +138,20 @@ export interface LinkResult {
  * Attaches a source's meeting (`wisprflow:<id>`) to a meeting record: the record named by `meetingRef`, the one
  * already linked to that source meeting, or a new one. The source fills what the record does not have yet.
  */
-export async function linkSource(options: {
+export async function linkSource(options: Parameters<typeof linkSourceUnlocked>[0]): Promise<LinkResult> {
+    const ref = parseSourceRef(options.sourceRef);
+    if (!ref) {
+        throw new Error(`Invalid source reference: ${options.sourceRef}`);
+    }
+    return withSourceAudioRecordLock({
+        store: options.store,
+        sourceId: ref.source,
+        sourceMeetingId: ref.id,
+        fn: () => linkSourceUnlocked(options),
+    });
+}
+
+async function linkSourceUnlocked(options: {
     store: MeetingStore;
     config: MeetingsConfigStore;
     sourceRef: string;

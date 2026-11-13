@@ -12,7 +12,7 @@ import { type SummaryPoint, summaryPoints } from "@genesiscz/utils/transcribe/su
 import { CallTimeline } from "./call-timeline";
 import { callSilentSpans, energyMicShareFor, type MicEnergy, storeCalibration } from "./energy";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./platforms";
-import { withPreservedSourceAudio } from "./source-audio";
+import { preservedSourceAudio, withPreservedSourceAudio } from "./source-audio";
 import { type LinkedSource, linkedSource, type SourceRef, sourceRefOf } from "./sources";
 import { configuredWordChecks, type WordCheckChoice, wordCheckFor } from "./word-check";
 
@@ -84,7 +84,16 @@ export class OpenedMeeting {
     /** The source's speaker evidence as it keeps it, every reading included. */
     sourceEvidence(): Promise<MeetingEvidence | null> {
         this.evidenceOnce ??= this.linked().then(async ({ source, sourceMeetingId }) =>
-            withPreservedSourceAudio(this.current, await source.evidence(sourceMeetingId))
+            withPreservedSourceAudio(
+                this.current,
+                await source.evidence(sourceMeetingId).catch((error: unknown) => {
+                    if (!preservedSourceAudio(this.current)) {
+                        throw error;
+                    }
+                    log.debug({ error, meeting: this.current.id }, "source evidence unavailable; using owned audio");
+                    return null;
+                })
+            )
         );
         return this.evidenceOnce;
     }
@@ -180,6 +189,10 @@ export class OpenedMeeting {
 
     /** The recording the source keeps on this Mac. Throws a message ready to print. */
     async audioPath(): Promise<string> {
+        const owned = preservedSourceAudio(this.current);
+        if (owned) {
+            return owned.path;
+        }
         const evidence = await this.sourceEvidence();
 
         if (!evidence?.audioPath) {

@@ -16,6 +16,7 @@ import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import type { SuggestionReads } from "../project-suggestions";
 import { TOOL } from "../shared";
+import type { LocalSourceAudio } from "../source-audio-discovery";
 import { type LinkedSource, linkedSource } from "../sources";
 import { correctedTranscriptRead, revisionsRead, timedTranscriptView } from "../window-reads";
 import { generateWordTimings, meetingWordTimingCache, type WordTimingGenerateDeps } from "../word-timings";
@@ -55,6 +56,8 @@ export interface MeetingsCallContext {
 }
 
 export interface MeetingsHandlerDeps {
+    /** Local audio adapters; tests supply isolated catalogs and never read this Mac's provider. */
+    localSourceAudio?: LocalSourceAudio[];
     /** Optional isolated cache/inference dependencies for word-timing generation tests. */
     wordTimings?: Pick<WordTimingGenerateDeps, "cache" | "modelFiles" | "infer">;
     /** The meetings store (a test passes a scratch one). */
@@ -293,6 +296,17 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "meeting.timeline": async (params) => (await reads()).readTimeline(params, storeOf()),
         "meeting.waveform": async (params) => (await reads()).readWaveform(params, storeOf(), deps),
         "meetings.overview": async (params) => (await reads()).readOverview(params, storeOf()),
+        "sourceAudio.plan": async () =>
+            (await import("../source-audio-backfill")).planLocalSourceAudio({
+                store: storeOf(),
+                sources: deps.localSourceAudio,
+            }),
+        "sourceAudio.apply": async ({ plan }) =>
+            (await import("../source-audio-backfill")).applyLocalSourceAudio({
+                plan,
+                store: storeOf(),
+                sources: deps.localSourceAudio,
+            }),
         "config.read": async (params) => (await reads()).readConfig(params),
         "config.set": async (params) => (await reads()).setConfig(params),
         "config.unset": async (params) => (await reads()).unsetConfig(params),

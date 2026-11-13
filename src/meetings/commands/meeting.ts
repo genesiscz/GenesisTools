@@ -68,7 +68,7 @@ async function create(
             );
             await collectAndReport(store, record);
 
-            if (record.end) {
+            if (record.end || !sourceAudioSummary(record)) {
                 await askProjectAtEnd(store, record.id);
             }
 
@@ -264,7 +264,7 @@ async function link(ref: string, sourceRef: string, opts: { project?: string }):
         ui.ok(`${record.id}: linked ${sourceRef}`);
         await collectAndReport(store, record);
 
-        if (record.end) {
+        if (record.end || !sourceAudioSummary(record)) {
             await askProjectAtEnd(store, record.id);
         }
     } catch (err) {

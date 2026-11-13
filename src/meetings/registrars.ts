@@ -6,6 +6,7 @@ import type { LazyRegistrar } from "@genesiscz/utils/cli/lazy-registrars";
  * boxes and the watcher too. A name missing here only falls back to loading every tree, never to a missing command.
  */
 export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
+    { names: ["audio"], load: async () => (await import("./commands/audio")).registerAudioCommands },
     {
         names: ["new", "list", "ls", "show", "revisions", "set", "link", "merge", "duplicate", "context"],
         load: async () => (await import("./commands/meeting")).registerMeetingCommands,

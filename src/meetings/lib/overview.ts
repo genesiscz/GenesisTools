@@ -1,6 +1,7 @@
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { inputNeeded, openQuestions } from "./questions";
+import { sourceAudioSummary } from "./source-audio";
 
 /** What one meeting still needs, as counts and flags a list row can show without reading the record again. */
 export interface MeetingBadges {
@@ -31,6 +32,7 @@ export interface OverviewMeeting {
     labels: string[];
     hasTranscript: boolean;
     hasRecording: boolean;
+    sourceAudio?: { sources: string[]; bytes: number };
     /** The screen is being recorded now. */
     live: boolean;
     frames: number;
@@ -117,6 +119,7 @@ export function meetingsOverview(options: {
                 labels: record.labels,
                 hasTranscript: Object.keys(record.sources).length > 0,
                 hasRecording: (record.recording?.frames ?? 0) > 0,
+                ...(sourceAudioSummary(record) ? { sourceAudio: sourceAudioSummary(record) } : {}),
                 live: record.recording?.status === "recording" || record.recording?.status === "paused",
                 frames: record.recording?.frames ?? 0,
                 contextCount: record.context.length,

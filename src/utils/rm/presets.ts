@@ -2,6 +2,7 @@ import { type Dirent, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { protectsMeetingSourceAudio } from "@genesiscz/utils/meetings/source-audio-paths";
 import type { RmConfig, RmPreset } from "./config";
 import { canonicalPath, isInside, realOrSelf } from "./paths";
 
@@ -183,7 +184,7 @@ export function matchPreset(path: string, presets: readonly RmPreset[], siblings
     for (const preset of presets) {
         if (preset.within) {
             if (dirname(canonicalPath(path)) === realOrSelf(preset.within)) {
-                return preset;
+                return protectsMeetingSourceAudio(path) ? null : preset;
             }
 
             continue;
@@ -206,7 +207,7 @@ export function matchPreset(path: string, presets: readonly RmPreset[], siblings
             }
         }
 
-        return preset;
+        return protectsMeetingSourceAudio(path) ? null : preset;
     }
 
     return null;
@@ -266,7 +267,11 @@ export function scanPresets(root: string, presets: readonly RmPreset[], maxDepth
 
         for (const entry of readDir(within)) {
             const candidate = join(within, entry.name);
-            if (entry.isDirectory() && (candidate === searchRoot || isInside(candidate, searchRoot))) {
+            if (
+                entry.isDirectory() &&
+                (candidate === searchRoot || isInside(candidate, searchRoot)) &&
+                !protectsMeetingSourceAudio(candidate)
+            ) {
                 found.push({ path: candidate, preset });
             }
         }

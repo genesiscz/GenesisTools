@@ -1,6 +1,7 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { type MeetingsConfig, type MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
+import { logger } from "@genesiscz/utils/logger";
+import { type MeetingsConfig, MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { closestName } from "@genesiscz/utils/transclude/registry";
 import { z } from "zod";
@@ -243,7 +244,7 @@ export async function applyConfigEdits(store: MeetingsConfigStore, edits: Config
         }
     }
 
-    return store.update((raw) => {
+    const config = await store.update((raw) => {
         const guarded = parsed.filter(({ edit }) => "expect" in edit);
 
         if (guarded.length > 0) {
@@ -269,6 +270,21 @@ export async function applyConfigEdits(store: MeetingsConfigStore, edits: Config
             }
         }
     });
+    const preservationChanged = parsed.some(
+        ({ segments }) => segments[0] === "sources" && (segments.length < 3 || segments[2] === "preserveAudio")
+    );
+    if (
+        preservationChanged &&
+        store.path === new MeetingsConfigStore().path &&
+        Object.values(config.sources).some((source) => source.preserveAudio)
+    ) {
+        await (await import("../commands/watch"))
+            .ensureWatcher()
+            .catch((error: unknown) =>
+                logger.warn({ error }, "source audio preservation is enabled; watcher startup will retry at login")
+            );
+    }
+    return config;
 }
 
 function setAt(raw: Record<string, unknown>, segments: string[], value: unknown): void {

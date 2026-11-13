@@ -464,6 +464,11 @@ struct MeetingBadgesView: View {
 
     var body: some View {
         let badges = meeting.badges
+        if let audio = meeting.sourceAudio {
+            Badge("Audio preserved", color: KitPalette.added, symbol: "waveform")
+                .instantTooltip("Permanent source audio: \(audio.bytes) bytes")
+                .accessibilityIdentifier("meetings.sourceAudio.preserved")
+        }
         if meeting.live { Badge("Recording", color: KitPalette.removed, symbol: "record.circle") }
         // A list row only: under the header's badges the project picker says "No project" itself.
         if badges.noProject, open == nil { Badge("No project", color: KitPalette.modified) }

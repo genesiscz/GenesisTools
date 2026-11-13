@@ -94,6 +94,27 @@ describe("OpenedMeeting", () => {
         expect(SafeJSON.stringify(new MeetingStore(store.storage).read(record.id))).toBe(before);
     });
 
+    test("owned audio and evidence survive a provider that throws after its files disappear", async () => {
+        const { store, record } = await newRecord();
+        const original = join(store.root, "provider.ogg");
+        writeFileSync(original, "source bytes");
+        const saved = await preserveSourceAudio({
+            store,
+            meetingId: record.id,
+            ref: { sourceId: "wisprflow", sourceMeetingId: "abc" },
+            sourcePath: original,
+        });
+        const persisted = new MeetingStore(store.storage).read(record.id)!;
+        const source = fakeSource();
+        const evidence = spyOn(source, "evidence").mockRejectedValue(new Error("Provider removed the meeting"));
+        const opened = OpenedMeeting.of(store, persisted, { source, sourceMeetingId: "abc" });
+        expect(await opened.audioPath()).toBe(saved.audio.path);
+        expect(evidence).not.toHaveBeenCalled();
+        expect((await opened.sourceEvidence())?.audioPath).toBe(saved.audio.path);
+        expect(new MeetingStore(store.storage).read(record.id)).toEqual(persisted);
+        evidence.mockRestore();
+    });
+
     test("inspecting uncached audio creates neither a cache nor record history", async () => {
         const { store, record } = await newRecord();
         const audioPath = join(store.folder(record.id), "audio.wav");
