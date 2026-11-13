@@ -433,8 +433,13 @@ const SECRET_ARG = /authorization|token|password|secret|bearer|private-token/i;
 
 /** A flag whose value is `user:password` (curl `-u`, `--user`, `-U`, `--proxy-user`). */
 const USER_CREDENTIAL_FLAG = /^(?:-u|-U|--user|--proxy-user)$/;
-/** The same flag with its value in the word: `--user=alice:pw`, `-ualice:pw`. */
-const USER_CREDENTIAL_WORD = /^(?:--(?:proxy-)?user=|-[uU](?!-))[^:\s]+:/;
+/**
+ * The same flag with its value in the word: `--user=alice:pw`, `-ualice:pw`. The user may be empty (`-u :token`,
+ * `--user=:token`), as curl allows for a token as the password.
+ */
+const USER_CREDENTIAL_WORD = /^(?:--(?:proxy-)?user=|-[uU](?!-))[^:\s]*:/;
+/** The value after a credential flag: `alice:pw`, or `:token` with an empty user. */
+const USER_CREDENTIAL_VALUE = /^[^:\s]*:/;
 
 /** `git rev-parse --show-toplevel`, `gh pr view 42 --json …`: the command, its first arguments, credentials hidden. */
 export function spawnLabel(cmd: string[]): string {
@@ -457,7 +462,7 @@ function maskedArg(arg: string, previous: string | undefined): string {
         SECRET_ARG.test(arg) ||
         isSecretFlag(previous) ||
         USER_CREDENTIAL_WORD.test(arg) ||
-        (previous !== undefined && USER_CREDENTIAL_FLAG.test(previous) && /^[^:\s]+:/.test(arg))
+        (previous !== undefined && USER_CREDENTIAL_FLAG.test(previous) && USER_CREDENTIAL_VALUE.test(arg))
     ) {
         return "***";
     }

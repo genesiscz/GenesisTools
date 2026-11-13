@@ -26,7 +26,8 @@ const WHOLE_MATCH: RegExp[] = [
 /** The first group is kept, the rest of the match is masked. */
 const KEEP_PREFIX: RegExp[] = [
     /(\bBearer\s+)[A-Za-z0-9._~+/-]{12,}=*/gi,
-    /(\b[a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+(?=@)/gi,
+    // A URL password runs to the last `@` of the authority (`alice:first@second@host`), and its user may be empty.
+    /(\b[a-z][a-z0-9+.-]*:\/\/[^:\s/@]*:)[^\s/?#]+(?=@)/gi,
     /(\b(?:Set-)?Cookie:[ \t]*)[^\r\n]+/gi,
     // A value only counts when it looks like a credential (16+ key characters, a digit among them), so
     // code such as `refreshToken: string` or `token = readToken()` in an excerpt stays readable. A name may follow
