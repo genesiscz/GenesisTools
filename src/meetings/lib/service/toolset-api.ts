@@ -23,6 +23,17 @@ import { listenPrepare, meetingPeopleEdit, meetingVoice, momentSave, voiceEnrol 
  * recorder's REPL settings: about 26 to 49 ms that every `tools meetings` read would pay if `api.ts` held it.
  */
 
+import { meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
+import { byChannelOptionsSchema } from "../by-channel";
+
+export const byChannel = defineMethod({
+    name: "items.byChannel",
+    params: byChannelOptionsSchema,
+    result: z.unknown(),
+    effect: "reversible",
+    doc: "Read screen --at before attributing an idea shown on screen. Plan speaker ranges from microphone shares and explicit seats. dryRun defaults to true and writes nothing.",
+});
+
 export const ref = z.object({ ref: z.string().min(1) });
 export const ids = z.array(z.string().min(1));
 export const recordDoc =
@@ -65,10 +76,20 @@ export const editPerson = defineMethod({
 });
 export const evidence = defineMethod({
     name: "evidence",
-    params: z.object({}),
+    params: z
+        .object({
+            table: z.boolean().optional(),
+            raw: z.boolean().optional(),
+            from: z.number().nonnegative().optional(),
+            to: z.number().nonnegative().optional(),
+        })
+        .strict()
+        .refine((options) => options.to === undefined || options.to >= (options.from ?? 0), {
+            message: "to must be at or after from",
+        }),
     result: z.unknown(),
     effect: "read",
-    doc: "Which voice each label's lines are, by audio channel and the platform's speaking indicator.",
+    doc: "Read screen --at before attributing an idea shown on screen. Channel evidence; table returns compact per-line evidence, raw includes seats and project roles.",
 });
 export const transcript = defineMethod({
     name: "transcript",
@@ -165,13 +186,21 @@ export const decide = {
     effect: "reversible" as const,
 };
 export const rejectParams = z
-    .object({ ids: ids.optional(), minConfidence: z.number().min(0).max(1).optional() })
+    .object({
+        ids: ids.optional(),
+        minConfidence: z.number().min(0).max(1).optional(),
+        kind: z.enum(FINDING_KINDS).optional(),
+        where: z.string().optional(),
+    })
     .strict();
 export const confirm = defineMethod({
     name: "items.confirm",
     ...decide,
     // Only a confirm keeps a value; reject has its own schema, as in the CLI, so it refuses them (R2-MC12).
-    params: rejectParams.extend({ speaker: z.string().optional(), proposed: z.string().optional() }).strict(),
+    params: rejectParams
+        .omit({ kind: true, where: true })
+        .extend({ speaker: z.string().optional(), proposed: z.string().optional() })
+        .strict(),
     doc:
         'Confirm items (ids "i3", or a question\'s number "Q2"), or every suggested item at or above minConfidence (0..1). Transcripts apply confirmed items. A range nobody named needs `speaker`, a term with no spelling needs `proposed`; a question is answered by ear (' +
         toolCommand("meetings listen") +
@@ -220,6 +249,7 @@ export const set = defineMethod({
             project: z.string().min(1).optional(),
             labels: z.array(z.string().min(1)).optional(),
             unlabel: z.array(z.string().min(1)).optional(),
+            seats: meetingSeatsSchema.optional(),
         })
         .strict(),
     result: z.unknown(),
@@ -554,9 +584,9 @@ export const meetingsToolsetApi = defineApi({
                 transcript,
                 evidence,
                 voice,
-                editPerson,
                 itemsList,
                 itemsRows,
+                byChannel,
                 add,
                 suggest,
                 confirm,

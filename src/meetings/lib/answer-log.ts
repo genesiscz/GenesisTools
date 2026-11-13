@@ -15,6 +15,8 @@ export const ANSWER_LOG_FILE = "questions.ndjson";
 export type RoundEndReason = "done" | "stopped" | "aborted" | "budget";
 
 export type AnswerEvent =
+    | { event: "questions-rejected"; at: string; items: string[]; open: number }
+    | { event: "round-ended"; at: string; reason: "questions rejected" | "done"; open: number }
     | { event: "round-start"; at: string; pid: number; open: number }
     | {
           event: "answered";
@@ -97,18 +99,20 @@ export function roundRunning(path: string, alive: (pid: number) => boolean = lis
 /**
  * Prints each answer event as one JSON line while a person answers in `listen`, and resolves with the exit code:
  * 0 when a round ends (an aborted round-end when the listening process is gone without writing one), 2 on the
- * timeout. It first prints the round that is already running (`fromStart`: the whole file), so no answer is missed.
+ * timeout with a stderr diagnostic. With follow, it stays subscribed across empty rounds until the deadline.
+ * It first prints the round that is already running (`fromStart`: the whole file), so no answer is missed.
  */
 export async function subscribeAnswers(options: {
     path: string;
     fromStart: boolean;
     timeoutMs: number;
     write: (line: string) => void;
+    diagnostic?: (line: string) => void;
     alive?: (pid: number) => boolean;
     livenessMs?: number;
     /**
      * Stay up across rounds: a round's end (or a listener that died) waits for the next round, until a round ends with
-     * no open question left or the deadline. Without it the first round's end ends the subscription, and an agent that
+     * the deadline. Without it the first round's end ends the subscription, and an agent that
      * subscribes again after each one misses an answer given in between (the window answers one question per round).
      */
     follow?: boolean;
@@ -171,13 +175,20 @@ export async function subscribeAnswers(options: {
 
                     track(entry);
 
-                    if (entry.event !== "round-end") {
+                    const rejectedEnd = entry.event === "questions-rejected" && entry.open === 0;
+                    if (entry.event !== "round-end" && !rejectedEnd) {
                         return;
                     }
-
                     roundPid = undefined;
-
-                    if (!options.follow || entry.open === 0) {
+                    if (rejectedEnd) {
+                        track({
+                            event: "round-ended",
+                            at: entry.at,
+                            reason: rejectedEnd ? "questions rejected" : "done",
+                            open: 0,
+                        });
+                    }
+                    if (!options.follow) {
                         finish(0);
                     }
                 },
@@ -201,7 +212,12 @@ export async function subscribeAnswers(options: {
                 }
             }
         }, options.livenessMs ?? 5000);
-        const deadline = setTimeout(() => finish(2), options.timeoutMs);
+        const deadline = setTimeout(() => {
+            (options.diagnostic ?? ((line) => process.stderr.write(`${line}\n`)))(
+                "Answer subscription timeout: deadline reached while waiting for another round or answer."
+            );
+            finish(2);
+        }, options.timeoutMs);
         tailer.start();
         tailer.flush();
     });

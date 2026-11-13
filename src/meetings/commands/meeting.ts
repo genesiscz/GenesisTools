@@ -219,9 +219,11 @@ async function show(ref: string, opts: { json?: boolean }): Promise<void> {
     out.print(showText(record));
 }
 
+import { meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
+
 async function set(
     ref: string,
-    opts: { project?: string; title?: string; label?: string[]; unlabel?: string[] }
+    opts: { project?: string; title?: string; label?: string[]; unlabel?: string[]; seats?: string }
 ): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
@@ -233,7 +235,7 @@ async function set(
     const labels = opts.label ?? [];
     const unlabel = opts.unlabel ?? [];
 
-    if (!opts.project && !opts.title && labels.length === 0 && unlabel.length === 0) {
+    if (!opts.seats && !opts.project && !opts.title && labels.length === 0 && unlabel.length === 0) {
         fail("Nothing to set: give --project <name>, --title <text>, --label <text> or --unlabel <text>.");
         return;
     }
@@ -243,7 +245,13 @@ async function set(
             store,
             config: new MeetingsConfigStore(),
             record,
-            change: { project: opts.project, title: opts.title, labels, unlabel },
+            change: {
+                project: opts.project,
+                title: opts.title,
+                labels,
+                unlabel,
+                ...(opts.seats ? { seats: meetingSeatsSchema.parse(SafeJSON.parse(opts.seats)) } : {}),
+            },
         });
         ui.ok(
             `${record.id}: ${changes.join(", ")}${updated.labels.length > 0 ? ` (labels: ${updated.labels.join(", ")})` : ""}`
@@ -505,6 +513,7 @@ export function registerMeetingCommands(program: Command): void {
         .option("--title <text>", "its title")
         .option("--label <text...>", "add labels (a new one joins the project's known labels)")
         .option("--unlabel <text...>", "remove labels from the meeting")
+        .option("--seats <json>", "explicit room, remote and microphone groups")
         .action(set);
 
     program

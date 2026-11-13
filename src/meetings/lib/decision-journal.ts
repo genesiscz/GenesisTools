@@ -21,6 +21,7 @@ import {
     meetingItemSchema,
     type SpellingReach,
 } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
 import { heardIn, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -156,11 +157,11 @@ interface Prepared {
     micShare?: MicShare;
 }
 
-type FieldValues = Record<(typeof MEETING_FIELDS)[number], string | string[] | undefined>;
+type FieldValues = Record<(typeof MEETING_FIELDS)[number], FieldChange["before"]>;
 
 /** The meeting's own fields as a `set` and its Undo see them. */
 function fieldValues(record: MeetingRecord): FieldValues {
-    return { project: record.project, title: record.title, labels: [...record.labels] };
+    return { project: record.project, title: record.title, labels: [...record.labels], seats: record.seats };
 }
 
 function fieldChanges(was: FieldValues, now: FieldValues): FieldChange[] {
@@ -179,6 +180,10 @@ function fieldChanges(was: FieldValues, now: FieldValues): FieldChange[] {
 
 /** Puts one field of the record back to `value` (absent: no value). */
 function putField(record: MeetingRecord, field: FieldChange["field"], value: FieldChange["before"]): void {
+    if (field === "seats") {
+        record.seats = value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+        return;
+    }
     if (field === "labels") {
         record.labels = Array.isArray(value) ? [...value] : [];
         return;
@@ -936,7 +941,17 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             });
             return transcript ? { transcript } : {};
         },
-        mutate: (record, action, { prepared }) => {
+        mutate: (record, action, { prepared, now }) => {
+            for (const item of record.items) {
+                if (
+                    action.replace?.kinds.some((kind) => kind === item.kind) &&
+                    item.status === "suggested" &&
+                    item.rules.includes(MeetingRule.Agent)
+                ) {
+                    item.status = "rejected";
+                    item.decidedAt = now;
+                }
+            }
             const { added, warnings } = prepareFindings({
                 findings: action.findings,
                 items: record.items,
@@ -959,10 +974,12 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             const removed = new Set(unlabel.map((label) => label.toLowerCase()));
             record.project = action.project ?? record.project;
             record.title = action.title ?? record.title;
+            record.seats = action.seats ?? record.seats;
             record.labels = mergeLabels(record.labels, labels).filter((label) => !removed.has(label.toLowerCase()));
             const change = [
                 action.project ? `project ${action.project}` : "",
                 action.title ? `title "${action.title}"` : "",
+                action.seats ? "seats and microphone groups" : "",
                 labels.length > 0 ? `labels + ${labels.join(", ")}` : "",
                 unlabel.length > 0 ? `labels - ${unlabel.join(", ")}` : "",
             ].filter(Boolean);
@@ -1115,6 +1132,19 @@ function labelChanges(before: Record<string, string>, after: Record<string, stri
  */
 function answerEventOf(entry: JournalEntry, reverted: JournalEntry | undefined): AnswerEvent | undefined {
     const { action, at } = entry;
+    if (action.kind === "reject") {
+        const items = entry.changes
+            .filter(
+                (change) =>
+                    change.before?.kind === "question" &&
+                    change.before.status === "suggested" &&
+                    change.after?.status === "rejected"
+            )
+            .map((change) => change.id);
+        if (items.length > 0) {
+            return { event: "questions-rejected", at, items, open: -1 };
+        }
+    }
 
     if (action.kind === "revert") {
         const item = entry.question;
@@ -1817,6 +1847,9 @@ export class DecisionJournal {
             ),
         ];
         const event = answerEventOf(entry, after.reverted);
+        if (event?.event === "questions-rejected") {
+            event.open = after.openAfter;
+        }
 
         if (event) {
             const logPath = join(store.folder(entry.meeting), ANSWER_LOG_FILE);

@@ -331,6 +331,7 @@ private struct PeopleList: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: person.label).font(.system(size: 12.5))
+                        ProjectPersonDetailsEditor(model: model, project: project, person: person)
                         Text(verbatim: person.pairedBy.map(MeetingsWords.pairedBy).joined(separator: "; "))
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
@@ -340,6 +341,7 @@ private struct PeopleList: View {
                     }
                     .instantTooltip("Remove this person, or every pairing one calendar entry made")
                 }
+                .liveRow()
             }
             FromMeetingsList(model: model, project: project)
         }
@@ -910,5 +912,35 @@ struct DictionaryFormPending: Equatable {
         guard let value, entries.contains(value) else { return false }
         self.value = nil
         return true
+    }
+}
+
+private struct ProjectPersonDetailsEditor: View {
+    let model: MeetingsSettingsModel
+    let project: String
+    let person: PairedPerson
+    @Environment(\.rowLive) private var rowLive
+    @State private var editing = false
+    @State private var role = ""
+    @State private var aliases = ""
+    var body: some View {
+        LiveButton(live: editing || rowLive, tooltip: nil, pressable: true) {
+            role = person.role ?? ""; aliases = (person.aliases ?? []).joined(separator: ", "); editing = true
+        } label: {
+            Text("Role: \(person.role ?? "unknown") · Aliases: \((person.aliases ?? []).joined(separator: ", "))")
+                .foregroundStyle(.tint)
+        }
+        .accessibilityIdentifier("meetings.projects.person.details.\(person.id)")
+        .popover(isPresented: $editing) {
+            Form {
+                TextField("Role", text: $role)
+                TextField("Aliases, comma separated", text: $aliases)
+                Text("Leave an unknown role empty.").font(.caption).foregroundStyle(.secondary)
+                Button("Save") {
+                    model.setPersonDetails(project: project, person: person, role: role, aliases: aliases.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+                    editing = false
+                }.keyboardShortcut(.defaultAction)
+            }.padding(16).frame(width: 340)
+        }
     }
 }

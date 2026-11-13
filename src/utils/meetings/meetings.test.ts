@@ -1287,3 +1287,20 @@ describe("isolated playback echo and speaker enrolment", () => {
         ).toBe("unknown");
     });
 });
+
+test("project person details are additive and survive a reopened config without inventing legacy roles", async () => {
+    const config = store();
+    await config.pairPeople({
+        project: "shop",
+        people: [{ name: "Alice" }],
+        by: { kind: "manual", at: "2026-01-01T00:00:00Z", note: "a note is not a role" },
+    });
+    const before = await new MeetingsConfigStore(config.storage).read();
+    expect(before.projects.shop?.match?.people[0]?.role).toBeUndefined();
+    await config.setPersonDetails({ project: "shop", name: "Alice", role: "Engineer", aliases: ["Al"] });
+    const read = await new MeetingsConfigStore(config.storage).read();
+    expect(read.projects.shop?.match?.people[0]).toMatchObject({ name: "Alice", role: "Engineer", aliases: ["Al"] });
+    const bytes = fs.readFileSync(config.path, "utf8");
+    await new MeetingsConfigStore(config.storage).read();
+    expect(fs.readFileSync(config.path, "utf8")).toBe(bytes);
+});

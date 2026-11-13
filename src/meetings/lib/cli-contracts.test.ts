@@ -9,6 +9,7 @@ import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { ChoiceSelectOptions } from "@genesiscz/utils/prompts/clack/choice-select";
+import { renderBrief } from "@genesiscz/utils/repl/discovery";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
@@ -24,6 +25,7 @@ import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
 import { InProcessMeetingsClient } from "./service/client";
 import { MeetingsServiceError } from "./service/handlers";
 import * as momentHandlers from "./service/moment-handlers";
+import { meetingsToolsetApi } from "./service/toolset-api";
 import { enumHint, errorJSON, errorText, fail, formatFlag } from "./shared";
 import { linkedSource } from "./sources";
 
@@ -31,6 +33,22 @@ import { linkedSource } from "./sources";
  * What the `tools meetings` commands promise a script or the Meetings window: a refusal names a command that runs,
  * an error code leads its sentence, a JSON shape stays. Each test pins one promise.
  */
+test("brief meeting help exposes the screen attribution instruction", () => {
+    const help = renderBrief(meetingsToolsetApi).split("\n");
+    for (const method of ["meeting.evidence(", "meeting.items.byChannel("]) {
+        expect(help.find((line) => line.includes(method))).toContain("Read screen --at before attributing");
+    }
+});
+
+test("meeting help lists each handle method once", () => {
+    const handles = meetingsToolsetApi.handles ?? [];
+    expect(handles.length).toBeGreaterThan(0);
+    for (const handle of handles) {
+        const methods = handle.methods.map((method) => method.name);
+        expect(new Set(methods).size).toBe(methods.length);
+    }
+});
+
 test("service comment refusals keep their code in human and JSON errors", () => {
     const error = new MeetingsServiceError("already-read", "The receiver acknowledged it.");
     expect(errorText(error)).toBe("[already-read] The receiver acknowledged it.");

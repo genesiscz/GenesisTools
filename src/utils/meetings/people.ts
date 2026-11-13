@@ -30,6 +30,8 @@ export type PairedBy = z.infer<typeof pairedBySchema>;
 export const pairedPersonSchema = z.object({
     name: z.string().trim().min(1),
     email: z.string().trim().min(1).optional(),
+    role: z.string().trim().min(1).optional(),
+    aliases: z.array(z.string().trim().min(1)).optional(),
     pairedBy: z.array(pairedBySchema).min(1),
 });
 export type PairedPerson = z.infer<typeof pairedPersonSchema>;

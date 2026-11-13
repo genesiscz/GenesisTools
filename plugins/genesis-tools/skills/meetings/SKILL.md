@@ -48,9 +48,10 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    The first flag uses the meeting start, not its end. Both save the chosen text and full commit inside the record;
    later file changes, deletion and duplication retain it. Check `evidence <meeting> --raw` for the expected
    `terms.documents.readAloud` and `terms.documents.identifiers`. Without either flag, the ordinary file-reference
-   fallback still applies. Check the project dictionary (`tools meetings dictionary show`). **Ask the user for each person's role** before you judge anything.
-3. **Pass 2, the agent judges.** Attribute speakers with [speakers.md](references/speakers.md) first (a term fix often
-   depends on who spoke), then build the glossary and fix terms with [polishing.md](references/polishing.md). Settle
+   fallback still applies. Check the project dictionary (`tools meetings dictionary show`). **Ask the user for each person's role and who sat at the user's microphone, who was remote, and when remote people joined or left** before you judge anything. Store explicit project roles and aliases, and meeting seats; unknown roles remain unknown.
+3. **Pass 2, the agent judges.**
+   First run `meeting.items.byChannel({ label, dryRun: true })` with the stored seats, or `tools meetings items by-channel <meeting> --label <label> --dry-run`. Inspect the plan before applying with `dryRun: false`. The shipped `meetings-attribute-by-mic` REPL preset takes meeting, label, room, remote and dryRun parameters. When a line refers to something on the screen, read `screen --at` before attributing the idea.
+   Attribute speakers with [speakers.md](references/speakers.md), then build the glossary and fix terms with [polishing.md](references/polishing.md). Settle
    what the context settles, and store every finding in the record with its confidence and the facts it rests on, all
    in one `tools meetings items add <meeting> --from-file <json>` call: an array of objects named like the flags
    (`tools meetings items add --help`). Before insertion, inspect the batch with

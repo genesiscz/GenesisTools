@@ -1,5 +1,7 @@
 import { prepareFindings } from "@app/meetings/lib/add-findings";
+import { type ByChannelOptions, byChannelOptionsSchema } from "@app/meetings/lib/by-channel";
 import { captureCost } from "@app/meetings/lib/capture-cost";
+import { attributeByChannel, channelEvidence } from "@app/meetings/lib/channel-operation";
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
 import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { callerActor, DecisionJournal } from "@app/meetings/lib/decision-journal";
@@ -9,6 +11,7 @@ import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-field
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
+import { rejectFilterIds } from "@app/meetings/lib/reject-filter";
 import { reviewRow } from "@app/meetings/lib/review-rows";
 import { withMeetingsClient } from "@app/meetings/lib/service/client";
 import {
@@ -25,6 +28,7 @@ import {
     dictionaryTest,
     editorProject,
     editPerson,
+    evidence as evidenceMethod,
     exportMethod,
     itemsList,
     itemsRows,
@@ -88,6 +92,7 @@ function describe(record: MeetingRecord) {
         start: record.start,
         project: record.project ?? null,
         labels: record.labels,
+        seats: record.seats ?? null,
         sources: Object.keys(record.sources),
         speakers: record.speakers.labels,
         items,
@@ -276,15 +281,31 @@ export class MeetingsToolset extends ReplToolset {
 
             return callRecorder({ id: liveId, method, params });
         };
-        const decideWith = (status: "confirmed" | "rejected") => async (input: z.input<typeof confirm.params>) => {
-            const options = (status === "confirmed" ? confirm : reject).params.parse(input);
-            const result = await decideItems({ store, record: current(), status, ids: options.ids ?? [], ...options });
-            log.info(
-                { meeting: id, status, decided: result.decided.length, skipped: result.skipped.length },
-                "items decided"
-            );
-            return result;
-        };
+        const decideWith =
+            (status: "confirmed" | "rejected") =>
+            async (input: z.input<typeof confirm.params> | z.input<typeof reject.params>) => {
+                const options = (status === "confirmed" ? confirm : reject).params.parse(input);
+                const record = current();
+                const filter = status === "rejected" ? reject.params.parse(input) : undefined;
+                const filtered = filter && (filter.kind || filter.where);
+                if (filtered && (options.ids?.length || options.minConfidence !== undefined)) {
+                    throw new Error("Use filters alone, without ids or minConfidence");
+                }
+                const result = await decideItems({
+                    store,
+                    record,
+                    status,
+                    ...options,
+                    ids: filtered
+                        ? rejectFilterIds(record.items, { kind: filter?.kind, where: filter?.where })
+                        : (options.ids ?? []),
+                });
+                log.info(
+                    { meeting: id, status, decided: result.decided.length, skipped: result.skipped.length },
+                    "items decided"
+                );
+                return result;
+            };
 
         return {
             id,
@@ -322,9 +343,26 @@ export class MeetingsToolset extends ReplToolset {
                     client.call("meeting.listen.prepare", { ...prepareListen.params.parse(input), meeting: id })
                 ),
             enrolVoices: () => withMeetingsClient((client) => client.call("meeting.voice.enrol", { meeting: id })),
-            evidence: () => opened().evidence(),
             voice: (options: { voices?: number; channel?: number } = {}) =>
                 withMeetingsClient((client) => client.call("meeting.voice", { meeting: id, ...options })),
+            evidence: async (input: z.input<typeof evidenceMethod.params> = {}) => {
+                const options = evidenceMethod.params.parse(input);
+                if (options.raw || options.table) {
+                    const raw = await channelEvidence(opened());
+                    if (options.table) {
+                        const { compactEvidence } = await import("@app/meetings/lib/raw");
+                        return compactEvidence({
+                            ...raw,
+                            lines: raw.lines.filter(
+                                (line) =>
+                                    line.fromSec >= (options.from ?? 0) && line.fromSec <= (options.to ?? Infinity)
+                            ),
+                        });
+                    }
+                    return raw;
+                }
+                return opened().evidence();
+            },
             transcript: async () => (await opened().meeting()).transcript,
             lines: async (input: z.input<typeof lines.params> = {}) => {
                 const options = lines.params.parse(input);
@@ -357,6 +395,8 @@ export class MeetingsToolset extends ReplToolset {
                 };
             },
             items: {
+                byChannel: (input: ByChannelOptions) =>
+                    attributeByChannel({ store, record: current(), input: byChannelOptionsSchema.parse(input) }),
                 list: (input: z.input<typeof itemsList.params> = {}) => {
                     const { status, kind } = itemsList.params.parse(input);
                     const record = current();

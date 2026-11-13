@@ -1,11 +1,13 @@
 import type { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+/** What `set` changes on a meeting; a field left out stays as it is. */
+import type { MeetingSeats } from "@genesiscz/utils/meetings/seats";
 import { callerActor, type Decided, DecisionJournal } from "./decision-journal";
 import { resolveProject } from "./project";
 
-/** What `set` changes on a meeting; a field left out stays as it is. */
 export interface MeetingFieldsChange {
     title?: string;
+    seats?: MeetingSeats;
     project?: string;
     /** Added to the meeting and to its project's labels. */
     labels?: string[];
@@ -35,7 +37,7 @@ export async function setMeetingFields(options: {
     const labels = change.labels ?? [];
     const unlabel = change.unlabel ?? [];
 
-    if (!change.project && !change.title && labels.length === 0 && unlabel.length === 0) {
+    if (!change.seats && !change.project && !change.title && labels.length === 0 && unlabel.length === 0) {
         throw new Error("Nothing to set: give a project, a title, labels to add or labels to remove.");
     }
 
@@ -59,6 +61,7 @@ export async function setMeetingFields(options: {
     const changes = [
         project ? `project ${project}` : "",
         change.title ? `title "${change.title}"` : "",
+        change.seats ? "seats and microphone groups" : "",
         labels.length > 0 ? `labels + ${labels.join(", ")}` : "",
         unlabel.length > 0 ? `labels - ${unlabel.join(", ")}` : "",
     ].filter(Boolean);
@@ -70,6 +73,7 @@ export async function setMeetingFields(options: {
         meeting: record.id,
         action: {
             kind: "set",
+            ...(change.seats ? { seats: change.seats } : {}),
             ...(project ? { project } : {}),
             ...(change.title ? { title: change.title } : {}),
             ...(labels.length > 0 ? { labels } : {}),

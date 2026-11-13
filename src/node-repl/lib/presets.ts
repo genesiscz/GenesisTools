@@ -178,11 +178,34 @@ export function savePreset(options: {
     return { meta, script: input.script, folder, ...(replaced ? { replaced } : {}) };
 }
 
+const attributePreset: Preset = {
+    folder: "",
+    meta: presetMetaSchema.parse({
+        version: 1,
+        name: "meetings-attribute-by-mic",
+        description: "Plan microphone-share speaker ranges from explicit seats before content judgement",
+        toolsets: ["meetings"],
+        params: {
+            meeting: { type: "string", default: "last" },
+            label: { type: "string" },
+            room: { type: "json", default: null },
+            remote: { type: "json", default: null },
+            dryRun: { type: "boolean", default: true },
+        },
+        createdAt: "2026-11-13T00:00:00Z",
+        updatedAt: "2026-11-13T00:00:00Z",
+    }),
+    script: "const meeting = await meetings.open(params.meeting); return await meeting.items.byChannel({label: params.label, ...(params.room === null ? {} : {room: params.room}), ...(params.remote === null ? {} : {remote: params.remote}), dryRun: params.dryRun});",
+};
+
 export function readPreset(name: string, root = presetsRoot()): Preset {
     const folder = join(root, parseOneLine(presetNameSchema, name));
     const metaPath = join(folder, PRESET_META);
 
     if (!existsSync(metaPath)) {
+        if (root === presetsRoot() && name === attributePreset.meta.name) {
+            return structuredClone(attributePreset);
+        }
         const known = listPresets(root).map((preset) => preset.name);
         throw new Error(`no preset "${name}"; saved: ${known.join(", ") || "none"}`);
     }
@@ -194,10 +217,10 @@ export function readPreset(name: string, root = presetsRoot()): Preset {
 /** Every preset's metadata, by name; a folder whose metadata does not parse is logged and left out. */
 export function listPresets(root = presetsRoot()): PresetMeta[] {
     if (!existsSync(root)) {
-        return [];
+        return root === presetsRoot() ? [structuredClone(attributePreset.meta)] : [];
     }
 
-    return readdirSync(root, { withFileTypes: true })
+    const saved = readdirSync(root, { withFileTypes: true })
         .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
         .flatMap((entry) => {
             const path = join(root, entry.name, PRESET_META);
@@ -214,11 +237,17 @@ export function listPresets(root = presetsRoot()): PresetMeta[] {
             }
         })
         .sort((a, b) => a.name.localeCompare(b.name));
+    return root === presetsRoot() && !saved.some((one) => one.name === attributePreset.meta.name)
+        ? [...saved, structuredClone(attributePreset.meta)].sort((a, b) => a.name.localeCompare(b.name))
+        : saved;
 }
 
 /** Moves the preset to `.trash/<name>-<time>`; returns where, so it can be moved back. */
 export function removePreset(name: string, root = presetsRoot(), now = new Date()): string {
     const { folder } = readPreset(name, root);
+    if (!folder) {
+        throw new Error("A shipped preset cannot be removed; save a personal copy to customize it");
+    }
     const target = moveToTrash(folder, name, root, now);
     log.info({ name, target }, "preset moved to the trash");
     return target;
@@ -312,6 +341,9 @@ export function resolveParams(meta: PresetMeta, values: Record<string, unknown> 
 export function noteRun(name: string, root = presetsRoot(), now = new Date()): void {
     try {
         const { meta, folder } = readPreset(name, root);
+        if (!folder) {
+            return;
+        }
         const next = { ...meta, runs: meta.runs + 1, lastRunAt: now.toISOString() };
         writeFileSync(join(folder, PRESET_META), `${SafeJSON.stringify(next, null, 2)}\n`);
     } catch (error) {
