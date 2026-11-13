@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import {
     type AgentNames,
     agentNamesFrom,
@@ -55,6 +56,26 @@ describe("login slot", () => {
 
             rmSync(slot);
             expect(tryAcquireSlot(slot, { ...login, pid: process.pid })).toBe(true);
+            releaseSlot(slot);
+            expect(existsSync(slot)).toBe(false);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test("the release waits its turn behind the arbiter the sweep's takeover holds", () => {
+        const dir = mkdtempSync(join(tmpdir(), "login-slot-test-"));
+        const slot = join(dir, "agent-1.login");
+        const login = { since: "2026-01-01T00:00:00.000Z", owner: "agent-1", kind: "login" as const };
+
+        try {
+            expect(tryAcquireSlot(slot, { ...login, pid: process.pid })).toBe(true);
+            // While a takeover holds the arbiter, the slot may be judged and replaced: the release touches nothing.
+            withPathArbitrationSync(slot, () => {
+                releaseSlot(slot);
+            });
+            expect(existsSync(slot)).toBe(true);
+
             releaseSlot(slot);
             expect(existsSync(slot)).toBe(false);
         } finally {
