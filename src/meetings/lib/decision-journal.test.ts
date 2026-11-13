@@ -934,6 +934,40 @@ describe("speaker assignments (assign)", () => {
         expect(speakers()).toEqual(["Dana Example", "Alex Example", "Dana Example", "S1", "S3"]);
     });
 
+    test("giving a stretch again to the same person takes back a later assignment inside it", async () => {
+        const fx = await assignFixture();
+        let tick = 0;
+        const journal = new DecisionJournal({
+            store: fx.store,
+            ledger: () => undefined,
+            split: { transcript: async () => transcript },
+            now: () => new Date(Date.parse(now) + 1000 * tick++),
+        });
+        const give = (who: string, fromSec: number, toSec: number) =>
+            journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "assign", person: who, stretches: [{ label: "S1", fromSec, toSec }] },
+                actor: person,
+            });
+        await give("Dana Example", 5, 35);
+        await give("Lee Example", 25, 35);
+        const again = await give("Dana Example", 5, 35);
+        const speakers = () =>
+            correctTranscript({
+                record: fx.record(),
+                transcript,
+                config: meetingsConfigSchema.parse({}),
+                format: "txt",
+            }).entries.map((line) => line.speaker);
+
+        expect(again.entry).toBeDefined();
+        expect(speakers()).toEqual(["Dana Example", "Alex Example", "Dana Example", "S1", "S3"]);
+        expect(fx.record().speakers.assignments?.map((one) => [one.id, one.person])).toEqual([
+            ["a1", "Dana Example"],
+            ["a2", "Lee Example"],
+        ]);
+    });
+
     test("a rename to a name another label holds says both labels become one person (G-PPL-4)", async () => {
         const fx = await assignFixture();
         const planned = await fx.journal.plan({
