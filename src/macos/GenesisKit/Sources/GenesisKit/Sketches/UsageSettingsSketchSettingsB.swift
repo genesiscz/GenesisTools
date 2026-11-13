@@ -347,6 +347,7 @@ struct UsageSettingsSketchPanesB: View {
 enum UsageSketchGlyphB: Hashable {
     case step, linear, band, noLane, auto, raw, bins
     case resets, severity, projection, cone, safePace, spikes, events, coverage, scoped, digestCone, hideColumns
+    case allWindows, compareAll
 }
 
 /// A small drawing of one chart element, accent when the setting draws it, faint when it does not.
@@ -480,6 +481,19 @@ struct UsageSketchGlyphViewB: View {
                 context.fill(Path(roundedRect: rect, cornerRadius: 1.5),
                              with: .color(index == 2 ? (on ? Color.primary.opacity(0.08) : base) : base))
             }
+        case .allWindows:
+            // Three columns always; three more for the other windows when the setting shows them.
+            for (index, x) in [0.06, 0.21, 0.36, 0.51, 0.66, 0.81].enumerated() {
+                let rect = CGRect(x: w * x, y: h * 0.25, width: w * 0.11, height: h * 0.5)
+                context.fill(Path(roundedRect: rect, cornerRadius: 1.5), with: .color(index < 3 ? base : ink))
+            }
+        case .compareAll:
+            // The picked account's lane, and the other accounts' lanes on the same axis when the setting shows them.
+            context.stroke(baseLine(size), with: .color(base), lineWidth: 1.2)
+            for offset in [0.12, 0.24] {
+                let lane = baseLine(CGSize(width: w, height: h * 0.8)).applying(CGAffineTransform(translationX: 0, y: h * offset))
+                context.stroke(lane, with: .color(ink), lineWidth: 1)
+            }
         }
     }
 }
@@ -530,6 +544,12 @@ struct UsageSettingsSketchChartsB: View {
             UsageSettingsSketchSectionB("Limits table", subtitle: "One row per account, one column per window.") {
                 toggle(.hideColumns, "Hide empty columns", "Leave out a window column that no account has a reading for.",
                        "usage.hideEmptyColumns", \.hideEmptyColumns)
+                toggle(.allWindows, "Show every window",
+                       "The table lists every window, the burn rate and the trend instead of the room left, the reset and the run-out.",
+                       "usage.limitsAllWindows", \.limitsAllWindows)
+                toggle(.compareAll, "Compare every account",
+                       "The burn lanes under the table show every account on one axis, not only the one you picked.",
+                       "usage.compareAllAccounts", \.compareAllAccounts)
             }
             UsageSettingsSketchSectionB("Burn lanes", subtitle: "One lane per window of each account, on one time axis.") {
                 UsageSettingsSketchChoiceB(
