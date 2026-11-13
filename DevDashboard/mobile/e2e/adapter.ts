@@ -19,7 +19,7 @@ export const RELEASE_JS_INPUTS = [
     "metro.config.js",
     "../../src/dev-dashboard/contract/**/*.ts",
     "../../src/dev-dashboard/lib/{daemon-view,timeline}/**/*.ts",
-    "../../src/utils/{cli/tool-command,logger/client,notifications/phone-wire,obsidian/vault-filter}.ts",
+    "../../src/utils/{cli/tool-command,logger/client,notifications/phone-wire,obsidian/vault-filter,template}.ts",
 ];
 
 /** The expo-router screens of one route group, `_layout` and `+not-found` style files left out. */
