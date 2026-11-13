@@ -98,6 +98,38 @@ export function listFormsSnapshot({
     });
 }
 
+/** The fields of a pending form that the waiting set counts by: no items and no JSON, so a row is cheap to read. */
+export type PendingFormHead = Pick<AskForm, "id" | "createdAt" | "status" | "sessionHint">;
+
+/**
+ * Every pending form's head, with no limit. A badge counts each pending form, while a card list reads at most its own
+ * limit of full forms through `listForms`.
+ */
+export function listPendingFormHeadsSnapshot({
+    dbPath = defaultPendingDbPath(),
+}: {
+    dbPath?: string;
+} = {}): PendingFormHead[] {
+    return withDatabaseReadSnapshot({
+        path: dbPath,
+        initialize: (db) => runMigrations(db, PENDING_MIGRATIONS, { tableName: "qa_pending" }),
+        read: (db) =>
+            db
+                .query<{ id: string; created_at: number; session_hint: string | null }, []>(
+                    "SELECT id, created_at, session_hint FROM qa_pending WHERE status = 'pending'"
+                )
+                .all()
+                .map(
+                    (row): PendingFormHead => ({
+                        id: row.id,
+                        createdAt: row.created_at,
+                        status: "pending",
+                        sessionHint: row.session_hint ?? undefined,
+                    })
+                ),
+    });
+}
+
 interface PendingRow {
     poster_json: string | null;
     transcript_anchor_json: string | null;

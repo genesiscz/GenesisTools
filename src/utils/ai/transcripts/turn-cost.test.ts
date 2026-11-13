@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { codexHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { scanClaudeNative } from "@genesiscz/utils/agent-sessions/readers/claude-native-scan";
+import { readClaudeStatistics } from "@genesiscz/utils/agent-sessions/readers/claude-statistics";
+import { parseClaudeTailUsage } from "@genesiscz/utils/agent-sessions/readers/claude-tail-usage";
+import { spendDriver } from "@genesiscz/utils/ai/usage/spend/drivers";
+import { priceUsage } from "@genesiscz/utils/ai/usage/spend/priced-usage";
+import { parseNativeChunk } from "@genesiscz/utils/ai/usage/spend/reports/native";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { transcriptParser } from "./load";
 import { buildToolStats, buildTurnCosts, type CallPricer } from "./turn-cost";
@@ -130,6 +138,58 @@ describe("scanClaudeNative", () => {
         expect(scan.toolTimings.get("t1")).toEqual({ startedAt: iso(6), endedAt: iso(16) });
         expect(scan.cwd).toBe("/work/app");
         expect(scan.branch).toBe("feat/b");
+    });
+
+    test("a call with only the nested cache-write split has the spend report's cache writes and price", async () => {
+        const text = line({
+            type: "assistant",
+            uuid: "n1",
+            timestamp: iso(0),
+            message: {
+                id: "m-nested",
+                model: "claude-sonnet-4-5-20250929",
+                usage: {
+                    input_tokens: 10,
+                    output_tokens: 20,
+                    cache_read_input_tokens: 0,
+                    cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 1_000 },
+                },
+            },
+        });
+        const [call] = scanClaudeNative(text).calls;
+        const [event] = parseNativeChunk({
+            driver: spendDriver("claude"),
+            source: "claude",
+            file: "/work/app/session.jsonl",
+            chunk: text,
+        }).events;
+
+        expect([call?.cacheWrite, call?.cacheWrite1h]).toEqual([1_100, 1_000]);
+        expect([event?.cacheCreationTokens, event?.cacheCreation1hTokens]).toEqual([1_100, 1_000]);
+        const price = (cacheWrite: number, cacheWrite1h: number | undefined) =>
+            priceUsage({
+                source: "claude",
+                model: "claude-sonnet-4-5-20250929",
+                tokens: { input: 10, output: 20, cacheRead: 0, cacheWrite, cacheWrite1h },
+            }).costUSD;
+        expect(price(call?.cacheWrite ?? 0, call?.cacheWrite1h)).toBe(
+            price(event?.cacheCreationTokens ?? 0, event?.cacheCreation1hTokens)
+        );
+
+        // The token counters of the session list and the history statistics read the same total.
+        expect(parseClaudeTailUsage([text], "/work/app/session.jsonl").cacheCreateTokens).toBe(1_100);
+        const dir = mkdtempSync(join(tmpdir(), "gt-nested-writes-"));
+        const filePath = join(dir, "session.jsonl");
+        writeFileSync(filePath, `${text}\n`);
+        const stats = await readClaudeStatistics({
+            kind: "claude",
+            root: dir,
+            sourceHome: dir,
+            filePath,
+            dataPaths: [filePath],
+            metadataPaths: [],
+        });
+        expect(stats.summary.tokenUsage?.cacheCreateTokens).toBe(1_100);
     });
 
     test("full tool inputs tell two edits of one file apart", async () => {

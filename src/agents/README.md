@@ -162,14 +162,21 @@ newest N unique Bash commands from the Claude transcripts, default 2000, and cou
 |---|---|
 | `hooks diff show <call>` | Print the full diff a cut message linked, by tool call id or a prefix of it. |
 | `hooks diff log` | What the diff hook decided per Bash call. |
+| `hooks diff audit` | Decides every logged file again by today's rules: printed files with no proof, declined files with proof. |
 
 `diff log` flags: `--session <id prefix>`, `--since <duration>` (24h), `--decision <list>` (`emitted`, `noted`,
 `failed`, `silent`, `skip` or `all`; default `emitted,noted,failed`), `-n, --lines <count>` (50), `--extended`
 (join each call with its Claude transcript: the command, what the message showed, and Claude Code's own diff),
 `--full-command` (each command whole in a fence; implies `--extended`) and `--json`.
 
+`diff audit` flags: `--since <duration>` (24h), `--session <id prefix>`, `-n, --lines <count>` (40 changed verdicts,
+`0` for the totals only) and `--json`. It reads every session's calls of the window (another session's calls are what
+makes a root shared), the transcripts for the commands, and every session's Edit and Write rows of the change log.
+It cannot rebuild a command that was still running in another session, so it is the more generous side.
+
 ```bash
 tools agents hooks diff log --extended --since 6h
+tools agents hooks diff audit --since 2d
 tools agents hooks diff show toolu_01abc
 ```
 
@@ -496,6 +503,18 @@ The outcomes are `allow`, `context` (a note to the model), `warn` and `block`. A
 A **deny** prints the rule's wrong and right forms, and the corrected command when the guard can derive it safely. A
 **warn** or a note means the command already ran, and one stated part of its output cannot be trusted.
 
+### Guard messages
+
+What the model reads is kept short (2026-11-11; 28% fewer characters on a replay of the last 1,000 warns and blocks).
+A corrected command up to `guard.corrected.wholeMaxChars` (200) characters prints whole; a longer one prints only
+the statement that changed, cut to its lines or a window around the change when it is longer than
+`guard.corrected.partMaxChars` (400). The change itself is never cut, and `…` marks the text left as written. The
+first time a rule fires in a loop (the main agent, or one subagent), the message explains it in full; a later firing
+in the same loop gets a compact form: the title, the matched part, the corrected part and "(explained earlier in this
+session)", and a block keeps the first sentence of its reason. After the loop compacts, the full form comes back once.
+Claude and Codex place a compaction by the rows of their transcripts; Grok keeps only a count, so a Grok session that
+has compacted at least once always gets the full form. The `systemMessage` the user sees is unchanged.
+
 ### Custom rules
 
 Personal rules live in your own folder and run in the same guard. Point the config at files or folders (`~` expands;
@@ -603,6 +622,25 @@ links its full diff.
   could not have written) is never diffed. `diff.othersSummary` `line` (default) names such files in one short line;
   `hidden` drops them. With `diff.dedupeAcrossSessions` (on), one file change prints at most once across every session
   on the machine.
+- A file is this call's only with proof, and the decision log keeps the rule for every printed file (`attributed`) and
+  every declined one (`declined`). The order, strongest first (`src/agents/lib/hooks/diff/attribution.ts`):
+
+  | Rule | Whose | Proof |
+  |---|---|---|
+  | `read-only` | not ours | The command cannot write. |
+  | `named` | ours | The command's text names the file. |
+  | `other-named` | not ours | Another call named the file while this one ran. |
+  | `other-wrote` | not ours | Another session's Edit or Write of the file falls inside this call's window. |
+  | `named-folder` | ours | The command names a folder inside the root that holds the file. |
+  | `scripted` | ours | A script the command names spells the file's path. |
+  | `foreign-owned` | not ours | Another session wrote the file in the hour before, and this session has no later proof. |
+  | `own-file` | ours | This session wrote the file before (any age), or read or named that exact file. |
+  | `own-root` | ours | The root is this session's alone: its path holds the session id, or no other session worked in it for an hour. |
+  | `unproven` | not shown | Nothing above. A second line names the files: "changed while the command ran, with no proof they are this session's". |
+
+  So a build that writes files it never names shows its diff in a worktree of the session, and only a line in a
+  checkout that other sessions work in. Only Claude sessions write the change log today: a Codex or Grok session's
+  own edits are seen through its Bash calls in the root (rule `own-root`), not through `other-wrote`.
 - A rebase that stopped, a cherry-pick, a merge or a `stash pop` brought content the command did not write: one line
   names how many files git changed. A commit made after it still renders.
 - A file moved without a change (`git mv`) is one "moved unchanged" line, not a Deleted and an Added block.
@@ -790,6 +828,27 @@ more than `unpushed.maxCommits` (3) commits are unpushed, or when the oldest unp
 `agentsTalk.hint` (on) lets the genesis-tools plugin's SessionStart hook remind the session about the `agents-talk`
 skill. The plugin hook reads the key itself, so these hooks wire nothing for it.
 
+### Area rules
+
+The genesis-tools plugin's PostToolUse hook (`plugins/genesis-tools/hooks/area-rules.ts`) gives an agent the
+`.claude/rules/*.md` file and the folder `CLAUDE.md` of each project area a Bash command WRITES into, once per agent:
+a `>` or `>>` redirect, `tee`, `sed -i`, `perl -i`, `mv`, `cp` or `ln` into it, `git apply`, `git am`, `patch`,
+`git checkout|restore -- <path>`, `biome --write`, `prettier --write`, fable-replace, `touch`, `mkdir`, and an inline
+script that calls something that writes (`python3 -c`, `bun -e`, `node --eval`, an interpreter fed a here-document,
+or a script written by a here-document and run in the same command). A read, a search or a listing gets nothing
+(Martin, 2026-11-11): the old hook gave the whole file on every search, which was 51.7% of all hook context in ten
+days, and a sample of 63 such injections found 16 useful.
+
+Claude Code loads a rule file by itself on its Read, Write and Edit tools; the hook records those and does not add
+them again. A Bash write passes that loader by, so Claude gets the hook too; Codex and Grok load no rule file by
+themselves. `areaRules.write` is `full` (the text), `pointer` (one line,
+`Area rules (pointer): <path> (<n> lines): <scope>`, with an instruction to read the file) or `off`;
+`areaRules.agents` is `same`, `pointer` (a subagent gets pointer lines at most) or `off`;
+`areaRules.harnesses.<claude|codex|grok>.<write|agents>` overrides one harness. A pointer is not repeated, a later
+`full` write upgrades it once, and a compaction clears what the compacting agent was given. The hook runs on Bash
+and on the Read, Write and Edit tools only, so a Grep or Glob call starts no process. A stored `areaRules.read` from
+the first version of this section is ignored.
+
 ### The Claude Code mods
 
 `tools agents hooks mods install --write` installs the plugin `genesis-tools-mods` from this repository's marketplace
@@ -841,6 +900,16 @@ It skips a session that compacted after its last turn, a context under `mods.idl
 session with no screen (`claude -p`), and it appends a notice that starts `Compacted while idle`.
 `config set mods.idleCompact false --write` turns it off, also for a timer already armed. A reload of the mod drops the
 timer until the next turn ends.
+
+**The resume guard.** `mods.resumeGuard` (`idleSeconds` 295, `minTokens` 150000, `teammates` on; off by default,
+`tools agents hooks mods enable resumeGuard --write`): a SendMessage to an agent of the session that is not running,
+idle for `idleSeconds` or more and holding `minTokens` or more of context is refused once, with the cost and the
+two ways on (send the same message again, or start a fresh agent with a brief). The same send again goes through,
+until the agent has run again. An agent's prompt cache lives 5 minutes, so such a message makes it write its whole
+context again. `tools agents hooks config describe mods.resumeGuard.minTokens` shows a key's value, its default and
+its named values with when to pick each, and `config set` takes a name
+(`config set mods.resumeGuard.minTokens recommended --write`) as well as a number. The measurements behind the
+defaults are in the plugin's [README](../../plugins/genesis-tools-mods/README.md#the-resume-guard-modsresumeguard).
 
 #### The daily mods (all off by default)
 

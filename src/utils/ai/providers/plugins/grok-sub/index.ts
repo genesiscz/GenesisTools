@@ -98,9 +98,12 @@ export const grokSubPlugin: ProviderPlugin = {
 
                 const used = sent.get(rejected) ?? initial;
                 const { refreshGrokAuth } = await import("../../../grok/refresh");
+                // Only a source the account owns mints the new token: its vault grant (a pasted
+                // token's recovery proves identity first), or the auth file the token came from.
+                // Never the Grok CLI's default file on a guess: it can hold another paying user.
                 const refreshed = used.storedGrant
                     ? await used.storedGrant.refresh("upstream returned 401", true)
-                    : await refreshGrokAuth({ path: used.authPath ?? grokAuthPath(), force: true });
+                    : used.authPath && (await refreshGrokAuth({ path: used.authPath, force: true }));
 
                 if (!refreshed || refreshed === rejected) {
                     throw used.storedGrant

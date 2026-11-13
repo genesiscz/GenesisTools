@@ -9,7 +9,7 @@ import type { ListingFreshness } from "./listing-freshness";
 import { haystackMatch } from "./match";
 import { validateHistoryFilters } from "./native-match";
 import { historyPathUnderRoot, historyProjectMatches } from "./project-scope";
-import type { CachedHistoryMetadata } from "./repository";
+import type { CachedHistoryMetadata, HistoryScopeFacts } from "./repository";
 import { historyCandidates, matchSnippets } from "./search-candidates";
 import {
     listingIndexSlice,
@@ -79,7 +79,7 @@ function topUpReadLimit(newest: number): number {
  * from 2026. A session overlaps the window when it ended at or after `since` and started at or
  * before `until`; `mtime` stands in for a missing end, and for a missing start.
  */
-function sessionOverlapsDateRange(metadata: CachedHistoryMetadata, filters: AgentSearchFilters): boolean {
+function sessionOverlapsDateRange(metadata: HistoryScopeFacts, filters: AgentSearchFilters): boolean {
     if (!filters.since && !filters.until) {
         return true;
     }
@@ -105,7 +105,7 @@ function isDatabaseBusy(error: unknown): boolean {
     return code.includes("SQLITE_BUSY") || /database is locked|database table is locked/i.test(error.message);
 }
 
-function metadataInScope(metadata: CachedHistoryMetadata, filters: AgentSearchFilters): boolean {
+function metadataInScope(metadata: HistoryScopeFacts, filters: AgentSearchFilters): boolean {
     if ((filters.agentsOnly && !metadata.isSubagent) || (filters.excludeAgents && metadata.isSubagent)) {
         return false;
     }
@@ -448,8 +448,58 @@ export class HistoryService {
     ): Promise<{ total: number; subagents: number }> {
         const unbounded = { ...filters, excludeAgents: undefined, agentsOnly: undefined, limit: undefined };
         const { scope } = await this.refreshCatalog(unbounded, options);
-        const rows = this.readCatalog(scope);
-        return { total: rows.length, subagents: rows.filter((row) => row.isSubagent).length };
+        return this.countCatalog(scope);
+    }
+
+    /**
+     * The rows `readCatalog` returns for a scope without agent flags or a limit, counted without hydrating them.
+     * SQLite counts the rows whose recorded root is a scope root; only the rest (a root recorded elsewhere or not at
+     * all) and the bounded top-up are read, as their scope facts alone, and tested by the same `metadataInScope`. A
+     * scope with `since` or `until` tests every row that way: its dates are parsed as `Date` parses them, which
+     * SQLite's date functions do not match for every text a row may hold.
+     */
+    private countCatalog(filters: AgentSearchFilters): { total: number; subagents: number } {
+        const roots = (filters.sourceRoots ?? this.options.roots).map(canonicalRoot);
+        const scoped = { ...filters, excludeAgents: undefined, agentsOnly: undefined, sourceRoots: roots };
+        const { repository, providerId } = this.options;
+        const query = {
+            providerId,
+            mtimeFrom: filters.mtimeFrom,
+            filePaths: filters.filePaths,
+            cwd: !filters.all && filters.cwd ? filters.cwd : undefined,
+            project: !filters.all && filters.project ? filters.project : undefined,
+            excludeSessions: filters.excludeSessions,
+        };
+        const counts = { total: 0, subagents: 0 };
+        const add = (rows: HistoryScopeFacts[]) => {
+            for (const row of rows) {
+                counts.total++;
+                counts.subagents += row.isSubagent ? 1 : 0;
+            }
+        };
+        const inScope = (row: HistoryScopeFacts) => metadataInScope(row, scoped);
+
+        if (filters.since || filters.until) {
+            add(repository.metadata.listScopeFacts(query).filter(inScope));
+        } else {
+            const counted = repository.metadata.countMetadata({ ...query, roots });
+            counts.total += counted.total;
+            counts.subagents += counted.subagents;
+            add(repository.metadata.listScopeFacts({ ...query, outsideRoots: roots }).filter(inScope));
+        }
+
+        if (filters.mtimeFrom !== undefined && filters.newest) {
+            // `readCatalog`'s top-up: the same newest rows by mtime, the in-scope ones the window above did not hold.
+            const from = filters.mtimeFrom;
+            const newest = repository.metadata.listScopeFacts({
+                providerId,
+                filePaths: filters.filePaths,
+                limit: topUpReadLimit(filters.newest),
+            });
+            add(newest.filter((row) => row.mtime < from && inScope(row)).slice(0, filters.newest));
+        }
+
+        return counts;
     }
 
     private async refreshCatalog(

@@ -4,6 +4,7 @@ import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import type { SessionTranscript } from "@genesiscz/utils/session-changes/types";
 import type { SessionAnalysisReader } from "./analysis-types";
 import type { DailyStats, HistoryFileStatistics, SessionMetadataRecord, TokenUsage } from "./cache-types";
+import type { SessionWorkflowReader } from "./workflow-types";
 
 /** One session's file changes as its transcript records them (`NativeSessionReader.readChanges`), and that transcript. */
 export interface SessionChangesRead {
@@ -454,6 +455,12 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      * reason, so `tools ai sessions report`, `spend waste` and `limits drift` never parse a format themselves.
      */
     readonly analysis: SessionAnalysisReader;
+    /**
+     * The multi-agent runs a session started (Claude Code's Workflow tool) and their agents, which live outside the
+     * session's direct sub-agents (`workflow-types.ts`). A harness with no such tool answers `supported: false` with
+     * the reason, so a cross-provider listing never prints "0 runs" for it as if none ran.
+     */
+    readonly workflows: SessionWorkflowReader;
     /**
      * The newest entries of a session, read from the end of its source back to the first entry `options.until`
      * accepts: the conversation after a known point (a decision's ask) without reading the whole file.

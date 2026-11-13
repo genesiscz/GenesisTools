@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import type { SelectValue } from "@genesiscz/utils/prompts/p";
-import { completeTask } from "@genesiscz/utils/prompts/p/opentui-backend";
+import { cancelTask, completeTask } from "@genesiscz/utils/prompts/p/opentui-backend";
 import type { PromptTask } from "@genesiscz/utils/tui/prompt-store";
 import { usePromptStore } from "@genesiscz/utils/tui/prompt-store";
 import { useKeyboard } from "@opentui/solid";
@@ -19,10 +19,6 @@ function isPrintableKey(sequence: string): boolean {
 
 function selectFallback(task: Extract<PromptTask, { type: "select" }>): SelectValue {
     return task.opts.initialValue ?? task.opts.options[0]?.value ?? "";
-}
-
-function multiSelectFallback(task: Extract<PromptTask, { type: "multiselect" }>): SelectValue[] {
-    return task.opts.initialValues ?? [];
 }
 
 export function PromptHost() {
@@ -54,8 +50,13 @@ export function PromptHost() {
                 return;
             }
 
-            if (key.name === "n" || key.name === "escape") {
+            if (key.name === "n") {
                 completeTask(task.id, false);
+                return;
+            }
+
+            if (key.name === "escape") {
+                cancelTask(task.id);
             }
 
             return;
@@ -75,7 +76,7 @@ export function PromptHost() {
             }
 
             if (key.name === "escape") {
-                completeTask(task.id, task.opts.initialValue ?? "");
+                cancelTask(task.id);
                 return;
             }
 
@@ -92,7 +93,7 @@ export function PromptHost() {
             }
 
             if (key.name === "escape") {
-                completeTask(task.id, false);
+                cancelTask(task.id);
                 return;
             }
 
@@ -117,7 +118,7 @@ export function PromptHost() {
             }
 
             if (key.name === "escape") {
-                completeTask(task.id, selectFallback(task));
+                cancelTask(task.id);
             }
 
             return;
@@ -161,7 +162,7 @@ export function PromptHost() {
             }
 
             if (key.name === "escape") {
-                completeTask(task.id, multiSelectFallback(task));
+                cancelTask(task.id);
             }
         }
     });

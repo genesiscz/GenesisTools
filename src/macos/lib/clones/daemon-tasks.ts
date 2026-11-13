@@ -129,3 +129,22 @@ export async function removeClonesDaemonTasks(): Promise<ClonesDaemonTasks> {
 export async function clonesDaemonTasksRegistered(): Promise<ClonesDaemonTasks> {
     return { scan: await isTaskRegistered(SCAN_TASK_NAME), prune: await isTaskRegistered(PRUNE_TASK_NAME) };
 }
+
+export const COLD_COMPRESS_TASK_NAME = "du-cold-compress";
+
+/** Explicit setup only. Existing user registration is preserved. Setup never
+ * enables a recurring history rewrite; enabling remains the user's decision. */
+export async function ensureColdCompressTask(): Promise<boolean> {
+    return registerTask({
+        name: COLD_COMPRESS_TASK_NAME,
+        command: resolveScriptCommand("cold-compress-daemon.ts"),
+        every: "every day at 05:00",
+        enabled: false,
+        overwrite: false,
+        notify: "failure",
+        priority: "low",
+        retries: 0,
+        timeoutMs: 30 * 60_000,
+        description: "Transparent compression of old agent text; skips battery; enable only after approval",
+    });
+}

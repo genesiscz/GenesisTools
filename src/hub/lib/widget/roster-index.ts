@@ -266,8 +266,9 @@ function under(root: string, path: string): string | undefined {
  * - `<claude root>/<project>/<session>.jsonl`: the Claude listing (title, activity time).
  * - `<claude root>/<project>/<lead>/subagents/<file>`: a read only, because the agents tree reads a listed lead's
  *   `subagents/` folder directly; the sub-agent listing only when the lead is not a listed parent.
- * - A transcript deeper under `subagents/` (a workflow's agents): the sub-agent listing, which walks the whole folder,
- *   while the agents tree reads only the files directly in it. A workflow's `journal.jsonl` is not indexed.
+ * - A transcript deeper under `subagents/` (a Workflow tool run's agents): the same. The agents tree lists a lead's
+ *   workflow agents too (`claudeSubagentTranscripts`), so a listed lead needs a read only. A run's `journal.jsonl` and
+ *   a nested meta file are not classified, so they ask for nothing; the agent's transcript changes with them.
  * - A rollout under a codex root, or a chat history or summary under a grok root: that provider's listing.
  */
 export function widgetRosterChange({
@@ -298,11 +299,9 @@ export function widgetRosterChange({
             }
 
             // Only a harness that writes its sub-agents beside the session (Claude) names one by path, and those
-            // have a listing of their own. The agents tree reads a listed lead's sub-agent folder itself, so a change
-            // directly in it is a read; a nested agent is in the listing only.
-            return !role.nested && role.parentSessionId && listedParent(role.parentSessionId)
-                ? "read"
-                : "claude-agents";
+            // have a listing of their own. The agents tree reads a listed lead's sub-agent folder itself, its
+            // workflow run folders included, so a change in it is a read.
+            return role.parentSessionId && listedParent(role.parentSessionId) ? "read" : "claude-agents";
         }
     }
 

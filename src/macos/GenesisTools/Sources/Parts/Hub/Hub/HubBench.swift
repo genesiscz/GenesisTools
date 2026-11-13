@@ -24,6 +24,7 @@ enum HubDefaults {
             scratch.set(value, forKey: key)
         }
         store = scratch
+        HubLayout.useScriptedDefaults(scratch)
         isolated = true
     }
 }

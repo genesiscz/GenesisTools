@@ -296,6 +296,28 @@ describe("resolveTranscript: sub-agent ids and absolute paths", () => {
         return file;
     }
 
+    test("an agent of a Workflow tool run resolves by its id, from the run's folder", async () => {
+        const root = fixtureRoot();
+        const dir = join(
+            root,
+            "claude",
+            "-tmp-proj",
+            "11111111-2222-3333-4444-555555555555",
+            "subagents",
+            "workflows",
+            "wf_fixture-001"
+        );
+        mkdirSync(dir, { recursive: true });
+        const file = join(dir, "agent-a7f74d35a45bc9da5.jsonl");
+        writeFileSync(file, "{}\n");
+
+        expect(await resolveTranscript("a7f74d35a45bc9da5", roots(root))).toMatchObject({
+            provider: "claude",
+            sessionId: "a7f74d35a45bc9da5",
+            filePath: file,
+        });
+    });
+
     test("a teammate's sub-agent id finds its agent-<id>.jsonl, with or without the agent- prefix", async () => {
         const root = fixtureRoot();
         const file = subagentFile(root, "aworker-one-0123456789abcdef");

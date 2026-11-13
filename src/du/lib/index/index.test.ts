@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { execFileSync } from "node:child_process";
 import {
     appendFileSync,
     chmodSync,
@@ -1302,5 +1303,36 @@ describeOnDarwin("du index: review regressions (2026-10-13 CLI review)", () => {
             excludes: [...misses, join(root, "a", "d")],
         });
         expect(r.alloc_bytes).toBe(oracle(join(root, "a")).alloc - oracle(join(root, "a", "d")).alloc);
+    });
+});
+
+describeOnDarwin("compressed index persistence", () => {
+    it("reopens stored totals and rolls compression changes through an update", async () => {
+        const base = realpathSync(mkdtempSync(join(tmpdir(), "compressed-index-")));
+        const root = join(base, "root");
+        const folder = join(root, "nested");
+        const db = join(base, "index.db");
+        mkdirSync(folder, { recursive: true });
+        const plain = join(base, "source.txt");
+        writeFileSync(plain, "record repeated text\n".repeat(100000));
+        const compressed = join(folder, "a.txt");
+        execFileSync("ditto", ["--noclone", "--hfsCompression", plain, compressed], { env: env.getProcessEnv() });
+        await buildIndex({ root, db, minDirBytes: 0, minFreeBytes: 0 });
+        const read = () => {
+            const conn = new Database(db, { readonly: true });
+            try {
+                return conn
+                    .query<{ compressed_files: number; compressed_logical_bytes: number }, []>(
+                        "SELECT compressed_files, compressed_logical_bytes FROM dirs WHERE parent_id = 0"
+                    )
+                    .get();
+            } finally {
+                conn.close();
+            }
+        };
+        expect(read()).toEqual({ compressed_files: 1, compressed_logical_bytes: lstatSync(plain).size });
+        writeFileSync(compressed, "now plain\n");
+        await updateIndex({ db, paths: [folder], minFreeBytes: 0 });
+        expect(read()).toEqual({ compressed_files: 0, compressed_logical_bytes: 0 });
     });
 });

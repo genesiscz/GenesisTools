@@ -79,6 +79,25 @@ const EDGES: DiagramEdge[] = [
     { from: "contract", to: "missing-box" },
 ];
 
+const SKIPPED_BANDS: DiagramLayer[] = [
+    { id: "editors", label: "Editors", columns: [3, 2, 2, 3], nodes: [{ id: "editor", title: "Editor", colSpan: 4 }] },
+    { id: "gateway", label: "Gateway", columns: [3, 2, 2, 3], nodes: [{ id: "bff", title: "BFF", colSpan: 4 }] },
+    {
+        id: "service",
+        label: "Service",
+        columns: [3, 2, 2, 3],
+        nodes: [{ id: "service", title: "Service", colSpan: 4 }],
+    },
+    {
+        id: "content",
+        label: "Content",
+        columns: [3, 2, 2, 3],
+        nodes: [
+            { id: "docs", title: "Documents", col: 2 },
+            { id: "related", title: "Related records", col: 4 },
+        ],
+    },
+];
 export default function LayerDiagramPage() {
     return (
         <GalleryPage
@@ -88,6 +107,47 @@ export default function LayerDiagramPage() {
         >
             <Demo title="Four bands, weighted columns, a tinted contract, a grid band with row and column spans">
                 <LayerDiagram title="Clients, doors, core and stores" layers={LAYERS} edges={EDGES} />
+            </Demo>
+            <Demo
+                title="Before: a direct arrow hides behind intermediate boxes"
+                note="The legacy direct route can look as though it calls the intermediate gateway. Both examples use the same connections."
+            >
+                <LayerDiagram
+                    title="Direct path hidden behind the gateway"
+                    routing="direct"
+                    layers={SKIPPED_BANDS}
+                    edges={[
+                        { from: "editor", to: "docs", label: "direct" },
+                        { from: "editor", to: "related", lane: "right" },
+                    ]}
+                />
+            </Demo>
+            <Demo
+                title="After: direct connections skip occupied bands"
+                note="No viewBox coordinates are needed. Both direct arrows automatically leave the occupied bands through a free side lane."
+            >
+                <LayerDiagram
+                    title="Editor calls content directly"
+                    layers={SKIPPED_BANDS}
+                    edges={[
+                        { from: "editor", to: "docs", label: "direct" },
+                        { from: "editor", to: "related", lane: "right" },
+                    ]}
+                />
+            </Demo>
+            <Demo
+                title="Choose a column gap, or leave a cell empty"
+                note="col is a 1-based start column; lane 1 is the gap after column 1."
+            >
+                <LayerDiagram
+                    title="Empty cells preserve a direct lane"
+                    layers={SKIPPED_BANDS.map((layer, i) =>
+                        i === 1 || i === 2
+                            ? { ...layer, nodes: [{ id: `${layer.id}-small`, title: layer.label, col: 3 }] }
+                            : layer
+                    )}
+                    edges={[{ from: "editor", to: "docs", lane: 1 }]}
+                />
             </Demo>
             <Demo
                 title="Edge case: an arrow to a box that does not exist is skipped"

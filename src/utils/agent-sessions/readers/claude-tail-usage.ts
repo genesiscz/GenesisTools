@@ -1,3 +1,4 @@
+import { claudeCacheWrites } from "@genesiscz/utils/ai/usage/spend/parse";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -144,7 +145,7 @@ export function parseClaudeTailUsage(lines: string[], filePath: string): ClaudeT
                 const u = obj.message.usage;
                 usage.totalTokens = (u.input_tokens ?? 0) + (u.output_tokens ?? 0);
                 usage.cacheReadTokens = u.cache_read_input_tokens ?? 0;
-                usage.cacheCreateTokens = u.cache_creation_input_tokens ?? 0;
+                usage.cacheCreateTokens = claudeCacheWrites(u).total;
                 usage.inputTokens = u.input_tokens ?? 0;
                 usage.model = model;
                 foundUsage = true;

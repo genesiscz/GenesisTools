@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { withCacheRateDefaults } from "./cache-rates";
-import { type LiteLLMModelPricing, LiteLLMPricingFetcher } from "./litellm";
+import { type LiteLLMModelPricing, LiteLLMPricingFetcher, liteLLMPricingFetcher } from "./litellm";
 import {
     clearPricingCache,
     convertOpenRouterPricing,
@@ -499,6 +499,64 @@ describe("withCacheRateDefaults", () => {
         expect(withCacheRateDefaults({ ...bare, cachedReadPer1M: 1 }, "anthropic").cachedReadPer1M).toBe(1);
         expect(withCacheRateDefaults(bare, "openai")).toEqual({ ...bare, cachedCreatePer1M: 4 });
         expect(withCacheRateDefaults(bare, "xai")).toEqual(bare);
+    });
+
+    test("a LiteLLM feed price keeps a published zero cache rate, and only an absent one takes the default", async () => {
+        const feed: Record<string, LiteLLMModelPricing> = {
+            "anthropic/claude-feed-fixture-free-cache": {
+                ...litellmPrice(4, 20),
+                cache_creation_input_token_cost: 0,
+                cache_read_input_token_cost: 0,
+            },
+            "anthropic/claude-feed-fixture-bare": litellmPrice(4, 20),
+        };
+        const lookup = spyOn(liteLLMPricingFetcher, "getModelPricing").mockImplementation(
+            async (name: string) => feed[name] ?? null
+        );
+
+        try {
+            expect(await pricingFor("anthropic", "claude-feed-fixture-free-cache")).toMatchObject({
+                inputPer1M: 4,
+                cachedCreatePer1M: 0,
+                cachedReadPer1M: 0,
+            });
+            expect(await pricingFor("anthropic", "claude-feed-fixture-bare")).toMatchObject({
+                inputPer1M: 4,
+                cachedCreatePer1M: 5,
+                cachedReadPer1M: 0.4,
+            });
+        } finally {
+            lookup.mockRestore();
+        }
+    });
+
+    test("the LiteLLM conversion keeps every explicit zero rate and leaves an absent one out", () => {
+        const converted = new LiteLLMPricingFetcher({ offline: true }).convertToModelPricing({
+            ...litellmPrice(0, 0),
+            cache_creation_input_token_cost: 0,
+            cache_creation_input_token_cost_above_1hr: 0,
+            cache_read_input_token_cost: 0,
+            input_cost_per_token_above_200k_tokens: 0,
+            output_cost_per_token_above_200k_tokens: 0,
+            cache_read_input_token_cost_above_200k_tokens: 0,
+            cache_creation_input_token_cost_above_200k_tokens: 0,
+        });
+
+        expect(converted).toEqual({
+            inputPer1M: 0,
+            outputPer1M: 0,
+            cachedReadPer1M: 0,
+            cachedCreatePer1M: 0,
+            cachedCreate1hPer1M: 0,
+            inputPer1MAbove200k: 0,
+            outputPer1MAbove200k: 0,
+            cachedReadPer1MAbove200k: 0,
+            cachedCreatePer1MAbove200k: 0,
+        });
+        expect(new LiteLLMPricingFetcher({ offline: true }).convertToModelPricing(litellmPrice(4, 20))).toEqual({
+            inputPer1M: 4,
+            outputPer1M: 20,
+        });
     });
 });
 

@@ -1,10 +1,10 @@
 /* highlight.js token classes on the theme variables, plus the mermaid frame.
-   Restrained on purpose: comments dim, keywords info, strings accent, the rest
+   Restrained on purpose: comments secondary ink, keywords info, strings accent, the rest
    ink. ok/err are kept for diff additions and deletions, where they carry
    meaning. styles.css imports this for the kit; page.html inlines the same
    file for served and built .md pages, so both doors highlight alike. */
 .hljs { color: var(--text); }
-.hljs-comment, .hljs-quote { color: var(--dim); font-style: italic; }
+.hljs-comment, .hljs-quote { color: var(--text-2, var(--text)); font-style: italic; }
 .hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-doctag, .hljs-meta, .hljs-type, .hljs-tag { color: var(--info); }
 .hljs-string, .hljs-regexp, .hljs-template-tag, .hljs-selector-attr, .hljs-selector-pseudo, .hljs-link { color: var(--accent); }
 .hljs-title, .hljs-section, .hljs-name, .hljs-selector-id, .hljs-selector-class { color: var(--text); font-weight: 600; }

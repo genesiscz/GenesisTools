@@ -478,6 +478,7 @@ async function offerGenesisToolsMcpRegistration(): Promise<void> {
             const answer = await p.confirm({
                 message: "Register the genesis-tools MCP server with Claude Code now?",
                 initialValue: false,
+                cancel: "back",
             });
             return answer === true;
         },

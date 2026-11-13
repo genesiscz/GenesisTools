@@ -104,6 +104,90 @@ describe("composeAuthFetch — 401 refresh", () => {
     });
 });
 
+/**
+ * Reading a token can refresh an expired grant, and the 401 path forces one. A refresh token is
+ * single-use, so a cancelled request must reach neither (PR #772 review). The callbacks count their
+ * calls; a path that reaches one after the cancel fails the count.
+ */
+describe("composeAuthFetch — a cancelled request spends no credential", () => {
+    function counted(onToken?: () => void) {
+        const calls = { getToken: 0, refresh: 0 };
+        const options = {
+            getToken: async () => {
+                calls.getToken++;
+                onToken?.();
+                return "stale";
+            },
+            refresh: async () => {
+                calls.refresh++;
+                return "fresh";
+            },
+        };
+
+        return { calls, options };
+    }
+
+    test("an already-cancelled request reads no token and sends nothing", async () => {
+        const { transport, attempts } = fakeFetch([200]);
+        const { calls, options } = counted();
+        const controller = new AbortController();
+        controller.abort();
+
+        const authed = composeAuthFetch({ ...options, fetch: transport });
+
+        await expect(
+            authed("https://example.invalid/v1/messages", { signal: controller.signal })
+        ).rejects.toMatchObject({ name: "AbortError" });
+        expect(calls).toEqual({ getToken: 0, refresh: 0 });
+        expect(attempts).toHaveLength(0);
+    });
+
+    test("the signal of a Request input counts as well", async () => {
+        const { transport, attempts } = fakeFetch([200]);
+        const { calls, options } = counted();
+        const controller = new AbortController();
+        controller.abort();
+
+        const authed = composeAuthFetch({ ...options, fetch: transport });
+
+        await expect(
+            authed(new Request("https://example.invalid/v1/messages", { signal: controller.signal }))
+        ).rejects.toMatchObject({ name: "AbortError" });
+        expect(calls.getToken).toBe(0);
+        expect(attempts).toHaveLength(0);
+    });
+
+    test("a cancel while the token is read sends nothing", async () => {
+        const { transport, attempts } = fakeFetch([200]);
+        const controller = new AbortController();
+        const { calls, options } = counted(() => controller.abort());
+
+        const authed = composeAuthFetch({ ...options, fetch: transport });
+
+        await expect(
+            authed("https://example.invalid/v1/messages", { signal: controller.signal })
+        ).rejects.toMatchObject({ name: "AbortError" });
+        expect(calls.getToken).toBe(1);
+        expect(attempts).toHaveLength(0);
+    });
+
+    test("a cancel during the 401 never reaches the refresh", async () => {
+        const controller = new AbortController();
+        const { calls, options } = counted();
+        const transport = (async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+            controller.abort();
+            return new Response("rejected", { status: 401 });
+        }) as typeof fetch;
+
+        const authed = composeAuthFetch({ ...options, fetch: transport });
+
+        await expect(
+            authed("https://example.invalid/v1/messages", { signal: controller.signal })
+        ).rejects.toMatchObject({ name: "AbortError" });
+        expect(calls).toEqual({ getToken: 1, refresh: 0 });
+    });
+});
+
 describe("composeAuthFetch — retry policy", () => {
     test("does NOT retry by default, because the ai-sdk already retries the call", async () => {
         const { transport, attempts } = fakeFetch([429, 200]);

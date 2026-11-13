@@ -14,8 +14,9 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { basename, dirname, resolve, sep } from "node:path";
+import { basename, resolve, sep } from "node:path";
 import { canonicalClaudeTranscript } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
+import { claudeSubagentTranscripts } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { estimateTokens } from "@genesiscz/utils/tokens";
 import { discoverSessionFiles } from "./discovery";
@@ -315,73 +316,39 @@ export class ClaudeSession {
         const results: TailTarget[] = [];
         const lowerQuery = query?.toLowerCase();
 
-        // Collect subagent dirs from all base dirs
-        const sessionDirs: string[] = [];
+        // The session folders to read: every one of each base dir, or the ones whose id starts with `sessionId`.
+        const sessionTranscripts: string[] = [];
+        const wantedSession = sessionId?.toLowerCase();
 
         for (const baseDir of baseDirs) {
-            if (sessionId) {
-                try {
-                    for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
-                        if (entry.isDirectory() && entry.name.toLowerCase().startsWith(sessionId.toLowerCase())) {
-                            const subagentsDir = resolve(baseDir, entry.name, "subagents");
-
-                            if (existsSync(subagentsDir)) {
-                                sessionDirs.push(subagentsDir);
-                            }
-                        }
+            try {
+                for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
+                    if (entry.isDirectory() && (!wantedSession || entry.name.toLowerCase().startsWith(wantedSession))) {
+                        sessionTranscripts.push(resolve(baseDir, `${entry.name}.jsonl`));
                     }
-                } catch {
-                    // Skip unreadable directories
                 }
-            } else {
-                try {
-                    for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
-                        if (entry.isDirectory()) {
-                            const subagentsDir = resolve(baseDir, entry.name, "subagents");
-
-                            if (existsSync(subagentsDir)) {
-                                sessionDirs.push(subagentsDir);
-                            }
-                        }
-                    }
-                } catch {
-                    // Skip unreadable directories
-                }
+            } catch {
+                // Skip unreadable directories
             }
         }
 
-        for (const subagentsDir of sessionDirs) {
-            let entries: string[];
-
-            try {
-                entries = readdirSync(subagentsDir);
-            } catch {
-                continue;
-            }
-
-            // Find all meta.json files
-            const metaFiles = entries.filter((e) => e.endsWith(".meta.json"));
-
-            for (const metaFile of metaFiles) {
-                const agentId = metaFile.replace(".meta.json", "").replace("agent-", "");
-                const jsonlFile = metaFile.replace(".meta.json", ".jsonl");
-                const jsonlPath = resolve(subagentsDir, jsonlFile);
-
-                if (!existsSync(jsonlPath)) {
+        for (const sessionTranscript of sessionTranscripts) {
+            // The agents directly in `subagents/` and the agents of the session's Workflow tool runs.
+            for (const { agentId, transcript: jsonlPath, meta: metaPath } of claudeSubagentTranscripts(
+                sessionTranscript
+            )) {
+                // Only an agent with a meta file is listed: the meta holds the name and description a query matches.
+                if (!existsSync(metaPath)) {
                     continue;
                 }
 
                 let meta: AgentMeta | null = null;
 
                 try {
-                    const metaText = readFileSync(resolve(subagentsDir, metaFile), "utf-8");
-                    meta = SafeJSON.parse(metaText, { strict: true }) as AgentMeta;
+                    meta = SafeJSON.parse(readFileSync(metaPath, "utf-8"), { strict: true }) as AgentMeta;
                 } catch {
                     // Skip unreadable meta files
                 }
-
-                // Derive session ID from parent directory name
-                const parentDir = basename(dirname(subagentsDir));
 
                 // Match against query (id, name, or description)
                 if (lowerQuery) {
@@ -398,7 +365,7 @@ export class ClaudeSession {
                 results.push({
                     filePath: jsonlPath,
                     label: meta?.description ?? `agent-${agentId}`,
-                    sessionId: parentDir,
+                    sessionId: basename(sessionTranscript, ".jsonl"),
                     agentId,
                     agentDescription: meta?.description,
                     isAgent: true,
