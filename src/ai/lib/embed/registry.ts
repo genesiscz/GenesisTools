@@ -7,7 +7,9 @@ import type { EmbedLauncher } from "./types";
  */
 export const EMBED_LAUNCHERS = {
     claude: async () => (await import("@app/claude/lib/embed")).claudeEmbed,
+    // lint-rules-ignore: each agent brings its own embed launcher, loaded on demand
     codex: async () => (await import("@app/codex/lib/embed")).codexEmbed,
+    // lint-rules-ignore: each agent brings its own embed launcher, loaded on demand
     grok: async () => (await import("@app/grok/lib/embed")).grokEmbed,
 } satisfies Record<HarnessId, Lazy<EmbedLauncher>>;
 

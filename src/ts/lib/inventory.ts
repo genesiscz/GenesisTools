@@ -46,9 +46,25 @@ const FACTS: NapiConfig = {
             },
             { kind: "import_statement" },
             { kind: "export_statement", has: { field: "source", kind: "string" } },
+            // `await import("@app/question/lib/verbs")` is a dependency too.
+            { kind: "call_expression", has: { field: "function", kind: "import" } },
         ],
     },
 };
+
+/** The module a dynamic `import(…)` names, when it is a literal: `"x"`, or a template with no `${…}` in it. */
+function dynamicImportSpecifier(call: SgNode): string | undefined {
+    const argument = call
+        .field("arguments")
+        ?.children()
+        .find((child) => child.kind() === "string" || child.kind() === "template_string");
+
+    if (!argument || (argument.kind() === "template_string" && argument.text().includes("${"))) {
+        return undefined;
+    }
+
+    return argument.text().slice(1, -1);
+}
 
 const PARAMETER_PARENTS =
     /^(?:required_parameter|optional_parameter|rest_pattern|object_pattern|array_pattern|shorthand_property_identifier_pattern|pair_pattern|assignment_pattern|formal_parameters)$/;
@@ -87,15 +103,75 @@ function parameterNames(fn: SgNode): string[] {
 const WORD_START = /[A-Za-z_$]/;
 const WORD = /[\w$]/;
 
+/** After one of these characters a `/` opens a regular expression; after a value (`)`, `]`, a name) it divides. */
+const REGEX_AFTER_CHAR = /[(,=:[!&|?{};+\-*%<>~^]/;
+/** The keywords after which a `/` opens a regular expression (`return /a b/.test(x)`). */
+const REGEX_AFTER_WORD = new Set([
+    "return",
+    "typeof",
+    "case",
+    "in",
+    "of",
+    "new",
+    "delete",
+    "void",
+    "throw",
+    "else",
+    "do",
+    "yield",
+    "await",
+    "instanceof",
+]);
+
+/** The end (exclusive, flags included) of the regular expression literal at `start`, or -1 when it is none. */
+function regexLiteralEnd(body: string, start: number): number {
+    let i = start + 1;
+    let inClass = false;
+
+    while (i < body.length) {
+        const char = body[i];
+
+        if (char === "\n") {
+            return -1;
+        }
+
+        if (char === "\\") {
+            i += 2;
+            continue;
+        }
+
+        if (char === "[") {
+            inClass = true;
+        } else if (char === "]") {
+            inClass = false;
+        } else if (char === "/" && !inClass) {
+            i += 1;
+
+            while (i < body.length && /[a-z]/i.test(body[i] ?? "")) {
+                i += 1;
+            }
+
+            return i;
+        }
+
+        i += 1;
+    }
+
+    return -1;
+}
+
 /**
  * A function body as a comparable string: comments and spacing dropped, each parameter replaced by `$<position>`.
  * Two copies that differ only in what they call their parameters, or in their comments, give the same string.
- * Strings are kept as written. Pure, and the same for the same text, which is all a comparison needs.
+ * Strings and regular expression literals are kept as written: `/a b/` and `/ab/` are different predicates. Pure, and
+ * the same for the same text, which is all a comparison needs.
  */
 export function fingerprint(body: string, parameters: readonly string[]): string {
     const position = new Map(parameters.map((name, index) => [name, index]));
     let out = "";
     let i = 0;
+    /** The word `out` ends with, else undefined: it decides whether a `/` divides or opens a regular expression. */
+    let lastWord: string | undefined;
 
     while (i < body.length) {
         const char = body[i] ?? "";
@@ -118,6 +194,7 @@ export function fingerprint(body: string, parameters: readonly string[]): string
 
             i += 1;
             out += body.slice(start, i);
+            lastWord = undefined;
         } else if (WORD_START.test(char)) {
             const start = i;
 
@@ -129,11 +206,18 @@ export function fingerprint(body: string, parameters: readonly string[]): string
             const index = body[start - 1] === "." ? undefined : position.get(word);
             // A space only where two words would otherwise run together (`return value`).
             out += `${WORD.test(out[out.length - 1] ?? "") ? " " : ""}${index === undefined ? word : `$${index}`}`;
+            lastWord = index === undefined ? word : `$${index}`;
         } else if (/\s/.test(char)) {
             i += 1;
         } else {
-            out += char;
-            i += 1;
+            const opensRegex =
+                char === "/" &&
+                (lastWord !== undefined ? REGEX_AFTER_WORD.has(lastWord) : REGEX_AFTER_CHAR.test(out.at(-1) ?? "("));
+            const end = opensRegex ? regexLiteralEnd(body, i) : -1;
+
+            out += end === -1 ? char : body.slice(i, end);
+            i = end === -1 ? i + 1 : end;
+            lastWord = undefined;
         }
     }
 
@@ -160,8 +244,9 @@ function factsOf(node: SgNode, file: string, into: Inventory): void {
     const kind = node.kind();
     const line = node.range().start.line + 1;
 
-    if (kind === "import_statement" || kind === "export_statement") {
-        const specifier = node.field("source")?.text().slice(1, -1);
+    if (kind === "import_statement" || kind === "export_statement" || kind === "call_expression") {
+        const specifier =
+            kind === "call_expression" ? dynamicImportSpecifier(node) : node.field("source")?.text().slice(1, -1);
         const target = specifier ? importTarget(file, specifier) : null;
 
         if (target) {

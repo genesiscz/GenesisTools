@@ -43,6 +43,7 @@ export const agentsToolChangesDoor: CallDoor<{ session: string; toolIds: string[
             // import of the same module is still running, that require throws. Loaded here first, it never races.
             await import("@genesiscz/utils/agent-sessions/provider");
             const { changeLogPath, readChangeLogFile } = await import("@genesiscz/utils/agents/change-log");
+            // lint-rules-ignore: the Changes door reads the agents tool's change log, loaded on demand
             const { toolChangesJson } = await import("@app/agents/lib/changes/tool-changes");
             const file = changeLogPath(session);
             const read = readChangeLogFile(file);
@@ -98,6 +99,7 @@ export const agentsTurnChangesDoor: CallDoor<{ session: string; lastTurns: numbe
             // import of the same module is still running, that require throws. Loaded here first, it never races.
             await import("@genesiscz/utils/agent-sessions/provider");
             const { changeLogPath, readChangeLogFile } = await import("@genesiscz/utils/agents/change-log");
+            // lint-rules-ignore: the Changes door reads the agents tool's change log, loaded on demand
             const { sessionTurnChanges, turnChangesJson } = await import("@app/agents/lib/changes/tool-changes");
             const file = changeLogPath(session);
             const read = readChangeLogFile(file);

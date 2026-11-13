@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { copyNames, type FunctionFact, fingerprint, isDistinctName } from "@app/ts/lib/inventory";
+import { buildInventory, copyNames, type FunctionFact, fingerprint, isDistinctName } from "@app/ts/lib/inventory";
 import { Lang, parse } from "@ast-grep/napi";
 import { checkSource, maskSwiftNonCode, withinCountRatchets } from "../lint-rules";
 import adoFetchOutsideApi from "./ado-fetch-outside-api.definition";
@@ -393,6 +393,45 @@ describe("tree rosters: what one file cannot show", () => {
         expect(fingerprint(record("value"), ["value"])).not.toBe(
             fingerprint('{ return typeof value === "string"; }', ["value"])
         );
+    });
+
+    test("a regular expression literal keeps its spacing and its words, and a division is still a division", () => {
+        const spaced = fingerprint('{ return /a b/.test(value) && typeof value === "string"; }', ["value"]);
+        const joined = fingerprint('{ return /ab/.test(input) && typeof input === "string"; }', ["input"]);
+
+        expect(spaced).not.toBe(joined);
+        expect(spaced).toBe('1|{return/a b/.test($0)&&typeof $0==="string";}');
+        // A parameter's name inside a pattern is text, and a `/` in a character class does not end it.
+        expect(fingerprint("{ const m = /[/ ]value/g.exec(value); return m; }", ["value"])).toBe(
+            "1|{const m=/[/ ]value/g.exec($0);return m;}"
+        );
+        expect(fingerprint("{ return (total / count) / 2; }", ["total", "count"])).toBe("2|{return($0/$1)/2;}");
+    });
+
+    test("a literal dynamic import is a dependency like a static one", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rosters-dynamic-import-"));
+        const file = join(dir, "planted.ts");
+        writeFileSync(
+            file,
+            [
+                "export async function load(name: string) {",
+                '    const verbs = await import("@app/question/lib/verbs");',
+                "    const later = await import(`@app/spotify/lib/${name}`);",
+                "    return [verbs, later];",
+                "}",
+            ].join("\n")
+        );
+
+        try {
+            const inventory = await buildInventory([file]);
+            expect(inventory.imports).toEqual([{ file, line: 2, target: "src/question/lib/verbs" }]);
+
+            const planted = inventory.imports.map((fact) => ({ ...fact, file: "src/hub/lib/planted.ts" }));
+            const matches = TOOL_DEPENDENCY_ADDED.scan({ functions: [], imports: planted });
+            expect(matches.map((match) => match.key)).toEqual(["hub → question"]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     test("a name counts when it is two words, and a copy affix does not hide it", () => {

@@ -19,8 +19,10 @@ const MEETING_SOURCES: Record<
     }
 > = {
     wisprflow: {
+        // lint-rules-ignore: each meeting source brings its own reader, loaded on demand
         open: () => import("@app/wisprflow/lib/meeting-source").then((module) => module.wisprflowSource),
         localTranscript: async (sourceMeetingId) => {
+            // lint-rules-ignore: each meeting source brings its own reader, loaded on demand
             const { loadMeeting } = await import("@app/wisprflow/lib/source");
             return (await loadMeeting(sourceMeetingId, { source: "local", transcript: true })).data.transcript;
         },
@@ -28,6 +30,7 @@ const MEETING_SOURCES: Record<
 };
 
 const LOCAL_SOURCE_AUDIO: Record<MeetingSourceId, () => Promise<LocalSourceAudio>> = {
+    // lint-rules-ignore: each meeting source brings its own reader, loaded on demand
     wisprflow: () => import("@app/wisprflow/lib/source-audio").then((module) => module.wisprLocalAudio),
 };
 

@@ -39,7 +39,9 @@ function iso(value: string | null | undefined): string | null {
 const monitorSource: WatchSource = {
     label: "Monitor",
     async read() {
+        // lint-rules-ignore: the Watching widget reads each tool's own watch list, loaded on demand
         const { Monitor } = await import("@app/monitor/lib/monitor");
+        // lint-rules-ignore: the Watching widget reads each tool's own watch list, loaded on demand
         const { carriesItems, isMuted } = await import("@app/monitor/lib/types");
         const monitor = new Monitor();
 
@@ -77,6 +79,7 @@ const monitorSource: WatchSource = {
         }
     },
     async mute(id, until) {
+        // lint-rules-ignore: the Watching widget reads each tool's own watch list, loaded on demand
         const { Monitor } = await import("@app/monitor/lib/monitor");
         const monitor = new Monitor();
 
@@ -92,6 +95,7 @@ const monitorSource: WatchSource = {
 const domainsSource: WatchSource = {
     label: "Domains",
     async read() {
+        // lint-rules-ignore: the Watching widget reads each tool's own watch list, loaded on demand
         const { listWatch } = await import("@app/domains/lib/watch");
         const entries = await listWatch();
         const now = Date.now();
@@ -130,6 +134,7 @@ const SHOPS_LOCAL_USER = 1;
 const shopsSource: WatchSource = {
     label: "Shops",
     async read() {
+        // lint-rules-ignore: the Watching widget reads each tool's own watch list, loaded on demand
         const { getWatchlist } = await import("@app/shops/lib/watchlist-api");
         const favorites = await getWatchlist(SHOPS_LOCAL_USER);
         const rows = favorites.map((favorite): WatchRowDto => {
@@ -164,7 +169,9 @@ const shopsSource: WatchSource = {
 const tradingviewSource: WatchSource = {
     label: "TradingView",
     async read() {
+        // lint-rules-ignore: the Watching widget reads each tool's own watch list, loaded on demand
         const { resolveSession } = await import("@app/tradingview/lib/auth");
+        // lint-rules-ignore: the Watching widget reads each tool's own watch list, loaded on demand
         const { listAlerts } = await import("@app/tradingview/lib/alerts-rest");
         const session = await resolveSession();
 

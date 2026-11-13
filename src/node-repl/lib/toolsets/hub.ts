@@ -33,6 +33,7 @@ export class HubToolset extends ReplToolset {
 
     async bootstrap(): Promise<Record<string, unknown>> {
         // lazy: saves 53.7 ms cold import (tools ts imports lazy, 2026-11-05) — listing the toolsets loads no hub backend
+        // lint-rules-ignore: the hub toolset reads PRs through the hub, loaded on bootstrap
         const { hubPr, hubPrs } = await import("@app/hub/lib/prs");
         return {
             hub: {
