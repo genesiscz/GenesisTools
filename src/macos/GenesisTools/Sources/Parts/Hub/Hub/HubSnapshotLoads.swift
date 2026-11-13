@@ -18,6 +18,18 @@ enum HubSnapshotLoads {
         guard let raw = ProcessInfo.processInfo.environment["GENESIS_HUB_SNAPSHOT_WAIT"], let seconds = TimeInterval(raw) else { return 20 }
         return min(max(seconds, 5), 50)
     }()
+    /// The pause between the focus wait and the load wait, so the focused diff draws first.
+    static let pause: TimeInterval = 2.5
+    /// What the settle before the focus wait and the capture after the load wait may take together.
+    static let settleAndCapture: TimeInterval = 25
+
+    /// The whole run's bound: the settle, the focus wait, the pause, the load wait and the capture, each bounded on its
+    /// own. It was `deadline + 30` from the window's setup, so with a 50 s load wait a slow focus wait let `exit(1)`
+    /// fire while the load wait still ran, and no snapshot was written.
+    nonisolated static func giveUp(loadWait: TimeInterval = deadline, focusWait: TimeInterval = HubSnapshotFocus.wait) -> TimeInterval {
+        max(60, settleAndCapture + focusWait + pause + loadWait)
+    }
+
     private static var running: [String: Int] = [:]
     private static var finished: Set<String> = []
     private static var waiters: [() -> Void] = []

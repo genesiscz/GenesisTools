@@ -398,7 +398,7 @@ package func runHub(_ args: [String]) -> Never {
                 // PRs mode shows the PR's own review, not the selected session's.
                 let review: @MainActor () -> ReviewModel? = { model.mode == .prs ? model.prs.review : model.review }
                 HubSnapshotFocus.whenReady(review: review, file: request.file, style: request.style, showsDiff: { model.snapshotShowsDiff }) {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + HubSnapshotLoads.pause) {
                         MainActor.assumeIsolated {
                             // An overlay that loads after it appears (the digest's day reading) is waited for on its
                             // own load signal, with a deadline (Hub/HubSnapshotLoads.swift).
@@ -436,9 +436,9 @@ package func runHub(_ args: [String]) -> Never {
                 }
             }
         }
-        // The give-up timer leaves room for the configured load wait (GENESIS_HUB_SNAPSHOT_WAIT, up to 50 s)
-        // plus the focus and settle pauses around it, so it never fires before the fallback capture.
-        let giveUp = max(60, HubSnapshotLoads.deadline + 30)
+        // The give-up timer bounds the whole run and counts every phase: the settle, the focus wait, the pause and the
+        // configured load wait (GENESIS_HUB_SNAPSHOT_WAIT, up to 50 s), so it never fires before the fallback capture.
+        let giveUp = HubSnapshotLoads.giveUp()
         DispatchQueue.main.asyncAfter(deadline: .now() + giveUp) {
             FileHandle.standardError.write(Data("hub snapshot: not settled within \(Int(giveUp)) s\n".utf8))
             exit(1)

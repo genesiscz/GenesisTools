@@ -40,6 +40,16 @@ final class HubSnapshotLoadsTests: XCTestCase {
         XCTAssertEqual(result, ["digest", "forecast"])
     }
 
+    /// The give-up timer starts at the window's setup, so it must outlast the focus wait, the pause and the load wait
+    /// that run after the settle; `deadline + 30` left 27.5 s for the settle and the focus wait at a 50 s load wait.
+    func testTheGiveUpTimerCountsTheFocusWaitThePauseAndTheLoadWait() {
+        for wait in [5.0, 20, 30, 50] {
+            let giveUp = HubSnapshotLoads.giveUp(loadWait: wait)
+            XCTAssertGreaterThanOrEqual(giveUp, HubSnapshotFocus.wait + HubSnapshotLoads.pause + wait + 20, "load wait \(wait) s")
+        }
+        XCTAssertGreaterThanOrEqual(HubSnapshotLoads.giveUp(loadWait: 5), 60, "the whole run keeps its old floor")
+    }
+
     func testOnlyTheOverlaysARequestOpensAreExpected() {
         XCTAssertEqual(HubRequest(["--digest", "--snapshot", "/tmp/x.png"]).snapshotLoads, ["digest"])
         XCTAssertEqual(HubRequest(["--mode", "inbox", "--snapshot", "/tmp/x.png"]).snapshotLoads, [])
