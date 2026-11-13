@@ -51,6 +51,11 @@ export async function listClarityTasks({
         throw new Error(`Timesheet ${timesheetId} not found`);
     }
 
+    return clarityTasksOf(timesheet);
+}
+
+/** The task rows of a timesheet already read, so a caller holding the record does not read it again. */
+export function clarityTasksOf(timesheet: TimesheetResponse["timesheets"]["_results"][number]): ClarityTask[] {
     return (timesheet.timeentries?._results ?? []).map((entry: TimeEntryRecord) => ({
         taskId: entry.taskId,
         taskName: entry.taskName,

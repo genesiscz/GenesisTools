@@ -1,4 +1,4 @@
-import { listClarityTasks } from "@app/clarity/lib/tasks";
+import { clarityTasksOf } from "@app/clarity/lib/tasks";
 import type { ClarityTask } from "@app/clarity/lib/types";
 import type { TimesheetAppResponse, TimesheetResponse } from "@genesiscz/utils/clarity";
 import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
@@ -327,7 +327,11 @@ function midMonth(year: number, month: number): string {
     return `${year}-${String(month).padStart(2, "0")}-15`;
 }
 
-async function getTimesheetWeeks(api: TimesheetWeekReader, month?: number, year?: number): Promise<TimesheetWeeks> {
+async function getTimesheetWeeks(
+    api: TimesheetWeekReader,
+    scope: { month?: number; year?: number; known?: ReadonlyMap<number, TimesheetRecord> }
+): Promise<TimesheetWeeks> {
+    const { month, year } = scope;
     // When a month is requested, navigate to a period covering it so the window is anchored there.
     const seedTimePeriodId = await resolveCarouselSeed({ api });
     let timePeriodId = seedTimePeriodId;
@@ -389,6 +393,11 @@ async function getTimesheetWeeks(api: TimesheetWeekReader, month?: number, year?
     if (needsCount.length > 0) {
         const results = await Promise.allSettled(
             needsCount.map(async (w) => {
+                const known = scope.known?.get(w.timesheetId);
+                if (known) {
+                    return { timesheetId: w.timesheetId, record: known };
+                }
+
                 const ts = await api.getTimesheet(w.timesheetId);
                 const record = ts.timesheets._results[0];
                 return { timesheetId: w.timesheetId, record };
@@ -592,28 +601,39 @@ export class TimesheetPeriods {
 
 /**
  * Walk the carousel once. With a month, the periods touching it; without, the window around the
- * current period.
+ * current period. `known` holds timesheets an earlier walk already read; they are not read again.
  */
 export async function loadTimesheetPeriods(
     api: TimesheetWeekReader,
-    scope: { month?: number; year?: number } = {}
+    scope: { month?: number; year?: number; known?: ReadonlyMap<number, TimesheetRecord> } = {}
 ): Promise<TimesheetPeriods> {
-    const { weeks, userId, records } = await getTimesheetWeeks(api, scope.month, scope.year);
+    const { weeks, userId, records } = await getTimesheetWeeks(api, scope);
+    for (const [timesheetId, record] of scope.known ?? []) {
+        if (!records.has(timesheetId)) {
+            records.set(timesheetId, record);
+        }
+    }
 
     return new TimesheetPeriods({ weeks, records, userId, month: scope.month, year: scope.year, api });
 }
 
 /**
  * The first period in the given order that actually carries task rows. A month's own timesheet can
- * exist with no catalogue yet, so the search has to fall through to another period.
+ * exist with no catalogue yet, so the search has to fall through to another period. Each timesheet
+ * comes through `periods.record`, which reuses the read its discovery already made.
  */
-async function firstNonEmptyCatalogue(api: TimesheetWeekReader, candidates: TimesheetWeek[]): Promise<ClarityTask[]> {
+async function firstNonEmptyCatalogue(periods: TimesheetPeriods, candidates: TimesheetWeek[]): Promise<ClarityTask[]> {
     for (const candidate of candidates) {
         if (!hasTimesheetId(candidate)) {
             continue;
         }
 
-        const tasks = await listClarityTasks({ api, timesheetId: candidate.timesheetId });
+        const record = await periods.record(candidate.timesheetId);
+        if (!record) {
+            throw new Error(`Timesheet ${candidate.timesheetId} not found`);
+        }
+
+        const tasks = clarityTasksOf(record);
 
         if (tasks.length > 0) {
             return tasks;
@@ -633,7 +653,7 @@ export async function loadTaskCatalogue(
 ): Promise<ClarityTask[]> {
     const periods = await loadTimesheetPeriods(api, { month, year });
     const preferred = periods.covering(midMonth(year, month), { requireTimesheet: true });
-    const tasks = await firstNonEmptyCatalogue(api, periods.taskSourceOrder(preferred));
+    const tasks = await firstNonEmptyCatalogue(periods, periods.taskSourceOrder(preferred));
 
     if (tasks.length > 0) {
         return tasks;
@@ -641,7 +661,7 @@ export async function loadTaskCatalogue(
 
     // A month whose timesheets exist but carry no rows yet has no catalogue of its own.
     // Widen past the month filter and take the newest period that does have rows.
-    const current = await loadTimesheetPeriods(api);
+    const current = await loadTimesheetPeriods(api, { known: periods.records });
 
-    return firstNonEmptyCatalogue(api, current.taskSourceOrder(undefined));
+    return firstNonEmptyCatalogue(current, current.taskSourceOrder(undefined));
 }

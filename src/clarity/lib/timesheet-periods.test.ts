@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { loadTimesheetPeriods, type TimesheetWeek, type TimesheetWeekReader } from "@app/clarity/lib/timesheet-weeks";
+import {
+    loadTaskCatalogue,
+    loadTimesheetPeriods,
+    type TimesheetWeek,
+    type TimesheetWeekReader,
+} from "@app/clarity/lib/timesheet-weeks";
 
 // Clarity periods are Monday weeks SPLIT AT MONTH BOUNDARIES, so 1-, 2-, 3- and 4-day periods exist,
 // and a period's finish date is EXCLUSIVE: the next period starts on it. Every id here is invented;
@@ -385,5 +390,38 @@ describe("timesheet periods: fill weeks", () => {
             ts("2026-11-16"),
             ts("2026-11-30"),
         ]);
+    });
+});
+
+describe("the task catalogue search", () => {
+    const repeated = (calls: number[]) => calls.filter((id, index) => calls.indexOf(id) !== index);
+
+    test("reads each timesheet once, reusing the reads its discovery made", async () => {
+        const clarity = fakeClarity();
+        const tasks = await loadTaskCatalogue(clarity.api, { month: 11, year: 2026 });
+
+        expect(tasks.map((task) => task.taskId)).toEqual([1, 2]);
+        expect(repeated(clarity.timesheetCalls)).toEqual([]);
+    });
+
+    test("an empty month falls back to the current window without reading a timesheet twice", async () => {
+        const october = Periods.filter((period) => period.start >= "2026-09-28" && period.start < "2026-11-01");
+        for (const period of october) {
+            NoRows.add(period.start);
+        }
+
+        try {
+            const clarity = fakeClarity();
+            const tasks = await loadTaskCatalogue(clarity.api, { month: 10, year: 2026 });
+
+            expect(tasks.map((task) => task.taskId)).toEqual([1, 2]);
+            expect(repeated(clarity.timesheetCalls)).toEqual([]);
+        } finally {
+            for (const period of october) {
+                if (period.start !== "2026-10-26") {
+                    NoRows.delete(period.start);
+                }
+            }
+        }
     });
 });
