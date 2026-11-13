@@ -392,6 +392,21 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(SafeJSON.stringify(await new MeetingsConfigStore().read())).toBe(configBefore);
     });
 
+    test("a long-stretch preparation asks about lines below the threshold the caller gives", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        // The fixture's upload is no real audio: the voice features are not what this test is about.
+        const quality = await import("../listen-quality");
+        const features = spyOn(quality, "qualityVoiceFeatures").mockResolvedValue([]);
+        closing.push(() => features.mockRestore());
+        // Line l2 (9 s) has a suggested speaker at 0.82: unsure below 0.9, sure below 0.8 (and the default 0.7).
+        const suggested = { ...REVIEW.items[0], label: "Speaker 2", fromSec: 9, toSec: 10, speaker: "Dana Example" };
+        writeFileSync(store.path(REVIEW.id), SafeJSON.stringify({ ...REVIEW, items: [suggested] }, null, 2));
+        const prepare = (below: number) =>
+            client.call("meeting.listen.prepare", { meeting: REVIEW.id, group: "long-stretch", words: 1, below });
+        expect((await prepare(0.8)).questions).toEqual([]);
+        expect((await prepare(0.9)).questions.length).toBeGreaterThan(0);
+    });
+
     test("meeting-local people persist device and half-open stays and remove through either adapter", async () => {
         const { client, store } = await ADAPTERS[kind]();
         await client.call("meeting.people.edit", {
