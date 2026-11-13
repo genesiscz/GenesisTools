@@ -416,6 +416,35 @@ final class IssueDraftTests: XCTestCase {
         XCTAssertFalse(empty.canPost)
     }
 
+    private final class CountingPoster: IssuePosting, @unchecked Sendable {
+        let result: Result<IssuePostResult, IssuePostError>
+        private(set) var posts = 0
+        init(result: Result<IssuePostResult, IssuePostError>) { self.result = result }
+        func post(_ draft: IssueDraft) async -> Result<IssuePostResult, IssuePostError> {
+            posts += 1
+            return result
+        }
+        func browserName(for url: String) async -> String? { nil }
+    }
+
+    func testAPostedDraftIsNeverPostedASecondTime() async {
+        let ok = IssuePostResult(posted: true, number: 7, url: "https://github.com/shop/storefront/issues/7", replaced: 0)
+        let poster = CountingPoster(result: .success(ok))
+        let model = IssueDraftModel(draft: IssueDraft(repo: "shop/storefront", title: "T", body: "B"), poster: poster)
+        await model.post()
+        XCTAssertFalse(model.canPost, "a posted draft is done")
+        await model.post()
+        XCTAssertEqual(poster.posts, 1, "a second post() after success must not open a second issue")
+        XCTAssertEqual(model.state, .posted(ok))
+
+        let failing = CountingPoster(result: .failure(IssuePostError(message: "Not Found")))
+        let retry = IssueDraftModel(draft: IssueDraft(repo: "shop/storefront", title: "T", body: "B"), poster: failing)
+        await retry.post()
+        XCTAssertTrue(retry.canPost, "a failed post can be tried again")
+        await retry.post()
+        XCTAssertEqual(failing.posts, 2)
+    }
+
 }
 
 /// A failed `tools` call as a report (`FailureReport.toolsCall`), the call ledger, the details' log and the inline view.

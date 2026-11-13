@@ -164,9 +164,16 @@ public final class IssueDraftModel: ObservableObject {
         self.browserName = browserName
     }
 
+    /// Only a draft being edited or one whose post failed can be posted: a posted draft is done, and posting it again
+    /// would open a second issue.
     public var canPost: Bool {
-        state != .posting && !draft.title.trimmingCharacters(in: .whitespaces).isEmpty
-            && !draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        switch state {
+        case .editing, .failed:
+            return !draft.title.trimmingCharacters(in: .whitespaces).isEmpty
+                && !draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .posting, .posted:
+            return false
+        }
     }
 
     public func post() async {
