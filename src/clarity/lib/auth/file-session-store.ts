@@ -1,7 +1,7 @@
 import { getConfig, saveConfig, storage } from "@app/clarity/config";
 import type { ClaritySessionStore } from "@app/clarity/lib/auth/types";
 
-/** The session inside the config file (mode 0600), beside the mappings. */
+/** The session inside the config file (mode 0600), beside the mappings and the base URL it belongs to. */
 export const fileSessionStore: ClaritySessionStore = {
     describe: () => `${storage.getConfigPath()} (mode 0600)`,
     async read() {

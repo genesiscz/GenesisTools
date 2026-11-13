@@ -25,7 +25,9 @@ export interface ClarityAuthDriver {
 export interface ClaritySessionStore {
     /** Where it is kept, in words a user can check. */
     describe(): string;
-    read(): Promise<ClaritySession | null>;
-    write(session: ClaritySession): Promise<void>;
+    /** The session for this server, or null: a session saved for another server is never handed out. Reads only. */
+    read(baseUrl: string): Promise<ClaritySession | null>;
+    /** Saves the session as the one for this server. */
+    write(session: ClaritySession, baseUrl: string): Promise<void>;
     clear(): Promise<void>;
 }

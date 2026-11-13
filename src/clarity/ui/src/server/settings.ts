@@ -5,7 +5,7 @@ import { extractOrgName, findConfigPath, loadConfig as loadAdoConfig } from "@ap
 import { buildAdoConfig, checkAzureCliLogin, saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
 import { fetchTimeLogFunctionsKey } from "@app/azure-devops/lib/timelog-configure";
 import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
-import { getConfig } from "@app/clarity/config";
+import { type ClarityConfig, getConfig } from "@app/clarity/config";
 import { getClarityApi } from "@app/clarity/lib/api";
 import { saveSignIn } from "@app/clarity/lib/auth/client";
 import { curlAuthDriver } from "@app/clarity/lib/auth/curl-driver";
@@ -30,8 +30,13 @@ export interface StatusResult {
     uniqueName: string | null;
 }
 
+async function hasSession(config: ClarityConfig | null): Promise<boolean> {
+    return config !== null && (await claritySessionStore.read(config.baseUrl)) !== null;
+}
+
 export async function getStatus(): Promise<StatusResult> {
-    return buildClarityShape(await getConfig(), (await claritySessionStore.read()) !== null);
+    const config = await getConfig();
+    return buildClarityShape(config, await hasSession(config));
 }
 
 export async function testConnection(): Promise<{ success: boolean; message: string }> {
@@ -217,7 +222,7 @@ export async function getGranularStatus(): Promise<GranularStatus> {
     ]);
 
     return {
-        clarity: { ...buildClarityShape(clarityConfig, (await claritySessionStore.read()) !== null), ...clarityAuth },
+        clarity: { ...buildClarityShape(clarityConfig, await hasSession(clarityConfig)), ...clarityAuth },
         ado: { ...buildAdoShape(adoConfig), ...adoAuth },
         timelog: { ...buildTimelogShape(adoConfig), ...timelogAuth },
         projectCwd,

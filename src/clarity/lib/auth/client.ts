@@ -7,7 +7,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
 async function savedSession(): Promise<ClarityApiConfig> {
     const config = await requireConfig();
-    const session = await claritySessionStore.read();
+    const session = await claritySessionStore.read(config.baseUrl);
 
     if (!session) {
         throw new Error(`Clarity is not signed in. Run: ${toolCommand("clarity configure auth")}`);
@@ -28,8 +28,18 @@ export class ClarityClient extends ClarityApi {
         this.given = auth !== undefined;
     }
 
+    /** False for a diagnostic: an expired session fails as it is, and no driver signs in again or writes a session. */
+    private renews = true;
+
+    /** The saved session for a status check or a preflight, which must never renew it (they only read). */
+    static withoutRenew(): ClarityClient {
+        const client = new ClarityClient();
+        client.renews = false;
+        return client;
+    }
+
     protected override async renewAuth(): Promise<boolean> {
-        if (this.given) {
+        if (this.given || !this.renews) {
             return false;
         }
 
@@ -55,13 +65,17 @@ export function isClarityAuthError(err: unknown): boolean {
     return msg.includes("401") || msg.includes("403") || lower.includes("session") || lower.includes("token");
 }
 
-/** The config keeps everything but the session, which goes to the session store. */
+/**
+ * The config keeps everything but the session, which goes to the session store. The session is written first: a stop
+ * between the two writes leaves the new session saved and the old config, never a config whose session was dropped
+ * before its replacement was saved. The config write drops a session still kept in it (the move to the store).
+ */
 async function saveSession(config: ClarityConfig, auth: ClarityAuth): Promise<void> {
     const { authToken: _token, sessionId: _session, cookies: _cookies, ...rest } = config;
     const { baseUrl, ...session } = auth;
 
+    await claritySessionStore.write(session, baseUrl);
     await saveConfig({ ...rest, baseUrl });
-    await claritySessionStore.write(session);
 }
 
 export interface SavedSignIn {
