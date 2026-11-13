@@ -34,6 +34,7 @@ const log = logger.child({ component: "session-input" });
 export type SessionInputRefusal =
     | "not-found"
     | "tty-shared"
+    | "ambiguous"
     | "tmux-hidden"
     | "dialog-open"
     | "draft-present"
@@ -75,6 +76,12 @@ export interface SessionInput {
      * `--force`. The tty and tmux guards still apply.
      */
     force?: boolean;
+    /**
+     * Only a surface the hook journal recorded for this session. A surface the locator matched to the session by a
+     * unique tab title is skipped, because another session can share that topic: a caller that must not guess
+     * (`--exact-session`) then gets `not-found` instead of a write.
+     */
+    recordedOnly?: boolean;
 }
 
 export type SurfaceLookup = { ok: true; surfaces: LiveAgentSurface[] } | { ok: false; detail: string };
@@ -222,9 +229,24 @@ export async function sendToSession(input: SessionInput, deps: SessionInputDeps 
         return refusal(input, "timeout", `nothing was sent to session ${input.sessionId}: ${lookup.detail}`);
     }
 
-    const target = lookup.surfaces.find(
-        (entry) => entry.sessionId === input.sessionId && (!input.provider || entry.agent === input.provider)
+    const candidates = lookup.surfaces.filter(
+        (entry) =>
+            entry.sessionId === input.sessionId &&
+            (!input.provider || entry.agent === input.provider) &&
+            !(input.recordedOnly && entry.transcriptPath)
     );
+
+    if (candidates.length > 1) {
+        return refusal(
+            input,
+            "ambiguous",
+            `nothing was sent: ${candidates.length} surfaces name session ${input.sessionId} (${candidates
+                .map((entry) => entry.surface.ref)
+                .join(", ")})`
+        );
+    }
+
+    const target = candidates[0];
 
     if (!target) {
         return refusal(input, "not-found", `session ${input.sessionId} has no live cmux surface`);

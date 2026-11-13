@@ -765,6 +765,19 @@ test("an automated exact-session reply still reaches the pane resuming the sessi
     expect(events.some((event) => event.includes("surface:2"))).toBe(false);
 });
 
+test("an exact-session send by full id asks the guarded input for recorded surfaces only", async () => {
+    const asked: Array<{ recordedOnly?: boolean }> = [];
+    const sessionInput = async (input: { recordedOnly?: boolean }) => {
+        asked.push(input);
+        return { delivered: false as const, reason: "not-found" as const, detail: "fixture: no surface" };
+    };
+
+    await sendCommand(SESSION_A, "media reply", { exactSession: true, paste: true }, { ...deps, sessionInput });
+    await sendCommand(SESSION_A, "media reply", { paste: true }, { ...deps, sessionInput });
+
+    expect(asked.map((input) => input.recordedOnly)).toEqual([true, false]);
+});
+
 test("a single working-directory match still delivers", async () => {
     setSnapshot([
         pane({

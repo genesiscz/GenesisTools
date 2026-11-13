@@ -488,6 +488,9 @@ async function sendByIdThroughInput({
     const continuedTo = sessionId !== asked ? sessionId : undefined;
     const provider = opts.harness && isAccountProviderAlias(opts.harness) ? opts.harness : undefined;
     const inputDeps: SessionInputDeps = { titleKeys: titleMatchKeys };
+    // `--exact-session` takes no surface the locator matched by its topic title alone; the text matcher then refuses
+    // that pane by its evidence (`ambiguousMatch`), as it did before this path existed.
+    const recordedOnly = opts.exactSession === true;
 
     if (option !== undefined) {
         const plan = planDialogOption({ query, opts: { ...opts, option }, deps, continuedTo });
@@ -497,7 +500,7 @@ async function sendByIdThroughInput({
         }
 
         const pressed = await input(
-            { sessionId: plan.sessionId, keys: inputKeys(plan.presses), force: true, provider },
+            { sessionId: plan.sessionId, keys: inputKeys(plan.presses), force: true, provider, recordedOnly },
             inputDeps
         );
 
@@ -525,8 +528,8 @@ async function sendByIdThroughInput({
 
     const force = opts.force === true;
     const first = typedSend(text, opts)
-        ? await input({ sessionId, keys: [{ text }], force, provider }, inputDeps)
-        : await input({ sessionId, text, submit: enter, force, provider }, inputDeps);
+        ? await input({ sessionId, keys: [{ text }], force, provider, recordedOnly }, inputDeps)
+        : await input({ sessionId, text, submit: enter, force, provider, recordedOnly }, inputDeps);
 
     if (!first.delivered) {
         return first.reason === "not-found" ? undefined : inputRefusal(query, sessionId, first);

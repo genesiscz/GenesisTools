@@ -379,6 +379,27 @@ describe("sendToSession: the one guarded session input", () => {
         expect([...other.calls, ...both.calls]).toEqual([]);
     });
 
+    it("recordedOnly skips a surface matched by its topic title alone, and two surfaces naming the id refuse", async () => {
+        const titled: LiveAgentSurface = { ...plain, transcriptPath: "/fixture/a.jsonl" };
+        const byTitle = edges({ surfaces: async () => ({ ok: true, surfaces: [titled] }) });
+        const twice = edges({
+            surfaces: async () => ({ ok: true, surfaces: [plain, liveSurface(SESSION_A, "surface:8", "ttys008")] }),
+        });
+
+        expect(
+            await sendToSession({ sessionId: SESSION_A, text: "hi", recordedOnly: true }, byTitle.deps)
+        ).toMatchObject({ delivered: false, reason: "not-found" });
+        expect(await sendToSession({ sessionId: SESSION_A, text: "hi" }, twice.deps)).toMatchObject({
+            reason: "ambiguous",
+            detail: expect.stringContaining("surface:7, surface:8"),
+        });
+        expect([...byTitle.calls, ...twice.calls]).toEqual([]);
+        // NEGATIVE CONTROL: without recordedOnly, the title-matched surface is still a target.
+        expect(await sendToSession({ sessionId: SESSION_A, text: "hi" }, byTitle.deps)).toMatchObject({
+            delivered: true,
+        });
+    });
+
     it("tty-shared: a second session of the same agent in the tab refuses the write", async () => {
         const twoClaudes = edges({ agentsOnTty: () => ["claude", "claude"] });
 
