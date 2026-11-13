@@ -200,10 +200,12 @@ test("resume guard: a cold, large agent is refused once, and the same send then 
         contextTokens: 240_000,
         thresholds: { idleSeconds: 295, minTokens: 150_000 },
     });
+    // Each batch of events carries its define line; the drain reads a repeat as the same declaration.
     const defines = lines.filter((line) => line.record.define !== undefined);
-    expect(defines.map((line) => line.record.define)).toEqual([
-        expect.objectContaining({ project: "agent-context", metric: "agent.resume", unit: "tokens" }),
-    ]);
+    expect(defines.length).toBe(resumeEvents(lines).length);
+    expect(defines[0]?.record.define).toEqual(
+        expect.objectContaining({ project: "agent-context", metric: "agent.resume", unit: "tokens" })
+    );
 });
 
 test("resume guard: the mark clears once the agent ran again, and a later cold send is refused again", async () => {
