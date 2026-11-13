@@ -1,5 +1,6 @@
 import { unsupportedCapabilityMessage } from "@app/ai-proxy/lib/account-model-ref";
 import type { ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
+import { BODY_UNREADABLE_MESSAGE, logRequestFailure, readRequestText } from "@app/ai-proxy/lib/request-lifecycle";
 import { guardProxyRoute, jsonError } from "@app/ai-proxy/lib/route-guards";
 import type { AiProxyConfig, ResolvedRoute } from "@app/ai-proxy/lib/types";
 import { scheduleBillingSync } from "@app/ai-proxy/lib/usage/billing-sync";
@@ -350,7 +351,14 @@ export async function handleRealtimeClientSecrets(input: {
     config: AiProxyConfig;
     providers: Map<string, ProxyProvider>;
 }): Promise<Response> {
-    const bodyText = await input.req.text();
+    let bodyText: string;
+
+    try {
+        bodyText = await readRequestText(input.req);
+    } catch (err) {
+        logRequestFailure({ req: input.req, err, status: 400, fields: { path: "/v1/realtime/client_secrets" } });
+        return jsonError(400, BODY_UNREADABLE_MESSAGE);
+    }
 
     let parsed: { model?: string; session?: { model?: string } };
     try {

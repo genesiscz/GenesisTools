@@ -965,6 +965,36 @@ describe("loadInbox", () => {
         expect([cleared.total, cleared.sessions[0]?.items.length]).toEqual([0, 3]);
     });
 
+    test("the waiting queue's total counts the pending forms past its listing's limit, as the notch does", async () => {
+        const at = Date.parse("2026-03-01T10:00:00.000Z");
+        const listed = form({ id: "ask_listed", createdAt: at, sessionHint: SESSION.sessionId });
+        const head = (id: string) => ({
+            id,
+            createdAt: at - 1000,
+            status: "pending" as const,
+            sessionHint: `old-${id}`,
+        });
+        const deps: InboxDeps = {
+            sessions: async () => [],
+            tail: async () => [],
+            stat: () => null,
+            rows: () => [],
+            // The listing read only the newest form; the heads are every pending one.
+            forms: () => [listed],
+            formHeads: () => [listed, head("ask_old_1"), head("ask_old_2")],
+            readCache: async () => null,
+            writeCache: async () => undefined,
+        };
+        const now = Date.parse("2026-03-01T12:00:00.000Z");
+
+        const queue = await loadWaitingQueue({ deps, now });
+        expect(queue.total).toBe(3);
+        expect(queue.sessions.flatMap((entry) => entry.items.map((item) => item.id))).toEqual(["ask_listed"]);
+
+        const withoutHeads = await loadWaitingQueue({ deps: { ...deps, formHeads: undefined }, now });
+        expect(withoutHeads.total).toBe(1);
+    });
+
     test("the blocks it lists that the log lacks are stored (harvestListed), so every surface reads the same rows", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-inbox-harvest-"));
         const files = { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl") };

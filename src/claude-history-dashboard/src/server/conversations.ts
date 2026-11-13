@@ -6,6 +6,7 @@
 import { basename } from "node:path";
 import type { DateRange, SearchFilters } from "@app/claude/lib/history/search";
 import type { SessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-types";
+import { subagentScope } from "@genesiscz/utils/agent-sessions/search-plan";
 import type { AgentSearchFilters } from "@genesiscz/utils/agent-sessions/types";
 import { resolveProjectDir } from "@genesiscz/utils/claude/projects";
 import { createServerFn } from "@tanstack/react-start";
@@ -62,7 +63,7 @@ export const getConversations = createServerFn({ method: "GET" })
 		const projectDir = filters.project ? resolveProjectDir(filters.project) : undefined;
 		const sessions = await claudeSessions({
 			project: projectDir ? basename(projectDir) : undefined,
-			excludeAgents: !filters.agentsOnly && filters.excludeAgents !== false,
+			...subagentScope({ only: filters.agentsOnly === true, exclude: filters.excludeAgents !== false }),
 			limit: filters.limit || 50,
 		});
 

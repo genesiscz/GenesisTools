@@ -55,6 +55,7 @@ for (const item of [...flushed, decision]) {
             files: item.files,
             ...(item.others && item.others.length > 0 ? { others: item.others } : {}),
             ...(item.attributed ? { attributed: item.attributed } : {}),
+            ...(item.declined && Object.keys(item.declined).length > 0 ? { declined: item.declined } : {}),
             ...(item.stats ? item.stats : {}),
             ...(item.task ? { background: item.task.id, flushedBy: payload.toolUseId } : {}),
         },

@@ -2671,8 +2671,14 @@ struct PRsMain: View {
     @ViewBuilder
     private var content: some View {
         if let pr = prs.selected {
-            PRDetailView(model: model, prs: prs, pr: pr)
-                .id(pr.id)
+            // Hub UX wave 2 design sketches (`--sketch prDetail=a|b`, Parts/Hub/Sketches/); nil is the current view.
+            switch HubLayout.option("prDetail") {
+            case "a": PRDetailSketchA(model: model, prs: prs, pr: pr).id(pr.id)
+            case "b": PRDetailSketchB(model: model, prs: prs, pr: pr).id(pr.id)
+            default:
+                PRDetailView(model: model, prs: prs, pr: pr)
+                    .id(pr.id)
+            }
         } else if let opening = prs.opening {
             PaneSkeleton("Opening \(opening.label)")
         } else if prs.loading {

@@ -1,3 +1,4 @@
+import { claudeCacheWrites } from "@genesiscz/utils/ai/usage/spend/parse";
 import { type HistoryFileStatistics, type TokenUsage, zeroTokenUsage } from "../cache-types";
 import type { JsonRecord, JsonValue } from "../source-scan";
 import { asRecord, scanJsonlRecords, text } from "../source-scan";
@@ -35,7 +36,7 @@ function modelBucket(model: string): string {
 function addTokenUsage(target: TokenUsage, usage: JsonRecord): void {
     target.inputTokens += numeric(usage.input_tokens);
     target.outputTokens += numeric(usage.output_tokens);
-    target.cacheCreateTokens += numeric(usage.cache_creation_input_tokens);
+    target.cacheCreateTokens += claudeCacheWrites(usage).total;
     target.cacheReadTokens += numeric(usage.cache_read_input_tokens);
 }
 

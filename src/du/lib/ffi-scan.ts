@@ -6,6 +6,7 @@
 // via the fcntl shim. Used by scan-worker.ts (one instance per Bun Worker).
 
 import { CString, dlopen, FFIType, ptr } from "bun:ffi";
+import { fstatSync } from "node:fs";
 import { profiler } from "@genesiscz/utils/profile";
 import { type CloudDomain, domainOf, emptyFolder, isCloudRoot, isDomainCandidate, SF_DATALESS } from "./cloud";
 import type { CloudBackedFolder } from "./types";
@@ -50,6 +51,7 @@ export interface ScanDirsResult {
     scanned: number; // files accounted (alloc>0 && >=min)
     listed: number; // all regular files seen
     opened: number; // shared files opened + scanned
+    compressed: { files: number; logical_bytes: number; allocated_bytes: number };
     gNaive: Float64Array;
     gFiles: Float64Array;
     gPrivate: Float64Array;
@@ -155,6 +157,7 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
     let scanned = 0;
     let listed = 0;
     let opened = 0;
+    const compressed = { files: 0, logical_bytes: 0, allocated_bytes: 0 };
     const gNaive = new Float64Array(ngroups);
     const gFiles = new Float64Array(ngroups);
     const gPrivate = new Float64Array(ngroups);
@@ -258,6 +261,12 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
                 }
                 privSum += priv;
 
+                const isCompressed = (flags & 0x20) !== 0;
+                if (isCompressed && alloc >= minB) {
+                    compressed.files++;
+                    compressed.logical_bytes += Number(dlen);
+                    compressed.allocated_bytes += Number(alloc);
+                }
                 if (alloc === 0n || alloc < minB) {
                     p += len;
                     continue;
@@ -285,7 +294,7 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
                     continue;
                 }
 
-                if (priv >= alloc && nlink <= 1 && alloc >= dlen) {
+                if (!isCompressed && priv >= alloc && nlink <= 1 && alloc >= dlen) {
                     uniquePrivate += dlen; // fully private, non-sparse, single link
                     uniquePrivateAlloc += alloc;
                     p += len;
@@ -293,13 +302,17 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
                 }
 
                 // Shares blocks (or hardlinked/sparse) — open by leaf + extent-scan.
-                const ffd = cs_openat_file(dfd, ptr(abuf, nameByteOff));
+                const forkName = isCompressed ? Buffer.from(`${readName(nameByteOff)}/..namedfork/rsrc\0`) : null;
+                const ffd = cs_openat_file(dfd, forkName ? ptr(forkName) : ptr(abuf, nameByteOff));
+                const extentStart = n;
                 if (ffd >= 0) {
                     opened++;
+                    const forkStat = isCompressed ? fstatSync(ffd) : null;
+                    const physicalLength = forkStat ? BigInt(Math.max(forkStat.size, forkStat.blocks * 512)) : dlen;
                     let off = 0n;
-                    while (off < dlen) {
+                    while (off < physicalLength) {
                         ldv.setUint32(0, 0, true);
-                        ldv.setBigInt64(4, dlen - off, true); // IN contigbytes
+                        ldv.setBigInt64(4, physicalLength - off, true); // IN contigbytes
                         ldv.setBigInt64(12, off, true); // IN file offset
                         if (l2p_ext(ffd, lbufPtr) < 0) {
                             break;
@@ -315,6 +328,10 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
                         off += contig;
                     }
                     cs_close(ffd);
+                }
+                if (isCompressed && n === extentStart) {
+                    uniquePrivate += alloc;
+                    uniquePrivateAlloc += alloc;
                 }
                 p += len;
             }
@@ -339,6 +356,7 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
         scanned,
         listed,
         opened,
+        compressed,
         gNaive,
         gFiles,
         gPrivate,

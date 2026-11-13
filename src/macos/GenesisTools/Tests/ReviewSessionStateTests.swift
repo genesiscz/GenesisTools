@@ -48,6 +48,26 @@ final class ReviewSessionStateTests: XCTestCase {
 
     // MARK: Scope
 
+    @MainActor
+    func testOnlyDeliberateReviewNavigationRequestsATabChange() {
+        let model = ReviewModel(repo: URL(fileURLWithPath: "/fixture"), options: DiffViewOptions(), renderer: NullRenderer())
+        model.follow(model.scope, remoteHead: nil)
+        XCTAssertEqual(model.navigationRequests, 0)
+        model.select("example.swift")
+        XCTAssertEqual(model.navigationRequests, 1)
+        model.reveal(path: "missing.swift")
+        XCTAssertEqual(model.navigationRequests, 2)
+        model.setScope(model.scope)
+        XCTAssertEqual(model.navigationRequests, 3, "an explicit pick of the same scope still opens Changes")
+        model.follow(model.scope, remoteHead: nil)
+        XCTAssertEqual(model.navigationRequests, 3, "a head refresh must not interrupt the reader")
+        model.select("automatic.swift", requestingNavigation: false)
+        XCTAssertEqual(model.selectedID, "automatic.swift")
+        model.reveal(path: "proposal.swift", requestingNavigation: false)
+        XCTAssertEqual(model.pendingRevealPath, "proposal.swift")
+        XCTAssertEqual(model.navigationRequests, 3, "automatic proposal positioning must preserve the active tab")
+    }
+
     func testEveryScopeSurvivesTheDiskForm() throws {
         let scopes: [DiffScope] = [
             .lastTurns(3), .uncommitted, .unstaged, .staged, .branch,

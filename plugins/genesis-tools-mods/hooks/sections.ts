@@ -139,6 +139,33 @@ export function fullDiffEnabled(hooksFile: string | undefined): boolean {
     return modsSettings(hooksFile).diff.fullDiff;
 }
 
+/**
+ * A press that changes a diff block's height from a button under it: the row's top goes to the window's top FIRST,
+ * then the change. The engine moves a transcript row only while the call answers the person's own input, so the
+ * scroll cannot come after the change; and without it the window stays where the block's end was, on later rows.
+ * A scroll the engine refuses (a row from before a compaction is not drawn) still lets the change happen.
+ */
+export async function fromTop(
+    scroll: (row: string) => Promise<unknown>,
+    row: string,
+    change: () => unknown | Promise<unknown>
+): Promise<void> {
+    try {
+        await scroll(row);
+    } catch {
+        // Refused: the fold is still what the person pressed.
+    }
+
+    await change();
+}
+
+/** `mods.diff.bottomRow` and `mods.diff.filesOnly` of the hooks file: the second button row, and blocks that start folded. */
+export function diffRowSettings(hooksFile: string | undefined): { bottomRow: boolean; filesOnly: boolean } {
+    const { bottomRow, filesOnly } = modsSettings(hooksFile).diff;
+
+    return { bottomRow, filesOnly };
+}
+
 /** `mods.diff.collapseGitSync` of the hooks file (the flat `mods.collapseGitSync` of before still counts). */
 export function collapseGitSyncEnabled(hooksFile: string | undefined): boolean {
     return modsSettings(hooksFile).diff.collapseGitSync;

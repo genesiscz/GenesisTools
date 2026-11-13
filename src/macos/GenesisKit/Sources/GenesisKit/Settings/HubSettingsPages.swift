@@ -23,7 +23,14 @@ public enum HubSettingsPages {
                     id: panesPageID, title: "Panes", symbol: "rectangle.split.3x1", tint: .teal,
                     subtitle: "Defaults for the diff, the Inbox, the PR overview, Activity, the Agents list, the Agent processes pane and the Worktree cleanup pane."
                 ) {
-                    HubPaneSettings(preferences: preferences)
+                    // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current page.
+                    HubLayoutView(.usageSettings) {
+                        UsageSettingsSketchPanesA(preferences: preferences)
+                    } compact: {
+                        UsageSettingsSketchPanesB(preferences: preferences)
+                    } classic: {
+                        HubPaneSettings(preferences: preferences)
+                    }
                 },
                 NativeSettingsPage(
                     id: historyPageID, title: "History", symbol: "clock.arrow.circlepath", tint: .purple,
@@ -47,6 +54,7 @@ private struct HubAppearanceSettings: View {
 
     var body: some View {
         VStack(spacing: 18) {
+            HubLayoutSettings()
             NativeSettingsCard(
                 "Window style", subtitle: "Hub keeps the hub's own dark look. Native uses the look of this window."
             ) {

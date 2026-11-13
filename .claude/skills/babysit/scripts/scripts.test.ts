@@ -43,7 +43,7 @@ import {
     judgeOwn,
     moveBlocker,
     OpenFiles,
-    openPaths,
+    openFiles,
     ownBuildOutput,
     ownSessionDirs,
     recentOpenFiles,
@@ -1848,26 +1848,34 @@ describe("round 1 regression guards", () => {
         }
     });
 
-    test("lsof must return a complete successful listing before reclamation", () => {
-        const original = Bun.spawnSync;
+    test("lsof must return a complete successful listing before reclamation", async () => {
+        const original = Bun.spawn.bind(Bun);
         let code = 1;
         let listing = "p123\nn/fixture/open\n";
-        const spawn = spyOn(Bun, "spawnSync").mockImplementation((_command, options) =>
+        let stderr = "";
+        const spawn = spyOn(Bun, "spawn").mockImplementation(() =>
             original(
                 [
                     process.execPath,
                     "-e",
-                    "console.log(" + SafeJSON.stringify(listing) + "); process.exit(" + code + ")",
+                    `process.stdout.write(${SafeJSON.stringify(listing)}); process.stderr.write(${SafeJSON.stringify(stderr)}); process.exit(${code})`,
                 ],
-                options
+                { stdout: "pipe", stderr: "pipe" }
             )
         );
         try {
-            expect(() => openPaths()).toThrow("listing incomplete");
+            await expect(openFiles()).rejects.toThrow("listing incomplete");
             code = 0;
-            expect(openPaths()).toEqual(["/fixture/open"]);
+            const open = await openFiles();
+            expect(open.holds("/fixture/open")).toBe(true);
+            expect(open.holds("/fixture/other")).toBe(false);
+            stderr = "lsof: can't read the process table";
+            await expect(openFiles()).rejects.toThrow("listing incomplete");
+            stderr = "";
+            listing = "p123\nftxt\n";
+            await expect(openFiles()).rejects.toThrow("listing incomplete");
             listing = "";
-            expect(() => openPaths()).toThrow("listing incomplete");
+            await expect(openFiles()).rejects.toThrow("listing incomplete");
         } finally {
             spawn.mockRestore();
         }
@@ -1889,22 +1897,22 @@ describe("round 1 regression guards", () => {
         }
     });
 
-    test("recentOpenFiles reads a new listing only once the last one is older than the limit", () => {
+    test("recentOpenFiles reads a new listing only once the last one is older than the limit", async () => {
         let clock = 1_000;
         let reads = 0;
         const recent = recentOpenFiles(
             5_000,
-            () => {
+            async () => {
                 reads++;
                 return new OpenFiles([], clock);
             },
             () => clock
         );
-        const first = recent();
+        const first = await recent();
         clock += 5_000;
-        expect(recent()).toBe(first);
+        expect(await recent()).toBe(first);
         clock += 1;
-        expect(recent()).not.toBe(first);
+        expect(await recent()).not.toBe(first);
         expect(reads).toBe(2);
     });
 
@@ -2797,9 +2805,10 @@ describe("round 7 review regressions", () => {
                     " : [], nativeTranscriptMaxDepth: () => 4, nativeHomePath: (kind, ...segments) => " +
                     SafeJSON.stringify(home) +
                     " + '/.' + kind + (segments.length ? '/' + segments.join('/') : '')}));",
-                "const spawn = Bun.spawnSync; Bun.spawnSync = (args, opts) => {",
-                "if (args[0] !== 'lsof') throw new Error('unexpected command');",
-                "return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file'),stderr:Buffer.alloc(0)}; };",
+                "Bun.spawnSync = () => { throw new Error('unexpected command'); };",
+                // The open-file listing is the one async spawn faked; any other spawn runs as it would.
+                "const spawn = Bun.spawn; Bun.spawn = (args, opts) => args[0] !== '/usr/sbin/lsof' ? spawn(args, opts) :",
+                "{stdout:'p1\\nn/unrelated-fixture-file',stderr:'',exited:Promise.resolve(0),kill(){}};",
             ].join("\n")
         );
         const execute = (args: string[], cwd?: string, extraEnv: Record<string, string> = {}) =>
@@ -3432,7 +3441,8 @@ describe("round 8 review regressions", () => {
                         ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
                     // The first listing shows nothing in the fixtures. The one after the moves shows held.txt where
                     // lsof names it by then, inside this apply's quarantine, or fails in the failure mode.
-                    "Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command');",
+                    "Bun.spawnSync=()=>{throw new Error('unexpected command');};",
+                    "const spawn=Bun.spawn;Bun.spawn=(args,opts)=>{if(args[0] !== '/usr/sbin/lsof') return spawn(args,opts);",
                     "original.appendFileSync(" +
                         SafeJSON.stringify(reads) +
                         ",'x'); const n=original.readFileSync(" +
@@ -3440,12 +3450,12 @@ describe("round 8 review regressions", () => {
                         ",'utf8').length;",
                     "if(n >= 2 && " +
                         SafeJSON.stringify(mode) +
-                        " === 'failure') return {exitCode:1,stdout:Buffer.alloc(0),stderr:Buffer.from('fixture failure')};",
+                        " === 'failure') return {stdout:'',stderr:'fixture failure',exited:Promise.resolve(1),kill(){}};",
                     "const held=n >= 2 ? original.readdirSync(" +
                         SafeJSON.stringify(root) +
                         ",{recursive:true}).map(String).find((p)=>p.includes('.tmp-reclaim-') && p.endsWith('fixture-second/held.txt')) : undefined;",
                     "const open=held ? " + SafeJSON.stringify(root) + "+'/'+held : '/unrelated-fixture-file';",
-                    "return {exitCode:0,stdout:Buffer.from('p1\\nn'+open+'\\n'),stderr:Buffer.alloc(0)};};",
+                    "return {stdout:'p1\\nn'+open+'\\n',stderr:'',exited:Promise.resolve(0),kill(){}};};",
                 ].join("\n")
             );
             const result = Bun.spawnSync(
@@ -3574,7 +3584,8 @@ describe("round 10 review regressions", () => {
                     "mock.module(" +
                         SafeJSON.stringify(providers) +
                         ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
-                    "Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file'),stderr:Buffer.alloc(0)};};",
+                    "Bun.spawnSync=()=>{throw new Error('unexpected command');};",
+                    "const spawn=Bun.spawn;Bun.spawn=(args,opts)=>args[0] !== '/usr/sbin/lsof' ? spawn(args,opts) : {stdout:'p1\\nn/unrelated-fixture-file',stderr:'',exited:Promise.resolve(0),kill(){}};",
                 ].join("\n")
             );
             const execute = (args: string[]) =>
@@ -4393,6 +4404,9 @@ describe("round 15 review regressions", () => {
                 "Bun.spawnSync=()=>{original.writeFileSync(" +
                     SafeJSON.stringify(scanned) +
                     ",'scanned');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file\\n'),stderr:Buffer.alloc(0)};};",
+                "const spawn=Bun.spawn;Bun.spawn=(args,opts)=>{if(args[0] !== '/usr/sbin/lsof') return spawn(args,opts);original.writeFileSync(" +
+                    SafeJSON.stringify(scanned) +
+                    ",'scanned');return {stdout:'p1\\nn/unrelated-fixture-file\\n',stderr:'',exited:Promise.resolve(0),kill(){}};};",
             ].join("\n")
         );
         const execute = (args: string[]) =>
@@ -4805,7 +4819,8 @@ describe("round 12 review regressions", () => {
                     "mock.module(" +
                         SafeJSON.stringify(providers) +
                         ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
-                    "Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture-file\\n'),stderr:Buffer.alloc(0)};};",
+                    "Bun.spawnSync=()=>{throw new Error('unexpected command');};",
+                    "const spawn=Bun.spawn;Bun.spawn=(args,opts)=>args[0] !== '/usr/sbin/lsof' ? spawn(args,opts) : {stdout:'p1\\nn/unrelated-fixture-file\\n',stderr:'',exited:Promise.resolve(0),kill(){}};",
                 ].join("\n")
             );
             const execute = (args: string[]) =>
@@ -5349,6 +5364,9 @@ describe("round 21 delivery and lifetime regressions", () => {
                     ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));Bun.spawnSync=()=>{original.writeFileSync(" +
                     SafeJSON.stringify(scanned) +
                     ",'scan');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture\\n'),stderr:Buffer.alloc(0)};};",
+                "const spawn=Bun.spawn;Bun.spawn=(args,opts)=>{if(args[0] !== '/usr/sbin/lsof') return spawn(args,opts);original.writeFileSync(" +
+                    SafeJSON.stringify(scanned) +
+                    ",'scan');return {stdout:'p1\\nn/unrelated-fixture\\n',stderr:'',exited:Promise.resolve(0),kill(){}};};",
             ].join("\n")
         );
         for (const createdAt of [
@@ -6211,7 +6229,8 @@ describe("round 31 exclusive reclaim quarantines", () => {
                 "mock.module(" +
                     SafeJSON.stringify(join(import.meta.dir, "../../../../src/utils/providers/session-paths.ts")) +
                     ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
-                "Bun.spawnSync=args=>{if(args[0]!=='lsof')throw new Error('unexpected command');return {exitCode:0,stdout:Buffer.from('p1\\nn/unrelated-fixture\\n'),stderr:Buffer.alloc(0)};};",
+                "Bun.spawnSync=()=>{throw new Error('unexpected command');};",
+                "const spawn=Bun.spawn;Bun.spawn=(args,opts)=>args[0]!=='/usr/sbin/lsof'?spawn(args,opts):{stdout:'p1\\nn/unrelated-fixture\\n',stderr:'',exited:Promise.resolve(0),kill(){}};",
             ].join("\n")
         );
         try {

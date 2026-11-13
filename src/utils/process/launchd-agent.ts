@@ -19,6 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { boundedCommand } from "./bounded-command";
 
 const realLaunchAgentsDir = (): string => join(homedir(), "Library", "LaunchAgents");
 let launchAgentsDir: () => string = realLaunchAgentsDir;
@@ -430,15 +431,35 @@ export interface LaunchctlResult {
 
 export type LaunchctlRunner = (args: readonly string[]) => Promise<LaunchctlResult>;
 
-const spawnLaunchctl: LaunchctlRunner = async (args) => {
-    const proc = Bun.spawn(["launchctl", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
-    return { exitCode, stdout, stderr };
-};
+/** A launchctl verb answers in well under a second; a stalled one must not block install, rollback or status. */
+const LAUNCHCTL_TIMEOUT_MS = 30_000;
+
+/** The exit code of a command that hit its deadline (the `timeout(1)` convention). */
+export const LAUNCHCTL_TIMEOUT_EXIT_CODE = 124;
+
+/**
+ * Run one launchctl command under a deadline. At the deadline the whole process group is terminated and reaped, and the
+ * result is exit code 124 with a stderr that says so, so every caller takes its ordinary failure path.
+ */
+export async function runLaunchctlCommand(command: string[], timeoutMs: number): Promise<LaunchctlResult> {
+    const result = await boundedCommand({ command, timeoutMs });
+
+    if (result.error?.code === "ETIMEDOUT") {
+        return {
+            exitCode: LAUNCHCTL_TIMEOUT_EXIT_CODE,
+            stdout: result.stdout,
+            stderr: `${command.join(" ")} timed out after ${timeoutMs} ms`,
+        };
+    }
+
+    if (result.error) {
+        return { exitCode: 1, stdout: result.stdout, stderr: result.error.message };
+    }
+
+    return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+}
+
+const spawnLaunchctl: LaunchctlRunner = (args) => runLaunchctlCommand(["launchctl", ...args], LAUNCHCTL_TIMEOUT_MS);
 
 let launchctlRunner: LaunchctlRunner = spawnLaunchctl;
 

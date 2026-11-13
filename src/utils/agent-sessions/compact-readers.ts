@@ -8,6 +8,7 @@ import { discoverClaudeHistorySources } from "./readers/claude-discovery";
 import { claudeMidWork } from "./readers/claude-mid-work";
 import { claudeClassifyPath, claudeReadSpawnLink } from "./readers/claude-paths";
 import { readClaudeStatistics } from "./readers/claude-statistics";
+import { claudeWorkflows } from "./readers/claude-workflows";
 import { createCodexHistoryOperations, readCodexSpawnLink } from "./readers/codex";
 import { codexAnalysis } from "./readers/codex-analysis";
 import { discoverCodexHistorySources } from "./readers/codex-discovery";
@@ -23,6 +24,7 @@ import { discoverGrokHistorySources, grokClassifyPath } from "./readers/grok-dis
 import { readGrokStatistics } from "./readers/grok-statistics";
 import { grokMidWork } from "./readers/grok-turn-state";
 import type { AgentKind, NativeSessionReader } from "./types";
+import { noWorkflowReader } from "./workflow-types";
 
 type CompactHistoryReaderOptions<Kind extends AgentKind> = Omit<NativeSessionReader<Kind>, "read">;
 
@@ -41,6 +43,7 @@ export const claudeHistoryReader = createCompactHistoryReader({
     // Claude permission prompts are delivered through hooks, not a transcript event log.
     dialog: claudeDialog,
     analysis: claudeAnalysis,
+    workflows: claudeWorkflows,
     windowTurns: deferredWindowTurns(import.meta, "./readers/claude-window-turns", "claudeWindowTurns"),
     roots: () => nativeSessionRoots("claude"),
     discover: discoverClaudeHistorySources,
@@ -66,6 +69,10 @@ export const codexHistoryReader = createCompactHistoryReader({
         pendingCall: codexPendingCall,
     },
     analysis: codexAnalysis,
+    // Codex has no multi-agent run tool: its sub-agents (spawn_agent) are sessions of their own, with no run record.
+    workflows: noWorkflowReader(
+        "Codex has no workflow tool: a rollout records no multi-agent run, only spawned agent threads."
+    ),
     windowTurns: deferredWindowTurns(import.meta, "./readers/codex-turns", "codexNativeLinesToTurns"),
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
@@ -85,6 +92,8 @@ export const grokHistoryReader = createCompactHistoryReader({
     kind: "grok",
     dialog: grokDialog,
     analysis: grokAnalysis,
+    // Grok CLI has no multi-agent run tool and writes no run record or journal.
+    workflows: noWorkflowReader("Grok has no workflow tool: its session folder holds no run record and no journal."),
     windowTurns: deferredWindowTurns(import.meta, "../ai/transcripts/grok", "grokNativeLinesToTurns"),
     roots: () => nativeSessionRoots("grok"),
     discover: discoverGrokHistorySources,

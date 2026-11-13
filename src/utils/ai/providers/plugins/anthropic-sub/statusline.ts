@@ -16,6 +16,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { ancestry, readProcessEnvironment } from "@genesiscz/utils/process/processes";
 import { claudeJsonPath, nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
+import { nonEmptyString } from "@genesiscz/utils/string";
 
 /**
  * Claude Code's statusline, as the host feature the generic renderer drives.
@@ -43,10 +44,6 @@ interface TranscriptFacts {
 }
 
 const transcriptFacts = new WeakMap<StatuslinePayload, Promise<TranscriptFacts>>();
-
-function asString(value: unknown): string | null {
-    return typeof value === "string" && value.length > 0 ? value : null;
-}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -141,11 +138,11 @@ async function scanTail(path: string, bytes: number): Promise<TranscriptFacts> {
                 continue;
             }
 
-            const type = asString(record.type);
+            const type = nonEmptyString(record.type);
 
             if (type === "assistant") {
                 const message = asRecord(record.message);
-                const model = asString(message?.model);
+                const model = nonEmptyString(message?.model);
 
                 if (model && model !== "<synthetic>") {
                     modelId = model;
@@ -153,7 +150,7 @@ async function scanTail(path: string, bytes: number): Promise<TranscriptFacts> {
             }
 
             if ((type === "user" || type === "assistant") && record.isSidechain !== true) {
-                lastMessageIso = asString(record.timestamp) ?? lastMessageIso;
+                lastMessageIso = nonEmptyString(record.timestamp) ?? lastMessageIso;
             }
         }
     } catch (error) {
@@ -224,7 +221,7 @@ async function resolveSessionName(payload: StatuslinePayload, cache: StatuslineC
             const record = asRecord(candidate);
 
             if (record && record.sessionId === payload.sessionId) {
-                name = asString(record.customTitle);
+                name = nonEmptyString(record.customTitle);
                 break;
             }
         }
@@ -244,7 +241,7 @@ async function resolveSessionName(payload: StatuslinePayload, cache: StatuslineC
  * `ps eww`, cached per session because the answer cannot change while the session lives.
  */
 export function resolveAccountName(payload: StatuslinePayload, cache: StatuslineCache, now: number): string | null {
-    const fromEnv = asString(env.getProcessEnv()[accountEnvVar("claude")]);
+    const fromEnv = nonEmptyString(env.getProcessEnv()[accountEnvVar("claude")]);
 
     if (fromEnv) {
         return fromEnv;
@@ -295,7 +292,7 @@ export function accountFromPinJournal(sessionId: string, path = pinJournalPath()
                 const pin = asRecord(SafeJSON.parse(line, { strict: true }));
 
                 if (pin && pin.sessionId === sessionId && (pin.provider === undefined || pin.provider === "claude")) {
-                    account = asString(pin.account);
+                    account = nonEmptyString(pin.account);
                 }
             } catch (error) {
                 logger.debug({ err: error, path }, "statusline: skipping an unparseable pin journal line");
@@ -431,7 +428,7 @@ export function parseInstalledCommand(text: string): string | null {
     const settings = asRecord(parsed);
     const statusLine = asRecord(settings?.statusLine);
 
-    return asString(statusLine?.command);
+    return nonEmptyString(statusLine?.command);
 }
 
 function readSettingsRecord(path: string): Record<string, unknown> {
@@ -474,7 +471,7 @@ async function readInstalledCommand(): Promise<string | null> {
     const settings = readSettingsRecord(path);
     const statusLine = asRecord(settings.statusLine);
 
-    return asString(statusLine?.command);
+    return nonEmptyString(statusLine?.command);
 }
 
 async function writeInstalledCommand(command: string | null): Promise<void> {
