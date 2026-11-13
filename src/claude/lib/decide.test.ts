@@ -55,6 +55,14 @@ describe("decide", () => {
             { sessionExists: () => true, send: () => true }
         );
         expect(set.text).toBe("DECISION 15: ac)");
+
+        // The reader takes a run only when it rises ("bad" is a word), so a set given in any order is typed rising.
+        const unordered = await answerDecision(
+            { session: SESSION, decision: "15", option: "ca" },
+            { sessionExists: () => true, send: () => true }
+        );
+        expect(unordered.text).toBe("DECISION 15: ac)");
+        expect(validateDecide({ session: SESSION, decision: "15", option: "dba" }).option).toBe("abd");
     });
 
     test("an unknown session, a non-integer decision, or a multi-letter option never reach the send primitive", async () => {

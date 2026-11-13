@@ -63,7 +63,11 @@ export function validateDecide(input: {
         throw new Error("question must be a form id (letters, numbers, _ or -)");
     }
 
-    return { ...target, option: input.option, ...(question ? { question } : {}) };
+    // A set has no order, but the chat reader takes a run of letters only when it rises (`lettersOf` in
+    // chat-answers.ts), so "bad" is never a set: `ca` is typed as `ac)`, the form the decision log stores too.
+    const option = [...input.option].sort().join("");
+
+    return { ...target, option, ...(question ? { question } : {}) };
 }
 
 /** A Claude session exists when its transcript does: `~/.claude/projects/<project>/<id>.jsonl`. */
