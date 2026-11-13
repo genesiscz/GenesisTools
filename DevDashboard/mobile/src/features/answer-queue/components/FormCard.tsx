@@ -32,7 +32,9 @@ export function FormCard({
     // Kept by the screen: a form scrolled far away unmounts, and the answers typed so far must survive that.
     const [draft, setDraft] = useKeptState<FormDraft>((kept) => kept.forms, form.id, () => ({}));
     const missing = missingAnswers(form, draft);
-    const canSend = missing.length === 0 && !answer.isPending;
+    // The answer was taken at the Send tap: an edit while it is on the way would show an answer the Mac never got.
+    const frozen = answer.isPending;
+    const canSend = missing.length === 0 && !frozen;
 
     const update = (itemId: string, patch: Partial<FormDraft[string]>) =>
         setDraft((current) => ({
@@ -60,7 +62,8 @@ export function FormCard({
                                     key={choice.id}
                                     testID={`${testId}-${question.itemId}-${choice.id}`}
                                     accessibilityRole={question.multiple ? "checkbox" : "radio"}
-                                    accessibilityState={{ checked: picked }}
+                                    accessibilityState={{ checked: picked, disabled: frozen }}
+                                    disabled={frozen}
                                     accessibilityLabel={choice.label}
                                     accessibilityHint={choice.rationale ?? undefined}
                                     onPress={() =>
@@ -100,6 +103,7 @@ export function FormCard({
                                 placeholder={question.choices.length > 0 ? "Or type an answer…" : "Type an answer…"}
                                 placeholderTextColor={c.textMuted}
                                 value={current.text}
+                                editable={!frozen}
                                 onChangeText={(text) => update(question.itemId, { text })}
                                 multiline
                                 className="min-h-11 rounded-lg border border-dd-border bg-dd-bg-base px-3 py-2"
