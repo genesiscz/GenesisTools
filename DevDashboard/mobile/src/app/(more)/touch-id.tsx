@@ -2,7 +2,7 @@ import type { GateDecisionDto, GateRaiseReceiptDto, GateWaitDto } from "@dd/cont
 import { Stack } from "expo-router";
 import { memo, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
-import { idempotencyKey } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { useGateLedger, useRaiseGate } from "@/features/gates/hooks";
 import { GATE_LABELS, requestBytes, waitLine } from "@/features/gates/queries";
 import { Empty } from "@/ui/Empty";

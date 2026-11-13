@@ -1,7 +1,7 @@
 import type { MemoActionKind } from "@dd/contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDashboardClient } from "@/api/client-provider";
-import { idempotencyKey } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { actOnMemo, memosKeys, memosQuery } from "@/features/memos/queries";
 
 export function useMemos() {

@@ -187,12 +187,10 @@ export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
 };
 
 /**
- * A key that makes a write safe to retry: the Mac answers a repeat with the first answer. Made once per user
- * action and passed in the mutation's variables, so a retry of the same action sends the same key.
+ * Moved to `@/lib/idempotency`: every feature makes these keys, so no feature should depend on the answer queue for
+ * one. Kept here only until the screens that still import it from this module move to the shared one.
  */
-export function idempotencyKey(): string {
-    return `phone-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
+export { idempotencyKey } from "@/lib/idempotency";
 
 export function decisionsOf(session: WaitingSessionDto): WaitingDecisionDto[] {
     return session.items.filter((item): item is WaitingDecisionDto => item.kind === "decision");

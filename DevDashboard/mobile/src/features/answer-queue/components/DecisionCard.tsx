@@ -5,7 +5,6 @@ import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { KeptEditsContext, useKeptState, useStagePick } from "@/features/answer-queue/hooks";
 import {
     flushDecision,
-    idempotencyKey,
     type NoteState,
     noteIsDirty,
     noteStateOf,
@@ -13,6 +12,7 @@ import {
     stagesOf,
     toggleStagedLetter,
 } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { useThemeColors } from "@/theme/colors";
 
 interface DecisionCardProps {

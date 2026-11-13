@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useDashboardClient } from "@/api/client-provider";
-import { idempotencyKey } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { appendText, clipLink } from "@/features/vault/queries";
 
 export function useClipLink() {

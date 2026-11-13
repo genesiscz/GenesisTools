@@ -7,13 +7,13 @@ import { WriteError } from "@/features/answer-queue/components/ReceiptLine";
 import { useSendStaged } from "@/features/answer-queue/hooks";
 import {
     flushThenSend,
-    idempotencyKey,
     queueSessionKey,
     type RecentReceipt,
     shownDrafts,
     singleFlight,
     stagedOf,
 } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { Card } from "@/ui/Card";
 import { StatusPill } from "@/ui/StatusPill";
 import { useThemeColors } from "@/theme/colors";

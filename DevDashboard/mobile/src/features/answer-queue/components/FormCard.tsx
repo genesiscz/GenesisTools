@@ -5,11 +5,11 @@ import { useAnswerForm, useKeptState } from "@/features/answer-queue/hooks";
 import {
     type FormDraft,
     formAnswers,
-    idempotencyKey,
     missingAnswers,
     type RecentReceipt,
     togglePick,
 } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { useThemeColors } from "@/theme/colors";
 
 /**

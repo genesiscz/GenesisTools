@@ -4,7 +4,7 @@ import { Stack } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { useDashboardClient, useIsMockClient } from "@/api/client-provider";
-import { idempotencyKey } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { getPref, setPref } from "@/lib/storage/kv";
 import { pushIdentity } from "@/push/push-keys";
 import { registerForPush } from "@/push/push";
