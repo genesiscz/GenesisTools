@@ -560,6 +560,16 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(throttle.offer("f4", at: 1.5), "f4", "and the next offer tries again")
     }
 
+    func testTheFollowKeepsTheHeardLineOfALongBlockInView() {
+        let first = TranscriptHeard(blockID: "b-1", lineID: "1")
+        XCTAssertEqual(TranscriptFollowTarget.of(from: nil, to: first), .block("b-1"), "the first heard line")
+        XCTAssertEqual(TranscriptFollowTarget.of(from: first, to: TranscriptHeard(blockID: "b-1", lineID: "2")), .line("2"),
+                       "the next line of one speaker's long block: it followed only a new block before")
+        XCTAssertEqual(TranscriptFollowTarget.of(from: first, to: TranscriptHeard(blockID: "b-3", lineID: "3")), .block("b-3"))
+        XCTAssertNil(TranscriptFollowTarget.of(from: first, to: TranscriptHeard(blockID: "b-1", lineID: "1", wordRange: NSRange(location: 4, length: 3))),
+                     "only the heard word moved")
+    }
+
     func testAskingForTheShownFrameAgainDropsTheDecodeInFlight() {
         var throttle = ScreenFrameThrottle()
         XCTAssertEqual(throttle.offer("a", at: 0), "a")

@@ -246,6 +246,9 @@ struct TranscriptBlockView: View, Equatable {
                         wordRange: line.id == heardLineID ? heardWordRange : nil,
                         selected: selected.contains(line.id), past: past, play: play, select: select, selectWords: selectWords
                     )
+                    // A scroll target of its own: a speaker's block can be taller than the pane, and the follow keeps
+                    // the heard line, not only its block, in view.
+                    .id(line.id)
                 }
             }
             // A reader loses the way back to the start of a line of 180 characters, which a wide window drew.

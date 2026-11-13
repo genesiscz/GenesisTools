@@ -337,6 +337,21 @@ private struct FollowingBlocks: View {
     }
 }
 
+/// Where the transcript's follow scrolls when the heard line moves.
+enum TranscriptFollowTarget: Equatable {
+    /// A new block: centre it (the lazy stack places it by its id), then keep its heard line in view.
+    case block(String)
+    /// A next line of the same block: the least scroll that keeps it in view. A speaker's block taller than the pane
+    /// did not follow at all: its id did not change while the heard line left the view.
+    case line(String)
+
+    /// Nil when only the heard word moved.
+    static func of(from old: TranscriptHeard?, to now: TranscriptHeard) -> Self? {
+        guard old?.blockID == now.blockID else { return .block(now.blockID) }
+        return old?.lineID == now.lineID ? nil : .line(now.lineID)
+    }
+}
+
 /// The blocks, given the heard line and the end of the last block passed: only the heard block redraws when the
 /// heard line moves (G-TR-2); a new heard block scrolls into view while the pane follows, instantly under Reduce
 /// Motion. `==` compares what it shows and leaves the callbacks out.
@@ -377,28 +392,38 @@ private struct FollowingList: View, Equatable {
                     .padding(.vertical, 4)
                     .background(UserScrollProbe(onUserScroll: scrolledAway))
             }
-            .onChange(of: heard?.blockID) { _, block in
-                guard follows, let block else { return }
-                scroll(proxy, to: block)
+            .onChange(of: heard) { old, now in
+                guard follows, let now, let target = TranscriptFollowTarget.of(from: old, to: now) else { return }
+                switch target {
+                case .block(let block): scroll(proxy, to: block, anchor: .center, thenLine: now.lineID)
+                case .line(let line): scroll(proxy, to: line, anchor: nil)
+                }
             }
             // A pane that opens while a Moment plays starts at the heard line: it scrolled only when the heard block
             // changed, so beside a clip that stays in one block it showed the meeting's first lines to the end.
             .onAppear {
-                guard follows, let block = heard?.blockID else { return }
-                DispatchQueue.main.async { proxy.scrollTo(block, anchor: .center) }
+                guard follows, let heard else { return }
+                DispatchQueue.main.async {
+                    proxy.scrollTo(heard.blockID, anchor: .center)
+                    DispatchQueue.main.async { proxy.scrollTo(heard.lineID, anchor: .center) }
+                }
             }
+            // "Jump to now" centres the heard line: a long block centred on its middle could leave that line outside.
             .onChange(of: jump) { _, _ in
-                if let block = heard?.blockID { scroll(proxy, to: block) }
+                if let heard { scroll(proxy, to: heard.blockID, anchor: .center, thenLine: heard.lineID, lineAnchor: .center) }
             }
         }
     }
 
-    private func scroll(_ proxy: ScrollViewProxy, to block: String) {
+    private func scroll(_ proxy: ScrollViewProxy, to id: String, anchor: UnitPoint?, thenLine line: String? = nil,
+                        lineAnchor: UnitPoint? = nil) {
         if reduceMotion {
-            proxy.scrollTo(block, anchor: .center)
+            proxy.scrollTo(id, anchor: anchor)
         } else {
-            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(block, anchor: .center) }
+            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: anchor) }
         }
+        // The line's id is known once its block is laid out: one turn later.
+        if let line { DispatchQueue.main.async { proxy.scrollTo(line, anchor: lineAnchor) } }
     }
 }
 
