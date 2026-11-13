@@ -289,6 +289,18 @@ final class DisplayChangeTests: XCTestCase {
         XCTAssertFalse(geometry.acceptsClick(at: CGPoint(x: -50, y: 50)))
     }
 
+    func testADisplayCanvasCutsTheClickRegionsOfAWindowThatReachesPastIt() {
+        let display = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let edge = CGRect(x: 1240, y: 100, width: 600, height: 400)
+        let offscreen = CGRect(x: 1600, y: 100, width: 300, height: 300)
+        let geometry = CursorTrackGeometry(rect: cursorTrackRect(display: display, movie: CGSize(width: 1440, height: 900)),
+                                           clickRegions: [edge, offscreen], canvas: display)
+        XCTAssertEqual(geometry.clickRegions, [CGRect(x: 1240, y: 100, width: 200, height: 400)],
+                       "the part past the canvas is not in the movie, and a window wholly past it gives no region")
+        XCTAssertTrue(geometry.acceptsClick(at: CGPoint(x: 1300, y: 200)))
+        XCTAssertFalse(geometry.acceptsClick(at: CGPoint(x: 1500, y: 200)), "a click the movie never showed")
+    }
+
     func testCursorTrackRectKeepsTheFirstDisplayAndAFreeSizedStream() {
         let laptop = CGRect(x: 0, y: 0, width: 2056, height: 1329)
         let same = cursorTrackRect(display: laptop, movie: CGSize(width: 4112, height: 2658))

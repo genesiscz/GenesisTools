@@ -146,6 +146,12 @@ public struct CursorTrackGeometry {
         self.clickRegions = clickRegions
     }
 
+    /// Click regions cut to `canvas`, the part of the screen the movie holds. A window that reaches past a display
+    /// canvas is clipped out of the picture, so a click there lands on nothing the recording shows.
+    public init(rect: CGRect, clickRegions: [CGRect], canvas: CGRect) {
+        self.init(rect: rect, clickRegions: clickRegions.map { $0.intersection(canvas) }.filter { !$0.isNull && !$0.isEmpty })
+    }
+
     public func normalized(_ point: CGPoint) -> CGPoint? {
         guard rect.width > 0, rect.height > 0 else { return nil }
         return CGPoint(x: (point.x - rect.minX) / rect.width, y: (point.y - rect.minY) / rect.height)
