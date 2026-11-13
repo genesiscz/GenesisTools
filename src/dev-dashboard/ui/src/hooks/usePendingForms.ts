@@ -1,6 +1,11 @@
 import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import type { LiveAskForm } from "@app/dev-dashboard/contract/live";
-import { applyPendingFrame, mergePendingSnapshot, nextPendingSequence } from "@app/dev-dashboard/lib/qa-pending-merge";
+import {
+    applyPendingFrame,
+    mergePendingSnapshot,
+    nextPendingSequence,
+    stampStreamSnapshot,
+} from "@app/dev-dashboard/lib/qa-pending-merge";
 import type { AskForm } from "@app/question/lib/pending/types";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -94,6 +99,7 @@ export function usePendingForms(): { forms: AskForm[]; isLoading: boolean; refet
             if (frame.type === "snapshot") {
                 const snapshot = frame.payload.forms.map(asAskForm);
                 const fetchedAt = nextPendingSequence();
+                stampStreamSnapshot(snapshot, lastSseAt.current, fetchedAt);
 
                 setById((prev) =>
                     mergePendingSnapshot({

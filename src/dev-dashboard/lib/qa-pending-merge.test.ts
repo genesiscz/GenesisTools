@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import type { AskForm } from "@app/question/lib/pending/types";
-import { applyPendingFrame, mergePendingSnapshot, nextPendingSequence } from "./qa-pending-merge";
+import { applyPendingFrame, mergePendingSnapshot, nextPendingSequence, stampStreamSnapshot } from "./qa-pending-merge";
 
 function form(id: string, status: AskForm["status"] = "pending", createdAt = 1000): AskForm {
     return {
@@ -142,5 +142,47 @@ describe("applyPendingFrame", () => {
         const next = applyPendingFrame(new Map(), { id: "a", form: form("a") }, resolved);
 
         expect(next.has("a")).toBe(false);
+    });
+});
+
+describe("the live channel's snapshot frame", () => {
+    test("a form it delivered survives an older REST snapshot that lands after it", () => {
+        const lastSseAt = new Map<string, number>();
+        const restRequestedAt = nextPendingSequence();
+        const streamAt = nextPendingSequence();
+        stampStreamSnapshot([form("new")], lastSseAt, streamAt);
+        const onScreen = mergePendingSnapshot({
+            snapshot: [form("new")],
+            previous: new Map(),
+            resolved: NOTHING_RESOLVED,
+            lastSseAt,
+            fetchedAt: streamAt,
+        });
+
+        const next = mergePendingSnapshot({
+            snapshot: [],
+            previous: onScreen,
+            resolved: NOTHING_RESOLVED,
+            lastSseAt,
+            fetchedAt: restRequestedAt,
+        });
+
+        expect([...next.keys()]).toEqual(["new"]);
+    });
+
+    test("a REST snapshot requested after it still drops a form that is gone", () => {
+        const lastSseAt = new Map<string, number>();
+        const streamAt = nextPendingSequence();
+        stampStreamSnapshot([form("gone")], lastSseAt, streamAt);
+
+        const next = mergePendingSnapshot({
+            snapshot: [],
+            previous: new Map([["gone", form("gone")]]),
+            resolved: NOTHING_RESOLVED,
+            lastSseAt,
+            fetchedAt: nextPendingSequence(),
+        });
+
+        expect(next.size).toBe(0);
     });
 });
