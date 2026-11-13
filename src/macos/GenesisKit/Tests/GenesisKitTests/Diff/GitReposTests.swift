@@ -33,7 +33,10 @@ final class GitReposTests: XCTestCase {
         try git(["commit", "--allow-empty", "-q", "-m", "Second"], in: root)
         model.refresh()
         await wait("refresh after identical porcelain status") { model.generation > generation }
-        XCTAssertEqual(model.status, status)
+        // The porcelain list is the same; only HEAD moved, which the status now carries.
+        XCTAssertEqual(model.status?.entries, status?.entries)
+        XCTAssertEqual(model.status?.branch, status?.branch)
+        XCTAssertNotEqual(model.status?.head, status?.head)
     }
 
     func testTheFileStateFollowsAStageWithoutBeingAsked() async throws {
