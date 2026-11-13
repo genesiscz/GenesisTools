@@ -115,4 +115,45 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         }
         XCTAssertEqual(planned, reach)
     }
+
+    // MARK: An older settings read cannot put the raw config back (PR 759)
+
+    private final class HeldReads {
+        var waiting: [CheckedContinuation<ConfigShow, Error>] = []
+    }
+
+    private func config(language: String) throws -> ConfigShow {
+        try JSONDecoder().decode(ConfigShow.self, from: Data("""
+        {"path":"/x/config.json","value":{"version":3,"global":{"dictionary":{"entries":[]},"language":"\(language)",
+         "capture":{"backend":"native","displays":2,"activeFps":1,"idleFps":0.1,"threshold":0.02,"jpegQuality":0.75,
+         "resolutionCap":2880,"retentionDays":30,"recorders":{}},"assign":{"ask":true,"lookbackHours":48,"maxProposals":5,
+         "calendarSlackMin":15,"calendarLookbehindHours":6,"folderWaitDays":30,"retryFailedMin":20},"suggest":{"applyAbove":0.5,"listenBelow":0.6}},
+         "projects":{},"sources":{},"languages":{}}}
+        """.utf8))
+    }
+
+    private func until(_ what: String, _ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(3)
+        while !condition() {
+            guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    func testAnOlderSettingsReadThatLandsLastIsDropped() async throws {
+        let window = MeetingsWindowModel(defaults: defaults, service: nil, loadDetail: { _ in })
+        let held = HeldReads()
+        window.readSettings = { _ in try await withCheckedThrowingContinuation { held.waiting.append($0) } }
+        window.loadSettings(quiet: true)
+        try await until("the first read waits") { held.waiting.count == 1 }
+        window.loadSettings(quiet: true)
+        try await until("the second read waits") { held.waiting.count == 2 }
+        let newer = try config(language: "en"), older = try config(language: "cs")
+        held.waiting[1].resume(returning: newer)
+        try await until("the newer read lands") { window.settingsRaw == newer.raw }
+        held.waiting[0].resume(returning: older)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(window.settingsRaw, newer.raw, "the next write names the value the config holds, not an older read")
+        XCTAssertEqual(window.settings.value, newer.value)
+    }
 }

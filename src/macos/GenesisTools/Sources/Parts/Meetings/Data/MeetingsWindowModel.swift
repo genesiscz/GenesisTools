@@ -315,10 +315,15 @@ final class MeetingsWindowModel {
 
     func loadSettings(quiet: Bool = false) {
         if !quiet { settings = .loading(previous: settings.value) }
+        settingsGeneration += 1
+        let generation = settingsGeneration
         Task {
             let next: Loadable<MeetingsSettings>
             do {
-                let shown = try await Self.settingsRead.run(service: service)
+                let shown = try await readSettings(service)
+                // Only the newest read: an older one landing after a write's read would put `settingsRaw` back, and the
+                // next write would name that value and be refused as `config-stale`.
+                guard generation == settingsGeneration else { return }
                 if settingsRaw != shown.raw {
                     if settingsRaw?.at(["global", "playback", "listen"]) != shown.raw.at(["global", "playback", "listen"]) {
                         player.invalidateClipCache()
@@ -327,11 +332,18 @@ final class MeetingsWindowModel {
                 }
                 next = .loaded(shown.value)
             } catch {
+                guard generation == settingsGeneration else { return }
                 next = .failed(asFailure(error), previous: settings.value)
             }
             if settings != next { settings = next }
         }
     }
+
+    /// The config read `loadSettings` runs; a test answers it in its own order.
+    @ObservationIgnored var readSettings: (MeetingsService?) async throws -> ConfigShow = { service in
+        try await MeetingsWindowModel.settingsRead.run(service: service)
+    }
+    @ObservationIgnored private var settingsGeneration = 0
 
     // MARK: Config writes from the window (the side panel's engine rows, the Contacts view's sources)
 
