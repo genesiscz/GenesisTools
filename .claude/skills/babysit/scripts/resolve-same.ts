@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import ts from "typescript";
 import { HOOKS_OFF, spawnGit } from "./versions";
 
@@ -213,8 +214,7 @@ function run(cwd: string): number {
                     return stop(`${commit}: ${file}: real or unsupported conflict`);
                 }
                 if (file.endsWith(".json")) {
-                    // biome-ignore lint/style/noRestrictedGlobals: This check requires strict JSON parsing.
-                    JSON.parse(result.text);
+                    SafeJSON.parse(result.text, { strict: true });
                 } else {
                     const ext = file.split(".").pop();
                     if (ext === "ts" || ext === "tsx" || ext === "js") {
