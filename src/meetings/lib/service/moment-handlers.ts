@@ -1,5 +1,6 @@
-import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { existsSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore, TONE_PRESET_NAMES, TONE_PRESETS } from "@genesiscz/utils/meetings/config";
@@ -199,7 +200,19 @@ export async function previewTone(
     const path = join(toolDataDir("meetings-cache", "tones"), `tone-${key}.wav`);
 
     if (!existsSync(path)) {
-        await (deps.tone ?? cutTone)(sound, path);
+        // Made beside its place and renamed in only after success: a second preview never returns a half-written WAV,
+        // and a failed run leaves nothing that a later preview would return instead of trying again.
+        const pending = join(dirname(path), `.tone-${key}-${process.pid}-${randomUUID()}.wav`);
+
+        try {
+            await (deps.tone ?? cutTone)(sound, pending);
+            renameSync(pending, path);
+        } finally {
+            if (existsSync(pending)) {
+                unlinkSync(pending);
+            }
+        }
+
         log.debug({ path, sound }, "tone preview made");
     }
 
