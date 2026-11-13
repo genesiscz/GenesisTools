@@ -1,3 +1,4 @@
+import { SafeJSON } from "@genesiscz/utils/json";
 import * as SecureStore from "expo-secure-store";
 import Storage from "expo-sqlite/kv-store";
 import type {
@@ -101,7 +102,7 @@ export async function loadConnections(): Promise<SavedConnection[]> {
             return [];
         }
 
-        const parsed: unknown = JSON.parse(raw);
+        const parsed: unknown = SafeJSON.parse(raw, { strict: true });
 
         if (!Array.isArray(parsed)) {
             console.warn("[connections] stored connections were not an array; ignoring");
@@ -116,7 +117,7 @@ export async function loadConnections(): Promise<SavedConnection[]> {
 }
 
 async function persistConnections(list: SavedConnection[]): Promise<void> {
-    await Storage.setItem(CONNECTIONS_KEY, JSON.stringify(list));
+    await Storage.setItem(CONNECTIONS_KEY, SafeJSON.stringify(list));
 }
 
 export async function getActiveConnectionId(): Promise<string | null> {

@@ -1,3 +1,4 @@
+import { SafeJSON } from "@genesiscz/utils/json";
 import Storage from "expo-sqlite/kv-store";
 
 export type TerminalDriverId = "webview-ttyd" | "webview-html" | "native";
@@ -20,7 +21,7 @@ export async function getPref<K extends keyof Prefs>(key: K): Promise<Prefs[K] |
     }
 
     try {
-        return JSON.parse(v) as Prefs[K];
+        return SafeJSON.parse(v, { strict: true }) as Prefs[K];
     } catch {
         // A corrupt or legacy stored value reads as "unset" rather than rejecting every caller.
         return null;
@@ -28,7 +29,7 @@ export async function getPref<K extends keyof Prefs>(key: K): Promise<Prefs[K] |
 }
 
 export async function setPref<K extends keyof Prefs>(key: K, value: Prefs[K]): Promise<void> {
-    await Storage.setItem(key, JSON.stringify(value));
+    await Storage.setItem(key, SafeJSON.stringify(value));
 }
 
 export async function removePref<K extends keyof Prefs>(key: K): Promise<void> {
