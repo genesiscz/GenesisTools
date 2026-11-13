@@ -67,13 +67,21 @@ export async function prepareVoiceModel(): Promise<string> {
     }
     return asset.path;
 }
+/** A sample that cannot be scored by its nature (no model, too short, quiet, too little speech): identity stays unknown. */
+export class VoiceUnavailableError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "VoiceUnavailableError";
+    }
+}
+
 let runtime: { model: string; extractor: Extractor } | undefined;
 export function localVoiceBackend(): { model: string; extractor: Extractor } {
     if (runtime) {
         return runtime;
     }
     if (!existsSync(EMBEDDING_MODEL.file)) {
-        throw new Error("Speaker model unavailable; run meetings voice prepare explicitly");
+        throw new VoiceUnavailableError("Speaker model unavailable; run meetings voice prepare explicitly");
     }
     const model = `campplus:${createHash("sha256").update(readFileSync(EMBEDDING_MODEL.file)).digest("hex")}`;
     const sherpa: Sherpa = createRequire(import.meta.url)("sherpa-onnx-node");
@@ -95,19 +103,19 @@ export async function embedVoice(options: {
     toSec: number;
 }): Promise<{ model: string; embedding: number[] }> {
     if (options.toSec - options.fromSec < 1.5) {
-        throw new Error("Voice sample needs at least 1.5 seconds of confirmed single-speaker speech");
+        throw new VoiceUnavailableError("Voice sample needs at least 1.5 seconds of confirmed single-speaker speech");
     }
     const backend = localVoiceBackend();
     const samples = await toFloat32AudioWindow(options.audioPath, options);
     const rms = Math.sqrt(samples.reduce((sum, n) => sum + n * n, 0) / Math.max(1, samples.length));
     if (rms < 0.002) {
-        throw new Error("Voice sample is quiet; identity remains unknown");
+        throw new VoiceUnavailableError("Voice sample is quiet; identity remains unknown");
     }
     const stream = backend.extractor.createStream();
     stream.acceptWaveform({ samples, sampleRate: 16000 });
     stream.inputFinished();
     if (!backend.extractor.isReady(stream)) {
-        throw new Error("Not enough speech for a speaker embedding");
+        throw new VoiceUnavailableError("Not enough speech for a speaker embedding");
     }
     const embedding = Array.from(backend.extractor.compute(stream));
     if (!embedding.length || embedding.some((n) => !Number.isFinite(n))) {

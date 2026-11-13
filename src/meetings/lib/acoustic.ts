@@ -11,6 +11,7 @@ import {
     saveVoiceSample,
     scoreVoice,
     type VoiceMatch,
+    VoiceUnavailableError,
     voiceEvidenceSchema,
 } from "@genesiscz/utils/meetings/voice";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -63,8 +64,25 @@ export async function voiceMeeting(options: {
     person?: string;
 }) {
     const { folder, audioPath, record } = await acousticMeeting(options.store, options.meeting);
-    const voice = await embedVoice({ audioPath, ...options });
     const file = join(folder, "voices.json");
+    let voice: Awaited<ReturnType<typeof embedVoice>>;
+    try {
+        voice = await embedVoice({ audioPath, ...options });
+    } catch (error) {
+        // Scoring a sample that cannot be scored is an unknown voice; enrolling one stays a refusal to act on.
+        if (options.person || !(error instanceof VoiceUnavailableError)) {
+            throw error;
+        }
+
+        const match: VoiceMatch = {
+            model: readVoiceSamples(file)[0]?.model ?? "unavailable",
+            quality: "unknown",
+            candidates: [],
+            reason: error.message,
+        };
+        return match;
+    }
+
     if (options.person) {
         mkdirSync(folder, { recursive: true });
         saveVoiceSample(file, {
@@ -80,6 +98,29 @@ export async function voiceMeeting(options: {
     return scoreVoice({ ...voice, samples: readVoiceSamples(file) });
 }
 
+/** Every `factor` samples averaged into one: a low-pass copy at a lower rate for the lag search. */
+export function decimate(samples: Float32Array, factor: number): Float32Array {
+    const out = new Float32Array(Math.floor(samples.length / factor));
+
+    for (let i = 0; i < out.length; i++) {
+        let sum = 0;
+
+        for (let j = 0; j < factor; j++) {
+            sum += samples[i * factor + j]!;
+        }
+
+        out[i] = sum / factor;
+    }
+
+    return out;
+}
+
+/** The recording as it was read: a change of size or time means its scores were measured on other audio. */
+function sourceFingerprint(audioPath: string): string {
+    const stat = statSync(audioPath);
+    return SafeJSON.stringify([audioPath, stat.size, stat.mtimeMs]);
+}
+
 /** All three tracks are returned, even for a cleaned preview. Originals are never rewritten. */
 export async function acousticClip(options: { store: MeetingStore; meeting: string; fromSec: number; toSec: number }) {
     const { audioPath, folder, layout } = await acousticMeeting(options.store, options.meeting);
@@ -91,7 +132,9 @@ export async function acousticClip(options: { store: MeetingStore; meeting: stri
         toFloat32AudioWindow(audioPath, { ...options, channel }),
         toFloat32AudioWindow(audioPath, { ...options, channel: channel === 0 ? 1 : 0 }),
     ]);
-    const metric = correlateEcho({ mic, call, rate: 16000 });
+    // The lag and gain come from a 2 kHz copy, as the cache collector measures them: the exhaustive search at 16 kHz
+    // took about 476 million sample steps for a minute, on the service's one thread.
+    const metric = correlateEcho({ mic: decimate(mic, 8), call: decimate(call, 8), rate: 2000 });
     const lag = Math.round(metric.lagMs * 16);
     const clean = Float32Array.from(mic, (sample, i) => sample - metric.gain * (call[i - lag] ?? 0));
     const dir = join(folder, "acoustic-clips");
@@ -135,6 +178,9 @@ export async function collectVoiceEvidence(store: MeetingStore, meeting: string)
         throw new Error("Voice evidence needs calibrated channels");
     }
     const enrolmentFile = join(folder, "voices.json");
+    // The inputs as the scores use them: published only when neither changed during the long embedding loop.
+    const enrolment = Bun.hash(readFileSync(enrolmentFile)).toString();
+    const source = sourceFingerprint(audioPath);
     const samples = readVoiceSamples(enrolmentFile);
     if (!samples.length) {
         throw new Error("Enrol confirmed voices before collecting identity evidence");
@@ -175,13 +221,13 @@ export async function collectVoiceEvidence(store: MeetingStore, meeting: string)
                       reason: voice?.quality === "unknown" ? voice.reason : "no embedding",
                   };
     }
-    const stat = statSync(audioPath);
-    const result = voiceEvidenceSchema.parse({
-        version: 1,
-        source: SafeJSON.stringify([audioPath, stat.size, stat.mtimeMs]),
-        enrolment: Bun.hash(readFileSync(enrolmentFile)).toString(),
-        lines,
-    });
+    if (Bun.hash(readFileSync(enrolmentFile)).toString() !== enrolment || sourceFingerprint(audioPath) !== source) {
+        throw new Error(
+            "The enrolled voices or the recording changed while voice evidence was collected; collect again."
+        );
+    }
+
+    const result = voiceEvidenceSchema.parse({ version: 1, source, enrolment, lines });
     atomicWriteFileSync(join(folder, "voice-scores.json"), SafeJSON.stringify(result));
     return {
         lines: Object.keys(lines).length,
