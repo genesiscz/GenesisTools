@@ -220,6 +220,34 @@ final class InstantTooltipTests: XCTestCase {
         XCTAssertEqual(TooltipPresenter.shared.currentOwner, badge)
     }
 
+    /// A sensor whose text changes while its bubble is up (a hover load added the failed checks) shows the new text
+    /// at once; the bubble grows with it.
+    func testTheOwnersNewTextReplacesTheBubbleThatIsUp() throws {
+        let anchor = defaultAnchor()
+        let owner = show("short", on: anchor)
+        let before = try XCTUnwrap(TooltipPresenter.shared.panel?.frame)
+
+        TooltipPresenter.shared.update(owner: owner, content: TooltipContent("short\nFailed checks: build, lint, test"),
+                                       anchorView: anchor, below: true)
+
+        XCTAssertEqual(TooltipPresenter.shared.currentOwner, owner)
+        let after = try XCTUnwrap(TooltipPresenter.shared.panel?.frame)
+        XCTAssertGreaterThan(after.height, before.height)
+    }
+
+    /// Another sensor's new text never replaces the bubble it does not own, and never puts one up.
+    func testANewTextOfAnotherOwnerLeavesTheBubbleAlone() throws {
+        let anchor = defaultAnchor()
+        let owner = show("short", on: anchor)
+        let before = try XCTUnwrap(TooltipPresenter.shared.panel?.frame)
+
+        TooltipPresenter.shared.update(owner: UUID(), content: TooltipContent("a much longer text\non two lines"),
+                                       anchorView: anchor, below: true)
+
+        XCTAssertEqual(TooltipPresenter.shared.currentOwner, owner)
+        XCTAssertEqual(TooltipPresenter.shared.panel?.frame, before)
+    }
+
     /// Long text wraps inside the width cap instead of running off the screen.
     func testLongTextWrapsWithinTheWidthCap() throws {
         show("short", on: defaultAnchor())
