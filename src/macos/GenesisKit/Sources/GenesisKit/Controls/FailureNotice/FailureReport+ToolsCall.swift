@@ -107,7 +107,7 @@ struct ToolsCallCause: Equatable {
             return
         }
         switch error as? ToolsBridgeError {
-        case .timeout(let seconds):
+        case .timeout(let seconds, _):
             kind = .timeout(seconds: seconds, server: call?.via == "server-timeout")
         case .binaryNotFound(let path):
             kind = .notInstalled(path: path)
