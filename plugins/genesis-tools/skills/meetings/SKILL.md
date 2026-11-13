@@ -36,8 +36,12 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    `terms.documents` lists, for the meeting's context documents, each passage that reads a document line aloud
    (`readAloud`: the heard words, the line and its text) and each spoken path or identifier (`identifiers`). It has
    no rule weights and no confidence.
-   Pull the documents the meeting discussed (read-only) and check the project dictionary (`tools meetings dictionary
-   show`). **Ask the user for each person's role** before you judge anything.
+   Pull the documents the meeting discussed (read-only). Save the version the meeting read with
+   `tools meetings context add <meeting> <file> --before-meeting`, or choose a known commit with `--rev <sha>`.
+   The first flag uses the meeting start, not its end. Both save the chosen text and full commit inside the record;
+   later file changes, deletion and duplication retain it. Check `evidence <meeting> --raw` for the expected
+   `terms.documents.readAloud` and `terms.documents.identifiers`. Without either flag, the ordinary file-reference
+   fallback still applies. Check the project dictionary (`tools meetings dictionary show`). **Ask the user for each person's role** before you judge anything.
 3. **Pass 2, the agent judges.** Attribute speakers with [speakers.md](references/speakers.md) first (a term fix often
    depends on who spoke), then build the glossary and fix terms with [polishing.md](references/polishing.md). Settle
    what the context settles, and store every finding in the record with its confidence and the facts it rests on, all

@@ -19,7 +19,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `revisions <meeting> [--json]` | Revision tokens for each part of the Meetings window, so clients can skip unchanged reads. These are change tokens, not saved versions to restore |
 | `duplicate <meeting> [--title <text>] [--without-items] [--json]` | Create an independent record under a new id, keeping sources, context, frames and sound. Normal copies retain items and journal tokens, rewrite journal meeting IDs and keep `copiedFrom`; Undo affects the copy only. `--without-items` (alias `--no-items`) starts with zero items and an empty decision journal, ready for an independent automatic run. Copies inherit the project and do not trigger another automatic project-assignment question. Stop an active recording first |
 | `word-timings generate <meeting> --from <seconds> --to <seconds> --model <id> [--language <code>] [--json]` | Generate local word timing evidence for a bounded audio range with an already cached timestamp-enabled model; save coverage and provenance for later playback |
-| `context add <meeting> [file\|url] [--title] [--note]`, `context list`, `context remove` | Reference material; a file is kept as its path, never copied |
+| `context add <meeting> [file\|url] [--title] [--note] [--rev <sha>\|--before-meeting]`, `context list`, `context remove` | Reference material. An ordinary file keeps its path. Revision selection saves the full resolved commit and document text in the meeting, so later edits, deletion and duplication retain that version. The two revision flags cannot be combined and require a file |
 | `speakers stats <meeting> [--attendance <platform>\|<file>]` | Per label: origin, turns, spoken time, spans, with hints. A span joins turns up to `--gap` apart (2 minutes): it says when the label was there. `--json` also lists each turn by itself as `talk`, which the Meetings window draws as the talk-time lanes |
 | `speakers rename <meeting> <label> <name>` | Rename a label for this meeting |
 | `people [query] [--meeting <meeting> [--at <time>]] [--limit <n>] [--hidden] [--json]` | The people directory: everyone the meetings, the projects, Contacts and the people book name, one row per person, matched with case and accents ignored and ranked (see [People](#people)). `--json` prints `{ query, people, total, sources }`; a source that is off or refused says why in `sources` |
@@ -304,7 +304,9 @@ malformed attendance files still fail.
 - `term`: a misheard term and its proposed spelling, a passage read aloud from a context file (its quote and line),
   or a spoken path or identifier (its meaning after the words). A context file is read as the meeting saw it: when it
   changed or was deleted after the meeting, from its last git commit before the meeting's end; `suggest` warns when no
-  copy is left. With `global.suggest.restatedIdentifiers` at `skip` (the default), a plain code name that only writes
+  copy is left. For an explicit saved version, use `context add <meeting> <file> --before-meeting` (the last
+  committed version before the meeting start) or `--rev <sha>`. Later reads use the saved text and commit for
+  `evidence --raw`'s `terms.documents.readAloud` and `terms.documents.identifiers`. With `global.suggest.restatedIdentifiers` at `skip` (the default), a plain code name that only writes
   the said words in code form ("entity data", `EntityData`) gets no meaning; a path, a member chain or a CONSTANT_CODE
   still does. `mark` adds them all.
 - `label` (`meaningless: true`): the label tracks no one person from `fromSec` to `toSec`. The rules see its lines
@@ -468,6 +470,10 @@ hidden people). One person is the same email, or, when either side has no email,
 - `term`: a correct spelling the misheard-term check should know; `--spoken` lists how people say it.
 - `keep`: a word the misheard-term check must never flag.
 
+Whole-word matching keeps hyphens inside a token: an entry for `Tavo` does not rewrite part of `Tavo-taa`.
+The same boundary protects spoken forms, abbreviation expansion and term meanings. Fuzzy candidates also keep
+the whole hyphenated token.
+
 A `term` may list its spoken forms (`--spoken jenezetka --spoken jenezetkou` for JDZ): a whole-word spoken form is
 replaced by the term. Other words are compared with the terms and their spoken forms after the Czech ending is
 stripped (`jenezetkama` and `jenezetka` share `jenezet`). A level's `fuzzy: { apply, suggest }` (default 0.95 and
@@ -595,7 +601,8 @@ Routed timestamp links prefer the already-open Meetings window and push their Mo
 
 The default root is `~/.genesis-tools/meetings/`; `GENESIS_TOOLS_HOME` selects another GenesisTools data home.
 `config.json` holds projects, source matching, the dictionary and playback/capture settings. Each meeting has its
-own folder and `meeting.json`; context files outside it remain references. The current API groups the repeat switch
+own folder and `meeting.json`; ordinary context files outside it remain references. An explicitly selected
+context revision keeps its document text and full commit inside the meeting record. The current API groups the repeat switch
 and gap under `global.playback.listen.repeat`. The saved version 7 file retains the boolean `repeat` and numeric
 `repeatGapSec` that older stable builds read; the loader groups them for current callers.
 
