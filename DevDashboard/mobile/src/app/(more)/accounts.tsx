@@ -1,11 +1,10 @@
 import type { ForecastAccountDto, ForecastWindowDto } from "@dd/contract";
 import { Canvas, Path, Skia } from "@shopify/react-native-skia";
-import { useQuery } from "@tanstack/react-query";
-import { Stack, useIsFocused } from "expo-router";
+import { Stack } from "expo-router";
 import { memo, useMemo } from "react";
 import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from "react-native";
-import { useDashboardClient } from "@/api/client-provider";
-import { forecastQuery, paceLine, resetLine, ringTone } from "@/features/accounts/queries";
+import { useAccountForecast } from "@/features/accounts/hooks";
+import { paceLine, resetLine, ringTone } from "@/features/accounts/queries";
 import { useThemeColors } from "@/theme/colors";
 import { Empty } from "@/ui/Empty";
 import { MockBadge } from "@/ui/MockBadge";
@@ -88,11 +87,8 @@ const AccountCard = memo(function AccountCard({ account, now }: { account: Forec
  */
 export default function AccountsScreen() {
     const c = useThemeColors();
-    const focused = useIsFocused();
-    const options = forecastQuery(useDashboardClient());
-    const forecast = useQuery({ ...options, refetchInterval: focused ? options.refetchInterval : false });
+    const { forecast, now } = useAccountForecast();
     const accounts = forecast.data?.accounts ?? [];
-    const now = Date.now();
 
     return (
         <>
