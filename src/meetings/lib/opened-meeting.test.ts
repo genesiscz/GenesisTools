@@ -579,7 +579,8 @@ test("an exact attendance id reaches the Teams reader and chooses only that fixt
                 "chat-b",
                 "--json",
             ]);
-            expect(exec).toHaveBeenCalledTimes(3);
+            // One opened meeting reads one chat's attendance once, whichever step asks for it again.
+            expect(exec).toHaveBeenCalledTimes(1);
         } finally {
             of.mockRestore();
             collect.mockRestore();

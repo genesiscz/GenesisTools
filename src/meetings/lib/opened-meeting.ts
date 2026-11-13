@@ -48,6 +48,8 @@ export class OpenedMeeting {
     private energyOnce?: Promise<MicEnergy>;
     private timelineOnce?: Promise<CallTimeline>;
     private configOnce?: Promise<MeetingsConfig>;
+    /** A platform's attendance per choice (spec and id): one read serves the statistics and the evidence alike. */
+    private readonly attendanceOnce = new Map<string, ReturnType<typeof loadPresence>>();
 
     private constructor(
         readonly store: MeetingStore,
@@ -219,14 +221,27 @@ export class OpenedMeeting {
     }
 
     private async loadAttendance(spec: string, attendanceId?: string) {
-        const timeline = await this.timeline();
-        const meeting = await this.meeting();
-        return loadPresence(
-            { ...timeline.target(), title: meeting.title },
-            spec,
-            this.current.platform,
-            attendanceId === undefined ? undefined : { id: attendanceId }
-        );
+        const key = `${spec}\0${attendanceId ?? ""}`;
+        const known = this.attendanceOnce.get(key);
+
+        if (known) {
+            return known;
+        }
+
+        const loading = (async () => {
+            const timeline = await this.timeline();
+            const meeting = await this.meeting();
+            return loadPresence(
+                { ...timeline.target(), title: meeting.title },
+                spec,
+                this.current.platform,
+                attendanceId === undefined ? undefined : { id: attendanceId }
+            );
+        })();
+        this.attendanceOnce.set(key, loading);
+        // A failed read is not kept: the next ask tries the platform again.
+        loading.catch(() => this.attendanceOnce.delete(key));
+        return loading;
     }
 
     /** Suggestion rules may proceed without unavailable platform attendance; malformed input still throws. */

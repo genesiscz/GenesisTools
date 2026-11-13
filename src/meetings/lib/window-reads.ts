@@ -230,9 +230,11 @@ export async function speakerStatsRead(options: {
     attendance?: string;
     /** The record's source, when the caller holds it already (a test's fake one); else its linked source. */
     linked?: LinkedSource;
+    /** The caller's opened meeting, so a read that also builds the evidence loads the source and stays once. */
+    opened?: OpenedMeeting;
 }): Promise<SpeakerStatsView> {
     const { store, record, gapSec } = options;
-    const opened = OpenedMeeting.of(store, record, options.linked);
+    const opened = options.opened ?? OpenedMeeting.of(store, record, options.linked);
     const meeting = await opened.meeting();
     const stats = speakerStats(meeting.transcript, {
         gapSec,
