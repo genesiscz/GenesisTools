@@ -1354,6 +1354,20 @@ describe("watchOnce", () => {
         });
     });
 
+    test("a slow source-audio pass never holds the recorder control, and one pass runs at a time", async () => {
+        let passes = 0;
+        const h = harness({
+            archiveAudio: () => {
+                passes += 1;
+                return new Promise<boolean>(() => {});
+            },
+        });
+
+        expect(await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 5 })).toBe("started");
+        expect(await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 5 })).toBe("recording");
+        expect(passes).toBe(1);
+    });
+
     test("completed linked audio is preserved on the next tick even with capture autostart off", async () => {
         const h = harness({ settings: async () => ({ ...settings, enabled: false }) });
         h.deps.archiveAudio = () => archiveAvailableSourceAudio(h.store);
