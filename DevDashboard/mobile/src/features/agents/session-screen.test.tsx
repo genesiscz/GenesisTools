@@ -68,7 +68,7 @@ mock.module("@/ui/Empty", () => ({
 }));
 mock.module("@/theme/colors", () => ({ useThemeColors: () => ({}) }));
 
-const { act, cleanup, render } = await import("@testing-library/react-native/pure");
+const { act, cleanup, fireEvent, render } = await import("@testing-library/react-native/pure");
 const { MOCK_BOARD } = await import("@/api/fixtures/agents");
 const { default: AgentSessionScreen } = await import("@/app/(more)/agent-session");
 
@@ -109,6 +109,38 @@ it("gives the next session of the same route a fresh composer and no stop receip
     await screen.rerender(createElement(AgentSessionScreen));
     expect(screen.getByTestId("composer").props.children).toBe("claude:b");
     expect(screen.queryByTestId("stop-receipt")).toBeNull();
+});
+
+it("shows the whole of a long turn on request, and cuts it again", async () => {
+    const long = `${"a".repeat(1_600)} the question at the end`;
+    turns = [{ id: "t1", role: "assistant", at: null, text: long, tools: [] }];
+    board = live("claude:a");
+    const screen = await render(createElement(AgentSessionScreen));
+    expect(screen.getByTestId("turn-text-t1").props.children).not.toContain("the question at the end");
+
+    await fireEvent.press(screen.getByLabelText("Show all of this turn"));
+    expect(screen.getByTestId("turn-text-t1").props.children).toBe(long);
+
+    await fireEvent.press(screen.getByLabelText("Show less of this turn"));
+    expect(screen.getByTestId("turn-text-t1").props.children).not.toContain("the question at the end");
+});
+
+it("shows a tool call's output, a failed one's error too, when the call is tapped", async () => {
+    turns = [
+        {
+            id: "t2",
+            role: "assistant",
+            at: null,
+            text: "",
+            tools: [{ id: "call-1", name: "Bash", inputPreview: "bun test", result: "exit 1: 3 tests failed", isError: true }],
+        },
+    ];
+    board = live("claude:a");
+    const screen = await render(createElement(AgentSessionScreen));
+    expect(screen.queryByTestId("tool-result-call-1")).toBeNull();
+
+    await fireEvent.press(screen.getByLabelText("Failed Bash call, show its output"));
+    expect(screen.getByTestId("tool-result-call-1").props.children).toBe("exit 1: 3 tests failed");
 });
 
 it("waits for the board before it calls a session gone", async () => {

@@ -1,7 +1,17 @@
 import type { AgentBoardSession, AgentStopReceiptDto, AgentTranscriptTurnDto } from "@dd/contract";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { memo, useCallback, useRef, useState } from "react";
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, Text, View } from "react-native";
+import {
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    KeyboardAvoidingView,
+    Platform,
+    Pressable,
+    Text,
+    type TextStyle,
+    View,
+} from "react-native";
 import { PhaseBadge } from "@/features/agents/components/PhaseBadge";
 import { PingButton } from "@/features/agents/components/PingButton";
 import { ago } from "@/features/agents/components/SessionCard";
@@ -12,11 +22,79 @@ import { confirmWithFaceId } from "@/lib/face-id";
 import { Empty } from "@/ui/Empty";
 import { useThemeColors } from "@/theme/colors";
 
-/** How much of one turn's text the view shows; a long reply is cut with a marker. */
+/** How much of one turn's text, or of one tool's output, the view shows before "Show all". */
 const TURN_TEXT_CHARS = 1_500;
 
 function clip(text: string): string {
     return text.length > TURN_TEXT_CHARS ? `${text.slice(0, TURN_TEXT_CHARS)}…` : text;
+}
+
+/** A text cut to its first `TURN_TEXT_CHARS` characters, with a control that shows the rest and cuts it again. */
+function ClippedText({ text, what, testID, style }: { text: string; what: string; testID?: string; style: TextStyle }) {
+    const c = useThemeColors();
+    const [expanded, setExpanded] = useState(false);
+    const long = text.length > TURN_TEXT_CHARS;
+
+    return (
+        <>
+            <Text testID={testID} selectable style={style}>
+                {expanded || !long ? text : clip(text)}
+            </Text>
+            {long ? (
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={expanded ? `Show less of ${what}` : `Show all of ${what}`}
+                    accessibilityState={{ expanded }}
+                    onPress={() => setExpanded((value) => !value)}
+                >
+                    <Text style={{ color: c.accent, fontSize: 12 }}>
+                        {expanded ? "Show less" : `Show all ${text.length.toLocaleString()} characters`}
+                    </Text>
+                </Pressable>
+            ) : null}
+        </>
+    );
+}
+
+type TranscriptTool = AgentTranscriptTurnDto["tools"][number];
+
+/** One tool call: its name and input; a tap shows what it returned, or the error it failed with. */
+function ToolCall({ tool }: { tool: TranscriptTool }) {
+    const c = useThemeColors();
+    const [open, setOpen] = useState(false);
+    const id = tool.id || tool.name;
+    const color = tool.isError ? c.danger : c.textSecondary;
+    const line = (
+        <Text numberOfLines={open ? undefined : 2} style={{ color, fontFamily: "monospace", fontSize: 11 }}>
+            {`${tool.name} ${tool.inputPreview}`}
+        </Text>
+    );
+
+    if (tool.result === null) {
+        return line;
+    }
+
+    return (
+        <View className="gap-1">
+            <Pressable
+                testID={`tool-${id}`}
+                accessibilityRole="button"
+                accessibilityLabel={`${tool.isError ? "Failed " : ""}${tool.name} call, ${open ? "hide" : "show"} its output`}
+                accessibilityState={{ expanded: open }}
+                onPress={() => setOpen((value) => !value)}
+            >
+                {line}
+            </Pressable>
+            {open ? (
+                <ClippedText
+                    testID={`tool-result-${id}`}
+                    text={tool.result === "" ? "(no output)" : tool.result}
+                    what={`the ${tool.name} output`}
+                    style={{ color, fontFamily: "monospace", fontSize: 11 }}
+                />
+            ) : null}
+        </View>
+    );
 }
 
 const Turn = memo(function Turn({ turn }: { turn: AgentTranscriptTurnDto }) {
@@ -39,18 +117,15 @@ const Turn = memo(function Turn({ turn }: { turn: AgentTranscriptTurnDto }) {
                 }}
             >
                 {turn.text.trim() !== "" ? (
-                    <Text selectable style={{ color: system ? c.textMuted : c.textPrimary, fontSize: 14 }}>
-                        {clip(turn.text)}
-                    </Text>
+                    <ClippedText
+                        testID={`turn-text-${turn.id}`}
+                        text={turn.text}
+                        what="this turn"
+                        style={{ color: system ? c.textMuted : c.textPrimary, fontSize: 14 }}
+                    />
                 ) : null}
                 {turn.tools.map((tool) => (
-                    <Text
-                        key={tool.id || tool.name}
-                        numberOfLines={2}
-                        style={{ color: tool.isError ? c.danger : c.textSecondary, fontFamily: "monospace", fontSize: 11 }}
-                    >
-                        {`${tool.name} ${tool.inputPreview}`}
-                    </Text>
+                    <ToolCall key={tool.id || tool.name} tool={tool} />
                 ))}
             </View>
         </View>
