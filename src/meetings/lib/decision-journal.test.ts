@@ -37,6 +37,7 @@ import {
     thresholdProbe,
     uncertainSharedCallRanges,
 } from "./listen-quality";
+import { meetingFieldsChange } from "./meeting-fields";
 import { personStays, rosterPresence } from "./person-stays";
 import { reviewRow } from "./review-rows";
 import { assignmentReach } from "./speaker-assign";
@@ -1750,7 +1751,7 @@ describe("workshop listen contracts", () => {
             createdAt: now,
             createdBy: "new",
             items: [0.55, 0.75, 0.95].map((confidence, index) => ({
-                id: "i" + (index + 1),
+                id: `i${index + 1}`,
                 kind: "speaker-range",
                 label: "Voice",
                 fromSec: index * 10,
@@ -2434,4 +2435,12 @@ test("a forty-line question leads and its answer raises the compatible five-line
         evidence: { propagatedFrom: first.id },
     });
     expect(after.items.find((item) => item.id === "i3")).toEqual(before.items.find((item) => item.id === "i3"));
+});
+
+test("the service's set adapter forwards a seating change with the other fields, so a native seats save is not refused as empty", () => {
+    const seats = { room: ["Alice Example"], remote: [{ name: "Bob Example", fromSec: 60, toSec: 600 }] };
+    const action = { kind: "set" as const, seats, title: "Planning", labels: ["weekly"] };
+    expect(meetingFieldsChange(action)).toEqual({ seats, title: "Planning", labels: ["weekly"] });
+    expect(meetingFieldsChange({ seats })).toEqual({ seats });
+    expect(meetingFieldsChange({})).toEqual({});
 });

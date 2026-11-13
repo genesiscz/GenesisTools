@@ -15,7 +15,7 @@ import {
     type SplitInputs,
 } from "../decision-journal";
 import { CORRECTION_REPEATS } from "../dictionary-suggest";
-import { setMeetingFields } from "../meeting-fields";
+import { meetingFieldsChange, setMeetingFields } from "../meeting-fields";
 import { reviewRow, reviewRowsPatch } from "../review-rows";
 import { type AssignReachStretch, assignmentReach } from "../speaker-assign";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
@@ -86,12 +86,7 @@ export async function applyDecision(
                       store,
                       config: new MeetingsConfigStore(),
                       record,
-                      change: {
-                          ...(action.project ? { project: action.project } : {}),
-                          ...(action.title ? { title: action.title } : {}),
-                          ...(action.labels ? { labels: action.labels } : {}),
-                          ...(action.unlabel ? { unlabel: action.unlabel } : {}),
-                      },
+                      change: meetingFieldsChange(action),
                       quiet: true,
                       onApplied,
                       actor,
