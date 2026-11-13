@@ -35,3 +35,22 @@ export async function probePulse({
         return false;
     }
 }
+
+/** The deadline of the password check after a failed pairing; the slowest tier's probe deadline. */
+const PASSWORD_CHECK_MS = 4000;
+
+/**
+ * Whether the dashboard at `baseUrl` asks for a password: its pulse answers 401 to a request without one. A pairing
+ * that failed for another reason (no answer, a timeout, a refused link) must not ask for a secret that cannot help.
+ */
+export async function asksForPassword(baseUrl: string, timeoutMs: number = PASSWORD_CHECK_MS): Promise<boolean> {
+    const url = `${baseUrl.replace(/\/+$/, "")}/api/system/pulse`;
+
+    try {
+        const res = await expoFetch(url, { method: "GET", signal: timeoutSignal(timeoutMs) });
+        return res.status === 401;
+    } catch (err) {
+        console.log(`[connect] password check ${url} FAILED: ${err instanceof Error ? err.message : String(err)}`);
+        return false;
+    }
+}

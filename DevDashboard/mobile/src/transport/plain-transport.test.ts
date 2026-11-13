@@ -3,11 +3,23 @@ import { describe, expect, it, mock } from "bun:test";
 // `plain-transport.ts` transitively pulls native modules (`expo/fetch`, `partysocket`,
 // `react-native`). Stub them; the test injects its own probe + terminalFactory so neither the
 // real fetch nor the real socket are ever constructed.
-mock.module("expo/fetch", () => ({ fetch: async () => new Response("") }));
+let fetchStatus = 200;
+mock.module("expo/fetch", () => ({ fetch: async () => new Response("", { status: fetchStatus }) }));
 mock.module("partysocket", () => ({ WebSocket: class {} }));
 mock.module("react-native", () => ({ AppState: { addEventListener: () => ({ remove() {} }) } }));
 
 const { createPlainTransport } = await import("@/transport/plain-transport");
+const { asksForPassword } = await import("@/transport/probe");
+
+describe("asksForPassword", () => {
+    it("asks only when the dashboard answers 401, not when it is down or answers otherwise", async () => {
+        fetchStatus = 401;
+        expect(await asksForPassword("https://a.example.com/")).toBe(true);
+        fetchStatus = 502;
+        expect(await asksForPassword("https://a.example.com/")).toBe(false);
+        fetchStatus = 200;
+    });
+});
 
 describe("createPlainTransport", () => {
     it("exposes the tier, baseUrl, and authHeader it was built with", () => {
