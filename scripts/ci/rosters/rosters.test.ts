@@ -1,24 +1,33 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { copyNames, type FunctionFact, fingerprint, isDistinctName } from "@app/ts/lib/inventory";
 import { Lang, parse } from "@ast-grep/napi";
-import { checkSource, maskSwiftNonCode } from "../lint-rules";
+import { checkSource, maskSwiftNonCode, withinCountRatchets } from "../lint-rules";
 import adoFetchOutsideApi from "./ado-fetch-outside-api.definition";
+import appStatusOutsidePermissions from "./app-status-outside-permissions.definition";
+import cdpConnOutsideConnect from "./cdp-conn-outside-connect.definition";
 import cdpSocketOutsideConnect from "./cdp-socket-outside-connect.definition";
+import chooseCostOutsidePricedUsage from "./choose-cost-outside-priced-usage.definition";
+import clarityFillOutsideMonthFill from "./clarity-fill-outside-month-fill.definition";
 import cmuxSendOutsideSurfaceInput from "./cmux-send-outside-surface-input.definition";
 import cmuxTreeOutsideReader from "./cmux-tree-outside-reader.definition";
+import cmuxTreeParseOutsideReader from "./cmux-tree-parse-outside-reader.definition";
 import type { RosterDefinition } from "./define";
 import { callTo, importFrom, literal } from "./define";
 import doctorDirectDelete from "./doctor-direct-delete.definition";
-import { baseRosters, planRosters } from "./generate";
+import { baseRosters, planRosters, rosterFiles } from "./generate";
 import { ROSTER_DEFINITIONS, ROSTERS_FILE, rosterGrowth } from "./index";
 import launchctlOutsideLaunchdAgent from "./launchctl-outside-launchd-agent.definition";
 import lockUnlinkOutsidePidfile from "./lock-unlink-outside-pidfile.definition";
+import mcpBackupPromptOutsideCycle from "./mcp-backup-prompt-outside-cycle.definition";
 import mcpProviderWriteOutsideCycle from "./mcp-provider-write-outside-cycle.definition";
 import providerFetchOutsideExchange from "./provider-fetch-outside-exchange.definition";
+import providerPoolOutsideLifecycle from "./provider-pool-outside-lifecycle.definition";
+import questionItemsOutsideVerbs from "./question-items-outside-verbs.definition";
+import sessionListingOutsideClaude from "./session-listing-outside-claude.definition";
 import { SWIFT_ROSTERS, swiftRosterApplies, swiftRosterLines } from "./swift";
 import {
     countByKey,
@@ -34,33 +43,198 @@ function matches(definition: RosterDefinition, source: string): number {
     return root.findAll(definition.matcher).filter((node) => definition.test?.(node) ?? true).length;
 }
 
-describe("roster patterns", () => {
-    test.each([
-        [adoFetchOutsideApi, 'await fetch("https://dev.azure.com/x")', "await api.send(request)"],
-        [providerFetchOutsideExchange, "return fetch(url, init)", "return this.fetch(url, init)"],
-        [launchctlOutsideLaunchdAgent, 'spawn(["launchctl", "load", plist])', 'const label = "launchctl-like"'],
-        [lockUnlinkOutsidePidfile, "unlinkSync(lockPath)", "unlinkSync(outputPath)"],
-        [cmuxSendOutsideSurfaceInput, 'await runCmuxOk(["send", ...where, text])', 'z.enum(["send", "confirm"])'],
-        [doctorDirectDelete, "await rm(path, { recursive: true })", "await removeByName(path)"],
-        [cmuxTreeOutsideReader, 'await runCmux(["tree", "--all"])', 'runAx(["tree", "--app", app])'],
-        [mcpProviderWriteOutsideCycle, "writeFileSync(path, text)", "process.stdout.write(text)"],
-        [cdpSocketOutsideConnect, "const socket = new WebSocket(target.webSocketDebuggerUrl)", "connect(target, port)"],
-        // An argv kept in a constant or an object first, as the owners keep theirs, in a file that runs cmux.
-        [
-            cmuxTreeOutsideReader,
+interface RosterCase {
+    definition: RosterDefinition;
+    /** One planted violation: exactly one match. */
+    bad: string;
+    /** A look-alike that must pass. */
+    good: string;
+    /** The real owning file, which `allowedIn` lets hold the pattern; null for a roster without an owner. */
+    owner: string | null;
+    /** A new file the roster covers. */
+    planted: string;
+    /** What this case shows beyond the plain pattern. */
+    form?: string;
+}
+
+const ROSTER_CASES: RosterCase[] = [
+    {
+        definition: adoFetchOutsideApi,
+        bad: 'await fetch("https://dev.azure.com/x")',
+        good: "await api.send(request)",
+        owner: "src/azure-devops/api.ts",
+        planted: "src/azure-devops/planted-roster.ts",
+    },
+    {
+        definition: appStatusOutsidePermissions,
+        bad: "const status = await appStatus(part);",
+        good: "const status = await appStatusLabel(part);",
+        owner: "src/macos/lib/permissions/app.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: cdpConnOutsideConnect,
+        bad: "const conn = new Conn(socket);",
+        good: "const conn = await connect(target, port);",
+        owner: "src/chrome-devtools/lib/cdp.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: cdpSocketOutsideConnect,
+        bad: "const socket = new WebSocket(target.webSocketDebuggerUrl)",
+        good: "connect(target, port)",
+        owner: "src/chrome-devtools/lib/cdp.ts",
+        planted: "src/chrome-devtools/planted-roster.ts",
+    },
+    {
+        definition: chooseCostOutsidePricedUsage,
+        bad: "const cost = chooseCost(row);",
+        good: "const cost = pricedUsage(row).cost;",
+        owner: "src/utils/ai/usage/spend/priced-usage.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: clarityFillOutsideMonthFill,
+        bad: "const plan = planFill(month, weeks);",
+        good: "const plan = await runMonthFill(month);",
+        owner: "src/clarity/lib/month-fill.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: cmuxSendOutsideSurfaceInput,
+        bad: 'await runCmuxOk(["send", ...where, text])',
+        good: 'z.enum(["send", "confirm"])',
+        owner: "src/utils/cmux/surface-input.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: cmuxSendOutsideSurfaceInput,
+        form: "an argv kept in an object first, in a file that runs cmux",
+        bad: 'const steps = [{ args: ["send-key", ...where, "enter"] }];\nawait runCmuxOk(steps[0].args);',
+        good: 'import { runCmuxOk } from "./cmux";\nconst verb = z.enum(["send", "confirm"]);',
+        owner: "src/utils/cmux/surface-input.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: cmuxTreeOutsideReader,
+        bad: 'await runCmux(["tree", "--all"])',
+        good: 'runAx(["tree", "--app", app])',
+        owner: "src/utils/cmux/tree-read.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: cmuxTreeOutsideReader,
+        form: "an argv kept in a constant first, as the owner keeps its own",
+        bad:
             'import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";\n' +
-                'const TREE_ARGS = ["--id-format", "both", "tree", "--all"] as const;\nawait run(TREE_ARGS);',
-            'const TREE_ARGS = ["tree", "--app", app];\nawait runAx(TREE_ARGS);',
-        ],
-        [
-            cmuxSendOutsideSurfaceInput,
-            'const steps = [{ args: ["send-key", ...where, "enter"] }];\nawait runCmuxOk(steps[0].args);',
-            'import { runCmuxOk } from "./cmux";\nconst verb = z.enum(["send", "confirm"]);',
-        ],
-    ])("%#: matches the pattern and not its look-alike", (definition, bad, good) => {
-        expect(matches(definition, bad)).toBe(1);
-        expect(matches(definition, good)).toBe(0);
+            'const TREE_ARGS = ["--id-format", "both", "tree", "--all"] as const;\nawait run(TREE_ARGS);',
+        good: 'const TREE_ARGS = ["tree", "--app", app];\nawait runAx(TREE_ARGS);',
+        owner: "src/utils/cmux/tree-read.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: cmuxTreeParseOutsideReader,
+        bad: "const tree = parseCmuxTree(stdout);",
+        good: "const tree = await readCmuxTree();",
+        owner: "src/utils/cmux/live-layout.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: doctorDirectDelete,
+        bad: "await rm(path, { recursive: true })",
+        good: "await removeByName(path)",
+        owner: null,
+        planted: "src/doctor/planted-roster.ts",
+    },
+    {
+        definition: launchctlOutsideLaunchdAgent,
+        bad: 'spawn(["launchctl", "load", plist])',
+        good: 'const label = "launchctl-like"',
+        owner: "src/utils/process/launchd-agent.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: lockUnlinkOutsidePidfile,
+        bad: "unlinkSync(lockPath)",
+        good: "unlinkSync(outputPath)",
+        owner: "src/utils/process/pidfile.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: mcpBackupPromptOutsideCycle,
+        bad: "const ok = await this.backupManager.askConfirmation(diff);",
+        good: "const ok = await this.confirm(diff);",
+        owner: "src/mcp-manager/utils/providers/types.ts",
+        planted: "src/mcp-manager/planted-roster.ts",
+    },
+    {
+        definition: mcpProviderWriteOutsideCycle,
+        bad: "writeFileSync(path, text)",
+        good: "process.stdout.write(text)",
+        owner: "src/mcp-manager/utils/providers/types.ts",
+        planted: "src/mcp-manager/utils/providers/planted-roster.ts",
+    },
+    {
+        definition: providerFetchOutsideExchange,
+        bad: "return fetch(url, init)",
+        good: "return this.fetch(url, init)",
+        owner: "src/ai-proxy/lib/providers/http-relay.ts",
+        planted: "src/ai-proxy/lib/providers/planted-roster.ts",
+    },
+    {
+        definition: providerPoolOutsideLifecycle,
+        bad: "const provider = await acquireProvider(pool, model);",
+        good: "const provider = await lifecycle.run(request);",
+        owner: "src/ai-proxy/lib/request-lifecycle.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: questionItemsOutsideVerbs,
+        bad: "const items = splitItems(input);",
+        good: "const items = await postQuestion(input);",
+        owner: "src/question/lib/verbs.ts",
+        planted: "src/planted/roster.ts",
+    },
+    {
+        definition: sessionListingOutsideClaude,
+        bad: "const sessions = await getSessionListing();",
+        good: "const sessions = await listSessions({ limit: 5 });",
+        owner: "src/claude/lib/history/search.ts",
+        planted: "src/planted/roster.ts",
+    },
+];
+
+describe("roster patterns", () => {
+    test("every definition has a planted case", () => {
+        expect(new Set(ROSTER_CASES.map((rosterCase) => rosterCase.definition.name))).toEqual(
+            new Set(ROSTER_DEFINITIONS.map((definition) => definition.name))
+        );
     });
+
+    for (const { definition, bad, good, owner, planted, form } of ROSTER_CASES) {
+        const title = form ? `${definition.name} (${form})` : definition.name;
+
+        test(`${title}: matches the pattern and not its look-alike`, () => {
+            expect(matches(definition, bad)).toBe(1);
+            expect(matches(definition, good)).toBe(0);
+        });
+
+        test(`${title}: lint-rules fails a new file with it and names the file; the owner is no finding`, () => {
+            const findings = (file: string) =>
+                withinCountRatchets(checkSource(file, bad)).filter((finding) => finding.rule === definition.name);
+
+            expect(findings(planted).map((finding) => finding.file)).toEqual([planted]);
+
+            if (owner === null) {
+                expect(definition.allowedIn).toBeUndefined();
+                return;
+            }
+
+            expect([existsSync(owner), definition.allowedIn?.test(owner)]).toEqual([true, true]);
+            expect(findings(owner)).toEqual([]);
+            expect(rosterFiles(definition, [owner, planted])).toEqual([planted]);
+        });
+    }
 
     test.each([
         [cmuxTreeOutsideReader, "src/utils/cmux/tree-read.ts"],

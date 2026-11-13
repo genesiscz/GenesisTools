@@ -35,7 +35,9 @@ how many times. lint-rules turns every definition into a rule with those counts,
 once, a listed file fails when its count grows, and a count that fell must be lowered (run the generator). The manifest
 only shrinks: the generator never writes growth, `--check` exits 1 on it, and lint-rules refuses a `rosters.json` edited
 up against the base. A new definition is seeded by the generator with what the tree holds that day. A real exception is
-`// lint-rules-ignore: <why>` on the line, never a manifest edit.
+`// lint-rules-ignore: <why>` on the line, never a manifest edit. A new definition also gets a row in `ROSTER_CASES`
+(`rosters.test.ts`): a planted violation, a look-alike and its real owner file; the test fails while a definition has
+no row, and proves that lint-rules fails a new file with the pattern by name and leaves the owner alone.
 
 **A roster is any lint baseline that keeps one architecture problem from coming back**: a pattern, its owner, and a
 generated list of the places that still hold it, which only shrinks. Two kinds:
