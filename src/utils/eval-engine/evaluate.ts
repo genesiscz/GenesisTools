@@ -202,7 +202,7 @@ function matchArgs(input: Json, args: ArgsMatch | undefined): { ok: boolean; rea
         return { ok: false, reason: `the input is ${show(input)}, not an object` };
     }
     for (const [name, leaf] of Object.entries(args)) {
-        const value = name in input ? input[name] : undefined;
+        const value = Object.hasOwn(input, name) ? input[name] : undefined;
         const result = isMatchLeaf(leaf)
             ? matchValue(value, leaf)
             : {
@@ -339,7 +339,8 @@ export function evaluateCheck(
         }
         const named = scope.toolCalls.filter((call) => call.name === check.tool);
         const matching = named.filter((call) => matchArgs(call.input, check.args).ok);
-        const range = { min: check.times?.min ?? 1, max: check.times?.max };
+        // `{ max: 0 }` alone forbids the tool: the default minimum of 1 never exceeds the given maximum.
+        const range = { min: check.times?.min ?? Math.min(1, check.times?.max ?? 1), max: check.times?.max };
         const ok = inRange(matching.length, range);
         let reason = `${check.tool} called ${matching.length} time${matching.length === 1 ? "" : "s"}${check.args ? " with matching arguments" : ""}, expected ${rangeText(range)}`;
         if (!ok && named.length > matching.length) {

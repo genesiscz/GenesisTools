@@ -311,6 +311,25 @@ describe("hash and builder", () => {
         });
         assert.equal(a.hash, b.hash);
         assert.equal(canonicalJson({ b: 1, a: { d: 1, c: undefined } }), '{"a":{"d":1},"b":1}');
+        // A JSON `__proto__` key is data like any other key: it must change the canonical form and the hash.
+        assert.equal(canonicalJson(JSON.parse('{"__proto__":{"x":1}}')), '{"__proto__":{"x":1}}');
+        assert.notEqual(canonicalJson(JSON.parse('{"__proto__":{"x":1}}')), canonicalJson({}));
+    });
+
+    it("reads only a signal's own fields, never a member every object inherits", () => {
+        assert.deepEqual(resolveBindings({ c: "constructor" }, {}), {
+            ok: false,
+            name: "c",
+            path: "constructor",
+            reason: 'needed constructor; the signals has no "constructor"',
+        });
+        assert.deepEqual(resolveBindings({ c: "meta.toString" }, { meta: {} }), {
+            ok: false,
+            name: "c",
+            path: "meta.toString",
+            reason: 'needed meta.toString; meta has no "toString"',
+        });
+        assert.deepEqual(resolveBindings({ c: "constructor" }, { constructor: 1 }), { ok: true, values: { c: 1 } });
     });
 
     it("the builder gives the same document as the JSON form", () => {

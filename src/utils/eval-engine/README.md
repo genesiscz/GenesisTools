@@ -147,7 +147,7 @@ once, when the file is loaded. So a scenario can be printed, hashed, compared an
 
 | Check (JSON) | Builder | Passes when |
 |---|---|---|
-| `{ "tool": "x", "args": {...}, "times": { "min": 1, "max": 2 } }` | `s.tool("x", args?, times?)` | `x` was called with matching arguments between `min` (default 1) and `max` times |
+| `{ "tool": "x", "args": {...}, "times": { "min": 1, "max": 2 } }` | `s.tool("x", args?, times?)` | `x` was called with matching arguments between `min` (default 1, or 0 with `max: 0`) and `max` times |
 | `{ "onlyTools": ["a", "b"] }` / `{ "onlyTools": [] }` | `s.onlyTools("a", "b")` / `s.noTools()` | no other tool (no tool at all) was called |
 | `{ "text": { "contains": "x" \| ["x", "y"], "caseSensitive": false } }` or `{ "text": { "matches": "re", "flags": "i" } }` | `s.text(...)` | some reply in scope matches (case-insensitive by default) |
 | `{ "signal": "path", <matcher> }` | `s.signal("path", matcher)` | the signal at the path matches |
