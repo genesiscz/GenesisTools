@@ -1,4 +1,5 @@
 import { basename, extname } from "node:path";
+import { isJsonObject } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { median, silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
@@ -50,6 +51,7 @@ import {
     anchorScores,
     type CandidateTallies,
     lineTallies,
+    mergeScores,
     rosterTallies,
     ruleEvidence,
     type SamePerson,
@@ -159,6 +161,39 @@ export function spokenOnPurpose(words: string[], known: (word: string) => boolea
 }
 
 /** The words the dictionary settles: kept, fixed as one word, or a term's spoken form; lower case. */
+/** A word (or an English root) the language knows: English, or what the word check does not call unknown. */
+export function knownWord(wordCheck: WordCheck | undefined): (word: string) => boolean {
+    return (word) => isEnglishWord(word) || (wordCheck !== undefined && wordCheck.verdict(word).class !== "unknown");
+}
+
+/**
+ * An unknown word with a candidate from the meeting itself at 80 % or more is proposed even when its family is said
+ * on purpose (MC5): the suggestion and the retirement of a later run read it the same way.
+ */
+function strongMeetingCandidate(evidence: unknown): boolean {
+    if (
+        !isJsonObject(evidence) ||
+        !Array.isArray(evidence.candidateSources) ||
+        !Array.isArray(evidence.candidateScores)
+    ) {
+        return false;
+    }
+
+    const scores = evidence.candidateScores;
+    return evidence.candidateSources.some(
+        (source) =>
+            isJsonObject(source) &&
+            source.source === "meeting" &&
+            scores.some(
+                (score) =>
+                    isJsonObject(score) &&
+                    score.term === source.term &&
+                    typeof score.confidence === "number" &&
+                    score.confidence >= 0.8
+            )
+    );
+}
+
 export function dictionaryKeeps(dictionary: Pick<ResolvedDictionary, "entries">): Set<string> {
     return new Set(
         dictionary.entries.flatMap((entry) => {
@@ -565,7 +600,11 @@ export function settledTermItems(options: {
             settled.set(item.id, `the dictionary settles "${item.heard}"`);
         } else if (item.rules.includes(MeetingRule.UnknownWord) && keptFamilies.has(wordFamily(item.heard))) {
             settled.set(item.id, `the dictionary keeps a form of "${item.heard}"`);
-        } else if (item.rules.includes(MeetingRule.UnknownWord) && onPurpose.has(heard)) {
+        } else if (
+            item.rules.includes(MeetingRule.UnknownWord) &&
+            onPurpose.has(heard) &&
+            !strongMeetingCandidate(item.evidence)
+        ) {
             settled.set(item.id, `"${item.heard}" is said on purpose (a word family or an English root)`);
         }
     }
@@ -606,7 +645,7 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
     const keptFamilies = new Set([...keep].map(wordFamily));
     const onPurpose = spokenOnPurpose(
         heardUnknown.map((word) => word.heard),
-        (root) => isEnglishWord(root) || wordCheck?.verdict(root).class !== "unknown"
+        knownWord(wordCheck)
     );
     const unknown = heardUnknown.filter(
         (word) =>
@@ -748,6 +787,8 @@ interface EvidenceFinding {
     listen?: boolean;
     /** The microphone heard the call's own words (rule R2.1 echo). */
     echo?: boolean;
+    /** The tagged channel and the calibrated energy disagree: no other rule may name a winner over it. */
+    conflict?: boolean;
 }
 
 /** The microphone alone never proves the user spoke (Martin, 2026-11-02): loud speakers can reach it. */
@@ -1342,6 +1383,7 @@ function localVoiceFinding(options: {
             rules: [MeetingRule.Channel, MeetingRule.Energy, MeetingRule.LocalVoice],
             confidence: 0.4,
             listen: true,
+            conflict: true,
         };
     }
 
@@ -1559,8 +1601,15 @@ function evidenceItems(options: {
     const swaps = swappedStretches(swapLines, selfName, platformLabels);
     const swapped = (line: LineEvidence) => inSwap(swaps, line.label, line.startSec);
 
+    // A line a confirmed voice names is decided by that voice below, so the swap gives it no competing assignment.
+    const voiced = new Set(
+        lines.filter((line) => line.voice?.quality === "matched").map((line) => `${line.label}|${line.startSec}`)
+    );
+
     for (const swap of swaps) {
-        const findings = swapItems(swap, selfName, swapLines);
+        const findings: NewItem[] = swapItems(swap, selfName, swapLines).filter(
+            (found) => found.kind !== "speaker-range" || !voiced.has(`${found.label}|${found.fromSec}`)
+        );
         for (const item of findings) {
             if (item.kind === "speaker-range" && item.speaker === selfName) {
                 const room = microphoneCandidates(options.record, item.fromSec);
@@ -1627,7 +1676,7 @@ function evidenceItems(options: {
                     (line.label === swap.selfLabel || line.label === swap.otherLabel) &&
                     swap.skipped?.includes(line.startSec)
             );
-            if (skippedSwap) {
+            if (skippedSwap && line.voice?.quality !== "matched") {
                 close();
                 continue;
             }
@@ -1689,27 +1738,31 @@ function evidenceItems(options: {
                 platformLabel: platformLabels.has(label),
                 ownLabelNearby: nearby,
             });
-            const finding = localVoiceFinding({
-                line,
-                selfName,
-                isSelfLabel,
-                voices,
-                platformLabel: platformLabels.has(label),
-                roomPeople: microphoneCandidates(options.record, line.startSec),
-                indicatorIgnored: stuck.has(line.index),
-                remoteCandidates: (
-                    line.present ??
-                    assessment.candidates
-                        .filter((person) => person.fromSec <= line.startSec)
-                        .map((person) => person.name)
-                ).filter(
-                    (name) =>
-                        !sameName(name, selfName) &&
-                        !options.record.seats?.room.some((person) => sameName(name, person))
-                ),
-                unusable: within(unusable, line.startSec),
-                found,
-            });
+            // A confirmed voice match (its presence and mute checks passed in findingFor) names the person outright: the
+            // channel and label fallbacks of R18 and R19 never replace it.
+            const finding = found?.rules.includes(MeetingRule.Voice)
+                ? found
+                : localVoiceFinding({
+                      line,
+                      selfName,
+                      isSelfLabel,
+                      voices,
+                      platformLabel: platformLabels.has(label),
+                      roomPeople: microphoneCandidates(options.record, line.startSec),
+                      indicatorIgnored: stuck.has(line.index),
+                      remoteCandidates: (
+                          line.present ??
+                          assessment.candidates
+                              .filter((person) => person.fromSec <= line.startSec)
+                              .map((person) => person.name)
+                      ).filter(
+                          (name) =>
+                              !sameName(name, selfName) &&
+                              !options.record.seats?.room.some((person) => sameName(name, person))
+                      ),
+                      unusable: within(unusable, line.startSec),
+                      found,
+                  });
 
             // A range holds only consecutive lines with its finding: a line without one stays its label's.
             if (!finding) {
@@ -1717,7 +1770,8 @@ function evidenceItems(options: {
                 continue;
             }
 
-            const key = `${finding.speaker ?? ""}|${(finding.candidates ?? []).join(",")}|${finding.listen ? "listen" : ""}`;
+            // A voice finding and a channel finding stay apart, so a range's rules and voice evidence fit every line.
+            const key = `${finding.speaker ?? ""}|${(finding.candidates ?? []).join(",")}|${finding.listen ? "listen" : ""}|${finding.rules.includes(MeetingRule.Voice) ? "voice" : ""}|${finding.conflict ? "conflict" : ""}`;
 
             if (open && open.key === key && line.startSec - open.item.toSec < EVIDENCE_GAP_SEC) {
                 open.item.toSec = line.startSec;
@@ -1749,6 +1803,7 @@ function evidenceItems(options: {
                     rules: finding.rules,
                     evidence: {
                         channel: finding.speaker === selfName ? "mic" : "system",
+                        ...(finding.conflict ? { channelConflict: true } : {}),
                         ...(stuck.has(line.index) ? { indicatorIgnored: assessment.reasons.get(line.index) } : {}),
                         ...(stuck.has(line.index) ? { indicatorReason: assessment.reasons.get(line.index) } : {}),
                         ...(finding.listen
@@ -1809,19 +1864,20 @@ function agreeing(first: NewItem, second: NewItem): NewItem {
             ? (a ?? b)
             : Math.min(AGREEING_MAX, Math.round((1 - (1 - a) * (1 - b)) * 100) / 100);
     const evidence = { ...second.evidence, ...first.evidence };
+    // Both rules' alternatives stay: one rule may score only its speaker while the other scored E3's or E4's people.
     const scores =
-        first.kind === "speaker-range" && first.speaker ? speakerScoresOf({ kind: first.kind, evidence }) : [];
+        first.kind === "speaker-range"
+            ? mergeScores(speakerScoresOf(first), speakerScoresOf({ kind: second.kind, evidence: second.evidence }))
+            : [];
+    const candidateScores =
+        first.kind === "speaker-range" && first.speaker && confidence !== undefined
+            ? anchorScores(scores, first.speaker, confidence, ruleEvidence(second.rules))
+            : scores;
     return {
         ...first,
         rules: [...new Set([...first.rules, ...second.rules])],
         ...(confidence === undefined ? {} : { confidence }),
-        evidence:
-            scores.length > 0 && confidence !== undefined && first.kind === "speaker-range" && first.speaker
-                ? {
-                      ...evidence,
-                      candidateScores: anchorScores(scores, first.speaker, confidence, ruleEvidence(second.rules)),
-                  }
-                : evidence,
+        evidence: scores.length > 0 ? { ...evidence, candidateScores } : evidence,
     };
 }
 
@@ -1887,6 +1943,9 @@ export function suggestItems(options: {
                     ]
           )
         : [];
+    // A stretch a person rejected (or any decision already made on it) is never manufactured again for this run.
+    const decidedKeys = new Set(record.items.map(itemKey));
+    prehistory.splice(0, prehistory.length, ...prehistory.filter((item) => !decidedKeys.has(itemKey(item))));
     const unlabeled = unlabeledView(
         options.meeting,
         unlabeledStretches([
@@ -1902,24 +1961,28 @@ export function suggestItems(options: {
     );
     const meeting = unlabeled.meeting;
     const found: NewItem[] = [...prehistory];
-    found.push(
-        ...localSpeechLines({
-            transcript: meeting.transcript,
-            start: meeting.start,
-            calls: options.localSpeech ?? [],
-        }).map(
-            (line): NewItem => ({
-                kind: "removal",
-                fromSec: line.fromSec,
-                toSec: line.fromSec,
-                heard: line.text,
-                status: "suggested",
-                confidence: 0.9,
-                rules: [MeetingRule.LocalSpeech],
-                evidence: { reason: "local speech output", transcriptLine: line.index },
-            })
-        )
-    );
+
+    // Speech this Mac played into the room is evidence of who did not speak: only the evidence rules remove it.
+    if (options.rules.includes("evidence")) {
+        found.push(
+            ...localSpeechLines({
+                transcript: meeting.transcript,
+                start: meeting.start,
+                calls: options.localSpeech ?? [],
+            }).map(
+                (line): NewItem => ({
+                    kind: "removal",
+                    fromSec: line.fromSec,
+                    toSec: line.fromSec,
+                    heard: line.text,
+                    status: "suggested",
+                    confidence: 0.9,
+                    rules: [MeetingRule.LocalSpeech],
+                    evidence: { reason: "local speech output", transcriptLine: line.index },
+                })
+            )
+        );
+    }
 
     const selfNameForDeparture = record.participants.find((person) => person.self)?.name ?? options.evidence?.selfName;
     const departureLines = options.evidence
@@ -2017,7 +2080,8 @@ export function suggestItems(options: {
             samePerson: options.samePerson,
         });
         for (const item of channel.items) {
-            if (item.kind !== "speaker-range") {
+            // A confirmed voice match already says which person at the shared device spoke.
+            if (item.kind !== "speaker-range" || item.rules.includes(MeetingRule.Voice)) {
                 continue;
             }
             const at = item.fromSec;
@@ -2028,6 +2092,9 @@ export function suggestItems(options: {
                 item.speaker = undefined;
                 item.candidates = candidates;
                 item.confidence = Math.min(item.confidence ?? 0.4, 0.4);
+                // The scores were made for the device owner at the old confidence; nobody owns the device's lines now.
+                const { candidateScores: _ownerScores, ...rest } = item.evidence ?? {};
+                item.evidence = rest;
             }
         }
         for (const line of lineEvidence(
@@ -2064,19 +2131,43 @@ export function suggestItems(options: {
                 evidence: { channel: "mic", listen: true, note: "shared microphone" },
             });
         }
-        for (const item of channel.items) {
-            if (item.kind !== "speaker-range" || !item.candidates?.length) {
+        // A shared device's range may name the room person whose anchored voice cluster holds every line of it: the
+        // one exception to candidate-only shared-device ranges. It stays a proposal at 0.7 with its candidates, to
+        // listen, since a cluster's confidence measures separation, not identity. Never over conflicting channels.
+        const clusterOf = new Map<number, NonNullable<LineVoice["cluster"]>>();
+
+        for (const value of options.voice ?? []) {
+            if (value.cluster && !clusterOf.has(value.index)) {
+                clusterOf.set(value.index, value.cluster);
+            }
+        }
+
+        const linesOf = new Map<string, Array<{ index: number; startSec: number }>>();
+
+        if (clusterOf.size > 0) {
+            meeting.transcript.forEach((entry, index) => {
+                if (entry.startSec !== undefined) {
+                    const group = linesOf.get(entry.speaker) ?? [];
+                    group.push({ index, startSec: entry.startSec });
+                    linesOf.set(entry.speaker, group);
+                }
+            });
+        }
+
+        for (const item of clusterOf.size > 0 ? channel.items : []) {
+            if (
+                item.kind !== "speaker-range" ||
+                !item.candidates?.length ||
+                item.evidence?.channelConflict === true ||
+                (typeof item.evidence?.echoLines === "number" && item.evidence.echoLines > 0)
+            ) {
                 continue;
             }
-            const indices = meeting.transcript.flatMap((entry, index) =>
-                entry.startSec !== undefined &&
-                entry.startSec >= item.fromSec &&
-                entry.startSec <= item.toSec &&
-                sameName(entry.speaker, item.label)
-                    ? [index]
-                    : []
+            const labelLines = [...linesOf].flatMap(([label, group]) => (sameName(label, item.label) ? group : []));
+            const indices = labelLines.flatMap((entry) =>
+                entry.startSec >= item.fromSec && entry.startSec <= item.toSec ? [entry.index] : []
             );
-            const clusters = indices.map((index) => options.voice?.find((value) => value.index === index)?.cluster);
+            const clusters = indices.map((index) => clusterOf.get(index));
             const first = clusters[0];
             const cluster =
                 first?.speaker &&
@@ -2094,6 +2185,7 @@ export function suggestItems(options: {
                 item.confidence = 0.7;
                 item.evidence = {
                     ...item.evidence,
+                    listen: true,
                     note: "anchored voice feature cluster; confidence is a separation heuristic",
                 };
             }

@@ -372,6 +372,11 @@ describe("shared indicator and departure APIs", () => {
         expect(identifiedDepartures({ hints, lines: shown, selfName: USER, ignoredIndicator: new Set([0]) })).toEqual(
             []
         );
+        // A goodbye under Carol's own label names its label, so the suggest rules keep that label's leave hint.
+        const own = [{ ...hints[0]!, label: "Carol Example" }];
+        expect(identifiedDepartures({ hints: own, lines: shown, selfName: USER, presence })).toEqual([
+            { name: "Carol Example", atSec: 0, label: "Carol Example", reason: "indicator" },
+        ]);
     });
 });
 
@@ -834,6 +839,75 @@ test("pitch identity is stable across gain changes and unnamed clusters remain u
         })[0]!.cluster
     ).toBeUndefined();
     expect(anonymous.every((line) => line.cluster?.speaker === undefined)).toBe(true);
+});
+
+const roomRecord = meetingRecordSchema.parse({
+    ...record,
+    seats: { room: [USER, "Dana Example"], remote: [{ name: "Bob Example" }] },
+});
+const danaCluster = (index: number) => ({
+    index,
+    channels: [{ rms: 0, pitchHz: null, lowBandShare: 0, tilt: 0, voicedShare: 0 }],
+    cluster: { id: 0, confidence: 0.9, speaker: "Dana Example" },
+});
+
+test("a confirmed room voice keeps its person through the shared-microphone fallbacks", () => {
+    const fixture = scene([
+        { label: "Bob Example", mic: 0.95 },
+        { label: "Bob Example", mic: 0.95 },
+    ]);
+    const share: AcousticShare = Object.assign(fixture.share, {
+        voice: () => ({
+            model: "fixture:v1",
+            quality: "matched" as const,
+            person: "Dana Example",
+            candidates: [{ person: "Dana Example", score: 0.9 }],
+            reason: "threshold and margin met",
+        }),
+    });
+    const found = ranges(
+        suggestItems({
+            ...base,
+            record: roomRecord,
+            meeting: fixture.meeting,
+            evidence: fixture.evidence,
+            energyMicShare: share,
+        })
+    );
+
+    expect(found.every((item) => item.speaker === "Dana Example" && item.rules.includes("voice"))).toBe(true);
+    expect(found.length).toBeGreaterThan(0);
+});
+
+test("an anchored voice cluster names a room person only where the channels agree, and stays a question", () => {
+    const shared = scene([{ label: USER, mic: 0.95 }]);
+    const promoted = ranges(
+        suggestItems({
+            ...base,
+            record: roomRecord,
+            meeting: shared.meeting,
+            evidence: shared.evidence,
+            energyMicShare: shared.share,
+            voice: [danaCluster(0)],
+        })
+    );
+    expect(promoted[0]).toMatchObject({ speaker: "Dana Example", confidence: 0.7, evidence: { listen: true } });
+    expect(promoted[0]?.candidates).toContain(USER);
+
+    // The tagged channel says microphone, the calibrated energy says call: the cluster does not settle that conflict.
+    const conflict = scene([{ label: "Bob Example", mic: 0.95 }]);
+    const kept = ranges(
+        suggestItems({
+            ...base,
+            record: roomRecord,
+            meeting: conflict.meeting,
+            evidence: conflict.evidence,
+            energyMicShare: () => 0.2,
+            voice: [danaCluster(0)],
+        })
+    );
+    expect(kept[0]?.speaker).toBeUndefined();
+    expect(kept[0]?.candidates).toContain("Dana Example");
 });
 
 test("confirmed offline voice evidence decides remote lines without inheriting a mic label", () => {

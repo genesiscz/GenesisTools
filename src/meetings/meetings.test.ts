@@ -112,6 +112,7 @@ import {
     CandidateTallies,
     directoryMatcher,
     lineTallies,
+    mergeScores,
     rosterTallies,
     scoreCandidates,
     speakerScoresOf,
@@ -964,6 +965,27 @@ describe("speaker candidate scores (G31)", () => {
         folded.of("Daniel Example").roster = 1;
 
         expect(folded.tallies.map((tally) => [tally.name, tally.directory])).toEqual([["Dan Example", true]]);
+    });
+
+    test("two rules' scores of one range merge: each person once, the higher confidence, both evidence lists", () => {
+        const attendance = [{ speaker: "Bob Example", confidence: 0.75, evidence: [{ kind: "roster" as const }] }];
+        const channel = [
+            { speaker: "Bob Example", confidence: 0.6, evidence: [{ kind: "voice" as const, rule: "E3" }] },
+            { speaker: "Dan Example", confidence: 0.3, evidence: [{ kind: "voice" as const, rule: "E4" }] },
+        ];
+        const merged = mergeScores(attendance, channel);
+
+        expect(merged).toEqual([
+            {
+                speaker: "Bob Example",
+                confidence: 0.75,
+                evidence: [{ kind: "roster" }, { kind: "voice", rule: "E3" }],
+            },
+            { speaker: "Dan Example", confidence: 0.3, evidence: [{ kind: "voice", rule: "E4" }] },
+        ]);
+        const raised = anchorScores(merged, "Bob Example", 0.9);
+        expect(raised.map((score) => score.speaker)).toEqual(["Bob Example", "Dan Example"]);
+        expect(raised.reduce((sum, score) => sum + score.confidence, 0)).toBeLessThanOrEqual(1 + 1e-9);
     });
 
     test("an answer that raises a range's speaker keeps the others' proportions in the room it leaves", () => {
@@ -6286,6 +6308,37 @@ describe("suggest: words said on purpose", () => {
 
         expect([...settled.keys()].sort()).toEqual(["i1", "i3"]);
     });
+
+    test("a proposal with a strong meeting candidate stays through the next run's retirement", () => {
+        const unknownWord = (id: string, heard: string, evidence: Record<string, unknown> = {}) => ({
+            id,
+            kind: "term",
+            status: "suggested",
+            heard,
+            atSec: 10,
+            confidence: 0.85,
+            rules: [MeetingRule.UnknownWord],
+            evidence,
+            suggestedAt: meeting.start,
+        });
+        const proposed = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                unknownWord("i1", "deployovat", {
+                    candidateSources: [{ term: "Deploy", source: "meeting" }],
+                    candidateScores: [{ term: "Deploy", confidence: 0.85 }],
+                }),
+                unknownWord("i2", "deployovali"),
+            ],
+        });
+        const settled = settledTermItems({
+            record: proposed,
+            dictionary: { entries: [] },
+            known: (word) => word === "deploy",
+        });
+
+        expect([...settled.keys()]).toEqual(["i2"]);
+    });
 });
 
 describe("saved screen capture coverage", () => {
@@ -6679,15 +6732,20 @@ test("local speech matches words and clock, emits removal at 0.9 and raw facts",
     const calls = [{ ts: Date.parse(start) + 5_000, text: "Fixture task done" }];
     expect(localSpeechLines({ start, transcript, calls }).map((line) => line.index)).toEqual([0]);
     const current = { ...meeting, start, transcript };
-    const items = suggestItems({
-        record,
-        meeting: current,
-        rules: [],
-        dictionary: { entries: [], abbrExpansion: "off" },
-        sourceWords: [],
-        localSpeech: calls,
-        now: start,
-    });
+    const suggest = (rules: Parameters<typeof suggestItems>[0]["rules"]) =>
+        suggestItems({
+            record,
+            meeting: current,
+            rules,
+            dictionary: { entries: [], abbrExpansion: "off" },
+            sourceWords: [],
+            localSpeech: calls,
+            now: start,
+        });
+    const items = suggest(["evidence"]);
+    // A run of other rules leaves local speech alone: `--rules terms` proposes no removal.
+    expect(suggest(["terms"]).some((item) => item.kind === "removal")).toBe(false);
+    expect(suggest(["speakers"]).some((item) => item.kind === "removal")).toBe(false);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ kind: "removal", confidence: 0.9, evidence: { reason: "local speech output" } });
     const raw = rawMeeting({ record, meeting: current, evidence: null, points: [], localSpeech: calls });
@@ -6721,6 +6779,30 @@ test("platform label prehistory emits one meaningless stretch and keeps later ow
             confidence: 0.8,
         }),
     ]);
+
+    // A person rejects the stretch: the next run neither proposes it again nor reads those lines as unlabeled, so
+    // E3 showing Bob does not move Alice's own platform lines to him.
+    const rejected = meetingRecordSchema.parse({
+        ...record,
+        items: items.map((item) => (item.kind === "label" ? { ...item, status: "rejected" } : item)),
+    });
+    const again = suggestItems({
+        record: rejected,
+        meeting: current,
+        rules: ["evidence", "speakers"],
+        dictionary: { entries: [], abbrExpansion: "off" },
+        sourceWords: [],
+        evidence: {
+            selfName: "Zed Example",
+            segments: [{ startSec: 0, endSec: 140, channel: "system" }],
+            speaking: Array.from({ length: 14 }, (_, index) => ({ tSec: index * 10, speaking: ["Bob Example"] })),
+            files: [],
+        },
+        now: record.start,
+    });
+
+    expect(again.some((item) => item.kind === "label")).toBe(false);
+    expect(again.filter((item) => item.kind === "speaker-range" && item.speaker === "Bob Example")).toEqual([]);
 });
 
 test("local speech history is read-only and excludes muted, failed and file-only calls", () => {

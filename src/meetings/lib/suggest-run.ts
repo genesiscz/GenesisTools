@@ -4,14 +4,13 @@ import { languageSettings, type MeetingsConfig } from "@genesiscz/utils/meetings
 import { type AcousticShare, collectEcho, echoForRange } from "@genesiscz/utils/meetings/echo";
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { isEnglishWord } from "@genesiscz/utils/transcribe/terms";
 import { contextEntryText } from "./context-file";
 import { indicatorFacts } from "./indicator-facts";
 import { addQualityQuestions, qualityVoiceFeatures } from "./listen-quality";
 import { localSpeechDuring } from "./local-speech";
 import { OpenedMeeting } from "./opened-meeting";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
-import { type SuggestRule, settledTermItems, suggestItems } from "./suggest";
+import { knownWord, type SuggestRule, settledTermItems, suggestItems } from "./suggest";
 import { meetingVoices } from "./voice";
 import type { WordCheckChoice } from "./word-check";
 
@@ -106,7 +105,7 @@ export async function runSuggest(options: {
           )
         : energy.share;
     const inputs: Parameters<typeof suggestItems>[0] = {
-        localSpeech: localSpeechDuring({ start: meeting.start, end: meeting.end }),
+        localSpeech: rules.includes("evidence") ? localSpeechDuring({ start: meeting.start, end: meeting.end }) : [],
         record: collected,
         meeting,
         rules,
@@ -142,8 +141,7 @@ export async function runSuggest(options: {
     }
     let fresh: MeetingItem[] = [];
     let retired: string[] = [];
-    const known = (word: string) =>
-        isEnglishWord(word) || (wordCheck !== undefined && wordCheck.verdict(word).class !== "unknown");
+    const known = knownWord(wordCheck);
 
     try {
         await store.update(record.id, { command: "suggest", change: "suggest findings and questions" }, (current) => {

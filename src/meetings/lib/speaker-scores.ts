@@ -493,7 +493,9 @@ export function anchorScores(
     evidence: SpeakerEvidence[] = []
 ): SpeakerScore[] {
     const anchor = scores.find((score) => sameName(score.speaker, speaker));
-    const before = 1 - (anchor?.confidence ?? 0);
+    // Merged scores of two rules can hold more than the anchor left: the others then share the room by proportion.
+    const othersBefore = scores.reduce((sum, score) => (score === anchor ? sum : sum + score.confidence), 0);
+    const before = Math.max(1 - (anchor?.confidence ?? 0), othersBefore);
     const factor = before > 0 ? (1 - confidence) / before : 0;
     const rest = scores.filter((score) => score !== anchor);
     const shares = roundedShares(
@@ -507,6 +509,26 @@ export function anchorScores(
         ? { ...anchor, confidence: round(confidence), evidence: joined(anchor.evidence, evidence) }
         : { speaker, confidence: round(confidence), evidence };
     return [top, ...others].sort((a, b) => b.confidence - a.confidence);
+}
+
+/** Two rules' scores of one range as one list: each person once, at the higher confidence, with both evidence lists. */
+export function mergeScores(first: SpeakerScore[], second: SpeakerScore[]): SpeakerScore[] {
+    const out: SpeakerScore[] = [];
+
+    for (const score of [...first, ...second]) {
+        const index = out.findIndex((one) => sameName(one.speaker, score.speaker));
+
+        if (index < 0) {
+            out.push(score);
+            continue;
+        }
+
+        const seen = out[index]!;
+        const kept = score.confidence > seen.confidence ? score : seen;
+        out[index] = { ...kept, evidence: joined(kept.evidence, kept === seen ? score.evidence : seen.evidence) };
+    }
+
+    return out.sort((a, b) => b.confidence - a.confidence);
 }
 
 /** A speaker range's typed candidate scores; entries that do not parse are left out, never guessed. */
