@@ -144,7 +144,8 @@ export default function AgentPromptsScreen() {
             <Stack.Screen options={{ title: picked ?? "Saved prompts" }} />
             <View testID="screen-agent-prompts" accessibilityLabel="screen-agent-prompts" className="flex-1 bg-dd-bg-base">
                 {picked ? (
-                    <Prepared name={picked} sessionKey={key ?? ""} session={session?.sessionId ?? null} />
+                    // Keyed like the session screen: values typed for one session or prompt stay with it.
+                    <Prepared key={`${key ?? ""}:${picked}`} name={picked} sessionKey={key ?? ""} session={session?.sessionId ?? null} />
                 ) : prompts.isPending ? (
                     <ActivityIndicator color={c.accent} />
                 ) : prompts.isError ? (
