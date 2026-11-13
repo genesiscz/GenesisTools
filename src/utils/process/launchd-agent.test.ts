@@ -13,6 +13,7 @@ import {
     parseLaunchdPid,
     plistPath,
     renderLaunchdPlist,
+    runLaunchctlBounded,
 } from "@genesiscz/utils/process/launchd-agent";
 import { skip } from "@genesiscz/utils/test/skip";
 
@@ -62,6 +63,21 @@ describe("renderLaunchdPlist", () => {
             const path = plistString(renderLaunchdPlist(baseOptions()), "PATH") ?? "";
             expect(path.split(":")).toContain("/opt/homebrew/bin");
             expect(path.split(":")).toContain("/usr/bin");
+        });
+    });
+});
+
+describe("runLaunchctlBounded", () => {
+    test("a call past its deadline is killed and comes back as a failed result", async () => {
+        const result = await runLaunchctlBounded(["5"], { binary: "/bin/sleep", timeoutMs: 200 });
+        expect(result.timedOut).toBe(true);
+        expect(result.exitCode).toBe(124);
+        expect(result.stderr).toContain("did not finish within 200 ms");
+    });
+
+    test("a call that ends in time keeps its own exit code", async () => {
+        expect(await runLaunchctlBounded([], { binary: "/usr/bin/false", timeoutMs: 10_000 })).toMatchObject({
+            exitCode: 1,
         });
     });
 });
