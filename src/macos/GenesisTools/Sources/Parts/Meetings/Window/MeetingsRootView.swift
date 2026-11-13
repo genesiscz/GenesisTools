@@ -407,6 +407,7 @@ struct MeetingRowMenu: View {
     var body: some View {
         Button("Open in New Window") { MeetingsWindow.openExtra(meeting: id) }
         Button("Duplicate") { model.duplicate(id) }.disabled(model.duplicating.contains(id))
+        Button("Duplicate clean copy") { model.duplicate(id, withoutItems: true) }.disabled(model.duplicating.contains(id))
         Button("Rename…") {
             model.select(id)
             model.renamingMeetingID = id

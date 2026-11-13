@@ -10,14 +10,16 @@ import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
 import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { editMeetingPerson } from "@genesiscz/utils/meetings/room-people";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
-
 import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
+import { OpenedMeeting } from "../opened-meeting";
 import type { SuggestionReads } from "../project-suggestions";
 import { TOOL } from "../shared";
 import type { LocalSourceAudio } from "../source-audio-discovery";
 import { type LinkedSource, linkedSource } from "../sources";
+import { meetingVoices } from "../voice";
 import { correctedTranscriptRead, revisionsRead, timedTranscriptView } from "../window-reads";
 import { generateWordTimings, meetingWordTimingCache, type WordTimingGenerateDeps } from "../word-timings";
 import {
@@ -212,6 +214,27 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             return params.full ? records : records.map(meetingListRow);
         },
         "meeting.show": (params) => recordOf(storeOf(), params.ref),
+        "meeting.people.edit": async (params, context) => {
+            const store = storeOf();
+            const current = recordOf(store, params.meeting);
+            let selfName: string | undefined;
+            if (params.atMic && !current.participants.some((person) => person.self)) {
+                selfName = (await OpenedMeeting.of(store, current, deps.linkedSource?.(current)).evidence())?.selfName;
+            }
+            const record = await editMeetingPerson({ store, meeting: params.meeting, edit: params, selfName });
+            context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
+            context.emit?.("people.changed", {});
+            return record;
+        },
+        "meeting.voice": async (params) => {
+            const store = storeOf();
+            const record = recordOf(store, params.meeting);
+            return meetingVoices({
+                opened: OpenedMeeting.of(store, record, deps.linkedSource?.(record)),
+                voices: params.voices,
+                channel: params.channel,
+            });
+        },
         "meeting.transcript": async (params) => {
             const store = storeOf();
             const record = recordOf(store, params.ref);

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { type AcousticShare, echoForRange, readEchoCache } from "@genesiscz/utils/meetings/echo";
 import {
     type ChannelCalibration,
     calibrateChannels,
@@ -16,7 +17,7 @@ const { log } = logger.scoped("meetings-energy");
 
 export interface MicEnergy {
     /** The microphone channel's energy share per time range; undefined when the layout is unknown. */
-    share?: (fromSec: number, toSec: number) => number | undefined;
+    share?: AcousticShare;
     calibration?: ChannelCalibration;
 }
 
@@ -43,11 +44,24 @@ export async function energyMicShareFor(
     const calibration = calibrateChannels(energy, evidence.segments);
     log.debug({ meeting: record.id, ...calibration }, "channel layout calibrated");
     const { layout } = calibration;
+    const echo =
+        layout === "unknown"
+            ? undefined
+            : await readEchoCache({
+                  audioPath: evidence.audioPath,
+                  cachePath: join(store.folder(record.id), "evidence", "echo.json"),
+                  layout,
+              });
+    const share: AcousticShare = (fromSec, toSec) =>
+        (echo ? echoForRange(echo, fromSec, toSec)?.cleanMicShare : undefined) ??
+        micShare(energy, layout, fromSec, toSec);
+    share.raw = (fromSec, toSec) => micShare(energy, layout, fromSec, toSec);
+    if (echo) {
+        share.acoustic = (fromSec, toSec) => echoForRange(echo, fromSec, toSec);
+    }
     return {
         calibration,
-        ...(layout === "unknown"
-            ? {}
-            : { share: (fromSec: number, toSec: number) => micShare(energy, layout, fromSec, toSec) }),
+        ...(layout === "unknown" ? {} : { share }),
     };
 }
 

@@ -64,6 +64,7 @@ struct SelectionPopover: View {
     var playAll: ((MomentTarget) -> Void)? = nil
     var saveClip: ((TranscriptSelection, Double) -> Void)? = nil
     var savingClip = false
+    var speakerEvidence: [String] = []
     var close: () -> Void = {}
 
     /// Words that start a comment of a usual kind: a click writes them, the reader types the rest.
@@ -75,6 +76,9 @@ struct SelectionPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            ForEach(speakerEvidence, id: \.self) { text in
+                Text(text).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            }
             if commenting || startsInComment {
                 composer
             } else {

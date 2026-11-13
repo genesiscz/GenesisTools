@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -309,7 +313,8 @@ describe("anchors at items add", () => {
             },
             { kind: "term", at: 5, heard: "Ada", proposed: "ADA", scope: "line", confidence: 0.9, reason: "heard" },
         ]);
-        const { added, warnings } = prepareFindings({ findings, items: [], transcript: twice });
+        expect(() => prepareFindings({ findings, items: [], transcript: twice })).toThrow("choose a line");
+        const { added, warnings } = prepareFindings({ findings, items: [], transcript: twice, force: true });
 
         expect(added.map((one) => one.evidence?.transcriptLine)).toEqual([2, undefined]);
         expect(warnings).toHaveLength(1);
@@ -451,4 +456,40 @@ test("a join after blank lines still reports a missing predecessor", () => {
         joins: [{ item: "i1", atSec: 5 }],
     });
     expect(result.outcomes).toContainEqual(expect.objectContaining({ item: "i1", status: "not-found" }));
+});
+test("one persisted stem item keeps Czech endings across corrected lines", async () => {
+    const transcript = [
+        line("Alice", 5, "i na browsera"),
+        line("Alice", 8, "i na browseru"),
+        line("Alice", 10, "i na browserovéx"),
+    ];
+    const prepared = prepareFindings({
+        items: [],
+        transcript,
+        findings: [
+            findingSchema.parse({
+                kind: "term",
+                at: 5,
+                heard: "i na browser",
+                heardStem: "i na browser",
+                proposedStem: "in-app browser",
+                confidence: 0.9,
+                reason: "confirmed stem",
+            }),
+        ],
+    });
+    const folder = await mkdtemp(join(tmpdir(), "stem-roundtrip-"));
+    const file = join(folder, "meeting.json");
+    await writeFile(
+        file,
+        SafeJSON.stringify({ ...base, items: prepared.added.map((item) => ({ ...item, status: "confirmed" })) })
+    );
+    const reopened = meetingRecordSchema.parse(SafeJSON.parse(await readFile(file, "utf8")));
+    expect(reopened.items[0]).toMatchObject({ heardStem: "i na browser", proposedStem: "in-app browser" });
+    const corrected = correctTranscript({ record: reopened, transcript, config, format: "md", dictionary: false });
+    expect(corrected.entries.map((entry) => entry.text)).toEqual([
+        "in-app browsera",
+        "in-app browseru",
+        "i na browserovéx",
+    ]);
 });

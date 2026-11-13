@@ -364,6 +364,11 @@ function endedAt(record: MeetingRecord): number {
     return Date.parse(record.end ?? record.recording?.stoppedAt ?? record.start);
 }
 
+function isDuplicate(record: MeetingRecord | undefined): boolean {
+    const creation = record?.history[0];
+    return creation?.command === "duplicate" && creation.change.startsWith("duplicated from ");
+}
+
 /**
  * Why a meeting is not asked about now; undefined when it should be. `retryFailedMin` is `global.assign.retryFailedMin`:
  * a question whose post failed is posted again after that long.
@@ -375,6 +380,11 @@ export function skipReason(options: {
     retryFailedMin: number;
 }): string | undefined {
     const { record, store, now } = options;
+
+    // The creation entry also identifies older copies, without mistaking later merged history for provenance.
+    if (isDuplicate(record)) {
+        return "duplicate meeting";
+    }
 
     if (record.project) {
         return `has project ${record.project}`;
@@ -990,6 +1000,11 @@ export async function assignSweep(store: MeetingStore, deps: AssignDeps = defaul
     const result: SweepResult = { asked: [], advanced: [] };
 
     for (const [meetingId, step] of Object.entries(readState(store).open)) {
+        if (isDuplicate(store.read(meetingId))) {
+            setOpen(store, meetingId, undefined);
+            continue;
+        }
+
         try {
             const outcome = await advance(store, meetingId, step, deps);
 
@@ -1014,6 +1029,9 @@ export async function assignSweep(store: MeetingStore, deps: AssignDeps = defaul
 
     for (const id of recentMeetingIds(store, now - config.global.assign.lookbackHours * 3_600_000)) {
         const record = store.read(id);
+        if (isDuplicate(record)) {
+            continue;
+        }
 
         if (record?.assign?.ask?.outcome === "pending" && !readState(store).open[id]) {
             setOpen(store, id, "ask");

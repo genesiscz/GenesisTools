@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -12,6 +11,7 @@ import { localTime } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
+import { contextFileRevision } from "../lib/context-file";
 import { duplicateMeeting } from "../lib/duplicate";
 import { linkSource } from "../lib/link";
 import { setMeetingFields } from "../lib/meeting-fields";
@@ -63,9 +63,13 @@ async function create(
                 createdBy: "new",
                 quiet: opts.yes,
             });
-            ui.ok(
-                `${created ? "Created" : "Already there:"} ${record.id}${record.project ? ` (project ${record.project})` : ""}`
-            );
+            if (!created) {
+                ui.warn(
+                    `Source already belongs to ${record.id}. To create a copy: ${TOOL} duplicate ${record.id} --title "<title>" (add --without-items for a clean copy).`
+                );
+            } else {
+                ui.ok(`Created ${record.id}${record.project ? ` (project ${record.project})` : ""}`);
+            }
             await collectAndReport(store, record);
 
             if (record.end || !sourceAudioSummary(record)) {
@@ -315,9 +319,17 @@ async function merge(fromRef: string, opts: { into: string; dryRun?: boolean; js
     }
 }
 
-async function duplicate(ref: string, opts: { title?: string; json?: boolean }): Promise<void> {
+async function duplicate(
+    ref: string,
+    opts: { title?: string; json?: boolean; withoutItems?: boolean; items?: boolean }
+): Promise<void> {
     try {
-        const result = await duplicateMeeting({ store: new MeetingStore(), ref, title: opts.title });
+        const result = await duplicateMeeting({
+            store: new MeetingStore(),
+            ref,
+            title: opts.title,
+            withoutItems: opts.withoutItems || opts.items === false,
+        });
 
         if (opts.json) {
             out.result(SafeJSON.stringify(result, null, 2));
@@ -333,7 +345,7 @@ async function duplicate(ref: string, opts: { title?: string; json?: boolean }):
 async function contextAdd(
     ref: string,
     target: string | undefined,
-    opts: { title?: string; note?: string }
+    opts: { title?: string; note?: string; rev?: string; beforeMeeting?: boolean }
 ): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
@@ -345,17 +357,17 @@ async function contextAdd(
     let kind: "file" | "url" | "note";
     let value: string;
 
+    if ((opts.rev !== undefined || opts.beforeMeeting) && (!target || /^https?:\/\//.test(target))) {
+        fail("--rev and --before-meeting require a document file, not a URL or a note.");
+        return;
+    }
+
     if (target && /^https?:\/\//.test(target)) {
         kind = "url";
         value = target;
     } else if (target) {
         value = resolve(target);
         kind = "file";
-
-        if (!existsSync(value)) {
-            fail(`No such file: ${value}. A context file is referenced by its path, so it must exist.`);
-            return;
-        }
     } else if (opts.note) {
         kind = "note";
         value = opts.note;
@@ -365,14 +377,24 @@ async function contextAdd(
     }
 
     try {
+        const revision =
+            kind === "file"
+                ? contextFileRevision({
+                      path: value,
+                      rev: opts.rev,
+                      beforeMeeting: opts.beforeMeeting,
+                      start: record.start,
+                  })
+                : undefined;
         const updated = await store.update(
             record.id,
-            { command: "context add", change: `${kind} ${value}` },
+            { command: "context add", change: `${kind} ${value}${revision ? ` at ${revision.commit}` : ""}` },
             (current) => {
                 current.context.push({
                     id: nextId("c", current.context),
                     kind,
                     ref: value,
+                    ...(revision ? { file: { revision } } : {}),
                     ...(opts.title ? { title: opts.title } : {}),
                     ...(opts.note && kind !== "note" ? { note: opts.note } : {}),
                     addedAt: new Date().toISOString(),
@@ -510,6 +532,8 @@ export function registerMeetingCommands(program: Command): void {
         .description("Copy a meeting into a new record: its fields, items, context, frames and sound")
         .option("--title <text>", 'the copy\'s title (default: the title with " (copy)")')
         .option("--json", "print the copy's id and title as JSON")
+        .option("--without-items", "copy without items or the decision journal, ready for an independent suggest run")
+        .option("--no-items", "alias for --without-items")
         .action(duplicate);
 
     const context = program.command("context").description("Reference material for a meeting: notes, files, links");
@@ -517,8 +541,10 @@ export function registerMeetingCommands(program: Command): void {
     context
         .command("add")
         .argument("<meeting>", MEETING_REF)
-        .argument("[file|url]", "a file (kept as its path, never copied) or a URL")
+        .argument("[file|url]", "a document file or a URL; revision selections save the document text")
         .description("Add a context reference")
+        .option("--rev <sha>", "save the document text at this Git revision")
+        .option("--before-meeting", "save the last document revision before the meeting start")
         .option("--title <text>", "a title for it")
         .option("--note <text>", "why it matters; alone, a note of its own")
         .action(contextAdd);

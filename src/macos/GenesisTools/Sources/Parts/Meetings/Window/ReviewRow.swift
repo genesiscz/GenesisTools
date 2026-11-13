@@ -165,6 +165,10 @@ struct ReviewRowView: View, Equatable {
                 Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.tertiary)
                     .lineLimit(1).fixedSize()
             }
+            if let priority = row.priority, row.isOpen {
+                Text(verbatim: "Priority \(priority.formatted(.number.precision(.fractionLength(0...2))))")
+                    .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+            }
             if let player, let span = playingSpan() {
                 // R25, G-ROW-1: the playing row's own timeline takes the header's free room, so the row keeps its height.
                 PlayingBarSlot(span: span, player: player, meeting: detail.id)

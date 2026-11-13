@@ -19,10 +19,18 @@ export function participantName(raw: string): string {
 }
 
 const observationLine = z.union([
-    z.object({ participant: z.object({ pid: z.string(), name: z.string(), self: z.boolean().optional() }) }),
+    z.object({
+        participant: z.object({
+            pid: z.string(),
+            name: z.string(),
+            self: z.boolean().optional(),
+            firstSeenMs: z.number().optional(),
+        }),
+    }),
     z.object({
         obs: z.object({
             tMs: z.number(),
+            reason: z.string().optional(),
             speaking: z.array(z.string()).nullish(),
             muted: z.array(z.string()).nullish(),
         }),
@@ -54,17 +62,44 @@ export function parseObservations(raw: string, selfName?: string): SpeakingObser
         if ("participant" in line) {
             const name = line.participant.self && selfName ? selfName : participantName(line.participant.name);
             names.set(line.participant.pid, name);
-        } else if ("obs" in line && line.obs.speaking) {
+        } else if ("obs" in line) {
             const named = (pids: string[]) => pids.map((pid) => names.get(pid) ?? pid);
             observations.push({
                 tSec: line.obs.tMs / 1000,
-                speaking: named(line.obs.speaking),
+                speaking: line.obs.reason ? [] : named(line.obs.speaking ?? []),
+                ...(!line.obs.speaking || line.obs.reason ? { speakingUnknown: true } : {}),
+                ...(line.obs.reason ? { reason: line.obs.reason } : {}),
                 ...(line.obs.muted ? { muted: named(line.obs.muted) } : {}),
             });
         }
     }
 
-    return observations.sort((a, b) => a.tSec - b.tSec);
+    const sorted = observations.sort((a, b) => a.tSec - b.tSec);
+    return sorted.map((observation, index) => ({
+        ...observation,
+        validUntilSec: Math.round(Math.min(observation.tSec + 10, sorted[index + 1]?.tSec ?? Infinity) * 1000) / 1000,
+    }));
+}
+
+export function parseRoster(raw: string, selfName?: string): NonNullable<MeetingEvidence["participants"]> {
+    return raw.split("\n").flatMap((row) => {
+        if (!row.trim()) {
+            return [];
+        }
+        const parsed = observationLine.safeParse(SafeJSON.parse(row, { strict: true }));
+        if (!parsed.success || !("participant" in parsed.data)) {
+            return [];
+        }
+        const person = parsed.data.participant;
+        return [
+            {
+                name: person.self && selfName ? selfName : participantName(person.name),
+                self: person.self,
+                firstSeenSec: (person.firstSeenMs ?? 0) / 1000,
+                from: ["platform-roster"],
+            },
+        ];
+    });
 }
 
 const metaSchema = z.object({ meta: z.object({ platform: z.string().optional() }) });
@@ -144,6 +179,7 @@ export function readEvidence(meetingId: string, selfName: string | undefined): M
         ...(platform ? { platform } : {}),
         segments,
         speaking,
+        participants: parseRoster(observationsRaw, selfName),
         ...(tokens.success
             ? { tokens: { mic: tokens.data.mic.total_tokens, system: tokens.data.system.total_tokens } }
             : {}),

@@ -9,6 +9,15 @@ import XCTest
 /// read, and the rows from `meeting.rows` with their decisions through the journal.
 @MainActor
 final class MeetingsReviewRowTests: XCTestCase {
+    func testWorkshopLineEvidenceKeepsRulesIgnoredIndicatorAndSkippedSwaps() throws {
+        let json = #"{"id":"i1","kind":"speaker-range","status":"suggested","fromSec":20,"rules":["R20","energy"],"evidence":{"indicatorIgnored":"stretch-stuck","swap":{"skipped":[21,22]},"departure":{"name":"Carol Example"}}}"#
+        let item = try JSONDecoder().decode(MeetingItem.self, from: Data(json.utf8))
+        XCTAssertTrue(item.speakerEvidenceText?.contains("R20, energy") == true)
+        XCTAssertTrue(item.speakerEvidenceText?.contains("stretch-stuck") == true)
+        XCTAssertTrue(item.speakerEvidenceText?.contains("2 contradictory lines") == true)
+        XCTAssertEqual(item.departureText, "Carol Example said goodbye at 20 s")
+    }
+
     private func defaults() throws -> (UserDefaults, String) {
         let suite = "meetings.rows.tests.\(UUID().uuidString)"
         return (try XCTUnwrap(UserDefaults(suiteName: suite)), suite)

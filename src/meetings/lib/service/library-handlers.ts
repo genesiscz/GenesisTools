@@ -241,6 +241,7 @@ export async function testDictionaryPhrase(
 ): Promise<MeetingsResult<"dictionary.test">> {
     return testPhrase(await configOf(deps).read(), {
         phrase: params.phrase,
+        ...(params.entry ? { entry: params.entry } : {}),
         ...(params.project ? { project: params.project } : {}),
     });
 }

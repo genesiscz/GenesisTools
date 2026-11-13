@@ -45,6 +45,7 @@ export interface MeetingEvidence {
     platform?: string;
     segments: EvidenceSegment[];
     speaking: SpeakingObservation[];
+    participants?: MeetingParticipant[];
     /** Words recognized per channel: the user's share of the speech. */
     tokens?: { mic: number; system: number };
     /** The audio setup, as the source recorded it. */

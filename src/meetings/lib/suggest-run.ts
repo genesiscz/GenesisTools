@@ -1,9 +1,11 @@
+import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { languageSettings, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
+import { type AcousticShare, collectEcho, echoForRange } from "@genesiscz/utils/meetings/echo";
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { isEnglishWord } from "@genesiscz/utils/transcribe/terms";
-import { contextFileText, contextMoment } from "./context-file";
+import { contextEntryText } from "./context-file";
 import { OpenedMeeting } from "./opened-meeting";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { type SuggestRule, settledTermItems, suggestItems } from "./suggest";
@@ -72,15 +74,45 @@ export async function runSuggest(options: {
         wordCheck = check.check;
     }
 
+    let presence: Awaited<ReturnType<OpenedMeeting["presence"]>>;
+    try {
+        presence = await opened.presence(options.attendance);
+    } catch (error) {
+        log.warn({ error, meeting: record.id }, "attendance unavailable; suggest continues with the imported roster");
+        warnings.push(`attendance unavailable; E2 skipped: ${error instanceof Error ? error.message : String(error)}`);
+        presence = await opened.presence();
+    }
+    const energy = await opened.energy();
+    const echo =
+        rules.includes("evidence") &&
+        evidence?.audioPath &&
+        energy.calibration?.layout &&
+        energy.calibration.layout !== "unknown"
+            ? await collectEcho({
+                  audioPath: evidence.audioPath,
+                  cachePath: join(store.folder(record.id), "evidence", "echo.json"),
+                  layout: energy.calibration.layout,
+              })
+            : undefined;
+    const share: AcousticShare | undefined = echo
+        ? Object.assign(
+              (fromSec: number, toSec: number) =>
+                  echoForRange(echo, fromSec, toSec)?.cleanMicShare ?? energy.share?.(fromSec, toSec),
+              {
+                  acoustic: (fromSec: number, toSec: number) => echoForRange(echo, fromSec, toSec),
+                  raw: energy.share?.raw ?? energy.share,
+              }
+          )
+        : energy.share;
     const inputs: Parameters<typeof suggestItems>[0] = {
         record: collected,
         meeting,
         rules,
         dictionary: await opened.dictionary(),
         sourceWords: await opened.sourceWords(),
-        presence: await opened.presence(options.attendance),
+        presence,
         evidence,
-        energyMicShare: (await opened.energy()).share,
+        energyMicShare: share,
         listenBelow: config.global.suggest.listenBelow,
         questionBudget: config.global.suggest.questionCap,
         minPriority: config.global.playback.listen.minPriority,
@@ -133,7 +165,7 @@ export function contextWarnings(record: MeetingRecord): string[] {
             return [];
         }
 
-        const file = contextFileText(entry.ref, contextMoment(record));
+        const file = contextEntryText(entry, record);
 
         if (!file) {
             return [
@@ -144,7 +176,7 @@ export function contextWarnings(record: MeetingRecord): string[] {
         if (file.from === "git") {
             logger.debug(
                 { ref: entry.ref, commit: file.commit },
-                "meetings: context file read at its commit before the meeting"
+                "meetings: context file read at its saved or historical Git revision"
             );
         }
 

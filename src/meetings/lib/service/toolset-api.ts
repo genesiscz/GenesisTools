@@ -15,7 +15,7 @@ import {
 import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
 import { sourceAudioPlanSchema } from "../source-audio-discovery";
-import { momentSave } from "./api";
+import { meetingPeopleEdit, meetingVoice, momentSave } from "./api";
 
 /**
  * The REPL `meetings` toolset's descriptor (src/node-repl/lib/toolsets/meetings.ts reads it), beside the Meetings
@@ -52,6 +52,16 @@ export const info = defineMethod({
     resultName: recordDoc,
     effect: "read",
     doc: "The meeting as it is saved now: title, project, sources, speaker renames, item counts and a one-line summary.",
+});
+export const voice = defineMethod({
+    ...meetingVoice,
+    name: "voice",
+    params: meetingVoice.params.omit({ meeting: true }),
+});
+export const editPerson = defineMethod({
+    ...meetingPeopleEdit,
+    name: "editPerson",
+    params: meetingPeopleEdit.params.omit({ meeting: true }),
 });
 export const evidence = defineMethod({
     name: "evidence",
@@ -95,11 +105,15 @@ export const itemsRows = defineMethod({
 });
 export const add = defineMethod({
     name: "items.add",
-    params: z.object({ findings: z.array(findingSchema).min(1) }),
+    params: z.object({
+        findings: z.array(findingSchema).min(1),
+        allowDuplicates: z.boolean().optional(),
+        force: z.boolean().optional(),
+    }),
     result: z.unknown(),
-    resultName: "{ added: items.list rows, warnings }",
+    resultName: "{ added: items.list rows, duplicates: string[], warnings }",
     effect: "reversible",
-    doc: "Add validated findings under the meeting store lock; answers the items it added (as items.list rows) and the warnings, never the whole meeting.",
+    doc: "Add validated findings under the meeting store lock. Equal open findings are retained and reported as duplicate ids; allowDuplicates appends deliberately. Answers added items.list rows, duplicate ids and warnings. An all-duplicate retry writes nothing.",
 });
 export const suggest = defineMethod({
     name: "items.suggest",
@@ -499,6 +513,8 @@ export const meetingsToolsetApi = defineApi({
                 lines,
                 transcript,
                 evidence,
+                voice,
+                editPerson,
                 itemsList,
                 itemsRows,
                 add,

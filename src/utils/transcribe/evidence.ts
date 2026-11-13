@@ -1,4 +1,6 @@
 import { similarityScore } from "@genesiscz/utils/fuzzy-match";
+import type { AcousticShare, EchoMetric } from "@genesiscz/utils/meetings/echo";
+import type { VoiceMatch } from "@genesiscz/utils/meetings/voice";
 import { TranscriptLines } from "./lines";
 import type { Presence } from "./speakers";
 import type { TranscriptEntry } from "./types";
@@ -20,6 +22,9 @@ export interface EvidenceSegment {
 export interface SpeakingObservation {
     tSec: number;
     speaking: string[];
+    speakingUnknown?: boolean;
+    reason?: string;
+    validUntilSec?: number;
     /** Who was muted; absent when the reading did not read the mute state (Teams leaves it out of most readings). */
     muted?: string[];
 }
@@ -36,6 +41,10 @@ const TIE_SHARE = 0.001;
 const SPEAKING_LEAD_SEC = 1;
 
 export interface LineEvidence {
+    voice?: VoiceMatch;
+    acoustic?: EchoMetric;
+    echoOfCall?: number;
+    echoLagMs?: number;
     index: number;
     startSec: number;
     endSec: number;
@@ -53,6 +62,7 @@ export interface LineEvidence {
     liveName?: string;
     /** How often each name was shown speaking during the line. */
     speaking: Record<string, number>;
+    speakingUnknown?: boolean;
     /** Who was in the call at the line's start (with attendance). */
     present?: string[];
     /** The refined transcript's speaker id of the line. */
@@ -71,6 +81,7 @@ export interface LineEvidence {
      * recording's channel layout is unknown (calibrated per recording).
      */
     energyMic?: number;
+    energyMicRaw?: number;
 }
 
 function plainText(text: string): string {
@@ -107,7 +118,7 @@ export function lineEvidence(
     evidence: { segments: EvidenceSegment[]; speaking: SpeakingObservation[] },
     presence?: Presence[],
     /** The microphone channel's share of the audio energy over a time range, when the audio is at hand. */
-    energyMicShare?: (fromSec: number, toSec: number) => number | undefined
+    energyMicShare?: AcousticShare
 ): LineEvidence[] {
     const lines = new TranscriptLines(entries);
     const timed = entries.flatMap((entry, at) => {
@@ -143,6 +154,9 @@ export function lineEvidence(
 
         const echo = echoScore(touching);
         const energyMic = energyMicShare?.(fromSec, endSec);
+        const energyMicRaw = energyMicShare?.raw?.(fromSec, endSec);
+        const acoustic = energyMicShare?.acoustic?.(fromSec, endSec);
+        const voice = energyMicShare?.voice?.(fromSec, endSec);
 
         const total = [...overlap.values()].reduce((sum, value) => sum + value.sec, 0);
         const ranked = [...overlap.entries()].sort((a, b) => b[1].sec - a[1].sec);
@@ -159,15 +173,20 @@ export function lineEvidence(
 
         for (const observation of evidence.speaking) {
             if (observation.tSec >= startSec - SPEAKING_LEAD_SEC && observation.tSec < endSec) {
-                count(observation.speaking);
+                if (!observation.speakingUnknown) {
+                    count(observation.speaking);
+                }
                 readings.push(observation);
             }
         }
 
         const atStart = evidence.speaking.findLast((observation) => observation.tSec <= startSec);
 
-        if (atStart) {
-            count(atStart.speaking);
+        const validAtStart = atStart && startSec < (atStart.validUntilSec ?? atStart.tSec + 10);
+        if (atStart && validAtStart) {
+            if (!atStart.speakingUnknown && !readings.includes(atStart)) {
+                count(atStart.speaking);
+            }
 
             if (!readings.includes(atStart)) {
                 readings.push(atStart);
@@ -203,11 +222,15 @@ export function lineEvidence(
             ...(tie ? { tie: true } : {}),
             ...(winner && winner !== SELF && best?.liveName ? { liveName: best.liveName } : {}),
             speaking,
+            speakingUnknown: !validAtStart || atStart?.speakingUnknown === true,
             ...(present ? { present: [...new Set(present)] } : {}),
             ...(entry.speakerId !== undefined ? { refinedSpeakerId: entry.speakerId } : {}),
             ...(best?.voiceId !== undefined ? { liveVoiceId: best.voiceId } : {}),
             ...(echo !== undefined ? { echo } : {}),
             ...(energyMic !== undefined ? { energyMic } : {}),
+            ...(energyMicRaw !== undefined ? { energyMicRaw } : {}),
+            ...(acoustic ? { acoustic, echoOfCall: acoustic.echoOfCall, echoLagMs: acoustic.lagMs } : {}),
+            ...(voice ? { voice } : {}),
             ...(muted && muted.length > 0 ? { muted } : {}),
         };
     });

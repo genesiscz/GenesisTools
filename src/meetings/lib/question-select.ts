@@ -104,8 +104,8 @@ function merge(into: NewQuestion, next: NewQuestion): NewQuestion {
  * From the candidate questions, the ones worth asking, each with its priority:
  * 1. a coarse question whose time finer items mostly cover is dropped;
  * 2. questions with the same single label, exact range, clip and choices become one cluster question;
- * 3. priority = (1 − confidence) × impact × reach, where reach counts the questions that share the signature (the same
- *    top choices and the same people present). Settlement also requires the same label and exact range.
+ * 3. priority = (1 − confidence) × impact × reach. Impact is on the documented single-question scale; reach counts
+ *    the findings this answer actually decides, never other passages with a matching candidate signature.
  */
 export function selectQuestions(candidates: NewQuestion[], items: MeetingItem[]): NewQuestion[] {
     const kept = candidates.filter((question) => !isCoarse(question, items)).sort((a, b) => a.fromSec - b.fromSec);
@@ -129,19 +129,13 @@ export function selectQuestions(candidates: NewQuestion[], items: MeetingItem[])
         }
     }
 
-    const reach = new Map<string, number>();
-
-    for (const question of clustered) {
-        reach.set(question.signature ?? "", (reach.get(question.signature ?? "") ?? 0) + 1);
-    }
-
     return clustered.map((question) => {
         const unsure = 1 - (question.confidence ?? 0);
-        const impact = Math.max(1, numberOf(question, "impact"));
-        const shared = question.signature ? (reach.get(question.signature) ?? 1) : 1;
+        const impact = Math.max(1, numberOf(question, "impact") / 3);
+        const shared = Math.max(1, new Set(question.decides).size);
         return {
             ...question,
-            priority: Math.round(unsure * impact * shared * 100) / 100,
+            priority: Math.round(Math.max(1, Math.min(3, unsure * impact)) * shared * 100) / 100,
             evidence: { ...question.evidence, reach: shared },
         };
     });

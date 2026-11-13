@@ -43,6 +43,7 @@ struct MeetingDetailView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 header
+                MeetingRoomPeopleView(detail: detail)
                 Divider()
                 // The notices float inside the dock's inset too: put on the padded view, a bottom stack sat under the
                 // playing dock, and an answer's Undo was never seen while the next row played.
@@ -103,6 +104,7 @@ struct MeetingDetailView: View {
                 MenuButton(style: .genHoverPlain(), items: {
                     [.action("Open in New Window") { MeetingsWindow.openExtra(meeting: detail.id) },
                      .action("Duplicate", enabled: !window.duplicating.contains(detail.id)) { window.duplicate(detail.id) },
+                     .action("Duplicate clean copy", enabled: !window.duplicating.contains(detail.id)) { window.duplicate(detail.id, withoutItems: true) },
                      .action("Rename…") { window.renamingMeetingID = detail.id }]
                 }) {
                     Image(systemName: "ellipsis.circle").font(.system(size: 14)).foregroundStyle(.secondary)

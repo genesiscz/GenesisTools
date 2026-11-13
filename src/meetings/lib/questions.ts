@@ -41,6 +41,8 @@ const IMPACT = { decision: 3, cited: 3, owner: 2 } as const;
 /** What a question needs to know about the meeting besides the item. */
 export interface QuestionContext {
     listenBelow: number;
+    /** Canonical candidate names from the meeting roster and people added to this meeting. */
+    candidates?: readonly string[];
     /** Who was in the call, the user under their own name (`CallTimeline.named`, as `OpenedMeeting.presence` gives it). */
     presence?: Presence[];
     /** The source's transcript, on the source's own labels. */
@@ -159,7 +161,23 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
         const present = (context.presence ?? [])
             .filter((stay) => stay.fromSec <= toSec && stay.toSec >= item.fromSec)
             .map((stay) => stay.name);
-        const choices = [...new Set([...(item.speaker ? [item.speaker] : []), ...(item.candidates ?? []), ...present])];
+        const absent = (context.presence ?? [])
+            .filter((stay) => !present.some((name) => sameName(name, stay.name)))
+            .map((stay) => stay.name);
+        const choices = [
+            ...(item.speaker ? [item.speaker] : []),
+            ...(item.candidates ?? []),
+            ...present,
+            ...(context.candidates ?? []),
+        ].filter(
+            (name, index, names) =>
+                !absent.some((other) => sameName(name, other)) &&
+                names.findIndex((other) => sameName(name, other)) === index
+        );
+
+        if (choices.length < 2) {
+            return undefined;
+        }
         const { impact } = impactOf(text, item.label, context);
         const longest = [...lines].sort((a, b) => b.endSec - b.startSec - (a.endSec - a.startSec))[0];
         return {

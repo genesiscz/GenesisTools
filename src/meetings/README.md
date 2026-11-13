@@ -294,6 +294,8 @@ as an open question is.
   (30 at least) and call lines of its own carries someone else on the microphone. Its microphone lines name the people
   in the call as candidates (0.4); the user's sure microphone lines are capped at 0.7 and asked, and a line under 90 %
   stays its label's.
+- When the source favors the microphone but measured energy favors the call, a platform label stays open with known
+  people as candidates. The conflict alone confirms nobody; the range asks for listening.
 - A stuck speaking indicator: E3 showing the same one remote person for 6 min or more while a third of the lines are on
   the microphone is ignored for that stretch.
 - R20, swapped labels: in 5 min windows of a calibrated recording, the user's label sits on the call's channel (median
@@ -610,6 +612,30 @@ A recorded meeting keeps images in `frames/`, their times and displays in `frame
 `ocr.jsonl`. OCR can lag behind capture; a missing OCR row does not mean a missing frame. The decision journal is
 `decisions.ndjson`, and listen/answer events are in `questions.ndjson`. Keep these files with the record when making
 a backup. Merge and project-change backups are kept under `~/.genesis-tools/backups/meetings/`.
+
+## Speaker evidence and review
+
+Speaker labels are source labels, not person identities. Sure microphone lines offer the recording user and the
+explicitly listed people sharing that microphone. The user is capped at 70% for a platform label. Shared microphone
+membership stays uncertain until another source identifies the voice. A remote goodbye never closes the recording
+user's later lines, and an ambiguous goodbye leaves the departing person unresolved.
+
+Speaking observations expire after at most ten seconds and at the next read. Failed or occluded reads are unknown,
+not silence and not a repeated speaker. One assessment ignores an indicator that dominates more than 80% of all
+lines with at least twenty samples, or at least 90% of call lines in a long stretch with competing remote speakers.
+Raw evidence keeps its observations and reports why the indicator was ignored. A label swap applies only to lines
+whose own channel agrees; the review row and transcript selection detail report skipped contradictory lines.
+
+Suggestion collection retains raw and estimated cleaned microphone metrics separately. Linear echo subtraction is
+an estimate, so a mixed raw microphone line does not become a remote identity just because its residual is small.
+Term candidates come from the meeting dictionary, context, people, user vocabulary and stronger acronym spellings
+observed in the same meeting. Vocabulary sources appear on term review rows. No developer-tool glossary is added
+implicitly, and a known Czech word form is not rewritten by a phonetic guess.
+
+The Meetings window offers a clean-copy action, shows copy provenance, displays shared microphone groups and lets
+you edit their members. Selected transcript lines show the applied rules and ignored indicator metadata. Context
+files can be pinned with `context add <meeting> <file> --rev <commit>` or `--before-meeting`. Short listen rounds accept
+`listen <meeting> --questions <refs>`; the CLI help describes the question file and item-reference forms.
 
 ## Troubleshooting
 
