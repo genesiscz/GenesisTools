@@ -274,7 +274,7 @@ final class RecorderScreenFindViewTests: XCTestCase {
         let named = try XCTUnwrap(fixture[2]["ops"] as? [String: [Any]])
 
         var sent: [[String]] = []
-        model.runTools = { argv, done in
+        model.runTools = { argv, _, done in
             sent.append(argv)
             done(1, "", "no edit to change\n")
         }

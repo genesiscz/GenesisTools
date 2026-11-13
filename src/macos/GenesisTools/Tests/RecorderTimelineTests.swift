@@ -387,7 +387,7 @@ final class RecorderTimelineTests: XCTestCase {
         try outside.encoded().write(to: url, options: .atomic)
 
         var writes = 0
-        model.runTools = { argv, done in
+        model.runTools = { argv, _, done in
             // `tools recorder apply`: the ops on the edit as the disk holds it, one revision on.
             guard argv.prefix(2) == ["recorder", "apply"],
                   let ops = try? JSONSerialization.jsonObject(with: Data(argv[3].utf8)) as? [[String: Any]],
@@ -418,7 +418,7 @@ final class RecorderTimelineTests: XCTestCase {
         project.revision = 3
         let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("edit.json")), link: { nil })
         var sent: [[String]] = []
-        model.runTools = { argv, done in
+        model.runTools = { argv, _, done in
             sent.append(argv)
             // What tools recorder apply and undo write: the edit with the marker, or without it, one revision on.
             var next = model.project
@@ -465,7 +465,7 @@ final class RecorderTimelineTests: XCTestCase {
         // The CLI, as the editor calls it: a switch and a redo write the plan after it, an undo the plan before it.
         var calls: [[String]] = []
         var fails = false
-        model.runTools = { argv, done in
+        model.runTools = { argv, _, done in
             calls.append(argv)
             if fails { return done(1, "", "ffmpeg failed\n") }
             try? Data((argv.contains("--undo-switch") ? before : after).utf8).write(to: planFile)
@@ -530,7 +530,7 @@ final class RecorderTimelineTests: XCTestCase {
         service = FakeServiceLink(project: project, rules: FakeRules.basic)
         let model = EditorModel.on(service, store: ProjectStore(url: recording.appendingPathComponent("edit.json")))
         var held: [() -> Void] = []
-        model.runTools = { argv, done in
+        model.runTools = { argv, _, done in
             let plan = argv.contains("--undo-switch") ? before : after
             let answer = {
                 try? Data(plan.utf8).write(to: planFile)
@@ -768,6 +768,26 @@ final class RecorderTimelineTests: XCTestCase {
                       "a service too old to name the holder: every window's change looks like its own, as before")
     }
 
+    // Regression test: PR #507 review — a first screen scan had 30 minutes on the service, but its CLI fallback ran on
+    // the runner's 10-minute default and was killed while it read the movie.
+    func testAScreenScanHasItsHalfHourOnTheServiceAndOnTheCLI() {
+        let model = cameraModel()
+        service.serviceMethods.append("movie.privateData")
+        service.movieAnswer = { _, _ in [Any]() }
+        var listed: [Result<[PrivateHitRow], FxListFailure>] = []
+        model.fxList("privateData", argv: ["recorder", "private-data", model.fxRecordingPath, "--json"]) { listed.append($0) }
+        XCTAssertEqual(service.timeouts["movie.privateData"], 30 * 60)
+
+        var cliTimeout: TimeInterval?
+        model.runTools = { _, timeout, done in
+            cliTimeout = timeout
+            done(0, "[]", "")
+        }
+        model.fxList("waits", argv: ["recorder", "waits", model.fxRecordingPath, "--json"]) { (_: Result<[WaitRow], FxListFailure>) in }
+        XCTAssertEqual(cliTimeout, 30 * 60, "the service does not offer movie.waits: the CLI gets the same deadline")
+        XCTAssertEqual(listed.count, 1)
+    }
+
     // Regression test: PR #507 review — an agent's undo after a display switch took the switch off the list instead of
     // the agent's step: the switch could not be undone, and a later ⌘Z undid an earlier change.
     func testAnOutsideUndoAfterADisplaySwitchTakesTheEditStepAndKeepsTheSwitch() throws {
@@ -840,11 +860,11 @@ final class RecorderTimelineTests: XCTestCase {
         let remakes = model.runTools
         var failing: [() -> Void] = []
         let failRemakes = {
-            model.runTools = { argv, done in
+            model.runTools = { argv, timeout, done in
                 if argv.contains("--undo-switch") || argv.contains("--redo-switch") {
                     failing.append { done(1, "", "the movie was not made\n") }
                 } else {
-                    remakes(argv, done)
+                    remakes(argv, timeout, done)
                 }
             }
         }

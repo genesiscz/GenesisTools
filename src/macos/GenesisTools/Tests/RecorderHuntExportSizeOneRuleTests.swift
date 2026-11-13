@@ -137,7 +137,7 @@ final class RecorderHuntExportSizeOneRuleTests: XCTestCase {
         let project = try await ProjectStore.load(path: movie.path).project
         let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("screen.edit.json")),
                                 link: { nil })
-        model.runTools = { _, _ in }
+        model.runTools = { _, _, _ in }
         let deadline = Date().addingTimeInterval(10)
         while model.sourceNominalFps == nil, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
         let rate = try XCTUnwrap(model.sourceNominalFps, "the rate was read within 10 s")

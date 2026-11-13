@@ -16,6 +16,8 @@ final class FakeServiceLink: RecorderServiceLink {
                           "gesture.preview", "gesture.commit", "gesture.cancel"]
     private(set) var project: EditProject
     private(set) var calls: [(method: String, params: [String: Any])] = []
+    /// Each method's deadline on its last call.
+    private(set) var timeouts: [String: TimeInterval] = [:]
     var rules: Rules
     /// The answer of a `movie.<name>` call.
     var movieAnswer: (String, [String: Any]) -> Any? = { _, _ in [String: Any]() }
@@ -58,6 +60,7 @@ final class FakeServiceLink: RecorderServiceLink {
               onProgress: ((LiveRecordingRPCClient.CallProgress) -> Void)?,
               completion: @escaping (Result<Any?, Error>) -> Void) -> Int? {
         calls.append((method, params))
+        timeouts[method] = timeout
         let result: Result<Any?, Error>
         do {
             result = .success(try answer(method, params))
@@ -229,7 +232,7 @@ extension EditorModel {
     /// A model whose edit lives on `service`; a `tools` process would fail the test (the window starts none online).
     static func on(_ service: FakeServiceLink, store: ProjectStore) -> EditorModel {
         let model = EditorModel(project: service.project, store: store, link: { service })
-        model.runTools = { argv, done in
+        model.runTools = { argv, _, done in
             XCTFail("the window ran tools \(argv.joined(separator: " ")) while the service answers")
             done(1, "", "no tools in this test\n")
         }

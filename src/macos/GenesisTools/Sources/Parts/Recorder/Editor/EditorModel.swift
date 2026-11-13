@@ -124,10 +124,11 @@ final class EditorModel {
     /// Counts the new steps (a change, an outside edit, a display switch); an undo or redo that fails puts its step
     /// back on the redo list only when no new step came since (a new step empties that list).
     @ObservationIgnored var historyGeneration = 0
-    /// Starts a `tools` command for the window and answers on the main thread (`ToolsRunner.run`); a test answers
-    /// for the CLI instead.
-    @ObservationIgnored var runTools: (_ argv: [String], _ done: @escaping @MainActor (Int32, String, String) -> Void) -> Void = {
-        ToolsRunner.run($0, done: $1)
+    /// Starts a `tools` command for the window with its deadline in seconds and answers on the main thread
+    /// (`ToolsRunner.run`); a test answers for the CLI instead.
+    @ObservationIgnored var runTools: (_ argv: [String], _ timeout: TimeInterval,
+                                       _ done: @escaping @MainActor (Int32, String, String) -> Void) -> Void = {
+        ToolsRunner.run($0, timeout: $1, done: $2)
     }
     @ObservationIgnored let cursor: CursorTrack?
     /// The review comments beside the recording (comments.jsonl), watched so an agent's comment shows at once.
