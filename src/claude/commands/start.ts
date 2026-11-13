@@ -409,19 +409,30 @@ async function guardFableHeadroom(accountName: string, modelId: string | undefin
  * refuses before sending. Inference still bills the pinned account. So a
  * limit-dead keychain kills every session on the machine. Say so.
  */
-/** The secondary login with its tokens resolved, for the keychain injection that spends them. */
-async function resolvedSecondary(account: AccountEntry | undefined): Promise<AISecondaryLogin | undefined> {
+/**
+ * The secondary login with its tokens resolved, for the keychain injection that spends them. Undefined when either
+ * token resolves to nothing: an empty login must never replace the keychain's current one (the long-lived-token path
+ * refuses an unresolved secret the same way).
+ */
+export async function resolvedSecondary(account: AccountEntry | undefined): Promise<AISecondaryLogin | undefined> {
     const secondary = account?.credentials.secondary;
     if (!secondary) {
         return undefined;
     }
 
     const { accessToken, refreshToken, ...rest } = secondary;
-    return {
-        ...rest,
-        accessToken: (await resolveSecret(accessToken)) ?? "",
-        refreshToken: (await resolveSecret(refreshToken)) ?? "",
-    };
+    const access = await resolveSecret(accessToken);
+    const refresh = await resolveSecret(refreshToken);
+
+    if (!access || !refresh) {
+        logger.warn(
+            { account: account?.name, accessToken: Boolean(access), refreshToken: Boolean(refresh) },
+            "[start] the secondary login's tokens did not resolve; refusing the keychain injection"
+        );
+        return undefined;
+    }
+
+    return { ...rest, accessToken: access, refreshToken: refresh };
 }
 
 async function warnKeychainLimits(

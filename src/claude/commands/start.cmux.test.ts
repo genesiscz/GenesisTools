@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type DirectRunDeps, pumpLines, relayBytes, relayLines } from "@app/ai/lib/embed/direct-run";
 import type { ScoredAccount } from "@app/claude/lib/usage/account-picker";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { annotateLimitLine, rewriteSteerLine, runClaudeBinaryDirect } from "../lib/direct-run";
 import { claudeEmbedAccountName } from "../lib/embed";
@@ -14,6 +15,7 @@ import {
     buildLaunchArgs,
     cmuxPermissionArgs,
     passthroughHandlesSession,
+    resolvedSecondary,
     resolveResumeArgs,
     resumedSessionIdOf,
     splitStartOperands,
@@ -587,5 +589,37 @@ describe("limit note on Claude Code's own limit frames", () => {
         expect(code).toBe(0);
         expect(stdio).toEqual(["inherit", "pipe", "inherit"]);
         expect(new TextDecoder().decode(Buffer.concat(written))).toBe(`${annotateLimitLine(assistant, note)}\n`);
+    });
+});
+
+describe("resolvedSecondary", () => {
+    const withSecondary = (secondary: AccountEntry["credentials"]["secondary"]): AccountEntry => ({
+        id: "acc_work",
+        name: "work",
+        provider: "anthropic-sub",
+        enabled: true,
+        billing: { mode: "subscription" },
+        credentials: { secondary },
+        useEnvApiKey: false,
+    });
+
+    test("a token that resolves to nothing refuses the injection instead of an empty login", async () => {
+        const noAccess = withSecondary({ accessToken: "", refreshToken: "refresh-fixture" });
+        const noRefresh = withSecondary({ accessToken: "access-fixture", refreshToken: "" });
+
+        expect(await resolvedSecondary(noAccess)).toBeUndefined();
+        expect(await resolvedSecondary(noRefresh)).toBeUndefined();
+    });
+
+    test("NEGATIVE CONTROL: both tokens resolved give the login to inject", async () => {
+        const login = await resolvedSecondary(
+            withSecondary({ accessToken: "access-fixture", refreshToken: "refresh-fixture", accountUuid: "uuid-1" })
+        );
+
+        expect(login).toEqual({
+            accessToken: "access-fixture",
+            refreshToken: "refresh-fixture",
+            accountUuid: "uuid-1",
+        });
     });
 });
