@@ -520,7 +520,9 @@ class TerminalAdapter implements ListenAdapter {
             clip,
             plan,
             player: this.deps.player,
-            vocabulary: this.deps.vocabulary.filter((name) => personPresent(asked.record, name, question.fromSec)),
+            vocabulary: [...new Set([...question.choices, ...this.deps.vocabulary])].filter((name) =>
+                personPresent(asked.record, name, question.fromSec)
+            ),
             delayMs: listen.delaySec * 1000,
             ...(listen.repeat.enabled ? { repeatGapMs: listen.repeat.gapSec * 1000 } : {}),
             ...(view.said ? { said: view.said } : {}),
