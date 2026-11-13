@@ -30,9 +30,8 @@ import {
     loadHooksConfig,
 } from "../lib/hooks/config";
 import { type CustomRules, loadRuleSet } from "../lib/hooks/custom-rules";
-import { FOREIGN_WINDOW_MS } from "../lib/hooks/diff/attribution";
 import { findFullDiff, fullDiffDir } from "../lib/hooks/diff/full";
-import { auditDiffLog, changeRowsSince, fileToolWrites, summarizeAudit } from "../lib/hooks/diff-audit";
+import { auditHorizon, summarizeAudit } from "../lib/hooks/diff-audit";
 import { decisionCounts, extendFromTranscripts, formatEntry, RULE_MEANING, readDiffLog } from "../lib/hooks/diff-log";
 import { collectStaleCaptures, parseHorizon } from "../lib/hooks/gc";
 import { lastSeenPerHarness } from "../lib/hooks/harnesses";
@@ -737,15 +736,10 @@ export function registerHooksCommands(program: Command): void {
                 return;
             }
 
-            const since = Date.now() - horizonMs;
-            // Every session's calls: another session's pre rows are what makes a root shared.
-            const entries = readDiffLog({ logPath: loadHooksConfig().logPath, since });
-
-            extendFromTranscripts(entries.filter((entry) => entry.files.length > 0 || entry.others.length > 0));
-
-            const rows = auditDiffLog({
-                entries,
-                writes: fileToolWrites(changeRowsSince(since - FOREIGN_WINDOW_MS)),
+            const rows = auditHorizon({
+                logPath: loadHooksConfig().logPath,
+                since: Date.now() - horizonMs,
+                extend: extendFromTranscripts,
             }).filter((row) => !options.session || row.session.startsWith(options.session));
             const summary = summarizeAudit(rows);
 

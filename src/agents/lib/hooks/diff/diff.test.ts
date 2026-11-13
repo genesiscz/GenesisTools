@@ -32,7 +32,7 @@ import { underCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { DEFAULT_HOOKS_CONFIG, type DiffConfig, defaultLogPath } from "../config";
-import { auditDiffLog, fileToolWrites, summarizeAudit } from "../diff-audit";
+import { auditDiffLog, auditHorizon, fileToolWrites, summarizeAudit } from "../diff-audit";
 import {
     commandSlices,
     type DiffLogEntry,
@@ -7040,6 +7040,44 @@ describe("the rule that decides whose a changed file is", () => {
             });
 
             expect(rows.map((row) => [row.file, row.replayed])).toEqual([[file, "unproven"]]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("the audit horizon cuts the rows, never the evidence: a call just before it still makes a root shared", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-audit-horizon-"));
+        const log = join(dir, "hooks.jsonl");
+        const at = (offset: number) => new Date(since + offset).toISOString();
+        const call = (session: string, id: string, offset: number, files: string[]) => [
+            { at: at(offset), phase: "pre", harness: "claude", session, toolUseId: id, roots: [root] },
+            {
+                at: at(offset + 5_000),
+                phase: "post",
+                harness: "claude",
+                session,
+                toolUseId: id,
+                decision: "emitted",
+                reason: "rendered",
+                files,
+                attributed: Object.fromEntries(files.map((path) => [path, "runner"])),
+            },
+        ];
+        const records = [...call("theirs", "t0", -minutes(10), []), ...call("mine", "t1", 1_000, [file])];
+
+        writeFileSync(log, `${records.map((record) => SafeJSON.stringify(record)).join("\n")}\n`);
+
+        try {
+            // Read from the horizon alone, their call is gone and the root looks like this session's.
+            const blind = auditDiffLog({
+                entries: readDiffLog({ logPath: log, since }),
+                writes: new Map(),
+                mentionsFor: () => mentionsFrom([]),
+            });
+            expect(blind.map((row) => row.replayed)).toEqual(["own-root"]);
+
+            const rows = auditHorizon({ logPath: log, since, changeLogs: dir });
+            expect(rows.map((row) => [row.session, row.file, row.replayed])).toEqual([["mine", file, "unproven"]]);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
