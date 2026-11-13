@@ -543,6 +543,93 @@ function UmlBox({
         </g>
     );
 }
+const KIND_WORDS: Record<UmlElementKind, string> = {
+    class: "Class",
+    primitiveType: "Primitive type",
+    dataType: "Data type",
+    enumeration: "Enumeration",
+    interface: "Interface",
+    note: "Note",
+};
+const CONNECTOR_WORDS: Record<UmlConnectorKind, string> = {
+    association: "Association",
+    aggregation: "Aggregation",
+    composition: "Composition",
+    generalization: "Generalization",
+    realization: "Realization",
+    dependency: "Dependency",
+    usage: "Usage",
+    noteLink: "Note link",
+};
+
+/** One connector end in words: "role owner, multiplicity 1". */
+function endWords(role: string | undefined, card: string | undefined): string {
+    return [role ? `role ${role}` : "", card ? `multiplicity ${card}` : ""].filter(Boolean).join(", ");
+}
+
+/**
+ * Words for a screen reader, from the model: every element with its keyword, attributes or literals, tags and
+ * mark, then every connector with its kind, name, roles and multiplicities. An image flattens the drawn text, so
+ * this is what a screen reader can say. A connector to a missing element is not drawn, so not said.
+ */
+function describeUmlModel(model: UmlDiagramModel): string {
+    const names = new Map(model.elements.map((element) => [element.id, element.name]));
+    const elements = model.elements.map((element) => {
+        if (element.kind === "note") {
+            return `Note: ${(element.text ?? "").replace(/\s*\n\s*/g, " ")}.`;
+        }
+
+        const head = [
+            `${KIND_WORDS[element.kind]} ${element.name}`,
+            element.stereotype ? `stereotype ${element.stereotype}` : "",
+            element.from ? `from ${element.from}` : "",
+            element.mark ? `marked ${element.mark}` : "",
+        ];
+        const rows =
+            element.kind === "enumeration"
+                ? element.literals?.length
+                    ? `literals ${element.literals.join(", ")}`
+                    : ""
+                : element.attributes?.length
+                  ? `attributes ${element.attributes
+                        .map(
+                            (attribute) => `${attributeText(attribute)}${attribute.mark ? ` (${attribute.mark})` : ""}`
+                        )
+                        .join(", ")}`
+                  : "";
+        const tags = element.tags?.length
+            ? `tags ${element.tags.map((tag) => `${tag.name} = ${tag.value}`).join(", ")}`
+            : "";
+
+        return `${[...head, rows, tags].filter(Boolean).join("; ")}.`;
+    });
+    const connectors = model.connectors.flatMap((connector) => {
+        const source = names.get(connector.source);
+        const target = names.get(connector.target);
+
+        if (source === undefined || target === undefined) {
+            return [];
+        }
+
+        const ends = [
+            endWords(connector.sourceRole, connector.sourceCard),
+            endWords(connector.targetRole, connector.targetCard),
+        ];
+        const words = [
+            `${CONNECTOR_WORDS[connector.kind]} from ${source} to ${target}`,
+            connector.name ? `named ${connector.name}` : "",
+            connector.stereotype ? `stereotype ${connector.stereotype}` : "",
+            ends[0] ? `at ${source}: ${ends[0]}` : "",
+            ends[1] ? `at ${target}: ${ends[1]}` : "",
+            connector.mark ? `marked ${connector.mark}` : "",
+        ];
+
+        return [`${words.filter(Boolean).join("; ")}.`];
+    });
+
+    return [...elements, ...connectors].join(" ");
+}
+
 export function UmlDiagram({ model, theme = "modern", look, selected, onSelect }: UmlDiagramProps) {
     const appearance = look ?? theme;
     const palette = PALETTES[appearance];
@@ -555,6 +642,7 @@ export function UmlDiagram({ model, theme = "modern", look, selected, onSelect }
             width="100%"
             role={onSelect ? "group" : "img"}
             aria-label={`UML diagram ${model.name}`}
+            aria-describedby={`${prefix}-desc`}
             className="block rounded border border-line"
             style={{
                 fontFamily:
@@ -565,6 +653,7 @@ export function UmlDiagram({ model, theme = "modern", look, selected, onSelect }
             }}
         >
             <title>{tab}</title>
+            <desc id={`${prefix}-desc`}>{describeUmlModel(model)}</desc>
             <defs>
                 {(Object.keys(KEYWORDS) as UmlElementKind[]).map((kind) => {
                     const fill =

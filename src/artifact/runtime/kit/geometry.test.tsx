@@ -393,6 +393,21 @@ describe("diagram geometry", () => {
             await dom.unmount();
         }
     });
+    test("a read-only UML diagram describes its elements and connectors in words", async () => {
+        const dom = await mountDom(<UmlDiagram model={MODEL} />);
+        try {
+            const svg = dom.container.querySelector("svg");
+            expect(svg?.getAttribute("role")).toBe("img");
+            const desc = dom.window.document.getElementById(svg?.getAttribute("aria-describedby") ?? "");
+            expect(desc?.tagName.toLowerCase()).toBe("desc");
+            expect(desc?.textContent).toBe(
+                "Class A; attributes id: string (ok); tags version = 2. Interface B. " +
+                    "Composition from A to B; at A: role owner, multiplicity 1; at B: role parts, multiplicity *."
+            );
+        } finally {
+            await dom.unmount();
+        }
+    });
     test("workbench owns selection used by the inspector", async () => {
         const dom = await mountDom(
             <UmlWorkbench initialSelected="a">
