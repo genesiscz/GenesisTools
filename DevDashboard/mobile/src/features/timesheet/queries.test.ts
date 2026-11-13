@@ -1,7 +1,66 @@
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { fixtureDashboardClient } from "@/api/fixture-wire";
 import { MOCK_TIMESHEET } from "@/api/fixtures/timesheet";
 import { acceptedForRevision, allAccepted, dayLine, fillWeek, hours, localDay, weekQuery } from "@/features/timesheet/queries";
+
+/** The phone's notification center and keychain, as the reminder sees them. */
+const device = {
+    granted: false,
+    canAskAgain: false,
+    scheduleFails: false,
+    scheduled: new Set<string>(),
+    secure: new Map<string, string>(),
+};
+
+mock.module("expo-notifications", () => ({
+    SchedulableTriggerInputTypes: { WEEKLY: "weekly" },
+    getPermissionsAsync: async () => ({ granted: device.granted, canAskAgain: device.canAskAgain }),
+    requestPermissionsAsync: async () => ({ granted: device.granted, canAskAgain: false }),
+    getAllScheduledNotificationsAsync: async () => [...device.scheduled].map((identifier) => ({ identifier })),
+    cancelScheduledNotificationAsync: async (identifier: string) => {
+        device.scheduled.delete(identifier);
+    },
+    scheduleNotificationAsync: async (request: { identifier: string }) => {
+        if (device.scheduleFails) {
+            throw new Error("scheduling refused");
+        }
+
+        device.scheduled.add(request.identifier);
+        return request.identifier;
+    },
+}));
+mock.module("expo-secure-store", () => ({
+    getItemAsync: async (key: string) => device.secure.get(key) ?? null,
+    setItemAsync: async (key: string, value: string) => {
+        device.secure.set(key, value);
+    },
+}));
+
+const { ensureDefaultReminder, setReminder } = await import("@/features/timesheet/reminder");
+
+describe("the Friday reminder", () => {
+    beforeEach(() => {
+        Object.assign(device, { granted: false, canAskAgain: false, scheduleFails: false });
+        device.scheduled.clear();
+        device.secure.clear();
+    });
+
+    it("stays undecided while it cannot be scheduled, so the default turns it on once notifications are allowed", async () => {
+        await expect(ensureDefaultReminder()).resolves.toBe(false);
+        expect(device.secure.size).toBe(0);
+
+        device.granted = true;
+        device.scheduleFails = true;
+        await expect(setReminder(true)).resolves.toBe(false);
+        expect(device.secure.size).toBe(0);
+
+        device.scheduleFails = false;
+        await expect(ensureDefaultReminder()).resolves.toBe(true);
+        expect(device.secure.size).toBe(1);
+        await expect(setReminder(false)).resolves.toBe(false);
+        await expect(ensureDefaultReminder()).resolves.toBe(false);
+    });
+});
 
 describe("the Friday timesheet", () => {
     it("requires a new review after a stale fill is refused and the same task codes refresh", () => {
