@@ -59,7 +59,7 @@ it("keeps a refused pick blocking Send across card unmount and remount until a p
     const mount = () => render(
         createElement(QueryClientProvider, { client: queryClient },
             createElement(KeptEditsContext.Provider, { value: kept },
-                createElement(DecisionCard, { session: "session", decision, registerFlush })))
+                createElement(DecisionCard, { session: "session", decision, registerFlush, frozen: false })))
     );
     let card = await mount();
     const pick = async (option: string) => {
@@ -98,7 +98,7 @@ it("stages the whole set for a multiple decision and the single letter for a sin
         render(
             createElement(QueryClientProvider, { client: queryClient },
                 createElement(KeptEditsContext.Provider, { value: keptEdits() },
-                    createElement(DecisionCard, { session: "session", decision, registerFlush: () => {} })))
+                    createElement(DecisionCard, { session: "session", decision, registerFlush: () => {}, frozen: false })))
         );
     const idOf = (decision: typeof base, option: string) =>
         `answer-queue-decision-session-${decision.number}-option-${option}`;
@@ -141,7 +141,7 @@ it("shows the decision's context, proposal, reasoning and each option's rational
     const card = await render(
         createElement(QueryClientProvider, { client: queryClient },
             createElement(KeptEditsContext.Provider, { value: keptEdits() },
-                createElement(DecisionCard, { session: "session", decision, registerFlush: () => {} })))
+                createElement(DecisionCard, { session: "session", decision, registerFlush: () => {}, frozen: false })))
     );
     const id = `answer-queue-decision-session-${decision.number}`;
     const text = (testID: string) => card.getByTestId(testID).props.children[1].props.children;
@@ -178,7 +178,9 @@ it("keeps the options disabled until the queue shows the staged set, so the next
                 return { ...server, draftOption: picks.at(-1) || null };
             },
         });
-        return data ? createElement(DecisionCard, { session: "session", decision: data, registerFlush: () => {} }) : null;
+        return data
+            ? createElement(DecisionCard, { session: "session", decision: data, registerFlush: () => {}, frozen: false })
+            : null;
     }
     const card = await render(createElement(QueryClientProvider, { client: queryClient }, createElement(Host)));
     const option = (id: string) => card.getByTestId(`answer-queue-decision-session-${server.number}-option-${id}`);

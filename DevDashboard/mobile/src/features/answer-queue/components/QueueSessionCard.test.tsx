@@ -52,6 +52,8 @@ afterEach(async () => {
     }
 
     gates.clear();
+    // A write a failed test left waiting finishes here, not inside the next test's call list.
+    await Bun.sleep(5);
     calls.length = 0;
     await cleanup();
 });
@@ -75,6 +77,50 @@ async function settle() {
 }
 
 const parserSession = () => fixtureQueue().sessions.find((session) => session.sessionId === "s-parser")!;
+
+it("freezes every decision from the Send tap until the send settles, and sends the note shown at the tap", async () => {
+    const base = parserSession();
+    const session = {
+        ...base,
+        items: base.items.map((item) => (item.kind === "decision" && item.number === 4 ? { ...item, draftOption: "a" } : item)),
+    };
+    const { card } = await mount(session);
+    const four = "answer-queue-decision-s-parser-4";
+    const five = "answer-queue-decision-s-parser-5";
+    const send = "answer-queue-session-s-parser-send";
+
+    await fireEvent.changeText(card.getByTestId(`${four}-note`), "use the old cache");
+    const releaseStage = hold("/api/qa/decisions/draft");
+    await fireEvent.press(card.getByTestId(`${four}-option-b`));
+    await fireEvent.press(card.getByTestId(send));
+    await settle();
+
+    // The flush waits for the pick: nothing is editable, on this card or the next one.
+    expect(card.getByTestId(`${four}-note`).props.editable).toBe(false);
+    expect(card.getByTestId(`${five}-option-a`).props.disabled).toBe(true);
+    expect(card.getByTestId(`${five}-note`).props.editable).toBe(false);
+
+    const releaseSend = hold("/api/qa/decisions/send-drafts");
+    await act(async () => {
+        releaseStage();
+        await Bun.sleep(5);
+    });
+    expect(calls.map((call) => call.input.text ?? call.input.option ?? call.path)).toEqual([
+        "b",
+        "use the old cache",
+        "/api/qa/decisions/send-drafts",
+    ]);
+    // Still frozen while the send itself is on the way.
+    expect(card.getByTestId(`${five}-option-a`).props.disabled).toBe(true);
+    expect(card.getByTestId(`${four}-note`).props.editable).toBe(false);
+
+    await act(async () => {
+        releaseSend();
+        await Bun.sleep(5);
+    });
+    expect(card.getByTestId(`${five}-option-a`).props.disabled).toBe(false);
+    expect(card.getByTestId(`${four}-note`).props.editable).toBe(true);
+});
 
 it("freezes a form's choices and text while its answer is on the way", async () => {
     const session = parserSession();

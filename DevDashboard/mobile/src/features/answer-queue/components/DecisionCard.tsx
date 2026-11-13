@@ -21,6 +21,11 @@ interface DecisionCardProps {
     decision: WaitingDecisionDto;
     /** Hands the session card this card's flush (save the note, wait for a stage), so Send runs it first. */
     registerFlush: (number: number, flush: (() => Promise<void>) | null) => void;
+    /**
+     * True while the session's Send flushes and sends. The answer is taken from the card at that point, so the card
+     * takes no pick and no note edit until the send settles: a later edit would show an answer the Mac never got.
+     */
+    frozen: boolean;
 }
 
 /**
@@ -29,7 +34,7 @@ interface DecisionCardProps {
  * message, as the notch widget does. The stage carries the revision shown, so a decision the agent re-posted refuses
  * the stale pick with the Mac's words.
  */
-export function DecisionCard({ session, decision, registerFlush }: DecisionCardProps) {
+export function DecisionCard({ session, decision, registerFlush, frozen }: DecisionCardProps) {
     const c = useThemeColors();
     const stage = useStagePick();
     // Kept by the screen, not the card: the list unmounts a card scrolled far away, and the note must survive that.
@@ -65,14 +70,21 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
         return pending;
     };
 
+    // A flush waits for pending stages before it saves the note: it must save the note as it is then, not as it was
+    // when the flush started.
+    const latestNote = useRef(noteState);
+    latestNote.current = noteState;
+
     /** Stages the note against the revision it was written on; rejects when the Mac refuses it. */
     const saveNote = async () => {
-        if (!noteIsDirty(noteState)) {
+        const current = latestNote.current;
+
+        if (!noteIsDirty(current)) {
             return;
         }
 
-        const text = noteState.note.trim();
-        await stageAsync({ text }, noteState.base.revision);
+        const text = current.note.trim();
+        await stageAsync({ text }, current.base.revision);
         setNoteState((state) => ({ ...state, base: { ...state.base, draft: text } }));
     };
 
@@ -125,12 +137,12 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                             accessibilityRole={decision.multiple ? "checkbox" : "button"}
                             accessibilityState={{
                                 selected: staged,
-                                disabled: stage.isPending,
+                                disabled: stage.isPending || frozen,
                                 ...(decision.multiple ? { checked: staged } : {}),
                             }}
                             accessibilityLabel={`Option ${choice.id}: ${choice.label}${choice.recommended ? ", recommended" : ""}`}
                             accessibilityHint={choice.rationale ?? undefined}
-                            disabled={stage.isPending}
+                            disabled={stage.isPending || frozen}
                             onPress={() => {
                                 // A multiple decision stages the whole new set; the session's Send sends it.
                                 const option = decision.multiple
@@ -180,6 +192,7 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                 placeholder="Add a note…"
                 placeholderTextColor={c.textMuted}
                 value={noteState.note}
+                editable={!frozen}
                 onChangeText={(note) => setNoteState((state) => ({ ...state, note }))}
                 onEndEditing={() => void saveNote().catch(() => undefined)}
                 multiline

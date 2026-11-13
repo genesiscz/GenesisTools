@@ -89,6 +89,7 @@ export function QueueSessionCard({
                             session={session.sessionId}
                             decision={item}
                             registerFlush={registerFlush}
+                            frozen={busy}
                         />
                     ) : null;
                 }
