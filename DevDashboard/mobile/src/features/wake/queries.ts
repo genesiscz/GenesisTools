@@ -63,6 +63,17 @@ export function wakeRequest(relay: WakeRelayDto | null): { url: string; init: Re
     };
 }
 
+/** Whether a relay's answer is its acknowledgment, `{ ok: true }` (`src/wakeup/lib/server.ts`). */
+function relayAcknowledged(text: string): boolean {
+    try {
+        const parsed: unknown = SafeJSON.parse(text, { strict: true });
+        return typeof parsed === "object" && parsed !== null && Reflect.get(parsed, "ok") === true;
+    } catch {
+        // Not JSON (an HTML page, an empty body): no acknowledgment.
+        return false;
+    }
+}
+
 export interface WakeOutcome {
     sent: boolean;
     detail: string;
@@ -87,6 +98,11 @@ export async function sendWake(
 
         if (!response.ok) {
             return { sent: false, detail: `The relay answered ${response.status}: ${text.slice(0, 120)}` };
+        }
+
+        // Any 2xx is not proof: a wrong relay URL can answer 200 with a web page. Only `{ ok: true }` says it was sent.
+        if (!relayAcknowledged(text)) {
+            return { sent: false, detail: `The relay did not confirm the wake packet: ${text.slice(0, 120)}` };
         }
 
         return { sent: true, detail: "The relay sent the wake packet. Waiting for the Mac to answer." };

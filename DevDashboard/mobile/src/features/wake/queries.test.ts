@@ -119,4 +119,14 @@ describe("Wake my Mac", () => {
         expect(sent.sent).toBe(true);
         expect((await sendWake(null)).sent).toBe(false);
     });
+
+    it("reports no wake for a 2xx answer that is not the relay's acknowledgment", async () => {
+        const page = await sendWake(MOCK_WAKE, async () => new Response("<html>Welcome</html>", { status: 200 }));
+        const refused = await sendWake(MOCK_WAKE, async () => new Response('{"ok":false}'));
+        const empty = await sendWake(MOCK_WAKE, async () => new Response("", { status: 204 }));
+
+        expect(page).toMatchObject({ sent: false, detail: expect.stringContaining("did not confirm") });
+        expect(refused.sent).toBe(false);
+        expect(empty.sent).toBe(false);
+    });
 });
