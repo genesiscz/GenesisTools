@@ -1,3 +1,4 @@
+import { promptCancelSymbol } from "@genesiscz/utils/prompts/cancel";
 import type { PromptBackend } from "@genesiscz/utils/prompts/p/backend";
 import type {
     ConfirmOpts,
@@ -20,7 +21,9 @@ export interface LogEntry {
     timestamp: string;
 }
 
-const resolvers = new Map<string, (value: PromptTaskValue) => void>();
+type TaskAnswer = { cancelled: false; value: PromptTaskValue } | { cancelled: true };
+
+const resolvers = new Map<string, (answer: TaskAnswer) => void>();
 const logEntries: LogEntry[] = [];
 const logSubscribers = new Set<(entries: LogEntry[]) => void>();
 
@@ -28,9 +31,20 @@ function nextTaskId(): string {
     return `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function enqueue<T>(task: PromptTask, coerce: (value: PromptTaskValue) => T): Promise<T> {
-    return new Promise<T>((resolve) => {
-        resolvers.set(task.id, (value) => resolve(coerce(value)));
+function enqueue<T>(task: PromptTask, coerce: (value: PromptTaskValue) => T): Promise<T | symbol> {
+    return new Promise<T | symbol>((resolve, reject) => {
+        resolvers.set(task.id, (answer) => {
+            if (answer.cancelled) {
+                resolve(promptCancelSymbol);
+                return;
+            }
+
+            try {
+                resolve(coerce(answer.value));
+            } catch (error) {
+                reject(error);
+            }
+        });
         usePromptStore.getState().enqueue(task);
     });
 }
@@ -61,17 +75,18 @@ function optionValues<V>(options: SelectOption<V>[], value: PromptTaskValue): V[
     return picked.flatMap((item) => (typeof item === "number" && options[item] ? [options[item].value] : []));
 }
 
+/** The option the answer index points at. An option whose own value is `undefined` is still a selection. */
 function optionValue<V>(options: SelectOption<V>[], value: PromptTaskValue): V {
-    const [first] = optionValues(options, value);
+    const option = typeof value === "number" ? options[value] : undefined;
 
-    if (first === undefined && options.length > 0) {
+    if (!option) {
         throw new Error("opentuiBackend select answered with no option");
     }
 
-    return first;
+    return option.value;
 }
 
-export function completeTask(id: string, value: PromptTaskValue): void {
+function settleTask(id: string, answer: TaskAnswer): void {
     const resolver = resolvers.get(id);
 
     if (!resolver) {
@@ -80,7 +95,16 @@ export function completeTask(id: string, value: PromptTaskValue): void {
 
     resolvers.delete(id);
     usePromptStore.getState().complete(id);
-    resolver(value);
+    resolver(answer);
+}
+
+export function completeTask(id: string, value: PromptTaskValue): void {
+    settleTask(id, { cancelled: false, value });
+}
+
+/** The user dismissed the prompt (Escape). The prompt answers `promptCancelSymbol`, which the facade settles. */
+export function cancelTask(id: string): void {
+    settleTask(id, { cancelled: true });
 }
 
 export function opentuiBackend(_renderer: CliRenderer): PromptBackend {
