@@ -100,7 +100,7 @@ struct ToolsCallCause: Equatable {
 
     init(error: Error, call: ToolsCallLedger.Call?) {
         let printed = call?.stderr.flatMap { FailureLog.headline(in: $0) }
-        // A runner that throws its own error for a call it killed (the hub's `ToolsCLIRunner`).
+        // A runner that throws its own error for a call it killed (not `ToolsBridgeError.timeout`).
         if let call, call.timedOut, (error as? ToolsBridgeError) == nil {
             let seconds = call.ended.map { Int($0.timeIntervalSince(call.started).rounded()) } ?? 0
             kind = .timeout(seconds: seconds, server: call.via == "server-timeout")

@@ -9,6 +9,7 @@ extension ToolsBridge {
     public func capture(_ argv: [String], timeout: TimeInterval = 60) throws -> ProcessCapture {
         let traceId = ToolsCallTrace.newId()
         let started = Date()
+        ToolsCallTrace.began(traceId: traceId, argv: argv, started: started)
         if let server {
             let start = CFAbsoluteTimeGetCurrent()
             let patience = Self.serverPatience(timeoutSeconds: Int(timeout))
@@ -48,6 +49,7 @@ extension ToolsBridge {
     public func captureStoppable(_ argv: [String], timeout: TimeInterval = 60) async throws -> (capture: ProcessCapture, stopped: Bool) {
         let traceId = ToolsCallTrace.newId()
         let started = Date()
+        ToolsCallTrace.began(traceId: traceId, argv: argv, started: started)
         if let server {
             let start = CFAbsoluteTimeGetCurrent()
             let patience = Self.serverPatience(timeoutSeconds: Int(timeout))
@@ -78,10 +80,12 @@ extension ToolsBridge {
         _ work: @escaping @Sendable (ProcessCancelHandle) throws -> T
     ) async throws -> (value: T, stopped: Bool) {
         let handle = ProcessCancelHandle()
+        // The queue hop leaves the task: the caller's call ledger goes along by hand.
+        let ledger = ToolsCallTrace.ledger
         let value = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
                 DispatchQueue.global(qos: .userInitiated).async {
-                    continuation.resume(with: Result { try work(handle) })
+                    continuation.resume(with: Result { try ToolsCallTrace.$ledger.withValue(ledger) { try work(handle) } })
                 }
             }
         } onCancel: {
