@@ -597,6 +597,21 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(new MeetingStore(store.storage).read(REVIEW.id)!.history.at(-1)?.change).toBe("1 finding");
     });
 
+    test("a seating save goes through decision.apply's set action, alone and beside another field", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const seats = { room: ["Dana Example"], remote: [{ name: "Alex Example", fromSec: 60, toSec: 600 }] };
+        await client.call("decision.apply", { meeting: REVIEW.id, action: { kind: "set", seats } });
+        expect(store.read(REVIEW.id)?.seats).toEqual(seats);
+        const moved = { room: ["Dana Example", "Alex Example"], remote: [] };
+        await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "set", seats: moved, title: "Seated review" },
+        });
+        expect(store.read(REVIEW.id)).toMatchObject({ seats: moved, title: "Seated review" });
+        const rows = await client.call("journal.read", { meeting: REVIEW.id });
+        expect(rows.entries).toHaveLength(2);
+    });
+
     test("service journal reads retain the copied meeting's provenance", async () => {
         const { client, store } = await ADAPTERS[kind]();
         const { duplicateMeeting } = await import("../duplicate");
