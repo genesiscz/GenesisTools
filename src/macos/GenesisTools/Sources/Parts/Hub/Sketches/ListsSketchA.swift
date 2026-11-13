@@ -509,9 +509,13 @@ extension ListsSketchA {
     /// Every question in triage order: needs your answer (blocking first, then newest), staged, waiting to send, quiet.
     @MainActor
     static func queue(_ inbox: HubInboxModel, filter: String) -> [Entry] {
+        queue(inbox.sessions, filter: filter)
+    }
+
+    static func queue(_ sessions: [InboxSession], filter: String) -> [Entry] {
         let needle = filter.trimmed.lowercased()
         var entries: [Entry] = []
-        for session in inbox.sessions {
+        for session in sessions {
             for item in session.items {
                 let bucket: Bucket
                 if !item.isOpen {
@@ -544,6 +548,15 @@ extension ListsSketchA {
     static func pick(_ entry: Entry, inbox: HubInboxModel) {
         inbox.selectedID = entry.session.id
         inbox.keyCardID = entry.item.id
+    }
+
+    /// The question rows the sidebar shows, in its order, for Up and Down: a folded Quiet section keeps only the
+    /// current question. The keys stepped through session ids before, so they skipped questions and moved a selection
+    /// the page does not show.
+    static func keyOrder(_ entries: [Entry], showsQuiet: Bool, current: String?) -> [String] {
+        Bucket.allCases.flatMap { bucket in
+            entries.filter { $0.bucket == bucket && (bucket != .quiet || showsQuiet || $0.id == current) }.map(\.id)
+        }
     }
 
     /// The sidebar: the questions, one row each, under their triage section.
@@ -636,6 +649,8 @@ extension ListsSketchA {
                 ListsSketchA.pick(entry, inbox: inbox)
             }
             .equatable()
+            // The arrow keys scroll to the question they select (`keyOrder`).
+            .id(entry.id)
         }
     }
 

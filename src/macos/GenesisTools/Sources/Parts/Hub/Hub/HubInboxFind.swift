@@ -11,8 +11,26 @@ struct InboxFindHost: View {
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
     @State private var find = PanelFindModel(scope: "inbox", title: "the inbox")
 
+    /// What the rows are built from: the sessions, the sidebar filter (the variants filter each question by it) and
+    /// the layout.
+    private struct Revision: Equatable {
+        let sessions: [InboxSession]
+        let filter: String
+        let option: String?
+    }
+
     static func cardFields(session: InboxSession, item: InboxItem) -> [PanelFindField] {
         session.findFields.map { PanelFindField("session.\($0.key)", $0.text, markdown: $0.markdown) } + item.findFields
+    }
+
+    /// One row per question a redesign layout can show: option A's queue, option B's entries before its section and
+    /// project filters (a reveal clears them). Every item of each session was indexed before, so a match could sit in
+    /// a closed question or a sibling the sidebar filter hides, and the reveal then showed another card.
+    static func variantRows(_ sessions: [InboxSession], filter: String, option: String) -> [PanelFindRow] {
+        let questions: [(session: InboxSession, item: InboxItem)] = option == "a"
+            ? ListsSketchA.queue(sessions, filter: filter).map { ($0.session, $0.item) }
+            : ListsSketchB.entries(sessions, filter: filter).map { ($0.session, $0.item) }
+        return questions.map { PanelFindRow(id: $0.item.id, fields: cardFields(session: $0.session, item: $0.item)) }
     }
 
     var body: some View {
@@ -20,32 +38,48 @@ struct InboxFindHost: View {
         // InboxMain shows the queued-only sessions after the others, under their own heading.
         let sorted = inbox.sorted(InboxSort(rawValue: sortKey) ?? .recent, filter: model.filter)
         let sessions = sorted.filter { !$0.isQueuedOnly } + sorted.filter(\.isQueuedOnly)
+        let option = HubLayout.option("lists")
         Group {
-            switch HubLayout.option("lists") {
+            switch option {
             case "a": ListsSketchA.InboxFocus(model: model, inbox: inbox)
             case "b": ListsSketchB.InboxTable(model: model, inbox: inbox)
             default: InboxMain(model: model, inbox: inbox)
             }
         }
-            .onReceive(find.$revealToken) { _ in
-                guard HubLayout.option("lists") != nil, let hit = find.current,
-                      let session = sessions.first(where: { $0.items.contains(where: { $0.id == hit.row }) }) else { return }
-                inbox.selectedID = session.id
-                inbox.keyCardID = hit.row
-                if HubLayout.option("lists") == "b" {
-                    ListsSketchB.InboxPick.shared.bucket = nil
-                    ListsSketchB.InboxPick.shared.project = nil
-                    ListsSketchB.InboxPick.shared.open = hit.row
+            .panelFind(find, revision: Revision(sessions: sessions, filter: model.filter, option: option),
+                       prepare: { match in prepareVariant(match, option: option) }) {
+                if let option {
+                    return Self.variantRows(inbox.sessions, filter: model.filter, option: option)
                 }
-            }
-            .panelFind(find, revision: sessions) {
-                sessions.flatMap { session in
-                    if HubLayout.option("lists") != nil {
-                        return session.items.map { PanelFindRow(id: $0.id, fields: Self.cardFields(session: session, item: $0)) }
-                    }
-                    return [PanelFindRow(id: "session:\(session.id)", fields: session.findFields, container: session.id)]
+                return sessions.flatMap { session in
+                    [PanelFindRow(id: "session:\(session.id)", fields: session.findFields, container: session.id)]
                         + session.items.map { PanelFindRow(id: $0.id, fields: $0.findFields, container: session.id) }
                 }
             }
+    }
+
+    /// A redesign layout builds a question's card only once it is the shown one (A) or the open line (B). The find
+    /// selects it first and answers true, so the scroll waits for the layout that builds the card; selecting it from
+    /// a separate subscriber raced the find's own scroll, which aimed at a card not built yet.
+    private func prepareVariant(_ match: PanelFindMatch, option: String?) -> Bool {
+        switch option {
+        case "a":
+            guard inbox.keyCardID != match.row,
+                  let entry = ListsSketchA.queue(inbox, filter: model.filter).first(where: { $0.id == match.row }) else { return false }
+            ListsSketchA.pick(entry, inbox: inbox)
+            return true
+        case "b":
+            let pick = ListsSketchB.InboxPick.shared
+            guard pick.open != match.row || pick.bucket != nil || pick.project != nil,
+                  let entry = ListsSketchB.entries(inbox, filter: model.filter).first(where: { $0.id == match.row }) else { return false }
+            inbox.selectedID = entry.session.id
+            inbox.keyCardID = entry.item.id
+            pick.bucket = nil
+            pick.project = nil
+            pick.open = entry.item.id
+            return true
+        default:
+            return false
+        }
     }
 }

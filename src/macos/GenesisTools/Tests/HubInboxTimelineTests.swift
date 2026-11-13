@@ -60,6 +60,80 @@ final class HubInboxTimelineTests: XCTestCase {
         XCTAssertNil(pick.project)
     }
 
+    /// A session in project "lab" with a staged question and a question the session closed without an answer.
+    private let labJSON = """
+    {
+      "sessions": [
+        {
+          "sessionId": "s-lab", "provider": "claude", "title": "lab work", "project": "lab", "cwd": "/tmp/gt/lab",
+          "branch": null, "account": "work", "lastAt": "2026-03-01T08:00:00.000Z", "waiting": 1,
+          "items": [
+            {
+              "kind": "decision", "id": "d_1_s-lab", "number": 1, "title": "Rename the probe?", "prompt": "Rename the probe?",
+              "choices": [{ "id": "a", "label": "rename it" }], "recommended": null, "blocking": false, "status": "drafted",
+              "option": "a", "answer": null, "source": "transcript", "at": "2026-03-01T08:00:00.000Z"
+            },
+            {
+              "kind": "decision", "id": "d_2_s-lab", "number": 2, "title": "Rename the probe twice?", "prompt": "Rename the probe twice?",
+              "choices": [{ "id": "a", "label": "rename it" }], "recommended": null, "blocking": false, "status": "cancelled",
+              "option": null, "answer": null, "source": "transcript", "at": "2026-03-01T07:00:00.000Z"
+            }
+          ]
+        }
+      ],
+      "scanned": { "sessions": 1, "fromCache": 0, "read": 1, "failed": 0 },
+      "elapsedMs": 3
+    }
+    """
+
+    private func allSessions() throws -> [InboxSession] {
+        try JSONDecoder().decode(InboxEnvelope.self, from: Data(inboxJSON.utf8)).sessions
+            + JSONDecoder().decode(InboxEnvelope.self, from: Data(labJSON.utf8)).sessions
+    }
+
+    /// Closing the open line of the compact table leaves every line closed; the first line no longer opens instead.
+    @MainActor
+    func testTheCompactTableKeepsEveryLineClosedAfterTheReaderClosesOne() {
+        let shown = ["first", "second"]
+        XCTAssertNil(ListsSketchB.InboxPick.openLine(ListsSketchB.InboxPick.allClosed, shown: shown))
+        XCTAssertEqual(ListsSketchB.InboxPick.openLine("second", shown: shown), "second")
+        XCTAssertEqual(ListsSketchB.InboxPick.openLine(nil, shown: shown), "first")
+        XCTAssertEqual(ListsSketchB.InboxPick.openLine("filtered-out", shown: shown), "first")
+    }
+
+    /// A project whose questions are all staged still gets a row in the project filter, with 0 to answer.
+    @MainActor
+    func testTheCompactProjectFilterListsProjectsWithoutAnUnansweredQuestion() throws {
+        let entries = ListsSketchB.entries(try allSessions(), filter: "")
+        let projects = ListsSketchB.InboxTriage.projects(entries)
+        XCTAssertEqual(projects.first { $0.name == "lab" }?.count, 0)
+        XCTAssertEqual(projects.first { $0.name == "app" }?.count, 1)
+    }
+
+    /// Option A's arrow keys step through its question rows in their order, not through session ids.
+    @MainActor
+    func testTheFocusedSidebarKeysStepThroughQuestionRows() throws {
+        let queue = ListsSketchA.queue(try allSessions(), filter: "")
+        let order = ListsSketchA.keyOrder(queue, showsQuiet: false, current: nil)
+        XCTAssertEqual(order, queue.map(\.id))
+        XCTAssertTrue(order.contains("d_1_s-lab"))
+        XCTAssertFalse(order.contains("s-lab"), "a session id is never a row of option A")
+    }
+
+    /// Find in a redesign layout indexes only the questions that layout can show: a closed, unanswered question has
+    /// no card, so it never counts as a match.
+    @MainActor
+    func testVariantInboxFindIndexesOnlyTheQuestionsALayoutShows() throws {
+        let sessions = try allSessions()
+        for option in ["a", "b"] {
+            let ids = InboxFindHost.variantRows(sessions, filter: "", option: option).map(\.id)
+            XCTAssertTrue(ids.contains("d_1_s-lab"), option)
+            XCTAssertFalse(ids.contains("d_2_s-lab"), "option \(option) has no card for a cancelled question")
+            let filtered = InboxFindHost.variantRows(sessions, filter: "keep the cache", option: option).map(\.id)
+            XCTAssertEqual(filtered, ["d_3_s-alpha"], "option \(option) filters each question, as its rows do")
+        }
+    }
+
     func testVariantInboxSearchKeepsSessionAndCardFieldKeysDistinct() throws {
         let session = try JSONDecoder().decode(InboxEnvelope.self, from: Data(inboxJSON.utf8)).sessions[0]
         let fields = InboxFindHost.cardFields(session: session, item: session.items[0])

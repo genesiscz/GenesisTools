@@ -2900,25 +2900,38 @@ private struct SessionListView: View {
                     }
                         .modifier(SidebarArrowKeys(
                             ids: {
-                                if HubLayout.option("lists") == "b" {
+                                switch HubLayout.option("lists") {
+                                case "b":
                                     return ListsSketchB.InboxTriage.keyRows(ListsSketchB.entries(model.inbox, filter: model.filter)).map(\.id)
+                                case "a":
+                                    // Option A lists questions, not sessions: its rows, in its order.
+                                    let queue = ListsSketchA.queue(model.inbox, filter: model.filter)
+                                    let current = ListsSketchA.current(queue, keyCardID: model.inbox.keyCardID)?.id
+                                    return ListsSketchA.keyOrder(queue, showsQuiet: model.inbox.showsQuiet, current: current)
+                                default:
+                                    return Self.inboxKeyOrder(model.inbox, sort: sort, filter: model.filter)
                                 }
-                                return Self.inboxKeyOrder(model.inbox, sort: sort, filter: model.filter)
                             },
                             selection: {
-                                HubLayout.option("lists") == "b" ? ListsSketchB.InboxPick.shared.railSelection : model.inbox.selectedID
+                                switch HubLayout.option("lists") {
+                                case "b": return ListsSketchB.InboxPick.shared.railSelection
+                                case "a":
+                                    let queue = ListsSketchA.queue(model.inbox, filter: model.filter)
+                                    return ListsSketchA.current(queue, keyCardID: model.inbox.keyCardID)?.id
+                                default: return model.inbox.selectedID
+                                }
                             },
                             select: { id in
-                                if HubLayout.option("lists") == "b" {
+                                switch HubLayout.option("lists") {
+                                case "b":
                                     let rows = ListsSketchB.InboxTriage.keyRows(ListsSketchB.entries(model.inbox, filter: model.filter))
                                     if let row = rows.first(where: { $0.id == id }) { ListsSketchB.InboxPick.shared.select(row) }
-                                    return
-                                }
-                                model.inbox.selectedID = id
-                                if HubLayout.option("lists") == "a",
-                                   let session = model.inbox.sessions.first(where: { $0.id == id }),
-                                   let item = session.items.first(where: { $0.isOpen }) ?? session.items.first {
-                                    model.inbox.keyCardID = item.id
+                                case "a":
+                                    if let entry = ListsSketchA.queue(model.inbox, filter: model.filter).first(where: { $0.id == id }) {
+                                        ListsSketchA.pick(entry, inbox: model.inbox)
+                                    }
+                                default:
+                                    model.inbox.selectedID = id
                                 }
                             },
                             proxy: proxy, focused: $listFocused, focusOnClick: true))

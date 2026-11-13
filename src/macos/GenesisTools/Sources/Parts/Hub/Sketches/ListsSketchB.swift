@@ -486,15 +486,30 @@ extension ListsSketchB {
             open = nil
         }
 
-        /// The open line of the table; nil opens the first one.
+        /// The open line of the table; nil opens the first one, `allClosed` none.
         @Published var open: String?
+
+        /// The reader closed the open line: no line is open, and the first one does not open in its place.
+        static let allClosed = ""
+
+        /// The line the table opens: the picked one while the filters show it, none after the reader closed it, else
+        /// the first shown. The closed state fell back to the first line, so the first line could not be closed and
+        /// closing another one opened the first.
+        static func openLine(_ picked: String?, shown: [String]) -> String? {
+            if picked == allClosed { return nil }
+            return picked.flatMap { id in shown.contains(id) ? id : nil } ?? shown.first
+        }
     }
 
     @MainActor
     static func entries(_ inbox: HubInboxModel, filter: String) -> [Entry] {
+        entries(inbox.sessions, filter: filter)
+    }
+
+    static func entries(_ sessions: [InboxSession], filter: String) -> [Entry] {
         let needle = filter.trimmed.lowercased()
         var entries: [Entry] = []
-        for session in inbox.sessions {
+        for session in sessions {
             for item in session.items {
                 let bucket: Bucket
                 if !item.isOpen {
@@ -536,10 +551,13 @@ extension ListsSketchB {
         @ObservedObject var inbox: HubInboxModel
         @ObservedObject private var pick = InboxPick.shared
 
-        private static func projects(_ all: [Entry]) -> [(name: String, count: Int)] {
-            let open = all.filter { $0.bucket == .needsAnswer }
-            let grouped: [String: [Entry]] = Dictionary(grouping: open, by: { $0.session.projectName })
-            let rows: [(name: String, count: Int)] = grouped.map { (name: $0.key, count: $0.value.count) }
+        /// Every project with a question in any section, so the project filter reaches one that holds only staged or
+        /// quiet questions; the count is its questions that need an answer, which may be 0.
+        static func projects(_ all: [Entry]) -> [(name: String, count: Int)] {
+            let grouped: [String: [Entry]] = Dictionary(grouping: all, by: { $0.session.projectName })
+            let rows: [(name: String, count: Int)] = grouped.map { name, entries in
+                (name: name, count: entries.filter { $0.bucket == .needsAnswer }.count)
+            }
             return rows.sorted { a, b in a.count == b.count ? a.name < b.name : a.count > b.count }
         }
 
@@ -639,8 +657,9 @@ extension ListsSketchB {
             let shown = all.filter { entry in
                 (pick.bucket == nil || entry.bucket == pick.bucket) && (pick.project == nil || entry.session.projectName == pick.project)
             }
-            // An open id that the filters hide no longer opens anything: the first shown line opens instead.
-            let open = pick.open.flatMap { id in shown.contains { $0.id == id } ? id : nil } ?? shown.first?.id
+            // An open id that the filters hide no longer opens anything: the first shown line opens instead, unless
+            // the reader closed the open line.
+            let open = InboxPick.openLine(pick.open, shown: shown.map(\.id))
             VStack(spacing: 0) {
                 header(all: all, shown: shown.count)
                 PanelFindBarSlot()
@@ -675,15 +694,18 @@ extension ListsSketchB {
                 .onChange(of: open) { _, id in
                     if let id { proxy.scrollTo(id, anchor: .center) }
                 }
+                // A banner or a deep link: clear the filters, open the line and scroll to it. Each request scrolls, also
+                // when the line is open already, after the layout that the filter change causes.
+                .onChange(of: inbox.focusRequest, initial: true) { _, _ in
+                    guard let id = inbox.focusedItemID, all.contains(where: { $0.id == id }) else { return }
+                    pick.bucket = nil
+                    pick.project = nil
+                    pick.open = id
+                    DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+                }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .onChange(of: inbox.focusRequest, initial: true) { _, _ in
-                guard let id = inbox.focusedItemID, all.contains(where: { $0.id == id }) else { return }
-                pick.bucket = nil
-                pick.project = nil
-                pick.open = id
-            }
             .modifier(ListVariantInboxKeys(inbox: inbox, entries: shown.map { ListVariantInboxEntry(session: $0.session, item: $0.item) }, selected: open, focused: $keys) { entry in
                 inbox.selectedID = entry.session.id; inbox.keyCardID = entry.item.id; pick.open = entry.item.id
             })
@@ -693,7 +715,7 @@ extension ListsSketchB {
         private func line(_ entry: Entry, open: Bool) -> some View {
             TableLine(entry: entry, open: open) {
                 GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
-                    pick.open = open ? "" : entry.id
+                    pick.open = open ? InboxPick.allClosed : entry.id
                 }
             }
             .equatable()
