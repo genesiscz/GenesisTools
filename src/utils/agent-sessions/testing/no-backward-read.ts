@@ -8,6 +8,7 @@ import type {
     RowAnchorWalk,
     SpawnLink,
 } from "../types";
+import { noWorkflowReader, type SessionWorkflowReader } from "../workflow-types";
 
 /** `readBackward` for a test reader whose test never walks a session backwards. */
 export async function noBackwardRead(): Promise<BackwardRead> {
@@ -45,6 +46,9 @@ export const noAnalysis: SessionAnalysisReader = {
     compactions: async () => ({ supported: false, reason: "test reader" }),
     quotaReadings: async () => ({ supported: false, reason: "test reader" }),
 };
+
+/** `workflows` for a test reader whose test never lists a multi-agent run. */
+export const noWorkflows: SessionWorkflowReader = noWorkflowReader("test reader");
 
 /** `midWork` for a test reader whose sessions are never asked whether they still work: always finished. */
 export function noMidWork(): boolean {

@@ -7,12 +7,14 @@ import {
     _setLaunchAgentsDirForTests,
     _setLaunchctlRunnerForTests,
     installLaunchd,
+    LAUNCHCTL_TIMEOUT_EXIT_CODE,
     type LaunchctlResult,
     type LaunchdInstallOptions,
     launchdStatus,
     parseLaunchdPid,
     plistPath,
     renderLaunchdPlist,
+    runLaunchctlCommand,
 } from "@genesiscz/utils/process/launchd-agent";
 import { skip } from "@genesiscz/utils/test/skip";
 
@@ -170,5 +172,22 @@ describe.skipIf(skip.unlessMac)("launchd agent through the fake runner", () => {
 
         await expect(installLaunchd(baseOptions())).rejects.toThrow("nope");
         expect(calls.map((call) => call[0])).toEqual(["unload", "load"]);
+    });
+});
+
+describe("runLaunchctlCommand", () => {
+    test("ends a command that outlives its deadline with the timeout exit code and says so", async () => {
+        const started = Date.now();
+        const result = await runLaunchctlCommand(["sleep", "30"], 300);
+
+        expect(result.exitCode).toBe(LAUNCHCTL_TIMEOUT_EXIT_CODE);
+        expect(result.stderr).toContain("timed out after 300 ms");
+        expect(Date.now() - started).toBeLessThan(10_000);
+    });
+
+    test("returns the output and exit code of a command that finishes in time", async () => {
+        const result = await runLaunchctlCommand(["sh", "-c", "echo out; echo err >&2; exit 3"], 5_000);
+
+        expect(result).toEqual({ exitCode: 3, stdout: "out\n", stderr: "err\n" });
     });
 });

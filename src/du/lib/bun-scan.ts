@@ -508,6 +508,14 @@ export async function scanWithBun(opts: ScanOptions): Promise<ClonesizeResult> {
     const pct = naiveNum ? (100 * shared) / naiveNum : 0;
 
     const groupsOut: GroupResult[] = [];
+    const compressed = results.reduce(
+        (sum, item) => ({
+            files: sum.files + item.compressed.files,
+            logical_bytes: sum.logical_bytes + item.compressed.logical_bytes,
+            allocated_bytes: sum.allocated_bytes + item.compressed.allocated_bytes,
+        }),
+        { files: 0, logical_bytes: 0, allocated_bytes: 0 }
+    );
     for (let g = 0; g < ngroups; g++) {
         if (gNaive[g]! === 0) {
             continue;
@@ -534,6 +542,7 @@ export async function scanWithBun(opts: ScanOptions): Promise<ClonesizeResult> {
         files_scanned: scanned,
         files_listed: listed,
         files_opened: opened,
+        compressed,
         extents: totalExts,
         threads: nthreads,
         naive_bytes: naiveNum,

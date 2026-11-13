@@ -80,8 +80,11 @@ interface Rule {
      * shared literal walk, which visits only `string` and `template_string` nodes.
      */
     matcher?: NapiConfig;
-    /** Given the node's source text (and the node, for a rule that needs its parent), does it violate? */
-    test: (text: string, node: SgNode) => boolean;
+    /**
+     * Given the node's source text (and the node, for a rule that needs its parent), does it violate? `file` is the
+     * repo-relative path being checked: a node parsed by `checkSource` has no file name of its own.
+     */
+    test: (text: string, node: SgNode, file: string) => boolean;
     /** Files where the pattern is the implementation, not a violation. */
     allowedIn?: RegExp;
     /** The rule runs only on these files. */
@@ -1037,7 +1040,7 @@ const RULES: Rule[] = [
             "A static import of @genesiscz/utils/readme loads the README renderer (cli-html and highlight.js, about 590 " +
             "modules and 110 to 220 ms) into every start of the tool. runTool already answers --readme; an entry " +
             "without runTool calls `await answerReadmeFlag(import.meta.dir)` from @genesiscz/utils/cli/readme-flag.",
-        test: (text, node) => staticallyImportsReadme(text, node.getRoot().filename()),
+        test: (text, _node, file) => staticallyImportsReadme(text, file),
         allowedIn: /(?:^|\/)src\/utils\/readme\.test\.ts$/,
     },
     {
@@ -2162,7 +2165,7 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
 
         if (RAW_CLACK_IMPORT_RULE.matcher && ruleApplies(RAW_CLACK_IMPORT_RULE, file, ratchets)) {
             for (const node of root.findAll(RAW_CLACK_IMPORT_RULE.matcher)) {
-                if (RAW_CLACK_IMPORT_RULE.test(node.text(), node)) {
+                if (RAW_CLACK_IMPORT_RULE.test(node.text(), node, file)) {
                     record(node, RAW_CLACK_IMPORT_RULE);
                 }
             }
@@ -2177,7 +2180,7 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
         const text = node.text();
 
         for (const rule of RULES) {
-            if (!rule.matcher && ruleApplies(rule, file, ratchets) && rule.test(text, node)) {
+            if (!rule.matcher && ruleApplies(rule, file, ratchets) && rule.test(text, node, file)) {
                 record(node, rule);
             }
         }
@@ -2189,7 +2192,7 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
         }
 
         for (const node of root.findAll(rule.matcher)) {
-            if (rule.test(node.text(), node)) {
+            if (rule.test(node.text(), node, file)) {
                 record(node, rule);
             }
         }
@@ -2522,17 +2525,33 @@ export function changedFiles(base: string, { cwd = process.cwd() }: { cwd?: stri
 
     const changed = new Set(diff.stdout.toString().split("\0").filter(Boolean));
     checkRatchetGrowth({ from, cwd, changed });
-    const ruleInputs = new Set([
-        "biome.json",
-        "scripts/ci/lint-rules.ts",
-        "scripts/ci/lint-changed.sh",
-        ...RATCHET_INPUTS,
-    ]);
-    if ([...changed].some((file) => ruleInputs.has(file))) {
+
+    if ([...changed].some(isRuleInput)) {
         return null;
     }
 
     return changed;
+}
+
+/** The files a rule is made of, besides the ratchet lists: a change to one can expose an unchanged offender. */
+const RULE_INPUTS = new Set([
+    "biome.json",
+    "scripts/ci/lint-rules.ts",
+    "scripts/ci/lint-changed.sh",
+    "scripts/ci/harness-guard.ts",
+    "scripts/ci/harness-guard-allowlist.ts",
+    "scripts/ci/swift-lint-rules.ts",
+    "scripts/ci/swift-row-ratchet.ts",
+    "src/utils/agent/identity/terminals.ts",
+    ...RATCHET_INPUTS,
+]);
+
+/** A roster's matcher, owner and helpers: a tightened matcher or a narrower `allowedIn` reaches files nobody changed. */
+const ROSTER_RULE_INPUT = /^scripts\/ci\/rosters\/(?:index\.ts|define\.ts|swift\.ts|[^/]+\.definition\.ts)$/;
+
+/** Whether a change to `file` must rescan the whole tree. */
+export function isRuleInput(file: string): boolean {
+    return RULE_INPUTS.has(file) || ROSTER_RULE_INPUT.test(file);
 }
 
 export async function targetFiles(): Promise<string[]> {
@@ -2564,6 +2583,13 @@ export async function targetFiles(): Promise<string[]> {
         "*.cjs",
         "*.swift",
     ]);
+
+    // A failed listing prints nothing on stdout: read as "no files", it passes every rule and lets the roster
+    // generator drop every count.
+    if (listed.exitCode !== 0) {
+        throw new Error(`lint-rules: git ls-files exited ${listed.exitCode}: ${listed.stderr.toString().trim()}`);
+    }
+
     const files = listed.stdout.toString().split("\0").filter(Boolean);
 
     const included = files.filter(
@@ -2686,13 +2712,10 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
                     guard((nodes) => {
                         for (const node of nodes) {
                             const text = node.text();
+                            const file = node.getRoot().filename();
 
                             for (const rule of RULES) {
-                                if (
-                                    !rule.matcher &&
-                                    ruleApplies(rule, node.getRoot().filename()) &&
-                                    rule.test(text, node)
-                                ) {
+                                if (!rule.matcher && ruleApplies(rule, file) && rule.test(text, node, file)) {
                                     push(node, rule);
                                 }
                             }
@@ -2714,7 +2737,7 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
                             { paths: scoped, matcher },
                             guard((nodes) => {
                                 for (const node of nodes) {
-                                    if (rule.test(node.text(), node)) {
+                                    if (rule.test(node.text(), node, node.getRoot().filename())) {
                                         push(node, rule);
                                     }
                                 }
@@ -2789,7 +2812,7 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
                 { paths: clackScoped, matcher: RAW_CLACK_IMPORT_RULE.matcher },
                 guard((nodes) => {
                     for (const node of nodes) {
-                        if (RAW_CLACK_IMPORT_RULE.test(node.text(), node)) {
+                        if (RAW_CLACK_IMPORT_RULE.test(node.text(), node, node.getRoot().filename())) {
                             push(node, RAW_CLACK_IMPORT_RULE);
                         }
                     }

@@ -17,6 +17,7 @@ import {
     noSessionChanges,
     noSpawnLink,
     noStatistics,
+    noWorkflows,
 } from "@genesiscz/utils/agent-sessions/testing/no-backward-read";
 import type {
     NativeSessionReader,
@@ -291,6 +292,7 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         readChanges: noSessionChanges,
         rowAnchors: noRowAnchors,
         analysis: noAnalysis,
+        workflows: noWorkflows,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],

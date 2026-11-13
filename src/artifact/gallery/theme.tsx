@@ -1,4 +1,13 @@
-import { ChartJs, HUE, Mermaid, SERIES_COLOR, ThemeToggle, useTheme } from "@artifact/kit";
+import {
+    ChartJs,
+    HUE,
+    Mermaid,
+    readableTextOn,
+    resolveCssColorValue,
+    SERIES_COLOR,
+    ThemeToggle,
+    useTheme,
+} from "@artifact/kit";
 import { Demo, type GalleryMeta, GalleryPage } from "./_frame";
 
 export const meta: GalleryMeta = {
@@ -28,8 +37,11 @@ export default function ThemePage() {
                     {SERIES_COLOR.map((color, i) => (
                         <span
                             key={color}
-                            className="inline-flex h-10 w-20 items-end rounded-card p-1 font-mono text-[10px] text-white"
-                            style={{ background: color }}
+                            className="inline-flex h-10 w-20 items-end rounded-card p-1 font-mono text-[10px]"
+                            style={{
+                                background: color,
+                                color: readableTextOn(resolveCssColorValue(color, document.documentElement)),
+                            }}
                         >
                             {i + 1}
                         </span>
@@ -41,8 +53,11 @@ export default function ThemePage() {
                     {Object.entries(HUE).map(([name, color]) => (
                         <span
                             key={name}
-                            className="inline-flex h-10 w-20 items-end rounded-card p-1 font-mono text-[10px] text-canvas"
-                            style={{ background: color }}
+                            className="inline-flex h-10 w-20 items-end rounded-card p-1 font-mono text-[10px]"
+                            style={{
+                                background: color,
+                                color: readableTextOn(resolveCssColorValue(color, document.documentElement)),
+                            }}
                         >
                             {name}
                         </span>

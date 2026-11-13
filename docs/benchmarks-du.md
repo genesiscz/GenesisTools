@@ -1621,3 +1621,84 @@ At that load the two runs move both ways by up to 46% on unchanged loops, so the
 comparison that counts. The tests are `clone-controls.test.ts` "clonesize excludes: every one is honored, past the
 256th" (bun:ffi and the CLI binary) and `index.test.ts` "L7" (the `--index` walk through `buildIndex`). A planted 256
 cap in `excludes_add` failed all three.
+
+## 2026-11-12 06:20 — transparent compression accounting and native listing metadata
+
+The native and Bun engines now map a compressed file's `..namedfork/rsrc` payload instead of mapping its logical
+data fork. Compressed clones therefore contribute their physical payload once. A compressed file with no mapped
+resource fork retains its reported allocation as a conservative upper bound. `compressed` reports per-file count,
+logical bytes and allocated bytes before clone deduplication. Compressed files are no longer classified as sparse.
+The index walk collects the same compression totals without extra syscalls, persists them through an additive
+migration and propagates region-update deltas. The listing walk now returns its existing flags plus an inline
+`ATTR_CMNEXT_CLONEID`, retaining bigint nanosecond mtime at the TypeScript boundary.
+
+The fixed matrix ran before edits (`cold-compress-before`) and after the native changes (`cold-compress-final`),
+on the Mac checkout at HEAD `029ddd1431eab453e4c2b75bbf5cbde491d3b158` with uncommitted changes. Five timed runs
+per matrix arm, warmup one, three cache-arm runs. System CPU is primary. The load average changed from 19.23 to
+53.21 during the before run and 10.75 to 142.35 during the final run, peaking at 167.29 after its matrix.
+
+| Arm | Before wall mean | Before system CPU | Final wall mean | Final system CPU |
+|---|---|---|---|---|
+| T1 flat | 3.379 s | 23.244 s | 3.302 s | 23.369 s |
+| T1 depth2 | 3.261 s | 20.617 s | 5.366 s | 16.733 s |
+| T2 flat | 0.674 s | 4.439 s | 0.925 s | 4.558 s |
+| T2 depth2 | 0.644 s | 4.329 s | 0.693 s | 4.967 s |
+| T1 cache-cold | 3.131 s | 17.277 s | 3.407 s | 26.942 s |
+| T1 cache-warm | 2.274 s | 13.668 s | 2.671 s | 20.473 s |
+
+These sequential numbers cannot resolve a regression against that load swing. T1 also changed under concurrent
+work: files scanned 331254 to 331525, naive bytes 12366901248 to 12390436864, and large sparse files disappeared
+between those snapshots. A later old/new pair both saw the same 39725252608 sparse bytes, confirming that this
+was live-tree drift rather than compressed files being reclassified. Ordinary uncompressed-file semantics remain
+unchanged. The added compression object is intentional, and compressed resource-fork totals deliberately change.
+
+A separate three-round interleaved control on `node_modules`, rotating which arm ran first, measured system CPU:
+old scan 2.86/2.37/3.26 s, new scan 2.87/5.14/3.82 s; old listing 0.80/0.47/0.76 s, new listing 0.71/0.49/0.75 s.
+The ranges overlap and do not establish a speed change. Every old/new scan had exactly 82284 accounted files,
+82352 listed files, 1644765184 naive bytes, 1210277704 mapped unique bytes, 1418579968 allocated unique bytes,
+and 226185216 shared bytes. Listing candidates were identical: 174 files, 798580736 allocated bytes.
+
+Fixture truth, recorded before and after the fix: two clones of a compressed 12600000-byte text file have
+212992 naive bytes. The old binary reported zero unique bytes; the new one reports 104638 mapped and 106496
+allocated unique bytes, zero sparse files, and `compressed: {files:2, logical_bytes:25200000, allocated_bytes:212992}`.
+C subprocess, C FFI and independent Bun paths are covered. An index regression reopens its SQLite database to
+assert persisted compression totals, then rewrites the file plain and checks that an update rolls the count to zero.
+
+Clone ownership control: one plain source and its plain clone occupied 12603392 unique allocated bytes. Compressing
+only the source increased this to 12709888. Refreshing the partner as a clone of the compressed source reduced the
+pair to 106496. This is why the read-only suggestion counts no shared or unknown allocation as reclaimable.
+The suggestion samples the first and middle 1 MiB with the shared selected writer's algorithm and uses the same
+age, extension, open-file, hard-link, flag and size filters as transparent plan. It emits only estimates and commands.
+The optional `du-cold-compress` registration is disabled, daily, low priority; no live task was registered or run.
+
+Raw outputs are retained in the supplied session scratch under `compress/du/`: `bench-before.log`,
+`bench-final.log`, `compare.json`, `pair-before.json`, `pair-after.json`, `ownership-*.json`, and `tests-final.log`.
+
+## 2026-11-12 06:27 — resource-fork reserved tails and final checks
+
+The compressed-clone regression also found forks whose logical length was 104638 but whose allocated size was
+135168. Both clones' `stat` and bulk attributes agreed; a scan capped at EOF counted only 106496 unique allocated
+bytes. Mapping through `max(resource_size, resource_blocks * 512)` captures those reserved extents. C and Bun now
+agree with reported allocation in that case too. The retained original pair now has mapped and allocated unique
+bytes both 106496, since the compressed mapping deliberately includes its reserved tail. Inline compressed files
+with zero blocks are counted as compressed, with zero allocation, and never called sparse.
+
+The fixed matrix was rerun after this correction (`cold-compress-resource-reserve`, five main runs and three cache
+runs). Load average was 35.74 at start, 107.51 after the main matrix and 109.43 at end. System CPU / wall mean:
+T1 flat 24.519 / 4.068 s; T1 depth2 31.062 / 3.920 s; T2 flat 7.190 / 0.724 s; T2 depth2 5.239 / 0.812 s;
+T1 cache-cold 33.714 / 4.018 s; T1 cache-warm 25.859 / 3.090 s. The reserve change runs only for compressed files;
+this live checkout had none in the earlier control. These loaded sequential measurements do not establish a
+regression or improvement; the interleaved unchanged-tree totals above remain the semantic control.
+
+The suggestion's content estimate was compared to full LZFSE compression on 35 copied real files, five per kind.
+Absolute aggregate saving errors were Claude plain 11.69%, Claude with images 18.11%, tool results 2.21%, Codex
+11.66%, Grok 7.00%, logs 2.49%, JSON 5.65%. All category aggregates are within 20%; individual-file errors can be
+larger. This tests content sampling, while live-root eligibility and external clone ownership remain separate filters.
+
+Final Mac tests at HEAD `721e2af6ba1e936f1d9f7262d0f38039cc84d475` plus uncommitted changes:
+`bun scripts/test.ts src/du/lib/clone-controls.test.ts src/du/lib/bigfiles.test.ts src/du/lib/index/index.test.ts
+src/du/lib/format.test.ts src/macos/lib/clones/daemon-tasks.test.ts` completed 119 tests, 587 assertions, exit 0
+(`[test] suite complete (exit 0)`). `bunx tsgo --noEmit --pretty false` exited 0 after concurrent HEAD advanced to
+`f8f8a369b5d1052095ae5d61ebf067c83b8e1c9e`, with uncommitted changes. Biome checked 17 touched TypeScript
+files, no changes needed. `git diff --check` on owned paths was clean. A broader cloud suite cannot write its
+existing File Provider xattr fixture on this OS, returning EPERM before the scanner runs; no cloud test was weakened.

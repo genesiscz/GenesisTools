@@ -154,6 +154,7 @@ export function claudeAgentNode(agent: SessionSubagent, input: ParentInput): Age
         spawnPromptPreview: promptPreview(agent.spawnPrompt),
         toolUseId: agent.toolUseId,
         spawnDepth: agent.spawnDepth ?? (teammate ? 0 : 1),
+        ...(agent.workflow ? { workflow: agent.workflow } : {}),
         children: [],
     };
 }

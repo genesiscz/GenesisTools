@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Lang, parse } from "@ast-grep/napi";
@@ -24,6 +24,7 @@ import {
     checkSwiftSource,
     countRatchetShortfalls,
     type Finding,
+    isRuleInput,
     maskSwiftNonCode,
     namesToolCommand,
     namesTranscriptFormat,
@@ -1158,7 +1159,9 @@ describe("no-static-readme-import", () => {
     });
 
     test("resolves a relative specifier against the importing file", () => {
-        // checkSource parses without a file name, so the relative case is pinned on the helper the rule calls.
+        // checkSource parses without a file name of its own, so this goes through rules() to prove it passes the path.
+        expect(rules('import { a } from "../readme";', "src/utils/cli/a.ts")).toContain(rule);
+        expect(rules('import { a } from "../utils/readme.ts";', "src/x/index.ts")).toContain(rule);
         expect(staticallyImportsReadme('import { a } from "../readme";', "src/utils/cli/a.ts")).toBe(true);
         expect(staticallyImportsReadme('import { a } from "../utils/readme.ts";', "src/x/index.ts")).toBe(true);
         expect(staticallyImportsReadme('import { a } from "./readme";', "src/x/lib/a.ts")).toBe(false);
@@ -1592,6 +1595,18 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
                 expect(rules(source, "src/offender.ts")).toContain("no-model-id-literal-outside-catalog");
             }
 
+            // A roster definition is a rule: a tightened matcher reaches files nobody changed. The proposer is not.
+            mkdirSync(join(dir, "scripts/ci/rosters"));
+            writeFileSync(join(dir, "scripts/ci/rosters/example.definition.ts"), "export default {};");
+            writeFileSync(join(dir, "scripts/ci/rosters/propose.ts"), "export {};");
+            run(["add", "--", "scripts/ci/rosters/example.definition.ts"]);
+            run(["commit", "-qm", "tighten a roster"]);
+            expect(changedFiles(previous, { cwd: dir })).toBeNull();
+            previous = run(["rev-parse", "HEAD"]);
+            run(["add", "--", "scripts/ci/rosters/propose.ts"]);
+            run(["commit", "-qm", "change the proposer"]);
+            expect(changedFiles(previous, { cwd: dir })).toEqual(new Set(["scripts/ci/rosters/propose.ts"]));
+
             writeFileSync(join(dir, "scripts/ci/harness-ratchet.ts"), list(["src/offender.ts", "src/new.ts"]));
             run(["add", "--", "scripts/ci/harness-ratchet.ts"]);
             run(["commit", "-qm", "grow exemption"]);
@@ -1600,6 +1615,36 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
             rmSync(dir, { recursive: true, force: true });
         }
     }, 30_000);
+
+    test("every module lint-rules.ts loads from this repository makes a change to it rescan the whole tree", () => {
+        const loaded = new Set<string>();
+        const queue = ["scripts/ci/lint-rules.ts"];
+
+        while (queue.length > 0) {
+            const file = queue.pop() ?? "";
+
+            if (loaded.has(file)) {
+                continue;
+            }
+
+            loaded.add(file);
+
+            for (const [, specifier] of readFileSync(file, "utf8").matchAll(/\bfrom\s+"(\.{1,2}\/[^"]+)"/g)) {
+                const base = join(dirname(file), specifier);
+                const target = [`${base}.ts`, join(base, "index.ts")].find((path) => existsSync(path));
+
+                if (target) {
+                    queue.push(target);
+                }
+            }
+        }
+
+        expect(loaded.has("scripts/ci/rosters/define.ts")).toBe(true);
+        expect([...loaded].filter((file) => !isRuleInput(file))).toEqual([]);
+        expect(isRuleInput("src/utils/agent/identity/terminals.ts")).toBe(true);
+        expect(isRuleInput("scripts/ci/rosters/generate.ts")).toBe(false);
+        expect(isRuleInput("scripts/ci/rosters/rosters.test.ts")).toBe(false);
+    });
 
     test("every file on a ratchet list still offends its rule, so a migrated file leaves the list", () => {
         const lists: [string, ReadonlySet<string>][] = [

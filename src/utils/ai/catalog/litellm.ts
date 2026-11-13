@@ -400,30 +400,20 @@ export class LiteLLMPricingFetcher {
      * this module depend transitively on ask's type layer.
      */
     convertToModelPricing(pricing: LiteLLMModelPricing): ModelPricing {
-        // LiteLLM pricing is per token, convert to per 1M tokens (multiply by 1,000,000)
-        const inputPer1M = pricing.input_cost_per_token ? pricing.input_cost_per_token * 1_000_000 : 0;
-        const outputPer1M = pricing.output_cost_per_token ? pricing.output_cost_per_token * 1_000_000 : 0;
-        const cachedReadPer1M = pricing.cache_read_input_token_cost
-            ? pricing.cache_read_input_token_cost * 1_000_000
-            : undefined;
-        const cachedCreatePer1M = pricing.cache_creation_input_token_cost
-            ? pricing.cache_creation_input_token_cost * 1_000_000
-            : undefined;
-        const cachedCreate1hPer1M = pricing.cache_creation_input_token_cost_above_1hr
-            ? pricing.cache_creation_input_token_cost_above_1hr * 1_000_000
-            : undefined;
-        const inputPer1MAbove200k = pricing.input_cost_per_token_above_200k_tokens
-            ? pricing.input_cost_per_token_above_200k_tokens * 1_000_000
-            : undefined;
-        const outputPer1MAbove200k = pricing.output_cost_per_token_above_200k_tokens
-            ? pricing.output_cost_per_token_above_200k_tokens * 1_000_000
-            : undefined;
-        const cachedReadPer1MAbove200k = pricing.cache_read_input_token_cost_above_200k_tokens
-            ? pricing.cache_read_input_token_cost_above_200k_tokens * 1_000_000
-            : undefined;
-        const cachedCreatePer1MAbove200k = pricing.cache_creation_input_token_cost_above_200k_tokens
-            ? pricing.cache_creation_input_token_cost_above_200k_tokens * 1_000_000
-            : undefined;
+        // LiteLLM pricing is per token, convert to per 1M tokens. An absent rate stays absent and an explicit 0 stays
+        // a priced 0: `pricingFor` fills an absent cache rate with the family default, which must not replace a
+        // published free one.
+        const per1M = (perToken: number | undefined): number | undefined =>
+            perToken === undefined ? undefined : perToken * 1_000_000;
+        const inputPer1M = per1M(pricing.input_cost_per_token) ?? 0;
+        const outputPer1M = per1M(pricing.output_cost_per_token) ?? 0;
+        const cachedReadPer1M = per1M(pricing.cache_read_input_token_cost);
+        const cachedCreatePer1M = per1M(pricing.cache_creation_input_token_cost);
+        const cachedCreate1hPer1M = per1M(pricing.cache_creation_input_token_cost_above_1hr);
+        const inputPer1MAbove200k = per1M(pricing.input_cost_per_token_above_200k_tokens);
+        const outputPer1MAbove200k = per1M(pricing.output_cost_per_token_above_200k_tokens);
+        const cachedReadPer1MAbove200k = per1M(pricing.cache_read_input_token_cost_above_200k_tokens);
+        const cachedCreatePer1MAbove200k = per1M(pricing.cache_creation_input_token_cost_above_200k_tokens);
 
         return {
             inputPer1M,

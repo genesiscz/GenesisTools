@@ -16,6 +16,7 @@ import {
     deadlineMessage,
     Executor,
     formatMissingEnumHelp,
+    maskedArgv,
     PLAIN_OUTPUT_ENV,
     resolveExecDeadline,
     setSuggestCommandProgram,
@@ -308,6 +309,19 @@ describe("spawnLabel", () => {
         expect(spawnLabel(["C:\\tools\\gh.exe", "pr", "list"])).toBe("gh.exe pr list");
     });
 
+    test("hides a URL credential and the value of -u user:password, and keeps a -u that is no credential", () => {
+        expect(spawnLabel(["git", "clone", "https://alice:example123@example.com/repo.git"])).toBe(
+            "git clone https://alice:[redacted]@example.com/repo.git"
+        );
+        expect(spawnLabel(["curl", "-u", "alice:example123", "https://example.com"])).toBe(
+            "curl -u *** https://example.com"
+        );
+        expect(spawnLabel(["curl", "--user=alice:example123", "-ualice:example123", "-U", "proxy:example123"])).toBe(
+            "curl *** *** -U ***"
+        );
+        expect(spawnLabel(["git", "push", "-u", "origin", "HEAD:main"])).toBe("git push -u origin HEAD:main");
+    });
+
     test("cuts long and many arguments", () => {
         const label = spawnLabel(["gh", "api", "graphql", "-f", `query=${"x".repeat(200)}`, "a", "b", "c"]);
         expect(label.endsWith(" …")).toBe(true);
@@ -407,6 +421,25 @@ describe("Executor bounded calls", () => {
         expect(deadlineMessage(resolveExecDeadline(undefined, 300), cmd)).toBe(
             "Command timed out after 300ms (its Executor's bound): git fetch *** *** origin"
         );
+    });
+
+    test("the message and the kept argv hide URL credentials and the value of -u user:password", () => {
+        const cmd = ["curl", "-u", "alice:example123", "https://alice:example123@example.com/repo"];
+
+        expect(maskedArgv(cmd)).toEqual(["curl", "-u", "***", "https://alice:[redacted]@example.com/repo"]);
+        expect(deadlineMessage(resolveExecDeadline(undefined, 300), cmd)).toBe(
+            "Command timed out after 300ms (its Executor's bound): curl -u *** https://alice:[redacted]@example.com/repo"
+        );
+    });
+
+    test("execOrThrow's message hides the credentials of the failed command", async () => {
+        const error = await new Executor()
+            .execOrThrow(["sh", "-c", "exit 3", "https://alice:example123@example.com/repo", "-u", "alice:example123"])
+            .catch((caught: unknown) => caught);
+        const message = error instanceof Error ? error.message : "";
+
+        expect(message).toStartWith("Command failed: sh -c exit 3 https://alice:[redacted]@example.com/repo -u ***");
+        expect(message).not.toContain("example123");
     });
 
     test("an executor-level bound expires and kills the whole process group, the grandchild too", async () => {
