@@ -5,7 +5,7 @@ import {
     useAudioRecorder,
     useAudioRecorderState,
 } from "expo-audio";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 import { useDashboardClient } from "@/api/client-provider";
 import { transcribeClip } from "@/features/agents/queries";
@@ -16,8 +16,9 @@ import { useThemeColors } from "@/theme/colors";
 const MAX_CLIP_MS = 90_000;
 
 /**
- * The walkie-talkie's recorder (F12), loaded by `WalkieTalkie` only when expo-audio is in the build: tap to record, tap again to stop. The clip goes to the Mac, which transcribes it and sends
- * nothing; the text lands in the composer for one check, and the composer's Send is the one tap that sends it.
+ * The walkie-talkie's recorder (F12), loaded by `WalkieTalkie` only when expo-audio is in the build: tap to record,
+ * tap again to stop. A clip that reaches the limit stops by itself and goes the same way as a tapped Stop. The clip
+ * goes to the Mac, which transcribes it and sends nothing; the text lands in the composer for one check, and the composer's Send is the one tap that sends it.
  * Recording uses expo-audio (D20: Expo first), AAC in an M4A container, foreground only.
  */
 export default function WalkieTalkieRecorder({ onText }: { onText: (text: string) => void }) {
@@ -27,6 +28,9 @@ export default function WalkieTalkieRecorder({ onText }: { onText: (text: string
     const state = useAudioRecorderState(recorder, 250);
     const [busy, setBusy] = useState<"idle" | "starting" | "transcribing">("idle");
     const [error, setError] = useState<string | null>(null);
+    /** Whether the newest clip already went to finish; a clip is finished once, however it stopped. */
+    const finished = useRef(true);
+    const wasRecording = useRef(false);
 
     const start = async () => {
         setError(null);
@@ -42,6 +46,7 @@ export default function WalkieTalkieRecorder({ onText }: { onText: (text: string
 
             await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
             await recorder.prepareToRecordAsync();
+            finished.current = false;
             recorder.record({ forDuration: MAX_CLIP_MS / 1000 });
         } catch (err) {
             setError(err instanceof Error ? err.message : String(err));
@@ -50,11 +55,20 @@ export default function WalkieTalkieRecorder({ onText }: { onText: (text: string
         }
     };
 
-    const stop = async () => {
+    /** The one way a clip ends, whether Stop was tapped or the limit stopped it: one call per clip. */
+    const finish = useCallback(async () => {
+        if (finished.current) {
+            return;
+        }
+
+        finished.current = true;
         setBusy("transcribing");
 
         try {
-            await recorder.stop();
+            if (recorder.isRecording) {
+                await recorder.stop();
+            }
+
             await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false });
             const uri = recorder.uri;
 
@@ -81,7 +95,15 @@ export default function WalkieTalkieRecorder({ onText }: { onText: (text: string
         } finally {
             setBusy("idle");
         }
-    };
+    }, [client, onText, recorder]);
+
+    useEffect(() => {
+        if (wasRecording.current && !state.isRecording) {
+            void finish();
+        }
+
+        wasRecording.current = state.isRecording;
+    }, [state.isRecording, finish]);
 
     const recording = state.isRecording;
     const seconds = Math.round(state.durationMillis / 1000);
@@ -94,7 +116,7 @@ export default function WalkieTalkieRecorder({ onText }: { onText: (text: string
                 accessibilityLabel={recording ? "Stop recording" : "Record a voice message"}
                 accessibilityHint="The Mac turns it into text in the composer; nothing is sent until you tap Send"
                 disabled={busy !== "idle"}
-                onPress={() => void (recording ? stop() : start())}
+                onPress={() => void (recording ? finish() : start())}
                 className="items-center justify-center rounded-xl px-3 py-2"
                 style={{
                     borderWidth: 1,
