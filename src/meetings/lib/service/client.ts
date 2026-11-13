@@ -99,10 +99,8 @@ export function subscriptionHears(
  * so it is refused as invalid params (-32602), as the service refuses it.
  */
 function checkedFilter<F extends { meeting?: string; events?: readonly string[] }>(filter: F): F {
-    const parsed = subscribeParamsSchema.safeParse({
-        ...filter,
-        ...(filter.events ? { events: [...filter.events] } : {}),
-    });
+    // The filter itself, never a copy: a spread would turn a string `events` into its characters, which the schema takes.
+    const parsed = subscribeParamsSchema.safeParse(filter);
 
     if (!parsed.success) {
         const issue = parsed.error.issues[0];
