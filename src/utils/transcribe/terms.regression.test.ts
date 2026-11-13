@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { WordCheck } from "./languages/word-check";
-import { applyFixes, findSuspectTerms, findUnknownWords, scopedVocabulary } from "./terms";
+import {
+    applyFixes,
+    candidatesInMeeting,
+    findSuspectTerms,
+    findUnknownWords,
+    meetingTermCandidates,
+    meetingTermsOf,
+    scopedVocabulary,
+} from "./terms";
 
 const entry = (text: string) => ({ speaker: "Alice", startSec: 0, text });
 const check: WordCheck = {
@@ -115,4 +123,22 @@ test("observed acronym spellings are meeting scoped and preserve the ending", ()
     });
     expect(found.find((item) => item.heard === "XYZ")?.candidates).toEqual([]);
     expect(findUnknownWords({ entries: [entry("XYYku")], vocab: [], wordCheck: unknown })[0]?.candidates).toEqual([]);
+});
+
+test("the meeting is read once for every proposal, and a proposal from it equals one read for itself", () => {
+    const entries = [entry("XYZ XYZ XYZko XYYku"), entry("Mluvili jsme o Kubernetes.")];
+    const vocab = [{ term: "Kubernetes", source: "dictionary" }];
+    const meeting = meetingTermsOf(entries, vocab);
+
+    expect(meeting.acronyms).toEqual(
+        new Map([
+            ["XYZ", 3],
+            ["XYY", 1],
+        ])
+    );
+    expect(meeting.scoped.map((term) => term.term)).toEqual(["Kubernetes"]);
+
+    for (const heard of ["XYYku", "Kubernetis", "XYZ"]) {
+        expect(candidatesInMeeting(meeting, heard)).toEqual(meetingTermCandidates({ heard, entries, vocab }));
+    }
 });
