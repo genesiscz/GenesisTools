@@ -13,7 +13,10 @@ export interface ChildStdioOptions extends Omit<RpcPeerOptions, "write" | "onBac
     child: ChildStdio;
     /** The reason every waiting request rejects with when the child exits; `<label> exited with code <n>` by default. */
     exitReason?: (code: number) => string;
-    /** How long the end of stdout waits for the exit code before it ends the connection without one. */
+    /**
+     * How long the end of stdout waits for the exit code, and the exit waits for the rest of stdout, before the
+     * connection ends without the other.
+     */
     exitGraceMs?: number;
 }
 
@@ -31,6 +34,12 @@ export interface ChildStdioConnection {
      * answer awaits it.
      */
     written(): Promise<void>;
+    /**
+     * Settles once this adapter ended the connection: stdout was read to its end, or the child exited and the rest of
+     * its stdout was read (for at most `exitGraceMs`), and the peer is closed. A caller that acts on the exit awaits it,
+     * so the replies the child wrote before it exited reach their calls first.
+     */
+    ended: Promise<void>;
 }
 
 function message(error: unknown): string {
@@ -39,8 +48,9 @@ function message(error: unknown): string {
 
 /**
  * Connects a peer to a child process: each line on stdout goes to `peer.receive`, each message the peer writes goes to
- * stdin, and on the end of stdout or the child's exit every waiting request rejects with the exit reason. A failed
- * write or a line past the dialect's limit ends the connection the same way, with its own reason.
+ * stdin, and at the end of stdout every waiting request rejects with the exit reason. An exit first reads the rest of
+ * stdout, so the replies the child wrote before it exited still resolve their calls. A failed write or a line past the
+ * dialect's limit ends the connection the same way, with its own reason.
  */
 export function connectChildStdio(options: ChildStdioOptions): ChildStdioConnection {
     const { child, exitReason: reasonFor, exitGraceMs = 2000, ...peerOptions } = options;
@@ -90,34 +100,66 @@ export function connectChildStdio(options: ChildStdioOptions): ChildStdioConnect
     };
     const connected = new RpcPeer({ ...peerOptions, write });
     peer = connected;
+    const stdoutEnded = readStdout(child, connected, options);
+    const endings = [
+        stdoutEnded.then(async (failure) => {
+            if (failure !== undefined) {
+                connected.close(failure);
+                return;
+            }
 
-    void child.exited?.then(
-        (code) => connected.close(exitReason(code)),
-        (error) => connected.close(message(error))
-    );
-    void readStdout(child, connected, options, async () => {
-        if (!child.exited) {
-            return `${options.label} closed its stdout`;
-        }
+            if (!child.exited) {
+                connected.close(`${options.label} closed its stdout`);
+                return;
+            }
 
-        try {
-            return exitReason(await withTimeout(child.exited, exitGraceMs));
-        } catch {
-            return `${options.label} closed its stdout`;
-        }
-    });
+            try {
+                connected.close(exitReason(await withTimeout(child.exited, exitGraceMs)));
+            } catch (error) {
+                options.log.debug(
+                    { ...options.logFields, error },
+                    `${options.label} closed its stdout without an exit`
+                );
+                connected.close(`${options.label} closed its stdout`);
+            }
+        }),
+    ];
 
-    return { peer: connected, written };
+    if (child.exited) {
+        endings.push(
+            child.exited.then(
+                async (code) => {
+                    // The replies the child wrote before it exited can still sit in the pipe: stdout is read to its
+                    // end first (for at most the grace), so they reach their calls before the exit rejects the rest.
+                    try {
+                        await withTimeout(stdoutEnded, exitGraceMs);
+                    } catch (error) {
+                        options.log.debug(
+                            { ...options.logFields, error },
+                            `${options.label} exited and its stdout stayed open`
+                        );
+                    }
+
+                    connected.close(exitReason(code));
+                },
+                (error) => connected.close(message(error))
+            )
+        );
+    }
+
+    return { peer: connected, written, ended: Promise.race(endings) };
 }
 
+/**
+ * Feeds stdout to the peer, line by line, until its end. Resolves with undefined at the end of stdout, or with the
+ * reason of a read that failed; the caller closes the peer.
+ */
 async function readStdout(
     child: ChildStdio,
     peer: RpcPeer,
-    options: Pick<ChildStdioOptions, "log" | "label" | "logFields">,
-    endReason: () => Promise<string>
-): Promise<void> {
+    options: Pick<ChildStdioOptions, "log" | "label" | "logFields">
+): Promise<string | undefined> {
     const reader = child.stdout.getReader();
-    let reason: string;
 
     try {
         for (;;) {
@@ -132,16 +174,14 @@ async function readStdout(
 
         // A child that exits right after its last reply may end it without a newline: a closing newline reads it.
         peer.receive(new TextEncoder().encode("\n"));
-        reason = await endReason();
+        return undefined;
     } catch (error) {
         if (!peer.closed) {
             options.log.warn({ ...options.logFields, error }, `reading ${options.label} stdout failed`);
         }
 
-        reason = message(error);
+        return message(error);
     } finally {
         reader.releaseLock();
     }
-
-    peer.close(reason);
 }

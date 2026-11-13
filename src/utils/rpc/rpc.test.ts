@@ -411,6 +411,50 @@ describe("a peer on a child's stdio", () => {
         expect(second.status === "rejected" && String(second.reason)).toBe("Error: agent closed its stdout");
     });
 
+    test("an exit that settles before the last reply is read still lets that reply resolve its call", async () => {
+        const pipe = childPipe();
+        const exited = Promise.withResolvers<number>();
+        const { peer, ended } = connectChildStdio({
+            child: { ...pipe.child, exited: exited.promise },
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        const answered = peer.request("one", {}, { timeoutMs: 60_000 });
+        const left = peer.request("two", {}, { timeoutMs: 60_000 });
+        const outcomes = Promise.allSettled([answered, left]);
+
+        exited.resolve(0);
+        await Bun.sleep(0);
+        expect(peer.closed).toBe(false);
+        pipe.emit('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n');
+        pipe.end();
+
+        const [first, second] = await outcomes;
+        expect(first).toEqual({ status: "fulfilled", value: { ok: true } });
+        expect(second.status === "rejected" && String(second.reason)).toBe("Error: agent exited with code 0");
+        await ended;
+        expect(peer.closed).toBe(true);
+    });
+
+    test("an exit whose stdout stays open (a grandchild holds it) ends the connection after the grace", async () => {
+        const pipe = childPipe();
+        const { peer, ended } = connectChildStdio({
+            child: { ...pipe.child, exited: Promise.resolve(9) },
+            exitGraceMs: 20,
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        const waiting = peer.request("one", {}, { timeoutMs: 60_000 });
+
+        await ended;
+        expect(peer.closed).toBe(true);
+        await expect(waiting).rejects.toThrow("agent exited with code 9");
+    });
+
     test("a child that stops reading its stdin reaches the backlog limit and its connection ends", async () => {
         const pipe = childPipe();
         const { peer } = connectChildStdio({
