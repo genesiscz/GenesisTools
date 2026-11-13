@@ -62,6 +62,7 @@ export const MOCK_BOARD: AgentsBoardDto = {
                     status: "running",
                     lastAt: new Date(NOW - 60_000).toISOString(),
                     liveLabel: null,
+                    liveKey: null,
                     children: [],
                 },
             ],
