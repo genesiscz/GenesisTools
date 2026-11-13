@@ -645,6 +645,18 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(rules.map(\.values), [["Work"], ["design", "ops"]])
     }
 
+    /// "No rule finds this project's meetings yet" only when nothing does: paired people propose the project, labels
+    /// find nothing.
+    func testAProjectWithPairedPeopleIsFoundAndOneWithOnlyLabelsIsNot() {
+        let none = ProjectSummary.rules(folders: [], calendars: [], words: [], labels: [])
+        let labels = ProjectSummary.rules(folders: [], calendars: [], words: [], labels: ["design"])
+        let words = ProjectSummary.rules(folders: [], calendars: [], words: ["Standup"], labels: [])
+        XCTAssertFalse(ProjectSummary.findsMeetings(none, pairedPeople: 0))
+        XCTAssertTrue(ProjectSummary.findsMeetings(none, pairedPeople: 2), "paired people alone said no rule finds it")
+        XCTAssertFalse(ProjectSummary.findsMeetings(labels, pairedPeople: 0), "a label is not a rule that finds a meeting")
+        XCTAssertTrue(ProjectSummary.findsMeetings(words, pairedPeople: 0))
+    }
+
     func testANarrowSpeakerRowKeepsItsNumbersReadable() throws {
         let speaker = try JSONDecoder().decode(SpeakerStat.self, from: Data("""
         {"label":"Speaker 2","turns":42,"lines":42,"words":3779,"spokenSec":1440,"firstSec":375,"lastSec":3152}

@@ -652,7 +652,7 @@ struct ProjectSummary: View {
         let rules = Self.rules(folders: wispr?.match[name]?.folders ?? [], calendars: settings?.match?.calendar?.calendars ?? [],
                                words: settings?.match?.title?.words ?? [], labels: settings?.labels ?? [])
         return VStack(alignment: .leading, spacing: 6) {
-            if rules.isEmpty {
+            if !Self.findsMeetings(rules, pairedPeople: settings?.match?.people.count ?? 0) {
                 // One sentence for a project without a rule: four lines that each said "none" pushed its meetings
                 // 80 pt down and told the reader nothing.
                 Text("No rule finds this project's meetings yet. A meeting joins it when you choose the project.")
@@ -682,6 +682,13 @@ struct ProjectSummary: View {
         [("Wispr folders", folders), ("Calendars", calendars), ("Title words", words), ("Labels", labels)]
             .filter { !$0.1.isEmpty }
             .map { (title: $0.0, values: $0.1) }
+    }
+
+    /// Whether something finds the project's meetings by itself: a folder, calendar or title-word rule, or a paired
+    /// person (a meeting with them proposes the project). Labels are what a meeting of the project gets, not a rule
+    /// that finds one, so a project with only labels, or only paired people, said the wrong thing.
+    static func findsMeetings(_ rules: [(title: String, values: [String])], pairedPeople: Int) -> Bool {
+        pairedPeople > 0 || rules.contains { $0.title != "Labels" }
     }
 
     private func line(_ title: String, _ values: [String]) -> some View {
