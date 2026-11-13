@@ -385,8 +385,9 @@ struct ReviewRowView: View, Equatable {
                         }
                     }
                 case .document(let path, let line):
-                    Button((path as NSString).lastPathComponent + (line.map { ":\($0)" } ?? "")) { PathOpener.reveal(path) }
-                        .buttonStyle(.link).font(.system(size: 11))
+                    // A click opens the document at the cited line; the right-click menu keeps Finder and reveal.
+                    PathLabel(path: path, font: .system(size: 11), showIcons: false, line: line,
+                              title: PinCard.sourceTitle(source), color: .accentColor)
                 case .commit(let sha):
                     Text(verbatim: String(sha.prefix(10))).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
                 case .workItem(let id):
