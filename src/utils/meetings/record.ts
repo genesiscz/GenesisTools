@@ -384,6 +384,16 @@ const assignSchema = z.object({
 });
 export type MeetingAssign = z.infer<typeof assignSchema>;
 
+/** Source audio kept independently of expiring screen captures. Stored paths are repointed with meeting copies. */
+export const preservedSourceAudioSchema = z.object({
+    sourceMeetingId: z.string().min(1),
+    path: z.string().min(1),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    bytes: z.number().int().nonnegative(),
+    savedAt: isoTime,
+});
+export type PreservedSourceAudio = z.infer<typeof preservedSourceAudioSchema>;
+
 export const meetingRecordSchema = z.object({
     version: z.literal(1).default(1),
     id: z.string().min(1),
@@ -397,6 +407,8 @@ export const meetingRecordSchema = z.object({
     createdBy: z.enum(MEETING_CREATORS),
     /** One block per source, written by that source. Only that source reads its keys. */
     sources: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
+    /** Original source media has a permanent lifetime; recording.audio remains expiring capture data. */
+    audio: z.object({ sources: z.record(z.string().min(1), preservedSourceAudioSchema) }).optional(),
     calendar: calendarSchema.optional(),
     participants: z.array(participantSchema).default([]),
     context: z.array(contextSchema).default([]),

@@ -8,7 +8,7 @@ import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/pro
 import type { Command } from "commander";
 import { askAtMeetingEnd, hasOpenAssignSteps } from "../lib/assign";
 import { fail, resolveEnum } from "../lib/shared";
-import { hasRecordingToWatch, watchedSourceId, watchLoop, watchOnce } from "../lib/watch";
+import { hasRecordingToWatch, hasSourceAudioToWatch, watchedSourceId, watchLoop, watchOnce } from "../lib/watch";
 
 const { log } = logger.scoped("meetings-watch-cmd");
 /** How long `ensureWatcher` waits for the spawned watcher to own its pidfile. */
@@ -19,17 +19,19 @@ export function watcherPidPath(store: MeetingStore): string {
 }
 
 /**
- * Starts the watcher in the background unless it runs already, or autoRecord is off and no project question or
- * folder step waits (the watcher's sweep is what reads those back). The daemon calls it at login.
+ * Starts the watcher unless it runs already or no capture, missing linked audio or project step needs it.
+ * The daemon calls it at login.
  */
 export async function ensureWatcher(): Promise<"started" | "running" | "disabled"> {
     const config = await new MeetingsConfigStore().read();
 
     const store = new MeetingStore();
     if (
+        !Object.values(config.sources).some((source) => source.preserveAudio) &&
         !config.sources[watchedSourceId(config)].autoRecord.enabled &&
         !hasOpenAssignSteps(store) &&
-        !hasRecordingToWatch(store)
+        !hasRecordingToWatch(store) &&
+        !hasSourceAudioToWatch(store)
     ) {
         return "disabled";
     }
@@ -63,7 +65,7 @@ export async function ensureWatcher(): Promise<"started" | "running" | "disabled
 export async function askProjectAtEnd(store: MeetingStore, meetingId: string): Promise<void> {
     const asked = await askAtMeetingEnd(store, meetingId);
 
-    if (!asked.formId && !hasOpenAssignSteps(store)) {
+    if (!asked.formId && !hasOpenAssignSteps(store) && !hasSourceAudioToWatch(store)) {
         return;
     }
 

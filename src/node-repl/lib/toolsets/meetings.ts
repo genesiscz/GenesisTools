@@ -15,6 +15,8 @@ import {
     add,
     assignApply,
     assignAsk,
+    audioApply,
+    audioPlan,
     commentRead,
     commentWithdraw,
     configGet,
@@ -46,6 +48,7 @@ import {
     speakers,
     suggest,
 } from "@app/meetings/lib/service/toolset-api";
+import { applyLocalSourceAudio, planLocalSourceAudio } from "@app/meetings/lib/source-audio-backfill";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
@@ -105,6 +108,14 @@ export class MeetingsToolset extends ReplToolset {
         const store = new MeetingStore();
         return {
             meetings: {
+                audio: {
+                    plan: async (input: z.input<typeof audioPlan.params> = {}) => {
+                        audioPlan.params.parse(input);
+                        return planLocalSourceAudio({ store });
+                    },
+                    apply: async (plan: z.input<typeof audioApply.params>["plan"]) =>
+                        applyLocalSourceAudio({ plan: audioApply.params.parse({ plan }).plan, store }),
+                },
                 list: (input: z.input<typeof list.params> = {}) => {
                     const { project } = list.params.parse(input);
                     return store

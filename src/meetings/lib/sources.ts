@@ -8,11 +8,24 @@ import {
     type TranscriptSource,
 } from "@genesiscz/utils/meetings/sources";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import type { LocalSourceAudio } from "./source-audio-discovery";
 
 /** One loader per source. The table lives in the tool, because a source is implemented in its own tool. */
 const MEETING_SOURCES: Record<MeetingSourceId, () => Promise<TranscriptSource>> = {
     wisprflow: () => import("@app/wisprflow/lib/meeting-source").then((module) => module.wisprflowSource),
 };
+
+const LOCAL_SOURCE_AUDIO: Record<MeetingSourceId, () => Promise<LocalSourceAudio>> = {
+    wisprflow: () => import("@app/wisprflow/lib/source-audio").then((module) => module.wisprLocalAudio),
+};
+
+/** Local media only: never loads provider evidence or falls back to a remote service. */
+export async function localSourceAudio(id: string): Promise<LocalSourceAudio> {
+    if (!isMeetingSourceId(id)) {
+        throw new Error(`Unknown local audio source: ${id}`);
+    }
+    return LOCAL_SOURCE_AUDIO[id]();
+}
 
 export function isMeetingSourceId(value: string): value is MeetingSourceId {
     return (MEETING_SOURCE_IDS as readonly string[]).includes(value);

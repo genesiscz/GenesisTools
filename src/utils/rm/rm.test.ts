@@ -20,12 +20,14 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { sessionScratchPath } from "../../../plugins/genesis-tools/hooks/session-scratch";
 import {
     type AppApproval,
     type ApprovalDeps,
     ApprovalUpdates,
     acquireDrainerLock,
+    allPresets,
     appApprovalFromReply,
     appApproveParams,
     appendRmLedger,
@@ -67,6 +69,7 @@ import {
     loadRmMeasurements,
     loadRmRequest,
     lockRmRequest,
+    matchPreset,
     mayDenyRmRequest,
     measureBytes,
     measureBytesAsync,
@@ -286,6 +289,45 @@ describe("presets", () => {
         expect(verdictOf(join(app, "node_modules"))).toEqual({ kind: "allow", rule: "preset" });
         expect(verdictOf(join(app, ".build"))).toEqual({ kind: "allow", rule: "preset" });
         expect(verdictOf(join(base, "work", "loose", "node_modules"))).toEqual({ kind: "ask", rule: "default" });
+    });
+
+    test("automatic presets retain permanent meeting source audio under a custom home and through ancestors", async () => {
+        const customHome = dir("permanent-audio-home");
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: customHome }, () => {
+            const root = toolDataDir("meetings");
+            const meeting = join(root, "2026-11-01_10-00-planning");
+            const source = join(meeting, "source-audio");
+            const capture = join(meeting, "audio");
+            mkdirSync(source, { recursive: true });
+            mkdirSync(capture);
+            const kept = file(join(source, "digest.ogg"), "permanent source fixture");
+            const named = { id: "custom-source", description: "fixture", names: ["source-audio", "audio"] };
+            const ancestors = [root, meeting, source, dirname(root)];
+            expect(scanPresets(root, [named]).map((match) => match.path)).toEqual([capture]);
+            expect(matchPreset(source, [named])).toBeNull();
+            expect(matchPreset(capture, [named])?.id).toBe("custom-source");
+            const alias = join(dir("permanent-audio-alias"), "meetings");
+            symlinkSync(root, alias);
+            expect(matchPreset(join(alias, "2026-11-01_10-00-planning", "source-audio"), [named])).toBeNull();
+            expect(scanPresets(alias, [named]).map((match) => match.path)).toEqual([
+                join(alias, "2026-11-01_10-00-planning", "audio"),
+            ]);
+            expect(matchPreset(kept, [{ ...named, names: ["*.ogg"] }])).toBeNull();
+            for (const candidate of ancestors) {
+                const broad = { id: "custom-broad", description: "fixture", names: [], within: dirname(candidate) };
+                expect(matchPreset(candidate, [broad])).toBeNull();
+                expect(scanPresets(candidate, [broad])).toEqual([]);
+            }
+            const ordinary = dir("permanent-audio-home", "build-fixture");
+            file(join(ordinary, "package.json"), "{}");
+            mkdirSync(join(ordinary, "dist"));
+            expect(scanPresets(ordinary, allPresets(config)).map((match) => match.path)).toEqual([
+                join(ordinary, "dist"),
+            ]);
+            expect(scanPresets(root, allPresets(config))).toEqual([]);
+            expect(verdictOf(source, ctx({ presets: [named] })).kind).toBe("ask");
+            expect(readFileSync(kept, "utf8")).toBe("permanent source fixture");
+        });
     });
 
     test("within presets never select siblings outside the requested root", () => {

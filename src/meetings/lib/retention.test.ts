@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { chmodSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import * as removal from "@genesiscz/utils/rm";
@@ -29,6 +29,25 @@ function fresh(): MeetingStore {
 }
 
 describe("capture retention", () => {
+    test("permanent source audio stays outside every capture retention plan, even when older than the capture", () => {
+        const store = fresh();
+        const id = "2026-09-01_10-00-kept-source";
+        meetingWithCaptures(store, id, 60);
+        const folder = join(store.folder(id), "source-audio");
+        mkdirSync(folder);
+        const kept = join(folder, "digest.ogg");
+        writeFileSync(kept, "permanent source audio");
+        const at = new Date(now - 120 * DAY_MS);
+        utimesSync(kept, at, at);
+        utimesSync(folder, at, at);
+        for (const days of [0, 1, 30, 59]) {
+            const plans = capturesToPrune(store, { days, now });
+            expect(plans).toHaveLength(1);
+            expect(plans.flatMap((plan) => plan.paths).some((path) => path.includes("source-audio"))).toBe(false);
+        }
+        expect(readFileSync(kept, "utf8")).toBe("permanent source audio");
+    });
+
     test("only the frames and OCR of meetings past the days go, never the record or a running recording", () => {
         const store = fresh();
         meetingWithCaptures(store, "2026-09-01_10-00-old", 60);

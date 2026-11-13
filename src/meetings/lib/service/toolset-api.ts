@@ -14,6 +14,7 @@ import {
 } from "@genesiscz/utils/repl/toolsets/recorder";
 import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
+import { sourceAudioPlanSchema } from "../source-audio-discovery";
 import { momentSave } from "./api";
 
 /**
@@ -291,6 +292,22 @@ export const dictionaryTest = defineMethod({
     effect: "read",
     doc: "What the dictionary (global, then the project) does to one phrase, and which entries fired.",
 });
+export const audioPlan = defineMethod({
+    name: "audio.plan",
+    params: z.object({}).strict(),
+    result: sourceAudioPlanSchema,
+    effect: "read",
+    doc: "Read-only reconciliation of permanent local audio, provider files and legacy archive files.",
+});
+export const audioApply = defineMethod({
+    name: "audio.apply",
+    params: z.object({ plan: sourceAudioPlanSchema }).strict(),
+    positional: ["plan"],
+    result: z.unknown(),
+    effect: "reversible",
+    doc: "Explicitly preserve a revalidated audio plan. Leaves originals untouched.",
+});
+
 export const configGet = defineMethod({
     name: "config.get",
     params: z.object({ path: z.string().min(1).optional() }).strict(),
@@ -464,6 +481,8 @@ export const meetingsToolsetApi = defineApi({
         projectsPreview,
         dictionaryTest,
         configGet,
+        audioPlan,
+        audioApply,
         configSet,
         captureCostMethod,
         assignSweepMethod,

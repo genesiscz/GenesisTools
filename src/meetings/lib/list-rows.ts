@@ -1,4 +1,5 @@
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { sourceAudioSummary } from "./source-audio";
 
 /** One meeting as `list --json` prints it: what a list needs. `show <meeting> --json` prints the whole record. */
 export interface MeetingListRow {
@@ -14,6 +15,7 @@ export interface MeetingListRow {
     context: number;
     items: { suggested: number; confirmed: number; rejected: number };
     recording?: { status?: string; frames: number; bytes: number };
+    sourceAudio?: { sources: string[]; bytes: number };
 }
 
 /**
@@ -24,7 +26,9 @@ export function meetingListRow(record: MeetingRecord): MeetingListRow {
     const count = (status: "suggested" | "confirmed" | "rejected") =>
         record.items.filter((item) => item.status === status).length;
 
+    const sourceAudio = sourceAudioSummary(record);
     return {
+        ...(sourceAudio ? { sourceAudio } : {}),
         id: record.id,
         title: record.title,
         start: record.start,

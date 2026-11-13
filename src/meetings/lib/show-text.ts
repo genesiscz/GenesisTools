@@ -5,6 +5,7 @@ import { truncateDisplay } from "@genesiscz/utils/table";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { recordingSummary } from "./screen";
 import { TOOL } from "./shared";
+import { preservedSourceAudio } from "./source-audio";
 import { assignmentText } from "./speaker-assign";
 
 /** A source block as a person reads it: the source meeting and its folders, not the raw JSON (MC24). */
@@ -46,6 +47,12 @@ export function showText(record: MeetingRecord): string {
     }
 
     facts.push(...recordingSummary(record));
+    for (const [sourceId, audio] of Object.entries(record.audio?.sources ?? {})) {
+        const present = preservedSourceAudio(record, { sourceId, sourceMeetingId: audio.sourceMeetingId });
+        facts.push(
+            `source audio (${sourceId}): ${present ? "preserved" : "file missing or changed"}, ${audio.bytes} bytes, SHA256 ${audio.sha256}, ${audio.path}`
+        );
+    }
 
     const blocks: Block[] = [{ ul: facts }];
 

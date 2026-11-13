@@ -10,6 +10,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { loadPresence } from "./attendance";
 import { CallTimeline } from "./call-timeline";
 import { OpenedMeeting } from "./opened-meeting";
+import { preserveSourceAudio } from "./source-audio";
 
 let stores = 0;
 
@@ -72,6 +73,48 @@ async function newRecord(fields: Record<string, unknown> = {}) {
 }
 
 describe("OpenedMeeting", () => {
+    test("owned audio stays readable when provider evidence no longer includes a file, without writing during the read", async () => {
+        const { store, record } = await newRecord();
+        const sourcePath = join(store.root, "provider.ogg");
+        writeFileSync(sourcePath, "audio bytes");
+        const saved = await preserveSourceAudio({
+            store,
+            meetingId: record.id,
+            ref: { sourceId: "wisprflow", sourceMeetingId: "abc" },
+            sourcePath,
+        });
+        const persisted = new MeetingStore(store.storage).read(record.id)!;
+        const before = SafeJSON.stringify(persisted);
+        const source = fakeSource({ evidence: null });
+        const evidenceRead = spyOn(source, "evidence");
+        const opened = OpenedMeeting.of(store, persisted, { source, sourceMeetingId: "abc" });
+        expect(await opened.audioPath()).toBe(saved.audio.path);
+        expect((await opened.sourceEvidence())?.audioPath).toBe(saved.audio.path);
+        expect(evidenceRead).toHaveBeenCalledTimes(1);
+        expect(SafeJSON.stringify(new MeetingStore(store.storage).read(record.id))).toBe(before);
+    });
+
+    test("owned audio and evidence survive a provider that throws after its files disappear", async () => {
+        const { store, record } = await newRecord();
+        const original = join(store.root, "provider.ogg");
+        writeFileSync(original, "source bytes");
+        const saved = await preserveSourceAudio({
+            store,
+            meetingId: record.id,
+            ref: { sourceId: "wisprflow", sourceMeetingId: "abc" },
+            sourcePath: original,
+        });
+        const persisted = new MeetingStore(store.storage).read(record.id)!;
+        const source = fakeSource();
+        const evidence = spyOn(source, "evidence").mockRejectedValue(new Error("Provider removed the meeting"));
+        const opened = OpenedMeeting.of(store, persisted, { source, sourceMeetingId: "abc" });
+        expect(await opened.audioPath()).toBe(saved.audio.path);
+        expect(evidence).not.toHaveBeenCalled();
+        expect((await opened.sourceEvidence())?.audioPath).toBe(saved.audio.path);
+        expect(new MeetingStore(store.storage).read(record.id)).toEqual(persisted);
+        evidence.mockRestore();
+    });
+
     test("inspecting uncached audio creates neither a cache nor record history", async () => {
         const { store, record } = await newRecord();
         const audioPath = join(store.folder(record.id), "audio.wav");

@@ -14,6 +14,8 @@ import {
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { resolveProject } from "./project";
+import { type SourceAudioSync, syncSourceAudio } from "./source-audio";
+import { withSourceAudioRecordLock } from "./source-audio-discovery";
 import { meetingSource } from "./sources";
 
 const { log } = logger.scoped("meetings-link");
@@ -129,13 +131,27 @@ function laterEnd(recordEnd: string | undefined, sourceEnd: string | undefined):
 export interface LinkResult {
     record: MeetingRecord;
     created: boolean;
+    audio?: SourceAudioSync["status"];
 }
 
 /**
  * Attaches a source's meeting (`wisprflow:<id>`) to a meeting record: the record named by `meetingRef`, the one
  * already linked to that source meeting, or a new one. The source fills what the record does not have yet.
  */
-export async function linkSource(options: {
+export async function linkSource(options: Parameters<typeof linkSourceUnlocked>[0]): Promise<LinkResult> {
+    const ref = parseSourceRef(options.sourceRef);
+    if (!ref) {
+        throw new Error(`Invalid source reference: ${options.sourceRef}`);
+    }
+    return withSourceAudioRecordLock({
+        store: options.store,
+        sourceId: ref.source,
+        sourceMeetingId: ref.id,
+        fn: () => linkSourceUnlocked(options),
+    });
+}
+
+async function linkSourceUnlocked(options: {
     store: MeetingStore;
     config: MeetingsConfigStore;
     sourceRef: string;
@@ -193,7 +209,13 @@ export async function linkSource(options: {
             applySource({ record: current, sourceId: ref.source, block, meeting, refresh: options.refresh });
             current.project ??= project;
         });
-        return { record, created: false };
+        const audio = await syncSourceAudio({
+            store: options.store,
+            record,
+            source,
+            sourceMeetingId: meeting.sourceMeetingId,
+        });
+        return { record: audio.record, created: false, audio: audio.status };
     }
 
     const record = await options.store.create(
@@ -209,7 +231,13 @@ export async function linkSource(options: {
         },
         { command: options.command, change: `created from ${change}` }
     );
-    return { record, created: true };
+    const audio = await syncSourceAudio({
+        store: options.store,
+        record,
+        source,
+        sourceMeetingId: meeting.sourceMeetingId,
+    });
+    return { record: audio.record, created: true, audio: audio.status };
 }
 
 /** The `--play-links` of a transcript: a link per time that plays the meeting from there, and what to warn about. */

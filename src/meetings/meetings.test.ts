@@ -12,11 +12,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
+import { wisprLocalAudio } from "@app/wisprflow/lib/source-audio";
 import { withTimeout } from "@genesiscz/utils/async";
+import { env } from "@genesiscz/utils/env";
 import { checkImageDimensions } from "@genesiscz/utils/image/dimensions";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { voiceRuns } from "@genesiscz/utils/meetings/energy";
 import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
 import {
@@ -63,7 +66,7 @@ import * as transcribeTerms from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
 import { z } from "zod";
-import { claimWatcher, watcherPidPath } from "./commands/watch";
+import { claimWatcher, ensureWatcher, watcherPidPath } from "./commands/watch";
 import { buildQuestion } from "./lib/assign";
 import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
@@ -99,6 +102,7 @@ import { framesMatching, ocrRowSchema, readOcrRows, renderScreenBoxes } from "./
 import { InProcessMeetingsClient } from "./lib/service/client";
 import { readScreen } from "./lib/service/reads-handlers";
 import { showText } from "./lib/show-text";
+import { preservedSourceAudio, preserveSourceAudio } from "./lib/source-audio";
 import {
     addPolish,
     anchorScores,
@@ -112,7 +116,14 @@ import { printSpeakerStats } from "./lib/speakers-view";
 import { settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { transcriptDocument } from "./lib/transcript-document";
-import { hasRecordingToWatch, type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
+import {
+    archiveAvailableSourceAudio,
+    hasRecordingToWatch,
+    WATCH_INTERVAL_MS,
+    type WatchDeps,
+    type WatchNote,
+    watchOnce,
+} from "./lib/watch";
 import { readAuto, writeAuto } from "./lib/watch-auto";
 
 function line(speaker: string, startSec: number, text: string, speakerId?: number): TranscriptEntry {
@@ -1160,6 +1171,7 @@ describe("watchOnce", () => {
         const refreshed: string[] = [];
         let running = false;
         const deps: Partial<WatchDeps> = {
+            archiveAudio: async () => false,
             refresh: async (meetingId, sourceRef) => {
                 refreshed.push(`${meetingId} ${sourceRef}`);
                 return record;
@@ -1194,6 +1206,182 @@ describe("watchOnce", () => {
             refreshed,
         };
     }
+
+    test("unlinked completed provider audio gets a record and verified archive within a minute without capture", async () => {
+        const h = harness({ settings: async () => ({ ...settings, enabled: false }) });
+        h.deps.archiveAudio = () => archiveAvailableSourceAudio(h.store);
+        const original = join(h.store.root, "unlinked.ogg");
+        mkdirSync(h.store.root, { recursive: true });
+        writeFileSync(original, "completed local source");
+        let recording = true;
+        let published = false;
+        const active = spyOn(wisprflowSource, "liveRecording").mockImplementation(async () =>
+            recording ? { ...live, sourceMeetingId: "unlinked-source" } : null
+        );
+        const files = spyOn(wisprLocalAudio, "files").mockImplementation(async () =>
+            published ? [{ sourceMeetingId: "unlinked-source", path: original }] : []
+        );
+        const load = spyOn(wisprLocalAudio, "load").mockResolvedValue({
+            sourceMeetingId: "unlinked-source",
+            title: "Planning",
+            start: live.startedAt,
+            end: new Date(now).toISOString(),
+            participants: [],
+            speakers: [],
+            transcript: [],
+            folders: [],
+        });
+        const evidence = spyOn(wisprflowSource, "evidence").mockRejectedValue(
+            new Error("Discovery must never load evidence")
+        );
+        try {
+            await watchOnce(h.store, { deps: h.deps, now });
+            expect(h.store.list()).toHaveLength(0);
+            recording = false;
+            await watchOnce(h.store, { deps: h.deps, now: now + WATCH_INTERVAL_MS });
+            expect(h.store.list()).toHaveLength(0);
+            published = true;
+            await watchOnce(h.store, { deps: h.deps, now: now + 2 * WATCH_INTERVAL_MS });
+            const saved = new MeetingStore(h.store.storage).list();
+            expect(saved).toHaveLength(1);
+            expect(preservedSourceAudio(saved[0])?.bytes).toBe(22);
+            expect(2 * WATCH_INTERVAL_MS).toBeLessThan(60_000);
+            expect(evidence).not.toHaveBeenCalled();
+            expect(h.runs).toEqual([]);
+        } finally {
+            active.mockRestore();
+            files.mockRestore();
+            load.mockRestore();
+            evidence.mockRestore();
+        }
+    });
+
+    test("missing linked source audio keeps the watcher eligible with capture autostart off", async () => {
+        const customHome = mkdtempSync(join(tmpdir(), "meetings-audio-watch-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: customHome }, async () => {
+            const store = new MeetingStore();
+            const linked = await store.create(
+                {
+                    title: "Planning",
+                    start: live.startedAt,
+                    createdBy: "link",
+                    sources: { wisprflow: { meetingId: "audio-gate" } },
+                },
+                { command: "test", change: "linked fixture" }
+            );
+            await claimWatcher(store);
+            try {
+                expect(await ensureWatcher()).toBe("running");
+                const original = join(store.root, "provider.ogg");
+                writeFileSync(original, "audio fixture");
+                await preserveSourceAudio({
+                    store,
+                    meetingId: linked.id,
+                    ref: { sourceId: "wisprflow", sourceMeetingId: "audio-gate" },
+                    sourcePath: original,
+                });
+                expect(await ensureWatcher()).toBe("running");
+                await new MeetingsConfigStore().update((raw) => {
+                    raw.sources = { wisprflow: { preserveAudio: false } };
+                });
+                expect(await ensureWatcher()).toBe("disabled");
+            } finally {
+                clearPidFile(watcherPidPath(store));
+            }
+        });
+    });
+
+    test("completed linked audio is preserved on the next tick even with capture autostart off", async () => {
+        const h = harness({ settings: async () => ({ ...settings, enabled: false }) });
+        h.deps.archiveAudio = () => archiveAvailableSourceAudio(h.store);
+        const linked = await h.store.create(
+            {
+                title: "Planning",
+                start: live.startedAt,
+                createdBy: "link",
+                sources: { wisprflow: { meetingId: "audio-finished" } },
+            },
+            { command: "test", change: "linked fixture" }
+        );
+        const original = join(h.store.root, "provider-upload.ogg");
+        writeFileSync(original, "provider audio fixture");
+        let recording = true;
+        let published = false;
+        const active = spyOn(wisprflowSource, "liveRecording").mockImplementation(async () =>
+            recording ? { ...live, sourceMeetingId: "audio-finished" } : null
+        );
+        const files = spyOn(wisprLocalAudio, "files").mockImplementation(async () =>
+            published ? [{ sourceMeetingId: "audio-finished", path: original }] : []
+        );
+        const evidence = spyOn(wisprflowSource, "evidence").mockImplementation(async () => ({
+            segments: [],
+            speaking: [],
+            files: [],
+            ...(published ? { audioPath: original } : {}),
+        }));
+        try {
+            await watchOnce(h.store, { deps: h.deps, now });
+            expect(preservedSourceAudio(h.store.read(linked.id)!)).toBeUndefined();
+            expect(evidence).not.toHaveBeenCalled();
+            recording = false;
+            expect(await watchOnce(h.store, { deps: h.deps, now: now + WATCH_INTERVAL_MS })).toBe("idle");
+            expect(preservedSourceAudio(h.store.read(linked.id)!)).toBeUndefined();
+            published = true;
+            await watchOnce(h.store, { deps: h.deps, now: now + 2 * WATCH_INTERVAL_MS });
+            const reopened = new MeetingStore(h.store.storage);
+            const saved = preservedSourceAudio(reopened.read(linked.id)!);
+            expect(saved).toBeDefined();
+            expect(readFileSync(saved!.path, "utf8")).toBe("provider audio fixture");
+            expect(readFileSync(original, "utf8")).toBe("provider audio fixture");
+            expect(2 * WATCH_INTERVAL_MS).toBeLessThan(60_000);
+            expect(evidence).not.toHaveBeenCalled();
+            const reads = evidence.mock.calls.length;
+            await watchOnce(h.store, { deps: h.deps, now: now + 3 * WATCH_INTERVAL_MS });
+            expect(evidence).toHaveBeenCalledTimes(reads);
+        } finally {
+            files.mockRestore();
+            active.mockRestore();
+            evidence.mockRestore();
+        }
+    });
+
+    test("an already-finished linked meeting missing audio is preserved without watch-auto state", async () => {
+        const h = harness({ liveRecording: async () => null });
+        h.deps.archiveAudio = () => archiveAvailableSourceAudio(h.store);
+        const linked = await h.store.create(
+            {
+                title: "Old planning",
+                start: new Date(now - 2 * 86_400_000).toISOString(),
+                end: new Date(now - 86_400_000).toISOString(),
+                createdBy: "link",
+                sources: { wisprflow: { meetingId: "audio-old" } },
+            },
+            { command: "test", change: "linked fixture" }
+        );
+        const original = join(h.store.root, "old-provider-upload.ogg");
+        writeFileSync(original, "old provider fixture");
+        const oldFiles = spyOn(wisprLocalAudio, "files").mockResolvedValue([
+            { sourceMeetingId: "audio-old", path: original },
+        ]);
+        const active = spyOn(wisprflowSource, "liveRecording").mockResolvedValue(null);
+        const evidence = spyOn(wisprflowSource, "evidence").mockResolvedValue({
+            segments: [],
+            speaking: [],
+            files: [],
+            audioPath: original,
+        });
+        try {
+            await watchOnce(h.store, { deps: h.deps, now });
+            const reopened = new MeetingStore(h.store.storage);
+            expect(preservedSourceAudio(reopened.read(linked.id)!)?.bytes).toBe(20);
+            expect(readAuto(h.store)).toBeUndefined();
+            expect(evidence).not.toHaveBeenCalled();
+        } finally {
+            oldFiles.mockRestore();
+            active.mockRestore();
+            evidence.mockRestore();
+        }
+    });
 
     test("a recorder that died without a stop (a reinstall, a kill) starts again at the next look; one dead too long is ended as interrupted", async () => {
         const dead = (meetingId: string) => ({
