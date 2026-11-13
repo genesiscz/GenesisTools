@@ -145,6 +145,31 @@ describe("the live cache table", () => {
         expect(queryClient.getQueryData(agentsKeys.board)).toMatchObject({ sessions: MOCK_BOARD.sessions });
     });
 
+    it("a phase or snapshot row for a worker folded under its parent patches that child's label", () => {
+        const queryClient = new QueryClient();
+        const [first, ...rest] = MOCK_BOARD.sessions;
+        const workerKey = "codex:cccccccc-0000-4000-8000-000000000003";
+        const worker = { ...first.children[0], id: "w1", liveLabel: "thinking" as const, liveKey: workerKey };
+        const board = { ...MOCK_BOARD, sessions: [{ ...first, children: [worker] }, ...rest] };
+        const workerRow = { ...first, key: workerKey, sessionId: workerKey.slice(6), label: "tool" as const };
+        queryClient.setQueryData(agentsKeys.board, board);
+
+        applyLiveFrame(LIVE_CACHE_TABLE, { v: 1, channel: "agents", type: "phase", payload: workerRow }, queryClient);
+        const afterPhase = queryClient.getQueryData<typeof board>(agentsKeys.board);
+        expect(afterPhase?.sessions[0].children[0]).toMatchObject({ id: "w1", liveLabel: "tool" });
+        expect(afterPhase?.sessions[0].label).toBe(first.label);
+
+        const snapshot = [...board.sessions, { ...workerRow, label: "waiting" as const }];
+        applyLiveFrame(
+            LIVE_CACHE_TABLE,
+            { v: 1, channel: "agents", type: "snapshot", payload: { sessions: snapshot } },
+            queryClient
+        );
+        expect(queryClient.getQueryData<typeof board>(agentsKeys.board)?.sessions[0].children[0].liveLabel).toBe(
+            "waiting"
+        );
+    });
+
     it("an agents snapshot with a session that ended refetches the board", () => {
         const queryClient = new QueryClient();
         queryClient.setQueryData(agentsKeys.board, MOCK_BOARD);

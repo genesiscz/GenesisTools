@@ -157,7 +157,10 @@ describe("agents board", () => {
         const board = await agentsBoard(boardDeps(fleet, tree));
 
         expect(board.sessions.map((s) => s.key)).toEqual([`claude:${S1}`]);
-        expect(board.sessions[0].children).toEqual([expect.objectContaining({ id: "w1", liveLabel: "tool" })]);
+        // The worker's board key lets a phase frame for the folded session patch this child.
+        expect(board.sessions[0].children).toEqual([
+            expect.objectContaining({ id: "w1", liveLabel: "tool", liveKey: `codex:${S2}` }),
+        ]);
     });
 
     test("no live session reads no agent tree", async () => {

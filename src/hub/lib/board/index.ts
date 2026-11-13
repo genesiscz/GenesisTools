@@ -14,7 +14,7 @@ import { clipOneLine } from "@genesiscz/utils/string";
 import { type AgentNode, type AgentParent, type AgentsTree, DEFAULT_AGENTS_LIMIT, hubAgents } from "../agents/index";
 import { fleetStuckCheck } from "../insights/index";
 import { allSendTimings } from "../send/registry";
-import { phaseRowOf } from "./phases";
+import { boardKey, phaseRowOf } from "./phases";
 
 export { boardKey, diffPhases, phaseRowOf } from "./phases";
 
@@ -93,6 +93,7 @@ function childOf(node: AgentNode, folded: ReadonlyMap<string, FleetEntry>): Agen
         status: node.status,
         lastAt: node.lastAt,
         liveLabel: live?.label ?? null,
+        liveKey: live ? boardKey(live) : null,
         children: node.children.map((child) => childOf(child, folded)),
     };
 }
