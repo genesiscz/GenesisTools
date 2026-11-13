@@ -370,6 +370,17 @@ describe("decision journal", () => {
         expect(fx.item("i1")).toMatchObject({ status: "suggested", proposed: "OMP" });
     });
 
+    test("a respelt question names the answer command with the text quoted for the shell", async () => {
+        const fx = await fixture([question("i1")]);
+        const result = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "respell", item: "i1", text: 'Alice "Work" $(id)' },
+            actor: { kind: "window" },
+        });
+
+        expect(result.skipped?.[0]?.reason).toEndWith(`--answer 'Alice "Work" $(id)'`);
+    });
+
     test("spelling reach survives reopen, changes only selected lines and can decline dictionary teaching", async () => {
         const fx = await fixture([term("i1", 5, { proposed: "ADA" })]);
         const reach = {
