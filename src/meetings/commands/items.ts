@@ -524,12 +524,17 @@ async function decide(
         return;
     }
 
-    if (status === "rejected" && (opts.kind || opts.where)) {
+    // The filter goes with the reject, so the journal checks it again under its lock: an item confirmed or changed
+    // between this pick and the save keeps its newer state.
+    const filter: RejectFilter | undefined =
+        status === "rejected" && (opts.kind || opts.where) ? { kind: opts.kind, where: opts.where } : undefined;
+
+    if (filter) {
         if (ids.length > 0 || opts.minConfidence !== undefined) {
             fail("Use filter flags alone, without ids or --min-confidence");
             return;
         }
-        ids = rejectFilterIds(record.items, { kind: opts.kind, where: opts.where });
+        ids = rejectFilterIds(record.items, filter);
     }
     const minConfidence = opts.minConfidence === undefined ? undefined : Number(opts.minConfidence);
 
@@ -548,13 +553,19 @@ async function decide(
     const failed = (skipped: Array<{ needs: string }>) => skipped.some((skip) => skip.needs !== "nothing");
 
     try {
-        const filtered = status === "rejected" && (opts.kind !== undefined || opts.where !== undefined);
         const decided =
-            filteredNothing({ filtered, ids }) ??
+            filteredNothing({ filtered: filter !== undefined, ids }) ??
             (await withMeetingsClient((client) =>
                 client.call("decision.apply", {
                     meeting: record.id,
-                    action: decisionOf({ status, ids, minConfidence, speaker: opts.speaker, proposed: opts.proposed }),
+                    action: decisionOf({
+                        status,
+                        ids,
+                        minConfidence,
+                        speaker: opts.speaker,
+                        proposed: opts.proposed,
+                        ...(filter ? { filter } : {}),
+                    }),
                     ...(opts.reason ? { reason: opts.reason } : {}),
                 })
             ));

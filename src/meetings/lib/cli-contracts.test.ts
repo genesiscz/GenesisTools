@@ -246,8 +246,14 @@ test("items reject takes --kind and --json although its parent items command has
         await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "items" });
         await program.parseAsync(["items", "reject", record.id, "--kind", "term", "--json"], { from: "user" });
         expect(process.exitCode ?? 0).toBe(0);
+        // The filter travels with the reject, so the journal checks it again under its lock like the service path.
         expect(results.map((data) => SafeJSON.parse(String(data)))).toEqual([
-            expect.objectContaining({ decided: ["i1"] }),
+            expect.objectContaining({
+                decided: ["i1"],
+                entry: expect.objectContaining({
+                    action: { kind: "reject", items: ["i1"], filter: { kind: "term" } },
+                }),
+            }),
         ]);
         expect(store.read(record.id)?.items.map((item) => item.status)).toEqual(["rejected", "suggested"]);
     } finally {
