@@ -203,6 +203,10 @@ struct MarkdownWebView: NSViewRepresentable {
     /// What a click on a task box does. The default is a page that shows the boxes and cannot change the note (a
     /// hover preview, a diff, a past version).
     var tasks: MarkdownTaskBoxes = .preview
+    /// The verbs a right-click on the page adds (`MarkdownPageMenu`). Only the view of an open document gives them: a
+    /// page that shows another file (a commit's file, a hover preview, a diff) keeps WebKit's menu, since the selected
+    /// tab's rename or trash there acted on a file the page does not show.
+    var pageMenu: (() -> [PathMenuEntry])? = nil
 
     /// The bridge plus both schemes: the bundled assets, and the media the
     /// coordinator registered for the current document.
@@ -286,6 +290,8 @@ struct MarkdownWebView: NSViewRepresentable {
         let _ = RenderProbe.hit("md.webView.update")
         let c = context.coordinator
         c.parent = self
+        // A spare page taken from another view gets this view's verbs, or none.
+        (web as? MarkdownDropWebView)?.pageMenu = pageMenu
         if abs(web.pageZoom - CGFloat(zoom)) > 0.001 {
             web.pageZoom = CGFloat(zoom)
         }

@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import XCTest
 @testable import GenesisKit
 
@@ -70,17 +72,35 @@ final class MarkdownFileOpsTests: XCTestCase {
         XCTAssertEqual(outsideTheViewer.items.map(\.title), ["Reload"])
     }
 
-    func testPageOutsideTheViewerKeepsWebKitMenu() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
-                              styleMask: [.titled], backing: .buffered, defer: false)
-        let controller = NSWindowController(window: window)
-        let view = NSView(frame: window.contentView!.bounds)
-        window.contentView?.addSubview(view)
+    // A commit's file and a hover preview are pages in the viewer's window too, and their right-click offered the
+    // selected tab's rename and trash for a file they do not show (review of 2026-11-02).
+    func testOnlyThePageOfTheOpenDocumentOffersItsVerbs() throws {
+        model.open([url("readme.md")])
+        let doc = try XCTUnwrap(model.selected)
+        let model = model!
+        func hosted(_ pageMenu: (() -> [PathMenuEntry])?) throws -> MarkdownDropWebView {
+            let page = MarkdownWebView(markdown: "# a", scrollTarget: nil, highlightQuery: nil, highlightToken: 0,
+                                       onWikilink: { _ in }, onActiveSection: { _ in }, pageMenu: pageMenu)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: page)
+            window.contentView?.layoutSubtreeIfNeeded()
+            addTeardownBlock { window.contentView = nil }
+            func find(_ view: NSView) -> MarkdownDropWebView? {
+                (view as? MarkdownDropWebView) ?? view.subviews.lazy.compactMap(find).first
+            }
+            return try XCTUnwrap(window.contentView.flatMap(find), "the page's web view")
+        }
+
+        let preview = try hosted(nil)
         let menu = NSMenu()
         menu.addItem(Self.webKitReload())
-        MarkdownPageMenu.adapt(menu, entries: MarkdownPageMenu.entries(for: view))
-        XCTAssertEqual(menu.items.map(\.title), ["Reload"])
-        withExtendedLifetime(controller) {}
+        MarkdownPageMenu.adapt(menu, entries: preview.pageMenuEntries)
+        XCTAssertEqual(menu.items.map(\.title), ["Reload"], "a page of another file keeps WebKit's menu")
+
+        let document = try hosted { model.documentMenuEntries(for: doc) }
+        XCTAssertEqual(PathMenuEntry.outline(document.pageMenuEntries).first, "Close Tab")
     }
 
     func testAnUnsavedTabBlocksItsFileAndEveryFolderAboveIt() {

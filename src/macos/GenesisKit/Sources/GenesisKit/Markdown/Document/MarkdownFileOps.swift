@@ -121,12 +121,6 @@ enum MarkdownPageMenu {
     /// the page offered.
     static let webKitReload = NSUserInterfaceItemIdentifier("WKMenuItemIdentifierReload")
 
-    /// A page gets only the document belonging to its own viewer window.
-    static func entries(for view: NSView?) -> [PathMenuEntry] {
-        guard let controller = view?.window?.windowController as? MarkdownDocumentWindowController else { return [] }
-        return entries(for: controller)
-    }
-
     static func entries(for controller: MarkdownDocumentWindowController) -> [PathMenuEntry] {
         guard let doc = controller.model.selected else { return [] }
         return controller.model.documentMenuEntries(for: doc)

@@ -1264,7 +1264,8 @@ private struct MarkdownDocumentPane: View {
                 onDropFiles: { model.acceptDrop($0) },
                 documentURL: doc.url,
                 vaultRoot: GenesisKit.host?.markdownVaultRoot,
-                tasks: native ? taskBoxes : .preview
+                tasks: native ? taskBoxes : .preview,
+                pageMenu: { model.documentMenuEntries(for: doc) }
             )
         } else {
             MarkdownPreviewView(
