@@ -5,7 +5,12 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { MacContactsDatabase } from "@genesiscz/utils/macos/MacContactsDatabase";
-import type { AttendanceTarget, MeetingPlatform, PlatformAttendance } from "@genesiscz/utils/meetings/platform";
+import {
+    type AttendanceTarget,
+    AttendanceUnavailableError,
+    type MeetingPlatform,
+    type PlatformAttendance,
+} from "@genesiscz/utils/meetings/platform";
 import type { Presence } from "@genesiscz/utils/transcribe/speakers";
 
 const { log } = logger.scoped("meetings-facetime");
@@ -26,21 +31,26 @@ function callHistoryPath(): string {
     return join(env.tools.getHome(), "Library", "Application Support", "CallHistoryDB", "CallHistory.storedata");
 }
 
-/** The FaceTime calls starting near the meeting, with their remote handles. Read-only. */
+/**
+ * The FaceTime calls starting near the meeting, with their remote handles. Read-only. A call history that is missing,
+ * cannot be opened (no Full Disk Access) or cannot be read is an unavailable platform (`AttendanceUnavailableError`),
+ * so a caller that can go on without attendance does.
+ */
 function readCalls(startSec: number): Array<CallRow & { handles: string[] }> {
     const path = callHistoryPath();
 
     if (!existsSync(path)) {
-        throw new Error(`No call history at ${path}.`);
+        throw new AttendanceUnavailableError(`No call history at ${path}.`);
     }
 
     let db: Database;
 
     try {
         db = new Database(path, { readonly: true });
-    } catch (err) {
-        throw new Error(
-            `The call history cannot be read (${String(err)}). It needs Full Disk Access: ${toolCommand("macos", "permissions")}`
+    } catch (cause) {
+        throw new AttendanceUnavailableError(
+            `The call history cannot be read (${String(cause)}). It needs Full Disk Access: ${toolCommand("macos", "permissions")}`,
+            { cause }
         );
     }
 
@@ -66,6 +76,10 @@ function readCalls(startSec: number): Array<CallRow & { handles: string[] }> {
             name: call.name,
             handles: handles.all(call.pk).flatMap((row) => (row.value ? [row.value] : [])),
         }));
+    } catch (cause) {
+        throw new AttendanceUnavailableError(`The call history at ${path} cannot be queried (${String(cause)}).`, {
+            cause,
+        });
     } finally {
         db.close();
     }

@@ -5,6 +5,57 @@ import type { IdentifiedDeparture } from "./departure";
 
 type Stay = NonNullable<MeetingParticipant["stays"]>[number];
 
+/** A stay a person's presence starts from; `inexactEnd` when the platform did not record the leave exactly. */
+interface BaselineStay {
+    stay: Stay;
+    inexactEnd?: boolean;
+}
+
+/**
+ * The stays a person's presence starts from, one rule for every reader (the stored stays, the opened meeting's
+ * presence, the answers a question offers): their hand-corrected stays, else the platform's attendance, else their
+ * stored stays, else from when the roster first saw them. Undefined when the record knows nothing of them.
+ */
+function baselineStays(record: MeetingRecord, name: string): BaselineStay[] | undefined {
+    const person = record.participants.find((one) => sameName(one.name, name));
+    const attendance = record.attendance?.people.filter((stay) => sameName(stay.name, name));
+
+    if (attendance?.length && !person?.stays?.some((stay) => stay.source === "hand")) {
+        return attendance.flatMap((stay) =>
+            stay.toSec <= 0
+                ? []
+                : [
+                      {
+                          stay: {
+                              fromSec: Math.max(0, stay.fromSec),
+                              toSec: stay.toSec,
+                              source: "attendance" as const,
+                              confidence: 1,
+                          },
+                          ...(stay.leftAtExact === false ? { inexactEnd: true } : {}),
+                      },
+                  ]
+        );
+    }
+
+    if (person?.stays) {
+        return person.stays.map((stay) => ({ stay }));
+    }
+
+    return person?.firstSeenSec === undefined
+        ? undefined
+        : [{ stay: { fromSec: person.firstSeenSec, source: "platform-roster", confidence: 1 } }];
+}
+
+/** Whether the record's stays put a person in the call at a time; true when it knows nothing of them. */
+export function storedPresentAt(record: MeetingRecord, name: string, sec: number): boolean {
+    const stays = baselineStays(record, name);
+    return (
+        stays === undefined ||
+        stays.some(({ stay }) => sec >= stay.fromSec && (stay.toSec === undefined || sec < stay.toSec))
+    );
+}
+
 /** Consumes resolved identities. Later observed speech vetoes the inferred departure. */
 export function personStays(options: {
     record: MeetingRecord;
@@ -15,30 +66,27 @@ export function personStays(options: {
     callSilent?: readonly { fromSec: number; toSec: number }[];
 }): Array<{ name: string; self?: boolean; stays: Stay[] }> {
     return options.record.participants.map((person) => {
-        const attendance = options.record.attendance?.people.filter((stay) => sameName(stay.name, person.name));
-        const baseline: Stay[] =
-            attendance?.length && !person.stays?.some((stay) => stay.source === "hand")
-                ? attendance.flatMap((stay) =>
-                      stay.toSec <= 0
-                          ? []
-                          : [
-                                {
-                                    fromSec: Math.max(0, stay.fromSec),
-                                    toSec: stay.toSec,
-                                    source: "attendance" as const,
-                                    confidence: 1,
-                                },
-                            ]
-                  )
-                : (person.stays ??
-                  (person.firstSeenSec === undefined
-                      ? []
-                      : [{ fromSec: person.firstSeenSec, source: "platform-roster", confidence: 1 }]));
-        const stays: Stay[] = baseline.map((stay) =>
+        const baseline = baselineStays(options.record, person.name) ?? [];
+        const stays: Stay[] = baseline.map(({ stay }) =>
             options.lines && (stay.source === "goodbye" || stay.source === "silence")
                 ? { fromSec: stay.fromSec, source: "platform-roster" as const, confidence: 1 }
                 : { ...stay }
         );
+        // An open stay, or one whose end the platform only bounded (`leftAtExact: false`), may end at an inferred
+        // departure before that bound; an exact attendance leave stays as recorded.
+        const inexact = new Set(stays.filter((_, index) => baseline[index]?.inexactEnd));
+        const endable = (stay: Stay, atSec: number) =>
+            stay.fromSec <= atSec && (stay.toSec === undefined || (inexact.has(stay) && atSec < stay.toSec));
+        const laterMatchedVoice = (afterSec: number) =>
+            options.lines?.some((line) => {
+                const voice = options.record.evidence?.voice?.lines[String(line.index)];
+                return (
+                    line.startSec > afterSec &&
+                    voice?.quality === "matched" &&
+                    voice.person &&
+                    sameName(voice.person, person.name)
+                );
+            }) ?? false;
         for (const event of options.departures ?? []) {
             if (!sameName(event.name, person.name)) {
                 continue;
@@ -57,19 +105,10 @@ export function personStays(options: {
                     sameName(item.speaker, person.name) &&
                     item.toSec > event.atSec + 5
             );
-            const laterVoice = options.lines?.some((line) => {
-                const voice = options.record.evidence?.voice?.lines[String(line.index)];
-                return (
-                    line.startSec > event.atSec + 5 &&
-                    voice?.quality === "matched" &&
-                    voice.person &&
-                    sameName(voice.person, person.name)
-                );
-            });
-            if (later || confirmed || laterVoice) {
+            if (later || confirmed || laterMatchedVoice(event.atSec + 5)) {
                 continue;
             }
-            const stay = stays.findLast((one) => one.fromSec <= event.atSec && one.toSec === undefined);
+            const stay = stays.findLast((one) => endable(one, event.atSec));
             if (stay) {
                 stay.toSec = event.atSec;
                 stay.source = "goodbye";
@@ -83,23 +122,25 @@ export function personStays(options: {
                         !line.speakingUnknown && Object.keys(line.speaking).some((name) => sameName(name, person.name))
                 ) ?? [];
             const last = spoken.at(-1);
-            const stay = stays.findLast((one) => one.toSec === undefined);
+            const stay = last && stays.findLast((one) => endable(one, last.endSec));
             const quiet =
                 last &&
                 options.callSilent.find(
                     (span) =>
                         span.fromSec <= last.endSec + 5 && span.toSec >= last.endSec + options.silenceMinutes! * 60
                 );
+            // The same vetoes as an explicit departure: a later confirmed range or a later matched voice of theirs.
             const laterVoice =
                 last &&
-                options.record.items.some(
+                (options.record.items.some(
                     (item) =>
                         item.kind === "speaker-range" &&
                         item.status === "confirmed" &&
                         item.speaker &&
                         sameName(item.speaker, person.name) &&
                         item.toSec > last.endSec + 5
-                );
+                ) ||
+                    laterMatchedVoice(last.endSec + 5));
             if (
                 last &&
                 stay &&
@@ -118,11 +159,20 @@ export function personStays(options: {
 
 export function rosterPresence(record: MeetingRecord, durationSec: number): Presence[] {
     return personStays({ record, durationSec }).flatMap((person) =>
-        person.stays.map((stay) => ({
-            name: person.name,
-            self: person.self,
-            fromSec: stay.fromSec,
-            toSec: stay.toSec ?? durationSec,
-        }))
+        person.stays.map((stay) => presenceOf(person, stay, durationSec))
     );
+}
+
+/**
+ * One stay as presence. A stay with no end runs to `durationSec`, an artificial bound, so it is marked
+ * `leftAtExact: false`: a departure resolver must not read that bound as a recorded leave.
+ */
+export function presenceOf(person: { name: string; self?: boolean }, stay: Stay, durationSec: number): Presence {
+    return {
+        name: person.name,
+        self: person.self,
+        fromSec: stay.fromSec,
+        toSec: stay.toSec ?? durationSec,
+        ...(stay.toSec === undefined ? { leftAtExact: false } : {}),
+    };
 }
