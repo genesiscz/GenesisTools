@@ -288,6 +288,7 @@ describe("tree rosters: what one file cannot show", () => {
         const root = parse(
             Lang.TypeScript,
             'import axios from "axios";\nexport { x } from "axios";\nimport y from "axios-retry";\n' +
+                'const z = await import("axios"); const w = load("axios");\n' +
                 'const a = "refs.jsonl"; const b = `$' +
                 '{dir}/refs.jsonl`; const c = "not-refs.jsonl";'
         ).root();
@@ -295,6 +296,7 @@ describe("tree rosters: what one file cannot show", () => {
         expect(root.findAll(importFrom(/^axios$/)).map((node) => node.text())).toEqual([
             'import axios from "axios";',
             'export { x } from "axios";',
+            'import("axios")',
         ]);
         expect(root.findAll(literal(/^refs\.jsonl$/)).map((node) => node.text())).toEqual(["refs.jsonl"]);
         expect(root.findAll(literal(/(?:^|\/)refs\.jsonl$/)).map((node) => node.text())).toEqual([

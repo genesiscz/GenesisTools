@@ -223,29 +223,32 @@ async function readShadowed(): Promise<ShadowedReport> {
 /** The matcher source of a scaffolded definition, for one shape. Pure. */
 export function matcherSource(shape: Shape): string {
     const escaped = shape.value.replace(/[.*+?^${}()|[\]\\]/g, "\\\\$&");
+    const literalText = shape.value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+    const exact = `/^${literalText}$/`;
 
     switch (shape.kind) {
         case "call":
             return `callTo([${SafeJSON.stringify(shape.value.split(".").at(-1))}])`;
         case "import":
-            return `{ rule: { kind: "import_statement", has: { kind: "string", regex: "${escaped}" } } }`;
+            // The package and its subpaths (`zod/v4`): the census counts a package, not one specifier.
+            return `importFrom(/^${literalText}(?:\\/|$)/)`;
         case "new":
             return `{ rule: { kind: "new_expression", has: { field: "constructor", regex: "^${escaped}$" } } }`;
         case "argv":
             return `{ rule: { kind: "array", has: { kind: "string", regex: "^[\\"'\`]${escaped}[\\"'\`]$" } } }`;
         case "declare":
-            return `{ rule: { kind: "function_declaration", has: { field: "name", regex: "^${escaped}$" } } }`;
+            return `declaration(${exact})`;
         case "literal":
-            return `literal(/^${shape.value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}$/)`;
+            return `literal(${exact})`;
     }
 }
 
 const SCAFFOLD_IMPORTS: Record<ShapeKind, string> = {
     call: "callTo, defineRoster",
-    import: "defineRoster",
+    import: "defineRoster, importFrom",
     new: "defineRoster",
     argv: "defineRoster",
-    declare: "defineRoster",
+    declare: "declaration, defineRoster",
     literal: "defineRoster, literal",
 };
 

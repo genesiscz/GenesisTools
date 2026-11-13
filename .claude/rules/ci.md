@@ -42,7 +42,9 @@ generated list of the places that still hold it, which only shrinks. Two kinds:
 
 - A **pattern roster** (a `.definition.ts`) looks at one file. Matcher helpers in `define.ts`: `callTo(names)` (also an aliased import, `const x = api.name` and
   `const { name: x } = api`, each counted at the binding),
-  `literal(/^state-file\.jsonl$/)` (a string's text, in quotes or a template), `importFrom(/^axios$/)`.
+  `literal(/^state-file\.jsonl$/)` (a string's text, in quotes or a template), `importFrom(/^axios$/)` (an import,
+  an `export … from` and a dynamic `import("axios")`), `declaration(/^name$/)` (a function, class, `const` or method
+  of that name).
 - A **tree roster** (`rosters/tree.ts`) needs every file at once, so it is not in lint-rules. It runs in
   `bun scripts/ci/rosters/generate.ts --check --tree` (about 4 s; the pre-push hook and CI's "Tree roster guard"):
   - `roster-shared-export-redeclared`: a function named like a two-word export of `src/utils/**`, also with a copy
@@ -72,5 +74,6 @@ To find new rosters, run `bun scripts/ci/rosters/propose.ts`. It has four source
 - `shadowed`: the exported helpers that tools still redefine privately (`tools ts refactors --include shadowed`).
 
 `--scaffold '<key>' --name <slug> --candidate C<n>` writes a NEW definition with the matcher and the owner as
-`allowedIn` (`literal:<name>` gives `literal(/^name$/)`, `import:<pkg>` an import matcher). It refuses an existing
-file and writes nothing else. The ranking is a heuristic, so read each candidate before you make it a rule.
+`allowedIn` (`literal:<name>` gives `literal(/^name$/)`, `import:<pkg>` gives `importFrom` for the package and its
+subpaths, `declare:<name>` gives `declaration(/^name$/)`). It refuses an existing file and writes nothing else. A test
+(`propose.test.ts`) writes a scaffold of each kind, imports it and runs its matcher on the shape and its look-alikes. The ranking is a heuristic, so read each candidate before you make it a rule.

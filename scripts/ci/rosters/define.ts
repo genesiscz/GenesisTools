@@ -68,12 +68,49 @@ export function literal(content: RegExp): NapiConfig {
     return { rule: { kind: "string_fragment", regex: content.source } };
 }
 
-/** An `import … from "<specifier>"` or `export … from "<specifier>"` whose specifier matches: a package only one module may load. */
+/**
+ * An `import … from "<specifier>"`, an `export … from "<specifier>"` or an `import("<specifier>")` whose specifier
+ * matches: a package only one module may load.
+ */
 export function importFrom(specifier: RegExp): NapiConfig {
+    const text = { kind: "string_fragment", regex: specifier.source };
+
     return {
         rule: {
-            any: [{ kind: "import_statement" }, { kind: "export_statement" }],
-            has: { field: "source", has: { kind: "string_fragment", regex: specifier.source } },
+            any: [
+                {
+                    any: [{ kind: "import_statement" }, { kind: "export_statement" }],
+                    has: { field: "source", has: text },
+                },
+                {
+                    kind: "call_expression",
+                    all: [
+                        { has: { field: "function", kind: "import" } },
+                        { has: { field: "arguments", has: { kind: "string", has: text } } },
+                    ],
+                },
+            ],
+        },
+    };
+}
+
+/**
+ * A function, class, `const` or method declared under a name that matches: the forms the `shadowed` refactor analyser
+ * reports as a private copy of a shared helper.
+ */
+export function declaration(name: RegExp): NapiConfig {
+    const named = { field: "name", regex: name.source };
+
+    return {
+        rule: {
+            any: [
+                "function_declaration",
+                "generator_function_declaration",
+                "class_declaration",
+                "abstract_class_declaration",
+                "variable_declarator",
+                "method_definition",
+            ].map((kind) => ({ kind, has: named })),
         },
     };
 }

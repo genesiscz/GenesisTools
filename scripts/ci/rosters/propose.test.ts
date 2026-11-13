@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Lang, parse } from "@ast-grep/napi";
+import { SafeJSON } from "@genesiscz/utils/json";
+import type { RosterDefinition } from "./define";
 import { collectShapes, rankCandidates, scaffold, shadowedCandidates, shapesOf } from "./propose";
 import { census } from "./propose-census";
 import { collectPairs, rankPairs } from "./propose-pairs";
+import type { Shape } from "./propose-shapes";
 
 describe("shapesOf", () => {
     test("reads calls, imports, constructors and argv heads, and skips the noise", () => {
@@ -121,6 +128,92 @@ describe("shadowedCandidates", () => {
             ["twoCopies", 2],
             ["oneCopy", 1],
         ]);
+    });
+});
+
+describe("a scaffolded definition matches its shape", () => {
+    /** Each shape, source that holds it (one match per line) and look-alikes that must not match. */
+    const cases: { shape: Shape; hits: string[]; misses: string[] }[] = [
+        {
+            shape: { kind: "import", value: "@clack/prompts" },
+            hits: [
+                'import { select } from "@clack/prompts";',
+                'export { text } from "@clack/prompts";',
+                'const prompts = await import("@clack/prompts");',
+                'import { group } from "@clack/prompts/group";',
+            ],
+            misses: [
+                'import extra from "@clack/prompts-extra";',
+                'import local from "./clack/prompts";',
+                'load("@clack/prompts");',
+            ],
+        },
+        {
+            shape: { kind: "declare", value: "formatDuration" },
+            hits: [
+                "function formatDuration(ms: number) { return `${ms} ms`; }",
+                "const formatDuration = (ms: number) => `${ms} ms`;",
+                "class formatDuration {}",
+                "class Clock { formatDuration(ms: number) { return ms; } }",
+            ],
+            misses: [
+                'import { formatDuration } from "@genesiscz/utils/format";',
+                "formatDuration(5);",
+                "const formatDurationLabel = 1;",
+                "const { formatDuration: format } = helpers;",
+            ],
+        },
+        {
+            shape: { kind: "call", value: "fs.unlinkSync" },
+            hits: ["fs.unlinkSync(lock);"],
+            misses: ["unlinkSyncLater(lock);"],
+        },
+        {
+            shape: { kind: "new", value: "Conn" },
+            hits: ["const conn = new Conn(url);"],
+            misses: ["new Connection(url);"],
+        },
+        {
+            shape: { kind: "argv", value: "launchctl" },
+            hits: ['spawn(["launchctl", "load", plist]);'],
+            misses: ['const label = "launchctl";'],
+        },
+        {
+            shape: { kind: "literal", value: "radio-queue.jsonl" },
+            hits: ['const file = "radio-queue.jsonl";'],
+            misses: ['const file = "radio-queue.json";'],
+        },
+    ];
+
+    test("each kind's generated matcher finds the shape and passes its look-alikes", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "roster-scaffold-"));
+        const count = (definition: RosterDefinition, lines: string[]) =>
+            parse(Lang.TypeScript, lines.join("\n")).root().findAll(definition.matcher).length;
+
+        try {
+            // The scaffold imports "./define": point it at the real helpers.
+            writeFileSync(
+                join(dir, "define.ts"),
+                `export * from ${SafeJSON.stringify(join(import.meta.dir, "define.ts"))};\n`
+            );
+
+            const path = (shape: Shape) => join(dir, `example-${shape.kind}.definition.ts`);
+
+            // Every file before the first import: Bun's resolver keeps the folder listing it read first.
+            for (const { shape } of cases) {
+                const name = `example-${shape.kind}`;
+                writeFileSync(path(shape), scaffold({ shape, name, candidate: "C99", allowedIn: "src/owner.ts" }));
+            }
+
+            for (const { shape, hits, misses } of cases) {
+                const definition: RosterDefinition = (await import(path(shape))).default;
+
+                expect([shape.kind, count(definition, hits)]).toEqual([shape.kind, hits.length]);
+                expect([shape.kind, count(definition, misses)]).toEqual([shape.kind, 0]);
+            }
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 
