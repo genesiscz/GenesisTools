@@ -9,8 +9,23 @@ import { MockBadge } from "@/ui/MockBadge";
 import { StatusPill } from "@/ui/StatusPill";
 import { useThemeColors } from "@/theme/colors";
 
-/** One line of the brief; a tap opens the screen that owns it. */
-function BriefLine({ testID, title, href, children }: { testID: string; title: string; href?: Href; children: ReactNode }) {
+/**
+ * One line of the brief; a tap opens the screen that owns it. `summary` is what the line says in words: a button's
+ * label replaces the text inside it for VoiceOver, so the label carries the count, the summary or the temperature too.
+ */
+function BriefLine({
+    testID,
+    title,
+    summary,
+    href,
+    children,
+}: {
+    testID: string;
+    title: string;
+    summary: string;
+    href?: Href;
+    children: ReactNode;
+}) {
     const c = useThemeColors();
     const body = (
         <View className="gap-1 rounded-2xl p-4" style={{ backgroundColor: c.bgPanel, borderWidth: 1, borderColor: c.border }}>
@@ -27,7 +42,12 @@ function BriefLine({ testID, title, href, children }: { testID: string; title: s
     }
 
     return (
-        <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={title} onPress={() => router.push(href)}>
+        <Pressable
+            testID={testID}
+            accessibilityRole="button"
+            accessibilityLabel={`${title}: ${summary}`}
+            onPress={() => router.push(href)}
+        >
             {body}
         </Pressable>
     );
@@ -44,6 +64,12 @@ export default function BriefScreen() {
     const brief = query.data ?? null;
     const commute = brief ? commuteLine(brief) : null;
     const overnight = brief ? overnightLine(brief) : null;
+    const weather = brief?.weather
+        ? brief.weather.tempC === null
+            ? brief.weather.description
+            : `${Math.round(brief.weather.tempC)} °C, ${brief.weather.description}`
+        : null;
+    const decisions = brief && brief.decisionsWaiting !== null ? `${brief.decisionsWaiting} waiting` : "Could not count";
 
     return (
         <>
@@ -82,28 +108,29 @@ export default function BriefScreen() {
                 ) : (
                     <>
                         {commute && brief.commute ? (
-                            <BriefLine testID="brief-commute" title={`${brief.commute.from} → ${brief.commute.to}`}>
+                            <BriefLine testID="brief-commute" title={`${brief.commute.from} → ${brief.commute.to}`} summary={commute}>
                                 <Text style={{ color: brief.commute.error ? c.danger : c.textPrimary, fontSize: 17, fontWeight: "600" }}>
                                     {commute}
                                 </Text>
                             </BriefLine>
                         ) : null}
-                        {brief.weather ? (
-                            <BriefLine testID="brief-weather" title={`Weather · ${brief.weather.label}`} href="/weather">
-                                <Text style={{ color: c.textPrimary, fontSize: 15 }}>
-                                    {brief.weather.tempC === null
-                                        ? brief.weather.description
-                                        : `${Math.round(brief.weather.tempC)} °C, ${brief.weather.description}`}
-                                </Text>
+                        {weather && brief.weather ? (
+                            <BriefLine testID="brief-weather" title={`Weather · ${brief.weather.label}`} summary={weather} href="/weather">
+                                <Text style={{ color: c.textPrimary, fontSize: 15 }}>{weather}</Text>
                             </BriefLine>
                         ) : null}
-                        <BriefLine testID="brief-decisions" title="Decisions" href="/needs-input-inbox">
+                        <BriefLine testID="brief-decisions" title="Decisions" summary={decisions} href="/needs-input-inbox">
                             <Text style={{ color: brief.decisionsWaiting ? c.warning : c.textPrimary, fontSize: 15 }}>
-                                {brief.decisionsWaiting === null ? "Could not count" : `${brief.decisionsWaiting} waiting`}
+                                {decisions}
                             </Text>
                         </BriefLine>
                         {overnight && brief.overnight ? (
-                            <BriefLine testID="brief-overnight" title="Overnight" href="/agents">
+                            <BriefLine
+                                testID="brief-overnight"
+                                title="Overnight"
+                                summary={[overnight, ...brief.overnight.titles].join(". ")}
+                                href="/agents"
+                            >
                                 <Text style={{ color: c.textPrimary, fontSize: 15 }}>{overnight}</Text>
                                 {brief.overnight.titles.map((title) => (
                                     <Text key={title} numberOfLines={1} style={{ color: c.textSecondary, fontSize: 12 }}>
@@ -113,7 +140,12 @@ export default function BriefScreen() {
                             </BriefLine>
                         ) : null}
                         {brief.resets.length > 0 ? (
-                            <BriefLine testID="brief-resets" title="Short windows" href="/claude-usage">
+                            <BriefLine
+                                testID="brief-resets"
+                                title="Short windows"
+                                summary={brief.resets.map((reset) => `${reset.account} ${reset.label} ${resetLine(reset)}`).join(". ")}
+                                href="/claude-usage"
+                            >
                                 {brief.resets.map((reset) => (
                                     <View key={`${reset.provider}-${reset.account}`} className="flex-row justify-between">
                                         <Text style={{ color: c.textSecondary, fontSize: 13 }}>{`${reset.account} ${reset.label}`}</Text>

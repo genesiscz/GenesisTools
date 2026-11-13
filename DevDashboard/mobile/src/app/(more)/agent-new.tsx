@@ -50,7 +50,7 @@ function AccountRow({ account, selected, onPress }: { account: LaunchAccountDto;
         <Pressable
             testID={`launch-account-${account.name}`}
             accessibilityRole="radio"
-            accessibilityState={{ selected }}
+            accessibilityState={{ checked: selected }}
             onPress={onPress}
             className="flex-row items-center gap-3 rounded-xl px-3 py-2.5"
             style={{ backgroundColor: selected ? c.accentMuted : c.bgPanel, borderWidth: 1, borderColor: selected ? c.accentGlow : c.border }}
@@ -161,6 +161,7 @@ export default function AgentNewScreen() {
                     <SectionHeader title="Repo" />
                     <TextInput
                         testID="launch-repo-filter"
+                        accessibilityLabel="Filter repos"
                         value={filter}
                         onChangeText={setFilter}
                         placeholder="Filter repos"
@@ -180,6 +181,7 @@ export default function AgentNewScreen() {
                     <SectionHeader title="First prompt" />
                     <TextInput
                         testID="launch-prompt"
+                        accessibilityLabel="First prompt"
                         value={prompt}
                         onChangeText={setPrompt}
                         placeholder="Optional: what the agent starts with"
