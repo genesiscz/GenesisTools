@@ -141,6 +141,10 @@ Which environment the app sees depends on how it starts:
   session cookies cross the network unencrypted. Without `DD_CLOUD_AUTH_SECRET` it also signs sessions with the
   public development fallback, so anyone who reads the repository can forge a session. To reach the app from another
   device, set a unique `DD_CLOUD_AUTH_SECRET`, keep the server on `127.0.0.1`, and put a TLS tunnel in front of it.
+  Also set `DD_CLOUD_APP_URL` to the tunnel's https address: the auth, Stripe checkout and billing portal redirects
+  are built from it, and the default `http://localhost:7251` sends the other device to its own localhost. The launchd
+  agent gets none of your shell's variables, so with the agent installed it keeps the public development secret: run
+  `tools dev-dashboard-cloud uninstall` first, then start the dashboard from the shell that holds both variables.
 - ❗ `DD_CLOUD_PORT` is the exception. The bare command replaces a shell value with its `-p` value (default 7251), so
   `DD_CLOUD_PORT=7300 tools dev-dashboard-cloud` still starts on 7251. With `up` or `restart`, the shell value does reach
   the app, which then listens on 7300 while the tool waits on 7251: it warns `Readiness check failed ... Started
