@@ -156,4 +156,16 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         XCTAssertEqual(window.settingsRaw, newer.raw, "the next write names the value the config holds, not an older read")
         XCTAssertEqual(window.settings.value, newer.value)
     }
+
+    // MARK: A project person is found by name and address (PR 809)
+
+    func testTheEditedProjectPersonIsTheOneWithItsAddress() {
+        let saved: [[String: Any]] = [["name": "Alex Example", "email": "alex@example.com"],
+                                      ["name": "Alex Example", "email": "alex.other@example.com"],
+                                      ["name": "Robin Example"]]
+        let second = PairedPerson(name: "Alex Example", email: "alex.other@example.com", pairedBy: [])
+        XCTAssertEqual(MeetingsSettingsModel.personIndex(of: second, in: saved), 1, "the second Alex keeps the first one's role")
+        XCTAssertEqual(MeetingsSettingsModel.personIndex(of: PairedPerson(name: "Robin Example", email: nil, pairedBy: []), in: saved), 2)
+        XCTAssertNil(MeetingsSettingsModel.personIndex(of: PairedPerson(name: "Alex Example", email: nil, pairedBy: []), in: saved))
+    }
 }

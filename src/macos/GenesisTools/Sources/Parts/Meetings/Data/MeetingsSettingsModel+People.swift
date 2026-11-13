@@ -7,10 +7,20 @@ extension MeetingsSettingsModel {
     func setPersonDetails(project: String, person: PairedPerson, role: String, aliases: [String]) {
         let path = ["projects", project, "match", "people"]
         guard var people = settingsRaw?.at(path).foundation as? [[String: Any]],
-              let index = people.firstIndex(where: { ($0["name"] as? String) == person.name }) else { return }
+              let index = Self.personIndex(of: person, in: people) else { return }
         people[index]["role"] = role.trimmingCharacters(in: .whitespaces).isEmpty ? nil : role
         people[index]["aliases"] = aliases
         set(path, people, done: "Updated role and aliases for \(person.name)")
+    }
+
+    /// The saved entry of `person`: two people may share a name with different addresses (`samePerson` in
+    /// src/utils/meetings/people.ts), so the address decides when either side has one, as `PairedPerson.id` does.
+    static func personIndex(of person: PairedPerson, in people: [[String: Any]]) -> Int? {
+        let email = person.email?.lowercased()
+        return people.firstIndex { entry in
+            guard (entry["name"] as? String) == person.name else { return false }
+            return (entry["email"] as? String)?.lowercased() == email
+        }
     }
 
     typealias MeetingPerson = MeetingsAPI.ProjectsMeetingPeople.Person
