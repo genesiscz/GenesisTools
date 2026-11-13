@@ -17,6 +17,7 @@ import { MEETING_PLATFORMS } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { assessIndicator } from "./lib/speaker-indicator";
 import { suggestItems } from "./lib/suggest";
+import { lineDeviceCandidates } from "./lib/voice";
 import { clearLanguage, lineLanguages } from "./lib/word-languages";
 
 const USER = "Una Example";
@@ -662,6 +663,14 @@ test("shared microphone never identifies its owner as fact", () => {
             microphones: [{ id: "self", people: [USER, "Dana Example", "Eli Example"] }],
         },
     });
+    for (const micShare of [0.65, 0.8, 0.9, 1]) {
+        expect(lineDeviceCandidates({ record: shared, atSec: 10, micShare })).toEqual([
+            USER,
+            "Dana Example",
+            "Eli Example",
+        ]);
+    }
+    expect(lineDeviceCandidates({ record: shared, atSec: 10, micShare: 0.64 })).toEqual([]);
     const s = scene([
         { label: USER, mic: 1 },
         { label: USER, mic: 1 },
