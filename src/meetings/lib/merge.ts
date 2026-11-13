@@ -7,6 +7,7 @@ import {
     readdirSync,
     readFileSync,
     renameSync,
+    rmdirSync,
     writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -127,9 +128,15 @@ function refusal(from: MeetingRecord, into: MeetingRecord, store: MeetingStore):
     return undefined;
 }
 
+/** A lock or pid claim a process holds (`meeting.json.lock`, its queue and arbitration, `*.pid`), never meeting data. */
+function isClaimFile(name: string): boolean {
+    return /(?:\.pid|\.lock)(?:$|\.)/.test(name);
+}
+
 /**
- * A clone of every file under `source` at `destination` (a copy where the volume cannot clone). Meeting folders hold
- * screen captures and transcripts, so every folder is owner-only (0700) and every file keeps its owner bits only.
+ * A clone of every file under `source` at `destination` (a copy where the volume cannot clone), without the locks and
+ * claims in it. Meeting folders hold screen captures and transcripts, so every folder is owner-only (0700) and every
+ * file keeps its owner bits only.
  */
 export function cloneTree(source: string, destination: string): void {
     const sourceStat = lstatSync(source);
@@ -146,6 +153,11 @@ export function cloneTree(source: string, destination: string): void {
     mkdirSync(destination, { recursive: true, mode: 0o700 });
 
     for (const name of readdirSync(source)) {
+        // A lock or claim belongs to the process that holds it: a restore that copied it back would block the record.
+        if (isClaimFile(name)) {
+            continue;
+        }
+
         const from = join(source, name);
         const to = join(destination, name);
         const stat = lstatSync(from);
@@ -358,7 +370,7 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
         return mergeLockedMeetings({ request, from, into, update: store.update.bind(store) });
     }
 
-    return store.withRecords({
+    const result = await store.withRecords({
         ids: [from.id, into.id],
         fn: async (records, update) => {
             const currentFrom = records.get(from.id);
@@ -371,6 +383,24 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
             return mergeLockedMeetings({ request, from: currentFrom, into: currentInto, update });
         },
     });
+
+    removeEmptyFolder(store.folder(from.id));
+    return result;
+}
+
+/**
+ * Removes the folder of the record that went away once its lock is released, so its id is free again. `rmdirSync`
+ * removes only an empty folder: a lock or claim another writer took there since keeps it, and the log names it.
+ */
+function removeEmptyFolder(folder: string): void {
+    try {
+        rmdirSync(folder);
+    } catch (error) {
+        log.warn(
+            { error, folder, left: existsSync(folder) ? readdirSync(folder) : [] },
+            "merge: the folder of the merged record is not empty; it stays"
+        );
+    }
 }
 
 async function mergeLockedMeetings({
@@ -554,7 +584,17 @@ async function mergeLockedMeetings({
         }
     );
 
-    renameSync(fromFolder, join(backup, "moved", from.id));
+    // Its files move, its folder stays until the locks are released (`mergeMeetings` removes it then): moving the folder
+    // carried the held lock into the backup, and the release made the folder again, empty, keeping the id taken.
+    const movedFolder = join(backup, "moved", from.id);
+    mkdirSync(movedFolder, { mode: 0o700 });
+
+    for (const name of readdirSync(fromFolder)) {
+        if (!isClaimFile(name)) {
+            renameSync(join(fromFolder, name), join(movedFolder, name));
+        }
+    }
+
     appendFileSync(
         join(backup, "README.md"),
         `\nMerged: ${record.id} now holds ${record.recording?.frames ?? 0} frames.\n`

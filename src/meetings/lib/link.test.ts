@@ -58,6 +58,11 @@ import {
     planSourceAudio,
 } from "./source-audio-discovery";
 
+/** Every lock file or lock folder under `dir`, as paths relative to it. */
+function lockFilesUnder(dir: string): string[] {
+    return readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((path) => /\.lock(?:$|\.)/.test(path));
+}
+
 function gate(enabled: boolean, linkHost: string | null = "links.example"): LinkGate {
     return {
         version: 2,
@@ -328,6 +333,10 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
         expect(existsSync(join(result.backup ?? "", "before", from, "frames", "14-03-00-000-d1.jpg"))).toBe(true);
         expect(existsSync(join(result.backup ?? "", "before", into, "recording.json"))).toBe(true);
         expect(existsSync(join(result.backup ?? "", "moved", from, "meeting.json"))).toBe(true);
+        // The folder of the record that went away is gone itself, so its id is free again, and no lock the merge held
+        // went into the backup: a restore from it must not bring back a lock.
+        expect(existsSync(store.folder(from))).toBe(false);
+        expect(lockFilesUnder(result.backup ?? "")).toEqual([]);
         expect(cancelled).toEqual(["form-1"]);
         expect(result.withdrawn).toBe("form-1");
         expect(store.resolve("wisprflow:call-1")?.id).toBe(into);
