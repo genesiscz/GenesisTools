@@ -17,14 +17,12 @@ final class FrameReviewWindow: NSObject, NSWindowDelegate {
             existing.model.open(file: file, at: at)
             if text { existing.model.textVisible = true }
             existing.window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
             return
         }
         let controller = FrameReviewWindow(meeting: meeting, file: file, at: at, player: player,
                                            defaults: defaults, timeline: timeline, duration: duration, text: text)
         open[meeting] = controller
         controller.window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     private init(meeting: String, file: String, at: Double, player: MomentPlayer?,
