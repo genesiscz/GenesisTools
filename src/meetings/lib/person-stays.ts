@@ -16,22 +16,29 @@ export function personStays(options: {
 }): Array<{ name: string; self?: boolean; stays: Stay[] }> {
     return options.record.participants.map((person) => {
         const attendance = options.record.attendance?.people.filter((stay) => sameName(stay.name, person.name));
-        const stays: Stay[] =
-            person.stays?.map((stay) =>
-                options.lines && (stay.source === "goodbye" || stay.source === "silence")
-                    ? { fromSec: stay.fromSec, source: "platform-roster" as const, confidence: 1 }
-                    : { ...stay }
-            ) ??
-            (attendance?.length
-                ? attendance.map((stay) => ({
-                      fromSec: stay.fromSec,
-                      toSec: stay.toSec,
-                      source: "attendance" as const,
-                      confidence: 1,
-                  }))
-                : person.firstSeenSec === undefined
-                  ? []
-                  : [{ fromSec: person.firstSeenSec, source: "platform-roster", confidence: 1 }]);
+        const baseline: Stay[] =
+            attendance?.length && !person.stays?.some((stay) => stay.source === "hand")
+                ? attendance.flatMap((stay) =>
+                      stay.toSec <= 0
+                          ? []
+                          : [
+                                {
+                                    fromSec: Math.max(0, stay.fromSec),
+                                    toSec: stay.toSec,
+                                    source: "attendance" as const,
+                                    confidence: 1,
+                                },
+                            ]
+                  )
+                : (person.stays ??
+                  (person.firstSeenSec === undefined
+                      ? []
+                      : [{ fromSec: person.firstSeenSec, source: "platform-roster", confidence: 1 }]));
+        const stays: Stay[] = baseline.map((stay) =>
+            options.lines && (stay.source === "goodbye" || stay.source === "silence")
+                ? { fromSec: stay.fromSec, source: "platform-roster" as const, confidence: 1 }
+                : { ...stay }
+        );
         for (const event of options.departures ?? []) {
             if (!sameName(event.name, person.name)) {
                 continue;

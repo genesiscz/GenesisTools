@@ -1599,6 +1599,45 @@ describe("workshop listen contracts", () => {
         });
     });
 
+    test("later attendance replaces roster stays after reopen and preserves manual windows", async () => {
+        const fx = await fixture([]);
+        await fx.store.update(fx.meeting.id, { command: "test", change: "late attendance" }, (record) => {
+            record.participants = [
+                {
+                    name: "Bob Example",
+                    firstSeenSec: 600,
+                    from: ["platform-roster"],
+                    stays: [{ fromSec: 600, source: "platform-roster", confidence: 1 }],
+                },
+            ];
+            record.attendance = {
+                from: "teams",
+                people: [{ name: "Bob Example", fromSec: 550, toSec: 2405, joinedAtExact: true, leftAtExact: true }],
+            };
+        });
+        let reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        const derived = personStays({ record: reopened, durationSec: 3000 });
+        expect(derived[0]!.stays).toEqual([{ fromSec: 550, toSec: 2405, source: "attendance", confidence: 1 }]);
+        await fx.store.update(fx.meeting.id, { command: "test", change: "persist stays" }, (record) => {
+            record.participants[0]!.stays = derived[0]!.stays;
+        });
+        reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(reopened.participants[0]!.firstSeenSec).toBe(600);
+        expect(reopened.participants[0]!.stays).toEqual(derived[0]!.stays);
+        await fx.store.update(fx.meeting.id, { command: "test", change: "refresh attendance" }, (record) => {
+            record.attendance!.people[0]!.toSec = 2500;
+        });
+        reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(personStays({ record: reopened, durationSec: 3000 })[0]!.stays[0]!.toSec).toBe(2500);
+        await fx.store.update(fx.meeting.id, { command: "test", change: "manual window" }, (record) => {
+            record.participants[0]!.stays = [{ fromSec: 700, toSec: 2000, source: "hand", confidence: 1 }];
+        });
+        reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(personStays({ record: reopened, durationSec: 3000 })[0]!.stays).toEqual([
+            { fromSec: 700, toSec: 2000, source: "hand", confidence: 1 },
+        ]);
+    });
+
     test("quality probe conserves lines, sample has no replacement, alternating features split four parts", () => {
         const record = meetingRecordSchema.parse({
             id: "quality",
