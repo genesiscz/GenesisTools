@@ -59,7 +59,7 @@ enum WorktreeDiscovery {
 
     /// The git roots each session's shell commands worked in, as the Bash hook recorded them
     /// (`<temp>/GenesisTools/ai/hooks/mentions/<session>.json`, `roots`). A session started in one repository often
-    /// works in another by `cd` (a frontend session that builds its backend): its folder alone missed that repository.
+    /// works in another by `cd` (an app session that also builds its backend): its folder alone missed that repository.
     static func hookRoots(of sessions: [HubSession]) -> [String] {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("GenesisTools/ai/hooks/mentions", isDirectory: true)
