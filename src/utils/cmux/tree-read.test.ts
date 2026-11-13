@@ -7,7 +7,7 @@ import {
     type TreeBackoffStore,
     treeBackoffDelayMs,
 } from "./lib/tree-backoff";
-import { CMUX_TREE_TIMEOUT_MS, cmuxDidNotAnswer, readCmuxTree } from "./tree-read";
+import { CMUX_TREE_TIMEOUT_MS, cmuxDidNotAnswer, cmuxTreeFromJson, readCmuxTree } from "./tree-read";
 
 /** A `cmux --json --id-format both tree --all` answer, trimmed to the fields the readers use. */
 const FIXTURE = {
@@ -73,6 +73,15 @@ const failing = async (): Promise<unknown> => {
     throw new Error("cmux tree --all failed (1): timed out");
 };
 
+describe("cmuxTreeFromJson", () => {
+    test("an answer without a windows list is no tree, never an empty layout", () => {
+        expect(cmuxTreeFromJson({ error: { code: "busy" } })).toBeNull();
+        expect(cmuxTreeFromJson([{ windows: [] }])).toBeNull();
+        expect(cmuxTreeFromJson({ windows: "none" })).toBeNull();
+        expect(cmuxTreeFromJson({ windows: [] })).toEqual({ caller: null, windows: [] });
+    });
+});
+
 describe("readCmuxTree", () => {
     test("asks once with the UUID argv and the bound, and parses ids, refs, ttys and pane fallbacks", async () => {
         const calls: Array<{ args: string[]; timeoutMs: number }> = [];
@@ -124,7 +133,7 @@ describe("readCmuxTree", () => {
         expect(await readCmuxTree({ run: async () => "nope" })).toEqual({
             ok: false,
             reason: "failed",
-            error: "cmux tree answered no object",
+            error: "cmux tree answered no tree (no windows list)",
         });
     });
 
