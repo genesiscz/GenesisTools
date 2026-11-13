@@ -59,7 +59,7 @@ public final class ToolsServerClient: @unchecked Sendable {
         preview: Bool = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true
     ) -> Bool {
         !preview && environment["GENESIS_HUB_SERVER"] != "0"
-            && environment["GENESIS_TOOLS_HOME"] == nil && environment["GENESIS_TOOLS_BIN"] == nil
+            && environment[GenesisToolsHome.variable] == nil && environment["GENESIS_TOOLS_BIN"] == nil
     }
 
     /// A client of the resident server when `allowsResidentServer` says this face may use one, else nil.
