@@ -9,7 +9,7 @@ import { actorText } from "./decision-journal";
 import { itemWhat } from "./item-text";
 import { personPresent } from "./listen-answers";
 import { momentsInText } from "./moment-schema";
-import { inputNeeded, NONE_OF_THESE, type QuestionItem, questionLabel, questionRank, questionView } from "./questions";
+import { askedRank, inputNeeded, NONE_OF_THESE, type QuestionItem, questionLabel, questionView } from "./questions";
 import type {
     ClockTime,
     ReviewRow,
@@ -29,9 +29,11 @@ export * from "./review-row-schema";
  * its sources, its Moment and its last decision. The Meetings window, `tools meetings rows`, `items` and the REPL print
  * from these rows, so a question reads the same everywhere and the window computes nothing itself.
  *
- * The order is one rule (G32): questions first, by uncertain words and distinct answer targets, then by time,
- * which is the order `listen` asks them in; then every other item by time, then by id. Legacy and term questions use
- * their priority. A decision does not move its row (R16). Open questions under `playback.listen.minPriority` are
+ * The order is one rule (G32): questions first, by uncertain words and distinct answer targets as they were when the
+ * question was asked (`askedRank`), then by time, which is the order `listen` asks them in until an answer raises
+ * another question's confidence; then every other item by time, then by id. Legacy and term questions use their
+ * priority. A decision does not move its row, nor the rows its answer propagates to (R16). Open questions under
+ * `playback.listen.minPriority` are
  * left out, as `listen` leaves them, and counted (G13).
  */
 
@@ -45,8 +47,11 @@ export function clockTime(sec: number): ClockTime {
 /** Characters of transcript a row quotes before it cuts with "…". */
 const SAID_CHARS = 240;
 
-/** One typed candidate score as suggest writes it (`evidence.candidateScores`); other keys are dropped. */
-const candidateScoreSchema = z.object({ term: z.string(), confidence: z.number() });
+/**
+ * One typed candidate score as suggest writes it (`evidence.candidateScores`); other keys are dropped. A score outside
+ * 0 to 1 is left out like one that does not read, because a row choice's confidence is 0 to 1 (`rowChoiceSchema`).
+ */
+const candidateScoreSchema = z.object({ term: z.string(), confidence: z.number().min(0).max(1) });
 
 /**
  * A term's candidates with their confidence 0 to 1, best first: the typed `evidence.candidateScores` of a newer
@@ -74,7 +79,8 @@ export function candidateScores(item: MeetingItem): Array<{ term: string; confid
     return strings
         .flatMap((one: unknown) => {
             const match = typeof one === "string" ? /^(.*\S)\s+(\d+(?:[.,]\d+)?)\s*%$/u.exec(one) : null;
-            return match ? [{ term: match[1]!, confidence: Number(match[2]!.replace(",", ".")) / 100 }] : [];
+            const confidence = match ? Number(match[2]!.replace(",", ".")) / 100 : Number.NaN;
+            return match && confidence <= 1 ? [{ term: match[1]!, confidence }] : [];
         })
         .sort((a, b) => b.confidence - a.confidence);
 }
@@ -294,9 +300,18 @@ function scoreOf(scores: Map<string, number>, name: string): number | undefined 
     return [...scores].find(([speaker]) => sameName(speaker, name))?.[1];
 }
 
+/**
+ * A speaker range's choices: its speaker, the other people it could be (its candidates and every name its typed scores
+ * weigh, one per person by the identity rules), then "None of these".
+ */
 function rangeChoices(item: Extract<MeetingItem, { kind: "speaker-range" }>): RowChoice[] {
-    const others = (item.candidates ?? []).filter((name) => name !== item.speaker);
     const scores = speakerChoiceScores([item]);
+    const named = [...(item.candidates ?? []), ...scores.keys()];
+    const others = named.filter(
+        (name, index) =>
+            !(item.speaker && sameName(name, item.speaker)) &&
+            named.findIndex((other) => sameName(other, name)) === index
+    );
     return ordered([
         ...(item.speaker
             ? [
@@ -337,9 +352,10 @@ function plainChoices(item: MeetingItem, label: string): RowChoice[] {
 
 /**
  * A question's choices (G1, G2, G31, G32): the engine's answers with their roles and confidence (a term's suggestion
- * the term's own, its candidates their scores; a speaker question's suggested speaker the range's confidence and the
- * other names their typed candidate scores over the ranges it decides, none for a name without one), then "None of
- * these", "Several voices" for a speaker question, and "Skip".
+ * the term's own, its candidates their scores; a speaker question's names, the suggested one included, their typed
+ * candidate scores over the ranges it decides, none for a name without one, and the suggested speaker the first range's
+ * confidence only when its ranges have no typed scores), then "None of these", "Several voices" for a speaker
+ * question, and "Skip".
  */
 function questionChoices(record: MeetingRecord, question: QuestionItem): RowChoice[] {
     const decided = record.items.filter((item) => question.decides.includes(item.id));
@@ -378,11 +394,15 @@ function questionChoices(record: MeetingRecord, question: QuestionItem): RowChoi
                     : question.heard && lower === question.heard.toLowerCase()
                       ? "heard"
                       : "candidate";
+        // A speaker question's every name, its suggestion too, takes the score over all the ranges it decides; only
+        // ranges without typed scores fall back to the first range's own confidence for the suggestion.
         const confidence =
-            role === "suggested"
-                ? (question.about === "speaker" ? range : term)?.confidence
-                : question.about === "speaker"
-                  ? scoreOf(speakerScores, value)
+            question.about === "speaker"
+                ? role === "suggested" && speakerScores.size === 0
+                    ? range?.confidence
+                    : scoreOf(speakerScores, value)
+                : role === "suggested"
+                  ? term?.confidence
                   : scores.find((score) => score.term.toLowerCase() === lower)?.confidence;
         return {
             value,
@@ -509,14 +529,18 @@ function partsOf(record: MeetingRecord, item: MeetingItem, lines: TranscriptLine
             parts.push({ kind: "who", text: line.entry.speaker });
         }
 
+        // A removal quotes the words it removes. A range that starts and ends at one time (a split part) quotes the
+        // line it starts, because `saidBetween` over a zero-length span finds no line or the one before it.
         const said =
             item.kind === "join"
                 ? item.joined
-                : item.kind === "term"
-                  ? line?.entry.text
-                  : lines
-                    ? saidBetween(lines, item.fromSec, item.toSec, voicesOf(record, item))
-                    : undefined;
+                : item.kind === "removal"
+                  ? item.heard
+                  : item.kind === "term" || item.toSec <= item.fromSec
+                    ? line?.entry.text
+                    : lines
+                      ? saidBetween(lines, item.fromSec, item.toSec, voicesOf(record, item))
+                      : undefined;
 
         if (said) {
             parts.push({ kind: "said", text: cut(said) });
@@ -707,7 +731,7 @@ function rowOrder(a: MeetingItem, b: MeetingItem): number {
     }
 
     if (a.kind === "question" && b.kind === "question") {
-        const byPriority = questionRank(b) - questionRank(a);
+        const byPriority = askedRank(b) - askedRank(a);
 
         if (byPriority !== 0) {
             return byPriority;

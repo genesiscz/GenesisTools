@@ -85,6 +85,7 @@ import {
     propagateAnswer,
     type QuestionContext,
     questionFor,
+    questionRank,
     skipQuestion,
     splitQuestion,
 } from "./lib/questions";
@@ -2063,6 +2064,29 @@ describe("questions (R2.3)", () => {
         ).toEqual([["i5"], ["i6"]]);
     });
 
+    test("a cluster question counts its one passage's words once and keeps the rank it was asked with", () => {
+        const speaker = (id: string, fromSec: number, words: number) => ({
+            kind: "question" as const,
+            status: "suggested" as const,
+            about: "speaker" as const,
+            fromSec,
+            toSec: fromSec + 10,
+            question: "Who?",
+            choices: ["Bob Example", "Carol Example"],
+            decides: [id],
+            rules: [],
+            confidence: 0.5,
+            clip: { fromSec, toSec: fromSec + 10 },
+            evidence: { words, impact: 4, labels: ["Speaker 5"] },
+        });
+        const picked = selectQuestions([speaker("i1", 100, 20), speaker("i2", 100, 20), speaker("i3", 300, 50)], []);
+
+        expect(picked.map((item) => item.decides)).toEqual([["i1", "i2"], ["i3"]]);
+        // 20 words × 2 targets × 0.5 against 50 words × 1 target × 0.5: the larger passage ranks first.
+        expect(picked.map((item) => questionRank(item))).toEqual([20, 25]);
+        expect(picked.map((item) => item.evidence?.rank)).toEqual([20, 25]);
+    });
+
     test("a term question retains the finding line when timestamps coincide", () => {
         const item = meetingItemSchema.parse({
             id: "i1",
@@ -2353,6 +2377,66 @@ describe("several voices", () => {
         expect(parts).toEqual([]);
         expect(split.items).toHaveLength(1);
         expect(split.items[0]).toMatchObject({ status: "suggested" });
+    });
+
+    test("each part of a split question counts and ranks its own words, not the whole question's", () => {
+        const split = question(0, 16);
+        const whole = split.items[0]!;
+
+        if (whole.kind !== "question") {
+            throw new Error("the fixture has no question");
+        }
+
+        whole.confidence = 0.5;
+        whole.evidence = { words: 16 };
+        const words =
+            "jedna dva tři čtyři pět šest sedm osm devět deset jedenáct dvanáct třináct čtrnáct patnáct šestnáct";
+        const parts = splitQuestion(split, "i1", { transcript: [line("Alice Example", 0, words)], now, micShare });
+
+        expect(parts.map((part) => part.evidence?.words)).toEqual([11, 5]);
+        expect(parts.map((part) => questionRank(part))).toEqual([5.5, 2.5]);
+        expect(parts.map((part) => part.evidence?.rank)).toEqual([5.5, 2.5]);
+    });
+
+    test("a one-person answer that replaces a several-voices answer leaves no voices on the range", () => {
+        const draft = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i1",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label: "Speaker 1",
+                    fromSec: 0,
+                    toSec: 0,
+                    rules: [],
+                    suggestedAt: now,
+                },
+                {
+                    id: "i2",
+                    kind: "question",
+                    status: "suggested",
+                    about: "speaker",
+                    fromSec: 0,
+                    toSec: 10,
+                    question: "Who speaks?",
+                    choices: ["Alice Example", "Bob Example"],
+                    decides: ["i1"],
+                    rules: [],
+                    suggestedAt: now,
+                },
+            ],
+        });
+        const transcript = [line("Speaker 1", 0, "First part here. Second part here.")];
+
+        answerQuestion(draft, "i2", { answer: "Alice Example and Bob Example", now, transcript });
+        expect(draft.items[0]).toMatchObject({ voices: ["Alice Example", "Bob Example"] });
+        draft.items[1]!.status = "suggested";
+        answerQuestion(draft, "i2", { answer: "Alice Example", now, transcript });
+
+        expect(draft.items[0]).toMatchObject({ speaker: "Alice Example", status: "confirmed" });
+        expect(draft.items[0]).not.toHaveProperty("voices");
+        expect(draft.items[0]).not.toHaveProperty("segments");
     });
 });
 
