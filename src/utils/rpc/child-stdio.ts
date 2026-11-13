@@ -29,9 +29,10 @@ export const CHILD_STDIN_HIGH_WATER_BYTES = 64 * 1024;
 export interface ChildStdioConnection {
     peer: RpcPeer;
     /**
-     * Settles once every message the peer sent so far is written to stdin and flushed, the ones its outbox still holds
-     * included; rejects with the error of a write that failed. A caller that must order its next message after an
-     * answer awaits it.
+     * Settles once every message the peer sent before this call is written to stdin and flushed, the ones its outbox
+     * still holds included; a message sent later does not extend the wait. Rejects with the error of a write that
+     * failed, or when the connection closed before those messages were written (the outbox dropped them). A caller
+     * that must order its next message after an answer awaits it.
      */
     written(): Promise<void>;
     /**
@@ -46,6 +47,20 @@ function message(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+/** A `written()` call: it waits until the bytes the peer had sent when it was called are written. */
+interface WriteWaiter {
+    through: number;
+    resolve: () => void;
+    reject: (error: Error) => void;
+}
+
+/** One message handed to stdin: `start` is its first byte in the order the peer sent them. */
+interface StdinWrite {
+    start: number;
+    bytes: number;
+    done: boolean;
+}
+
 /**
  * Connects a peer to a child process: each line on stdout goes to `peer.receive`, each message the peer writes goes to
  * stdin, and at the end of stdout every waiting request rejects with the exit reason. An exit first reads the rest of
@@ -55,9 +70,30 @@ function message(error: unknown): string {
 export function connectChildStdio(options: ChildStdioOptions): ChildStdioConnection {
     const { child, exitReason: reasonFor, exitGraceMs = 2000, ...peerOptions } = options;
     const exitReason = reasonFor ?? ((code: number) => `${options.label} exited with code ${code}`);
-    let last: Promise<void> = Promise.resolve();
     let inFlight = 0;
     let peer: RpcPeer | undefined;
+    /** The bytes handed to stdin, and of those the leading ones whose write and flush finished, in the peer's order. */
+    let acceptedBytes = 0;
+    let writtenBytes = 0;
+    const writes: StdinWrite[] = [];
+    let failure: { start: number; error: Error } | undefined;
+    const waiters = new Set<WriteWaiter>();
+
+    const settleWaiters = (): void => {
+        for (const waiter of waiters) {
+            if (writtenBytes >= waiter.through) {
+                waiters.delete(waiter);
+                waiter.resolve();
+            } else if (failure && waiter.through > failure.start) {
+                waiters.delete(waiter);
+                waiter.reject(failure.error);
+            } else if (peer?.closed && waiter.through > acceptedBytes) {
+                // A closed peer hands nothing more to stdin: what its outbox held or dropped is never written.
+                waiters.delete(waiter);
+                waiter.reject(new Error(`${options.label} closed before its messages were written`));
+            }
+        }
+    };
 
     // Below the high-water mark a message goes to stdin at once. Past it the write takes none of it: the peer's outbox
     // holds it, where the backlog limit applies, and each write that finishes flushes the outbox again.
@@ -67,6 +103,9 @@ export function connectChildStdio(options: ChildStdioOptions): ChildStdioConnect
         }
 
         inFlight += bytes.length;
+        const entry: StdinWrite = { start: acceptedBytes, bytes: bytes.length, done: false };
+        acceptedBytes += bytes.length;
+        writes.push(entry);
         // The write starts now, so messages reach stdin in the order the peer sent them; its completion is tracked.
         const current = (async () => {
             await child.stdin.write(bytes.toString());
@@ -75,32 +114,37 @@ export function connectChildStdio(options: ChildStdioOptions): ChildStdioConnect
         current.then(
             () => {
                 inFlight -= bytes.length;
+                entry.done = true;
+
+                for (let head = writes[0]; head?.done; head = writes[0]) {
+                    writtenBytes += head.bytes;
+                    writes.shift();
+                }
+
                 peer?.flush();
+                settleWaiters();
             },
             (error) => {
                 inFlight -= bytes.length;
+                failure ??= { start: entry.start, error: error instanceof Error ? error : new Error(message(error)) };
                 peer?.close(message(error));
+                settleWaiters();
             }
         );
-        last = Promise.all([last, current]).then(() => undefined);
-        last.catch(() => undefined);
         return bytes.length;
     };
-    const written = async (): Promise<void> => {
-        // A finished write hands the outbox's next messages to stdin before `last` settles, so a `last` that changed
-        // while it was awaited means more went out: that is awaited too.
-        for (;;) {
-            const pending = last;
-            await pending;
+    const written = (): Promise<void> => {
+        const through = peer?.sentBytes ?? 0;
 
-            if (pending === last) {
-                return;
-            }
-        }
+        return new Promise<void>((resolve, reject) => {
+            waiters.add({ through, resolve, reject });
+            settleWaiters();
+        });
     };
-    const connected = new RpcPeer({ ...peerOptions, write });
+    const connected = new RpcPeer({ ...peerOptions, write, onBacklogFull: settleWaiters });
     peer = connected;
-    const stdoutEnded = readStdout(child, connected, options);
+    const reader = child.stdout.getReader();
+    const stdoutEnded = readStdout(reader, connected, options);
     const endings = [
         stdoutEnded.then(async (failure) => {
             if (failure !== undefined) {
@@ -138,6 +182,13 @@ export function connectChildStdio(options: ChildStdioOptions): ChildStdioConnect
                             { ...options.logFields, error },
                             `${options.label} exited and its stdout stayed open`
                         );
+                        // A grandchild that holds stdout open would keep the read (and the pipe) alive for good.
+                        reader.cancel(exitReason(code)).catch((cancelError) => {
+                            options.log.debug(
+                                { ...options.logFields, error: cancelError },
+                                `${options.label} stdout cancel failed`
+                            );
+                        });
                     }
 
                     connected.close(exitReason(code));
@@ -155,12 +206,10 @@ export function connectChildStdio(options: ChildStdioOptions): ChildStdioConnect
  * reason of a read that failed; the caller closes the peer.
  */
 async function readStdout(
-    child: ChildStdio,
+    reader: ReadableStreamDefaultReader<Uint8Array>,
     peer: RpcPeer,
     options: Pick<ChildStdioOptions, "log" | "label" | "logFields">
 ): Promise<string | undefined> {
-    const reader = child.stdout.getReader();
-
     try {
         for (;;) {
             const { done, value } = await reader.read();
