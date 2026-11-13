@@ -25,6 +25,8 @@ public final class GitGutterModel: ObservableObject {
     private var headTicket = 0
     private var hunkTicket = 0
     var computeHunks: @Sendable (String, String) -> [GitHunk] = { GitHunks.between(old: $0, new: $1) }
+    /// The commit HEAD names for the file's repository, from its shared status (a test names one).
+    var headOf: @MainActor (URL) -> String? = { GitRepos.shared.model(for: $0.deletingLastPathComponent())?.status?.head }
 
     public init() {}
 
@@ -53,14 +55,14 @@ public final class GitGutterModel: ObservableObject {
         schedule()
     }
 
-    private func repositoryChanged() {
+    func repositoryChanged() {
         guard let readAtHead, readAtHead == currentHead() else { return loadHead() }
     }
 
     /// The commit HEAD names in the shared status of the file's repository.
     private func currentHead() -> String? {
         guard let url else { return nil }
-        return GitRepos.shared.model(for: url.deletingLastPathComponent())?.status?.head
+        return headOf(url)
     }
 
     private func loadHead() {
@@ -70,11 +72,19 @@ public final class GitGutterModel: ObservableObject {
         let provider = GenesisKitGT.provider
         let at = currentHead()
         DispatchQueue.global(qos: .utility).async {
-            let head = (try? provider.contents(of: url, at: .head)) ?? nil
+            let read = Result { try provider.contents(of: url, at: .head) }
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.headTicket == ticket, self.url == url else { return }
-                self.readAtHead = at
-                self.head = head
+                switch read {
+                case .success(let head):
+                    // nil: the file is not in HEAD, which is an answer too.
+                    self.readAtHead = at
+                    self.head = head
+                case .failure:
+                    // A failed read is no answer: the gutter keeps HEAD's last copy, and the next repository change
+                    // (a save, a stage, a retry) reads again even while HEAD stays where it is.
+                    self.readAtHead = nil
+                }
                 self.compute()
             }
         }
