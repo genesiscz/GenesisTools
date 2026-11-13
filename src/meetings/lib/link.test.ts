@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
+import * as fs from "node:fs";
 import {
     appendFileSync,
     chmodSync,
@@ -485,10 +486,25 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
 
             return acquire(options);
         };
+        // A move the merge undid later would leave the same end state, so any move or clone fails the test at once.
+        const moved = spyOn(fs, "renameSync").mockImplementation(() => {
+            throw new Error("a file moved before the refusal");
+        });
+        const cloned = spyOn(cloneFiles, "cloneOrCopy").mockImplementation(() => {
+            throw new Error("a file was cloned before the refusal");
+        });
 
-        await expect(mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot })).rejects.toThrow(
-            "hold different source meetings"
-        );
+        try {
+            await expect(mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot })).rejects.toThrow(
+                "hold different source meetings"
+            );
+            expect(moved).not.toHaveBeenCalled();
+            expect(cloned).not.toHaveBeenCalled();
+        } finally {
+            moved.mockRestore();
+            cloned.mockRestore();
+        }
+
         expect(existsSync(backupRoot)).toBe(false);
         expect(readdirSync(join(store.folder(from), "frames"))).toEqual(["14-03-00-000-d1.jpg"]);
         expect(new MeetingStore(store.storage).read(from)?.id).toBe(from);
