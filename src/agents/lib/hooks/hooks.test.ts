@@ -19,14 +19,18 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
+import { claudeCompactedSince } from "@genesiscz/utils/agent-sessions/readers/claude-compaction";
 import { claudeCurrentModel } from "@genesiscz/utils/agent-sessions/readers/claude-model";
+import { codexCompactedSince } from "@genesiscz/utils/agent-sessions/readers/codex-compaction";
 import { codexCurrentModel } from "@genesiscz/utils/agent-sessions/readers/codex-model";
+import { grokCompactedSince } from "@genesiscz/utils/agent-sessions/readers/grok-compaction";
 import { grokCurrentModel } from "@genesiscz/utils/agent-sessions/readers/grok-model";
 import { changedOnly, SHIPPED_DEFAULTS_KEY, storedOverrides } from "@genesiscz/utils/agents/hooks/config-section";
 import { env } from "@genesiscz/utils/env";
 import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { RmRequest } from "@genesiscz/utils/rm";
+import { AREA_RULES_DEFAULTS, mergeAreaRules } from "../../../../plugins/genesis-tools/hooks/area-rules";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
 import {
     DEFAULT_HOOKS_CONFIG,
@@ -87,7 +91,7 @@ import {
     parseHookPayload,
 } from "./payload";
 import { rmRequestNotice } from "./rm-requests";
-import { applySetting, SETTABLE_KEYS, setHooksConfig } from "./set-config";
+import { applySetting, describeSetting, SETTABLE_KEYS, setHooksConfig } from "./set-config";
 import {
     bumpContextCounts,
     type HookSessionState,
@@ -653,6 +657,7 @@ describe("the hook sections", () => {
             "rules switched off",
             "rules allowed per harness",
             "longCommand",
+            "corrected command",
             "contextCapPerSession",
             "diff.enabled",
             "diff.maxFiles",
@@ -661,6 +666,7 @@ describe("the hook sections", () => {
             "diff per harness",
             "questions per harness",
             "agentsTalk.hint",
+            "areaRules",
             "decisions.stopHook",
             "decisions.questionNudge",
             "decisions.chatAnswers",
@@ -671,6 +677,7 @@ describe("the hook sections", () => {
         ]);
         expect(rows.find(([label]) => label === "guard rules")?.[1]).toBe("3 built-in, 1 custom");
         expect(rows.find(([label]) => label === "rules switched off")?.[1]).toBe("none");
+        expect(rows.find(([label]) => label === "areaRules")?.[1]).toBe("write full, agents same");
     });
 
     it("the default config wires the guard, the diff and the unpushed reminder's Stop entry, and nothing else", () => {
@@ -824,9 +831,74 @@ describe("applySetting", () => {
         expect(set("mods.cacheBand.warnMinutes", "15").cacheBand.warnMinutes).toBe(15);
         expect(() => set("mods.cacheBand.warnMinutes", "75")).toThrow("1 to 59");
         expect(set("mods.cacheBand.cautionMinutes", "30").cacheBand.cautionMinutes).toBe(30);
-        expect(set("mods.hooks.dedupe", "true").hooks).toEqual({ tokens: false, dedupe: true });
+        expect(set("mods.hooks.dedupe", "true").hooks).toEqual({ tokens: false, dedupe: true, metrics: true });
+        expect(set("mods.hooks.metrics", "false").hooks.metrics).toBe(false);
         expect(() => set("mods.nonsense.enabled", "true")).toThrow("Unknown mods key");
         expect(() => set("mods.links.colour", "red")).toThrow("Unknown mods key");
+    });
+
+    it("mods.resumeGuard: off by default, bounded, and set by a named value or any number in range", () => {
+        const set = (key: string, value: string) => applySetting(DEFAULT_HOOKS_CONFIG, key, value).mods.resumeGuard;
+
+        expect(DEFAULT_HOOKS_CONFIG.mods.resumeGuard).toEqual({
+            enabled: false,
+            idleSeconds: 295,
+            minTokens: 150_000,
+            teammates: true,
+        });
+        expect(set("mods.resumeGuard", "true").enabled).toBe(true);
+        expect(set("mods.resumeGuard.teammates", "false").teammates).toBe(false);
+        expect(set("mods.resumeGuard.minTokens", "only-large").minTokens).toBe(300_000);
+        expect(set("mods.resumeGuard.idleSeconds", "sure-miss").idleSeconds).toBe(330);
+        expect(set("mods.resumeGuard.minTokens", "120000").minTokens).toBe(120_000);
+        expect(() => set("mods.resumeGuard.minTokens", "huge")).toThrow(
+            "recommended (150000), lean-agents (100000), fewer-refusals (200000) or only-large (300000)"
+        );
+        expect(() => set("mods.resumeGuard.idleSeconds", "30")).toThrow("at least 60");
+        expect(() => set("mods.resumeGuard.idleSeconds", "4000")).toThrow("60 to 3600");
+        expect(() => set("mods.resumeGuard.minTokens", "3000000")).toThrow("20000 to 2000000");
+
+        const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-resume-")), "hooks.json");
+        const problems: string[] = [];
+
+        writeFileSync(
+            path,
+            SafeJSON.stringify({ mods: { resumeGuard: { enabled: "yes", idleSeconds: 10, minTokens: 9_000_000 } } })
+        );
+        expect(loadHooksConfig(path).mods.resumeGuard).toEqual(DEFAULT_HOOKS_CONFIG.mods.resumeGuard);
+        HOOK_CONFIG_SECTIONS.mods.merge({ resumeGuard: { idleSeconds: "300" } }, problems);
+        expect(problems).toEqual([
+            'mods.resumeGuard.idleSeconds is "300", not a whole number of at least 60; using 295',
+        ]);
+    });
+
+    it("config describe: a key's value, default and named values; a key with none or no single value", () => {
+        const config = applySetting(DEFAULT_HOOKS_CONFIG, "mods.resumeGuard.minTokens", "fewer-refusals");
+        const described = describeSetting(config, "mods.resumeGuard.minTokens");
+
+        expect(described).toMatchObject({ value: 200_000, defaultValue: 150_000, named: "fewer-refusals" });
+        expect(described.presets.map((preset) => preset.name)).toEqual([
+            "recommended",
+            "lean-agents",
+            "fewer-refusals",
+            "only-large",
+        ]);
+        expect(describeSetting(config, "mods.resumeGuard.idleSeconds").named).toBe("recommended");
+        expect(describeSetting(config, "mods.stall.minutes")).toEqual({
+            key: "mods.stall.minutes",
+            value: 5,
+            defaultValue: 5,
+            presets: [],
+        });
+        expect(() => describeSetting(config, "mods.resumeGuard")).toThrow("No single setting");
+        expect(() => describeSetting(config, "mods.nothing.here")).toThrow("No single setting");
+        // An unset per-harness key shows the shared value it takes; a set one shows its own.
+        expect(describeSetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.codex.write")).toMatchObject({
+            value: "full",
+            defaultValue: "full",
+        });
+        const codexPointer = applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.codex.write", "pointer");
+        expect(describeSetting(codexPointer, "areaRules.harnesses.codex.write").value).toBe("pointer");
     });
 
     it("reads the mods plugin's row from claude plugin list --json", () => {
@@ -920,6 +992,48 @@ describe("applySetting", () => {
         expect(loadHooksConfig(path).agentsTalk.hint).toBe(false);
         writeFileSync(path, SafeJSON.stringify({ agentsTalk: { hint: "no" } }));
         expect(loadHooksConfig(path).agentsTalk.hint).toBe(true);
+    });
+
+    it("areaRules: per-harness levels, named values, the plugin hook's own reader agrees", () => {
+        expect(DEFAULT_HOOKS_CONFIG.areaRules).toEqual(AREA_RULES_DEFAULTS);
+        expect(DEFAULT_HOOKS_CONFIG.areaRules.harnesses.claude).toEqual({});
+
+        const quiet = applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.claude.write", "pointer");
+        expect(quiet.areaRules.harnesses.claude).toEqual({ write: "pointer" });
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents", "off").areaRules.agents).toBe("off");
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.write", "off").areaRules.write).toBe("off");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.write", "same")).toThrow("full, pointer or off");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents", "full")).toThrow("same, pointer or off");
+        // A read gets nothing, so there is no read level to set.
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.read", "full")).toThrow("unknown key");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "areaRules.harnesses.vim.write", "full")).toThrow(
+            "unknown key"
+        );
+
+        const described = describeSetting(quiet, "areaRules.harnesses.claude.write");
+        expect(described).toMatchObject({ value: "pointer", defaultValue: "full", named: "pointer" });
+        expect(described.presets.map((preset) => preset.name)).toEqual(["full", "pointer", "off"]);
+        expect(describeSetting(DEFAULT_HOOKS_CONFIG, "areaRules.agents").presets).toHaveLength(3);
+
+        const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-area-")), "hooks.json");
+        const stored = {
+            areaRules: {
+                read: "pointer",
+                write: "loud",
+                agents: "pointer",
+                harnesses: { codex: { write: "pointer" }, claude: 3 },
+            },
+        };
+        writeFileSync(path, SafeJSON.stringify(stored));
+        const loaded = loadHooksConfig(path).areaRules;
+        expect(loaded).toEqual({
+            ...AREA_RULES_DEFAULTS,
+            agents: "pointer",
+            harnesses: { ...AREA_RULES_DEFAULTS.harnesses, codex: { write: "pointer" } },
+        });
+        // The `read` key of the first version is ignored without a problem; a bad `write` is named.
+        expect(lastConfigProblems()).toEqual(['areaRules.write is "loud", not full, pointer or off; ignored']);
+        expect(mergeAreaRules(stored)).toEqual(loaded);
     });
 
     it("refuses a count outside its domain, in set and on load alike", () => {
@@ -2004,7 +2118,7 @@ describe("hook state across processes", () => {
         };
         const expected: HookSessionState = {
             version: 2,
-            guard: { contextNotes: { "rule-x": 3 } },
+            guard: { contextNotes: { "rule-x": 3 }, explained: {} },
             decisions: {
                 stopBlocks: 1,
                 nudge: { blocks: 2, lastTurn: 77 },
@@ -2025,8 +2139,20 @@ describe("hook state across processes", () => {
             await bumpContextCounts("sess-old", ["rule-x"]);
 
             const written = SafeJSON.parse(readFileSync(path, "utf8"));
-            expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 } } });
+            expect(written).toEqual({ ...expected, guard: { contextNotes: { "rule-x": 4 }, explained: {} } });
+            // A version 2 file from before `explained` existed reads as nothing explained, and keeps what it has.
+            expect(migrateHookState({ ...written, guard: { contextNotes: { "rule-x": 4 } } })).toEqual(written);
+            expect(
+                migrateHookState({ ...written, guard: { contextNotes: {}, explained: { main: { r: 5, bad: "x" } } } })
+                    .guard.explained
+            ).toEqual({ main: { r: 5 } });
             expect(migrateHookState(written)).toEqual(written);
+            // A version 2 file from before `explained` existed reads as nothing explained, and keeps what it has.
+            expect(migrateHookState({ ...written, guard: { contextNotes: { "rule-x": 4 } } })).toEqual(written);
+            expect(
+                migrateHookState({ ...written, guard: { contextNotes: {}, explained: { main: { r: 5, bad: "x" } } } })
+                    .guard.explained
+            ).toEqual({ main: { r: 5 } });
         });
     });
 
@@ -2922,6 +3048,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             agentsTalkHint: expect.any(Function),
             promisesFileTracking: true,
             compactBoundaryRows: true,
+            compactedSince: claudeCompactedSince,
             homeBindsAccount: false,
             launchAuthFromAncestor: true,
             journalOmitsProvider: true,
@@ -2941,6 +3068,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             agentsTalkHint: expect.any(Function),
             promisesFileTracking: false,
             compactBoundaryRows: false,
+            compactedSince: grokCompactedSince,
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,
@@ -2960,6 +3088,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             agentsTalkHint: expect.any(Function),
             promisesFileTracking: false,
             compactBoundaryRows: false,
+            compactedSince: codexCompactedSince,
             homeBindsAccount: true,
             launchAuthFromAncestor: false,
             journalOmitsProvider: false,

@@ -34,6 +34,16 @@ export type HookInstallOverrides = Readonly<Partial<Record<string, boolean>>>;
 export type HookDoctorRow = readonly [label: string, value: string];
 
 /**
+ * A named value of one setting and when to pick it. `config describe <key>` lists them, and `config set <key> <name>`
+ * stores the value; any other value the setting takes stays accepted.
+ */
+export interface ConfigPreset {
+    readonly name: string;
+    readonly value: number | string | boolean;
+    readonly why: string;
+}
+
+/**
  * One hook feature's part of `hooks.json`, and everything the feature decides about it.
  *
  * - `Facts`: what its doctor rows may show besides its own value (the loaded rule set, whether a Stop hook is wired).
@@ -60,6 +70,10 @@ export interface HookConfigSection<T, Facts = unknown, Context = unknown> {
     entries(value: T, overrides: HookInstallOverrides): readonly HookEntryKind[];
     /** Its rows in `doctor`'s settings table, in the order they print. */
     doctor(value: T, facts: Facts): readonly HookDoctorRow[];
+    /** The named values of its keys, by the full key (`mods.resumeGuard.minTokens`); a key without any is absent. */
+    readonly presets?: Readonly<Record<string, readonly ConfigPreset[]>>;
+    /** The key whose value a key takes while it is unset (a per-harness override takes the shared value). */
+    inheritsFrom?(key: string): string | undefined;
 }
 
 export function hooksConfigPath(): string {
@@ -242,6 +256,36 @@ export function storedPart<T>(value: unknown): Partial<T> {
 /** `a or b`, `a, b or c`. */
 export function listed(choices: readonly string[]): string {
     return choices.length < 2 ? (choices[0] ?? "") : `${choices.slice(0, -1).join(", ")} or ${choices.at(-1)}`;
+}
+
+/** The preset whose value is `value`, to name it beside the number (`295 (recommended)`). */
+export function presetNamed(presets: readonly ConfigPreset[] | undefined, value: unknown): ConfigPreset | undefined {
+    return presets?.find((preset) => preset.value === value);
+}
+
+/**
+ * What a `config set` text stands for: a preset's value, as text, when it names one; else the text itself. A key whose
+ * presets are all numbers refuses a text that is neither a name nor a number, with the names in the message.
+ */
+export function presetValue(presets: readonly ConfigPreset[] | undefined, key: string, value: string): string {
+    if (!presets || presets.length === 0) {
+        return value;
+    }
+
+    const named = presets.find((preset) => preset.name === value);
+
+    if (named) {
+        return String(named.value);
+    }
+
+    const isNumeric = presets.every((preset) => typeof preset.value === "number");
+
+    if (isNumeric && (value.trim() === "" || !Number.isFinite(Number(value)))) {
+        const names = presets.map((preset) => `${preset.name} (${preset.value})`);
+        throw new Error(`${key} takes a number or a named value: ${listed(names)}; not ${SafeJSON.stringify(value)}`);
+    }
+
+    return value;
 }
 
 export function asBoolean(key: string, value: string): boolean {

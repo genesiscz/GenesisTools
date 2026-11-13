@@ -259,6 +259,15 @@ describe("the forwards that use the exchange", () => {
         expect(error).not.toHaveBeenCalled();
     });
 
+    /** A cancelled request used to load, and when needed mint, a Copilot session before the fetch rejected it. */
+    it("the copilot client refuses a cancelled request before it loads a session", async () => {
+        const client = new GithubCopilotApi({ dataDir: "/tmp/none", apiBaseUrl: "https://copilot.example" });
+
+        await expect(client.fetch("/chat/completions", { signal: abortedSignal() })).rejects.toMatchObject({
+            name: "AbortError",
+        });
+    });
+
     it("copilot sends the path through the client's own fetch", async () => {
         const paths: string[] = [];
         const provider = copilot(async (path) => {

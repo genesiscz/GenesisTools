@@ -4,7 +4,7 @@ import type { ModsSettings } from "./settings";
 
 /** Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`. */
 export const MODS_DEFAULTS: ModsSettings = {
-    diff: { fullDiff: true, collapseGitSync: true },
+    diff: { fullDiff: true, collapseGitSync: true, bottomRow: true, filesOnly: false },
     idleCompact: { enabled: true, minutes: 56, minTokens: 200000 },
     agentModel: { enabled: false, format: "label" },
     agentRow: { enabled: false, format: "version", effort: true },
@@ -25,8 +25,9 @@ export const MODS_DEFAULTS: ModsSettings = {
     cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
     tmpUsage: { enabled: false, minutes: 5 },
     agentsBand: { enabled: false, warnMinutes: 60 },
-    hooks: { tokens: false, dedupe: false },
+    hooks: { tokens: false, dedupe: false, metrics: true },
     log: { readings: false },
     sidebar: { hints: true, feedback: "line", focus: "command" },
     stall: { enabled: false, action: "button", minutes: 5 },
+    resumeGuard: { enabled: false, idleSeconds: 295, minTokens: 150000, teammates: true },
 };

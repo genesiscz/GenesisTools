@@ -277,13 +277,33 @@ describe("the mods section", () => {
             })
         );
 
-        expect(read.diff).toEqual({ fullDiff: false, collapseGitSync: false });
+        expect(read.diff).toEqual({ fullDiff: false, collapseGitSync: false, bottomRow: true, filesOnly: false });
         expect(read.idleCompact).toEqual({ enabled: false, minutes: 40, minTokens: 200_000 });
         expect(read.agentModel).toEqual({ enabled: false, format: "short" });
         // Out of range keeps the default, as the CLI does.
         expect(read.cacheBand.warnMinutes).toBe(10);
-        expect(read.hooks).toEqual({ tokens: false, dedupe: false });
+        expect(read.hooks).toEqual({ tokens: false, dedupe: false, metrics: true });
         expect(modsSettings("{ not json")).toEqual(MODS_DEFAULTS);
+    });
+
+    it("the plugin reads mods.resumeGuard with the CLI's bounds", () => {
+        const read = (resumeGuard: Record<string, unknown>) =>
+            modsSettings(SafeJSON.stringify({ mods: { resumeGuard } })).resumeGuard;
+
+        expect(MODS_DEFAULTS.resumeGuard).toEqual({
+            enabled: false,
+            idleSeconds: 295,
+            minTokens: 150_000,
+            teammates: true,
+        });
+        expect(read({ enabled: true, idleSeconds: 330, minTokens: 300_000, teammates: false })).toEqual({
+            enabled: true,
+            idleSeconds: 330,
+            minTokens: 300_000,
+            teammates: false,
+        });
+        expect(read({ idleSeconds: 59, minTokens: 2_000_001 })).toEqual(MODS_DEFAULTS.resumeGuard);
+        expect(read({ idleSeconds: "300", enabled: 1 })).toEqual(MODS_DEFAULTS.resumeGuard);
     });
 });
 

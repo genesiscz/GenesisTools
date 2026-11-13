@@ -187,6 +187,11 @@ export function renderHuman(r: ClonesizeResult, engine: Engine, elapsedMs?: numb
     const savedPct = r.shared_pct.toFixed(1);
 
     L.push(pc.bold(`Clone-aware disk usage — ${r.path}`));
+    if (r.compressed && r.compressed.files > 0) {
+        L.push(
+            `Transparent compression: ${r.compressed.files} files, ${humanBytes(r.compressed.logical_bytes)} logical, ${humanBytes(r.compressed.allocated_bytes)} allocated, ${humanBytes(Math.max(0, r.compressed.logical_bytes - r.compressed.allocated_bytes))} saved before clone deduplication`
+        );
+    }
     const meta: string[] = [`${r.files_scanned.toLocaleString()} files`, `${engine} engine`, `${r.threads} threads`];
     if (elapsedMs !== undefined) {
         meta.push(`${(elapsedMs / 1000).toFixed(2)}s`);
@@ -403,6 +408,11 @@ export function renderVolume(vol: VolumeInfo, scan: ClonesizeResult, elapsedMs?:
     const unaccounted = vol.used_bytes - scanned;
 
     L.push(pc.bold(`Volume reconcile — ${vol.mount}`));
+    if (scan.compressed && scan.compressed.files > 0) {
+        L.push(
+            `Transparent compression: ${scan.compressed.files} files, ${humanBytesDecimal(scan.compressed.logical_bytes)} logical, ${humanBytesDecimal(scan.compressed.allocated_bytes)} allocated`
+        );
+    }
     const meta = [`${scan.files_scanned.toLocaleString()} files`, `${scan.threads} threads`];
     if (elapsedMs !== undefined) {
         meta.push(`${(elapsedMs / 1000).toFixed(1)}s`);

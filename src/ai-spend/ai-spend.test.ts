@@ -107,6 +107,24 @@ describe("parseTranscriptLine", () => {
         );
     });
 
+    it("reads the cache writes from the nested split when the top-level total is missing", () => {
+        const line = SafeJSON.stringify({
+            type: "assistant",
+            message: {
+                id: "msg_nested",
+                model: "claude-opus-5",
+                usage: {
+                    input_tokens: 24,
+                    output_tokens: 10,
+                    cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 1_000 },
+                },
+            },
+        });
+        const ev = parseTranscriptLine(line);
+
+        expect([ev?.cacheCreationTokens, ev?.cacheCreation1hTokens]).toEqual([1_100, 1_000]);
+    });
+
     it("returns null for non-assistant lines", () => {
         expect(parseTranscriptLine(SafeJSON.stringify({ type: "user", message: {} }))).toBeNull();
     });

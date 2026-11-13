@@ -68,7 +68,17 @@ provider, so a new provider is a list of members to fill in and no feature parse
   call with its token split, deduplicated), `compactions` and `quotaReadings` (Codex `rate_limits`). Each answers
   `{ supported: false, reason }` when the harness's files lack the fact (Claude and Grok keep no quota reading; Grok
   keeps only a compaction count), never an empty list. The implementations are `readers/<harness>-analysis.ts`; a
-  test fake uses `noAnalysis`.
+  test fake uses `noAnalysis`. Added 2026-11-10: `workflows`, the multi-agent runs a session started
+  (`workflow-types.ts`): `runs` (each run with its agents joined by id from the run record, the journal and the
+  transcript folder), `results` and `grep`, plus the static `support`. Claude reads its Workflow tool's files
+  (`readers/claude-workflows.ts`); Codex and Grok have no such tool and answer `{ supported: false, reason }`
+  (`noWorkflowReader`); a test fake uses `noWorkflows`. Each agent of a run carries its journal lines and the retry
+  that replaced it (`journal`, `supersededBy`), so a caller cites a line and never opens the journal itself. The
+  session-analyzer skill in GenesisClaude calls `tools ai sessions workflows` (2026-11-11): do not add a second
+  reader of these files anywhere. A session's sub-agent transcripts, the ones of its workflow
+  runs included, are enumerated in ONE place: `claudeSubagentTranscripts` in `readers/claude-paths.ts` (the folder walk
+  itself is `claudeSubagentFolders` in `claude-subagent-path.ts`, which a hook can load). `listSubagents` returns one
+  agent per id: a revived workflow agent has two files, kept in `files`.
 - **What a feature gets is normalized**: `NativeHistoryEntry` (role, text, timestamp, tool, paths). Logic over it
   (decision answers in `src/question/lib/decisions/chat-answers.ts`, a reply's decision blocks) is provider-neutral
   and never names a JSONL field such as `"type":"assistant"`, `response_item`, `continued-in` or `chat_history`.

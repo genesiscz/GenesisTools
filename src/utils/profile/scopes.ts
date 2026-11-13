@@ -65,6 +65,8 @@ export const PROFILER_SCOPE_NAMES = [
     "repo-context",
     // Every agent-context gatherer (runtime context, host, say caller, failure caller, gateway peer, hook payload): one line per call.
     "agent-context",
+    // `tools metrics` service: each spool drain, ingest batch, query and events read.
+    "metrics",
     "control-native",
     "control-overlay",
     "control-simulator",

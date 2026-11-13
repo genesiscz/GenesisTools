@@ -10,10 +10,13 @@ import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import {
     anthropicEnvelope,
+    BODY_UNREADABLE_MESSAGE,
+    logRequestFailure,
     type ModelDoor,
     type ModelRequestBody,
     openAiEnvelope,
     parseModelBody,
+    readRequestText,
     serveModelDoor,
 } from "@app/ai-proxy/lib/request-lifecycle";
 import { applyReasoningEffortToBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
@@ -357,7 +360,14 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     return anthropicEnvelope(401, "Invalid proxy API key");
                 }
 
-                const countBody = await req.text();
+                let countBody: string;
+
+                try {
+                    countBody = await readRequestText(req);
+                } catch (err) {
+                    logRequestFailure({ req, err, status: 400, fields: { path } });
+                    return anthropicEnvelope(400, BODY_UNREADABLE_MESSAGE);
+                }
 
                 return new Response(SafeJSON.stringify({ input_tokens: countAnthropicInputTokens(countBody) }), {
                     headers: { "Content-Type": "application/json" },

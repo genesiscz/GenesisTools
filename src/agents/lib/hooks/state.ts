@@ -19,9 +19,18 @@ export function safeSessionId(value: unknown): string | null {
     return sharedSafeSessionId(value);
 }
 
-/** The guard's part: how many times each rule's context note was shown in the session. */
+/** The loop name of the main agent in `GuardSessionState.explained`; a subagent's loop is its agent id. */
+export const MAIN_LOOP = "main";
+
+/** The guard's part of the session state. */
 export interface GuardSessionState {
+    /** How many times each rule's context note was shown in the session. */
     contextNotes: Record<string, number>;
+    /**
+     * Per loop (`MAIN_LOOP`, or a subagent's id), when each rule was last explained in full (epoch ms). A later firing
+     * in that loop gets the compact form until the loop compacts after that time.
+     */
+    explained: Record<string, Record<string, number>>;
 }
 
 /** The decision hooks' part: the loop guard, the question nudge and the chat-answer step. */
@@ -58,7 +67,7 @@ export interface HookSessionState {
 export function emptyHookState(): HookSessionState {
     return {
         version: STATE_VERSION,
-        guard: { contextNotes: {} },
+        guard: { contextNotes: {}, explained: {} },
         decisions: { stopBlocks: 0, nudge: { blocks: 0 }, chat: { offsets: {}, sentBack: [] } },
     };
 }
@@ -104,6 +113,10 @@ export function migrateHookState(raw: unknown): HookSessionState {
         const lastTurn = numberOr(nudge.lastTurn);
         const checkedAt = numberOr(chat.checkedAt);
         state.guard.contextNotes = numbersOf(guard.contextNotes);
+        // Added later inside version 2: a file without it reads as nothing explained yet.
+        state.guard.explained = isJsonObject(guard.explained)
+            ? Object.fromEntries(Object.entries(guard.explained).map(([loop, rules]) => [loop, numbersOf(rules)]))
+            : {};
         state.decisions.stopBlocks = numberOr(decisions.stopBlocks) ?? 0;
         state.decisions.nudge = {
             blocks: numberOr(nudge.blocks) ?? 0,
@@ -209,6 +222,36 @@ export async function updateHookState(sessionId: string, change: (state: HookSes
  */
 export function readContextCounts(sessionId: string): Record<string, number> {
     return readHookState(sessionId).guard.contextNotes;
+}
+
+/** The rules a loop was given in full, each with the time it was (epoch ms); empty for a loop never told anything. */
+export function readExplained(sessionId: string, loop: string): Record<string, number> {
+    return readHookState(sessionId).guard.explained[loop] ?? {};
+}
+
+/**
+ * What one guard message showed, in one locked write: the context notes it counts against the session cap, and the
+ * rules it explained in full to `loop` at `at`.
+ */
+export function recordGuardShown(
+    sessionId: string,
+    shown: { contextRules: readonly string[]; loop: string; explainedRules: readonly string[]; at: number }
+): Promise<void> {
+    return updateHookState(sessionId, (state) => {
+        for (const id of shown.contextRules) {
+            state.guard.contextNotes[id] = (state.guard.contextNotes[id] ?? 0) + 1;
+        }
+
+        if (shown.explainedRules.length > 0) {
+            const loop = { ...state.guard.explained[shown.loop] };
+
+            for (const id of shown.explainedRules) {
+                loop[id] = shown.at;
+            }
+
+            state.guard.explained[shown.loop] = loop;
+        }
+    });
 }
 
 export function bumpContextCounts(sessionId: string, ruleIds: string[]): Promise<void> {

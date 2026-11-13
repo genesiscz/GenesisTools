@@ -19,6 +19,7 @@ import {
     wordTimingGenerateResultSchema,
     wordTimingMetadataSchema,
 } from "@genesiscz/utils/meetings/word-timing-cache";
+import { checkoutCodeStamp } from "@genesiscz/utils/rpc/code-stamp";
 import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import type { SpeakerHint, SpeakerLeave } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
@@ -1472,5 +1473,5 @@ export function meetingsSourceRoot(): string {
  * the service's own check (it refuses and exits, `service.ts`).
  */
 export function meetingsCodeStamp(root = meetingsSourceRoot()): string {
-    return createHash("sha1").update(root).digest("hex").slice(0, 12);
+    return checkoutCodeStamp(root);
 }
