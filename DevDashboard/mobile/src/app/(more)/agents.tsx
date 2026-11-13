@@ -8,6 +8,7 @@ import { useLiveChannel } from "@/live/provider";
 import { Empty } from "@/ui/Empty";
 import { MockBadge } from "@/ui/MockBadge";
 import { StatusPill } from "@/ui/StatusPill";
+import { useMinuteClock } from "@/hooks/use-minute-clock";
 import { useThemeColors } from "@/theme/colors";
 
 const keyOf = (session: AgentBoardSession) => session.key;
@@ -21,7 +22,7 @@ export default function AgentsScreen() {
     const c = useThemeColors();
     const board = useAgentsBoard();
     const live = useLiveChannel("agents");
-    const now = Date.now();
+    const now = useMinuteClock();
     const open = useCallback((key: string) => {
         router.push({ pathname: "/agent-session", params: { key } });
     }, []);

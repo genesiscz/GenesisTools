@@ -10,6 +10,7 @@ import { attentionCount, MUTE_MINUTES, rowsOf } from "@/features/watching/querie
 import { Empty } from "@/ui/Empty";
 import { MockBadge } from "@/ui/MockBadge";
 import { StatusPill } from "@/ui/StatusPill";
+import { useMinuteClock } from "@/hooks/use-minute-clock";
 import { useThemeColors } from "@/theme/colors";
 
 const rowKey = (row: WatchRowDto) => `${row.source}:${row.id}`;
@@ -50,20 +51,27 @@ const WatchRow = memo(function WatchRow({ row, now }: { row: WatchRowDto; now: n
                         accessibilityRole="button"
                         hitSlop={8}
                         disabled={mute.isPending}
-                        onPress={() =>
+                        onPress={() => {
+                            // A receipt describes the last action only; the next one starts without it.
+                            setReceipt(null);
                             mute.mutate({
                                 source: row.source,
                                 id: row.id,
                                 minutes: row.mutedUntil ? 0 : MUTE_MINUTES,
                                 idempotencyKey: idempotencyKey(),
-                            })
-                        }
+                            });
+                        }}
                     >
                         <Text style={{ color: c.accent, fontSize: 13 }}>{row.mutedUntil ? "Unmute" : "Mute 2 h"}</Text>
                     </Pressable>
                 ) : null}
             </View>
             {receipt ? <Text style={{ color: c.textMuted, fontSize: 12 }}>{receipt.detail}</Text> : null}
+            {mute.isError ? (
+                <Text testID={`watch-mute-error-${row.source}-${row.id}`} style={{ color: c.danger, fontSize: 12 }}>
+                    {`${row.mutedUntil ? "Not unmuted" : "Not muted"}: ${String(mute.error)}`}
+                </Text>
+            ) : null}
         </View>
     );
 });
@@ -77,7 +85,7 @@ export default function WatchingScreen() {
     const c = useThemeColors();
     const watching = useWatching();
     const [source, setSource] = useState<WatchSourceId | "all">("all");
-    const now = Date.now();
+    const now = useMinuteClock();
     const rows = rowsOf(watching.data, source);
     const notes = (watching.data?.sources ?? []).filter((entry) => entry.note && (source === "all" || entry.id === source));
     const renderItem = useCallback(({ item }: { item: WatchRowDto }) => <WatchRow row={item} now={now} />, [now]);
