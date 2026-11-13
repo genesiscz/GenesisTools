@@ -13,12 +13,12 @@ import { versionFastPathLines } from "@app/ai/lib/embed/probe";
 import { embedAccountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { slug } from "@genesiscz/utils/eval-engine/plan";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { fileNameSlug } from "@genesiscz/utils/string";
 
 const { log } = logger.scoped("t3:launchers");
 
@@ -38,7 +38,7 @@ export interface LauncherSpec {
 export function launcherFileName(spec: LauncherSpec): string {
     const base = `${spec.alias}-tools`;
 
-    return spec.account === null ? base : `${base}@${slug(spec.account)}`;
+    return spec.account === null ? base : `${base}@${fileNameSlug(spec.account)}`;
 }
 
 export function launcherPath(binDir: string, spec: LauncherSpec): string {
