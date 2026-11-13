@@ -34,9 +34,14 @@ struct ScreenFrameThrottle: Equatable {
     }
 
     /// The frame to start decoding now, or nil (the same frame, one already decoding, or too soon: kept as pending).
+    /// The shown frame asked for again drops the decode in flight too: its completion would replace the frame the
+    /// position now wants (a seek back while the next frame decoded showed the wrong screen).
     mutating func offer(_ frame: String?, at now: Double) -> String? {
         guard let frame, frame != shown, frame != decoding else {
-            if frame == shown { pending = nil }
+            if frame == shown {
+                pending = nil
+                decoding = nil
+            }
             return nil
         }
         if let lastChangeAt, now - lastChangeAt < minIntervalSec {

@@ -560,6 +560,18 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(throttle.offer("f4", at: 1.5), "f4", "and the next offer tries again")
     }
 
+    func testAskingForTheShownFrameAgainDropsTheDecodeInFlight() {
+        var throttle = ScreenFrameThrottle()
+        XCTAssertEqual(throttle.offer("a", at: 0), "a")
+        XCTAssertTrue(throttle.decoded("a", at: 0.1))
+        XCTAssertEqual(throttle.offer("b", at: 1.5), "b", "the position moves on: b decodes")
+        XCTAssertNil(throttle.offer("a", at: 1.6), "a seek back: a is on screen already")
+        XCTAssertNil(throttle.decoding)
+        XCTAssertFalse(throttle.decoded("b", at: 1.7), "b's late completion would replace the frame the position wants")
+        XCTAssertEqual(throttle.shown, "a")
+        XCTAssertEqual(throttle.offer("b", at: 2.8), "b", "b asked again decodes again")
+    }
+
     func testNoCaptureDrawsNoPane() throws {
         let view = ScreenBesidePlayback(recorded: false, image: nil, displays: [], pickDisplay: { _ in }).frame(width: 300)
         let renderer = ImageRenderer(content: view)
