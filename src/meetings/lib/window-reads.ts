@@ -19,6 +19,7 @@ import { type AssignDeps, type AssignView, skipReason, viewProposals } from "./a
 import { captureCost } from "./capture-cost";
 import { configValueAt, parseConfigPath } from "./config-edit";
 import { transcriptMarkdown } from "./export";
+import { localSpeechDbPath } from "./local-speech";
 import { type MatchDraft, matchDraftSchema } from "./match-preview";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingsOverview, meetingsOverview } from "./overview";
@@ -78,6 +79,11 @@ export interface RevisionFacts {
     source: string | null;
     screen: unknown[];
     transcriptEvidence?: string | null;
+    /**
+     * What the Speakers pane's evidence reads beside the record and the source: the meeting's `evidence/` caches and
+     * the local speech history (with its WAL), so a call that became `spoken` after the read changes the token.
+     */
+    speakerEvidence?: unknown[];
 }
 
 /**
@@ -94,7 +100,7 @@ export function revisionTokens(facts: RevisionFacts): WindowRevisions {
             source === null || facts.transcriptEvidence === null
                 ? null
                 : stamp(recordFile, config, source, facts.transcriptEvidence),
-        speakers: source === null ? null : stamp(recordFile, source),
+        speakers: source === null ? null : stamp(recordFile, source, config, facts.speakerEvidence ?? []),
         timeline: source === null ? null : stamp(recordFile, screen, source),
     };
 }
@@ -139,6 +145,13 @@ export async function revisionsRead(options: {
             .filter((entry) => entry.isDirectory())
             .map((entry) => [entry.name, fileIdentity(join(folder, entry.name))]),
     ];
+    const evidenceFolder = join(folder, "evidence");
+    const evidenceFiles = entries.some((entry) => entry.name === "evidence" && entry.isDirectory())
+        ? readdirSync(evidenceFolder)
+              .sort()
+              .map((name) => [name, fileIdentity(join(evidenceFolder, name))])
+        : [];
+    const speechDb = localSpeechDbPath();
     return revisionTokens({
         meeting: record.id,
         recordFile,
@@ -146,6 +159,7 @@ export async function revisionsRead(options: {
         source,
         screen,
         transcriptEvidence: meetingWordTimingCache(record.id).inputRevision(),
+        speakerEvidence: [evidenceFiles, fileIdentity(speechDb), fileIdentity(`${speechDb}-wal`)],
     });
 }
 
