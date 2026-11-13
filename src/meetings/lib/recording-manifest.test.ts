@@ -490,6 +490,52 @@ describe("the frame index and the OCR worker (two phases)", () => {
         ]);
     });
 
+    it("ends a row torn by a crash before it appends: the next row starts on a line of its own and reads", async () => {
+        const meeting = await meetingWith([{ name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" }]);
+        await runOcrWorker({ store: meeting.store, meetingId: meeting.id, settings, engine: fakeEngine(() => false) });
+        const ocr = join(meeting.dir, "ocr.jsonl");
+        // A crash in the middle of f2's append: its row has no end and no line end.
+        writeFileSync(ocr, `${readFileSync(ocr, "utf8")}{"file":"frames/f2-d1.jpg","at":"2026-11-11T14:0`);
+        meeting.add({ name: "f2-d1.jpg", at: "2026-11-11T14:00:02.000Z" });
+        const resumed = await runOcrWorker({
+            store: meeting.store,
+            meetingId: meeting.id,
+            settings,
+            engine: fakeEngine(() => false),
+        });
+
+        expect(resumed.read).toBe(1);
+        expect(readScreenRows(meeting.dir).rows.map((row) => [row.file, row.text])).toEqual([
+            ["frames/f1-d1.jpg", "text of f1-d1.jpg"],
+            ["frames/f2-d1.jpg", "text of f2-d1.jpg"],
+        ]);
+    });
+
+    it("gives a lone frame that never reads, with no other frame to check Vision on, a failed row after its rounds", async () => {
+        const meeting = await meetingWith([{ name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" }]);
+        const sleeps: number[] = [];
+        const result = await runOcrWorker({
+            store: meeting.store,
+            meetingId: meeting.id,
+            settings,
+            engine: fakeEngine(() => true),
+            failureNotices: "off",
+            sleep: async (ms) => {
+                sleeps.push(ms);
+
+                if (sleeps.length > 10) {
+                    throw new Error("the worker waits on a lone unreadable frame without end");
+                }
+            },
+        });
+
+        expect(sleeps).toEqual(OCR_OUTAGE_BACKOFF_MS.slice(0, OCR_MAX_ATTEMPTS));
+        expect(result).toMatchObject({ read: 1, failed: 1 });
+        expect(rows(meeting.dir).map((row) => [row.file, row.failed !== undefined])).toEqual([
+            ["frames/f1-d1.jpg", true],
+        ]);
+    });
+
     it("--reread-empty-since reads the empty rows from that time again and leaves the earlier ones", async () => {
         const meeting = await meetingWith([
             { name: "f1-d1.jpg", at: "2026-11-11T14:00:01.000Z" },
