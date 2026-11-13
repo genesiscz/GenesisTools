@@ -585,6 +585,7 @@ typedef struct {
     uint64_t apparent;                  // sum dlen of accounted files (sparse count full)
     uint64_t sparse_extra;              // sum (dlen - alloc) over files where dlen > alloc
     uint64_t sparse_files;              // count of those files
+    uint64_t compressed_files, compressed_logical, compressed_alloc;
     uint64_t group_naive[MAX_GROUPS];
     uint64_t group_files[MAX_GROUPS];
     uint64_t group_private[MAX_GROUPS];
@@ -872,6 +873,10 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
                 if (dataless) { c_dataless++; c_only += (uint64_t)dlen; }
             }
             t->priv_sum += (uint64_t)priv;
+            if ((fflags & UF_COMPRESSED) && alloc == 0 && g_min_blocks == 0) {
+                t->compressed_files++;
+                t->compressed_logical += (uint64_t)dlen;
+            }
             if (alloc == 0 || (size_t)alloc < g_min_blocks) continue;
 
             uint64_t a = (uint64_t)alloc;
@@ -881,7 +886,12 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
             t->group_private[g] += (uint64_t)priv;
             t->files_accounted++;
             t->apparent += (uint64_t)dlen;
-            if ((uint64_t)dlen > a) {
+            if (fflags & UF_COMPRESSED) {
+                t->compressed_files++;
+                t->compressed_logical += (uint64_t)dlen;
+                t->compressed_alloc += a;
+            }
+            if (!(fflags & UF_COMPRESSED) && (uint64_t)dlen > a) {
                 t->sparse_extra += (uint64_t)dlen - a;
                 t->sparse_files++;
             }
@@ -893,6 +903,40 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
                 t->unique_private += (uint64_t)dlen;
                 t->unique_private_alloc += a;
                 if (g_maxdepth >= 0) rec_push(t, dirnode, a, (uint64_t)dlen, (uint64_t)priv, 1);
+                continue;
+            }
+
+            // decmpfs keeps its payload outside the data fork. Map the resource
+            // fork directly; opening the data fork asks APFS for logical bytes.
+            if ((fflags & UF_COMPRESSED) && !g_partner_mode) {
+                size_t plen = strlen(name) + sizeof "/..namedfork/rsrc";
+                char *forkname = malloc(plen);
+                if (!forkname) { perror("malloc resource fork"); exit(1); }
+                snprintf(forkname, plen, "%s/..namedfork/rsrc", name);
+                int rfd = openat(dfd, forkname, O_RDONLY | O_NONBLOCK);
+                free(forkname);
+                struct stat rst;
+                size_t start = t->n;
+                if (rfd >= 0) {
+                    t->files_opened++;
+                    if (fstat(rfd, &rst) == 0 && rst.st_size > 0) {
+                        // APFS can reserve blocks beyond the resource fork's EOF.
+                        // Query those too or an otherwise shared fork loses its tail allocation.
+                        off_t span = rst.st_blocks * 512 > rst.st_size ? rst.st_blocks * 512 : rst.st_size;
+                        scan_shared_file(t, rfd, span, g, g_maxdepth >= 0 ? dirnode : -1, next_file_id(t));
+                    }
+                    close(rfd);
+                }
+                if (t->n == start) {
+                    // Inline decmpfs has no resource fork and no mapped payload.
+                    // Count its reported allocation conservatively, never zero it.
+                    t->unique_private += a;
+                    t->unique_private_alloc += a;
+                    if (g_maxdepth >= 0) rec_push(t, dirnode, a, (uint64_t)dlen, (uint64_t)priv, 3);
+                } else {
+                    t->priv_opened += (uint64_t)priv;
+                    if (g_maxdepth >= 0) rec_push(t, dirnode, a, (uint64_t)dlen, (uint64_t)priv, 2);
+                }
                 continue;
             }
 
@@ -1171,6 +1215,7 @@ typedef struct {
     uint64_t unique_alloc;                  // same dedup, block-aligned (what the disk loses)
     uint64_t outside_shared;                // blocks also referenced by files OUTSIDE the scan root
     uint64_t apparent, sparse_extra, sparse_files;
+    uint64_t compressed_files, compressed_logical, compressed_alloc;
     uint64_t files_listed, files_accounted, files_opened, files_cached, extents;
     int      threads;
     double   pct;
@@ -1526,6 +1571,9 @@ static int run_scan(const char *target, Result *R) {
         apparent             += g_outs[i].apparent;
         sparse_extra         += g_outs[i].sparse_extra;
         sparse_files         += g_outs[i].sparse_files;
+        R->compressed_files += g_outs[i].compressed_files;
+        R->compressed_logical += g_outs[i].compressed_logical;
+        R->compressed_alloc += g_outs[i].compressed_alloc;
         files_listed         += g_outs[i].files_listed;
         files_accounted      += g_outs[i].files_accounted;
         files_opened         += g_outs[i].files_opened;
@@ -1542,12 +1590,12 @@ static int run_scan(const char *target, Result *R) {
             nd->files    += 1;
             nd->priv     += fr->priv;
             nd->apparent += fr->dlen;
-            if (fr->dlen > fr->alloc) {
+            if (!(fr->is_private & 2) && fr->dlen > fr->alloc) {
                 nd->sparse_extra += fr->dlen - fr->alloc;
                 nd->sparse_files++;
             }
-            if (fr->is_private) {
-                nd->private_dlen  += fr->dlen;
+            if (fr->is_private & 1) {
+                nd->private_dlen  += (fr->is_private & 2) ? fr->alloc : fr->dlen;
                 nd->private_alloc += fr->alloc;
             }
         }
@@ -1709,6 +1757,9 @@ static char *format_json(const char *target, const Result *R) {
     EMIT("  \"apparent_bytes\": %llu,\n", (unsigned long long)R->apparent);
     EMIT("  \"sparse_bytes\": %llu,\n", (unsigned long long)R->sparse_extra);
     EMIT("  \"sparse_files\": %llu,\n", (unsigned long long)R->sparse_files);
+    EMIT("  \"compressed\": {\"files\": %llu, \"logical_bytes\": %llu, \"allocated_bytes\": %llu},\n",
+         (unsigned long long)R->compressed_files, (unsigned long long)R->compressed_logical,
+         (unsigned long long)R->compressed_alloc);
     EMIT("  \"shared_bytes\": %llu,\n", (unsigned long long)R->shared);
     EMIT("  \"shared_pct\": %.2f,\n", R->pct);
     EMIT("  \"cross_group_shared_bytes\": %llu,\n", (unsigned long long)R->cross_shared);
@@ -2209,7 +2260,7 @@ void clonesize_free(char *p) { free(p); }
 // Progress goes to stderr as one JSON line per BIG_PROGRESS_EVERY files, so a
 // caller reading the pipe can drive a spinner while the walk runs.
 // ---------------------------------------------------------------------------
-typedef struct { char *path; uint64_t dlen, alloc, fileid, mtime_ns; uint32_t nlink; int cloud; } BigRec;
+typedef struct { char *path; uint64_t dlen, alloc, fileid, mtime_ns, cloneid; uint32_t nlink, flags; int cloud; } BigRec;
 // --dusize: a hard-linked inode seen by one thread; the names of one inode meet when the threads' lists are merged.
 typedef struct { uint64_t fileid, alloc; } LinkRec;
 typedef struct {
@@ -2245,7 +2296,8 @@ static void big_setup_attrlist(void) {
     g_big_al.commonattr  = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_NAME | ATTR_CMN_OBJTYPE |
                            ATTR_CMN_MODTIME | ATTR_CMN_FLAGS | ATTR_CMN_FILEID;
     g_big_al.fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH;
-    g_big_alopt = FSOPT_PACK_INVAL_ATTRS | FSOPT_NOFOLLOW;
+    g_big_al.forkattr    = ATTR_CMNEXT_CLONEID;
+    g_big_alopt = FSOPT_PACK_INVAL_ATTRS | FSOPT_ATTR_CMN_EXTENDED | FSOPT_NOFOLLOW;
 }
 
 static int is_pruned_name(const char *name) {
@@ -2256,7 +2308,7 @@ static int is_pruned_name(const char *name) {
 }
 
 static void big_push(BigOut *o, char *path, uint64_t dlen, uint64_t alloc, uint64_t fileid,
-                     uint64_t mtime_ns, uint32_t nlink, int cloud) {
+                     uint64_t mtime_ns, uint32_t nlink, int cloud, uint32_t flags, uint64_t cloneid) {
     if (o->n == o->cap) {
         o->cap = o->cap ? o->cap * 2 : 256;
         o->recs = realloc(o->recs, o->cap * sizeof(BigRec));
@@ -2264,7 +2316,7 @@ static void big_push(BigOut *o, char *path, uint64_t dlen, uint64_t alloc, uint6
     }
     BigRec *r = &o->recs[o->n++];
     r->path = path; r->dlen = dlen; r->alloc = alloc; r->fileid = fileid; r->mtime_ns = mtime_ns; r->nlink = nlink;
-    r->cloud = cloud;
+    r->cloud = cloud; r->flags = flags; r->cloneid = cloneid;
 }
 
 // Entry layout without the fork attr (same order as process_dir's, minus
@@ -2313,6 +2365,7 @@ static void big_process_dir(BigOut *o, const char *dirpath, int dircloud) {
             uint32_t nlink;  memcpy(&nlink,  entry + off, 4); off += 4;
             off_t alloc; memcpy(&alloc, entry + off, 8); off += 8;
             off_t dlen;  memcpy(&dlen,  entry + off, 8); off += 8;
+            uint64_t cloneid; memcpy(&cloneid, entry + off, 8); off += 8;
             p += len;
 
             if (objtype == VDIR) {
@@ -2396,7 +2449,7 @@ static void big_process_dir(BigOut *o, const char *dirpath, int dircloud) {
 
             char *full = idx_child_path(dirpath, name);
             uint64_t mtime_ns = (uint64_t)mtime * 1000000000ULL + (uint64_t)mnsec;
-            big_push(o, full, (uint64_t)dlen, (uint64_t)alloc, fileid, mtime_ns, nlink, dircloud);
+            big_push(o, full, (uint64_t)dlen, (uint64_t)alloc, fileid, mtime_ns, nlink, dircloud, fflags, cloneid);
         }
     }
     close(dfd);
@@ -2514,6 +2567,7 @@ static char *big_run_json(const char *const *roots, int nroots, int threads, uns
         BEMIT("%s{\"path\":\"%s\",\"size\":%llu,\"alloc\":%llu,\"fileid\":%llu,\"mtime_ns\":\"%llu\",\"nlink\":%u",
               i ? "," : "", pesc, (unsigned long long)all[i].dlen, (unsigned long long)all[i].alloc,
               (unsigned long long)all[i].fileid, (unsigned long long)all[i].mtime_ns, all[i].nlink);
+        BEMIT(",\"flags\":%u,\"clone_id\":\"%llx\"", all[i].flags, (unsigned long long)all[i].cloneid);
         int cb = all[i].cloud;
         if (cb > 0 && cb <= MAX_CLOUD_BUCKETS && g_cb[cb].path) {
             char *desc = json_escape(g_cb[cb].path);
@@ -2682,6 +2736,7 @@ typedef struct {
     uint64_t fileid;
     int64_t  dir_mtime_ms;
     uint64_t alloc, dlen, priv, files, dirs;   // direct files, then the subtree after the roll-up
+    uint64_t compressed_files, compressed_logical, compressed_alloc;
     uint64_t max_file;          // largest datalength in the subtree
     int64_t  newest_mtime_s;    // newest file mtime in the subtree
     uint8_t  stored;
@@ -2997,6 +3052,7 @@ static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
     }
     pthread_mutex_unlock(&t->mtx);
     uint64_t alloc_sum = 0, dlen_sum = 0, priv_sum = 0, files = 0, max_file = 0;
+    uint64_t compressed_files = 0, compressed_logical = 0, compressed_alloc = 0;
     int64_t newest = 0;
     char buf[64 * 1024];
     for (;;) {
@@ -3058,6 +3114,11 @@ static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
             files++;
             alloc_sum += (uint64_t)alloc;
             dlen_sum += (uint64_t)dlen;
+            if (fflags & UF_COMPRESSED) {
+                compressed_files++;
+                compressed_logical += (uint64_t)dlen;
+                compressed_alloc += (uint64_t)alloc;
+            }
             priv_sum += (uint64_t)priv;
             if ((uint64_t)dlen > max_file) max_file = (uint64_t)dlen;
             if (mtime > newest) newest = mtime;
@@ -3080,6 +3141,9 @@ static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
     if (!idx_claim(t)) return 1;
     me->alloc = alloc_sum;
     me->dlen = dlen_sum;
+    me->compressed_files = compressed_files;
+    me->compressed_logical = compressed_logical;
+    me->compressed_alloc = compressed_alloc;
     me->priv = priv_sum;
     me->files = files;
     me->max_file = max_file;
@@ -3297,11 +3361,13 @@ static void idx_emit_node(FILE *out, int id, const INode *n) {
     char *nm = json_escape(n->name);
     fprintf(out,
             "{\"t\":\"%s\",\"i\":%d,\"p\":%d,\"n\":\"%s\",\"f\":%llu,\"a\":%llu,\"l\":%llu,\"v\":%llu,\"c\":%llu,"
-            "\"d\":%llu,\"x\":%llu,\"m\":%lld,\"dm\":%lld,\"fl\":%u}\n",
+            "\"d\":%llu,\"x\":%llu,\"m\":%lld,\"dm\":%lld,\"fl\":%u,\"cf\":%llu,\"cl\":%llu,\"ca\":%llu}\n",
             (g_idx_region && id == 0) ? "r" : "d", id, n->parent, nm,
             (unsigned long long)n->fileid, (unsigned long long)n->alloc, (unsigned long long)n->dlen,
             (unsigned long long)n->priv, (unsigned long long)n->files, (unsigned long long)n->dirs,
-            (unsigned long long)n->max_file, (long long)n->newest_mtime_s, (long long)n->dir_mtime_ms, n->flags);
+            (unsigned long long)n->max_file, (long long)n->newest_mtime_s, (long long)n->dir_mtime_ms, n->flags,
+            (unsigned long long)n->compressed_files, (unsigned long long)n->compressed_logical,
+            (unsigned long long)n->compressed_alloc);
     free(nm);
 }
 
@@ -3362,6 +3428,9 @@ static int run_index(const char *root, int nthreads) {
         INode *c = inode(id), *pa = inode(c->parent);
         pa->alloc += c->alloc;
         pa->dlen += c->dlen;
+        pa->compressed_files += c->compressed_files;
+        pa->compressed_logical += c->compressed_logical;
+        pa->compressed_alloc += c->compressed_alloc;
         pa->priv += c->priv;
         pa->files += c->files;
         pa->dirs += c->dirs + 1;

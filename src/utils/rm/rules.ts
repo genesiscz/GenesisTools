@@ -328,9 +328,14 @@ export const VM_DISK_EXTENSIONS = [".vmdk", ".vdi", ".hdd", ".qcow2", ".raw"];
 /** The one VM-shaped file a removal may take: an Android emulator's user-data disk (the AVD definition stays). */
 const ANDROID_USERDATA_GLOB = "~/.android/avd/*.avd/userdata-qemu.img.qcow2";
 
+/** The globs know only `/`: a Windows path (`C:\Users\x\a.photoslibrary\db`) is matched with its separators turned into `/`. */
+function withForwardSlashes(path: string): string {
+    return path.replaceAll("\\", "/");
+}
+
 /** A path glob as a regex: a double star with a slash is any folders, a double star anything, a single star one segment, and a leading `~` the home folder. */
 export function pathGlobRegex(glob: string, home: string): RegExp {
-    const expanded = glob.replace(/^~(?=$|\/)/, home);
+    const expanded = glob.replace(/^~(?=$|\/)/, () => withForwardSlashes(home));
     const escaped = expanded.replace(/[.+^${}()|[\]\\]/g, "\\$&");
     const pattern = escaped
         .replace(/\*\*\//g, "§ANYDIRS§")
@@ -342,7 +347,10 @@ export function pathGlobRegex(glob: string, home: string): RegExp {
 }
 
 /** Why `path` is a VM or container disk, a Photos library or Tresorit's sync database; null when it is none of these. */
-export function vmDataReason(path: string, home: string): string | null {
+export function vmDataReason(nativePath: string, home: string): string | null {
+    // Match on forward slashes only; the caller keeps its native path for the filesystem.
+    const path = withForwardSlashes(nativePath);
+
     if (pathGlobRegex(ANDROID_USERDATA_GLOB, home).test(path)) {
         return null;
     }

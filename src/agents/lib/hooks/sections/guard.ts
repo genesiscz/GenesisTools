@@ -27,6 +27,9 @@ const DEFAULT_GUARD: GuardConfig = {
     ),
     models: {},
     longCommand: { lines: 30, chars: 2500 },
+    // On the guard's last 1,000 warns and blocks (2026-11-11) a 200-character whole command and a 400-character part
+    // cut the corrected commands from 416k to 88k characters, and the change itself is never cut.
+    corrected: { wholeMaxChars: 200, partMaxChars: 400 },
     contextCapPerSession: 3,
     customRules: [],
 };
@@ -94,6 +97,18 @@ function merge(value: unknown, problems: string[]): GuardConfig {
                 fallback: base.longCommand.chars,
             }),
         },
+        corrected: {
+            wholeMaxChars: countOr(problems, {
+                field: "guard.corrected.wholeMaxChars",
+                value: guard?.corrected?.wholeMaxChars,
+                fallback: base.corrected.wholeMaxChars,
+            }),
+            partMaxChars: countOr(problems, {
+                field: "guard.corrected.partMaxChars",
+                value: guard?.corrected?.partMaxChars,
+                fallback: base.corrected.partMaxChars,
+            }),
+        },
         contextCapPerSession: countOr(problems, {
             field: "guard.contextCapPerSession",
             value: guard?.contextCapPerSession,
@@ -118,6 +133,8 @@ const GUARD_KEYS: ReadonlySet<string> = new Set([
     "guard.enabled",
     "guard.longCommand.lines",
     "guard.longCommand.chars",
+    "guard.corrected.wholeMaxChars",
+    "guard.corrected.partMaxChars",
     "guard.contextCapPerSession",
     "guard.customRules",
 ]);
@@ -130,6 +147,7 @@ function set(current: GuardConfig, key: string, value: string, { ruleIds }: Hook
         default: { ...current.default },
         harnesses: { ...current.harnesses },
         longCommand: { ...current.longCommand },
+        corrected: { ...current.corrected },
     };
 
     if (key === "enabled" || key === "guard.enabled") {
@@ -139,6 +157,11 @@ function set(current: GuardConfig, key: string, value: string, { ruleIds }: Hook
 
     if (key === "guard.longCommand.lines" || key === "guard.longCommand.chars") {
         next.longCommand[key.endsWith("lines") ? "lines" : "chars"] = asCount(key, value);
+        return next;
+    }
+
+    if (key === "guard.corrected.wholeMaxChars" || key === "guard.corrected.partMaxChars") {
+        next.corrected[key.endsWith("wholeMaxChars") ? "wholeMaxChars" : "partMaxChars"] = asCount(key, value);
         return next;
     }
 
@@ -192,6 +215,8 @@ export const GUARD_HOOK_SECTION: HookConfigSection<GuardConfig, HookDoctorFacts,
         "enabled",
         "guard.longCommand.lines",
         "guard.longCommand.chars",
+        "guard.corrected.wholeMaxChars",
+        "guard.corrected.partMaxChars",
         "guard.contextCapPerSession",
         "guard.customRules",
         "rules.<rule-id>",
@@ -207,6 +232,10 @@ export const GUARD_HOOK_SECTION: HookConfigSection<GuardConfig, HookDoctorFacts,
         ["rules switched off", facts.rules.off || "none"],
         ["rules allowed per harness", facts.rules.perHarness || "none"],
         ["longCommand", `${guard.longCommand.lines} lines / ${guard.longCommand.chars} chars`],
+        [
+            "corrected command",
+            `whole up to ${guard.corrected.wholeMaxChars} chars, part up to ${guard.corrected.partMaxChars}`,
+        ],
         ["contextCapPerSession", String(guard.contextCapPerSession)],
     ],
 };

@@ -44,7 +44,14 @@ export interface NodeResult {
     sparse_files?: number;
 }
 
+export interface CompressedTotals {
+    files: number;
+    logical_bytes: number;
+    allocated_bytes: number;
+}
+
 export interface ClonesizeResult {
+    compressed?: CompressedTotals;
     path: string;
     files_scanned: number;
     files_listed: number;

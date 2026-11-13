@@ -20,6 +20,7 @@ import {
     noSessionChanges,
     noSpawnLink,
     noStatistics,
+    noWorkflows,
 } from "./testing/no-backward-read";
 import type { HistoryMetadataRead, NativeSessionReader, NativeSessionSource } from "./types";
 
@@ -92,6 +93,7 @@ function createFixture(): {
         scan: noRecordScan,
         readRecords: noRecordRead,
         readStatistics: noStatistics,
+        workflows: noWorkflows,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],
@@ -464,6 +466,7 @@ test("selective refresh reuses full discovery, retains unselected sources, and l
         scan: noRecordScan,
         readRecords: noRecordRead,
         readStatistics: noStatistics,
+        workflows: noWorkflows,
         readTurnBoundary: async () => null,
         readForward: async () => ({ rows: [], file: null, endOffset: 0, issues: [] }),
         roots: () => [root],

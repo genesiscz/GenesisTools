@@ -52,6 +52,9 @@ export function errorEvent(command: string, err: IndexError): ErrorEvent {
 
 /** One `dirs` row as stored. */
 export interface DirRow {
+    compressed_files?: number | null;
+    compressed_logical_bytes?: number | null;
+    compressed_allocated_bytes?: number | null;
     id: number;
     parent_id: number;
     name: string;
@@ -206,6 +209,7 @@ export interface AsOf {
 }
 
 export interface NodeOut {
+    compressed?: { files: number; logical_bytes: number; allocated_bytes: number };
     id: number;
     parent_id: number;
     name: string;

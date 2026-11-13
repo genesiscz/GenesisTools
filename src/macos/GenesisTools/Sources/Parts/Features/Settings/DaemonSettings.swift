@@ -363,7 +363,14 @@ enum DaemonSettingsPages {
                     id: pageID, title: "Daemon", symbol: "gearshape.2", tint: .gray,
                     subtitle: "The tasks the GenesisTools daemon runs: their schedule, limits, runs and output."
                 ) {
-                    DaemonSettingsView(store: store)
+                    // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current page.
+                    HubLayoutView(.usageSettings) {
+                        UsageSettingsSketchDaemonA(store: store)
+                    } compact: {
+                        UsageSettingsSketchDaemonB(store: store)
+                    } classic: {
+                        DaemonSettingsView(store: store)
+                    }
                 },
             ], order: 37)
     }
@@ -632,7 +639,7 @@ enum DaemonRetryTimeDraft {
 }
 
 @MainActor
-private struct DaemonTaskEditor: View {
+struct DaemonTaskEditor: View {
     let task: DaemonTaskConfig
     @ObservedObject var store: DaemonSettingsStore
     @State private var every = ""
@@ -814,7 +821,7 @@ private struct DaemonTaskEditor: View {
 
 /// The recent runs; a click opens the run's output under it, from its run log.
 @MainActor
-private struct DaemonRunList: View {
+struct DaemonRunList: View {
     let runs: [DaemonRun]
     @ObservedObject var store: DaemonSettingsStore
     @State private var openRun: String?

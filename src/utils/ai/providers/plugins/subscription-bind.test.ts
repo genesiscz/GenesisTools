@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claudeOAuth } from "@genesiscz/utils/claude/auth";
@@ -467,6 +467,107 @@ describe("grok-sub bind", () => {
             expect(wire.sent).toHaveLength(2);
         } finally {
             refresh.mockRestore();
+        }
+    });
+});
+
+/**
+ * A pasted token has no grant of its own, and the Grok CLI's default auth file holds whoever the
+ * CLI is logged in as, possibly another paying user (PR #772 review). After a 401 that file is
+ * used only when it proves the pasted token's identity. Both refresh primitives are spies that
+ * throw: the file's OIDC grant goes through the global fetch, a vault grant through `grokOAuth`.
+ */
+describe("grok-sub bind: a 401 on a pasted token", () => {
+    const envSnapshot = env.testing.snapshot();
+    let defaultAuthFile: string;
+
+    beforeEach(() => {
+        const grokHome = mkdtempSync(join(tmpdir(), "gt-subscription-bind-grok-"));
+        env.testing.set("GROK_HOME", grokHome);
+        defaultAuthFile = join(grokHome, "auth.json");
+    });
+
+    afterEach(() => {
+        env.testing.restore(envSnapshot);
+    });
+
+    function pastedAccount(): AccountEntry {
+        return { ...grokAccount(), credentials: { accessToken: grokToken("pasted") } };
+    }
+
+    function writeDefaultAuth(key: string, userId: string): void {
+        const entry = {
+            key,
+            refresh_token: "cli-refresh-1",
+            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+            oidc_issuer: "https://auth.example.test",
+            oidc_client_id: "client-fixture",
+            auth_mode: "oidc",
+            user_id: userId,
+        };
+        writeFileSync(defaultAuthFile, SafeJSON.stringify({ "https://auth.example.test::cli": entry }));
+    }
+
+    function refreshSpies(): { calls: () => number; restore: () => void } {
+        const refuse = async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+            throw new Error("the default auth file's OIDC grant was reached");
+        };
+        const network = spyOn(globalThis, "fetch").mockImplementation(refuse as typeof fetch);
+        const vault = spyOn(grokOAuth, "refresh").mockImplementation(async () => {
+            throw new Error("a vault grant was reached");
+        });
+
+        return {
+            calls: () => network.mock.calls.length + vault.mock.calls.length,
+            restore: () => {
+                network.mockRestore();
+                vault.mockRestore();
+            },
+        };
+    }
+
+    test("never refreshes or sends a default auth file of another identity", async () => {
+        const account = pastedAccount();
+        const pasted = account.credentials.accessToken;
+        saveConfig([account]);
+        const theirs = jwt({ exp: Math.floor((Date.now() + 3_600_000) / 1000), sub: "xai-user-other" });
+        writeDefaultAuth(theirs, "xai-user-other");
+        const before = readFileSync(defaultAuthFile, "utf8");
+        const spies = refreshSpies();
+        const wire = transport(1, grokOk);
+
+        try {
+            const binding = await grokSubPlugin.bind({ account, fetch: wire.fetch });
+
+            await expect(
+                generateText({ model: binding.language("grok-4.5"), prompt: "ping", maxRetries: 0 })
+            ).rejects.toThrow(/tools grok login work/);
+            expect(spies.calls()).toBe(0);
+            expect(wire.sent.map((request) => request.authorization)).toEqual([`Bearer ${pasted}`]);
+            expect(readFileSync(defaultAuthFile, "utf8")).toBe(before);
+        } finally {
+            spies.restore();
+        }
+    });
+
+    test("NEGATIVE CONTROL: a newer token of the same identity is sent, with no grant spent", async () => {
+        const account = pastedAccount();
+        const pasted = account.credentials.accessToken;
+        saveConfig([account]);
+        const newer = grokToken("cli-newer");
+        writeDefaultAuth(newer, "xai-user-invented");
+        const spies = refreshSpies();
+        const wire = transport(1, grokOk);
+
+        try {
+            const binding = await grokSubPlugin.bind({ account, fetch: wire.fetch });
+            const result = await generateText({ model: binding.language("grok-4.5"), prompt: "ping", maxRetries: 0 });
+
+            expect(result.text).toBe("pong");
+            expect(spies.calls()).toBe(0);
+            expect(wire.sent.map((request) => request.authorization)).toEqual([`Bearer ${pasted}`, `Bearer ${newer}`]);
+        } finally {
+            spies.restore();
         }
     });
 });

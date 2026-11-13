@@ -40,6 +40,18 @@ export function listingIndexSlice<T extends { mtime: number }>(entries: T[], lim
     return sorted.slice(0, Math.max(20, limit * 4));
 }
 
+/**
+ * The catalog's two sub-agent filters from a listing's two switches. `only` lists sub-agents alone and wins;
+ * `exclude` drops them only without it. Both keys always come back, so a caller cannot ask for sub-agents only and
+ * forget to say so to the catalog.
+ */
+export function subagentScope(options: { only: boolean; exclude: boolean }): {
+    agentsOnly: boolean;
+    excludeAgents: boolean;
+} {
+    return { agentsOnly: options.only, excludeAgents: !options.only && options.exclude };
+}
+
 export function listingWavePlan<T extends { agentsOnly?: boolean; excludeAgents?: boolean; limit?: number }>(
     filters: T
 ): ListingWavePlan {

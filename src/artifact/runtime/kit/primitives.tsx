@@ -1,5 +1,6 @@
-import { type CSSProperties, type ReactNode, useEffect, useId, useState } from "react";
-import { highlightCode } from "../../lib/highlight";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { type CSSProperties, createContext, type ReactNode, useContext, useEffect, useId, useState } from "react";
+import { highlightCode, resolveLanguage } from "../../lib/highlight";
 import { type PageLook, PageLookContext, PageWidthContext, usePageLook } from "./look";
 import { Md, MdInline } from "./md";
 
@@ -96,6 +97,7 @@ export function Page({ children, width, look = "dense", nav, backdrop = "plain",
         <PageLookContext.Provider value={look}>
             <PageWidthContext.Provider value={contentWidth}>
                 <div
+                    data-artifact-page
                     className={`min-h-dvh bg-canvas font-sans text-ink ${isDocument ? "text-base leading-[1.6]" : ""}`}
                     style={backdrop === "glow" ? GLOW_BACKDROP : undefined}
                 >
@@ -794,6 +796,10 @@ export interface CodeBlockProps {
     /** Syntax highlighting (`ts`, `swift`, `bash`, `json`, `sql`, …). Unknown names render plain. */
     lang?: string;
     wrap?: boolean;
+    /** Truncate JSON string values over this many characters; their title and copied text retain the full value. */
+    maxString?: number;
+    /** Auto removes the extra frame inside a Card. Framed keeps the standalone box; plain removes it everywhere. */
+    surface?: "auto" | "framed" | "plain";
     /** Copy-to-clipboard button (default on — cited code exists to be copied). */
     copy?: boolean;
     /** 1-based lines to mark as load-bearing (accent tint). */
@@ -807,6 +813,47 @@ function litHtml(code: string, lang: string | undefined): string | null {
     return lang ? (highlightCode(code, lang)?.html ?? null) : null;
 }
 
+const CardSurfaceContext = createContext(false);
+
+/** Keep the original source intact while shortening only JSON value tokens in the rendered code. */
+function jsonCodeContent(code: string, maxString: number): ReactNode {
+    const parts: ReactNode[] = [];
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: JSON strings exclude unescaped control characters
+    const strings = /"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[\da-fA-F]{4}))*"/g;
+    let start = 0;
+
+    const highlighted = (text: string, key: number): ReactNode => (
+        <span
+            key={key}
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js escapes all source text
+            dangerouslySetInnerHTML={{ __html: litHtml(text, "json") ?? "" }}
+        />
+    );
+
+    for (const match of code.matchAll(strings)) {
+        const token = match[0];
+        const end = match.index + token.length;
+        const isKey = /^\s*:/.test(code.slice(end));
+        const value: unknown = SafeJSON.parse(token, { strict: true });
+
+        if (isKey || typeof value !== "string" || value.length <= maxString) {
+            continue;
+        }
+
+        parts.push(highlighted(code.slice(start, match.index), start));
+        parts.push(
+            <span key={`string-${match.index}`} className="hljs-string" title={value}>
+                {SafeJSON.stringify(`${value.slice(0, maxString)}…`)}
+            </span>
+        );
+        start = end;
+    }
+
+    parts.push(highlighted(code.slice(start), start));
+
+    return parts;
+}
+
 /**
  * Preformatted code / log block with copy, line marking and optional syntax
  * highlighting. Marked blocks highlight line by line, so a construct that
@@ -817,14 +864,20 @@ export function CodeBlock({
     label,
     lang,
     wrap = false,
+    maxString,
+    surface = "auto",
     copy = true,
     highlightLines,
     badLines,
 }: CodeBlockProps) {
     const [copied, setCopied] = useState(false);
     const isDocument = usePageLook() === "document";
+    const inCard = useContext(CardSurfaceContext);
+    const plain = surface === "plain" || (surface === "auto" && inCard);
+    const shortenJson =
+        maxString !== undefined && maxString >= 0 && Number.isFinite(maxString) && resolveLanguage(lang) === "json";
     const marked = (highlightLines?.length ?? 0) + (badLines?.length ?? 0) > 0;
-    const wholeHtml = marked ? null : litHtml(children, lang);
+    const wholeHtml = marked || shortenJson ? null : litHtml(children, lang);
     const onCopy = (): void => {
         // navigator.clipboard is undefined in non-secure contexts (plain http
         // on a non-loopback host) — the property access itself would throw.
@@ -844,7 +897,11 @@ export function CodeBlock({
     };
 
     return (
-        <div className={`group relative overflow-hidden rounded-card border border-line ${isDocument ? "" : "my-3"}`}>
+        <div
+            data-artifact-codeblock
+            data-surface={plain ? "plain" : "framed"}
+            className={`group relative overflow-hidden ${plain ? "" : "rounded-card border border-line"} ${isDocument ? "" : "my-3"}`}
+        >
             {label ? (
                 <div className="border-b border-line bg-panel px-3 py-1 font-mono text-[0.7rem] text-dim">{label}</div>
             ) : null}
@@ -858,7 +915,7 @@ export function CodeBlock({
                 </button>
             ) : null}
             <pre
-                className={`overflow-x-auto bg-canvas/80 font-mono text-ink/90 ${isDocument ? "px-[18px] py-4 text-[14.5px] leading-[1.65]" : "p-3 text-[0.82rem] leading-relaxed"} ${wrap ? "whitespace-pre-wrap" : ""}`}
+                className={`overflow-x-auto ${plain ? "bg-transparent" : "bg-canvas/80"} font-mono text-ink/90 ${isDocument ? "px-[18px] py-4 text-[14.5px] leading-[1.65]" : "p-3 text-[0.82rem] leading-relaxed"} ${wrap ? "whitespace-pre-wrap break-normal [overflow-wrap:anywhere]" : ""}`}
             >
                 {marked ? (
                     children.split("\n").map((line, i) => {
@@ -868,6 +925,14 @@ export function CodeBlock({
                             : highlightLines?.includes(no)
                               ? "block bg-accent/10"
                               : "block";
+                        if (shortenJson) {
+                            return (
+                                <span key={no} className={`${cls} hljs`}>
+                                    {line ? jsonCodeContent(line, maxString) : " "}
+                                </span>
+                            );
+                        }
+
                         const lineHtml = line ? litHtml(line, lang) : null;
 
                         if (lineHtml !== null) {
@@ -887,6 +952,8 @@ export function CodeBlock({
                             </span>
                         );
                     })
+                ) : shortenJson ? (
+                    <code className="hljs">{jsonCodeContent(children, maxString)}</code>
                 ) : wholeHtml !== null ? (
                     <code
                         className="hljs"
@@ -985,12 +1052,14 @@ export function Card(props: CardProps) {
         const border = tone ? TONE_BORDER[tone] : "border-line";
 
         return (
-            <div className={`rounded-card border ${border} bg-panel/60 p-4`}>
-                {title ? (
-                    <h3 className={`mb-2 font-semibold ${tone ? TONE_TEXT[tone] : "text-ink"}`}>{title}</h3>
-                ) : null}
-                <div className="text-[0.95rem] text-ink/90">{renderBody(children)}</div>
-            </div>
+            <CardSurfaceContext.Provider value={true}>
+                <div data-artifact-card className={`rounded-card border ${border} bg-panel/60 p-4`}>
+                    {title ? (
+                        <h3 className={`mb-2 font-semibold ${tone ? TONE_TEXT[tone] : "text-ink"}`}>{title}</h3>
+                    ) : null}
+                    <div className="text-[0.95rem] text-ink/90">{renderBody(children)}</div>
+                </div>
+            </CardSurfaceContext.Provider>
         );
     }
 
@@ -1016,58 +1085,68 @@ export function Card(props: CardProps) {
     const headGap = subtitle ? "" : number !== undefined ? "mb-2" : muted ? "mb-1" : "mb-1.5";
 
     return (
-        <div
-            className={`relative min-w-0 rounded-card border ${border} ${surface} ${mono || muted ? "px-3.5 py-3" : "px-4 py-3.5"} ${highlight ? "shadow-[var(--glow)]" : ""} ${motion} transition-[rotate,translate,scale,box-shadow,border-color] duration-200 ease-out`}
-            style={style}
-        >
-            {kicker ? (
-                <div className="font-mono text-[15px] font-bold leading-[normal]" style={{ color: accent }}>
-                    {kicker}
-                </div>
-            ) : null}
-            {number !== undefined || title ? (
-                <div className={`flex items-baseline gap-2.5 ${kicker ? "mt-1" : ""} ${headGap}`}>
-                    {number !== undefined ? (
-                        <span
-                            className="min-w-[34px] font-display text-[22px] font-bold leading-[normal]"
-                            style={{ color: accent }}
-                        >
-                            {number}
-                        </span>
-                    ) : null}
-                    {title ? (
-                        <h3 className={`${titleClass} ${tone && !color ? TONE_TEXT[tone] : "text-ink"}`}>{title}</h3>
-                    ) : null}
-                </div>
-            ) : null}
-            {subtitle ? <div className="mt-0.5 mb-1.5 text-[14px] text-dim">{subtitle}</div> : null}
-            {fields?.length ? (
-                <dl className="grid grid-cols-[74px_1fr] gap-x-2.5 gap-y-1 text-[14.5px]">
-                    {fields.map((field) => (
-                        <div key={field.k} className="contents">
-                            <dt className="font-mono text-sm font-medium leading-[normal] text-dim">{field.k}</dt>
-                            <dd className="min-w-0 text-ink-2 [&_code]:text-ink">
-                                {typeof field.v === "string" ? <MdInline>{field.v}</MdInline> : field.v}
-                            </dd>
-                        </div>
-                    ))}
-                </dl>
-            ) : null}
-            {lines?.length ? (
-                <ul className="font-mono text-[14.5px] leading-[1.55] text-ink-2">
-                    {lines.map((line, i) => (
-                        <li key={i} className="py-px">
-                            {line}
-                        </li>
-                    ))}
-                </ul>
-            ) : null}
-            {children !== undefined && children !== null ? (
-                <div className={`text-[15px] text-ink-2 ${muted ? "leading-[1.7]" : ""}`}>{renderBody(children)}</div>
-            ) : null}
-            {note ? <div className={`mt-2 text-[14px] ${TONE_TEXT[noteTone]}`}>{renderBody(note)}</div> : null}
-            {footer ? <div className="mt-2.5 flex flex-wrap gap-1.5">{footer}</div> : null}
-        </div>
+        <CardSurfaceContext.Provider value={true}>
+            <div
+                data-artifact-card
+                className={`relative min-w-0 rounded-card border ${border} ${surface} ${mono || muted ? "px-3.5 py-3" : "px-4 py-3.5"} ${highlight ? "shadow-[var(--glow)]" : ""} ${motion} transition-[rotate,translate,scale,box-shadow,border-color] duration-200 ease-out`}
+                style={style}
+            >
+                {kicker ? (
+                    <div
+                        className="font-mono text-[15px] font-bold leading-[normal]"
+                        style={{ color: color ?? (tone ? TONE_VAR[tone] : "var(--dim)") }}
+                    >
+                        {kicker}
+                    </div>
+                ) : null}
+                {number !== undefined || title ? (
+                    <div className={`flex items-baseline gap-2.5 ${kicker ? "mt-1" : ""} ${headGap}`}>
+                        {number !== undefined ? (
+                            <span
+                                className="min-w-[34px] font-display text-[22px] font-bold leading-[normal]"
+                                style={{ color: color ?? (tone ? TONE_VAR[tone] : "var(--dim)") }}
+                            >
+                                {number}
+                            </span>
+                        ) : null}
+                        {title ? (
+                            <h3 className={`${titleClass} ${tone && !color ? TONE_TEXT[tone] : "text-ink"}`}>
+                                {title}
+                            </h3>
+                        ) : null}
+                    </div>
+                ) : null}
+                {subtitle ? <div className="mt-0.5 mb-1.5 text-[14px] text-dim">{subtitle}</div> : null}
+                {fields?.length ? (
+                    <dl className="grid grid-cols-[74px_1fr] gap-x-2.5 gap-y-1 text-[14.5px]">
+                        {fields.map((field) => (
+                            <div key={field.k} className="contents">
+                                <dt className="font-mono text-sm font-medium leading-[normal] text-dim">{field.k}</dt>
+                                <dd className="min-w-0 text-ink-2 [&_code]:text-ink">
+                                    {typeof field.v === "string" ? <MdInline>{field.v}</MdInline> : field.v}
+                                </dd>
+                            </div>
+                        ))}
+                    </dl>
+                ) : null}
+                {lines?.length ? (
+                    <ul className="font-mono text-[14.5px] leading-[1.55] text-ink-2">
+                        {lines.map((line, i) => (
+                            <li key={i} className="py-px">
+                                {line}
+                            </li>
+                        ))}
+                    </ul>
+                ) : null}
+                {children !== undefined && children !== null ? (
+                    <div className={`text-[15px] text-ink-2 ${muted ? "leading-[1.7]" : ""}`}>
+                        {renderBody(children)}
+                    </div>
+                ) : null}
+                {note ? <div className={`mt-2 text-[14px] ${TONE_TEXT[noteTone]}`}>{renderBody(note)}</div> : null}
+                {footer ? <div className="mt-2.5 flex flex-wrap gap-1.5">{footer}</div> : null}
+            </div>
+        </CardSurfaceContext.Provider>
     );
 }
 
@@ -1103,12 +1182,14 @@ export interface ClaimProps {
     confidence?: number;
     tone?: Tone;
     children: BodyContent;
-    /** Optional grounds/proof line under the statement. */
+    /** Optional grounds/proof line under the statement. Strings render as inline markdown. */
     proof?: BodyContent;
+    /** Source chips under the proof line. */
+    marks?: Array<{ path: string; lines?: string }>;
 }
 
 /** A load-bearing claim: [NN%] badge + statement + optional proof line. */
-export function Claim({ confidence, tone, children, proof }: ClaimProps) {
+export function Claim({ confidence, tone, children, proof, marks }: ClaimProps) {
     const derived: Tone =
         tone ?? (confidence === undefined ? "neutral" : confidence >= 85 ? "ok" : confidence >= 60 ? "warn" : "err");
 
@@ -1118,8 +1199,40 @@ export function Claim({ confidence, tone, children, proof }: ClaimProps) {
                 {confidence !== undefined ? <Badge tone={derived}>{confidence}%</Badge> : null}
                 <div className="min-w-0 flex-1 text-ink/90">{renderBody(children)}</div>
             </div>
-            {proof ? <div className="mt-1 pl-1 text-sm text-dim">{renderBody(proof)}</div> : null}
+            {proof || marks?.length ? (
+                <div className="mt-1 pl-1 text-sm text-dim">
+                    {typeof proof === "string" ? <MdInline>{proof}</MdInline> : proof}
+                    {marks?.length ? (
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                            {marks.map((mark) => (
+                                <FileMark key={`${mark.path}:${mark.lines ?? ""}`} {...mark} />
+                            ))}
+                        </div>
+                    ) : null}
+                </div>
+            ) : null}
         </div>
+    );
+}
+
+export interface ClaimFact extends Omit<ClaimProps, "children"> {
+    text: BodyContent;
+}
+
+export interface ClaimListProps {
+    facts: ClaimFact[];
+}
+
+/** A set of claims with their confidence, proof and source chips. */
+export function ClaimList({ facts }: ClaimListProps) {
+    return (
+        <>
+            {facts.map(({ text, ...fact }, index) => (
+                <Claim key={index} {...fact}>
+                    {text}
+                </Claim>
+            ))}
+        </>
     );
 }
 
@@ -1158,11 +1271,11 @@ export interface SupersededProps {
 /** Retracted content kept for the audit trail — visibly marked, not just dimmed. */
 export function Superseded({ reason, children }: SupersededProps) {
     return (
-        <div className="my-3 rounded-card border border-line/60 p-3 opacity-60">
+        <div className="my-3 rounded-card border border-line/60 p-3">
             <div className="mb-1 font-mono text-[0.7rem] uppercase tracking-wider text-warn">
                 superseded{reason ? ` — ${reason}` : ""}
             </div>
-            {children}
+            <del className="block">{children}</del>
         </div>
     );
 }
@@ -1191,6 +1304,8 @@ export function FileMark({ path, lines, badge, tone = "neutral" }: FileMarkProps
 export interface SegmentedOption {
     value: string;
     label: string;
+    /** An unavailable choice: struck label, native disabled semantics and the reason in its tooltip. */
+    disabled?: string;
 }
 
 export interface SegmentedControlProps {
@@ -1198,6 +1313,8 @@ export interface SegmentedControlProps {
     value: string;
     onChange: (value: string) => void;
     label?: string;
+    /** Accessible group name when the visual context already labels the control. */
+    ariaLabel?: string;
 }
 
 /**
@@ -1209,11 +1326,13 @@ export interface SegmentedControlProps {
  * and the optional visual label is tied to the group through `aria-labelledby`
  * instead of merely sitting next to it.
  */
-export function SegmentedControl({ options, value, onChange, label }: SegmentedControlProps) {
+export function SegmentedControl({ options, value, onChange, label, ariaLabel }: SegmentedControlProps) {
     const labelId = useId();
+    const enabled = options.filter((option) => option.disabled === undefined);
+    const tabStop = enabled.find((option) => option.value === value)?.value ?? enabled[0]?.value;
 
     return (
-        <div className="inline-flex items-center gap-2">
+        <div className="inline-flex min-w-0 max-w-full items-center gap-2">
             {label ? (
                 <span id={labelId} className="text-xs text-dim">
                     {label}
@@ -1222,7 +1341,8 @@ export function SegmentedControl({ options, value, onChange, label }: SegmentedC
             <div
                 role="radiogroup"
                 aria-labelledby={label ? labelId : undefined}
-                className="inline-flex overflow-hidden rounded-card border border-line"
+                aria-label={label ? undefined : ariaLabel}
+                className="inline-flex min-w-0 max-w-full overflow-x-auto rounded-card border border-line"
             >
                 {options.map((option) => (
                     <button
@@ -1230,12 +1350,38 @@ export function SegmentedControl({ options, value, onChange, label }: SegmentedC
                         type="button"
                         role="radio"
                         aria-checked={option.value === value}
+                        aria-disabled={option.disabled !== undefined || undefined}
+                        disabled={option.disabled !== undefined}
+                        tabIndex={option.value === tabStop ? 0 : -1}
+                        onKeyDown={(event) => {
+                            const index = enabled.findIndex((candidate) => candidate.value === option.value);
+                            const next =
+                                event.key === "Home"
+                                    ? 0
+                                    : event.key === "End"
+                                      ? enabled.length - 1
+                                      : event.key === "ArrowRight" || event.key === "ArrowDown"
+                                        ? (index + 1) % enabled.length
+                                        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                                          ? (index - 1 + enabled.length) % enabled.length
+                                          : undefined;
+                            if (next === undefined || !enabled[next]) {
+                                return;
+                            }
+
+                            event.preventDefault();
+                            onChange(enabled[next].value);
+                            event.currentTarget.parentElement
+                                ?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")
+                                [next]?.focus();
+                        }}
+                        title={option.disabled}
                         onClick={() => onChange(option.value)}
-                        className={
+                        className={`shrink-0 ${option.disabled !== undefined ? "cursor-not-allowed line-through " : ""}${
                             option.value === value
                                 ? "bg-accent/15 px-3 py-1 text-sm font-medium text-accent"
-                                : "px-3 py-1 text-sm text-dim transition-colors hover:bg-panel hover:text-ink"
-                        }
+                                : "px-3 py-1 text-sm text-dim transition-colors enabled:hover:bg-panel enabled:hover:text-ink"
+                        }`}
                     >
                         {option.label}
                     </button>

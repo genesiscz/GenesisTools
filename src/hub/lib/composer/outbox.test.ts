@@ -87,6 +87,7 @@ import {
     readWidgetChanges,
     readWidgetDecisionEvents,
     realWidgetSources,
+    WIDGET_FORMS_LIMIT,
     type WidgetInboxWindow,
     type WidgetSources,
     widgetCardText,
@@ -3847,6 +3848,50 @@ describe("widget inbox notifications", () => {
         expect(snapshot.sessions.find((session) => session.target.sessionId === "live-asker")?.status).toBe("waiting");
         expect(snapshot.notifications?.needsAnswer).toBe(2);
     });
+
+    test("pending forms past the cards' read limit still count, and the inbox says it is cut", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const now = Date.now();
+                const db = openPendingStore(toolDataDir("question", "qa.db"));
+                const insert = db.query(
+                    "INSERT INTO qa_pending (id,created_at,status,source,session_hint,project_path,cwd,items_json) VALUES (?,?,'pending','Question',?,'/fixture','/fixture','[]')"
+                );
+                const post = (from: number, to: number) =>
+                    db.transaction(() => {
+                        for (let index = from; index < to; index++) {
+                            insert.run(`form-${index}`, now - 10_000 + index, `overflow-fixture-${index}`);
+                        }
+                    })();
+                // The production sources: the cards read the newest WIDGET_FORMS_LIMIT forms, the badge every head.
+                const sources: WidgetSources = {
+                    sessions: async () => [],
+                    decisions: () => [],
+                    forms: realWidgetSources.forms,
+                    formHeads: realWidgetSources.formHeads,
+                    answers: () => [],
+                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                    inboxData: () => ({ answers: [], complete: true, truncated: false }),
+                };
+                const notifications = async () =>
+                    (await widgetSnapshot({ root: directory, sources, now })).notifications;
+
+                post(0, 3);
+                expect(await notifications()).toMatchObject({ needsAnswer: 3, truncated: false });
+
+                post(3, WIDGET_FORMS_LIMIT + 8);
+                db.close();
+                const cut = await notifications();
+                expect(cut).toMatchObject({ needsAnswer: WIDGET_FORMS_LIMIT + 8, truncated: true });
+                expect(cut?.sessions.filter((session) => session.needsAnswer > 0)).toHaveLength(WIDGET_FORMS_LIMIT);
+
+                await performWidgetAction({ root: directory, input: { action: "inbox-clear", at: now } });
+                expect((await notifications())?.needsAnswer).toBe(0);
+            }
+        );
+    });
 });
 
 describe("private Widget voice notes", () => {
@@ -5628,9 +5673,11 @@ describe("background Widget roster", () => {
         expect(change("/fixture/claude/projects/-fixture-project/old-lead/subagents/agent-a1.jsonl")).toBe(
             "claude-agents"
         );
-        // A workflow's agents sit deeper; only the listing walks there, whether or not the lead is listed.
+        // A workflow's agents sit deeper. The agents tree lists them too, so a listed lead needs a read only; a
+        // lead that is not listed still needs the sub-agent listing, which finds it.
         const workflow = "/fixture/claude/projects/-fixture-project/lead-session/subagents/workflows/wf_1";
-        expect(change(`${workflow}/agent-a2.jsonl`, true)).toBe("claude-agents");
+        expect(change(`${workflow}/agent-a2.jsonl`, true)).toBe("read");
+        expect(change(`${workflow}/agent-a2.jsonl`)).toBe("claude-agents");
         expect(change(`${workflow}/journal.jsonl`, true)).toBeUndefined();
         expect(change(`${workflow}/agent-a2.meta.json`, true)).toBeUndefined();
         expect(change("/fixture/claude/projects/-fixture-project/lead-session/tool-results/out.txt")).toBeUndefined();

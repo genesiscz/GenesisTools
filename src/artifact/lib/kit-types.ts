@@ -20,9 +20,9 @@ const KIT_DIR = join(RUNTIME_DIR, "kit");
  * compiles, and one whose path escapes rootDir cannot be placed under outDir,
  * so it lands NEXT TO THE SOURCE instead. That is how stray .d.ts files got
  * into this tree before. A kit module importing `../../lib/markdown` is normal,
- * so the root is the whole tool directory.
+ * so the root includes the shared utility package too.
  */
-const EMIT_ROOT_DIR = resolve(RUNTIME_DIR, "..");
+const EMIT_ROOT_DIR = resolve(RUNTIME_DIR, "../..");
 const KIT_EMIT_SUBDIR = relative(EMIT_ROOT_DIR, KIT_DIR);
 const KIT_FILES = [
     "primitives.tsx",
@@ -51,6 +51,11 @@ const KIT_FILES = [
     "look.ts",
     "nav.tsx",
     "layer-diagram.tsx",
+    "decision-board.tsx",
+    "sticky-controls.tsx",
+    "uml-diagram.tsx",
+    "model-browser.tsx",
+    "property-grid.tsx",
     "index.ts",
 ];
 
@@ -80,6 +85,7 @@ export async function kitApiDts(): Promise<string> {
                     target: "ESNext",
                     module: "ESNext",
                     moduleResolution: "bundler",
+                    paths: { "@genesiscz/utils/*": [join(REPO_ROOT, "src/utils/*")] },
                     jsx: "react-jsx",
                     strict: true,
                     skipLibCheck: true,

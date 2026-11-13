@@ -26,11 +26,13 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib/spawn-counter";
+import { changeLogPathIn } from "@genesiscz/utils/agents/change-log";
 import { env } from "@genesiscz/utils/env";
 import { underCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { DEFAULT_HOOKS_CONFIG, type DiffConfig, defaultLogPath } from "../config";
+import { auditDiffLog, fileToolWrites, summarizeAudit } from "../diff-audit";
 import {
     commandSlices,
     type DiffLogEntry,
@@ -39,10 +41,18 @@ import {
     readDiffLog,
     readMessage,
 } from "../diff-log";
-import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
-import { callDir, claimsRoot, sessionDir } from "../paths";
+import { isDeleted, statusEntries, untrackedFilesIn, untrackedFilesInEach } from "../git";
+import { callDir, claimsRoot, mentionsRoot, sessionDir, touchesPath } from "../paths";
 import { type HookPayload, parseHookPayload } from "../payload";
-import { readOnlyCommand, recordTouches } from "./attribution";
+import {
+    type AttributionContext,
+    attribute,
+    readOnlyCommand,
+    recordTouches,
+    rootIsOwn,
+    scriptNames,
+    sessionWrites,
+} from "./attribution";
 import { beforeCopier, beforeCopy, leftOutOfCapture } from "./before";
 import { type CaptureResult, capturePre, captureRoots, harnessOwnFile } from "./capture";
 import { claimChange, claimFileName } from "./claim";
@@ -50,7 +60,7 @@ import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
 import { writeFullDiff } from "./full";
-import { covers, mentionsFrom, mentionsOf, textPaths } from "./mentions";
+import { activeSessions, covers, fileTimesOf, mentionsFrom, mentionsOf, textPaths } from "./mentions";
 import {
     assembleMessage,
     compactColour,
@@ -125,6 +135,27 @@ function begin(overrides: Partial<HookPayload> = {}, diff: DiffConfig = DEFAULT_
 
     return next;
 }
+
+/**
+ * Every case starts with no other session at work. The cases share temp repositories, and the pre phase of an
+ * earlier case's session would make each of them a root "another session works in" (rule `own-root`).
+ */
+beforeEach(() => {
+    let names: string[] = [];
+
+    try {
+        names = readdirSync(mentionsRoot());
+    } catch {
+        // No session has indexed anything yet.
+    }
+
+    for (const name of names.filter((item) => item.endsWith(".json"))) {
+        rmSync(join(mentionsRoot(), name), { force: true });
+    }
+
+    // The ledger too: a call's start has whole seconds, so a touch of the case before overlaps this one.
+    rmSync(touchesPath(), { force: true });
+});
 
 beforeAll(() => {
     repo = realpathSync(mkdtempSync(join(tmpdir(), "gt-capture-")));
@@ -2349,6 +2380,7 @@ describe("the before-state: clones of the dirty files, and none for a command th
             reason: "nothing left to print: 1 deletion(s) already gone before this command began; 2 changed by another writer, not this session",
             files: [],
             others: [join(tree, "tracked.ts"), log],
+            declined: { [join(tree, "tracked.ts")]: "read-only", [log]: "read-only" },
         });
     });
 
@@ -3685,6 +3717,64 @@ describe("listing a wide untracked directory", () => {
     it("says null, not empty, when git cannot list at all", () => {
         expect(untrackedFilesIn(join(wide, "not-a-repo-at-all"), "many/", 5)).toBeNull();
     });
+
+    describe("several untracked directories", () => {
+        const small = ["few/", "other dir/", "third/"];
+
+        beforeAll(() => {
+            writeFileSync(join(wide, ".gitignore"), "*.log\n");
+
+            for (const name of ["few/a.txt", "few/deep/b.txt", "few/ignored.log", "other dir/c.txt", "pat[x]/d.txt"]) {
+                mkdirSync(dirname(join(wide, name)), { recursive: true });
+                writeFileSync(join(wide, name), "");
+            }
+
+            for (let index = 0; index < 8; index += 1) {
+                mkdirSync(join(wide, "third"), { recursive: true });
+                writeFileSync(join(wide, "third", `t-${index}.txt`), "");
+            }
+        });
+
+        it("lists them with one git process, each with the answer of its own listing", async () => {
+            const each = await withSpawnCounter(async () => untrackedFilesInEach(wide, small, 5));
+
+            expect(each.count).toBe(1);
+            expect(each.result.get("few/")).toEqual(["few/a.txt", "few/deep/b.txt"]);
+            expect(each.result.get("third/")).toHaveLength(5);
+
+            for (const dir of small) {
+                expect(each.result.get(dir)).toEqual(untrackedFilesIn(wide, dir, 5));
+            }
+        });
+
+        it("lists a directory git would read as a pattern by itself", async () => {
+            const each = await withSpawnCounter(async () => untrackedFilesInEach(wide, [...small, "pat[x]/"], 5));
+
+            expect(each.count).toBe(2);
+            expect(each.result.get("pat[x]/")).toEqual(untrackedFilesIn(wide, "pat[x]/", 5));
+            expect(each.result.get("few/")).toEqual(["few/a.txt", "few/deep/b.txt"]);
+        });
+
+        it("falls back to one listing each when the batch outgrows one directory's buffer", async () => {
+            const dirs = ["many/", ...small];
+            const each = await withSpawnCounter(async () => untrackedFilesInEach(wide, dirs, 5));
+
+            // The batch, then each of the four by itself.
+            expect(each.count).toBe(5);
+
+            for (const dir of dirs) {
+                expect(each.result.get(dir)).toEqual(untrackedFilesIn(wide, dir, 5));
+            }
+        });
+
+        it("says null for every directory when git cannot list at all, and starts nothing for none", async () => {
+            const broken = untrackedFilesInEach(join(wide, "not-a-repo-at-all"), small, 5);
+            const none = await withSpawnCounter(async () => untrackedFilesInEach(wide, [], 5));
+
+            expect([...broken.values()]).toEqual([null, null, null]);
+            expect(none.count).toBe(0);
+        });
+    });
 });
 
 describe("a change another session made", () => {
@@ -3759,8 +3849,9 @@ describe("a change another session made", () => {
         const decision = runDiffPost({ payload: unnamed, config: plain });
 
         expect(decision.files).not.toContain(readme);
-        expect(decision.message).toContain("changed by others in this root:");
+        expect(decision.message).toContain("with no proof they are this session's:");
         expect(decision.others).toContain(readme);
+        expect(decision.declined?.[readme]).toBe("unproven");
 
         // `cd src` names a directory strictly INSIDE the root, so that command owns `src/`.
         const cdInto = as("gt-attr-cd", { command: "cd src && bun run build" });
@@ -6517,5 +6608,342 @@ describe("turnOf: the turn key of a stored change row", () => {
     it("changed on purpose: a Copilot payload's turn stays in raw, so its row is keyed by its call", () => {
         const copilot = { hookEventName: "postToolUse", sessionId: "p1", toolUseId: "call-p1", turnId: "t-copilot" };
         expect(turnOf(payloadOf(copilot))).toBe("call-p1");
+    });
+});
+
+/**
+ * The rule order of `attribute` (2026-11-12). Each case is one variant from two days of real decisions joined with
+ * the transcripts: the false blocks first, then the true ones that must stay.
+ */
+describe("the rule that decides whose a changed file is", () => {
+    const root = "/checkout";
+    const file = "/checkout/src/dev-monitor.ts";
+    const since = Date.parse("2026-11-12T01:00:00Z");
+    const minutes = (count: number) => count * 60_000;
+    const context = (over: Partial<AttributionContext> = {}): AttributionContext => ({
+        session: "mine",
+        since,
+        now: since + 40_000,
+        named: mentionsFrom([]),
+        mentions: () => mentionsFrom([]),
+        readOnly: () => false,
+        others: () => new Map(),
+        busyRoots: () => new Set(),
+        siblings: () => new Set(),
+        writes: () => ({ mine: new Map(), theirs: new Map() }),
+        scripts: () => [],
+        ownRoot: () => false,
+        ...over,
+    });
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    const theirs = (at: number) => new Map([[file, { session: "theirs", at }]]);
+    const rule = (over: Partial<AttributionContext> = {}) => attribute({ file, root, context: context(over) });
+
+    it("a command that only runs a program proves nothing in a root other sessions work in", () => {
+        // `timeout 40 docker system df` was shown a patch another session's agent wrote into the same folder.
+        expect(rule()).toEqual({ kind: "ambiguous", rule: "unproven" });
+    });
+
+    it("an old mention does not make another session's fresh write this call's", () => {
+        // `swift test --filter …` was shown a file this session had once read and another session was editing.
+        const over = {
+            mentions: () => mentionsFrom([file]),
+            writes: () => ({ mine: new Map(), theirs: theirs(since - minutes(20)) }),
+        };
+
+        expect(rule(over)).toEqual({ kind: "others", rule: "foreign-owned" });
+        // Also when this session's own proof has a time, and that time is before their write.
+        expect(
+            rule({
+                writes: () => ({ mine: new Map([[file, since - minutes(50)]]), theirs: theirs(since - minutes(20)) }),
+            })
+        ).toEqual({ kind: "others", rule: "foreign-owned" });
+    });
+
+    it("a file read ten minutes ago and changed by a script now is this session's, also after another session's write", () => {
+        const read = new Map([[file, since - minutes(10)]]);
+
+        expect(rule({ writes: () => ({ mine: read, theirs: new Map() }) })).toEqual({
+            kind: "mentioned",
+            rule: "own-file",
+        });
+        expect(rule({ writes: () => ({ mine: read, theirs: theirs(since - minutes(30)) }) })).toEqual({
+            kind: "mentioned",
+            rule: "own-file",
+        });
+        // An exact path an earlier command named has no time: it counts while no other session wrote the file.
+        expect(rule({ mentions: () => mentionsFrom([file]) })).toEqual({ kind: "mentioned", rule: "own-file" });
+    });
+
+    it("another session's write inside the call's window beats a folder the command names, never the file itself", () => {
+        const inWindow = { writes: () => ({ mine: new Map(), theirs: theirs(since + 5_000) }) };
+
+        expect(rule({ ...inWindow, named: mentionsFrom(["/checkout/src"]) })).toEqual({
+            kind: "others",
+            rule: "other-wrote",
+        });
+        expect(rule({ named: mentionsFrom(["/checkout/src"]) })).toEqual({ kind: "named", rule: "named-folder" });
+        expect(rule({ ...inWindow, named: mentionsFrom([file]) })).toEqual({ kind: "named", rule: "named" });
+    });
+
+    it("a long call does not collect what another session wrote while it ran", () => {
+        // A 90-minute gate script: this session read the file before the call, another session wrote it during it.
+        const long = {
+            since: since - minutes(90),
+            writes: () => ({ mine: new Map([[file, since - minutes(100)]]), theirs: theirs(since - minutes(30)) }),
+        };
+
+        expect(rule(long)).toEqual({ kind: "others", rule: "other-wrote" });
+    });
+
+    it("a script the command runs is proof when it spells the file's path, not for a common bare name", () => {
+        const scripts = (text: string) => () => [{ path: "/checkout/scripts/gen.ts", text }];
+
+        expect(rule({ scripts: scripts('write("src/dev-monitor.ts", out)') })).toEqual({
+            kind: "named",
+            rule: "scripted",
+        });
+        expect(rule({ scripts: scripts('write("dev-monitor.ts", out)') })).toEqual({ kind: "named", rule: "scripted" });
+        expect(scriptNames({ scripts: scripts('open("index.ts")')(), file: "/checkout/index.ts", root })).toBe(false);
+        // The script is not proof of its own change.
+        expect(scriptNames({ scripts: [{ path: file, text: file }], file, root })).toBe(false);
+    });
+
+    it("a runner's unnamed change is shown in a root that is this session's alone, never a file another actor took", () => {
+        expect(rule({ ownRoot: () => true })).toEqual({ kind: "runner", rule: "own-root" });
+        expect(
+            rule({
+                ownRoot: () => true,
+                others: () =>
+                    new Map([
+                        [
+                            file,
+                            [{ session: "theirs", start: since, end: since + 1, kind: "runner" as const, path: file }],
+                        ],
+                    ]),
+            })
+        ).toEqual({ kind: "ambiguous", rule: "unproven" });
+    });
+
+    it("a command that cannot write and a file another call named stay first", () => {
+        expect(rule({ readOnly: () => true, named: mentionsFrom([file]) })).toEqual({
+            kind: "others",
+            rule: "read-only",
+        });
+        expect(rule({ siblings: () => new Set([file]), mentions: () => mentionsFrom([file]) })).toEqual({
+            kind: "others",
+            rule: "other-named",
+        });
+    });
+
+    it("a root is the session's own by its id in the path, or when no other session shows work in it", () => {
+        const base = {
+            root,
+            session: "mine",
+            since,
+            busy: new Set<string>(),
+            touched: [] as string[],
+            writes: { mine: new Map(), theirs: new Map() },
+            active: [] as Array<{ session: string; roots: string[] }>,
+        };
+
+        expect(rootIsOwn(base)).toBe(true);
+        expect(rootIsOwn({ ...base, active: [{ session: "theirs", roots: ["/elsewhere"] }] })).toBe(true);
+        expect(rootIsOwn({ ...base, active: [{ session: "mine", roots: [root] }] })).toBe(true);
+        expect(rootIsOwn({ ...base, active: [{ session: "theirs", roots: [root] }] })).toBe(false);
+        expect(rootIsOwn({ ...base, busy: new Set([root]) })).toBe(false);
+        expect(rootIsOwn({ ...base, touched: ["/checkout/b.ts"] })).toBe(false);
+        expect(rootIsOwn({ ...base, touched: ["/checkout-two/b.ts"] })).toBe(true);
+        expect(rootIsOwn({ ...base, writes: { mine: new Map(), theirs: theirs(since - minutes(5)) } })).toBe(false);
+        // A worktree under the session's own folder, even with another session's command running in it.
+        expect(
+            rootIsOwn({
+                ...base,
+                root: "/tmp/cc/project/mine/worktrees/a",
+                busy: new Set(["/tmp/cc/project/mine/worktrees/a"]),
+            })
+        ).toBe(true);
+    });
+
+    it("reads who wrote what from the change logs: own writes at any age, another session's within the hour", () => {
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "gt-attr-logs-")));
+        const row = (session: string, path: string, at: number) =>
+            SafeJSON.stringify({
+                ts: new Date(at).toISOString(),
+                provider: "claude",
+                session,
+                turn: "t1",
+                tool: "Edit",
+                cwd: root,
+                path,
+                beforeOid: null,
+                afterOid: null,
+                source: "edit",
+            });
+        const write = (session: string, lines: string[]) => {
+            mkdirSync(join(dir, session), { recursive: true });
+            writeFileSync(changeLogPathIn(dir, session), `${lines.join("\n")}\n`);
+        };
+
+        write("gt-attr-writes-mine", [row("gt-attr-writes-mine", "/checkout/old.ts", since - minutes(60 * 30))]);
+        write("gt-attr-writes-theirs", [
+            row("gt-attr-writes-theirs", "/checkout/fresh.ts", since - minutes(20)),
+            row("gt-attr-writes-theirs", "/checkout/fresh.ts", since - minutes(10)),
+            row("gt-attr-writes-theirs", "/checkout/stale.ts", since - minutes(61)),
+        ]);
+        // This session's log was last written long ago: it is still read, because its own write counts at any age.
+        const old = new Date(since - minutes(60 * 30));
+        utimesSync(changeLogPathIn(dir, "gt-attr-writes-mine"), old, old);
+        utimesSync(changeLogPathIn(dir, "gt-attr-writes-theirs"), new Date(since), new Date(since));
+
+        const writes = sessionWrites({ session: "gt-attr-writes-mine", since, dir });
+
+        expect(writes.mine.get("/checkout/old.ts")).toBe(since - minutes(60 * 30));
+        expect(writes.theirs.get("/checkout/fresh.ts")).toEqual({
+            session: "gt-attr-writes-theirs",
+            at: since - minutes(10),
+        });
+        expect(writes.theirs.has("/checkout/stale.ts")).toBe(false);
+        expect(writes.theirs.has("/checkout/old.ts")).toBe(false);
+
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("keeps a time only for a file tool's exact path, and lists the sessions that began a call in the window", () => {
+        const at = since - minutes(10);
+        const times = fileTimesOf([
+            { tool: "Read", input: { file_path: file }, cwd: root, at },
+            { tool: "Read", input: { file_path: file }, cwd: root, at: at - 5_000 },
+            { tool: "Bash", input: { command: `cat ${file.replace("dev-monitor", "by-command")}` }, cwd: root, at },
+            { tool: "Grep", input: { path: "/checkout/src", pattern: "x" }, cwd: root, at },
+            { tool: "Edit", input: { file_path: "/checkout/src/no-time.ts" }, cwd: root },
+        ]);
+
+        expect([...times]).toEqual([[file, at]]);
+
+        const states = realpathSync(mkdtempSync(join(tmpdir(), "gt-attr-states-")));
+        const state = (name: string, roots: string[], modified: number) => {
+            writeFileSync(join(states, `${name}.json`), SafeJSON.stringify({ lastPre: modified, roots }));
+            utimesSync(join(states, `${name}.json`), new Date(modified), new Date(modified));
+        };
+
+        state("recent", [root], since - minutes(5));
+        state("long-ago", [root], since - minutes(90));
+        writeFileSync(join(states, "recent.files.tsv"), "1\t/x\n");
+
+        expect(activeSessions({ since: since - minutes(60), root: states })).toEqual([
+            { session: "recent", roots: [root] },
+        ]);
+
+        rmSync(states, { recursive: true, force: true });
+    });
+
+    it("end to end: the log row names the rule for a printed file and for a declined one", () => {
+        const logs = realpathSync(mkdtempSync(join(tmpdir(), "gt-attr-e2e-")));
+        const named = join(repo, "rule-named.ts");
+        const foreign = join(repo, "rule-foreign.ts");
+
+        writeFileSync(named, "one\n");
+        writeFileSync(foreign, "one\n");
+        git(["add", "-A"]);
+        git(["commit", "-qm", "rule fixtures"]);
+
+        const current = begin({ sessionId: "gt-attr-e2e", command: "bun scripts/build.ts rule-named.ts" });
+
+        writeFileSync(named, "one\nNAMED-BY-THE-COMMAND\n");
+        writeFileSync(foreign, "one\nANOTHER-SESSION-WROTE-THIS\n");
+        mkdirSync(join(logs, "gt-attr-e2e-other"), { recursive: true });
+        writeFileSync(
+            changeLogPathIn(logs, "gt-attr-e2e-other"),
+            `${SafeJSON.stringify({
+                ts: new Date(Date.now() + 1_000).toISOString(),
+                provider: "claude",
+                session: "gt-attr-e2e-other",
+                turn: "t1",
+                tool: "Write",
+                cwd: repo,
+                path: foreign,
+                beforeOid: null,
+                afterOid: null,
+                source: "write",
+            })}\n`
+        );
+
+        const decision = runDiffPost({ payload: current, config: plain, changeLogs: logs, record: () => {} });
+
+        expect(decision.attributed).toEqual({ [named]: "named" });
+        expect(decision.declined).toEqual({ [foreign]: "other-wrote" });
+        expect(decision.message).toContain("NAMED-BY-THE-COMMAND");
+        expect(decision.message).not.toContain("ANOTHER-SESSION-WROTE-THIS");
+        expect(decision.message).toContain("1 file(s) changed by others in this root: rule-foreign.ts");
+
+        git(["checkout", "-q", "--", "."]);
+        rmSync(logs, { recursive: true, force: true });
+    });
+
+    it("the audit replays logged calls: an unproven runner block drops, a named file and an own root stay", () => {
+        const at = (offset: number) => new Date(since + offset).toISOString();
+        const entry = (over: Partial<DiffLogEntry>): DiffLogEntry => ({
+            at: at(40_000),
+            began: at(0),
+            session: "mine",
+            toolUseId: "call-1",
+            harness: "claude",
+            decision: "emitted",
+            reason: "rendered a diff the harness did not",
+            files: [],
+            others: [],
+            skipped: [],
+            roots: [root],
+            ...over,
+        });
+        const folder = "/checkout/src/gen/out.ts";
+        const own = "/tmp/cc/project/mine/worktrees/a/b.ts";
+        const rows = auditDiffLog({
+            entries: [
+                // Another session began a call in the same root twenty minutes before: the root is shared.
+                entry({
+                    session: "theirs",
+                    toolUseId: "call-0",
+                    at: at(-minutes(20) + 5_000),
+                    began: at(-minutes(20)),
+                }),
+                entry({
+                    files: [file, "/checkout/named.ts", folder, own],
+                    roots: [root, "/tmp/cc/project/mine/worktrees/a"],
+                    attributed: {
+                        [file]: "runner",
+                        "/checkout/named.ts": "named",
+                        [folder]: "named folder",
+                        [own]: "runner",
+                    },
+                }),
+            ],
+            // Another session's Write of the folder-named file, inside the window.
+            writes: fileToolWrites([
+                {
+                    ts: at(10_000),
+                    provider: "claude",
+                    session: "theirs",
+                    turn: "t",
+                    tool: "Write",
+                    cwd: root,
+                    path: folder,
+                    beforeOid: null,
+                    afterOid: null,
+                    source: "write",
+                },
+            ]),
+            mentionsFor: () => mentionsFrom([]),
+        });
+
+        expect(rows.map((row) => [row.file, row.logged, row.replayed, row.ours])).toEqual([
+            [file, "own-root", "unproven", false],
+            ["/checkout/named.ts", "named", "named", true],
+            [folder, "named-folder", "other-wrote", false],
+            [own, "own-root", "own-root", true],
+        ]);
+        expect(rows[2]?.foreign).toEqual({ session: "theirs", at: at(10_000) });
+        expect(summarizeAudit(rows)).toMatchObject({ printed: 4, dropped: 2, declined: 0, recovered: 0 });
     });
 });

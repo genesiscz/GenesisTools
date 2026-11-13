@@ -23,7 +23,7 @@ import {
     readDecisions,
 } from "../decisions/store";
 import { closeNoticeItems, noticeItem } from "../notices/notices";
-import { listFormsSnapshot } from "../pending/store";
+import { listFormsSnapshot, listPendingFormHeadsSnapshot, type PendingFormHead } from "../pending/store";
 import type { AskForm } from "../pending/types";
 import { type QaRow, queryEntriesSnapshot } from "../read-model";
 import { waitingSet } from "../waiting/set";
@@ -81,6 +81,11 @@ export interface InboxDeps {
     }) => Promise<number>;
     forms: () => AskForm[] | Promise<AskForm[]>;
     /**
+     * Every pending form's head, with no limit: the waiting queue's total counts the forms past the listing's limit
+     * too, as the notch does. Absent: the total counts the forms `forms` read.
+     */
+    formHeads?: () => PendingFormHead[] | Promise<PendingFormHead[]>;
+    /**
      * The open dialog records of the listed sessions (the agents' own question tools, plan approvals and permission
      * prompts), after the hub watcher's pass; it raises a banner for a newly open one. Absent: none are listed.
      */
@@ -136,6 +141,7 @@ export const realInboxDeps: InboxDeps = {
         return stored.length;
     },
     forms: async () => (await import("../pending/ask")).listPendingForms({}, 200),
+    formHeads: () => listPendingFormHeadsSnapshot(),
     dialogs: async (sessions) => {
         const questions = loadQuestionsHookConfig();
         const open = await listedDialogs({ rows: sessions, questions });
@@ -576,7 +582,10 @@ export interface WaitingQueueSession {
 }
 
 export interface WaitingQueue {
-    /** The badge number: what the notch widget shows, decisions, forms and open dialogs (todos are not counted). */
+    /**
+     * The badge number: what the notch widget shows, decisions, forms and open dialogs (todos are not counted). It
+     * also counts the pending forms past the listing's limit, which `sessions` does not list.
+     */
     total: number;
     /** Newest ask first. */
     sessions: WaitingQueueSession[];
@@ -607,9 +616,11 @@ export async function loadWaitingQueue({
     const parts = await gatherInbox(hours, deps);
     const inbox = buildInbox({ ...parts, now });
     const activity = new Map(parts.sessions.map((row) => [row.sessionId, row.mtime]));
+    // Read after `gatherInbox`, whose form read expires the timed-out forms first.
+    const formHeads = deps.formHeads ? await deps.formHeads() : null;
     const set = waitingSet({
         rows: parts.rows,
-        forms: parts.forms,
+        forms: formHeads ?? parts.forms,
         dialogs: parts.dialogs,
         activityAt: (session) => activity.get(session),
         now,
@@ -624,7 +635,8 @@ export async function loadWaitingQueue({
     }
 
     const sessions: WaitingQueueSession[] = [];
-    let total = 0;
+    // A pending form past the listing's limit has no item here, but the notch counts it, so the total does too.
+    let total = set.items.filter((entry) => entry.kind === "form" && entry.counted && !found.has(entry.key)).length;
 
     for (const group of set.sessions) {
         // The queue lists what the hub inbox lists (decisions, forms, dialogs); a todo for the human stays a banner.
