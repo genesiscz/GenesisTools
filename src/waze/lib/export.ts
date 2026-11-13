@@ -110,6 +110,14 @@ function warningsText(input: ExportInput): string {
     return xml((input.warnings ?? []).join(" "));
 }
 
+function jamName(jam: CorridorJam): string {
+    return `km ${km(jam.alongM)} jam level ${jam.level}${jam.street ? ` · ${jam.street}` : ""}`;
+}
+
+function gpxPoints(points: readonly { lat: number; lon: number }[]): string {
+    return points.map((p) => `      <trkpt lat="${p.lat}" lon="${p.lon}"/>`).join("\n");
+}
+
 export function toGpx(input: ExportInput): string {
     const waypoints = input.alerts
         .map(
@@ -117,7 +125,12 @@ export function toGpx(input: ExportInput): string {
                 `  <wpt lat="${alert.lat}" lon="${alert.lon}">\n    <time>${new Date(alert.publishedAt).toISOString()}</time>\n    <name>${xml(alertName(alert))}</name>\n    <type>${xml(alert.category)}</type>\n  </wpt>`
         )
         .join("\n");
-    const track = input.route.coords.map((p) => `      <trkpt lat="${p.lat}" lon="${p.lon}"/>`).join("\n");
+    const jams = input.jams
+        .map(
+            (jam) =>
+                `  <trk>\n    <name>${xml(jamName(jam))}</name>\n    <type>jam</type>\n    <trkseg>\n${gpxPoints(jam.line)}\n    </trkseg>\n  </trk>`
+        )
+        .join("\n");
     const desc = warningsText(input);
     // GPX 1.1 orders metadata as name, desc, ..., time.
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -127,9 +140,10 @@ ${waypoints}
   <trk>
     <name>${xml(input.route.name)}</name>
     <trkseg>
-${track}
+${gpxPoints(input.route.coords)}
     </trkseg>
   </trk>
+${jams}
 </gpx>
 `;
 }
@@ -144,7 +158,7 @@ export function toKml(input: ExportInput): string {
     const jams = input.jams
         .map(
             (jam) =>
-                `    <Placemark><name>${xml(`km ${km(jam.alongM)} jam level ${jam.level}${jam.street ? ` · ${jam.street}` : ""}`)}</name><LineString><coordinates>${jam.line.map((p) => `${p.lon},${p.lat},0`).join(" ")}</coordinates></LineString></Placemark>`
+                `    <Placemark><name>${xml(jamName(jam))}</name><LineString><coordinates>${jam.line.map((p) => `${p.lon},${p.lat},0`).join(" ")}</coordinates></LineString></Placemark>`
         )
         .join("\n");
     const line = input.route.coords.map((p) => `${p.lon},${p.lat},0`).join(" ");

@@ -281,6 +281,17 @@ const hotspotsInput = z.object({
     limit: z.number().int().min(1).max(100).optional().describe("Most places (default 15)"),
 });
 
+/**
+ * The departures a trip can still take, from the earliest departure itself: Waze's quarter-hour slot before it (07:00
+ * for 07:10, or the slot already running for "now") has passed and is never the best departure.
+ */
+export function departuresInWindow<T extends { leaveAt: number }>(
+    departures: readonly T[],
+    window: { start: number; end: number }
+): T[] {
+    return departures.filter((option) => option.leaveAt >= window.start && option.leaveAt <= window.end);
+}
+
 function parseAt(text: string | undefined): number | undefined {
     if (text === undefined) {
         return undefined;
@@ -540,9 +551,7 @@ const OPERATION_DEFS: WazeOperation[] = [
                 startTime: start,
             });
             const end = start + (input.windowHours ?? 4) * 3_600_000;
-            const options = trip.departures.filter(
-                (option) => option.leaveAt >= start - 15 * 60_000 && option.leaveAt <= end
-            );
+            const options = departuresInWindow(trip.departures, { start, end });
             const best = options.reduce<(typeof options)[number] | undefined>(
                 (winner, option) => (!winner || option.minutes < winner.minutes ? option : winner),
                 undefined

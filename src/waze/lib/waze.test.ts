@@ -33,7 +33,7 @@ import {
     splitBBox,
     thinLine,
 } from "./geo";
-import { findOperation, USER_REPORTS_HIDDEN_NOTICE } from "./operations";
+import { departuresInWindow, findOperation, USER_REPORTS_HIDDEN_NOTICE } from "./operations";
 import { planRoute } from "./routing";
 import { BrowserTabTransport, LIVE_MAP_URL, type WazeRequest, type WazeResponse, type WazeTransport } from "./session";
 import { WazeStore } from "./store";
@@ -459,6 +459,15 @@ describe("operations", () => {
         await expect(findOperation("hotspots").run(ctx, { sinceDays: -3 })).rejects.toThrow();
     });
 
+    test("a departure window starts at the earliest departure, not at the quarter-hour slot before it", () => {
+        const at = (clock: string) => Date.parse(`2026-11-13T${clock}:00Z`);
+        const slots = ["07:00", "07:15", "07:30"].map((clock, index) => ({ leaveAt: at(clock), minutes: 20 - index }));
+        expect(departuresInWindow(slots, { start: at("07:10"), end: at("07:30") }).map((s) => s.leaveAt)).toEqual([
+            at("07:15"),
+            at("07:30"),
+        ]);
+    });
+
     test("alternative routes are asked for the same departure as the primary", async () => {
         const client = new TripClient(WHOLE);
         const planned = await planRoute({
@@ -509,6 +518,25 @@ describe("operations", () => {
             warnings: ["Part <missing> & capped."],
         };
         expect(exportTrip("gpx", input)).toContain("<desc>Part &lt;missing&gt; &amp; capped.</desc><time>");
+        const jam = {
+            id: "j1",
+            level: 3,
+            street: "D1",
+            lengthM: 800,
+            speedKmh: 12,
+            updatedAt: 0,
+            alongM: 2_500,
+            offsetM: 3,
+            side: "right" as const,
+            line: [
+                { lat: 50.01, lon: 14.02 },
+                { lat: 50.02, lon: 14.03 },
+            ],
+        };
+        const gpx = exportTrip("gpx", { ...input, jams: [jam] });
+        expect(gpx).toContain("<name>km 2.5 jam level 3 · D1</name>\n    <type>jam</type>");
+        expect(gpx).toContain('<trkpt lat="50.02" lon="14.03"/>');
+        expect(gpx.indexOf("<type>jam</type>")).toBeGreaterThan(gpx.indexOf("</trk>"));
         expect(exportTrip("kml", input)).toContain("<description>Part &lt;missing&gt; &amp; capped.</description>");
         expect(exportTrip("csv", input)).toBe(exportTrip("csv", { ...input, warnings: [] }));
         expect(exportTrip("gpx", { ...input, warnings: [] })).not.toContain("<desc>");
