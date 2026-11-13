@@ -1,5 +1,5 @@
 import type { AgentBoardSession, AgentStopReceiptDto, AgentTranscriptTurnDto } from "@dd/contract";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useIsFocused, useLocalSearchParams } from "expo-router";
 import { memo, useCallback, useRef, useState } from "react";
 import {
     ActivityIndicator,
@@ -21,6 +21,7 @@ import { SteerComposer } from "@/features/agents/components/SteerComposer";
 import { useAgentsBoard, useAgentTranscript, useStopSession } from "@/features/agents/hooks";
 import { idempotencyKey } from "@/features/answer-queue/units";
 import { confirmWithFaceId } from "@/lib/face-id";
+import { useMinuteClock } from "@/lib/minute-clock";
 import { Empty } from "@/ui/Empty";
 import { useThemeColors } from "@/theme/colors";
 
@@ -214,6 +215,7 @@ function StopButton({ session, onReceipt }: { session: AgentBoardSession; onRece
 function SessionHeader({ session, onStopReceipt }: { session: AgentBoardSession; onStopReceipt: OnStopReceipt }) {
     const c = useThemeColors();
     const meta = [session.provider, session.account, session.model].filter(Boolean).join(" · ");
+    const now = useMinuteClock(useIsFocused());
 
     return (
         <View className="gap-2 border-b p-4" style={{ borderColor: c.border }}>
@@ -223,7 +225,7 @@ function SessionHeader({ session, onStopReceipt }: { session: AgentBoardSession;
                     {meta}
                 </Text>
                 <Text style={{ color: c.textMuted, fontFamily: "monospace", fontSize: 11 }}>
-                    {ago(session.lastActivityAt, Date.now())}
+                    {ago(session.lastActivityAt, now)}
                 </Text>
             </View>
             {session.title ? (

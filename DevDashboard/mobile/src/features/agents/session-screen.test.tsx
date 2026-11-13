@@ -37,7 +37,11 @@ mock.module("react-native", () => ({
 }));
 
 let params: { key?: string; text?: string } = { key: "claude:a" };
-mock.module("expo-router", () => ({ Stack: { Screen: () => null }, useLocalSearchParams: () => params }));
+mock.module("expo-router", () => ({
+    Stack: { Screen: () => null },
+    useIsFocused: () => true,
+    useLocalSearchParams: () => params,
+}));
 
 interface BoardState {
     data?: { sessions: AgentBoardSession[]; sendTimings?: undefined };

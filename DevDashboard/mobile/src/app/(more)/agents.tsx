@@ -1,14 +1,14 @@
 import type { AgentBoardSession } from "@dd/contract";
-import { router, Stack } from "expo-router";
+import { router, Stack, useIsFocused } from "expo-router";
 import { useCallback } from "react";
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import { SessionCard } from "@/features/agents/components/SessionCard";
 import { useAgentsBoard } from "@/features/agents/hooks";
+import { useMinuteClock } from "@/lib/minute-clock";
 import { useLiveChannel } from "@/live/provider";
 import { Empty } from "@/ui/Empty";
 import { MockBadge } from "@/ui/MockBadge";
 import { StatusPill } from "@/ui/StatusPill";
-import { useMinuteClock } from "@/hooks/use-minute-clock";
 import { useThemeColors } from "@/theme/colors";
 
 const keyOf = (session: AgentBoardSession) => session.key;
@@ -22,7 +22,7 @@ export default function AgentsScreen() {
     const c = useThemeColors();
     const board = useAgentsBoard();
     const live = useLiveChannel("agents");
-    const now = useMinuteClock();
+    const now = useMinuteClock(useIsFocused());
     const open = useCallback((key: string) => {
         router.push({ pathname: "/agent-session", params: { key } });
     }, []);
