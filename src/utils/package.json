@@ -198,6 +198,11 @@
             "types": "./env.client.ts",
             "default": "./env.client.ts"
         },
+        "./eval-engine": {
+            "bun": "./eval-engine/index.ts",
+            "types": "./eval-engine/index.ts",
+            "default": "./eval-engine/index.ts"
+        },
         "./format": {
             "bun": "./format.ts",
             "types": "./format.ts",
@@ -378,6 +383,11 @@
             "types": "./metrics/index.ts",
             "default": "./metrics/index.ts"
         },
+        "./music": {
+            "bun": "./music/index.ts",
+            "types": "./music/index.ts",
+            "default": "./music/index.ts"
+        },
         "./network": {
             "bun": "./network.ts",
             "types": "./network.ts",
@@ -548,6 +558,11 @@
             "bun": "./transclude/index.ts",
             "types": "./transclude/index.ts",
             "default": "./transclude/index.ts"
+        },
+        "./transclude/redact": {
+            "bun": "./transclude/redact.ts",
+            "types": "./transclude/redact.ts",
+            "default": "./transclude/redact.ts"
         },
         "./ts/ast": {
             "bun": "./ts/ast/index.ts",

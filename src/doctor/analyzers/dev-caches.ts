@@ -3,6 +3,7 @@ import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
+import { readCompressionHint } from "@app/doctor/lib/compression-hint";
 import { devRoots } from "@app/doctor/lib/dev-roots";
 import {
     listGlobalPackages,
@@ -156,6 +157,19 @@ export class DevCachesAnalyzer extends Analyzer {
 
         this.emitStage(ctx, "brew cache");
         yield* this.scanBrewCache();
+
+        if (!(await (this.options.gate ?? readScanGate)()).gated) {
+            this.emitStage(ctx, "compression estimate");
+            try {
+                const hint = await readCompressionHint();
+
+                if (hint) {
+                    yield hint;
+                }
+            } catch (error) {
+                logger.debug({ error }, "Compression hint unavailable");
+            }
+        }
     }
 
     private emitStage(ctx: AnalyzerContext, currentItem: string): void {

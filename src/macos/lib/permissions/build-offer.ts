@@ -270,6 +270,7 @@ export function createRealBuildOfferDeps(): BuildOfferDeps {
             const answer = await confirm({
                 message: "Build and install GenesisTools.app now?",
                 initialValue: true,
+                cancel: "back",
             });
             return answer === true;
         },

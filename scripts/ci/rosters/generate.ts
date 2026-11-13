@@ -11,6 +11,9 @@
  * A roster only shrinks. A file that gained a match, or a new file with one, is printed and NOT written: fix the code,
  * or add `// lint-rules-ignore: <why>` on the line. Only a roster the manifest does not have yet (a new definition)
  * is seeded with what the tree holds today.
+ *
+ * Exit 2, with the reason and nothing written, when an input cannot be read: the tracked-file list, or a `--base` ref
+ * that is unknown or not fetched. A base commit from before the manifest existed is no error.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { findInFiles, type Lang, type SgNode } from "@ast-grep/napi";
@@ -191,6 +194,29 @@ function serialize(rosters: Rosters): string {
     return `${SafeJSON.stringify(sorted, null, 4)}\n`;
 }
 
+/**
+ * The manifest at `base`, or null when that commit predates it: a manifest that did not exist cannot have been edited
+ * up. An unknown or unfetched ref, or any other git failure, throws, so a baseline check never passes unread.
+ */
+export function baseRosters(base: string, { cwd = process.cwd() }: { cwd?: string } = {}): Rosters | null {
+    const git = (args: string[], what: string): string => {
+        const run = Bun.spawnSync(["git", ...args], { cwd });
+
+        if (run.exitCode !== 0) {
+            throw new Error(`rosters: cannot ${what} (git exited ${run.exitCode}): ${run.stderr.toString().trim()}`);
+        }
+
+        return run.stdout.toString();
+    };
+    const commit = git(["rev-parse", "--verify", `${base}^{commit}`], `read --base ${base}`).trim();
+
+    if (git(["ls-tree", "--name-only", commit, "--", ROSTERS_FILE], `list ${ROSTERS_FILE} at ${base}`).trim() === "") {
+        return null;
+    }
+
+    return parseRosters(git(["show", `${commit}:${ROSTERS_FILE}`], `read ${ROSTERS_FILE} at ${base}`));
+}
+
 function argValue(flag: string): string | undefined {
     const index = process.argv.indexOf(flag);
     return index >= 0 ? process.argv[index + 1] : undefined;
@@ -210,7 +236,21 @@ if (import.meta.main) {
         process.exit(2);
     }
 
-    const files = await targetFiles();
+    // A scan that cannot read its input stops with the reason and writes nothing: an empty file list would drop every
+    // count, and an unread base would pass a manifest edited up.
+    const abort = (error: unknown): never => {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(2);
+    };
+    let baseline: Rosters | null = null;
+
+    try {
+        baseline = base ? baseRosters(base) : null;
+    } catch (error) {
+        abort(error);
+    }
+
+    const files = await targetFiles().catch(abort);
     const current = readRosters();
     const found: Record<string, Record<string, number>> = {};
 
@@ -256,14 +296,8 @@ if (import.meta.main) {
 
     const problems = [...plan.grown.map((line) => `grew: ${line}`)];
 
-    if (base) {
-        const previous = Bun.spawnSync(["git", "show", `${base}:${ROSTERS_FILE}`]);
-
-        if (previous.exitCode === 0) {
-            problems.push(
-                ...rosterGrowth(parseRosters(previous.stdout.toString()), current).map((l) => `edited up: ${l}`)
-            );
-        }
+    if (baseline) {
+        problems.push(...rosterGrowth(baseline, current).map((l) => `edited up: ${l}`));
     }
 
     const changed = serialize(next) !== serialize(current);

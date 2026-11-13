@@ -162,14 +162,21 @@ newest N unique Bash commands from the Claude transcripts, default 2000, and cou
 |---|---|
 | `hooks diff show <call>` | Print the full diff a cut message linked, by tool call id or a prefix of it. |
 | `hooks diff log` | What the diff hook decided per Bash call. |
+| `hooks diff audit` | Decides every logged file again by today's rules: printed files with no proof, declined files with proof. |
 
 `diff log` flags: `--session <id prefix>`, `--since <duration>` (24h), `--decision <list>` (`emitted`, `noted`,
 `failed`, `silent`, `skip` or `all`; default `emitted,noted,failed`), `-n, --lines <count>` (50), `--extended`
 (join each call with its Claude transcript: the command, what the message showed, and Claude Code's own diff),
 `--full-command` (each command whole in a fence; implies `--extended`) and `--json`.
 
+`diff audit` flags: `--since <duration>` (24h), `--session <id prefix>`, `-n, --lines <count>` (40 changed verdicts,
+`0` for the totals only) and `--json`. It reads every session's calls of the window (another session's calls are what
+makes a root shared), the transcripts for the commands, and every session's Edit and Write rows of the change log.
+It cannot rebuild a command that was still running in another session, so it is the more generous side.
+
 ```bash
 tools agents hooks diff log --extended --since 6h
+tools agents hooks diff audit --since 2d
 tools agents hooks diff show toolu_01abc
 ```
 
@@ -615,6 +622,25 @@ links its full diff.
   could not have written) is never diffed. `diff.othersSummary` `line` (default) names such files in one short line;
   `hidden` drops them. With `diff.dedupeAcrossSessions` (on), one file change prints at most once across every session
   on the machine.
+- A file is this call's only with proof, and the decision log keeps the rule for every printed file (`attributed`) and
+  every declined one (`declined`). The order, strongest first (`src/agents/lib/hooks/diff/attribution.ts`):
+
+  | Rule | Whose | Proof |
+  |---|---|---|
+  | `read-only` | not ours | The command cannot write. |
+  | `named` | ours | The command's text names the file. |
+  | `other-named` | not ours | Another call named the file while this one ran. |
+  | `other-wrote` | not ours | Another session's Edit or Write of the file falls inside this call's window. |
+  | `named-folder` | ours | The command names a folder inside the root that holds the file. |
+  | `scripted` | ours | A script the command names spells the file's path. |
+  | `foreign-owned` | not ours | Another session wrote the file in the hour before, and this session has no later proof. |
+  | `own-file` | ours | This session wrote the file before (any age), or read or named that exact file. |
+  | `own-root` | ours | The root is this session's alone: its path holds the session id, or no other session worked in it for an hour. |
+  | `unproven` | not shown | Nothing above. A second line names the files: "changed while the command ran, with no proof they are this session's". |
+
+  So a build that writes files it never names shows its diff in a worktree of the session, and only a line in a
+  checkout that other sessions work in. Only Claude sessions write the change log today: a Codex or Grok session's
+  own edits are seen through its Bash calls in the root (rule `own-root`), not through `other-wrote`.
 - A rebase that stopped, a cherry-pick, a merge or a `stash pop` brought content the command did not write: one line
   names how many files git changed. A commit made after it still renders.
 - A file moved without a change (`git mv`) is one "moved unchanged" line, not a Deleted and an Added block.

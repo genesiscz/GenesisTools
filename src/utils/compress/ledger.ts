@@ -47,6 +47,12 @@ export interface LedgerRecord {
     endedAt: string;
     host: string;
     format: string;
+    /** Transparent decmpfs records name the actual kernel codec and writer. */
+    algorithm?: string;
+    writer?: string;
+    /** Actual private bytes observed at old-inode retirement, and conservative net saving. */
+    releasedBytes?: number;
+    savedBytes?: number;
     bunVersion: string;
     zstdVersion: string;
     error?: string;
@@ -54,6 +60,7 @@ export interface LedgerRecord {
 
 export type LedgerEntry = Omit<LedgerRecord, "id" | "host" | "format" | "bunVersion" | "zstdVersion" | "dictionary"> & {
     dictionary?: string | null;
+    format?: string;
 };
 
 export function ledgerPath(): string {

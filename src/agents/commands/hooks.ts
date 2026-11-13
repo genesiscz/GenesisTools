@@ -30,8 +30,10 @@ import {
     loadHooksConfig,
 } from "../lib/hooks/config";
 import { type CustomRules, loadRuleSet } from "../lib/hooks/custom-rules";
+import { FOREIGN_WINDOW_MS } from "../lib/hooks/diff/attribution";
 import { findFullDiff, fullDiffDir } from "../lib/hooks/diff/full";
-import { decisionCounts, extendFromTranscripts, formatEntry, readDiffLog } from "../lib/hooks/diff-log";
+import { auditDiffLog, changeRowsSince, fileToolWrites, summarizeAudit } from "../lib/hooks/diff-audit";
+import { decisionCounts, extendFromTranscripts, formatEntry, RULE_MEANING, readDiffLog } from "../lib/hooks/diff-log";
 import { collectStaleCaptures, parseHorizon } from "../lib/hooks/gc";
 import { lastSeenPerHarness } from "../lib/hooks/harnesses";
 import { hooksFileListsOldDefaults } from "../lib/hooks/hooks-file";
@@ -705,6 +707,85 @@ export function registerHooksCommands(program: Command): void {
                 );
             }
         );
+
+    diffCommand
+        .command("audit")
+        .description(
+            "Decide every logged file again by today's attribution rules, from the transcripts and every session's Edit and Write log: which printed files had no proof, which declined files had"
+        )
+        .option("--since <duration>", "How far back, e.g. 6h, 2d", "24h")
+        .option("--session <id>", "Only this session's calls (a prefix is enough)")
+        .option("-n, --lines <count>", "At most this many changed verdicts, the newest", "40")
+        .option("--json", "The summary and every row as JSON")
+        .action((options: { since?: string; session?: string; lines?: string; json?: boolean }) => {
+            let horizonMs: number;
+
+            try {
+                horizonMs = parseHorizon(options.since ?? "24h");
+            } catch (err) {
+                logger.debug({ err, since: options.since }, "Rejected a diff audit horizon");
+                ui.err(`--since takes a duration like 6h or 2d, not ${options.since}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const count = Number(options.lines ?? "40");
+
+            if (!Number.isInteger(count) || count < 0) {
+                ui.err(`--lines must be a whole number, got ${options.lines}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const since = Date.now() - horizonMs;
+            // Every session's calls: another session's pre rows are what makes a root shared.
+            const entries = readDiffLog({ logPath: loadHooksConfig().logPath, since });
+
+            extendFromTranscripts(entries.filter((entry) => entry.files.length > 0 || entry.others.length > 0));
+
+            const rows = auditDiffLog({
+                entries,
+                writes: fileToolWrites(changeRowsSince(since - FOREIGN_WINDOW_MS)),
+            }).filter((row) => !options.session || row.session.startsWith(options.session));
+            const summary = summarizeAudit(rows);
+
+            if (options.json) {
+                out.result({ summary, rows });
+                return;
+            }
+
+            const changed = rows.filter((row) => (row.side === "printed") !== row.ours);
+
+            for (const row of count === 0 ? [] : changed.slice(-count)) {
+                const verb = row.side === "printed" ? pc.red("printed, no proof") : pc.yellow("declined, has proof");
+                const other = row.foreign ? `, ${row.foreign.session.slice(0, 8)} wrote it in the window` : "";
+
+                out.println(
+                    `${pc.dim(`[${row.at.slice(0, 16).replace("T", " ")}Z]`)} ${pc.bold(row.session.slice(0, 8))} ${verb}: ${row.file}`
+                );
+                out.println(
+                    `    ${row.logged} -> ${row.replayed} (${RULE_MEANING[row.replayed] ?? row.replayed}${other})`
+                );
+
+                if (row.command) {
+                    out.println(pc.cyan(`    ${row.command.trim().split("\n")[0]?.slice(0, 140) ?? ""}`));
+                }
+            }
+
+            out.println("");
+            out.println(pc.bold(`Printed files: ${summary.printed}, of which ${summary.dropped} have no proof`));
+            out.println(
+                pc.bold(
+                    `Declined files with a logged rule: ${summary.declined}, of which ${summary.recovered} have proof`
+                )
+            );
+
+            for (const move of summary.moves) {
+                out.println(
+                    `  ${move.side.padEnd(8)} ${String(move.files).padStart(5)}  ${move.logged} -> ${move.replayed}`
+                );
+            }
+        });
 
     hooks
         .command("gc")

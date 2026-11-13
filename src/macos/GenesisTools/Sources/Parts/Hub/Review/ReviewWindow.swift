@@ -579,6 +579,8 @@ final class ReviewModel: ObservableObject {
     @Published private(set) var focusedCard: String?
     /// Bumped by s and f: the PR bar opens Submit review / Fix threads (each still asks first).
     @Published var submitRequests = 0
+    /// Intentional file, thread or scope navigation; background reloads never request a tab change.
+    @Published private(set) var navigationRequests = 0
     @Published var fixRequests = 0
     /// A `--snapshot --fix-form` run shows the Fix form under the PR bar instead of in a popover.
     @Published var showsFixFormInline = false
@@ -1502,9 +1504,10 @@ final class ReviewModel: ObservableObject {
 
     /// Opens a file now or once the next load has it: an absolute path inside any root, or a path
     /// relative to this repository.
-    func reveal(path: String) {
+    func reveal(path: String, requestingNavigation: Bool = true) {
+        if requestingNavigation { navigationRequests += 1 }
         if let file = file(atPath: path) {
-            select(file.id)
+            select(file.id, requestingNavigation: false)
         } else {
             pendingRevealPath = path
             notice = files.isEmpty ? nil : Self.noChangeNotice(path)
@@ -1631,14 +1634,14 @@ final class ReviewModel: ObservableObject {
     }
 
     /// Opens the draft's file and marks its card: the drafts list, the banner, a fresh proposal.
-    func revealDraft(_ id: String) {
+    func revealDraft(_ id: String, requestingNavigation: Bool = true) {
         guard let draft = proposal?.drafts.first(where: { $0.id == id }) else { return }
         // An off-diff draft only says so: a pending reveal would open its file on some later load unasked.
         if !files.isEmpty, file(atPath: draft.path) == nil {
             notice = Self.noChangeNotice(draft.path)
             return
         }
-        reveal(path: draft.path)
+        reveal(path: draft.path, requestingNavigation: requestingNavigation)
         // A draft whose file has no change in this scope never gets a card; a pending mark for it would
         // wait for ever and block the first-draft jump.
         guard draftCards.contains(where: { $0.id == ReviewCardID.proposalDraft(id).rawValue }) else { return }
@@ -1685,7 +1688,7 @@ final class ReviewModel: ObservableObject {
               let first = draftCards.first(where: { $0.state == "proposed" }) else { return }
         revealedProposal = proposal.url.path
         HubPerf.log("review.proposal opens at its first open draft \(first.id)")
-        if let id = ReviewCardID(first.id).draftID { revealDraft(id) }
+        if let id = ReviewCardID(first.id).draftID { revealDraft(id, requestingNavigation: false) }
     }
 
     /// The pending card, once the page has drawn the diff and holds that card; nil until then.
@@ -1694,7 +1697,8 @@ final class ReviewModel: ObservableObject {
         return pending
     }
 
-    func select(_ id: String) {
+    func select(_ id: String, requestingNavigation: Bool = true) {
+        if requestingNavigation { navigationRequests += 1 }
         selectedID = id
         if showsOneFile {
             pushToRenderer()
@@ -1861,6 +1865,7 @@ final class ReviewModel: ObservableObject {
     }
 
     func setScope(_ next: DiffScope) {
+        navigationRequests += 1
         guard next != scope else { return }
         scope = next
         // A PR push on screen (Reload, a version, a compare) moves the commits list and the agent note with it.
@@ -2482,6 +2487,7 @@ final class ReviewModel: ObservableObject {
                 : "No PR thread sits on this diff. Threads show on their lines in the Branch scope or the PR's range."
             return
         }
+        navigationRequests += 1
         focusedCard = id
         renderer.focusThread(cardID: id, reply: false)
     }
@@ -3663,6 +3669,22 @@ struct ScopeMenu: View {
     }
 }
 
+/// The same proposal and newer-push feedback in either redesign diff.
+struct ReviewVariantStatus: View {
+    @ObservedObject var model: ReviewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let proposal = model.proposal { ProposalBanner(model: model, proposal: proposal) }
+            if let news = model.pushNews, model.dismissedNewsHead != news.newest.headSha {
+                PushNewsBanner(model: model, news: news)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+            }
+        }
+    }
+}
+
 /// The agent's overall verdict above the diff, with a tally of what Martin decided so far.
 /// Chip, then three lines: who reviewed what (one line), the counts (one line, or two short ones in a
 /// narrow pane), the summary. The counts used to share the title's row and broke "!1234" in two.
@@ -4304,7 +4326,7 @@ private struct FileRow: View, Equatable {
 /// ran after the Worktrees pane had attached it, so the view left with the closed pane and the Worktrees diff
 /// stayed blank (2026-10-29). So a container in a window claims the view when it arrives there, and an update
 /// takes it only from a container that is no longer in a window.
-private struct RendererHost: NSViewRepresentable {
+struct RendererHost: NSViewRepresentable {
     let renderer: DiffRenderer
     /// The page's scroll bar follows Settings → Hub → Appearance → Scroll bars.
     @AppStorage(GenScrollBarStyle.key) private var scrollBars = GenScrollBarStyle.genesis.rawValue
@@ -4326,7 +4348,7 @@ private struct RendererHost: NSViewRepresentable {
     }
 }
 
-private final class RendererContainer: NSView {
+final class RendererContainer: NSView {
     var renderer: DiffRenderer?
 
     override func viewDidMoveToWindow() {

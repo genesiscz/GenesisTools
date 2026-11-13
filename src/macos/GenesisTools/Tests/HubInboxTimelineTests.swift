@@ -37,6 +37,38 @@ final class HubInboxTimelineTests: XCTestCase {
     }
     """
 
+    @MainActor
+    func testCompactInboxRailKeysFollowFiltersAndPreserveTheOtherFilter() throws {
+        let sessions = try JSONDecoder().decode(InboxEnvelope.self, from: Data(inboxJSON.utf8)).sessions
+        let entries = sessions.flatMap { session in
+            session.items.map { ListsSketchB.Entry(session: session, item: $0, bucket: .needsAnswer) }
+        }
+        let rows = ListsSketchB.InboxTriage.keyRows(entries)
+        XCTAssertEqual(Array(rows.prefix(6)), ListsSketchB.Bucket.allCases.map { .bucket($0) } + [.bucket(nil), .project(nil)])
+        XCTAssertEqual(Set(rows.map(\.id)).count, rows.count)
+        XCTAssertEqual(Set(rows.dropFirst(6).map(\.id)), Set([ListsSketchB.RailRow.project("app").id, ListsSketchB.RailRow.project("shop").id]))
+        let pick = ListsSketchB.InboxPick()
+        pick.select(.project("shop"))
+        pick.open = "ask_1"
+        pick.select(.bucket(.staged))
+        XCTAssertEqual(pick.bucket, .staged)
+        XCTAssertEqual(pick.project, "shop", "moving among triage rows must preserve the project filter")
+        XCTAssertNil(pick.open)
+        XCTAssertEqual(pick.railSelection, ListsSketchB.RailRow.bucket(.staged).id)
+        pick.select(.project(nil))
+        XCTAssertEqual(pick.bucket, .staged, "moving among project rows must preserve the triage filter")
+        XCTAssertNil(pick.project)
+    }
+
+    func testVariantInboxSearchKeepsSessionAndCardFieldKeysDistinct() throws {
+        let session = try JSONDecoder().decode(InboxEnvelope.self, from: Data(inboxJSON.utf8)).sessions[0]
+        let fields = InboxFindHost.cardFields(session: session, item: session.items[0])
+        XCTAssertEqual(Set(fields.map(\.key)).count, fields.count)
+        XCTAssertEqual(fields.first { $0.key == "title" }?.text, "Keep the cache?")
+        XCTAssertEqual(fields.first { $0.key == "session.title" }?.text, "parser work")
+        XCTAssertTrue(fields.contains { $0.key == "session.project" && $0.text == "app" })
+    }
+
     func testInboxDecodesDecisionsAndForms() throws {
         let envelope = try JSONDecoder().decode(InboxEnvelope.self, from: Data(inboxJSON.utf8))
         XCTAssertEqual(envelope.sessions.count, 2)

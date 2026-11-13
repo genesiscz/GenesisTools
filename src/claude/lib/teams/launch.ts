@@ -122,12 +122,16 @@ async function resolveAccount(preferred?: string): Promise<string> {
     return withToken[0]!.name;
 }
 
-/** Clear any half-typed input, type the command literally, press Enter; each call is bounded. */
-async function tmuxSendCommand(target: string, command: string): Promise<void> {
+/**
+ * Clear any half-typed input, type the command literally, press Enter; each call is bounded. A clear that failed or
+ * timed out stops the sequence: the pane may still hold old input or a foreground program, and a timed-out C-c may
+ * land after the command, so typing on would append to that input or reach that program.
+ */
+export async function tmuxSendCommand(target: string, command: string): Promise<void> {
     const cleared = await tmuxSendKeys(target, ["C-c"]);
 
     if (!cleared.ok) {
-        logger.debug({ target, detail: cleared.detail }, "[teams] could not clear the pane before the launch command");
+        throw new Error(`could not clear the pane before the launch command: ${cleared.detail}`);
     }
 
     const typed = await tmuxSendKeys(target, ["-l", "--", command]);

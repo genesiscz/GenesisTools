@@ -122,6 +122,8 @@ export function schemaSqlText(): string {
 }
 
 // An additive queue-only field: the v1 read contract and GenesisKit's schema fixture stay compatible.
+const COMPRESSED_COLUMNS = ["compressed_files", "compressed_logical_bytes", "compressed_allocated_bytes"] as const;
+
 export const INDEX_MIGRATIONS: Migration[] = [
     {
         id: "2026-10-du-index-v1",
@@ -140,6 +142,15 @@ export const INDEX_MIGRATIONS: Migration[] = [
         description: "Preserve recursive intent for deferred directory updates",
         apply(db: Database) {
             db.run("ALTER TABLE dirty_queue ADD COLUMN recursive INTEGER NOT NULL DEFAULT 0");
+        },
+    },
+    {
+        id: "2026-11-du-index-compressed",
+        description: "Store transparent compression totals per directory; old scans remain unknown",
+        apply(db: Database) {
+            for (const column of COMPRESSED_COLUMNS) {
+                db.run(`ALTER TABLE dirs ADD COLUMN ${column} INTEGER`);
+            }
         },
     },
 ];

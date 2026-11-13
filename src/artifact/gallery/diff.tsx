@@ -40,6 +40,49 @@ diff --git a/README.md b/README.md
  Logs go to stdout.
 `;
 
+const RECORD_BEFORE = `{
+  "kind": "article",
+  "id": "72d986bc-7cc4-4ac2-8507-f64b3fc91987",
+  "slug": "release-notes",
+  "live": {
+    "version": 7,
+    "active": true,
+    "publishedAt": "2026-01-03T09:15:00+01:00",
+    "release": {
+      "number": 12,
+      "name": "January",
+      "comment": "Updated notes",
+      "publishedBy": "editor"
+    },
+    "data": { "text": "A sentence with spaces and punctuation, followed by another sentence for wrapping." }
+  },
+  "draft": {
+    "version": 8,
+    "active": true,
+    "revision": 3,
+    "release": {
+      "id": "f19a5d9d-2815-48ed-b590-ff119001763c",
+      "number": 13,
+      "name": "February"
+    },
+    "updatedAt": "2026-01-10T14:02:00+01:00",
+    "updatedBy": "editor",
+    "data": { "text": "Draft release notes" }
+  }
+}`;
+
+const RECORD_AFTER = `{
+  "kind": "article",
+  "id": "72d986bc-7cc4-4ac2-8507-f64b3fc91987",
+  "slug": "release-notes",
+  "data": { "text": "A sentence with spaces and punctuation, followed by another sentence for wrapping." },
+  "meta": {
+    "version": 7,
+    "publishedAt": "2026-01-03T09:15:00+01:00",
+    "preview": false
+  }
+}`;
+
 const CHANGES = diffFields(
     { title: "Checkout retry fix", owner: "payments", estimate: 3, due: "2026-11-02", updatedAt: "10:00" },
     { title: "Checkout retry cap", owner: "payments", estimate: 5, labels: "reliability", updatedAt: "11:00" },
@@ -58,6 +101,24 @@ export default function DiffPage() {
             </Demo>
             <Demo title="Before and after, split" note="side by side">
                 <DiffView before={BEFORE} after={AFTER} mode="split" title="retry.ts" />
+            </Demo>
+            <Demo title="JSON values" note="object keys sort recursively; array order stays significant">
+                <DiffView
+                    beforeValue={{ enabled: true, limits: { burst: 20, daily: 400 } }}
+                    afterValue={{ limits: { daily: 600, burst: 20 }, enabled: true }}
+                    mode="split"
+                    wrap
+                />
+            </Demo>
+            <Demo title="A compact read record" note="30 lines become 11; each pane keeps its own context line numbers">
+                <DiffView
+                    before={RECORD_BEFORE}
+                    after={RECORD_AFTER}
+                    labels={["editor record", "published record"]}
+                    mode="split"
+                    wrap
+                    context={30}
+                />
             </Demo>
             <Demo title="A unified patch with two files" note="git diff output">
                 <DiffView patch={PATCH} />

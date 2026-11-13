@@ -13,6 +13,7 @@ import { versionFastPathLines } from "@app/ai/lib/embed/probe";
 import { embedAccountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { slug } from "@genesiscz/utils/eval-engine/plan";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
@@ -33,15 +34,11 @@ export interface LauncherSpec {
     account: string | null;
 }
 
-/** The file name of an account inside a launcher name: unsafe characters become `-`. */
-export function accountFileSlug(account: string): string {
-    return account.replace(/[^A-Za-z0-9._-]+/g, "-");
-}
-
+/** An account stands in a launcher name as a file-name slug: unsafe characters become `-`. */
 export function launcherFileName(spec: LauncherSpec): string {
     const base = `${spec.alias}-tools`;
 
-    return spec.account === null ? base : `${base}@${accountFileSlug(spec.account)}`;
+    return spec.account === null ? base : `${base}@${slug(spec.account)}`;
 }
 
 export function launcherPath(binDir: string, spec: LauncherSpec): string {

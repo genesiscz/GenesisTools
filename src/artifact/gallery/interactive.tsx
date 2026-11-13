@@ -46,7 +46,10 @@ export default function InteractivePage() {
             summary={meta.summary}
             keyboard="Simulator controls are buttons: Tab reaches play, step back, step forward and each step chip; Enter or Space presses them. ParametricSimulator's sliders move with the arrow keys. SegmentedControl is a radio group: Tab focuses it, Left and Right change the choice."
         >
-            <Demo title="SegmentedControl" note="controlled, with a label">
+            <Demo
+                title="SegmentedControl"
+                note="controlled; an unavailable option is struck through with a reason tooltip"
+            >
                 <SegmentedControl
                     label="Range"
                     value={range}
@@ -55,6 +58,7 @@ export default function InteractivePage() {
                         { value: "day", label: "Day" },
                         { value: "week", label: "Week" },
                         { value: "month", label: "Month" },
+                        { value: "year", label: "Year", disabled: "History is limited to the last month" },
                     ]}
                 />
                 <p className="mt-2 text-sm text-dim">Showing the last {range}.</p>

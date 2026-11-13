@@ -14,6 +14,9 @@ const prof = profiler.scope("du.engine");
 
 /** One stored directory (`t:"d"`), or the region root's walked totals (`t:"r"`). */
 export interface WalkNode {
+    cf?: number;
+    cl?: number;
+    ca?: number;
     /** Node id in this walk; a parent's id is below its children's. */
     i: number;
     /** Parent node id, -1 for the walk root. */

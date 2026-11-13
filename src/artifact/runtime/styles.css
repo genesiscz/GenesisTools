@@ -46,11 +46,11 @@
         0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
         0 10px 30px -12px color-mix(in srgb, var(--accent) 35%, transparent);
     /* Named categorical hues (HUE in the kit) for pages that colour by category, light and dark pairs. */
-    --hue-sky: light-dark(#0369a1, #38bdf8);
-    --hue-teal: light-dark(#0f766e, #2dd4bf);
-    --hue-lime: light-dark(#4d7c0f, #a3e635);
-    --hue-amber: light-dark(#a15c07, #f5b942);
-    --hue-rose: light-dark(#be123c, #fb7185);
+    --hue-sky: light-dark(#075985, #38bdf8);
+    --hue-teal: light-dark(#0b655e, #2dd4bf);
+    --hue-lime: light-dark(#3f650c, #a3e635);
+    --hue-amber: light-dark(#864800, #f5b942);
+    --hue-rose: light-dark(#a90e34, #fb7185);
     --hue-slate: light-dark(#475569, #9aa7bd);
     --hue-violet: light-dark(#6d28d9, #a78bfa);
     /* The hover card stays dark on dark in every theme: text 15:1, dim 7:1 on the card. */
@@ -89,4 +89,8 @@
     --font-mono: var(--font-code);
     --font-display: var(--font-heading);
     --radius-card: var(--radius);
+}
+
+.akit-sticky-controls {
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
 }
