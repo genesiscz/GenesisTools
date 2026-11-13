@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { parseDockerSystemDfJson, parseSimctlJson } from "@app/doctor/analyzers/dev-caches";
 import { compressionHintFinding, readCompressionHint } from "@app/doctor/lib/compression-hint";
 import { toJsonFinding } from "@app/doctor/ui/json";
+import { afsctoolWriter } from "@genesiscz/utils/compress/transparent";
 
 const FIXTURES = join(import.meta.dir, "fixtures");
 const scratchRoots: string[] = [];
@@ -88,6 +89,7 @@ it.skipIf(process.platform !== "darwin")(
         let flagged = 0;
         let sampled = 0;
         let timeoutMs = 0;
+        const algorithms = new Set<string>();
         const config = async () => ({
             defaults: { olderThan: "3d", minKb: 0, exts: ["txt"] },
             harnesses: { fixture: { roots: [root] } },
@@ -103,14 +105,32 @@ it.skipIf(process.platform !== "darwin")(
                 return 0;
             },
             privateSize: () => 4096,
-            ratio: () => {
+            ratio: (_path, _size, algorithm) => {
                 sampled++;
+                algorithms.add(algorithm ?? "default");
                 return 0.1;
             },
+            writer: () => afsctoolWriter("zlib", "/fixture/afsctool"),
             now: () => Date.now() + 4 * 86_400_000,
         });
         expect(flagged).toBe(513);
         expect(sampled).toBe(32);
+        // The estimate samples the codec of the writer the recommended command uses, and plans to its size limit.
+        expect([...algorithms]).toEqual(["zlib"]);
+        sampled = 0;
+        await readCompressionHint({
+            config,
+            opened: async () => new Set(),
+            flags: () => 0,
+            privateSize: () => 4096,
+            ratio: () => {
+                sampled++;
+                return 0.1;
+            },
+            writer: () => ({ ...afsctoolWriter("zlib", "/fixture/afsctool"), maxBytes: 1 }),
+            now: () => Date.now() + 4 * 86_400_000,
+        });
+        expect(sampled).toBe(0);
         expect(timeoutMs).toBe(1000);
         expect(readFileSync(join(root, "0.txt"), "utf8")).toBe("x".repeat(4096));
         const uncertain = await readCompressionHint({

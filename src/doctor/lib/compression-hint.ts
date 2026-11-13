@@ -3,7 +3,14 @@ import { join, resolve } from "node:path";
 import { formatBytes } from "@app/doctor/lib/size";
 import type { Finding } from "@app/doctor/lib/types";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { type NativeCompressionEntry, openPaths, plan, sampleRatio } from "@genesiscz/utils/compress/transparent";
+import {
+    availableTransparentWriter,
+    type NativeCompressionEntry,
+    openPaths,
+    plan,
+    sampleRatio,
+    type TransparentWriter,
+} from "@genesiscz/utils/compress/transparent";
 import { loadTransparentConfig } from "@genesiscz/utils/compress/transparent-config";
 import { fileFlags, SF_DATALESS, underCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import { logger } from "@genesiscz/utils/logger";
@@ -40,6 +47,8 @@ interface CompressionHintReads {
     flags: typeof fileFlags;
     privateSize: typeof getPrivateSize;
     ratio: typeof sampleRatio;
+    /** The writer the recommended command would use: its codec is sampled and its size limit bounds the plan. */
+    writer: () => TransparentWriter;
     now: () => number;
 }
 
@@ -55,6 +64,7 @@ export async function readCompressionHint(reads: Partial<CompressionHintReads> =
         flags: readFlags,
         privateSize,
         ratio,
+        writer: resolveWriter,
         now,
     } = {
         config: loadTransparentConfig,
@@ -62,9 +72,11 @@ export async function readCompressionHint(reads: Partial<CompressionHintReads> =
         flags: fileFlags,
         privateSize: getPrivateSize,
         ratio: sampleRatio,
+        writer: () => availableTransparentWriter(),
         now: Date.now,
         ...reads,
     };
+    const writer = resolveWriter();
     const deadline = now() + BUDGET_MS;
     const config = await readConfig();
     const age = /^(\d+)([dhm])$/.exec(config.defaults.olderThan);
@@ -153,6 +165,7 @@ export async function readCompressionHint(reads: Partial<CompressionHintReads> =
             exts: new Set(config.defaults.exts),
             open,
             now: now(),
+            maxBytes: writer.maxBytes,
         });
         let savingBytes = 0;
 
@@ -166,7 +179,8 @@ export async function readCompressionHint(reads: Partial<CompressionHintReads> =
             }
 
             sampled++;
-            const after = Math.ceil((candidate.size * ratio(candidate.path, candidate.size)) / 4096) * 4096;
+            const after =
+                Math.ceil((candidate.size * ratio(candidate.path, candidate.size, writer.algorithm)) / 4096) * 4096;
 
             if (Number.isFinite(after) && after <= candidate.alloc * 0.7) {
                 savingBytes += candidate.alloc - after;
