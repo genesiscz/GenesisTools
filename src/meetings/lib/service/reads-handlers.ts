@@ -11,7 +11,9 @@ import {
     unknownConfigPath,
     unsetConfigValue,
 } from "../config-edit";
+import { localSpeechDuring } from "../local-speech";
 import { OpenedMeeting } from "../opened-meeting";
+import { compactEvidence, rawMeeting } from "../raw";
 import { screenTimeline } from "../screen-timeline";
 import { configShowRead, overviewRead, rowsRead, speakerStatsRead } from "../window-reads";
 import type { MeetingsParsedParams, MeetingsResult } from "./api";
@@ -47,13 +49,43 @@ export async function readSpeakers(
 ): Promise<MeetingsResult<"meeting.speakers">> {
     const record = recordOf(store, params.meeting);
     const linked = deps.linkedSource?.(record);
-    return speakerStatsRead({
+    const stats = await speakerStatsRead({
         store,
         record,
         ...(linked ? { linked } : {}),
         gapSec: params.gapSec ?? DEFAULT_SPAN_GAP_SEC,
         ...(params.attendance ? { attendance: params.attendance } : {}),
     });
+    if (!params.evidence) {
+        return stats;
+    }
+    const opened = OpenedMeeting.of(store, record, linked);
+    const meeting = await opened.meeting();
+    const energy = await opened.energy();
+    const raw = rawMeeting({
+        record,
+        meeting,
+        evidence: await opened.evidence(),
+        energyMicShare: energy.share,
+        callSilent: await opened.silentCallSpans(),
+        presence: await opened.presence(params.attendance),
+        points: [],
+        localSpeech: localSpeechDuring({ start: meeting.start, end: meeting.end }),
+    });
+    const summary = [
+        ...(raw.meeting.indicatorGaps ?? []).map(
+            (gap) => `Indicator gap ${gap.fromSec}s to ${gap.toSec}s: ${gap.reason}`
+        ),
+        ...(raw.meeting.labels ?? []).map(
+            (label) =>
+                `${label.label}: first own indicator ${label.firstOwnIndicatorSec ?? "unknown"}s; first join ${label.firstJoinSec ?? "unknown"}s; ${label.lines} earlier lines`
+        ),
+        ...raw.people
+            .filter((person) => person.origin === "indicator")
+            .map((person) => `${person.name}: indicator only`),
+        ...raw.lines.filter((line) => line.localSpeechOutput).map((line) => `${line.fromSec}s: local speech output`),
+    ];
+    return { ...stats, evidence: { summary, lines: compactEvidence(raw) } };
 }
 
 export async function readScreen(

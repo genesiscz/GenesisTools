@@ -125,7 +125,7 @@ async function exportCommand(
 
 async function windowCommand(
     ref: string | undefined,
-    opts: { place?: string; tab?: string; focus?: boolean; build?: boolean }
+    opts: { place?: string; tab?: string; focus?: boolean; build?: boolean; newWindow?: boolean }
 ): Promise<void> {
     try {
         const meeting = ref ? new MeetingStore().resolve(ref)?.id : undefined;
@@ -151,6 +151,7 @@ async function windowCommand(
             ...(meeting ? { meeting } : {}),
             ...(tab ? { tab } : {}),
             focus: opts.focus !== false,
+            newWindow: opts.newWindow,
             build: opts.build !== false,
             onStep: (line) => ui.info(line),
         });
@@ -167,6 +168,7 @@ export function registerViewCommands(program: Command): void {
         .option("--place <place>", "needs, all, or a project's name")
         .option("--tab <tab>", WINDOW_TABS.join(" | "))
         .option("--no-focus", "open behind the front window")
+        .option("--new-window", "open an independent Meetings window instead of retargeting the existing window")
         .option("--no-build", "fail instead of building the app when it lacks the Meetings part")
         .action(windowCommand);
     program

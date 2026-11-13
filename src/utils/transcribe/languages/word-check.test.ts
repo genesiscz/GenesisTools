@@ -62,6 +62,29 @@ describe("word check", () => {
         expect(verdict("proklizuje")).toBe("unknown");
     });
 
+    test("spoken loan endings compose without accepting an unknown or negated root", () => {
+        const localCalls: string[][] = [];
+        const loanCalls: string[][] = [];
+        const tokens = ["widgetovejch", "zawidgetkovej", "florpkovej", "newidgetovejch"];
+        const words = createWordCheck({
+            provider: "test",
+            language: "cs",
+            rules: CZECH,
+            engine: engine([], localCalls),
+            loanEngine: engine(["widget"], loanCalls),
+            counts: new Map(),
+            loanWords: new Set(),
+            words: tokens,
+        });
+
+        expect(words.verdict("widgetovejch")).toMatchObject({ class: "loan", via: "widget" });
+        expect(words.verdict("zawidgetkovej")).toMatchObject({ class: "loan", via: "widget" });
+        expect(words.verdict("florpkovej").class).toBe("unknown");
+        expect(words.verdict("newidgetovejch").class).toBe("unknown");
+        expect(localCalls).toHaveLength(1);
+        expect(loanCalls).toHaveLength(1);
+    });
+
     test("the transcript's words go to the spell checker in one call", () => {
         const calls: string[][] = [];
         const words = createWordCheck({

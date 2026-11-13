@@ -437,6 +437,9 @@ function respellItem(record: MeetingRecord, item: MeetingItem, text: string): De
             }
 
             item.proposed = text;
+            if (item.heardStem) {
+                item.proposedStem = text;
+            }
             delete item.quote;
             delete item.meaning;
             return undefined;
@@ -462,6 +465,7 @@ function respellItem(record: MeetingRecord, item: MeetingItem, text: string): De
                 needs: "listen",
             };
         }
+        case "removal":
         case "label":
             return {
                 id: item.id,

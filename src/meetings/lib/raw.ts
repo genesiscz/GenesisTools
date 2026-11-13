@@ -7,6 +7,7 @@ import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { RawTermEvidence } from "@genesiscz/utils/transcribe/terms";
 import { type IndicatorGap, indicatorFacts, type LabelPrehistory } from "./indicator-facts";
+import { type LocalSpeech, localSpeechLines } from "./local-speech";
 import { rosterPresence } from "./person-stays";
 import { assessIndicator } from "./speaker-indicator";
 
@@ -58,6 +59,7 @@ export interface RawMeeting {
         indicatorIgnored?: "meeting-dominance" | "stretch-stuck";
         indicatorReason?: "meeting-dominance" | "stretch-stuck";
         muted: string[];
+        localSpeechOutput?: true;
         present: string[];
     }>;
     /** The term part: the word check, the vocabulary, every run heard near a term, and the words no layer knows. */
@@ -81,6 +83,7 @@ function presentAt(record: MeetingRecord, presence: Presence[] | undefined, sec:
 }
 
 export function rawMeeting(options: {
+    localSpeech?: LocalSpeech[];
     record: MeetingRecord;
     meeting: SourceMeeting;
     evidence: MeetingEvidence | null;
@@ -108,6 +111,13 @@ export function rawMeeting(options: {
         selfName: selfName ?? evidence?.selfName ?? "",
         roomPeople: record.seats?.room,
     });
+    const local = new Set(
+        localSpeechLines({
+            transcript: meeting.transcript,
+            start: meeting.start,
+            calls: options.localSpeech ?? [],
+        }).map((line) => line.index)
+    );
     const names = [
         ...new Set([
             ...(presence?.map((person) => person.name) ?? []),
@@ -172,6 +182,7 @@ export function rawMeeting(options: {
             const origin = originOf(line.label);
             return {
                 index: line.index,
+                ...(local.has(line.index) ? { localSpeechOutput: true as const } : {}),
                 fromSec: line.startSec,
                 toSec: line.endSec,
                 label: line.label,
@@ -205,7 +216,7 @@ export function compactEvidence(raw: RawMeeting): string {
     const legend = names.map((name) => `${short.get(name)}=${name}`).join("; ");
     const rows = raw.lines.map(
         (line) =>
-            `${line.index}|${formatClock(line.fromSec)}|${short.get(line.label)}|e${line.energyMicShare ?? "?"}|s[${line.speaking.map((name) => short.get(name)).join(",")}]|m[${line.muted.map((name) => short.get(name)).join(",")}]|${line.text.replace(/\r?\n/g, " ")}`
+            `${line.index}|${formatClock(line.fromSec)}|${short.get(line.label)}|mic${line.channel.micShare === null ? "?" : `${Math.round(line.channel.micShare * 100)}%`}|e${line.energyMicShare ?? "?"}|s[${line.speaking.map((name) => short.get(name)).join(",")}]|m[${line.muted.map((name) => short.get(name)).join(",")}]|${[...line.text.replace(/\r?\n/g, " ")].slice(0, 48).join("")}`
     );
     return [`Legend: ${legend}`, ...rows].join("\n");
 }

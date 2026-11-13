@@ -22,6 +22,9 @@ package func runHost() -> Never {
     // "" when there is none, so no check below can trap on an argument-less launch.
     let firstArgument = arguments.first ?? ""
     let wantsWindow = arguments.isEmpty || firstArgument == "--window" || firstArgument.hasPrefix("-psn_")
+    if !wantsWindow && AppParts.partOfFace[firstArgument] == nil && !firstArgument.contains("://") {
+        markBackgroundHelper()
+    }
 
     // GenesisTools --permission-status <kind> | --permission-dialog <kind> | --local-network-rules: the fresh-process grant
     // probe, the permission dialog for faces without a window, and the Local Network answers for the CLI (see

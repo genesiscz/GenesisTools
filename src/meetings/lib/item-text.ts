@@ -15,6 +15,9 @@ function span(fromSec: number, toSec: number): string {
  * the caller.
  */
 export function itemWhat(item: MeetingItem, options: { width?: number } = {}): string {
+    if (item.kind === "removal") {
+        return `${formatClock(item.fromSec)} remove local speech: ${item.heard}`;
+    }
     if (item.kind === "speaker-range") {
         const who = item.speaker ?? `? (${item.candidates?.join(", ") || "unknown"})`;
         return `${item.label} ${span(item.fromSec, item.toSec)} → ${who}`;

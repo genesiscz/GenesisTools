@@ -19,6 +19,7 @@ export interface WindowRequest {
     meeting?: string;
     tab?: WindowTab;
     focus?: boolean;
+    newWindow?: boolean;
     play?: MeetingsParams<"moment.clip">;
 }
 
@@ -36,6 +37,7 @@ export function windowOpenArgs(request: WindowRequest, bundle = genesisAppBundle
         bundle,
         "--args",
         "--meetings",
+        ...(request.newWindow ? ["--new-window"] : []),
         ...place,
         ...(request.meeting ? ["--meeting", request.meeting] : []),
         ...(request.tab ? ["--tab", request.tab] : []),

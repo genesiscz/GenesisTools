@@ -31,6 +31,13 @@ struct SpeakersTab: View {
                 GeometryReader { proxy in
                     let stacked = proxy.size.width < Self.stackWidth
                     List {
+                        if let evidence = stats.evidence {
+                            DisclosureGroup("Evidence facts") {
+                                ForEach(Array(evidence.summary.enumerated()), id: \.offset) { _, text in Text(text).textSelection(.enabled) }
+                                Text(evidence.lines).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                            }
+                            .accessibilityIdentifier("meetings.speakers.evidence")
+                        }
                         lanes(stats, names: renames)
                             .listRowSeparator(.hidden)
                         ForEach(speakers) { speaker in

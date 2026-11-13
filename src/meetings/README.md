@@ -313,8 +313,9 @@ malformed attendance files still fail.
   (0.5 plus half the gap of the two medians, at most 0.9). R18 and the per-line rules leave those lines alone.
 - `join`: a word cut between two lines ("dot" + "áhnu"), or one sentence cut between two whole words: a `joined`
   value with a space ("jsem zvědavej") keeps the space.
-- `term` from the word check (rule `unknown-word`, 30 %): a word no dictionary layer knows. It proposes nothing (the
-  closest terms are all below the suspect threshold, so they stay in `evidence.candidates`). A word said on purpose
+- `term` from the word check (rule `unknown-word`, 30 % without a strong proposal): a word no dictionary layer knows.
+  A one-edit match to a scoped term also spoken correctly, or a stronger acronym spelling observed in this meeting,
+  supplies a proposal at 80 %. Weak matches stay in `evidence.candidates`. A word said on purpose
   gets no item: a word family heard in two or more forms (`wordFamily`, the first four letters of the stem after one
   Czech prefix: "mokovaný", "namokovat", "nemokovaný"), or a Czech form of a known English word ("mokovat" from
   "mock"). A `keep` entry covers every form of its family.
@@ -681,7 +682,7 @@ Line-scoped terms with a dead or ambiguous anchor are refused. The diagnostic di
 
 The Meetings window offers Add question or term, clean duplication, question priority, saved document revision, and an indicator tooltip naming a stuck signal and why it was ignored. Its dictionary editor can preview an unsaved entry on pasted transcript lines. The read-only command equivalent is `dictionary test '<lines>' --entry '<dictionary-entry JSON>' --json`.
 
-The transcript's native confidence selector defaults to 70 percent. The service loads the available threshold previews together, and changing the selector chooses a loaded result without a new source read. The selector is saved per app; it changes no meeting or global suggestion configuration. CLI `transcript --with-suggested --apply-above 0.7` uses the same corrections engine for a one-off preview. Open question ranges keep their guessed speaker percentage until answered.
+The transcript's native confidence selector defaults to 70 percent. The service loads the available threshold previews together, and changing the selector chooses a loaded result without a new source read. The selector is saved per app; it changes no meeting or global suggestion configuration. CLI `transcript --with-suggested --apply-above 70` uses the same corrections engine for a one-off preview. Open question ranges keep their guessed speaker percentage until answered.
 
 For a meeting-local room person, use `attendance <meeting> --add "Alice Example" --from 0 --to 600 --at-mic`. `--via "Bob Example"` instead names a remote device owner. These finite stays and canonical microphone groups reopen from the meeting record. The native people strip and `meeting.people.edit` use the same implementation. Imported platform speaking and muted names also join automatic question candidates. `Meeting.editPerson` exposes the same operation in the REPL.
 
@@ -727,3 +728,47 @@ project suggestions use earlier shared attendees/title words, and an unassigned 
 Agent findings may attach an explicit `signature` and `candidates` to speaker ranges and the same `signature` to their
 question. Only matching labels and evidence identities propagate an answer to unasked ranges. Unknown call-channel
 observations produce unresolved candidate ranges, never an inferred shared voice identity or propagated answer.
+
+### Indicator facts, compact evidence and local speech
+
+`evidence <meeting> --raw --json` always includes `channel: { micShare: number | null }` on each timed transcript line.
+`null` means no overlapping channel segment, and is distinct from a measured zero. `energyMicShare` remains the
+separate calibrated energy measurement. People found only in speaking or muted observations have `origin: "indicator"`.
+
+`meeting.labels` reports each platform label's `firstOwnIndicatorSec`, optional `firstJoinSec`, and its earlier-line
+count. Ten or more lines before the first own indicator or join produce one `platform-prehistory` label finding at
+80 %, with `meaningless: true`. Speaker scoring ignores that label inside the finding's stretch. This rule has its
+own id because the existing R20 id already names swapped labels.
+
+`meeting.indicatorGaps` contains `{ fromSec, toSec, reason }` for intervals of at least 60 seconds without a usable
+speaking or muted observation while transcript lines are spoken. Empty observations do not establish anyone's absence.
+Suggest prints these gaps as warnings. The generic missing-indicator reason does not infer a screen share from silence.
+
+`evidence <meeting> --format lines` prints a name legend and one compact row per timed transcript line:
+`index|time|person|micNN%|eENERGY|s[people]|m[people]|text prefix`. Unknown microphone share and energy print `?`.
+Text prefixes are bounded to 48 Unicode characters; use raw JSON to read the full transcript. The Meetings Speakers
+pane's Evidence facts disclosure uses the same formatter and lists label prehistory, indicator gaps, indicator-only
+people and local speech. Its service read is `meeting.speakers` with `evidence: true`; existing readers omit it.
+
+Completed audible calls from the local speech history are matched against transcript words within 15 seconds of the
+recording clock. Written files, muted calls and failed calls are excluded. Raw lines carry `localSpeechOutput: true`;
+suggest offers `kind: "removal"` at 90 % with reason `local speech output`. Confirmation hides only the matching
+line in the corrected transcript; the source transcript stays intact. The speech history is opened read-only.
+
+### Stem term findings and scoped vocabulary
+
+A term finding can supply `heardStem` and `proposedStem` together. For example, `heard: "i na browser"`,
+`heardStem: "i na browser"`, `proposedStem: "in-app browser"` replaces the base plus its recognized Czech endings,
+keeping each ending. CLI flags are `--heard-stem` and `--proposed-stem`. The finding preview and correction outcomes
+list the lines it reaches. Line scope still limits its reach. An unrelated longer word is left alone.
+
+Automatic candidates come from the meeting's resolved dictionary, context documents, people and source user
+vocabulary. The shared developer-tool glossary is not injected. Known Czech words and known inflected stems are
+kept, and a run ending in a Czech copula is not glued into a technology name. An observed acronym candidate needs a
+stronger spelling in the same meeting and keeps its heard suffix. No missing context is invented to supply a proposal.
+
+`window <meeting> --new-window` forwards an independent-window request to the Meetings face. Each extra window keeps
+its own meeting model; `--tab` and `--no-focus` are preserved. Helpers transform themselves into background-only
+processes while retaining the signed identity needed for TCC. AppleScript can select the real window process with
+`first application process whose bundle identifier is "com.genesiscz.genesistools" and background only is false`.
+A desktop check after the parent installs the reconciled app must verify two independent windows and that process selection.
