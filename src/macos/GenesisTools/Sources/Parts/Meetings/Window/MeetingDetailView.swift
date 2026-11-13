@@ -73,6 +73,14 @@ struct MeetingDetailView: View {
         .navigationTitle(detail.record.value?.displayTitle ?? window.meeting(detail.id)?.displayTitle ?? "Meeting")
     }
 
+    private var projectDictionaryExists: Bool {
+        guard case .object(let projects) = window.settingsRaw?.at(["projects"]) else { return false }
+        return projects.values.contains { project in
+            if case .array(let entries) = project.at(["dictionary", "entries"]) { return !entries.isEmpty }
+            return false
+        }
+    }
+
     private var trailingPane: TrailingPane? {
         Self.trailingPane(tab: detail.tab, width: width,
                           setting: MeetingsPreferences.Panes.TranscriptPane(rawValue: transcriptPaneSetting) ?? .auto,
@@ -153,6 +161,11 @@ struct MeetingDetailView: View {
                 labelsPicker(record)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if record?.project == nil && projectDictionaryExists {
+                Label("Choose a project before polishing: project dictionaries are available.", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(KitPalette.modified)
+                    .accessibilityIdentifier("meetings.project.dictionaryWarning")
+            }
             if let failure = detail.record.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
                            fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.reloadRecord() },

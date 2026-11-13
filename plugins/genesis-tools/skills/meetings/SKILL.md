@@ -28,7 +28,10 @@ Both modes share the meeting record, its items and `tools meetings listen`.
 1. **Export raw, never edit it.** `tools wisprflow meetings export <id> --dir <topic>/meetings/<date>-wisprflow
    --timestamps`. The raw `Transcript.md`, `Summary.md` and `meeting.json` stay next to the
    polished file. Details: [wisprflow.md](references/wisprflow.md).
-2. **Pass 1, the tool collects the facts.** `tools meetings new --source wisprflow:<id>` builds the meeting record
+2. **Set the project first.** After creating or linking the record, inspect its project and set it with
+   `tools meetings set <meeting> --project <name>` before evidence, suggestions or term passes. Confirm each person's
+   join and leave window from `evidence --raw` before pass 2. Unknown indicator intervals are missing evidence.
+   **Pass 1, the tool collects the facts.** `tools meetings new --source wisprflow:<id>` builds the meeting record
    (transcript, people, calendar entry, attendance and `sections[]` from the meeting platform). `tools meetings
    evidence <meeting> --raw` prints the facts per line (label and its origin, text, microphone share, the people shown
    speaking or muted, who was present) and, for the terms, the vocabulary, the runs that sound like a vocabulary term
@@ -108,7 +111,11 @@ Both modes share the meeting record, its items and `tools meetings listen`.
 5. **The agent finishes.** Take the answers from the subscription (or `tools meetings items <meeting> --kind
    question`) and carry each one to the other lines with the same evidence. Ask what is still open in rounds (the `grilling` style): numbered questions
    with concrete quotes and timestamps, one recommendation each. Never settle a person's identity or a business term
-   by guessing.
+   by guessing. `transcript` applies suggested findings only with `--with-suggested`; use that flag to preview
+   unsettled findings. An open speaker question keeps its proposed voice as `[Name: NN %]` at every confidence.
+   Without the flag, choices carry no borrowed range confidence. A complete supplied unclear term mark is rendered
+   once. Confirm the findings settled by evidence or the user's answers with `tools meetings confirm <meeting>
+   <settled-item-ids>` before writing the polished file; keep unresolved findings open and visibly marked.
 6. **Write the one polished file** in the layout of [polishing.md](references/polishing.md#the-polished-file), then
    correct the source's summary against the polished transcript.
 7. **Report**: the file link, the count of changes per kind, the `[nejasné: ...]` count, and every decision that
@@ -144,3 +151,24 @@ Both modes share the meeting record, its items and `tools meetings listen`.
   give it to a worker you are testing the skill with.
 - Never write to the source app, ADO, Teams or the vault's git. The user commits the vault.
 - Every change is visible in a `diff` block, with `//` lines that give the rule and the score.
+
+## Listening quality and voice evidence
+
+`transcript <meeting> --with-suggested --apply-above 70` keeps lower-confidence voices as percentage marks.
+`transcript <meeting> --probe-thresholds 50,60,70,80` compares applied and open counts without changing the record.
+The Meetings window loads suggestions once; its threshold and Probe controls filter them locally.
+
+`listen <meeting> --spot-check 20` samples the 50 to 69 percent band without replacement. Comments leave questions
+open. `listen --long-stretch-words 50` prepares the long-stretch group; `--group rules|spot-check|long-stretch|all`
+selects a group. Long stretches split on channel voice-feature changes before naming. The group is retained in rows
+JSON. A sample result measures the share changed among answered sample lines, not a known meeting error rate.
+
+Several voices takes ordered people. A confirmed line can keep word-indexed segments and render separate turns.
+Unmatched prose remains a comment. The people picker matches accents and name order. Playback pauses while typing;
+space pauses and resumes with choices focused. The progress bar marks the asked span and tone.
+
+`listen <meeting> --enrol-voices` explicitly uses an already installed model, calibrated channels and canonical remote
+seats. Enrolment uses isolated-call solo windows or confirmed lines and excludes each scored line's own window.
+Cosine and margin are evidence, not probabilities. Missing models, quiet audio, incompatible embeddings and ambiguous
+scores remain unknown. Ordinary reads never provision models. Preserve raw microphone, isolated call and optional
+estimated-clean tracks separately.

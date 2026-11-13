@@ -132,6 +132,12 @@ export const transcriptLineSchema = z.object({
         .object({ names: z.array(z.string()), ignored: z.enum(["meeting-dominance", "stretch-stuck"]).optional() })
         .optional(),
     words: z.array(alignedWordSchema).optional(),
+    confidence: z.number().optional(),
+    suggestedSpeaker: z.string().optional(),
+    sourceIndex: z.number().int().nonnegative().optional(),
+    questioned: z.boolean().optional(),
+    guess: z.boolean().optional(),
+    band: z.enum(["confirmed", "applied", "guess", "open"]).optional(),
     id: z.string().optional(),
     startSec: z.number().optional(),
     endSec: z.number().optional(),
@@ -173,6 +179,30 @@ const list = defineMethod({
     resultName: "MeetingListRow[] | MeetingRecord[]",
     doc: "The meetings, newest first, as `list --json` prints them; full: true answers the whole records (`list --json --full`).",
     effect: "read",
+});
+
+export const listenPrepare = defineMethod({
+    name: "meeting.listen.prepare",
+    params: z
+        .object({
+            meeting: meetingRef,
+            group: z.enum(["spot-check", "long-stretch"]),
+            count: z.number().int().min(1).max(500).optional(),
+            words: z.number().int().min(1).optional(),
+        })
+        .strict(),
+    result: z.object({ meeting: z.string(), questions: z.array(z.string()) }),
+    resultName: "{meeting,questions}",
+    doc: "Prepare a categorized listening round without playing audio. Keeps the questions on the record.",
+    effect: "reversible",
+});
+export const voiceEnrol = defineMethod({
+    name: "meeting.voice.enrol",
+    params: z.object({ meeting: meetingRef }).strict(),
+    result: z.object({ samples: z.number(), matched: z.number(), unknown: z.number() }),
+    resultName: "{samples,matched,unknown}",
+    doc: "Explicitly enrol and score isolated-call remote voice embeddings using a locally installed model and calibrated channels.",
+    effect: "reversible",
 });
 
 const show = defineMethod({
@@ -749,6 +779,7 @@ const meetingRows = defineMethod({
             meeting: meetingRef,
             /** `show` keeps the open questions under `playback.listen.minPriority`; `hide` (the default) counts them. */
             lowPriority: z.enum(["hide", "show"]).optional(),
+            applyAbove: z.number().min(0).max(1).optional(),
         })
         .strict(),
     result: reviewRowsSchema,
@@ -1264,6 +1295,8 @@ export const meetingsApi = defineApi({
         hello,
         list,
         show,
+        listenPrepare,
+        voiceEnrol,
         meetingPeopleEdit,
         meetingVoice,
         meetingSuggest,

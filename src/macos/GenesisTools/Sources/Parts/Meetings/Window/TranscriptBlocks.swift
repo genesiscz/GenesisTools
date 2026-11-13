@@ -10,6 +10,7 @@ import SwiftUI
 enum TranscriptLineMark: String, Hashable, CaseIterable {
     /// The engine is not sure who said this line (a speaker hint range covers it).
     case unclearSpeaker
+    case byVoice
     /// A confirmed item or a dictionary entry changed words of this line.
     case corrected
     /// A staged comment for the listening agent covers this line.
@@ -238,6 +239,7 @@ struct TranscriptBlockView: View, Equatable {
             }
             VStack(alignment: .leading, spacing: 2) {
                 SpeakerChip(speaker: block.speaker, startSec: block.startSec, play: play)
+                    .opacity(block.speaker.contains(" %]") ? 0.65 : 1)
                 ForEach(block.lines) { line in
                     TranscriptBlockLineView(
                         line: line, speaker: SpeakerChip(speaker: block.speaker).name, heard: line.id == heardLineID,
@@ -355,6 +357,9 @@ private struct TranscriptBlockLineView: View {
                     .font(.system(size: 11)).foregroundStyle(.orange)
                     .instantTooltip("The engine is not sure who said this line")
             }
+            if line.marks.contains(.byVoice) {
+                Label("by voice", systemImage: "waveform").font(.caption2).foregroundStyle(.secondary)
+            }
             if line.marks.contains(.commented) {
                 Image(systemName: "text.bubble")
                     .font(.system(size: 11)).foregroundStyle(.purple)
@@ -401,6 +406,7 @@ private struct TranscriptBlockLineView: View {
         if heard { parts.append("playing now") }
         if line.marks.contains(.unclearSpeaker) { parts.append("speaker unsure") }
         if line.marks.contains(.corrected) { parts.append("corrected") }
+        if line.marks.contains(.byVoice) { parts.append("by voice") }
         if line.marks.contains(.commented) { parts.append("has a staged comment") }
         return parts.joined(separator: ", ")
     }

@@ -96,6 +96,7 @@ export type MicShare = (fromSec: number, toSec: number) => number | undefined;
 export interface SplitInputs {
     transcript(record: MeetingRecord): Promise<TranscriptEntry[]>;
     micShare?(record: MeetingRecord): Promise<MicShare | undefined>;
+    people?(record: MeetingRecord): Promise<string[]>;
 }
 
 export interface DecisionRequest {
@@ -151,6 +152,7 @@ interface ActionOutcome {
 /** Read before the record's lock, for the actions that need more than the record (a split's transcript). */
 interface Prepared {
     transcript?: TranscriptEntry[];
+    people?: string[];
     micShare?: MicShare;
 }
 
@@ -709,6 +711,19 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
         },
     },
     answer: {
+        prepare: async (record, action, inputs) => {
+            const question = record.items.find(
+                (item) => item.kind === "question" && item.id === itemIdOf(record, action.question)
+            );
+            if (question?.kind !== "question" || question.about !== "speaker") {
+                return {};
+            }
+            const transcript = await inputs?.transcript(record).catch((error: unknown) => {
+                log.debug({ error, meeting: record.id }, "answer without source words; voices remain unsplit");
+                return undefined;
+            });
+            return { transcript, people: await inputs?.people?.(record) };
+        },
         mutate: (record, action, context) => {
             const { now, listenBelow } = context;
             let except = (action.except ?? []).map((ref) => itemIdOf(record, ref));
@@ -766,12 +781,15 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             const propagationSource = structuredClone(question);
             const corrections = answerQuestion(record, question.id, {
                 answer: action.answer,
+                transcript: context.prepared.transcript,
+                people: context.prepared.people,
+                segments: action.segments,
                 ...(action.comment ? { comment: action.comment } : {}),
                 now,
                 except,
             });
             const alike =
-                action.lookAlikes === "leave"
+                action.lookAlikes === "leave" || question.status !== "confirmed"
                     ? { settled: [], corrections: [] }
                     : settleLookAlikes(record, propagationSource, { answer: action.answer, listenBelow, now, except });
             return {

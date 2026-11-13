@@ -45,6 +45,40 @@ export function prepareFindings(options: {
         if (line !== undefined) {
             item.evidence = { ...item.evidence, transcriptLine: line };
         }
+        if (item.kind === "question" && options.transcript) {
+            const words = options.transcript
+                .filter(
+                    (entry) =>
+                        entry.startSec !== undefined && entry.startSec >= item.fromSec && entry.startSec <= item.toSec
+                )
+                .reduce((sum, entry) => sum + entry.text.split(/\s+/).filter(Boolean).length, 0);
+            const shared = [...options.items, ...added].filter(
+                (candidate) =>
+                    candidate.kind === "speaker-range" &&
+                    candidate.status === "suggested" &&
+                    (item.signature
+                        ? candidate.evidence?.signature === item.signature
+                        : candidate.speaker && item.choices.includes(candidate.speaker))
+            );
+            const reach = Math.max(1, shared.length);
+            item.priority = (1 - (item.confidence ?? 0.5)) * Math.max(1, words) * reach;
+            const targets = [...options.items, ...added].filter(
+                (target) => target.kind === "speaker-range" && item.decides.includes(target.id)
+            );
+            item.evidence = {
+                ...item.evidence,
+                words,
+                reach,
+                labels: [
+                    ...new Set(targets.flatMap((target) => (target.kind === "speaker-range" ? [target.label] : []))),
+                ],
+            };
+            if (item.signature) {
+                for (const target of targets) {
+                    target.evidence = { ...target.evidence, signature: item.signature, choices: item.choices };
+                }
+            }
+        }
     }
 
     const retained = new Map<string, MeetingItem>();
@@ -119,7 +153,6 @@ function findingKey(item: MeetingItem): string {
         "question",
         "choices",
         "decides",
-        "priority",
     ];
     const content = Object.fromEntries(Object.entries(item).filter(([key]) => fields.includes(key)));
     content.evidence = { reason: item.evidence?.reason, transcriptLine: item.evidence?.transcriptLine };

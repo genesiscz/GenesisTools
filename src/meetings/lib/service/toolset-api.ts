@@ -15,7 +15,7 @@ import {
 import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
 import { sourceAudioPlanSchema } from "../source-audio-discovery";
-import { meetingPeopleEdit, meetingVoice, momentSave } from "./api";
+import { listenPrepare, meetingPeopleEdit, meetingVoice, momentSave, voiceEnrol } from "./api";
 
 /**
  * The REPL `meetings` toolset's descriptor (src/node-repl/lib/toolsets/meetings.ts reads it), beside the Meetings
@@ -80,12 +80,40 @@ export const transcript = defineMethod({
 });
 export const lines = defineMethod({
     name: "lines",
-    params: z.object({ withSuggested: z.boolean().optional(), dictionary: z.boolean().optional() }).strict(),
+    params: z
+        .object({
+            withSuggested: z.boolean().optional(),
+            dictionary: z.boolean().optional(),
+            applyAbove: z.number().min(0).max(1).optional(),
+        })
+        .strict(),
     result: z.unknown(),
     resultName: "{ lines: { at, speaker, text }[], speakers, unattributed, notApplied }",
     effect: "read",
     doc: "The transcript with the speaker renames, the confirmed items and the dictionary applied, as the transcript command prints it. withSuggested: true also applies the suggested items (a preview); dictionary: false leaves the dictionary out. `notApplied` names each correction that found no line.",
 });
+export const voiceFeatures = defineMethod({
+    name: "voiceFeatures",
+    params: meetingVoice.params.omit({ meeting: true }),
+    result: meetingVoice.result,
+    effect: meetingVoice.effect,
+    doc: meetingVoice.doc,
+});
+export const prepareListen = defineMethod({
+    name: "prepareListen",
+    params: listenPrepare.params.omit({ meeting: true }),
+    result: listenPrepare.result,
+    effect: listenPrepare.effect,
+    doc: listenPrepare.doc,
+});
+export const enrolVoices = defineMethod({
+    name: "enrolVoices",
+    params: voiceEnrol.params.omit({ meeting: true }),
+    result: voiceEnrol.result,
+    effect: voiceEnrol.effect,
+    doc: voiceEnrol.doc,
+});
+
 export const itemsList = defineMethod({
     name: "items.list",
     // An enum, as the CLI's --kind: a misspelt kind answered no rows (R2-MC11).
@@ -97,7 +125,9 @@ export const itemsList = defineMethod({
 });
 export const itemsRows = defineMethod({
     name: "items.rows",
-    params: z.object({ lowPriority: z.enum(["hide", "show"]).optional() }).strict(),
+    params: z
+        .object({ lowPriority: z.enum(["hide", "show"]).optional(), applyAbove: z.number().min(0).max(1).optional() })
+        .strict(),
     result: z.unknown(),
     resultName: "{ meeting, rows: ReviewRow[], hidden }",
     effect: "read",
@@ -514,6 +544,9 @@ export const meetingsToolsetApi = defineApi({
             methods: [
                 info,
                 editPerson,
+                voiceFeatures,
+                prepareListen,
+                enrolVoices,
                 commentsList,
                 commentRead,
                 commentWithdraw,

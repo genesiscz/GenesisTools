@@ -128,6 +128,10 @@ export const reviewRowSchema = z.object({
     status: z.enum(ITEM_STATUSES),
     confidence: z.number().optional(),
     priority: z.number().optional(),
+    reach: z.number().nonnegative().optional(),
+    group: z.enum(["rules", "spot-check", "long-stretch"]).optional(),
+    guess: z.boolean().optional(),
+    comment: z.string().optional(),
     /** The one-line text `items` prints. */
     what: z.string(),
     parts: z.array(rowPartSchema),

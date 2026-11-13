@@ -39,6 +39,9 @@ export const findingSchema = z.discriminatedUnion("kind", [
         /** The source's own label of the lines, as `evidence --raw` shows it. */
         label: text,
         speaker: text,
+        /** Explicit evidence identity and eligible answers for propagation across unasked ranges. */
+        signature: text.optional(),
+        candidates: z.array(text).optional(),
         confidence,
         reason: text,
     }),
@@ -99,6 +102,8 @@ export const findingSchema = z.discriminatedUnion("kind", [
          * cluster. Listen asks the highest first, and one under `playback.listen.minPriority` (0.5) only with `--item`.
          */
         priority: z.number().min(0).optional(),
+        /** Evidence-group identity, never inferred from matching words alone. */
+        signature: text.optional(),
         confidence: confidence.optional(),
         reason: text.optional(),
     }),
@@ -172,6 +177,14 @@ export function findingItems(findings: Finding[], items: MeetingItem[], now: str
         };
         const evidence = {
             ...(finding.reason ? { reason: finding.reason } : {}),
+            ...("signature" in finding && finding.signature
+                ? {
+                      signature: finding.signature,
+                      ...(finding.kind === "speaker-range"
+                          ? { choices: [...new Set([finding.speaker, ...(finding.candidates ?? [])])] }
+                          : {}),
+                  }
+                : {}),
             ...("line" in finding && finding.line !== undefined ? { transcriptLine: finding.line } : {}),
         };
 
@@ -192,6 +205,7 @@ function kindFields(finding: Finding, idOfRef: Map<string, string>): Record<stri
             fromSec: finding.from,
             toSec: finding.to,
             speaker: finding.speaker,
+            ...(finding.candidates ? { candidates: finding.candidates } : {}),
         };
     }
 
@@ -236,6 +250,7 @@ function kindFields(finding: Finding, idOfRef: Map<string, string>): Record<stri
         question: finding.question,
         ...(finding.heard ? { heard: finding.heard } : {}),
         choices: finding.choices,
+        ...(finding.signature ? { signature: finding.signature } : {}),
         decides: finding.decides.map((id) => idOfRef.get(id) ?? id),
         ...(finding.priority === undefined ? {} : { priority: finding.priority }),
     };

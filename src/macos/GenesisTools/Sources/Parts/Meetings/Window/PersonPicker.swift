@@ -25,11 +25,17 @@ enum PeopleText {
             .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
     }
 
+    static func personKey(_ text: String) -> String {
+        fold(text.replacingOccurrences(of: "\\([^)]*\\)", with: "", options: .regularExpression))
+            .split(whereSeparator: \.isWhitespace).sorted().joined(separator: " ")
+    }
+
     /// True when a person's name or one of their aliases is the typed text.
     static func isExactMatch(_ person: KnownPerson, _ text: String) -> Bool {
         let key = fold(text)
         guard !key.isEmpty else { return false }
-        return fold(person.name) == key || person.aliases.contains { fold($0) == key } || person.email.map(fold) == key
+        let named = personKey(text)
+        return personKey(person.name) == named || person.aliases.contains { personKey($0) == named } || person.email.map(fold) == key
     }
 
     /// The typed text offered as a new person, or nil.
@@ -89,7 +95,7 @@ struct PersonPicker: View {
     /// become one person.").
     var warning: String?
     var title: String = "Speaker"
-    var prompt: String = "Search contacts"
+    var prompt: String = "Search or own comment"
     var addRule: PersonPickerAddRule = .noExactMatch
     /// The most rows drawn before the list scrolls.
     var visibleRows: Int = 6

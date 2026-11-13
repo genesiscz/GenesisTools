@@ -396,6 +396,7 @@ enum SidePanelCatalog {
                          choices: [SidePanelChoice(value: .text("spoken"), title: "Most spoken"),
                                    SidePanelChoice(value: .text("transcript"), title: "Transcript")],
                          value: .text(MeetingsPreferences.speakerOrder(defaults).rawValue), defaultValue: .text("spoken")),
+            row(Transcript.applyAbove, value: Transcript.applyAbove.value(defaults)),
             row(Transcript.wordHighlights, value: Transcript.wordHighlights.value(defaults)),
             row(Transcript.dimPast, value: Transcript.dimPast.value(defaults)),
             row(Transcript.avatars, value: Transcript.avatars.value(defaults)),

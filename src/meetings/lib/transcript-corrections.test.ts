@@ -8,10 +8,12 @@ import { meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meeting
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
+import { groupTurns, transcriptMarkdown, transcriptTextLines } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { z } from "zod";
 import { prepareFindings } from "./add-findings";
 import { findingSchema } from "./findings";
+import { answerQuestion } from "./questions";
 import { composedMeeting } from "./sources";
 import { checkAnchors, correctTranscript, ledgerEntryFor, outcomeText } from "./transcript-corrections";
 
@@ -457,6 +459,118 @@ test("a join after blank lines still reports a missing predecessor", () => {
     });
     expect(result.outcomes).toContainEqual(expect.objectContaining({ item: "i1", status: "not-found" }));
 });
+
+describe("question-owned transcript uncertainty", () => {
+    test.each([0.4, 0.5, 0.6, 0.95, 1])("keeps a %s guess until a real answer, across readers", async (confidence) => {
+        const record = meetingRecordSchema.parse({
+            ...base,
+            items: [
+                item({
+                    id: "i1",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label: "Voice",
+                    fromSec: 5,
+                    toSec: 5,
+                    speaker: "B Example",
+                    confidence,
+                }),
+                item({
+                    id: "i2",
+                    kind: "question",
+                    status: "suggested",
+                    about: "speaker",
+                    fromSec: 0,
+                    toSec: 10,
+                    question: "Who?",
+                    choices: ["A Example", "B Example", "both"],
+                    decides: ["i1"],
+                }),
+            ],
+        });
+        const source = [line("Voice", 5, "Raw words."), line("Other", 20, "Unchanged.")];
+        const render = (withSuggested: boolean) =>
+            correctTranscript({ record, transcript: source, config, format: "txt", withSuggested, dictionary: false });
+        const guess = `[B Example: ${Math.round(confidence * 100)} %]`;
+        expect(render(true).entries[0]!.speaker).toBe(guess);
+        const choices = render(false).entries[0]!.speaker;
+        expect(choices).toBe('[nejasné: "Voice"; 1) A Example 2) B Example 3) both]');
+        const entries = render(true).entries;
+        expect(transcriptTextLines(groupTurns(entries), false).join("\n")).toContain(guess);
+        expect(transcriptMarkdown(groupTurns(entries), false)).toContain(guess);
+        expect(SafeJSON.parse(SafeJSON.stringify(entries))).toEqual(entries);
+        expect(source[0]).toEqual(line("Voice", 5, "Raw words."));
+        expect(entries[1]).toEqual(source[1]!);
+        answerQuestion(record, "i2", { answer: "A Example", now: "2026-11-03T10:00:00.000Z" });
+        const dir = await mkdtemp(join(tmpdir(), "uncertainty-answer-"));
+        const stored = `${dir}/record.json`;
+        await writeFile(stored, SafeJSON.stringify(record));
+        const reopened = meetingRecordSchema.parse(SafeJSON.parse(await readFile(stored, "utf8")));
+        expect(reopened.items[0]?.status).toBe("confirmed");
+        expect(
+            correctTranscript({ record: reopened, transcript: source, config, format: "json", withSuggested: true })
+                .entries[0]?.speaker
+        ).toBe("A Example");
+    });
+
+    test("unasked suggestions retain their threshold and explicit confirmations render plainly", () => {
+        const source = [line("Voice", 5, "Raw words.")];
+        const range = item({
+            id: "i1",
+            kind: "speaker-range",
+            status: "suggested",
+            label: "Voice",
+            fromSec: 5,
+            toSec: 5,
+            speaker: "B Example",
+            confidence: 0.6,
+        });
+        const render = (status: "suggested" | "confirmed", confidence: number, withSuggested: boolean) =>
+            correctTranscript({
+                record: meetingRecordSchema.parse({ ...base, items: [{ ...range, status, confidence }] }),
+                transcript: source,
+                config,
+                format: "txt",
+                withSuggested,
+                dictionary: false,
+            });
+        expect(render("suggested", 0.6, false).entries[0]?.speaker).toBe("Voice");
+        expect(render("suggested", 0.6, true).entries[0]?.speaker).toBe("[B Example: 60 %]");
+        expect(render("suggested", 0.4, true).entries[0]?.speaker).toBe("[B Example: 40 %]");
+        expect(render("confirmed", 0.4, false).entries[0]?.speaker).toBe("B Example");
+    });
+
+    test.each(["txt", "md", "json"] as const)("keeps a supplied final term mark once in %s", (format) => {
+        const proposed = '[nejasné: "x"; 1) a 2) b]';
+        const record = meetingRecordSchema.parse({
+            ...base,
+            items: [
+                item({
+                    id: "i1",
+                    kind: "term",
+                    status: "suggested",
+                    heard: "x",
+                    proposed,
+                    confidence: 0.45,
+                    scope: "line",
+                    atSec: 5,
+                }),
+            ],
+        });
+        const source = [line("Voice", 5, "Use x here."), line("Voice", 10, "Keep x here.")];
+        const result = correctTranscript({
+            record,
+            transcript: source,
+            config,
+            format,
+            withSuggested: true,
+            dictionary: false,
+        });
+        expect(result.entries.map((entry) => entry.text)).toEqual([`Use ${proposed} here.`, "Keep x here."]);
+        expect(source[0]?.text).toBe("Use x here.");
+    });
+});
+
 test("one persisted stem item keeps Czech endings across corrected lines", async () => {
     const transcript = [
         line("Alice", 5, "i na browsera"),

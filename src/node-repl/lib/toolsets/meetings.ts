@@ -24,6 +24,7 @@ import {
     confirm,
     dictionaryTest,
     editorProject,
+    editPerson,
     exportMethod,
     itemsList,
     itemsRows,
@@ -31,6 +32,7 @@ import {
     list,
     meetingsToolsetApi,
     overview,
+    prepareListen,
     projectsLabels,
     projectsPair,
     projectsPeople,
@@ -47,6 +49,7 @@ import {
     set,
     speakers,
     suggest,
+    voiceFeatures,
 } from "@app/meetings/lib/service/toolset-api";
 import { applyLocalSourceAudio, planLocalSourceAudio } from "@app/meetings/lib/source-audio-backfill";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
@@ -63,7 +66,6 @@ import {
     type MeetingRecord,
     MeetingStore,
 } from "@genesiscz/utils/meetings/record";
-import type { MeetingPersonEdit } from "@genesiscz/utils/meetings/room-people";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { type recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
 import { callRecorder, readLiveRecording } from "@genesiscz/utils/screen-recorder/live";
@@ -307,11 +309,22 @@ export class MeetingsToolset extends ReplToolset {
                 return current();
             },
             info: () => describe(current()),
+            editPerson: (input: z.input<typeof editPerson.params>) =>
+                withMeetingsClient((client) =>
+                    client.call("meeting.people.edit", { ...editPerson.params.parse(input), meeting: id })
+                ),
+            voiceFeatures: (input: z.input<typeof voiceFeatures.params> = {}) =>
+                withMeetingsClient((client) =>
+                    client.call("meeting.voice", { ...voiceFeatures.params.parse(input), meeting: id })
+                ),
+            prepareListen: (input: z.input<typeof prepareListen.params>) =>
+                withMeetingsClient((client) =>
+                    client.call("meeting.listen.prepare", { ...prepareListen.params.parse(input), meeting: id })
+                ),
+            enrolVoices: () => withMeetingsClient((client) => client.call("meeting.voice.enrol", { meeting: id })),
             evidence: () => opened().evidence(),
             voice: (options: { voices?: number; channel?: number } = {}) =>
                 withMeetingsClient((client) => client.call("meeting.voice", { meeting: id, ...options })),
-            editPerson: (edit: MeetingPersonEdit) =>
-                withMeetingsClient((client) => client.call("meeting.people.edit", { meeting: id, ...edit })),
             transcript: async () => (await opened().meeting()).transcript,
             lines: async (input: z.input<typeof lines.params> = {}) => {
                 const options = lines.params.parse(input);
@@ -330,6 +343,13 @@ export class MeetingsToolset extends ReplToolset {
                         at: entry.startSec ?? null,
                         speaker: entry.speaker,
                         text: entry.text,
+                        ...(entry.confidence === undefined
+                            ? {}
+                            : {
+                                  confidence: entry.confidence,
+                                  guess: entry.guess,
+                                  suggestedSpeaker: entry.suggestedSpeaker,
+                              }),
                     })),
                     speakers: applied.speakers,
                     unattributed: applied.unattributed,
@@ -345,8 +365,13 @@ export class MeetingsToolset extends ReplToolset {
                         .map((item) => itemRow(record, item));
                 },
                 rows: async (input: z.input<typeof itemsRows.params> = {}) => {
-                    const { lowPriority } = itemsRows.params.parse(input);
-                    return rowsRead({ store, record: current(), ...(lowPriority ? { lowPriority } : {}) });
+                    const { lowPriority, applyAbove } = itemsRows.params.parse(input);
+                    return rowsRead({
+                        store,
+                        record: current(),
+                        ...(lowPriority ? { lowPriority } : {}),
+                        ...(applyAbove === undefined ? {} : { applyAbove }),
+                    });
                 },
                 add: async (input: z.input<typeof add.params>) => {
                     const { findings, allowDuplicates, force } = add.params.parse(input);

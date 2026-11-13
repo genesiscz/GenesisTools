@@ -139,7 +139,7 @@ function printRow(row: ReviewRow): void {
     out.println(`      ${pc.dim("choices")}  ${choices.join(pc.dim(" · "))}`);
 }
 
-async function rows(ref: string, opts: { all?: boolean; json?: boolean }): Promise<void> {
+async function rows(ref: string, opts: { all?: boolean; json?: boolean; applyAbove?: string }): Promise<void> {
     const record = requireMeeting(new MeetingStore(), ref);
 
     if (!record) {
@@ -149,7 +149,11 @@ async function rows(ref: string, opts: { all?: boolean; json?: boolean }): Promi
     let answer: Awaited<ReturnType<typeof readRows>>;
 
     try {
-        answer = await readRows(record.id, opts.all === true);
+        answer = await readRows({
+            meeting: record.id,
+            all: opts.all === true,
+            applyAbove: opts.applyAbove === undefined ? undefined : Number(opts.applyAbove) / 100,
+        });
     } catch (err) {
         fail(err);
         return;
@@ -178,9 +182,13 @@ async function rows(ref: string, opts: { all?: boolean; json?: boolean }): Promi
     }
 }
 
-function readRows(meeting: string, all: boolean) {
+function readRows(options: { meeting: string; all: boolean; applyAbove?: number }) {
     return withMeetingsClient((client) =>
-        client.call("meeting.rows", { meeting, ...(all ? { lowPriority: "show" as const } : {}) })
+        client.call("meeting.rows", {
+            meeting: options.meeting,
+            ...(options.all ? { lowPriority: "show" as const } : {}),
+            ...(options.applyAbove === undefined ? {} : { applyAbove: options.applyAbove }),
+        })
     );
 }
 
@@ -375,6 +383,10 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
         return;
     }
 
+    const projectWarning = missingProjectWarning(record, await new MeetingsConfigStore().read());
+    if (projectWarning) {
+        ui.warn(projectWarning);
+    }
     let raw: unknown;
 
     try {
@@ -683,6 +695,9 @@ function reportOutcomes(outcomes: CorrectionOutcome[]): void {
     }
 }
 
+import { qualityLines, thresholdProbe } from "../lib/listen-quality";
+import { missingProjectWarning } from "../lib/project";
+
 async function transcript(
     ref: string,
     opts: {
@@ -690,6 +705,7 @@ async function transcript(
         json?: boolean;
         withSuggested?: boolean;
         applyAbove?: string;
+        probeThresholds?: string | boolean;
         dictionary?: boolean;
         timestamps?: boolean;
         playLinks?: boolean;
@@ -717,7 +733,28 @@ async function transcript(
     }
 
     try {
-        const { markdown, applied } = await correctedTranscriptRead({ store, record, format, flags: opts });
+        const config = await new MeetingsConfigStore().read();
+        const warning = missingProjectWarning(record, config);
+        if (warning) {
+            ui.warn(warning);
+        }
+        if (opts.probeThresholds !== undefined) {
+            const source = await OpenedMeeting.of(store, record).meeting();
+            const levels =
+                typeof opts.probeThresholds === "string"
+                    ? opts.probeThresholds.split(",").map(Number)
+                    : [50, 60, 70, 80];
+            out.result(SafeJSON.stringify(thresholdProbe(qualityLines(record, source.transcript), levels), null, 2));
+            return;
+        }
+        const { applyAbove, ...flags } = opts;
+        const threshold = applyAbove === undefined ? undefined : Number(applyAbove) / 100;
+        const { markdown, applied } = await correctedTranscriptRead({
+            store,
+            record,
+            format,
+            flags: { ...flags, ...(threshold === undefined ? {} : { applyAbove: threshold }) },
+        });
         reportOutcomes(applied.outcomes);
         ui.dim(appliedLine(applied));
 
@@ -808,6 +845,7 @@ export function registerItemCommands(program: Command): void {
             "The review rows: each item as the window shows it, in the order listen asks, with its question as parts, its choices with confidence and who decided it"
         )
         .option("--all", "also the open questions below playback.listen.minPriority")
+        .option("--apply-above <percent>", "mark lower-confidence speaker suggestions in the loaded rows")
         .option("--json", "print JSON")
         .action(rows);
 
@@ -955,8 +993,12 @@ export function registerItemCommands(program: Command): void {
         .option("--json", "the same as --format json")
         .option("--with-suggested", "also apply the suggested items")
         .option(
-            "--apply-above <confidence>",
-            "with --with-suggested: preview at this confidence, 0 to 1; changes no config"
+            "--apply-above <percent>",
+            "apply suggestions above this confidence; show lower speaker guesses with percentages"
+        )
+        .option(
+            "--probe-thresholds [percentages]",
+            "show applied/open lines and long-stretch questions per level, without writes"
         )
         .option("--no-dictionary", "do not apply the dictionary")
         .option("--no-frontmatter", "md: omit the frontmatter")

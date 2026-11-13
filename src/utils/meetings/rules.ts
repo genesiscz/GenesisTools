@@ -97,6 +97,8 @@ export enum MeetingRule {
      * an indicator (FaceTime). Teams never shows the user speaking, so E3 never counts against the user.
      */
     SpeakingIndicator = "E3",
+    /** A canonical isolated-call embedding passed its cosine and runner-up margin gates; scores are not probabilities. */
+    VoiceEmbedding = "voice-embedding",
     /**
      * E4, live name. The recorder's live voice id carries the platform's name for the call sound. It lags: a live id
      * keeps a departed person's name, so attendance (RA) and the speaking indicator (E3) overrule it. The weakest of

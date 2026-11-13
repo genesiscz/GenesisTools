@@ -239,6 +239,7 @@ export async function rowsRead(options: {
     linked?: LinkedSource;
     minPriority?: number;
     lowPriority?: "hide" | "show";
+    applyAbove?: number;
 }): Promise<ReviewRows> {
     const { store, record } = options;
     const opened = OpenedMeeting.of(store, record, options.linked);
@@ -252,16 +253,27 @@ export async function rowsRead(options: {
     const minPriority = options.minPriority ?? (await opened.config()).global.playback.listen.minPriority;
     // Loaded here: the row builder reads the decision journal's actor words, which no other window read needs.
     const { reviewRows } = await import("./review-rows");
-    return reviewRows(record, {
+    const rows = reviewRows(record, {
         ...(transcript ? { transcript } : {}),
         minPriority,
         ...(options.lowPriority ? { lowPriority: options.lowPriority } : {}),
     });
+    if (options.applyAbove !== undefined) {
+        rows.rows = rows.rows.map((row) =>
+            row.kind === "speaker-range" &&
+            row.status === "suggested" &&
+            row.confidence !== undefined &&
+            row.confidence < options.applyAbove!
+                ? { ...row, guess: true }
+                : row
+        );
+    }
+    return rows;
 }
 
 /** The transcript flags that change what `meetings transcript` applies or prints. */
 export interface TranscriptReadOptions {
-    applyAbove?: number | string;
+    applyAbove?: number;
     withSuggested?: boolean;
     dictionary?: boolean;
     frontmatter?: boolean;
@@ -298,6 +310,7 @@ export async function correctedTranscriptRead(options: {
                   transcript: meeting.transcript,
                   config,
                   ...(flags.withSuggested !== undefined ? { withSuggested: flags.withSuggested } : {}),
+                  ...(flags.applyAbove !== undefined ? { applyAbove: flags.applyAbove } : {}),
                   ...(flags.dictionary !== undefined ? { dictionary: flags.dictionary } : {}),
                   frontmatter: flags.frontmatter !== false,
                   timestamps: flags.timestamps === true,

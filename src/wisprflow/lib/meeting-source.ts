@@ -83,6 +83,7 @@ function toSourceMeeting(meeting: Meeting): SourceMeeting {
         start: meeting.start,
         ...(meeting.end ? { end: meeting.end } : {}),
         participants: participantsOf(meeting),
+        observations: localAvailable() ? readEvidence(meeting.id, localSelfName(meeting.id)).speaking : undefined,
         speakers: meeting.participants,
         transcript: meeting.transcript,
         calendar: calendarFor(meeting),

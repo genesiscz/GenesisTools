@@ -7,6 +7,7 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { z } from "zod";
 import { actorText } from "./decision-journal";
 import { itemWhat } from "./item-text";
+import { personPresent } from "./listen-answers";
 import { momentsInText } from "./moment-schema";
 import { inputNeeded, NONE_OF_THESE, type QuestionItem, questionLabel, questionView } from "./questions";
 import type {
@@ -661,9 +662,17 @@ export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?:
         status: item.status,
         ...confidenceOf(item.confidence),
         ...(item.kind === "question" && item.priority !== undefined ? { priority: item.priority } : {}),
+        ...(item.kind === "question" && item.group ? { group: item.group } : {}),
+        ...(item.kind === "question" && typeof item.evidence?.reach === "number" ? { reach: item.evidence.reach } : {}),
+        ...(item.kind === "question" && item.comment ? { comment: item.comment } : {}),
         what: itemWhat(item),
         parts,
-        choices: choicesOf(record, item),
+        choices: choicesOf(record, item).filter(
+            (choice) =>
+                item.kind !== "question" ||
+                item.about !== "speaker" ||
+                personPresent(record, choice.value, item.fromSec)
+        ),
         edit: EDITS[item.kind],
         ...(needs ? { needs } : {}),
         sources: sourcesOf(item, parts, lines),
