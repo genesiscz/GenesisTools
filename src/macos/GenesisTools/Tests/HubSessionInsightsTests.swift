@@ -172,14 +172,24 @@ final class HubSessionInsightsTests: XCTestCase {
         let envelope = try HubStuck.decode(Data(json.utf8))
         let asked = StuckAsks()
         let gate = DispatchSemaphore(value: 0)
+        let firstAsk = expectation(description: "the first stuck check starts")
         let store = HubStuckStore()
         // Only the first check waits, so a second one started beside it shows in `asked` and cannot hang the test.
         store.check = { ids in
-            if asked.add(ids) == 1 { _ = gate.wait(timeout: .now() + 10) }
+            if asked.add(ids) == 1 {
+                firstAsk.fulfill()
+                _ = gate.wait(timeout: .now() + 10)
+            }
             return envelope
         }
         let first = Task { await store.refresh(["a"]) }
-        while asked.all.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        await fulfillment(of: [firstAsk], timeout: 10)
+        guard !asked.all.isEmpty else {
+            // The refresh never asked: the expectation's timeout failed the test; the gate opens for a late check.
+            gate.signal()
+            await first.value
+            return
+        }
         await store.refresh(["a", "b"])
         await store.refresh(["a", "b", "c"])
         XCTAssertEqual(asked.all, [["a"]], "an ask during a check starts no check of its own")

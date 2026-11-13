@@ -66,7 +66,7 @@ final class RecorderHuntWaveformAllTracksTests: XCTestCase {
                                                                      presentationTimeStamp: CMTime(value: Int64(start), timescale: Int32(rate)),
                                                                      packetDescriptions: nil, sampleBufferOut: &made)
                 let buffer = try XCTUnwrap(made)
-                while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+                try await input.waitUntilReady()
                 XCTAssertTrue(input.append(buffer), "track \(index) takes its samples: \(String(describing: writer.error))")
             }
         }

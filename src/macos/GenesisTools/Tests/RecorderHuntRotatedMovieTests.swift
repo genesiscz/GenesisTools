@@ -30,7 +30,7 @@ final class RecorderHuntRotatedMovieTests: XCTestCase {
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
         for frame in 0..<30 {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+            try await input.waitUntilReady()
             var buffer: CVPixelBuffer?
             CVPixelBufferCreate(nil, 320, 180, kCVPixelFormatType_32BGRA, nil, &buffer)
             guard let buffer else { continue }
