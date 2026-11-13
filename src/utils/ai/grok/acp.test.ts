@@ -307,13 +307,14 @@ test("an agent request that carries the id of a waiting call is answered, and th
     try {
         expect(await client.listSessions()).toEqual([{ sessionId: SESSION_ID, title: "Fixture" }]);
         await Bun.sleep(10);
-        expect(answers).toEqual([
-            {
-                jsonrpc: "2.0",
-                id: 3,
-                error: { code: -32601, message: "grok-acp does not answer session/request_permission" },
-            },
-        ]);
+        // Every error reply of the shared peer also carries this repo's `stack` and `issue` members (748a9f7707);
+        // what the agent reads is the standard code and message under its own id.
+        expect(answers).toHaveLength(1);
+        expect(answers[0]).toMatchObject({
+            jsonrpc: "2.0",
+            id: 3,
+            error: { code: -32601, message: "grok-acp does not answer session/request_permission" },
+        });
     } finally {
         client.reset();
     }
