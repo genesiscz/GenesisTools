@@ -1,9 +1,11 @@
+import type { EchoMetric } from "@genesiscz/utils/meetings/echo";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { RawTermEvidence } from "@genesiscz/utils/transcribe/terms";
+import { assessIndicator } from "./speaker-indicator";
 
 /**
  * The facts of a meeting for an agent to reason over (the polishing session's three-pass mode, decision 33 a): who
@@ -40,9 +42,13 @@ export interface RawMeeting {
         /** The microphone's share of the line's channel segments; absent when no segment overlaps it. */
         channel?: { micShare: number };
         energyMicShare?: number;
+        rawEnergyMicShare?: number;
+        acoustic?: EchoMetric;
         liveName?: string;
         /** Everyone the platform showed speaking during the line, most often first. */
         speaking: string[];
+        speakingUnknown?: boolean;
+        indicatorIgnored?: "meeting-dominance" | "stretch-stuck";
         muted: string[];
         present: string[];
     }>;
@@ -88,11 +94,19 @@ export function rawMeeting(options: {
         options.energyMicShare
     );
     const selfName = record.participants.find((person) => person.self)?.name;
+    const assessment = assessIndicator({
+        lines,
+        selfName: selfName ?? evidence?.selfName ?? "",
+        roomPeople: record.seats?.room,
+    });
     const names = [
         ...new Set([
             ...((options.presence ?? record.attendance?.people)?.map((person) => person.name) ?? []),
             ...record.participants.map((person) => person.name),
             ...meeting.speakers.map((speaker) => speaker.name),
+            ...(evidence?.speaking.flatMap((reading) => reading.speaking) ?? []),
+            ...(record.seats?.room ?? []),
+            ...(record.seats?.remote.map((seat) => seat.name) ?? []),
         ]),
     ];
 
@@ -107,7 +121,14 @@ export function rawMeeting(options: {
             ...(options.callSilent ? { callSilent: options.callSilent } : {}),
         },
         people: names.map((name) => {
-            const origin = originOf(name);
+            const origin =
+                (record.participants.find((person) => sameName(person.name, name))?.from.includes("platform-roster")
+                    ? "platform-roster"
+                    : undefined) ??
+                originOf(name) ??
+                (evidence?.speaking.some((reading) => reading.speaking.some((shown) => sameName(shown, name)))
+                    ? "indicator"
+                    : undefined);
             return {
                 name,
                 ...(origin ? { origin } : {}),
@@ -130,11 +151,15 @@ export function rawMeeting(options: {
                     ? { channel: { micShare: Math.round(line.micShare * 1000) / 1000 } }
                     : {}),
                 ...(line.energyMic !== undefined ? { energyMicShare: Math.round(line.energyMic * 1000) / 1000 } : {}),
+                ...(line.energyMicRaw !== undefined ? { rawEnergyMicShare: line.energyMicRaw } : {}),
+                ...(line.acoustic ? { acoustic: line.acoustic } : {}),
                 ...(line.liveName ? { liveName: line.liveName } : {}),
                 speaking: Object.entries(line.speaking)
                     .sort((a, b) => b[1] - a[1])
                     .map(([name]) => name),
                 muted: line.muted ?? [],
+                speakingUnknown: line.speakingUnknown,
+                ...(assessment.reasons.has(line.index) ? { indicatorIgnored: assessment.reasons.get(line.index) } : {}),
                 present: presentAt(record, options.presence, line.startSec),
             };
         }),

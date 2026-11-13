@@ -1,7 +1,7 @@
 import { applyDictionary, type DictionaryNotes, type ResolvedDictionary } from "./dictionary";
 import { heardIn, heardPattern, type LineAddress, type LineLookup, TranscriptLines } from "./lines";
 import { formatClock } from "./render";
-import type { TermFix } from "./terms";
+import { type TermFix, termFixPattern, termFixReplacement } from "./terms";
 import type { TranscriptEntry } from "./types";
 
 /** Corrections a person confirmed, in the shape a transcript needs. Labels are the source's own labels. */
@@ -491,14 +491,14 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
             }
         }
 
-        const re = heardPattern(fix.heard);
+        const re = termFixPattern(fix);
         const changed = new Set<TranscriptEntry>();
 
         for (const line of targets) {
-            line.text = line.text.replace(re, () => {
+            line.text = line.text.replace(re, (_match, ending: string | undefined) => {
                 changed.add(line);
                 counts.terms += 1;
-                return fix.replacement;
+                return termFixReplacement(fix, ending);
             });
         }
 

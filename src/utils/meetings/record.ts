@@ -11,6 +11,7 @@ import { calendarEntrySchema, calendarPersonSchema } from "./calendar-entry";
 import { projectNameSchema } from "./config";
 import { CHANNEL_LAYOUTS } from "./energy";
 import { MEETING_PLATFORM_IDS } from "./platform";
+import { meetingSeatsSchema } from "./seats";
 
 const { log } = logger.scoped("meetings-record");
 
@@ -52,6 +53,26 @@ const isoTime = z.string().min(1);
 const participantSchema = z.object({
     name: z.string().min(1),
     self: z.boolean().optional(),
+    firstSeenSec: z.number().nonnegative().optional(),
+    stays: z
+        .array(
+            z.object({
+                fromSec: z.number().nonnegative(),
+                toSec: z.number().nonnegative().optional(),
+                source: z.enum([
+                    "attendance",
+                    "indicator",
+                    "platform-roster",
+                    "greeting",
+                    "goodbye",
+                    "silence",
+                    "phone",
+                    "hand",
+                ]),
+                confidence: z.number().min(0).max(1).optional(),
+            })
+        )
+        .optional(),
     /** Where the name came from: a source id, "calendar", or "user". */
     from: z.array(z.string()).default([]),
 });
@@ -214,6 +235,10 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         toSec: z.number(),
         /** Whose voice it is. Empty until a rule or a person knows; confirming needs it. */
         speaker: z.string().optional(),
+        segments: z
+            .array(z.object({ fromWord: z.number().int().nonnegative(), speaker: z.string().min(1) }))
+            .optional(),
+        voices: z.array(z.string()).optional(),
         /** Who could it be: the people in the call during the range. */
         candidates: z.array(z.string()).optional(),
         ...itemBase,
@@ -244,6 +269,8 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         kind: z.literal("term"),
         atSec: z.number().optional(),
         heard: z.string(),
+        heardStem: z.string().min(1).optional(),
+        proposedStem: z.string().min(1).optional(),
         /** The right spelling. Absent for a word no dictionary layer accepts and no term resembles: asked by ear. */
         proposed: z.string().optional(),
         /** `line`: the spelling fixes only the line at `atSec`. Absent, it fixes the words wherever they are heard. */
@@ -417,6 +444,7 @@ export const meetingRecordSchema = z.object({
     audio: z.object({ sources: z.record(z.string().min(1), preservedSourceAudioSchema) }).optional(),
     calendar: calendarSchema.optional(),
     participants: z.array(participantSchema).default([]),
+    seats: meetingSeatsSchema.optional(),
     context: z.array(contextSchema).default([]),
     /**
      * Renames for this meeting, and stretches given to a person (the decision journal's `assign`). Both are a

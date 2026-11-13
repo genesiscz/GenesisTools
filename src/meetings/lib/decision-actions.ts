@@ -99,6 +99,7 @@ export const DECISION_ACTION_OPTIONS = [
         kind: z.literal("add"),
         findings: z.array(findingSchema).min(1),
         allowDuplicates: z.boolean().optional(),
+        force: z.boolean().optional(),
     }),
     /**
      * The meeting's own fields (`set`): its project (a known name: the caller resolves it first), its title, labels

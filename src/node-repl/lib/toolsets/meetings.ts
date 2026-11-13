@@ -63,6 +63,7 @@ import {
     type MeetingRecord,
     MeetingStore,
 } from "@genesiscz/utils/meetings/record";
+import type { MeetingPersonEdit } from "@genesiscz/utils/meetings/room-people";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { type recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
 import { callRecorder, readLiveRecording } from "@genesiscz/utils/screen-recorder/live";
@@ -307,6 +308,10 @@ export class MeetingsToolset extends ReplToolset {
             },
             info: () => describe(current()),
             evidence: () => opened().evidence(),
+            voice: (options: { voices?: number; channel?: number } = {}) =>
+                withMeetingsClient((client) => client.call("meeting.voice", { meeting: id, ...options })),
+            editPerson: (edit: MeetingPersonEdit) =>
+                withMeetingsClient((client) => client.call("meeting.people.edit", { meeting: id, ...edit })),
             transcript: async () => (await opened().meeting()).transcript,
             lines: async (input: z.input<typeof lines.params> = {}) => {
                 const options = lines.params.parse(input);

@@ -56,12 +56,21 @@ export function calendarFor(meeting: Meeting): MeetingCalendar | undefined {
  */
 function participantsOf(meeting: Meeting): SourceMeeting["participants"] {
     const self = localAvailable() ? localSelfName(meeting.id) : undefined;
-    const people = meeting.participants.map((person) => ({
+    const roster = localAvailable() ? (readEvidence(meeting.id, self).participants ?? []) : [];
+    const people: SourceMeeting["participants"] = meeting.participants.map((person) => ({
         name: person.name,
         ...(person.isSelf || person.name === self ? { self: true } : {}),
         from: ["wisprflow"],
     }));
 
+    for (const person of roster) {
+        const known = people.find((one) => one.name === person.name);
+        if (known) {
+            Object.assign(known, person, { from: [...new Set([...known.from, ...person.from])] });
+        } else {
+            people.push(person);
+        }
+    }
     return self && !people.some((person) => person.name === self)
         ? [...people, { name: self, self: true, from: ["wisprflow"] }]
         : people;

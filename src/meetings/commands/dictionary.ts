@@ -263,11 +263,15 @@ function collect(value: string, previous: string[] = []): string[] {
     return [...previous, value];
 }
 
-async function test(phrase: string, opts: { project?: string; json?: boolean }): Promise<void> {
+async function test(phrase: string, opts: { project?: string; json?: boolean; entry?: string }): Promise<void> {
     try {
         const project = opts.project;
         const result = await withMeetingsClient((client) =>
-            client.call("dictionary.test", { phrase, ...(project ? { project } : {}) })
+            client.call("dictionary.test", {
+                phrase,
+                ...(project ? { project } : {}),
+                ...(opts.entry ? { entry: dictionaryEntrySchema.parse(SafeJSON.parse(opts.entry)) } : {}),
+            })
         );
 
         if (opts.json) {
@@ -355,6 +359,7 @@ export function registerDictionaryCommand(program: Command): void {
         .command("test")
         .argument("<phrase>", "a sentence as a transcript would have it")
         .description("The phrase after the dictionary, with each entry that fired; reads only")
+        .option("--entry <json>", "preview an unsaved dictionary entry against these lines without saving it")
         .option("--project <name>", "the global dictionary and this project's")
         .option("--json", "print JSON")
         .action(test);

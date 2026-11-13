@@ -716,6 +716,15 @@ struct MeetingsDictionaryPage: View {
                 }
             }
 
+            Button("Preview edited entry on the lines above") {
+                let entry = SavedDictionaryEntry(type: type, value: value,
+                    substitution: type == "fix" || type == "abbr" ? substitution : nil,
+                    spoken: type == "term" ? MeetingsDictionaryRules.spokenForms(spoken) : nil,
+                    meaning: type == "term" && !meaning.isEmpty ? meaning : nil,
+                    caseSensitive: type == "fix" ? caseSensitive : nil)
+                model.testPhrase(model.phrase, entry: entry)
+            }.disabled(!canSave || model.phrase.isEmpty)
+
             FillersCard(model: model, language: settings.global.language, fillers: settings.meetingLanguage?.fillers)
                 .nativeSettingsAnchor("fillers")
 

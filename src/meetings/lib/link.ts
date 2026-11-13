@@ -34,6 +34,8 @@ function mergeParticipants(current: MeetingParticipant[], incoming: MeetingParti
 
         known.from = [...new Set([...known.from, ...person.from])];
         known.self ||= person.self;
+        known.firstSeenSec = person.firstSeenSec ?? known.firstSeenSec;
+        known.stays ??= person.stays;
     }
 
     return merged;

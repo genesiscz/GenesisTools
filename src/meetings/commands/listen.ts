@@ -31,6 +31,7 @@ import {
     questionClip,
     writeQuestionClips,
 } from "../lib/listen-clips";
+import { listenQuestionFindings, selectedQuestionIds } from "../lib/listen-input";
 import {
     type AskedQuestion,
     type ListenAdapter,
@@ -149,7 +150,7 @@ function choiceRows(options: {
         },
         {
             value: OTHER,
-            label: "Something else…",
+            label: question.about === "speaker" ? "Somebody else…" : "Something else…",
             hint: "pick a known name or word, or type a new one",
             kind: "action",
             glyph: "✎",
@@ -319,6 +320,7 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
 }
 
 interface ListenOptions {
+    questions?: string;
     item?: string;
     answer?: string;
     except?: string[];
@@ -613,8 +615,40 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
 
+    let selected: string[] | undefined;
+    try {
+        if (opts.questions) {
+            if (opts.item || opts.answer !== undefined) {
+                throw new Error("--questions cannot be combined with --item or --answer");
+            }
+            if (/^(?:Q\d+|i\d+)(?:,(?:Q\d+|i\d+))*$/i.test(opts.questions)) {
+                selected = selectedQuestionIds(meeting, opts.questions.split(","));
+            } else {
+                if (opts.clipOut || !isInteractive()) {
+                    throw new Error(
+                        "Ad-hoc questions are stored when an interactive round starts; --clip-out and noninteractive use require stored question IDs"
+                    );
+                }
+                const text = opts.questions === "-" ? await Bun.stdin.text() : await Bun.file(opts.questions).text();
+                const findings = listenQuestionFindings(SafeJSON.parse(text));
+                const client = await openMeetingsClient({ role: "listen" });
+                try {
+                    await client.call("decision.apply", { meeting: meeting.id, action: { kind: "add", findings } });
+                    meeting = store.read(meeting.id) ?? meeting;
+                } finally {
+                    client.close();
+                }
+            }
+        }
+    } catch (error) {
+        fail(error);
+        return;
+    }
+
     const itemId = opts.item ? questionIdOf(meeting, opts.item) : undefined;
-    const first = openQuestions(meeting).find((item) => !itemId || item.id === itemId);
+    const first = openQuestions(meeting).find(
+        (item) => (!itemId || item.id === itemId) && (!selected || selected.includes(item.id))
+    );
 
     if (!first) {
         // A named question that is not open was not answered, so that exits 1; an empty round is no failure.
@@ -633,7 +667,9 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         }
 
         try {
-            const questions = openQuestions(meeting).filter((item) => !itemId || item.id === itemId);
+            const questions = openQuestions(meeting).filter(
+                (item) => (!itemId || item.id === itemId) && (!selected || selected.includes(item.id))
+            );
             await clipsOut({ store, meeting, questions, dir: opts.clipOut, json: opts.json });
         } catch (err) {
             fail(err);
@@ -667,6 +703,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             logPath: join(store.folder(meeting.id), ANSWER_LOG_FILE),
             adapter: chosen.adapter,
             ...(itemId ? { only: itemId } : {}),
+            ...(selected ? { selected } : {}),
             budget: chosen.budget,
             minPriority: settings.global.playback.listen.minPriority,
             listenBelow: settings.global.suggest.listenBelow,
@@ -723,6 +760,10 @@ export function registerListenCommand(program: Command): void {
             "Answer the open questions by ear, one at a time: each range is cut, played, and its answer decides its items"
         )
         .option("--item <Q12|id>", "only this question: its number as listen shows it (Q12), or its item id")
+        .option(
+            "--questions <file|Q12,Q13|->",
+            "store ad-hoc question findings from JSON at round start, or select stored questions"
+        )
         .option("--answer <text>", `answer --item without listening ("${NONE_OF_THESE}" rejects what it decides)`)
         .option("--comment <text>", "with --answer: a note kept on the question")
         .option("--except <items...>", "with --answer: leave these item ids or question numbers out")

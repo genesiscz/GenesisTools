@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { similarityScore } from "@genesiscz/utils/fuzzy-match";
+import { levenshteinDistance, similarityScore } from "@genesiscz/utils/fuzzy-match";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { MIN_STEM, stemOf } from "./languages/cs";
+import { CZECH, CZECH_ENDINGS, MIN_STEM, stemOf } from "./languages/cs";
 import type { WordCheck, WordVerdict } from "./languages/word-check";
 import { heardPattern, LINE_AT_TOLERANCE_SEC } from "./lines";
 import type { TranscriptEntry } from "./types";
@@ -57,10 +57,6 @@ const MIN_KEY_LENGTH = 4;
 /** A term this short matches too many ordinary words, so it must match almost exactly. */
 const SHORT_KEY = 4;
 const SHORT_KEY_MIN = 0.9;
-/** A dictionary word said fewer times than this in the subtitles is rare, and may still be a misheard term ("funkcionář"). */
-const RARE_COUNT = 200;
-/** A rare dictionary word must sound this much closer to a term than an unknown word does. */
-const RARE_MARGIN = 10;
 /** A longer run replaces a shorter one only when it scores clearly better. */
 const LONGER_RUN_MARGIN = 3;
 /** A term followed by at most this many letters is the term with a Czech case ending, not a mishearing. */
@@ -443,7 +439,12 @@ class TermIndex {
             const confidence = Math.round(Math.min(1, scored.value + bonus) * 100);
 
             if (confidence >= minConfidence - CANDIDATE_SPREAD) {
-                candidates.push({ term: term.term, source: term.source, confidence, kind: scored.kind });
+                candidates.push({
+                    term: inflectedCandidate(run.run, term.term),
+                    source: term.source,
+                    confidence,
+                    kind: scored.kind,
+                });
             }
         }
 
@@ -463,10 +464,104 @@ class TermIndex {
     }
 }
 
+/** Preserve a recognized Czech ending when comparing a heard form to a proposed base. */
+export function inflectedCandidate(heard: string, proposed: string): string {
+    const last = heard.split(/\s+/u).at(-1) ?? heard;
+    const target = proposed.split(/[\s._-]+/u).at(-1) ?? proposed;
+    const ending = CZECH_ENDINGS.find(
+        (suffix) => last.toLowerCase().endsWith(suffix) && last.length - suffix.length >= 3
+    );
+    if (!ending || target.toLowerCase().endsWith(ending)) {
+        return proposed;
+    }
+    return similarityScore(phoneticKey(last.slice(0, -ending.length)), phoneticKey(target)) >= 0.5
+        ? proposed + last.slice(-ending.length)
+        : proposed;
+}
+
+export function termFixPattern(fix: TermFix): RegExp {
+    if (!fix.heardStem || !fix.proposedStem) {
+        return heardPattern(fix.heard);
+    }
+    const escaped = fix.heardStem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(${CZECH_ENDINGS.join("|")}|)(?![\\p{L}\\p{N}_])`, "giu");
+}
+
+export function termFixReplacement(fix: TermFix, ending?: string): string {
+    return fix.heardStem && fix.proposedStem ? fix.proposedStem + (ending ?? "") : fix.replacement;
+}
+
 const MAX_EXAMPLES = 5;
 
 function sentencesOf(text: string): string[] {
     return text.split(/(?<=[.?!…])\s+/u).filter((sentence) => sentence.trim());
+}
+
+/** Explicit meeting owners supply candidates; no implicit developer-tool glossary. */
+export function scopedVocabulary(options: {
+    dictionary?: VocabTerm[];
+    context?: VocabTerm[];
+    people?: string[];
+    user?: VocabTerm[];
+}): VocabTerm[] {
+    return buildVocabulary([
+        options.dictionary ?? [],
+        options.context ?? [],
+        options.user ?? [],
+        (options.people ?? []).map((term) => ({ term, source: "participant" })),
+    ]);
+}
+
+/** A one-edit proposal uses scoped vocabulary or a stronger acronym spelling observed in this meeting. */
+export function meetingTermCandidates(options: {
+    heard: string;
+    entries: TranscriptEntry[];
+    vocab: VocabTerm[];
+}): TermCandidate[] {
+    const tokens = options.entries.flatMap((entry) => words(entry.text));
+    const spoken = new Set(tokens.map((word) => word.toLowerCase()));
+    const acronymPattern = /^(\p{Lu}[\p{Lu}\p{N}]+)(\p{Ll}*)$/u;
+    const acronym = acronymPattern.exec(options.heard);
+    const base = acronym?.[1] ?? options.heard;
+    const counts = new Map<string, number>();
+    for (const token of tokens) {
+        const stem = acronymPattern.exec(token)?.[1];
+        if (stem) {
+            counts.set(stem, (counts.get(stem) ?? 0) + 1);
+        }
+    }
+    const observed = acronym
+        ? [...counts]
+              .filter(([term, count]) => term !== base && count > (counts.get(base) ?? 0) && count >= 2)
+              .map(([term]) => ({ term, source: "meeting" }))
+        : [];
+    const oneEdit = (term: string) => {
+        if (levenshteinDistance(base, term) === 1) {
+            return true;
+        }
+        const differences = [...base].flatMap((letter, index) =>
+            letter.toLowerCase() === term[index]?.toLowerCase() ? [] : [index]
+        );
+        return (
+            base.length === term.length &&
+            differences.length === 2 &&
+            differences[1] === differences[0]! + 1 &&
+            base[differences[0]!] === term[differences[1]!] &&
+            base[differences[1]!] === term[differences[0]!]
+        );
+    };
+    return buildVocabulary([options.vocab.filter((term) => spoken.has(term.term.toLowerCase())), observed])
+        .filter((term) => oneEdit(term.term))
+        .map((term) => ({
+            ...term,
+            term: acronym ? term.term + (acronym[2] ?? "") : inflectedCandidate(options.heard, term.term),
+            confidence: 80,
+        }));
+}
+
+function knownCzechForm(word: string, check: WordCheck): boolean {
+    const known = (form: string) => ["dictionary", "spoken"].includes(check.verdict(form).class);
+    return known(word) || CZECH.loanStems(word).some(known);
 }
 
 /** The sentence of `entries[index]` that holds `heard`, marked, with the sentence before and after it. */
@@ -506,6 +601,10 @@ function bareWord(token: string): string {
  * dictionary knows every word of it. A run with a Czech letter, or a single English word without a check, is speech.
  */
 function requiredConfidence(run: RunKeys, minConfidence: number, wordCheck?: WordCheck): number | undefined {
+    if (run.words > 1 && /(?:^|\s)(?:je|jsou|jsem|jsme|jste|byl|byla|byli)$/iu.test(run.run)) {
+        return undefined;
+    }
+
     if (!wordCheck || run.words > 1) {
         // Czech words the dictionary knows, side by side ("jako skripty"), are speech; "chess benefit" is not.
         const czech =
@@ -517,13 +616,16 @@ function requiredConfidence(run: RunKeys, minConfidence: number, wordCheck?: Wor
             : minConfidence;
     }
 
+    if (knownCzechForm(bareWord(run.run), wordCheck)) {
+        return undefined;
+    }
     const verdict = wordCheck.verdict(bareWord(run.run));
 
     if (verdict.class === "unknown") {
         return minConfidence;
     }
 
-    return verdict.class === "dictionary" && verdict.count < RARE_COUNT ? minConfidence + RARE_MARGIN : undefined;
+    return undefined;
 }
 
 /**
@@ -683,6 +785,7 @@ export function findUnknownWords(options: {
     const context = new Set((options.context ?? []).map((t) => compact(t.term)));
     const index = new TermIndex(options.vocab);
     const found = new Map<string, UnknownWord>();
+    const near = (heard: string) => meetingTermCandidates({ heard, entries: options.entries, vocab: options.vocab });
     const passed = new Set<string>();
 
     for (const [entryIndex, entry] of options.entries.entries()) {
@@ -712,7 +815,13 @@ export function findUnknownWords(options: {
             const keys = runKeys(word);
             const short = word.length < UNKNOWN_MIN_LENGTH && !/^\p{Lu}{2,}$/u.test(word);
 
-            if (verdict.class !== "unknown" || short || options.skip?.has(key) || index.isKnown(keys)) {
+            if (
+                knownCzechForm(word, options.wordCheck) ||
+                verdict.class !== "unknown" ||
+                short ||
+                options.skip?.has(key) ||
+                index.isKnown(keys)
+            ) {
                 passed.add(key);
                 continue;
             }
@@ -722,7 +831,11 @@ export function findUnknownWords(options: {
                 occurrences: 1,
                 examples: [exampleAt(options.entries, entryIndex, word)],
                 verdict,
-                candidates: index.score(keys, context, WEAK_MIN)?.candidates ?? [],
+                candidates: near(word).length
+                    ? near(word)
+                    : /^\p{Lu}{2,}\p{Ll}*$/u.test(word)
+                      ? []
+                      : (index.score(keys, context, WEAK_MIN)?.candidates ?? []),
             });
         }
     }
@@ -784,6 +897,8 @@ export interface TermFix {
     replacement: string;
     /** Fix only the line that starts here (within half a second). Absent, every line. */
     atSec?: number;
+    heardStem?: string;
+    proposedStem?: string;
 }
 
 export const FIX_SEPARATOR = "::";
@@ -841,15 +956,15 @@ export function applyFixes(
 ): { entries: TranscriptEntry[]; replaced: number } {
     let replaced = 0;
     const patterns = fixes.map((fix) => ({
-        re: heardPattern(fix.heard),
-        replacement: fix.replacement,
+        re: termFixPattern(fix),
+        fix,
         atSec: fix.atSec,
     }));
 
     const next = entries.map((entry) => {
         let text = entry.text;
 
-        for (const { re, replacement, atSec } of patterns) {
+        for (const { re, fix, atSec } of patterns) {
             const elsewhere =
                 atSec !== undefined &&
                 (entry.startSec === undefined || Math.abs(entry.startSec - atSec) > LINE_AT_TOLERANCE_SEC);
@@ -858,9 +973,9 @@ export function applyFixes(
                 continue;
             }
 
-            text = text.replace(re, () => {
+            text = text.replace(re, (_match, ending: string | undefined) => {
                 replaced++;
-                return replacement;
+                return termFixReplacement(fix, ending);
             });
         }
 

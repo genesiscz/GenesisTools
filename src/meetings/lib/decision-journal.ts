@@ -919,6 +919,7 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 findings: action.findings,
                 items: record.items,
                 allowDuplicates: action.allowDuplicates,
+                force: action.force,
                 ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
             });
             record.items.push(...added);

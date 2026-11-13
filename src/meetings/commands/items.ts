@@ -300,6 +300,7 @@ interface AddOptions {
     kind?: string;
     plan?: boolean;
     allowDuplicates?: boolean;
+    force?: boolean;
     listen?: boolean;
     fromFile?: string;
     from?: string;
@@ -308,6 +309,8 @@ interface AddOptions {
     label?: string;
     speaker?: string;
     heard?: string;
+    heardStem?: string;
+    proposedStem?: string;
     proposed?: string;
     scope?: string;
     joined?: string;
@@ -340,6 +343,8 @@ function findingFromFlags(opts: AddOptions): Record<string, unknown> {
         label: opts.label,
         speaker: opts.speaker,
         heard: opts.heard,
+        heardStem: opts.heardStem,
+        proposedStem: opts.proposedStem,
         proposed: opts.proposed,
         scope: opts.scope,
         joined: opts.joined,
@@ -431,6 +436,7 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
                     kind: "add",
                     findings: parsed.data,
                     ...(opts.allowDuplicates ? { allowDuplicates: true } : {}),
+                    ...(opts.force ? { force: true } : {}),
                 },
             })
         );
@@ -833,6 +839,8 @@ export function registerItemCommands(program: Command): void {
             "term: the words as the transcript has them; question: the words marked until answered"
         )
         .option("--proposed <text>", "term: the right spelling, when known")
+        .option("--heard-stem <text>", "term: match this stem and its Czech endings")
+        .option("--proposed-stem <text>", "term: replace the stem, keeping each Czech ending")
         .option("--scope <scope>", "term: line (fix only the line at --at) or everywhere (default)")
         .option("--joined <word>", "join: the whole word the two lines make")
         .option("--about [topic]", `question: ${QUESTION_TOPICS.join(" | ")} (default speaker)`)
@@ -850,6 +858,7 @@ export function registerItemCommands(program: Command): void {
         )
         .option("--plan", "print each finding's affected transcript line indices and first words; write nothing")
         .option("--allow-duplicates", "append even when an equal open finding exists")
+        .option("--force", "store a line-scoped term with a dead anchor, retaining its diagnostic")
         .action(addItems);
 
     for (const [name, status] of [

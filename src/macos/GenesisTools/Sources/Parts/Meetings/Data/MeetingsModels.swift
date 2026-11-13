@@ -109,6 +109,21 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     /// A plain confirm applies it: a range needs its speaker and a term its spelling. The button, the accessibility
     /// action, Return and "confirm all" all ask this, so none of them sends a confirm the CLI refuses.
     var canConfirm: Bool { isDecidable && !(kind == "speaker-range" && speaker == nil) && !needsSpelling }
+    var departureText: String? {
+        guard case .object(let event)? = evidence?["departure"],
+              case .string(let name)? = event["name"] else { return nil }
+        return "\(name) said goodbye at \(Int(fromSec ?? 0)) s"
+    }
+    var speakerEvidenceText: String? {
+        guard kind == "speaker-range" else { return nil }
+        var parts = ["Rules: " + (rules ?? []).joined(separator: ", ")]
+        if case .string(let ignored)? = evidence?["indicatorIgnored"] { parts.append("Indicator ignored: " + ignored) }
+        if case .object(let swap)? = evidence?["swap"], case .array(let skipped)? = swap["skipped"] {
+            parts.append("Swap skips \(skipped.count) contradictory lines")
+        }
+        if let departureText { parts.append(departureText) }
+        return parts.joined(separator: " · ")
+    }
     var reason: String? {
         if case .string(let text)? = evidence?["reason"] { return text }
         return nil
@@ -116,6 +131,11 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
 }
 
 struct MeetingContextRef: Decodable, Equatable, Hashable, Identifiable {
+    struct File: Decodable, Equatable, Hashable {
+        struct Revision: Decodable, Equatable, Hashable { let commit: String; let text: String }
+        let revision: Revision
+    }
+    var file: File? = nil
     let id: String
     let kind: String
     let ref: String
@@ -144,8 +164,25 @@ struct MeetingRecordView: Decodable, Equatable {
     var items: [MeetingItem]
     let context: [MeetingContextRef]
     var speakers: Speakers
+    struct Person: Decodable, Equatable { var name: String; var from: [String]?; var `self`: Bool? }
+    struct Stay: Decodable, Equatable { var name: String; var fromSec: Double; var toSec: Double }
+    struct Attendance: Decodable, Equatable { var from: String; var people: [Stay] }
+    struct Seats: Decodable, Equatable {
+        struct Remote: Decodable, Equatable { var name: String }
+        struct Group: Decodable, Equatable { var id: String; var people: [String]; var deviceId: String? }
+        var room: [String]; var remote: [Remote]; var microphones: [Group]?
+    }
+    var participants: [Person]? = nil
+    var attendance: Attendance? = nil
+    var seats: Seats? = nil
     let recording: Recording?
     let sources: [String: JSONValue]
+    struct History: Decodable, Equatable { var command: String; var change: String }
+    var history: [History]? = nil
+    var copySource: String? {
+        guard let entry = history?.first, entry.command == "duplicate" else { return nil }
+        return entry.change.replacingOccurrences(of: "duplicated from ", with: "").replacingOccurrences(of: " without items", with: "")
+    }
 
     var displayTitle: String { title.trimmingCharacters(in: .whitespaces).isEmpty ? "Untitled meeting" : title }
 }

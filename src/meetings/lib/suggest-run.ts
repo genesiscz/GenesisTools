@@ -1,5 +1,7 @@
+import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { languageSettings, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
+import { type AcousticShare, collectEcho, echoForRange } from "@genesiscz/utils/meetings/echo";
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { isEnglishWord } from "@genesiscz/utils/transcribe/terms";
@@ -73,15 +75,38 @@ export async function runSuggest(options: {
         wordCheck = check.check;
     }
 
+    const presence = await opened.suggestionPresence({ ...options, warnings });
+    const energy = await opened.energy();
+    const echo =
+        rules.includes("evidence") &&
+        evidence?.audioPath &&
+        energy.calibration?.layout &&
+        energy.calibration.layout !== "unknown"
+            ? await collectEcho({
+                  audioPath: evidence.audioPath,
+                  cachePath: join(store.folder(record.id), "evidence", "echo.json"),
+                  layout: energy.calibration.layout,
+              })
+            : undefined;
+    const share: AcousticShare | undefined = echo
+        ? Object.assign(
+              (fromSec: number, toSec: number) =>
+                  echoForRange(echo, fromSec, toSec)?.cleanMicShare ?? energy.share?.(fromSec, toSec),
+              {
+                  acoustic: (fromSec: number, toSec: number) => echoForRange(echo, fromSec, toSec),
+                  raw: energy.share?.raw ?? energy.share,
+              }
+          )
+        : energy.share;
     const inputs: Parameters<typeof suggestItems>[0] = {
         record: collected,
         meeting,
         rules,
         dictionary: await opened.dictionary(),
         sourceWords: await opened.sourceWords(),
-        presence: await opened.suggestionPresence({ ...options, warnings }),
+        presence,
         evidence,
-        energyMicShare: (await opened.energy()).share,
+        energyMicShare: share,
         listenBelow: config.global.suggest.listenBelow,
         questionBudget: config.global.suggest.questionCap,
         minPriority: config.global.playback.listen.minPriority,

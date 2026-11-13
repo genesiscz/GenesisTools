@@ -40,6 +40,11 @@ struct ContextTab: View {
                                 } else if ref.kind == "url" {
                                     Text(verbatim: ref.ref).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                                 }
+                                if let revision = ref.file?.revision {
+                                    Text(verbatim: "Revision \(revision.commit.prefix(12)) · saved text")
+                                        .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
                                 if let note = MeetingsWords.contextNote(ref) {
                                     Text(verbatim: note).font(.system(size: 11.5)).foregroundStyle(.secondary)
                                 }

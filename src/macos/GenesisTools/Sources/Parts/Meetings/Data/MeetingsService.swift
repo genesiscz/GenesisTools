@@ -17,6 +17,25 @@ protocol MeetingsServiceMethod {
 enum MeetingsAPI {
     /// `MEETINGS_PROTOCOL`: a service that speaks another one refuses the hello with `protocol-mismatch`.
     static let protocolVersion = 1
+
+    enum MeetingPeopleEdit: MeetingsServiceMethod {
+        static let name = "meeting.people.edit"
+        struct Params: Codable, Equatable {
+            var meeting: String; var name: String; var action: String
+            var fromSec: Double?; var toSec: Double?; var atMic: Bool?; var via: String?
+        }
+        typealias Result = MeetingRecordView
+    }
+    enum Voice: MeetingsServiceMethod {
+        static let name = "meeting.voice"
+        struct Params: Codable, Equatable { var meeting: String; var voices: Int?; var channel: Int? }
+        struct Channel: Decodable, Equatable {
+            var rms: Double; var lowBandShare: Double; var tilt: Double; var pitchHz: Double?; var voicedShare: Double
+        }
+        struct Cluster: Decodable, Equatable { var id: Int; var confidence: Double; var speaker: String? }
+        struct Line: Decodable, Equatable { var index: Int; var channels: [Channel]; var cluster: Cluster? }
+        typealias Result = [Line]
+    }
     /// `MEETINGS_REFUSED`: the JSON-RPC error code of every refusal; its `data.code` says which one.
     static let refusedCode = 1100
 

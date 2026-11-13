@@ -505,13 +505,13 @@ final class MeetingsWindowModel {
     }
 
     /// Copies a meeting into a new record (`meetings duplicate`) and opens the copy, with its title ready to edit.
-    func duplicate(_ id: String) {
+    func duplicate(_ id: String, withoutItems: Bool = false) {
         guard !duplicating.contains(id) else { return }
         duplicating.insert(id)
         Task {
             defer { duplicating.remove(id) }
             do {
-                let copy = try await MeetingsCLI.json(DuplicateResult.self, ["duplicate", id, "--json"], timeoutSeconds: 120)
+                let copy = try await MeetingsCLI.json(DuplicateResult.self, ["duplicate", id, "--json"] + (withoutItems ? ["--without-items"] : []), timeoutSeconds: 120)
                 loadOverview(quiet: true)
                 select(copy.id)
                 renamingMeetingID = copy.id

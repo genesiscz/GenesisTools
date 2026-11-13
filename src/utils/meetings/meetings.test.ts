@@ -24,8 +24,10 @@ import {
     sourceFolders,
     TONE_PRESETS,
 } from "./config";
+import { collectEcho, correlateEcho, echoForRange, readEchoCache } from "./echo";
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
 import { MEETING_UNCHANGED, MeetingStore, meetingRecordSchema, nextId, titleSlug } from "./record";
+import { readVoiceSamples, saveVoiceSample, scoreVoice } from "./voice";
 
 let stores = 0;
 
@@ -1201,4 +1203,87 @@ test("a positive discovery limit parses only that many recent records", async ()
     } finally {
         read.mockRestore();
     }
+});
+
+describe("isolated playback echo and speaker enrolment", () => {
+    function noise(n: number, seed: number): Float32Array {
+        let state = seed;
+        return Float32Array.from({ length: n }, () => {
+            state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+            return (state / 4294967296 - 0.5) * 0.5;
+        });
+    }
+    test("recovers a delayed call and preserves independent near-end speech", () => {
+        const call = noise(4000, 11),
+            local = noise(4000, 72);
+        const echo = Float32Array.from(call, (_, i) => (call[i - 84] ?? 0) * 0.7);
+        const measured = correlateEcho({ mic: echo, call, rate: 2000 });
+        expect(measured.echoOfCall).toBeGreaterThan(0.99);
+        expect(measured.lagMs).toBe(42);
+        expect(measured.cleanMicShare).toBeLessThan(0.01);
+        const mixed = correlateEcho({ mic: Float32Array.from(echo, (n, i) => n + local[i]!), call, rate: 2000 });
+        expect(mixed.cleanMicRms).toBeGreaterThan(measured.cleanMicRms + 0.05);
+        expect(correlateEcho({ mic: local, call, rate: 2000 }).echoOfCall).toBeLessThan(0.03);
+        expect(
+            correlateEcho({ mic: new Float32Array(4000), call: new Float32Array(4000), rate: 2000 }).cleanMicShare
+        ).toBeUndefined();
+    });
+    test("reopens a collected echo cache and rejects changed audio provenance", async () => {
+        const root = mkdtempSync(join(tmpdir(), "echo-contract-"));
+        const input = join(root, "stereo.wav"),
+            cachePath = join(root, "echo.json");
+        const call = noise(4000, 11),
+            pcm = Buffer.alloc(4000 * 4),
+            wav = Buffer.alloc(44);
+        wav.write("RIFF");
+        wav.writeUInt32LE(36 + pcm.length, 4);
+        wav.write("WAVEfmt ", 8);
+        wav.writeUInt32LE(16, 16);
+        wav.writeUInt16LE(1, 20);
+        wav.writeUInt16LE(2, 22);
+        wav.writeUInt32LE(2000, 24);
+        wav.writeUInt32LE(8000, 28);
+        wav.writeUInt16LE(4, 32);
+        wav.writeUInt16LE(16, 34);
+        wav.write("data", 36);
+        wav.writeUInt32LE(pcm.length, 40);
+        for (let i = 0; i < call.length; i++) {
+            pcm.writeInt16LE(Math.round((call[i - 84] ?? 0) * 0.7 * 32767), i * 4);
+            pcm.writeInt16LE(Math.round(call[i]! * 32767), i * 4 + 2);
+        }
+        writeFileSync(input, Buffer.concat([wav, pcm]));
+        const before = fs.readFileSync(input);
+        await collectEcho({ audioPath: input, cachePath, layout: "left-mic" });
+        const reopened = await readEchoCache({ audioPath: input, cachePath, layout: "left-mic" });
+        expect(echoForRange(reopened!, 0, 2)?.echoOfCall).toBeGreaterThan(0.99);
+        expect(fs.readFileSync(input)).toEqual(before);
+        expect(await readEchoCache({ audioPath: input, cachePath, layout: "right-mic" })).toBeUndefined();
+        fs.utimesSync(input, new Date(), new Date(Date.now() + 3000));
+        expect(await readEchoCache({ audioPath: input, cachePath, layout: "left-mic" })).toBeUndefined();
+    });
+    test("reopens confirmed enrolments and keeps ambiguous or incompatible voices unknown", () => {
+        const file = join(mkdtempSync(join(tmpdir(), "voice-contract-")), "voices.json");
+        saveVoiceSample(file, {
+            person: "Alice",
+            model: "fixture:v1",
+            source: "fixture",
+            channel: 1,
+            fromSec: 1,
+            toSec: 5,
+            embedding: [1, 0],
+            confirmed: true,
+        });
+        const reopened = readVoiceSamples(file);
+        expect(reopened[0]?.confirmed).toBe(true);
+        expect(scoreVoice({ model: "fixture:v1", embedding: [1, 0], samples: reopened }).person).toBe("Alice");
+        expect(scoreVoice({ model: "fixture:v2", embedding: [1, 0], samples: reopened }).quality).toBe("unknown");
+        expect(scoreVoice({ model: "fixture:v1", embedding: [0, 0], samples: reopened }).quality).toBe("unknown");
+        expect(
+            scoreVoice({
+                model: "fixture:v1",
+                embedding: [1, 0],
+                samples: [...reopened, { ...reopened[0]!, person: "Bob" }],
+            }).quality
+        ).toBe("unknown");
+    });
 });

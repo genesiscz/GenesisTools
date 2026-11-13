@@ -469,7 +469,7 @@ describe("speaker evidence", () => {
         expect(participantName("Example Carol (QT)")).toBe("Example Carol (QT)");
     });
 
-    test("observations name the speakers by pid and skip failed reads", () => {
+    test("observations retain failed reads as unknown and bound every good read", () => {
         const raw = [
             '{"meta":{"platform":"teams","clock":"recording_active_ms"}}',
             '{"obs":{"tMs":5033,"reason":"source_missing","speaking":null,"muted":null}}',
@@ -479,7 +479,8 @@ describe("speaker evidence", () => {
         ].join("\n");
 
         expect(parseObservations(raw)).toEqual([
-            { tSec: 15.729, speaking: ["Bob Example"], muted: ["alice@example.com"] },
+            { tSec: 5.033, speaking: [], speakingUnknown: true, reason: "source_missing", validUntilSec: 15.033 },
+            { tSec: 15.729, speaking: ["Bob Example"], muted: ["alice@example.com"], validUntilSec: 25.729 },
         ]);
     });
 });
@@ -706,4 +707,22 @@ describe("lastLiveMarker", () => {
         expect(local.lastLiveMarker("m1", dir)).toEqual({ marker: "paused", epochMs: 9000 });
         expect(local.lastLiveMarker("missing", dir)).toBeNull();
     });
+});
+
+test("the indicator stops at the next read, including a partial or muted-only read", () => {
+    const raw = [
+        { participant: { pid: "p1", name: "Alice Example", self: true, firstSeenMs: 0 } },
+        { obs: { tMs: 0, speaking: ["p1"] } },
+        { obs: { tMs: 5000, speaking: ["p1"], reason: "partial_tree" } },
+        { obs: { tMs: 300000, muted: ["p1"] } },
+        { obs: { tMs: 305000, speaking: [] } },
+    ]
+        .map((row) => SafeJSON.stringify(row))
+        .join("\n");
+    expect(parseObservations(raw, "Alice Example")).toEqual([
+        { tSec: 0, speaking: ["Alice Example"], validUntilSec: 5 },
+        { tSec: 5, speaking: [], speakingUnknown: true, reason: "partial_tree", validUntilSec: 15 },
+        { tSec: 300, speaking: [], speakingUnknown: true, muted: ["Alice Example"], validUntilSec: 305 },
+        { tSec: 305, speaking: [], validUntilSec: 315 },
+    ]);
 });

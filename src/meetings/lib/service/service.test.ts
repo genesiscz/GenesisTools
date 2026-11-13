@@ -1073,6 +1073,7 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
                 to: { sec: 30, text: "00:30" },
                 target: { kind: "item", id: "i1" },
             },
+            { kind: "reason", pieces: [{ text: "Rules: presence" }] },
         ]);
         expect(rows.rows[0]?.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
             ["suggested", "Alex Example", 0.82],
@@ -1813,6 +1814,8 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meetings.list", {});
     await ask(window, "meetings.list", { project: "Atlas", full: true }, "full: the whole records.");
     await ask(window, "meeting.show", { ref: REVIEW.id });
+    await ask(window, "meeting.people.edit", { meeting: "nope", action: "add", name: "Dana Example" });
+    await ask(window, "meeting.voice", { meeting: "nope" });
     await ask(window, "meeting.show", { ref: "nope" }, "No meeting: meeting-not-found.");
     await ask(window, "meeting.show", { ref: "2026-11-03" }, "A prefix of two meetings: meeting-ref.");
     await ask(window, "meeting.transcript", { ref: REVIEW.id });

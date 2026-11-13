@@ -292,3 +292,119 @@ test("CLI finding batches preserve retries and forward explicit duplicates throu
         ok.mockRestore();
     }
 });
+
+test("automatic question reach counts only the targets of one answer", async () => {
+    const { questionFor } = await import("./questions");
+    const { selectQuestions } = await import("./question-select");
+    const { meetingItemSchema } = await import("@genesiscz/utils/meetings/record");
+    const range = meetingItemSchema.parse({
+        id: "i1",
+        kind: "speaker-range",
+        status: "suggested",
+        label: "Room",
+        fromSec: 0,
+        toSec: 10,
+        speaker: "Alice",
+        confidence: 0.4,
+        rules: [],
+        suggestedAt: "2026-11-01T10:00:00Z",
+    });
+    const question = questionFor(range, {
+        listenBelow: 0.6,
+        transcript: [
+            {
+                startSec: 0,
+                speaker: "Room",
+                text: "We will prepare the export and send the completed document to our colleagues before the next meeting.",
+            },
+        ],
+        points: [],
+        presence: [
+            { name: "Alice", fromSec: 0, toSec: 30 },
+            { name: "Bob", fromSec: 0, toSec: 30 },
+        ],
+    })!;
+    expect(question.choices).toEqual(["Alice", "Bob"]);
+    const selected = selectQuestions(
+        Array.from({ length: 40 }, (_, n) => ({
+            ...question,
+            fromSec: n * 20,
+            toSec: n * 20 + 10,
+            decides: [`i${n + 1}`],
+            clip: undefined,
+        })),
+        []
+    );
+    expect(selected.every((one) => one.priority! >= 1 && one.priority! <= 3)).toBe(true);
+    expect(selected.every((one) => one.evidence?.reach === 1)).toBe(true);
+});
+
+test("a dead line term refuses insertion unless forced and names the actual heard line", () => {
+    const term = findingsFileSchema.parse([
+        {
+            kind: "term",
+            at: 0,
+            heard: "Other",
+            proposed: "Another",
+            scope: "line",
+            confidence: 0.8,
+            reason: "spelling",
+        },
+    ]);
+    expect(() => prepareFindings({ findings: term, items: [], transcript })).toThrow("heard at 00:05 (line 1)");
+});
+
+test("term diagnostics distinguish absent time, wrong line and unheard word and force roundtrips", async () => {
+    const { diagnoseTermAddress } = await import("./term-address");
+    const store = new MeetingStore(new Storage("cms-forced-anchor"));
+    const record = await store.create(
+        { title: "Anchor fixture", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+        { command: "fixture", change: "create" }
+    );
+    const journal = new DecisionJournal({
+        store,
+        listenBelow: 0.6,
+        ledger: () => {},
+        split: { transcript: async () => transcript },
+    });
+    const finding = findingsFileSchema.parse([
+        {
+            kind: "term",
+            at: 0,
+            heard: "Other",
+            proposed: "Another",
+            scope: "line",
+            confidence: 0.8,
+            reason: "spelling",
+        },
+    ]);
+    await expect(
+        journal.apply({ meeting: record.id, action: { kind: "add", findings: finding }, actor: { kind: "listen" } })
+    ).rejects.toThrow("heard at 00:05");
+    await journal.apply({
+        meeting: record.id,
+        action: { kind: "add", findings: finding, force: true },
+        actor: { kind: "listen" },
+    });
+    const saved = new MeetingStore(store.storage).read(record.id)!.items[0]!;
+    if (saved.kind !== "term") {
+        throw new Error("expected term");
+    }
+    expect(diagnoseTermAddress({ item: saved, transcript })?.kind).toBe("wrong-line");
+    expect(diagnoseTermAddress({ item: { ...saved, atSec: 40 }, transcript })?.kind).toBe("no-line");
+    expect(diagnoseTermAddress({ item: { ...saved, heard: "Missing" }, transcript })?.kind).toBe("not-heard");
+    expect(diagnoseTermAddress({ item: { ...saved, atSec: 5 }, transcript })?.kind).toBe("found");
+});
+
+test("dictionary draft preview changes only matching whole tokens and never the config", async () => {
+    const { testPhrase } = await import("./dictionary-test");
+    const config = meetingsConfigSchema.parse({});
+    const before = SafeJSON.stringify(config);
+    const preview = testPhrase(config, {
+        phrase: "Loma and Loma-la\nLoma",
+        entry: { type: "fix", value: "Loma", substitution: "Luma" },
+    });
+    expect(preview.text).toBe("Luma and Loma-la\nLuma");
+    expect(preview.fired).toHaveLength(1);
+    expect(SafeJSON.stringify(config)).toBe(before);
+});

@@ -3,6 +3,7 @@ import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type Finding, findingItems, findingProblems } from "./findings";
+import { diagnoseTermAddress } from "./term-address";
 import { checkAnchors, correctTranscript } from "./transcript-corrections";
 
 /**
@@ -14,6 +15,8 @@ export function prepareFindings(options: {
     items: MeetingItem[];
     transcript?: TranscriptEntry[];
     allowDuplicates?: boolean;
+    /** Store a line-scoped term even when its address cannot apply. */
+    force?: boolean;
 }): { added: MeetingItem[]; duplicates: MeetingItem[]; warnings: string[] } {
     const problems = findingProblems(options.findings, options.items);
 
@@ -23,6 +26,18 @@ export function prepareFindings(options: {
 
     const added = findingItems(options.findings, options.items, new Date().toISOString());
     const anchors = options.transcript ? checkAnchors(added, options.transcript) : undefined;
+    const diagnostics = options.transcript
+        ? added.flatMap((item) =>
+              item.kind === "term" ? (diagnoseTermAddress({ item, transcript: options.transcript! }) ?? []) : []
+          )
+        : [];
+    const invalid = diagnostics.filter((entry) => entry.kind !== "found");
+
+    if (!options.force && invalid.length > 0) {
+        throw new Error(
+            invalid.map((entry) => `${entry.item}: ${entry.message}; correct the anchor or pass --force`).join("; ")
+        );
+    }
 
     for (const item of added) {
         const line = anchors?.addresses.get(item.id);
@@ -71,7 +86,10 @@ export function prepareFindings(options: {
         added: accepted,
         duplicates: orderedDuplicates,
         warnings: [
-            ...(anchors?.warnings ?? []),
+            ...(anchors?.warnings.filter(
+                (warning) => !diagnostics.some((entry) => warning.startsWith(`${entry.item}:`))
+            ) ?? []),
+            ...invalid.map((entry) => `${entry.item}: ${entry.message}`),
             ...orderedDuplicates.map(
                 (item) => `Already open: ${item.id} (${item.kind}); nothing added for this finding.`
             ),
@@ -128,7 +146,7 @@ export function planFindings(options: {
     transcript: TranscriptEntry[];
     config: MeetingsConfig;
 }) {
-    const prepared = prepareFindings({ ...options, items: options.record.items, allowDuplicates: true });
+    const prepared = prepareFindings({ ...options, items: options.record.items, allowDuplicates: true, force: true });
     return {
         warnings: prepared.warnings,
         findings: prepared.added.map((item, index) => {
