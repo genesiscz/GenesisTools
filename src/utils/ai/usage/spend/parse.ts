@@ -1,5 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import type { UsageEvent } from "./types";
 
 interface RawUsage {
@@ -43,6 +44,37 @@ export function claudeServiceTier(usage: { speed?: unknown }): "fast" | undefine
     return usage.speed === "fast" ? "fast" : undefined;
 }
 
+export interface ClaudeCacheWrites {
+    /** Every cache-write token of the call. */
+    total: number;
+    /** The one-hour share of `total` (billed at its own rate), never more than `total`. */
+    oneHour: number;
+}
+
+function tokenCount(value: unknown): number {
+    return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * A Claude call's cache writes. The nested `cache_creation` split, when the record has one, is the total
+ * (five-minute plus one-hour writes); otherwise the top-level `cache_creation_input_tokens`. Every reader of a Claude
+ * usage object asks this one function, so the spend reports, hub insights and session analysis price one call alike.
+ */
+export function claudeCacheWrites(usage: {
+    cache_creation_input_tokens?: unknown;
+    cache_creation?: unknown;
+}): ClaudeCacheWrites {
+    const nested = usage.cache_creation;
+
+    if (!isObject(nested)) {
+        return { total: tokenCount(usage.cache_creation_input_tokens), oneHour: 0 };
+    }
+
+    const oneHour = tokenCount(nested.ephemeral_1h_input_tokens);
+    const total = tokenCount(nested.ephemeral_5m_input_tokens) + oneHour;
+    return { total, oneHour: Math.min(oneHour, total) };
+}
+
 export function parseTranscriptLine(line: string): UsageEvent | null {
     const trimmed = line.trim();
     if (!trimmed) {
@@ -72,6 +104,7 @@ export function parseTranscriptLine(line: string): UsageEvent | null {
     }
 
     const serviceTier = claudeServiceTier(message.usage);
+    const cacheWrites = claudeCacheWrites(message.usage);
 
     return {
         messageId: message.id,
@@ -82,10 +115,8 @@ export function parseTranscriptLine(line: string): UsageEvent | null {
         sessionId: raw.sessionId ?? "",
         inputTokens: num(message.usage.input_tokens),
         outputTokens: num(message.usage.output_tokens),
-        cacheCreationTokens: num(message.usage.cache_creation_input_tokens),
-        ...(num(message.usage.cache_creation?.ephemeral_1h_input_tokens) > 0
-            ? { cacheCreation1hTokens: num(message.usage.cache_creation?.ephemeral_1h_input_tokens) }
-            : {}),
+        cacheCreationTokens: cacheWrites.total,
+        ...(cacheWrites.oneHour > 0 ? { cacheCreation1hTokens: cacheWrites.oneHour } : {}),
         cacheReadTokens: num(message.usage.cache_read_input_tokens),
         ...(serviceTier ? { serviceTier } : {}),
     };

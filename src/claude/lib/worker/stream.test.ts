@@ -99,4 +99,15 @@ describe("claudeTurnUsage", () => {
         ]);
         expect(claudeTurnUsage([init, assistant].join("\n"))).toEqual({ parts: null });
     });
+
+    test("without modelUsage, a usage line with only the nested cache-write split keeps its writes", () => {
+        const nestedOnly = `{"type":"result","subtype":"success","is_error":false,"session_id":"${SESSION}","usage":{"input_tokens":24,"output_tokens":10,"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":1000}}}`;
+
+        expect(claudeTurnUsage(nestedOnly).parts).toEqual([
+            {
+                model: null,
+                tokens: { input: 24, cacheRead: 0, cacheWrite: 1100, cacheWrite1h: 1000, output: 10, reasoning: 0 },
+            },
+        ]);
+    });
 });
