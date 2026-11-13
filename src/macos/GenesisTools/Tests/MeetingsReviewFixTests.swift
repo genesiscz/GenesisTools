@@ -514,8 +514,10 @@ final class MeetingsReviewFixTests: XCTestCase {
         let frame = try XCTUnwrap(FrameProbe.frames["meetings.row.long"])
         let scroll = try XCTUnwrap(Self.scrollView(in: host.contentView))
         let viewport = scroll.contentView.convert(scroll.contentView.bounds, to: nil)
-        let top = try XCTUnwrap(host.contentView).bounds.height - viewport.maxY
-        XCTAssertGreaterThan(frame.height, viewport.height, "the regression needs an oversized row")
+        // The list's first visible point is under the bar over it (the finding composer, a top safe-area inset that the
+        // scroll view keeps as its content inset): the clip view itself reaches up behind that bar.
+        let top = try XCTUnwrap(host.contentView).bounds.height - viewport.maxY + scroll.contentInsets.top
+        XCTAssertGreaterThan(frame.height, viewport.height - scroll.contentInsets.top, "the regression needs an oversized row")
         XCTAssertGreaterThanOrEqual(frame.minY, top - 1, "the selected row's heading must not scroll above the viewport")
         XCTAssertLessThanOrEqual(frame.minY, top + 16, "the selected row starts at the viewport's top")
     }
