@@ -12,6 +12,8 @@ import { randomBytes } from "node:crypto";
 import { appendFile, link, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { isProcessAliveSince } from "@genesiscz/utils/process-identity";
 import { z } from "zod";
 import type { CellRef, ConversationRecord } from "./conversation";
 import { EvalConfigError, type ScenarioOrigin, sha256 } from "./document";
@@ -283,17 +285,17 @@ function parseLockHolder(text: string): LockHolder | null {
     return null;
 }
 
-/** A holder on another computer, or one this process may not signal, counts as alive. */
+/**
+ * A holder on another computer counts as alive. On this one, the lock pid must still run the process that wrote the
+ * lock: a program that started after the lock time holds a recycled pid, and the lock is stale.
+ */
 function holderIsAlive(holder: LockHolder): boolean {
     if (holder.host !== hostname()) {
         return true;
     }
-    try {
-        process.kill(holder.pid, 0);
-        return true;
-    } catch (error) {
-        return !isErrno(error, "ESRCH");
-    }
+
+    const lockedAt = Date.parse(holder.at);
+    return Number.isFinite(lockedAt) ? isProcessAliveSince(holder.pid, lockedAt) : isProcessAlive(holder.pid);
 }
 
 async function readLockFile(path: string): Promise<string | null> {
