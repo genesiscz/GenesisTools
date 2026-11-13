@@ -41,9 +41,9 @@ A meeting argument is a meeting id, a unique prefix of it, `last`, or a source r
 | `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>] [--reason <text>] [--json]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker`. An item confirmed already is left as it is (`needs: "nothing"` in `--json`, exit 0), so its first Undo token still works; a skip that needs a value or an answer exits 1. `--reason` is kept in the decision journal and on each item it decided. `--json` prints `{ decided, token, skipped, entry }`; `entry` is the journal entry, with who decided (the actor), the reason and every item before and after |
 | `reject <meeting> <ids…> [--reason <text>] [--json]`, `--min-confidence 0.9` | Reject items; they are never suggested again. `--json` prints `{ decided, token, skipped, entry }`, as `confirm --json` does; the token is what `reopen --token` takes |
 | `journal <meeting> [--item i42\|Q12] [--limit <n>] [--json]` | Who decided what in the meeting, when and why, newest first: one entry per decision (a person in the window, a person in `listen`, a person at the command line, an agent with its harness and session, a rule), with its reason and the items it changed. An Undo names the entry it undid. Comments sent to the listening agent are entries too (kind `comment`). `--json` prints `{ meeting, entries }` |
-| `serve [--detach] [--status] [--stop] [--no-idle]` | The Meetings service: the one owner of the meetings store while it runs, which the window, the CLI and agents reach over `<genesis-tools>/meetings-service/service.sock` (`service.json` beside it names its pid and checkout). A command finds it by itself and answers in its own process when none runs, with the same output. It exits after 10 minutes with no connection and when its code changes. `--stop` stops it (none running is no failure) |
+| `serve [--detach] [--status] [--stop] [--no-idle]` | The Meetings service: the one owner of the meetings store while it runs, which the window, the CLI and agents reach over `<genesis-tools>/meetings-service/service.sock` (`service.json` beside it names its pid and checkout). A command finds it by itself and answers in its own process when none runs, with the same output. It exits after 10 minutes with no connection and when its code changes. `--stop` stops it (none running is no failure). The settings page's library is on it too: `projects.add`, `projects.rename`, `projects.remove`, `projects.labels`, `projects.unpair`, `projects.preview`, `dictionary.show`, `dictionary.add`, `dictionary.remove`, `dictionary.test` and `config.edit`, which `projects`, `dictionary` and `config edit` call with the same output |
 | `reopen <meeting> <ids…> [--token <token>] [--reason <text>] [--json]` | Put confirmed or rejected items back to suggested (the Undo of confirm and reject). `--token` undoes one decision, by the token that `confirm --json` or `reject --json` printed; when another decision changed one of its items since, it is refused with `[item-changed]`. A question is reopened only by `listen`, and a confirm's line in the corrections ledger stays |
-| `listen <meeting> [--item Q12] [--reason <text>]` | Answer the open questions by ear, one at a time: each range is cut with ffmpeg (padding `playback.listen.padSec`, asked on the first run), with a short tone just before the asked words (`playback.listen.tone`: `enabled`, `leadSec`, and its `sound` as `{ hz, sec, volume }`), and played `delaySec` (2) after the question shows, then again after each `repeatGapSec` (1) pause until the question is answered (`repeat`, on by default), also while a "Something else…" answer is typed. A word question shows the line its heard words are in, with the words marked and the lines before and after it. When the round already answered the same heard words at another time, that answer is the first choice and the question says when it was given. Esc goes back one step: from the comment to the choices, from the choices to the previous question, whose answer is undone. "Enough for now", or Esc on the first question, ends the round; the next `listen` goes on from there. Undo reverts only what that answer changed, so an item added meanwhile stays. `--item Q12` (or `12`, or the id `i42`) asks only that question and, after "Several voices", its parts. `--item Q12 --answer "<text>"` answers without audio, in a round of its own, or inside the round a person is listening to. `--reason` is kept in the decision journal with each answer |
+| `listen <meeting> [--item Q12] [--reason <text>]` | Answer the open questions by ear, one at a time: each range is cut with ffmpeg (padding `playback.listen.padBeforeSec` before it and `padAfterSec` after it, asked once on the first run for both sides), with a short tone just before the asked words (`playback.listen.tone`: `enabled`, `leadSec`, and its `sound`: a sine `{ hz, sec, volume }`, a preset `{ preset, volume? }` or a sound file `{ file, volume }`, see "The tone's sound"), and played `delaySec` (2) after the question shows, then again after each `repeatGapSec` (1) pause until the question is answered (`repeat`, on by default), also while a "Something else…" answer is typed. A word question shows the line its heard words are in, with the words marked and the lines before and after it. When the round already answered the same heard words at another time, that answer is the first choice and the question says when it was given. A speaker question shows each name's score beside it (`72 %`, see "Speaker candidate scores"); a name without one shows none. Esc goes back one step: from the comment to the choices, from the choices to the previous question, whose answer is undone. "Enough for now", or Esc on the first question, ends the round; the next `listen` goes on from there. Undo reverts only what that answer changed, so an item added meanwhile stays. `--item Q12` (or `12`, or the id `i42`) asks only that question and, after "Several voices", its parts. `--item Q12 --answer "<text>"` answers without audio, in a round of its own, or inside the round a person is listening to. `--reason` is kept in the decision journal with each answer |
 | `listen <meeting> --subscribe-answers [--follow] [--from-start] [--timeout 120]` | For an agent: prints the running round's events as JSON lines (`round-start`, `answered`, `skipped`, `split`, `reopened`, `round-end`) while the person answers, from `questions.ndjson` in the meeting folder, and exits 0 at the round's end (an aborted round when the listener is gone), 2 on the timeout in minutes. `--follow` stays up across rounds (the Meetings window answers one question per round) and exits 0 when a round ends with no open question. `--with-comments` adds the comments the person sends from the window to the same stream: one line per comment with `"type": "comment"` (`id`, `text`, `quote`, the transcript `target`, the journal `token`), and every answer line then starts with `"type": "answer"`. Without the flag the stream is unchanged. While it runs, the window names it as the listener a send reaches. An `answered` line names the items it confirmed or rejected in `decided`; `settled` lists the other questions the same answer closed. Run it under a Monitor, so each answer wakes the agent |
 
 ### Meeting records
@@ -330,9 +330,10 @@ whose text repeats another open question, one that decides no item, and one with
 
 ### Answering questions with listen
 
-`listen` asks the open questions one at a time. Each range is cut with ffmpeg, padded by `playback.listen.padSec`
-(asked on the first run), with a short tone just before the asked words (`playback.listen.tone`: `enabled`, `leadSec`
-0.4 s, and its `sound` as `{ hz, sec, volume }`). The clip plays
+`listen` asks the open questions one at a time. Each range is cut with ffmpeg, padded by `playback.listen.padBeforeSec`
+before it and `padAfterSec` after it (both asked on the first run), with a short tone just before the asked words
+(`playback.listen.tone`: `enabled`, `leadSec` 0.4 s, and its `sound` as a sine `{ hz, sec, volume }`, a preset
+`{ preset, volume? }` or a sound file `{ file, volume }`). The clip plays
 `delaySec` (2 s) after the question shows, then again after each `repeatGapSec` (1 s) pause until the question is
 answered (`repeat`, on by default), also while a "Something else…" answer is typed. Clips play with
 `playback.listen.player` (`afplay` by default, then `vlc`, then `ffplay`).
@@ -356,8 +357,8 @@ answered (`repeat`, on by default), also while a "Something else…" answer is t
   under a monitor, so each answer wakes the agent.
 - `--clip-out <dir>` cuts each open question's clip (only `--item`'s with it) into `<dir>/<Q12>.wav`, the same clip
   and tone the terminal plays, and prints one line per clip (`--json`: `[{ question, id, clip, fromSec, toSec,
-  padSec, toneAtSec }]`). It plays nothing, starts no round and changes nothing; without a saved
-  `playback.listen.padSec` it uses 5 s instead of asking.
+  padSec, padAfterSec?, toneAtSec }]`; `padAfterSec` is present when the pads differ). It plays nothing, starts no
+  round and changes nothing; without saved pads it uses 5 s on both sides instead of asking.
 
 A question is `Q<n>` to people: the n-th question of the record, as listen's header and the polished file number it.
 `items` shows the number in its `Q` column, and `confirm`, `reject` and `listen --item` take `Q12`.
@@ -376,8 +377,9 @@ earlier (`playback.beforeSec`, 5).
 - Errors exit 1 with the sentence on stderr.
 
 `play` with `--item`, `--at` and `--to`, `--target` or `--clip` plays the Moment of a target instead: the bounded
-clip `listen` would play, with its pad and the tone before the asked spot (`playback.listen.padSec`,
-`playback.listen.tone`).
+clip `listen` would play, with its pads and the tone before the asked spot (`playback.listen.padBeforeSec`,
+`padAfterSec`, `playback.listen.tone`). `--tone <sound>` overrides the sound for this call with a preset, a sound
+file or a sine JSON value.
 
 - `--item` takes an item id or a question's number, `--at` with `--to` a range, `--at` with `--clip` a time (the rest
   of its line, 4 to 15 s), and `--target` any target as JSON: `{"kind":"item","id":"Q12"}`,
@@ -754,6 +756,31 @@ A word question finds its heard words as whole words (`TranscriptLines` in `src/
 the spot the words are said, and two questions on the same words over the same range take the first and the second
 occurrence, each with its own time and line.
 
+### Speaker candidate scores
+
+Each speaker range the rules make carries `evidence.candidateScores`: one entry per person the voice could be,
+`{ speaker, confidence, lines?, evidence: [{ kind, rule?, lines?, against? }] }`, best first (`lib/speaker-scores.ts`).
+A speaker question's choices show them: `rows` and the Meetings window as each choice's `confidence`, `listen` as
+`72 %` beside the name. A term keeps its own `evidence.candidateScores` (`{ term, confidence }`).
+
+- The range's speaker keeps the rule's confidence, so one choice never shows two numbers. A range without a speaker
+  gives its confidence to its candidates; the label's own person gets no score there, because the rule says the voice
+  is not theirs.
+- The other people share what is left by weight, per share of the range's lines: the user's microphone holds the line
+  (1), E3 shows them speaking (0.5), E4 names them (0.1), they are in the call (0.2, never for the user, who is always
+  in their own call), they talk under their own label within 10 s (2, the turn timing: one voice cut into two
+  labels), an agent's range over the same lines names them (2 times its confidence and overlap, the polish). A voice
+  the roster does not list keeps 0.2, or 0.05 when attendance is known.
+- The evidence kinds are `voice`, `roster`, `timing`, `polish`, `directory` (the people directory folded two names of
+  one person into one candidate) and `answer` (an answer raised the range; the others then keep their proportions).
+- A person with no evidence gets no score. A question over several ranges shows a name's lowest score, and none when
+  one range does not score it. A range suggested before the scores existed shows a number on its speaker only.
+- Checked on 2026-11-10 on the two recorded meetings with answers: 62 fresh engine ranges whose lines an agent's
+  confirmed range or an answered question names. The suggested speaker was right in 26 of 36 (mean confidence 0.69).
+  The top-scored name is right in 39 of 62, and in 14 of the 26 ranges without a speaker, which had no number before.
+  The other names' scores hit about as often as they say: a mean of 0.04 hit 7 %, 0.18 hit 26 %, 0.36 hit 31 %.
+  Change a weight only after the same check.
+
 ### Context documents: quotes and meanings
 
 The meeting's context files and notes feed two term rules (`@genesiscz/utils/transcribe/doc-match`). Each item is
@@ -929,7 +956,7 @@ The main keys and their defaults (`config show` lists every one):
   in pixels; smaller text is lost to OCR on a large display), `retentionDays` (30), `ocr.*` (see
   [OCR settings](#ocr-settings)), `recorders.native.*` and `recorders.native.audio.*` (see [Sound](#sound)).
 - `global.playback`: `player` (`vlc`, then `ffplay`), `beforeSec` (5). `global.playback.listen`: `player` (`afplay`,
-  then `vlc`, then `ffplay`), `padSec` (asked on the first run), `roundCap` (12), `minPriority` (0.5), `delaySec` (2),
+  then `vlc`, then `ffplay`), `padBeforeSec` and `padAfterSec` (both asked on the first run), `roundCap` (12), `minPriority` (0.5), `delaySec` (2),
   `tone` (`enabled` on, `leadSec` 0.4, `sound` `{ hz: 880, sec: 0.15, volume: 0.6 }`), `repeat` (on), `repeatGapSec`
   (1).
 - `global.suggest`: `listenBelow` (0.6), `applyAbove` (0.5), `questionCap` (12), `restatedIdentifiers` (`skip` or
@@ -970,8 +997,21 @@ A version 1 file is rewritten once on the first read: `global.render` moves to `
 `projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. A version 2 file moves
 `projects.<p>.match.calendar.titles` to `projects.<p>.match.title.words`, since the words test the meeting title from
 any source. A version 3 file moves `playback.listen.beep` to `playback.listen.tone.enabled` and `beepLeadSec` to
-`tone.leadSec`, since the tone gained its sound and belongs to every Moment. The code reads only the new places. A
-file of a newer version still reads (the keys this code knows).
+`tone.leadSec`, since the tone gained its sound and belongs to every Moment. A version 4 file moves
+`playback.listen.padSec` to both `padBeforeSec` and `padAfterSec`, since a clip may hear more before the asked words
+than after them. The code reads only the new places. A file of a newer version still reads (the keys this code knows).
+
+### The tone's sound
+
+`playback.listen.tone.sound` is one of three shapes. A sine `{ hz, sec, volume }` (880 Hz, 0.15 s, 0.6 when unset; the
+version 4 shape). A preset `{ preset, volume? }`: `beep`, `soft` and `click` are sines (the Meetings window's Beep, Soft
+and Click), and `tink`, `pop`, `ping`, `glass`, `purr`, `bottle`, `morse`, `frog`, `funk`, `hero`, `blow`, `basso`,
+`submarine` and `sosumi` are the alert sounds in /System/Library/Sounds; without `volume` a preset plays at its own. A
+sound file `{ file, volume }` with an absolute path ffmpeg reads (wav, aiff, mp3, m4a). A file tone is cut to 2 s, and
+its length is read once per version of the file. A file that is gone stops the cut with the command that picks another
+sound. A Moment's `tone.sound` names what it played: a file answers `hz` 0, its `file` and its length in `sec`. The
+service's `tone.presets` lists the presets (each with its volume, a sine's `hz` and `sec`, a file's path, and whether
+this Mac has it), and `tone.preview { sound? }` cuts any of the three shapes alone for a Play button.
 
 ### Environment
 

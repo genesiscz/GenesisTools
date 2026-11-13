@@ -14,6 +14,7 @@ import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { citesPoint, keyWords, type SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { anchorScores, speakerScoresOf } from "./speaker-scores";
 import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 
 export type { HeardContext } from "@genesiscz/utils/transcribe/lines";
@@ -316,6 +317,17 @@ export function propagateAnswer(
             );
             item.rules = [...new Set([...item.rules, MeetingRule.User])];
             lowest = Math.min(lowest, item.confidence);
+            const scores = speakerScoresOf(item);
+
+            // The answer raised its speaker: the other candidates keep their proportions in the room it leaves.
+            if (scores.length > 0) {
+                item.evidence = {
+                    ...item.evidence,
+                    candidateScores: anchorScores(scores, options.answer, item.confidence, [
+                        { kind: "answer", rule: MeetingRule.User },
+                    ]),
+                };
+            }
         }
 
         question.confidence = lowest;

@@ -15,15 +15,17 @@ import { type RpcCall, type RpcConnection, RpcSocketServer } from "./socket-serv
 
 /**
  * The host part of a resident JSON-RPC service: one per folder on this Mac, found through `<dir>/service.json`, on
- * `<dir>/service.sock`, claimed by `<dir>/service.pid`. It exits after an idle stretch with no connection, and once a
+ * the socket it names (`<dir>/service.sock` by default), claimed by `<dir>/service.pid`. It exits after an idle stretch with no connection, and once a
  * module it loaded changed (when no call runs), so the next caller starts the new code. The service itself answers
  * the methods (`call`); the transport answers `subscribe`.
  *
- * Extracted from the recorder service (src/recorder/lib/service.ts) for the Meetings service; the recorder moves onto
- * it in a follow-up (F0r), so until then the recorder keeps its own copy of this logic.
+ * The recorder service (src/recorder/lib/service.ts) and the Meetings service (src/meetings/lib/service/service.ts)
+ * both run on it. A service's own lines log under its `logScope`, so a day-log search by the service's scope finds
+ * its starts and exits too.
  */
 
-const { log } = logger.scoped("rpc-service-host");
+const hostLog = logger.scoped("rpc-service-host");
+const { log } = hostLog;
 
 /** How long a second start waits for a rival start in the same folder to write its service.json. */
 const RIVAL_WAIT_MS = 15_000;
@@ -85,6 +87,8 @@ export function readLiveServiceEntry(dir: string): ServiceEntry | undefined {
 export interface ServiceHostOptions<S> {
     /** The folder of service.json, service.sock and service.pid. */
     dir: string;
+    /** The socket path; `<dir>/service.sock` by default. The recorder's is a hashed name when that path is too long. */
+    socket?: string;
     /** The name in log lines and messages (`meetings service`). */
     label: string;
     logScope: string;
@@ -103,10 +107,19 @@ export interface ServiceHostOptions<S> {
     /** Exit after this long with no connection and no call; 0 never exits for idleness. */
     idleMs: number;
     checkEveryMs?: number;
-    /** Something besides a connection keeps the service (the recorder's open edit sessions). */
-    busy?: () => boolean;
+    /**
+     * What keeps the service besides a connection and a running call, per exit: `idle` holds back the idle exit (the
+     * recorder's open edit sessions), `codeChange` the exit on a code change (the recorder's live recordings).
+     */
+    keepAlive?: { idle?: () => boolean; codeChange?: () => boolean };
     /** A module loaded from under this root that changed after the start makes the service exit once no call runs. */
     sourceRoot?: string;
+    /** service.json names `sourceRoot` (default true); the recorder's readers know no such field. */
+    publishSourceRoot?: boolean;
+    /** Runs at each check, before the exit rules (the recorder builds a stale native recorder ahead). */
+    onCheck?: () => void;
+    /** Runs once when a stop begins, before the connections end (the recorder saves and closes its edit sessions). */
+    onStopping?: (reason: string) => void;
     onStopped?: (reason: string) => void;
     /** How long a second start waits for a rival start's service.json (tests shorten it). */
     rivalWaitMs?: number;
@@ -132,10 +145,12 @@ export type ServiceHostStart<S> =
 
 /**
  * Starts the service in this process: claims `<dir>/service.pid` (a second start, in this process or another, finds
- * the first and answers `running`), listens on `<dir>/service.sock`, and writes `service.json`.
+ * the first and answers `running`), listens on its socket (`options.socket`, else `<dir>/service.sock`), and writes
+ * `service.json`.
  */
 export async function startServiceHost<S>(options: ServiceHostOptions<S>): Promise<ServiceHostStart<S>> {
     const { dir } = options;
+    const { log } = logger.scoped(options.logScope);
     // The service answers with the owner's private data, and `hello` is no login: only the owner may reach its folder.
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     chmodSync(dir, 0o700);
@@ -152,7 +167,7 @@ export async function startServiceHost<S>(options: ServiceHostOptions<S>): Promi
             const entry = readLiveServiceEntry(dir);
 
             if (entry) {
-                log.info({ dir, pid: entry.pid, label: options.label }, "the service runs already");
+                log.info({ dir, pid: entry.pid }, `a ${options.label} runs already`);
                 return { status: "running", entry };
             }
 
@@ -174,7 +189,8 @@ export async function startServiceHost<S>(options: ServiceHostOptions<S>): Promi
 
 function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
     const { dir, label } = options;
-    const socket = serviceSocketPath(dir);
+    const { log } = logger.scoped(options.logScope);
+    const socket = options.socket ?? serviceSocketPath(dir);
     const entryPath = serviceEntryPath(dir);
     const startedAt = Date.now();
     const pidCommand = readProcessCommand(process.pid);
@@ -187,7 +203,7 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
         startedAt: new Date(startedAt).toISOString(),
         codeStamp: startedAt,
         ...(options.code ? { code: options.code } : {}),
-        ...(options.sourceRoot ? { sourceRoot: options.sourceRoot } : {}),
+        ...(options.sourceRoot && options.publishSourceRoot !== false ? { sourceRoot: options.sourceRoot } : {}),
     };
     let lastBusy = Date.now();
     /** Calls answered now: a code change waits for them, so a call never loses its service halfway. */
@@ -229,13 +245,14 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
 
         stopping = true;
         clearInterval(check);
-        log.info({ reason, label, connections: server?.connections.length }, "service stopping");
+        log.info({ reason, connections: server?.connections.length }, `${label} stopping`);
+        options.onStopping?.(reason);
         server?.endConnections();
 
         try {
             withPathArbitrationSync(socket, removeFiles);
         } catch (error) {
-            log.warn({ error, socket }, "service socket lock busy; removing without it");
+            log.warn({ error, socket }, `${label} socket lock busy; removing without it`);
             removeFiles();
         }
 
@@ -282,26 +299,27 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
     });
 
     const check = setInterval(() => {
-        const busy = callsRunning > 0 || options.busy?.() === true;
+        options.onCheck?.();
 
         if (!codeIsCurrent()) {
-            if (busy) {
-                log.info({ calls: callsRunning, label }, "service code changed; exiting once no call runs");
+            if (callsRunning > 0 || options.keepAlive?.codeChange?.() === true) {
+                log.info({ calls: callsRunning }, `${label} code changed; exiting once nothing keeps it`);
                 return;
             }
 
-            log.info({ label }, "service code changed since start; exiting so the next caller starts the new code");
+            log.info(`${label} code changed since start; exiting so the next caller starts the new code`);
             stop("code-changed");
             return;
         }
 
         const idleMs = options.idleMs;
+        const kept = callsRunning > 0 || options.keepAlive?.idle?.() === true;
 
-        if (idleMs > 0 && !busy && (server?.connections.length ?? 0) === 0 && Date.now() - lastBusy >= idleMs) {
+        if (idleMs > 0 && !kept && (server?.connections.length ?? 0) === 0 && Date.now() - lastBusy >= idleMs) {
             stop("idle");
         }
     }, options.checkEveryMs ?? CHECK_EVERY_MS);
-    log.info({ dir, socket, pid: process.pid, label }, "service listening");
+    log.info({ dir, socket, pid: process.pid }, `${label} listening`);
 
     return {
         entry,
@@ -336,9 +354,12 @@ export async function launchService(options: {
     /** The folder of the start gates. */
     gates: string;
     label: string;
+    /** The scope of its log lines: the service's own (`recorder-service`); the host's by default. */
+    logScope?: string;
     timeoutMs?: number;
 }): Promise<ServiceLaunch> {
     const { dir, label } = options;
+    const { log } = options.logScope ? logger.scoped(options.logScope) : hostLog;
     const running = readLiveServiceEntry(dir);
 
     if (running) {
@@ -350,7 +371,7 @@ export async function launchService(options: {
     const gate = startGatePath(options.gates);
     const startedAt = Date.now();
     const timeoutMs = options.timeoutMs ?? START_TIMEOUT_MS;
-    log.info({ gate, label }, "starting the service");
+    log.info({ gate }, `starting the ${label}`);
     spawnToolDetached([...options.command, "--start-gate", gate], { reparent: true });
     const outcome = await awaitStart({
         gate,
@@ -363,7 +384,7 @@ export async function launchService(options: {
                 gate,
                 pid,
                 signal: (target) => {
-                    log.warn({ pid: target, gate, label }, "the service passed its start but never listened");
+                    log.warn({ pid: target, gate }, `the ${label} passed its start but never listened`);
                     // pid-verified: stopPassedChild calls this only after inspectPidFile confirmed the gate's writer is this live process
                     process.kill(target, "SIGTERM");
                 },
@@ -372,7 +393,7 @@ export async function launchService(options: {
     });
 
     if (outcome.status === "started") {
-        log.info({ pid: outcome.value.pid, ms: Date.now() - startedAt, label }, "the service started");
+        log.info({ pid: outcome.value.pid, ms: Date.now() - startedAt }, `the ${label} started`);
         return { status: "started", entry: outcome.value };
     }
 

@@ -192,7 +192,7 @@ final class MeetingsSettingsModel {
     }
 
     /// The Window page's tone Play button (`tone.preview`).
-    func previewTone(_ sound: ToneSound) {
+    func previewTone(_ sound: MeetingsAPI.ToneSoundSetting) {
         Task {
             do {
                 try await TonePreviewPlayer.play(sound, service: service)

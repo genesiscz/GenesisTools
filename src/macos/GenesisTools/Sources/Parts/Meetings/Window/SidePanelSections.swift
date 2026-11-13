@@ -1,50 +1,94 @@
+import AppKit
 import GenesisKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - The settings side panel's content (F8; R26, R8, G52 to G55)
 //
 // One section per group of the window settings (`MeetingsPreferences.Rows`, `Notices`, `Playback`, `Panes`) and one
-// for the engine's clip and tone (`global.playback.listen`: padSec, tone, longestClipSec), with "Applies from the next
-// clip" under the engine rows (G54) and "Reset to Defaults" per section (G55). The words and the choices come from the
-// same `MeetingsWindowSetting` values the Settings page reads. Presentational: the rows come in as values, a change goes
-// out through `change`, a reset through `reset`, the tone preview through `playTone`.
+// for the engine's clip and tone (`global.playback.listen`: the pads before and after, the tone and its sound and volume,
+// longestClipSec), with "Applies from the next clip" under the engine rows (G54) and "Reset to Defaults" per section
+// (G55). The words and the choices come from the same `MeetingsWindowSetting` values the Settings page reads, and the
+// Settings page draws the same sections as cards. Presentational: the rows come in as values, a change goes out through
+// `change`, a reset through `reset`, the tone preview through `playTone`.
 
-/// A value a panel row holds: a choice's raw text, a number, or a switch.
+/// A value a panel row holds: a choice's raw text, a number, a switch, or a sound file.
 enum SidePanelValue: Hashable {
     case text(String)
     case number(Double)
     case flag(Bool)
+    /// The tone sound row's sound file: an absolute path.
+    case file(String)
 }
 
 /// One choice a row's menu offers.
 struct SidePanelChoice: Hashable {
     let value: SidePanelValue
     let title: String
+    /// False shows the choice greyed out: a Mac alert sound this Mac lacks (`tone.presets`' `available`).
+    var available = true
+    /// A separator goes above it: "Sound file…" and a sound set by hand sit apart from the named sounds.
+    var startsGroup = false
+    /// A sentence about the choice the Settings page shows under it ("Not on this Mac.").
+    var note: String?
 }
 
-/// The tone's named sounds (G52, decision 8): each writes `tone.sound { hz, sec, volume }`; no sound files.
-enum TonePreset: String, CaseIterable {
-    case beep, soft, click
+/// The named tones the sound row offers (`tone.presets`, decision 8), as far as the window knows them.
+enum TonePresetList: Equatable {
+    case loading
+    case loaded([MeetingsAPI.TonePresets.Preset])
+    /// No answer: the row offers the saved sound and "Sound file…", and its detail says why.
+    case unavailable(String)
 
-    var title: String {
-        switch self {
-        case .beep: return "Beep"
-        case .soft: return "Soft"
-        case .click: return "Click"
-        }
+    var presets: [MeetingsAPI.TonePresets.Preset]? {
+        if case .loaded(let presets) = self { return presets }
+        return nil
     }
 
-    var sound: ToneSound {
-        switch self {
-        case .beep: return ToneSound(hz: 880, sec: 0.15, volume: 0.6)
-        case .soft: return ToneSound(hz: 523, sec: 0.3, volume: 0.35)
-        case .click: return ToneSound(hz: 2000, sec: 0.03, volume: 0.7)
+    /// Asks the Meetings service. While the service starts (the window starts one when none answers) it asks again
+    /// once a second, ten times; a cancelled ask answers `.loading`.
+    @MainActor
+    static func load(service: MeetingsService?, attempts: Int = 10) async -> TonePresetList {
+        guard let service else { return .unavailable("this build has no Meetings service") }
+        for attempt in 1...max(1, attempts) {
+            do {
+                return .loaded(try await service.call(MeetingsAPI.TonePresets.self, .init()).presets)
+            } catch let unavailable as MeetingsService.Unavailable {
+                if attempt >= attempts { return .unavailable(unavailable.reason) }
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled { return .loading }
+            } catch {
+                return .unavailable(asFailure(error).sentence)
+            }
         }
+        return .loading
     }
+}
 
-    /// The preset a saved sound is, nil for a sound set by hand ("Custom").
-    static func matching(_ sound: ToneSound) -> TonePreset? {
-        allCases.first { abs($0.sound.hz - sound.hz) < 0.5 && abs($0.sound.sec - sound.sec) < 0.001 && abs($0.sound.volume - sound.volume) < 0.001 }
+/// "Sound file…": an open panel for a sound the engine reads (wav, aiff, mp3, m4a). It answers the absolute path, or nil
+/// when it was cancelled; a sheet on the key window when there is one.
+@MainActor
+enum ToneFileChooser {
+    static let types: [UTType] = [.wav, .aiff, .mp3, .mpeg4Audio]
+
+    static func choose(near saved: String?) async -> String? {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a Tone Sound"
+        panel.message = "The tone plays the first 2 seconds of the file."
+        panel.prompt = "Use Sound"
+        panel.allowedContentTypes = types
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        if let saved { panel.directoryURL = URL(fileURLWithPath: saved).deletingLastPathComponent() }
+        let response: NSApplication.ModalResponse = await withCheckedContinuation { done in
+            if let window = NSApp.keyWindow {
+                panel.beginSheetModal(for: window) { done.resume(returning: $0) }
+            } else {
+                panel.begin { done.resume(returning: $0) }
+            }
+        }
+        return response == .OK ? panel.url?.path : nil
     }
 }
 
@@ -63,10 +107,21 @@ struct SidePanelRow: Identifiable, Equatable {
     /// Empty for a switch.
     let choices: [SidePanelChoice]
     let value: SidePanelValue
-    /// nil: the engine has no default (padSec, which the first `listen` asks for).
+    /// nil: the engine has no default (the pads, which the first `listen` asks for).
     let defaultValue: SidePanelValue?
-    /// The tone row: its Play button plays this sound.
-    var tone: ToneSound?
+    /// The tone sound row: the saved sound, which its Play button plays.
+    var tone: MeetingsAPI.ToneSoundSetting?
+    /// A slider instead of a menu (the tone's volume); the value is `.number`.
+    var slider: Slider?
+    /// A sentence beside the control when the saved value cannot work (a sound file that is gone).
+    var problem: String?
+    /// The whole value when its title is short (a sound file's path), as the control's tooltip.
+    var valueHelp: String?
+
+    struct Slider: Equatable {
+        let range: ClosedRange<Double>
+        let step: Double
+    }
     /// A row of the same section this one needs: off while that row holds none of `values` (ux checklist, Settings:
     /// a sub-option is disabled while its parent is off, and says which).
     var requires: Requirement?
@@ -127,8 +182,12 @@ struct SidePanelSection: Identifiable, Equatable {
 
     /// The app defaults keys a reset removes.
     var windowKeys: [String] { rows.compactMap { if case .window(let key) = $0.store { return key } else { return nil } } }
-    /// The config paths a reset unsets.
-    var enginePaths: [String] { rows.compactMap { if case .engine(let path) = $0.store { return path } else { return nil } } }
+    /// The config paths a reset unsets. A path under another one of the list goes with it (the tone's volume with its
+    /// sound), so no second write names a value the first one already removed.
+    var enginePaths: [String] {
+        let paths = rows.compactMap { row -> String? in if case .engine(let path) = row.store { return path } else { return nil } }
+        return paths.filter { path in !paths.contains { path.hasPrefix($0 + ".") } }
+    }
 }
 
 /// The words of the panel's choices: the same as the Settings page (G55).
@@ -178,6 +237,18 @@ enum SidePanelWords {
         return text
     }
 
+    /// A sound file's name for a menu: a long one keeps its start and its end ("a-long…ame.m4a"), so the menu stays
+    /// narrow enough for the row's title in a 280 pt panel. The whole path is the control's tooltip.
+    static func fileName(_ path: String, limit: Int = 14) -> String {
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        guard name.count > limit else { return name }
+        let tail = limit / 2
+        return "\(name.prefix(limit - tail - 1))…\(name.suffix(tail))"
+    }
+
+    /// A volume of 0 to 1 as a percentage: "60 %".
+    static func percent(_ value: Double) -> String { "\(Int((value * 100).rounded())) %" }
+
     static func title(_ value: SidePanelValue, store: SidePanelRow.Store) -> String {
         let key: String
         switch store {
@@ -188,6 +259,7 @@ enum SidePanelWords {
         case .text(let raw): return raw.isEmpty ? "Not set" : choice(raw, key: key)
         case .number(let number): return SidePanelWords.number(number, key: key)
         case .flag(let on): return on ? "On" : "Off"
+        case .file(let path): return fileName(path)
         }
     }
 }
@@ -330,35 +402,34 @@ enum SidePanelCatalog {
         case .number(let number):
             if integerKeys.contains(key) { defaults.set(Int(number.rounded()), forKey: key) } else { defaults.set(number, forKey: key) }
         case .flag(let on): defaults.set(on, forKey: key)
+        // A sound file is an engine value; no window row holds one.
+        case .file(let path): defaults.set(path, forKey: key)
         }
     }
 
-    /// An engine row's config path as segments (`global.playback.listen.padSec`).
+    /// An engine row's config path as segments (`global.playback.listen.padBeforeSec`).
     static func segments(_ path: String) -> [String] { path.split(separator: ".").map(String.init) }
 
     // MARK: Engine rows
 
-    /// The engine's clip and tone, from `config.read global.playback.listen` (null or missing keys read as defaults).
-    static func engineSection(listen: JSONValue) -> SidePanelSection {
+    /// The tone's sound (config version 5): a sine, a named preset or a sound file.
+    static let toneSoundPath = "\(listenPath).tone.sound"
+    /// The "Sound file…" choice: it opens a file panel, then writes the file it picked. Never stored.
+    static let chooseFileValue = SidePanelValue.text("chooseFile")
+    /// A sine set by hand that no named tone matches.
+    static let customValue = SidePanelValue.text("custom")
+    /// The pads a menu offers, in seconds.
+    static let padChoices: [Double] = [1, 2, 3, 5, 10]
+
+    /// The engine's clip and tone, from `config.read global.playback.listen` (null or missing keys read as defaults),
+    /// with the named tones `presets` holds. `fileExists` checks a saved sound file (one stat per draw).
+    static func engineSection(listen: JSONValue, presets: TonePresetList = .loading,
+                              fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> SidePanelSection {
         func number(_ path: [String]) -> Double? { if case .number(let value) = listen.at(path) { return value } else { return nil } }
         func flag(_ path: [String]) -> Bool? { if case .bool(let value) = listen.at(path) { return value } else { return nil } }
-        let pad = number(["padSec"])
-        let sound = ToneSound(hz: number(["tone", "sound", "hz"]) ?? TonePreset.beep.sound.hz,
-                              sec: number(["tone", "sound", "sec"]) ?? TonePreset.beep.sound.sec,
-                              volume: number(["tone", "sound", "volume"]) ?? TonePreset.beep.sound.volume)
-        let preset = TonePreset.matching(sound)
-        var padChoices = [1.0, 2, 3, 5, 10].map { SidePanelChoice(value: .number($0), title: SidePanelWords.number($0, key: "padSec")) }
-        if let pad, !padChoices.contains(where: { $0.value == .number(pad) }) {
-            padChoices.append(SidePanelChoice(value: .number(pad), title: SidePanelWords.number(pad, key: "padSec")))
-        }
-        if pad == nil { padChoices.insert(SidePanelChoice(value: .text(""), title: "Not set"), at: 0) }
-        var soundChoices = TonePreset.allCases.map { SidePanelChoice(value: .text($0.rawValue), title: $0.title) }
-        if preset == nil { soundChoices.append(SidePanelChoice(value: .text("custom"), title: "Custom")) }
         let toneOn = "\(listenPath).tone.enabled"
-        return SidePanelSection(id: "engine", title: "Clip and Tone", rows: [
-            SidePanelRow(store: .engine(path: "\(listenPath).padSec"), title: "Sound around the asked spot",
-                         detail: "Seconds a Moment plays before and after the words it is about.",
-                         choices: padChoices, value: pad.map(SidePanelValue.number) ?? .text(""), defaultValue: nil),
+        let setting = toneSetting(listen.at(["tone", "sound"]))
+        return SidePanelSection(id: "engine", title: "Clip and Tone", rows: padRows(before: number(["padBeforeSec"]), after: number(["padAfterSec"])) + [
             SidePanelRow(store: .engine(path: toneOn), title: "Tone",
                          detail: "A short tone just before the asked spot, in the window and the terminal.",
                          choices: [], value: .flag(flag(["tone", "enabled"]) ?? true), defaultValue: .flag(true)),
@@ -366,10 +437,9 @@ enum SidePanelCatalog {
                       choices: [0.2, 0.4, 0.6, 1], value: number(["tone", "leadSec"]) ?? 0.4, defaultValue: 0.4,
                       store: .engine(path: "\(listenPath).tone.leadSec"))
                 .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
-            SidePanelRow(store: .engine(path: "\(listenPath).tone.sound"), title: "Tone sound",
-                         detail: "Beep is a clear 880 Hz, Soft is lower and quieter, Click is very short.",
-                         choices: soundChoices, value: .text(preset?.rawValue ?? "custom"),
-                         defaultValue: .text(TonePreset.beep.rawValue), tone: sound)
+            toneSoundRow(setting, presets: presets, fileExists: fileExists)
+                .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
+            toneVolumeRow(setting, presets: presets.presets)
                 .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
             numberRow(key: "longestClipSec", title: "Longest clip",
                       detail: "A longer item or turn is shown, not played.",
@@ -378,22 +448,168 @@ enum SidePanelCatalog {
         ], footnote: "Applies from the next clip. The clip that plays keeps its sound.")
     }
 
-    /// The JSON `config.set` writes for an engine row's new value: a preset becomes its `{ hz, sec, volume }`.
-    static func configValue(_ value: SidePanelValue, for row: SidePanelRow) -> JSONValue? {
-        switch value {
-        case .number(let number): return .number(number)
-        case .flag(let on): return .bool(on)
-        case .text(let raw):
-            guard row.id.hasSuffix(".tone.sound") else { return raw.isEmpty ? nil : .string(raw) }
-            guard let preset = TonePreset(rawValue: raw) else { return nil }
-            return .object(["hz": .number(preset.sound.hz), "sec": .number(preset.sound.sec), "volume": .number(preset.sound.volume)])
+    /// The pads before and after the asked spot (config version 5, decision 9). Neither has a default: the first
+    /// `listen` asks once and saves both, and one side set stands for both, so an unset side says "Same as …" while
+    /// the other is set. Its empty choice puts the side back to that.
+    static func padRows(before: Double?, after: Double?) -> [SidePanelRow] {
+        func row(key: String, title: String, detail: String, value: Double?, other: Double?, sameAs: String) -> SidePanelRow {
+            var offered = padChoices
+            if let value, !offered.contains(value) { offered = (offered + [value]).sorted() }
+            let choices = [SidePanelChoice(value: .text(""), title: other == nil ? "Not set" : sameAs)]
+                + offered.map { SidePanelChoice(value: .number($0), title: SidePanelWords.number($0, key: key)) }
+            return SidePanelRow(store: .engine(path: "\(listenPath).\(key)"), title: title, detail: detail, choices: choices,
+                                value: value.map(SidePanelValue.number) ?? .text(""), defaultValue: nil)
+        }
+        return [
+            row(key: "padBeforeSec", title: "Before the asked spot", detail: "Seconds a Moment plays before the words it is about.",
+                value: before, other: after, sameAs: "Same as after"),
+            row(key: "padAfterSec", title: "After it", detail: "Seconds it plays after them.",
+                value: after, other: before, sameAs: "Same as before"),
+        ]
+    }
+
+    /// The saved tone sound, or the engine's default when none is stored.
+    static func toneSetting(_ value: JSONValue) -> MeetingsAPI.ToneSoundSetting {
+        guard case .object = value, let setting = try? MeetingsService.decode(MeetingsAPI.ToneSoundSetting.self, value.foundation) else {
+            return .engineDefault
+        }
+        return setting
+    }
+
+    /// The named sine a sound is (the same pitch and length), whatever its volume.
+    static func namedSine(_ setting: MeetingsAPI.ToneSoundSetting, in presets: [MeetingsAPI.TonePresets.Preset]) -> MeetingsAPI.TonePresets.Preset? {
+        guard case .sine(let hz, let sec, _) = setting else { return nil }
+        return presets.first { $0.kind == "sine" && abs(($0.hz ?? -1) - hz) < 0.5 && abs(($0.sec ?? -1) - sec) < 0.001 }
+    }
+
+    /// The sound row's value for a saved sound: a preset's name, `.file`, or "custom". Before the named tones answer,
+    /// the engine's default sine still reads as the beep, so the row does not change its words when they arrive.
+    static func toneValue(_ setting: MeetingsAPI.ToneSoundSetting, presets: [MeetingsAPI.TonePresets.Preset]?) -> SidePanelValue {
+        switch setting {
+        case .preset(let name, _): return .text(name)
+        case .file(let path, _): return .file(path)
+        case .sine:
+            if let presets { return namedSine(setting, in: presets).map { .text($0.name) } ?? customValue }
+            return sameSound(setting, .engineDefault) ? .text(defaultTonePreset) : customValue
         }
     }
 
-    /// The sound a tone row's Play button plays for a value: the preset's, else the saved sound.
-    static func sound(_ value: SidePanelValue, for row: SidePanelRow) -> ToneSound? {
-        if case .text(let raw) = value, let preset = TonePreset(rawValue: raw) { return preset.sound }
-        return row.tone
+    /// The preset that the engine's default sine is (DEFAULT_TONE_SOUND is the beep).
+    static let defaultTonePreset = "beep"
+
+    private static func sameSound(_ a: MeetingsAPI.ToneSoundSetting, _ b: MeetingsAPI.ToneSoundSetting) -> Bool {
+        guard case .sine(let hzA, let secA, _) = a, case .sine(let hzB, let secB, _) = b else { return false }
+        return abs(hzA - hzB) < 0.5 && abs(secA - secB) < 0.001
+    }
+
+    /// The tone sound row: every named tone (greyed where this Mac lacks the file), the saved sine or sound file when it
+    /// is neither, and "Sound file…". A sound file that is gone, or a Mac sound this Mac lacks, says so beside it.
+    static func toneSoundRow(_ setting: MeetingsAPI.ToneSoundSetting, presets: TonePresetList,
+                             fileExists: (String) -> Bool) -> SidePanelRow {
+        let named = presets.presets ?? []
+        let value = toneValue(setting, presets: presets.presets)
+        var choices = named.map {
+            SidePanelChoice(value: .text($0.name), title: $0.label, available: $0.available,
+                            note: $0.available ? nil : "Not on this Mac.")
+        }
+        if !choices.contains(where: { $0.value == value }) {
+            choices.append(SidePanelChoice(value: value, title: toneTitle(value, setting: setting), startsGroup: !choices.isEmpty,
+                                           note: setting.filePath))
+        }
+        choices.append(SidePanelChoice(value: chooseFileValue, title: "Sound file…",
+                                       startsGroup: !choices.contains { $0.startsGroup } && !choices.isEmpty,
+                                       note: "A wav, aiff, mp3 or m4a file. The tone plays its first 2 seconds."))
+        var detail = "The sound just before the asked spot. Each sound starts at its own volume."
+        if case .unavailable(let reason) = presets { detail += " The named sounds did not load: \(reason)." }
+        var row = SidePanelRow(store: .engine(path: toneSoundPath), title: "Tone sound", detail: detail, choices: choices,
+                               value: value, defaultValue: .text(defaultTonePreset), tone: setting)
+        row.valueHelp = setting.filePath
+        if let path = setting.filePath, !fileExists(path) {
+            row.problem = "\(URL(fileURLWithPath: path).lastPathComponent) is not there, so clips do not play. Pick another sound."
+        } else if case .preset(let name, _) = setting, let preset = named.first(where: { $0.name == name }), !preset.available {
+            row.problem = "\(preset.label) is not on this Mac, so clips do not play. Pick another sound."
+        }
+        return row
+    }
+
+    /// The title of a sound that no named tone lists (they have not answered, or it is none of them): a preset by its
+    /// name, a file by its file name, a sine set by hand by its pitch.
+    static func toneTitle(_ value: SidePanelValue, setting: MeetingsAPI.ToneSoundSetting) -> String {
+        switch value {
+        case .file(let path): return SidePanelWords.fileName(path)
+        case .text(let name) where value != customValue: return name.prefix(1).uppercased() + name.dropFirst()
+        default:
+            if case .sine(let hz, _, _) = setting { return "Custom (\(Int(hz.rounded())) Hz)" }
+            return "Custom"
+        }
+    }
+
+    /// The tone's volume (0 to 1), written at `tone.sound.volume`: the saved one, else the named tone's own, else the
+    /// engine's default. Its default is the sound's own volume, so a sound picked from the menu reads as default.
+    static func toneVolumeRow(_ setting: MeetingsAPI.ToneSoundSetting, presets: [MeetingsAPI.TonePresets.Preset]?) -> SidePanelRow {
+        let fallback = MeetingsAPI.ToneSoundSetting.defaultSine.volume
+        let own: Double
+        let saved: Double?
+        switch setting {
+        case .sine(_, _, let volume):
+            own = presets.flatMap { namedSine(setting, in: $0)?.volume } ?? fallback
+            saved = volume
+        case .preset(let name, let volume):
+            own = presets?.first { $0.name == name }?.volume ?? fallback
+            saved = volume
+        case .file(_, let volume):
+            own = fallback
+            saved = volume
+        }
+        var row = SidePanelRow(store: .engine(path: "\(toneSoundPath).volume"), title: "Tone volume",
+                               detail: "How loud the tone plays, from silent to full.", choices: [],
+                               value: .number(saved ?? own), defaultValue: .number(own))
+        row.slider = SidePanelRow.Slider(range: 0...1, step: 0.05)
+        return row
+    }
+
+    /// What a pick on an engine row writes.
+    enum EnginePick: Equatable {
+        case set(JSONValue)
+        /// Put the default back (`config.unset`).
+        case unset
+        /// "Sound file…": ask for the file first.
+        case chooseFile
+        /// The value already shown, or "Custom" (nothing to write).
+        case nothing
+    }
+
+    /// The write a pick means. A named tone is written whole as `{ preset }` (the engine refuses a preset key over a
+    /// stored sine), a sound file as `{ file }`; both play at their own volume until the volume row moves.
+    static func enginePick(_ value: SidePanelValue, for row: SidePanelRow) -> EnginePick {
+        if row.id == toneSoundPath, value == chooseFileValue { return .chooseFile }
+        guard value != row.value else { return .nothing }
+        switch value {
+        case .number(let number): return .set(.number(number))
+        case .flag(let on): return .set(.bool(on))
+        case .file(let path): return .set(.object(["file": .string(path)]))
+        case .text(let raw):
+            if raw.isEmpty { return .unset }
+            guard row.id == toneSoundPath else { return .set(.string(raw)) }
+            return value == customValue ? .nothing : .set(.object(["preset": .string(raw)]))
+        }
+    }
+
+    /// Runs an engine row's pick: `write` gets the JSON to set, or nil to put the default back. "Sound file…" opens
+    /// the file panel first and writes nothing when it is cancelled. The side panel and the Settings page both call it.
+    @MainActor
+    static func applyEngine(_ value: SidePanelValue, for row: SidePanelRow,
+                            chooseFile: @escaping @MainActor (String?) async -> String? = { await ToneFileChooser.choose(near: $0) },
+                            write: @escaping @MainActor (JSONValue?) -> Void) {
+        switch enginePick(value, for: row) {
+        case .set(let json): write(json)
+        case .unset: write(nil)
+        case .nothing: break
+        case .chooseFile:
+            Task { @MainActor in
+                if let path = await chooseFile(row.tone?.filePath) { write(.object(["file": .string(path)])) }
+            }
+        }
     }
 }
 
@@ -402,13 +618,13 @@ enum SidePanelCatalog {
 /// The side panel's sections, for an inspector about 280 pt wide (G53).
 struct SidePanelSections: View {
     let sections: [SidePanelSection]
-    /// A row's new value. A window row writes its defaults key; an engine row writes
-    /// `SidePanelCatalog.configValue(value, for: row)` with `config.set` at its path.
+    /// A row's new value. A window row writes its defaults key; an engine row goes through
+    /// `SidePanelCatalog.applyEngine` (`config.set` or `config.unset` at its path, a file panel first for "Sound file…").
     let change: (SidePanelRow, SidePanelValue) -> Void
     /// "Reset to Defaults": remove `section.windowKeys`, `config.unset` each of `section.enginePaths`.
     let reset: (SidePanelSection) -> Void
-    /// The tone row's Play button: `tone.preview` with the sound.
-    var playTone: ((ToneSound) -> Void)?
+    /// The tone row's Play button: `tone.preview` with the saved sound.
+    var playTone: ((MeetingsAPI.ToneSoundSetting) -> Void)?
     /// A section's "Settings…" link: the Settings page at the card anchor.
     var openSettings: ((String) -> Void)?
     /// The sections that start folded, by id; the wiring remembers the reader's choice.
@@ -487,11 +703,11 @@ struct SidePanelSections: View {
     }
 }
 
-/// One row: the title and the control on one line, the detail under them.
+/// One row: the title and the control on one line, the detail under them, and a problem with the saved value under that.
 struct SidePanelRowView: View {
     let row: SidePanelRow
     let change: (SidePanelValue) -> Void
-    var playTone: ((ToneSound) -> Void)?
+    var playTone: ((MeetingsAPI.ToneSoundSetting) -> Void)?
     /// False while the row it needs is off (`SidePanelSection.isEnabled`); `detail` then says why.
     var enabled = true
     var detail: String?
@@ -507,9 +723,11 @@ struct SidePanelRowView: View {
                 Spacer(minLength: 6)
                 control
                     .disabled(!enabled)
-                if let playTone, let sound = SidePanelCatalog.sound(row.value, for: row) {
+                if let playTone, let sound = row.tone {
                     // lint-rules-ignore: short list (the panel's settings rows, about thirty; only the tone row has it)
-                    IconButton(systemName: "play.circle", tooltip: "Play the tone", size: 13) { playTone(sound) }
+                    IconButton(systemName: "play.circle", tooltip: row.problem == nil ? "Play the tone" : "The tone cannot play: \(row.problem ?? "")",
+                               size: 13) { playTone(sound) }
+                        .disabled(!enabled || row.problem != nil)
                         .accessibilityIdentifier("meetings.sidePanel.playTone")
                 }
             }
@@ -517,6 +735,10 @@ struct SidePanelRowView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let problem = row.problem {
+                SidePanelProblem(text: problem)
+                    .accessibilityIdentifier("meetings.sidePanel.problem.\(row.id)")
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
@@ -526,7 +748,9 @@ struct SidePanelRowView: View {
 
     @ViewBuilder
     private var control: some View {
-        if case .flag(let on) = row.value {
+        if let slider = row.slider, case .number(let saved) = row.value {
+            SidePanelSlider(title: row.title, saved: saved, slider: slider) { change(.number($0)) }
+        } else if case .flag(let on) = row.value {
             Toggle(row.title, isOn: Binding(get: { on }, set: { change(.flag($0)) }))
                 .toggleStyle(.switch)
                 .controlSize(.mini)
@@ -534,13 +758,83 @@ struct SidePanelRowView: View {
         } else {
             Picker(row.title, selection: Binding(get: { row.value }, set: { change($0) })) {
                 ForEach(row.choices, id: \.self) { choice in
+                    if choice.startsGroup { Divider() }
                     Text(choice.title).tag(choice.value)
+                        .disabled(!choice.available)
                 }
             }
             .pickerStyle(.menu)
             .labelsHidden()
             .controlSize(.small)
             .fixedSize()
+            .help(row.valueHelp ?? "")
+        }
+    }
+}
+
+/// A sentence under a row whose saved value cannot work, with a warning symbol so it does not read as a plain detail.
+struct SidePanelProblem: View {
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(.orange)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The volume slider: it follows the knob while it moves and writes once, when the drag ends, so a drag is one
+/// `config.set`; a step by the arrow keys or VoiceOver writes 0.4 s after the last step. The draft stays until the
+/// saved value arrives (no jump back on release), or 5 s after a write that did not land, when the slider shows the
+/// saved value again.
+struct SidePanelSlider: View {
+    let title: String
+    let saved: Double
+    let slider: SidePanelRow.Slider
+    let commit: (Double) -> Void
+    @State private var draft: Double?
+    @State private var editing = false
+    @State private var written = 0
+
+    var body: some View {
+        HStack(spacing: 6) {
+            // No `step:` here: it draws a tick per step (21 for a volume). The value snaps to the step instead.
+            Slider(value: Binding(get: { draft ?? saved }, set: { draft = ($0 / slider.step).rounded() * slider.step }),
+                   in: slider.range) {
+                Text(title)
+            } onEditingChanged: { isEditing in
+                editing = isEditing
+                guard !isEditing, let draft else { return }
+                commit(draft)
+                written += 1
+            }
+            .labelsHidden()
+            .controlSize(.mini)
+            .frame(width: 96)
+            .accessibilityValue(SidePanelWords.percent(draft ?? saved))
+            Text(verbatim: SidePanelWords.percent(draft ?? saved))
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 36, alignment: .trailing)
+                .accessibilityHidden(true)
+        }
+        .onChange(of: saved) { draft = nil }
+        .task(id: draft) {
+            guard let draft, !editing, draft != saved else { return }
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled, !editing else { return }
+            commit(draft)
+            written += 1
+        }
+        .task(id: written) {
+            guard written > 0 else { return }
+            try? await Task.sleep(for: .seconds(5))
+            if !Task.isCancelled { draft = nil }
         }
     }
 }

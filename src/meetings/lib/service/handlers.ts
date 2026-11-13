@@ -1,5 +1,5 @@
 import { type RpcHandlers, type RpcTable, toRpcTable } from "@genesiscz/utils/api-descriptor";
-import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
+import type { MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import {
     MEETINGS_CONFLICT_CODES,
     MEETINGS_STATE_CODES,
@@ -63,6 +63,8 @@ export interface MeetingsHandlerDeps {
     readLedger?: () => Correction[];
     /** The meetings config (tests pass one); the config file by default. */
     config?: () => Promise<MeetingsConfig>;
+    /** The meetings config the library methods (projects, dictionary, config.edit) change; the config file by default. */
+    configStore?: () => MeetingsConfigStore;
     /** The clock of a decision's time (tests fix it). */
     now?: () => Date;
     /** Cuts a clip (tests pass a fake); ffmpeg by default. */
@@ -177,6 +179,7 @@ const moments = () => import("./moment-handlers");
 const reads = () => import("./reads-handlers");
 const comments = () => import("./comment-handlers");
 const people = () => import("./people-handlers");
+const library = () => import("./library-handlers");
 
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
@@ -222,6 +225,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "moment.plan": async (params) => (await moments()).planMomentCall(params, storeOf(), deps),
         "moment.clip": async (params, context) => (await moments()).clipMomentCall(params, context, storeOf(), deps),
         "tone.preview": async (params) => (await moments()).previewTone(params, deps),
+        "tone.presets": async () => (await moments()).listTonePresets(),
         "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
         "meeting.speakers": async (params) => (await reads()).readSpeakers(params, storeOf(), deps),
         "meeting.screen": async (params) => (await reads()).readScreen(params, storeOf()),
@@ -230,6 +234,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "config.read": async (params) => (await reads()).readConfig(params),
         "config.set": async (params) => (await reads()).setConfig(params),
         "config.unset": async (params) => (await reads()).unsetConfig(params),
+        "config.edit": async (params) => (await library()).editConfig(params, deps),
         "meeting.rows": async (params) => (await reads()).readRows(params, storeOf(), deps),
         "comment.stage": async (params, context) => (await comments()).stageComment(params, context, storeOf(), deps),
         "comment.list": async (params) => (await comments()).listComments(params, storeOf(), deps),
@@ -243,6 +248,17 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "people.planMerge": async (params) => (await people()).planPeopleMerge(params, storeOf(), deps),
         "people.merge": async (params) => (await people()).mergePeople(params, storeOf(), deps),
         "people.unmerge": async (params) => (await people()).unmergePeople(params, storeOf(), deps),
+        // The library (the settings page's projects, dictionary and source rules) loads its writers only when asked.
+        "projects.add": async (params) => (await library()).addProject(params, deps),
+        "projects.rename": async (params) => (await library()).renameKnownProject(params, storeOf(), deps),
+        "projects.remove": async (params) => (await library()).removeKnownProject(params, storeOf(), deps),
+        "projects.labels": async (params) => (await library()).changeProjectLabels(params, deps),
+        "projects.unpair": async (params) => (await library()).unpairProjects(params, deps),
+        "projects.preview": async (params) => (await library()).previewProjects(params, storeOf(), deps),
+        "dictionary.show": async (params) => (await library()).showDictionary(params, deps),
+        "dictionary.add": async (params) => (await library()).addDictionaryEntry(params, deps),
+        "dictionary.remove": async (params) => (await library()).removeDictionaryEntry(params, deps),
+        "dictionary.test": async (params) => (await library()).testDictionaryPhrase(params, deps),
     };
 }
 

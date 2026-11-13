@@ -2,12 +2,13 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { DEFAULT_TONE_SOUND, type LISTEN_PLAYERS, type ToneSound } from "@genesiscz/utils/meetings/config";
+import { DEFAULT_TONE_SOUND, type LISTEN_PLAYERS } from "@genesiscz/utils/meetings/config";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { z } from "zod";
 import { PLAYERS, pickPlayer } from "./players";
 import { meetingSource, sourceRefOf } from "./sources";
+import type { ToneSound } from "./tone-sound";
 
 const { log } = logger.scoped("meetings-audio");
 
@@ -48,7 +49,10 @@ export async function meetingAudio(record: MeetingRecord): Promise<MeetingAudio>
 export interface ClipPlan {
     fromSec: number;
     toSec: number;
+    /** Audio before the heard stretch, and after it unless `padAfterSec` says otherwise. */
     padSec: number;
+    /** Audio after the heard stretch, when it differs from `padSec` (`playback.listen.padAfterSec`). */
+    padAfterSec?: number;
     toneAtSec?: number;
     /** The tone's sound (`playback.listen.tone.sound`); the shipped sound when absent. */
     toneSound?: ToneSound;
@@ -104,8 +108,15 @@ export interface CutControl {
     tracks?: number;
 }
 
+/** The ffmpeg input of a tone: its sound file, or a sine made on the spot; both `sound.sec` long. */
+function toneInput(sound: ToneSound): string[] {
+    return sound.file
+        ? ["-t", String(sound.sec), "-i", sound.file]
+        : ["-f", "lavfi", "-t", String(sound.sec), "-i", `sine=frequency=${sound.hz}`];
+}
+
 /**
- * Cuts `fromSec - padSec` to `toSec + padSec` of the recording into a WAV clip. Needs ffmpeg. With `toneAtSec` (a
+ * Cuts `fromSec - padSec` to `toSec + padAfterSec` (padSec when absent) of the recording into a WAV clip. Needs ffmpeg. With `toneAtSec` (a
  * time in the recording) a short tone sounds at that moment of the clip, so the listener knows which words the
  * question is about. A recording with several audio streams is mixed into one, so no side of the call is lost.
  */
@@ -115,7 +126,7 @@ export async function cutClip(options: ClipPlan & CutControl & { audioPath: stri
     }
 
     const startSec = Math.max(0, options.fromSec - options.padSec);
-    const lengthSec = options.toSec + options.padSec - startSec;
+    const lengthSec = options.toSec + (options.padAfterSec ?? options.padSec) - startSec;
     mkdirSync(dirname(options.outPath), { recursive: true });
     const toneMs =
         options.toneAtSec === undefined ? undefined : Math.round(Math.max(0, options.toneAtSec - startSec) * 1000);
@@ -132,12 +143,7 @@ export async function cutClip(options: ClipPlan & CutControl & { audioPath: stri
                 ? ["-filter_complex", `${speech}[out]`, "-map", "[out]"]
                 : []
             : [
-                  "-f",
-                  "lavfi",
-                  "-t",
-                  String(sound.sec),
-                  "-i",
-                  `sine=frequency=${sound.hz}`,
+                  ...toneInput(sound),
                   "-filter_complex",
                   `${speech}[speech];[1:a]volume=${sound.volume},adelay=delays=${toneMs}:all=1[tone];[speech][tone]amix=inputs=2:duration=first:normalize=0[out]`,
                   "-map",
@@ -221,12 +227,7 @@ export async function cutTone(sound: ToneSound, outPath: string): Promise<void> 
         "-y",
         "-v",
         "error",
-        "-f",
-        "lavfi",
-        "-t",
-        String(sound.sec),
-        "-i",
-        `sine=frequency=${sound.hz}`,
+        ...toneInput(sound),
         "-af",
         `volume=${sound.volume}`,
         "-c:a",

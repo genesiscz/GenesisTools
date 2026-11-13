@@ -32,12 +32,15 @@ these names.
 
 ## Meetings
 
-- **Moment**: a bounded span of a meeting's audio, with its asked spot, the pad around it and the tone just before the
-  spot. Any target has one: an item or a question, a time, a range, words picked in the transcript, one speaker's
+- **Moment**: a bounded span of a meeting's audio, with its asked spot, the pads before and after it
+  (`playback.listen.padBeforeSec`, `padAfterSec`) and the tone just before the spot. Any target has one: an item or a question, a time, a range, words picked in the transcript, one speaker's
   turn. The Moment engine (`src/meetings/lib/moment.ts`) computes it and cuts it to a WAV; it never plays sound. The
   terminal `listen`, `listen --clip-out`, `tools meetings play` and the Meetings window all ask it, so the span, pad,
   spot and tone policy lives in one place. A Moment also names the screen frame on each display at its spot when the
   screen was recorded then.
+- **Tone**: the short sound a Moment's clip carries just before its asked spot, so the listener knows what the question
+  is about (`playback.listen.tone`). Its sound is a sine, a named preset (three sines and the Mac's alert sounds) or a
+  sound file cut to 2 s.
 - **Review row**: one thing to review in a meeting: an item or a question, with its Moment, its answer choices and its
   state. The window and the terminal show the same rows in the same order (`src/meetings/lib/review-rows.ts`,
   `tools meetings rows`).

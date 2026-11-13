@@ -80,7 +80,7 @@ enum TonePreviewPlayer {
     private static var player: AVAudioPlayer?
 
     /// Throws `MeetingsService.Unavailable` when no service answers; the caller says so in a notice.
-    static func play(_ sound: ToneSound, service: MeetingsService?) async throws {
+    static func play(_ sound: MeetingsAPI.ToneSoundSetting, service: MeetingsService?) async throws {
         guard let service else { throw MeetingsService.Unavailable(reason: "no Meetings service in this build") }
         let preview = try await service.call(MeetingsAPI.TonePreview.self, .init(sound: sound))
         let next = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: preview.path))

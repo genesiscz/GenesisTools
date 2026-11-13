@@ -18,7 +18,7 @@ import { type AssignDeps, type AssignView, skipReason, viewProposals } from "./a
 import { captureCost } from "./capture-cost";
 import { configValueAt, parseConfigPath } from "./config-edit";
 import { transcriptMarkdown } from "./export";
-import { type MatchDraft, type MatchPreviewRow, matchDraftSchema, matchPreview } from "./match-preview";
+import { type MatchDraft, matchDraftSchema } from "./match-preview";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingsOverview, meetingsOverview } from "./overview";
 import type { ReviewRows } from "./review-row-schema";
@@ -157,26 +157,20 @@ export interface DictionaryShowView {
 }
 
 /**
- * `meetings projects preview [--draft <json>] [--limit n]`: the newest meetings against the saved project rules and
- * the draft. `draft` is the parsed draft (undefined without one), which the table view needs.
+ * `meetings projects preview [--draft <json>] [--limit n]`'s flags: the parsed draft (undefined without one, which the
+ * table view needs) and the newest meetings to check. The Meetings service's `projects.preview` reads the rows.
  */
-export async function matchPreviewRead(flags: {
-    draft?: string;
-    limit?: string;
-}): Promise<{ draft: MatchDraft | undefined; rows: MatchPreviewRow[] }> {
+export function matchPreviewFlags(flags: { draft?: string; limit?: string }): {
+    draft: MatchDraft | undefined;
+    limit: number;
+} {
     const draft = flags.draft ? matchDraftSchema.parse(SafeJSON.parse(flags.draft, { strict: true })) : undefined;
     const limit = Number(flags.limit ?? "20");
     if (!Number.isSafeInteger(limit) || limit < 1) {
         throw new Error("--limit must be a positive integer");
     }
 
-    const rows = matchPreview({
-        records: new MeetingStore().listBounded({ limit }).records,
-        config: await new MeetingsConfigStore().read(),
-        ...(draft ? { draft } : {}),
-        limit,
-    });
-    return { draft, rows };
+    return { draft, limit };
 }
 
 /** `meetings dictionary show [--project p]`: the merged dictionary, each entry with the level it comes from. */

@@ -6,7 +6,7 @@ import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
+import { meetingsConfigSchema, TONE_MAX_SEC } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -35,6 +35,7 @@ import {
 } from "./moment";
 import { OpenedMeeting } from "./opened-meeting";
 import { askedSpotSec, heardClip, type QuestionItem } from "./questions";
+import { resolveToneSound } from "./tone-sound";
 
 const now = "2026-11-09T10:00:00.000Z";
 
@@ -247,6 +248,101 @@ describe("the playback settings a Moment carries", () => {
             listen.tone.leadSec + SPEAKER_PAD_SEC
         );
     });
+
+    test("the pads before and after a span are their own settings; equal pads keep the one padSec (decision 9)", () => {
+        const split = meetingsConfigSchema.parse({
+            version: 5,
+            global: { playback: { listen: { padBeforeSec: 2, padAfterSec: 6 } } },
+        }).global.playback.listen;
+        const range = plan({ kind: "range", fromSec: 30, toSec: 35 }, split);
+
+        expect(range).toMatchObject({ padSec: 2, padAfterSec: 6, startSec: 28, endSec: 41 });
+        expect(clipPlan(range)).toMatchObject({ padSec: 2, padAfterSec: 6 });
+        // A voice keeps the tone's lead on both sides, whatever the pads.
+        expect(plan({ kind: "item", id: "i2" }, split).padAfterSec).toBeUndefined();
+
+        const before = meetingsConfigSchema.parse({
+            version: 5,
+            global: { playback: { listen: { padBeforeSec: 3 } } },
+        });
+        const one = plan({ kind: "range", fromSec: 30, toSec: 35 }, before.global.playback.listen);
+        expect(one).toMatchObject({ padSec: 3, startSec: 27, endSec: 38 });
+        expect(one.padAfterSec).toBeUndefined();
+
+        // A caller's padSec is both sides, and its padAfterSec the after side only.
+        const rolling = planMoment({
+            record: meeting,
+            transcript,
+            listen: split,
+            target: { kind: "range", fromSec: 30, toSec: 35 },
+            padSec: 0,
+        });
+        expect(rolling).toMatchObject({ padSec: 0, startSec: 30, endSec: 35 });
+        const after = planMoment({
+            record: meeting,
+            transcript,
+            listen: split,
+            target: { kind: "range", fromSec: 30, toSec: 35 },
+            padAfterSec: 1,
+        });
+        expect(after).toMatchObject({ padSec: 2, padAfterSec: 1, endSec: 36 });
+    });
+
+    test("a preset or a sound file is the tone's sound; a file's length is read once and cut to 2 s (decision 8)", async () => {
+        const soft = meetingsConfigSchema.parse({
+            version: 5,
+            global: { playback: { listen: { tone: { sound: { preset: "soft", volume: 0.3 } } } } },
+        }).global.playback.listen;
+        expect(plan({ kind: "item", id: "i1" }, soft).tone?.sound).toEqual({
+            hz: 523,
+            sec: 0.3,
+            volume: 0.3,
+            preset: "soft",
+        });
+
+        const file = join(mkdtempSync(join(tmpdir(), "mtg-tone-")), "chime.wav");
+        writeFileSync(file, "RIFF");
+        const chime = meetingsConfigSchema.parse({
+            version: 5,
+            global: { playback: { listen: { tone: { sound: { file } } } } },
+        }).global.playback.listen;
+        // A file's length comes from the file, so the planner refuses to guess it.
+        expect(() => plan({ kind: "item", id: "i1" }, chime)).toThrow("resolve it with resolveToneSound");
+
+        let probes = 0;
+        const probe = async () => {
+            probes += 1;
+            return { durationSec: 3.4567 };
+        };
+        const sound = await resolveToneSound(chime.tone.sound, { probe });
+        expect(sound).toEqual({ hz: 0, sec: TONE_MAX_SEC, volume: 0.6, file });
+        await resolveToneSound(chime.tone.sound, { probe });
+        expect(probes).toBe(1);
+        const moment = planMoment({
+            record: meeting,
+            transcript,
+            listen: chime,
+            target: { kind: "item", id: "i1" },
+            toneSound: sound,
+        });
+        expect(moment.tone?.sound).toEqual(sound);
+        expect(clipPlan(moment).toneSound).toEqual(sound);
+        // An edited tone file is a new clip key, so a cached clip never keeps the old sound.
+        const source = { path: "/clips/call.ogg", mtimeMs: 1, size: 2 };
+        const cached = momentCachePath(moment, source);
+        writeFileSync(file, "RIFF, longer");
+        expect(momentCachePath(moment, source)).not.toBe(cached);
+
+        await expect(
+            resolveToneSound({ file: join(dirname(file), "gone.wav"), volume: 0.6 }, { probe })
+        ).rejects.toThrow("is not there");
+        expect(() =>
+            meetingsConfigSchema.parse({
+                version: 5,
+                global: { playback: { listen: { tone: { sound: { preset: "gong" } } } } },
+            })
+        ).toThrow();
+    });
 });
 
 describe("times named in a text (R17, R38)", () => {
@@ -331,7 +427,7 @@ describe("cutting a Moment", () => {
             questions: [question("i1"), question("i2")],
             transcript,
             listen,
-            padSec: 5,
+            pads: { beforeSec: 5, afterSec: 5 },
             audioPath: "/clips/call.ogg",
             dir: "/clips/out",
             cut: async () => {},
@@ -342,7 +438,7 @@ describe("cutting a Moment", () => {
             questions: [question("i2")],
             transcript,
             listen: silent.global.playback.listen,
-            padSec: 5,
+            pads: { beforeSec: 5, afterSec: 5 },
             audioPath: "/clips/call.ogg",
             dir: "/clips/out",
             cut: async () => {},
@@ -362,6 +458,28 @@ describe("cutting a Moment", () => {
             toneAtSec: 30 - listen.tone.leadSec,
         });
         expect(Object.keys(quiet!)).toEqual(["question", "id", "clip", "fromSec", "toSec", "padSec"]);
+        // Split pads add padAfterSec after padSec; equal pads print as before.
+        const [split] = await writeQuestionClips({
+            record: meeting,
+            questions: [question("i1")],
+            transcript,
+            listen,
+            pads: { beforeSec: 2, afterSec: 6 },
+            audioPath: "/clips/call.ogg",
+            dir: "/clips/out",
+            cut: async () => {},
+        });
+        expect(Object.keys(split!)).toEqual([
+            "question",
+            "id",
+            "clip",
+            "fromSec",
+            "toSec",
+            "padSec",
+            "padAfterSec",
+            "toneAtSec",
+        ]);
+        expect(split).toMatchObject({ padSec: 2, padAfterSec: 6 });
     });
 });
 
@@ -473,6 +591,23 @@ describe("a Moment of a saved meeting", () => {
         expect(dirname(cuts[0]!.outPath)).toBe(dirname(cut.path));
         expect(cuts[0]!.outPath).not.toBe(cut.path);
         expect(readFileSync(cut.path, "utf8")).toBe("RIFF");
+    });
+
+    test("a tone the caller names sounds for that call even when the tone setting is off (play --tone)", async () => {
+        const { store, saved, opened } = await savedMeeting("meetings-moment-tone-off", recording("tone-off"));
+        const off = meetingsConfigSchema.parse({
+            version: 5,
+            global: { playback: { listen: { tone: { enabled: false } } } },
+        });
+        spyOn(opened, "config").mockResolvedValue(off);
+        const target: MomentTarget = { kind: "item", id: "Q1" };
+
+        expect((await openMoment({ store, record: saved, target, opened })).tone).toBeUndefined();
+        const named = await openMoment({ store, record: saved, target, opened, toneSound: { preset: "soft" } });
+        expect(named.tone?.sound).toEqual({ hz: 523, sec: 0.3, volume: 0.35, preset: "soft" });
+        expect(named.tone?.atSec).toBe(
+            (await openMoment({ store, record: saved, target, opened, toneSound: { preset: "beep" } })).tone?.atSec
+        );
     });
 
     test("a recording with two tracks is cut with both, and another recording file is another clip", async () => {

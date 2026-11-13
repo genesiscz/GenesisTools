@@ -286,6 +286,8 @@ struct MeetingsWindowPage: View {
     @State private var afterExport: String
     /// A catalog row was written: the cards read the defaults again.
     @State private var revision = 0
+    /// The named tones of the Clip and Tone card's sound row (`tone.presets`).
+    @State private var tonePresets: TonePresetList = .loading
     @Environment(\.nativeSettingsIndexing) private var indexing
 
     /// The first frame shows the saved choices, never a default that snaps to them.
@@ -346,9 +348,14 @@ struct MeetingsWindowPage: View {
     @ViewBuilder
     private var engineCard: some View {
         if let raw = model.settingsRaw {
-            MeetingsCatalogCard(section: SidePanelCatalog.engineSection(listen: raw.at(SidePanelCatalog.segments(SidePanelCatalog.listenPath))),
+            MeetingsCatalogCard(section: SidePanelCatalog.engineSection(listen: raw.at(SidePanelCatalog.segments(SidePanelCatalog.listenPath)),
+                                                                        presets: tonePresets),
                                 change: changeEngine, reset: resetEngine, playTone: { model.previewTone($0) })
                 .nativeSettingsAnchor(MeetingsSettingsPages.anchor(forSection: "engine"))
+                .task {
+                    let presets = await TonePresetList.load(service: model.service)
+                    if presets != .loading { tonePresets = presets }
+                }
         } else if let failure = model.settings.failure {
             NoticePill(text: "The clip and tone settings did not load: \(failure.sentence)", more: failure.detail, tone: .error,
                        fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadSettings() }])
@@ -375,10 +382,12 @@ struct MeetingsWindowPage: View {
 
     private func changeEngine(_ row: SidePanelRow, _ value: SidePanelValue) {
         guard case .engine(let path) = row.store else { return }
-        if let json = SidePanelCatalog.configValue(value, for: row) {
-            model.set(SidePanelCatalog.segments(path), json.foundation)
-        } else {
-            model.unset(SidePanelCatalog.segments(path))
+        SidePanelCatalog.applyEngine(value, for: row) { json in
+            if let json {
+                model.set(SidePanelCatalog.segments(path), json.foundation)
+            } else {
+                model.unset(SidePanelCatalog.segments(path))
+            }
         }
     }
 
@@ -391,13 +400,13 @@ struct MeetingsWindowPage: View {
     }
 }
 
-/// One side panel section as a Settings card: a switch or a picker per row with its detail, the section's footnote
-/// and "Reset to Defaults" under the rows.
+/// One side panel section as a Settings card: a switch, a picker or a slider per row with its detail, a problem with the
+/// saved value under it, the section's footnote and "Reset to Defaults" under the rows.
 struct MeetingsCatalogCard: View {
     let section: SidePanelSection
     let change: (SidePanelRow, SidePanelValue) -> Void
     let reset: (SidePanelSection) -> Void
-    var playTone: ((ToneSound) -> Void)?
+    var playTone: ((MeetingsAPI.ToneSoundSetting) -> Void)?
 
     var body: some View {
         NativeSettingsCard(section.title) {
@@ -431,19 +440,61 @@ struct MeetingsCatalogCard: View {
 
     @ViewBuilder
     private func rowControl(_ row: SidePanelRow, detail: String) -> some View {
-        if case .flag(let on) = row.value {
+        if let slider = row.slider, case .number(let saved) = row.value {
+            MeetingsCatalogSlider(row: row, detail: detail, saved: saved, slider: slider) { change(row, .number($0)) }
+        } else if case .flag(let on) = row.value {
             NativeSettingsToggle(row.title, detail: detail, identifier: row.id,
                                  isOn: Binding(get: { on }, set: { change(row, .flag($0)) }))
         } else {
-            HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 NativeSettingsPicker(row.title, detail: detail, identifier: row.id,
-                                     options: row.choices.map { NativeSettingsOption($0.value, $0.title) },
-                                     selection: Binding(get: { row.value }, set: { change(row, $0) }))
-                if let playTone, let sound = SidePanelCatalog.sound(row.value, for: row) {
-                    IconButton(systemName: "play.circle", tooltip: "Play the tone") { playTone(sound) }
-                        .accessibilityIdentifier("meetings.window.playTone")
+                                     options: row.choices.map { NativeSettingsOption($0.value, $0.title, detail: $0.note, enabled: $0.available) },
+                                     selection: Binding(get: { row.value }, set: { change(row, $0) }),
+                                     trailing: playButton(row))
+                    .help(row.valueHelp ?? "")
+                if let problem = row.problem {
+                    SidePanelProblem(text: problem)
+                        .accessibilityIdentifier("meetings.window.problem.\(row.id)")
                 }
             }
         }
+    }
+
+    /// The tone row's Play button beside its picker; off while the saved sound cannot play.
+    private func playButton(_ row: SidePanelRow) -> AnyView? {
+        guard let playTone, let sound = row.tone else { return nil }
+        return AnyView(
+            IconButton(systemName: "play.circle",
+                       tooltip: row.problem == nil ? "Play the tone" : "The tone cannot play: \(row.problem ?? "")") { playTone(sound) }
+                .disabled(row.problem != nil)
+                .accessibilityIdentifier("meetings.window.playTone"))
+    }
+}
+
+/// A slider row of a Settings card (the tone's volume): the kit's slider, which writes once per gesture, key step or
+/// VoiceOver step. The draft stays until the saved value arrives, or 5 s after a write that did not land.
+struct MeetingsCatalogSlider: View {
+    let row: SidePanelRow
+    let detail: String
+    let saved: Double
+    let slider: SidePanelRow.Slider
+    let commit: (Double) -> Void
+    @State private var draft: Double?
+    @State private var written = 0
+
+    var body: some View {
+        NativeSettingsSlider(row.title, detail: detail, identifier: row.id,
+                             value: Binding(get: { draft ?? saved }, set: { draft = $0 }),
+                             in: slider.range, step: slider.step, format: SidePanelWords.percent,
+                             onCommit: { value in
+                                 commit(value)
+                                 written += 1
+                             })
+            .onChange(of: saved) { draft = nil }
+            .task(id: written) {
+                guard written > 0 else { return }
+                try? await Task.sleep(for: .seconds(5))
+                if !Task.isCancelled { draft = nil }
+            }
     }
 }

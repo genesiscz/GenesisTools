@@ -271,9 +271,13 @@ final class MeetingsServiceTests: XCTestCase {
                     XCTAssertFalse(entry.changes.isEmpty, "\(label): the item before and after decode")
                 }
                 if let data = (reply?["error"] as? [String: Any])?["data"] {
-                    let refused = try MeetingsService.decode(AlreadyDecided.self, data)
-                    XCTAssertEqual(refused.code, "already-decided", label)
-                    XCTAssertNotNil(refused.entry, "\(label): the refusal names the entry that decided it")
+                    let code = try MeetingsService.decode(MeetingsAPI.ErrorData.self, data).code
+                    if code == "already-decided" {
+                        let refused = try MeetingsService.decode(AlreadyDecided.self, data)
+                        XCTAssertNotNil(refused.entry, "\(label): the refusal names the entry that decided it")
+                    } else {
+                        XCTAssertEqual(code, "failed", label)
+                    }
                 }
             case MeetingsAPI.DecisionRevert.name:
                 try roundTrip(MeetingsAPI.DecisionRevert.Params.self, params, label)
@@ -286,13 +290,27 @@ final class MeetingsServiceTests: XCTestCase {
                 if let result {
                     let plan = try MeetingsService.decode(MeetingsAPI.MomentPlan.Result.self, result)
                     XCTAssertTrue(plan.moment != nil || plan.cannot != nil, label)
+                    // Two pads (config version 5): the Moment names the after pad, and the playing row's bar, which
+                    // draws to `endSec`, ends that long after the heard stretch.
+                    if let after = params["padAfterSec"] as? Double, let moment = plan.moment {
+                        XCTAssertEqual(moment.padAfterSec, after, label)
+                        XCTAssertEqual(ZoomSpan(moment: moment).endSec, moment.toSec + after, accuracy: 0.001, label)
+                    }
                 }
             case MeetingsAPI.MomentClipCut.name:
                 try roundTrip(MeetingsAPI.MomentClipCut.Params.self, params, label)
                 if let result { XCTAssertTrue(try MeetingsService.decode(MeetingsAPI.MomentClipCut.Result.self, result).path.hasSuffix(".wav"), label) }
             case MeetingsAPI.TonePreview.name:
                 try roundTrip(MeetingsAPI.TonePreview.Params.self, params, label)
-                if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.TonePreview.Result.self, result).sound.hz, 880) }
+                if let result {
+                    // A sine answers its own pitch, a named sine the preset's, a sound file hz 0 and its length.
+                    let sound = try MeetingsService.decode(MeetingsAPI.TonePreview.Result.self, result).sound
+                    switch try MeetingsService.decode(MeetingsAPI.TonePreview.Params.self, params).sound {
+                    case .sine(let hz, _, _)?: XCTAssertEqual(sound.hz, hz, label)
+                    case .file?: XCTAssertEqual(sound.hz, 0, label)
+                    case .preset?, nil: XCTAssertGreaterThan(sound.sec, 0, label)
+                    }
+                }
             case MeetingsAPI.MeetingAudio.name:
                 try roundTrip(MeetingsAPI.MeetingAudio.Params.self, params, label)
                 if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.MeetingAudio.Result.self, result).tracks, 1) }
@@ -357,6 +375,30 @@ final class MeetingsServiceTests: XCTestCase {
         for code in ["meeting-not-found", "no-transcript-source", "no-hello", "protocol-mismatch", "code-mismatch"] {
             XCTAssertTrue(refusals.contains(code), "the fixture has the refusal \(code): \(refusals)")
         }
+    }
+
+    /// G31: a speaker row's candidates carry their typed scores (`ChoiceButton` draws `confidence` for every role), and
+    /// a choice without a score decodes as none.
+    func testASpeakerRowDecodesTheConfidenceOfEachCandidate() throws {
+        let example = try XCTUnwrap(try MeetingsFixture.examples().first {
+            $0["method"] as? String == MeetingsAPI.MeetingRows.name && ($0["reply"] as? [String: Any])?["result"] != nil
+        })
+        var result = try XCTUnwrap((example["reply"] as? [String: Any])?["result"] as? [String: Any])
+        var rows = try XCTUnwrap(result["rows"] as? [[String: Any]])
+        var row = try XCTUnwrap(rows.first { $0["kind"] as? String == "speaker-range" }, "the fixture has a speaker row")
+        row["choices"] = [
+            ["value": "Speaker A", "label": "Speaker A", "role": "suggested", "action": ["kind": "confirm"], "confidence": 0.62],
+            ["value": "Speaker B", "label": "Speaker B", "role": "candidate", "action": ["kind": "confirm", "speaker": "Speaker B"],
+             "confidence": 0.25],
+            ["value": "Speaker C", "label": "Speaker C", "role": "candidate", "action": ["kind": "confirm", "speaker": "Speaker C"]],
+            ["value": "none of these", "label": "None of these", "role": "none", "action": ["kind": "reject"]],
+        ]
+        rows = [row]
+        result["rows"] = rows
+        let decoded = try MeetingsService.decode(MeetingsAPI.MeetingRows.Result.self, result)
+        let choices = try XCTUnwrap(decoded.rows.first?.choices)
+        XCTAssertEqual(choices.map(\.role), ["suggested", "candidate", "candidate", "none"])
+        XCTAssertEqual(choices.map(\.confidence), [0.62, 0.25, nil, nil])
     }
 
     /// The methods and the event the window uses are the ones the service lists in its hello.
@@ -449,7 +491,9 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(record.id, Self.design)
         XCTAssertEqual(record.project, "Atlas")
         let revisions = try await MeetingDetailModel.revisionsRead(Self.design).run(service: service, command: command())
-        XCTAssertEqual(revisions.show, "32y96zb50zq92")
+        let fixture = try XCTUnwrap(MeetingsFixture.reply(MeetingsAPI.Revisions.name, params: ["ref": Self.design])?["result"])
+        let expected = try MeetingsService.decode(MeetingsAPI.Revisions.Result.self, fixture)
+        XCTAssertEqual(revisions.show, expected.show)
         let transcript = try await MeetingDetailModel.transcriptRead(Self.design).run(service: service, command: command())
         XCTAssertEqual(transcript.entries.map(\.speaker), ["Dana Example", "Alex Example"])
 

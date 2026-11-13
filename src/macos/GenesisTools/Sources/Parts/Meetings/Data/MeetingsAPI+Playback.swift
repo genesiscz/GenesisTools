@@ -80,7 +80,8 @@ enum MomentTarget: Codable, Equatable, Hashable {
     }
 }
 
-/// A tone's sound (`tone.sound`): its pitch, length and volume.
+/// A tone's sound as a Moment or `tone.preview` answers it: its pitch, length and volume. A sound file answers hz 0 and
+/// the file's length; a setting the window writes is `MeetingsAPI.ToneSoundSetting`.
 struct ToneSound: Codable, Equatable, Hashable {
     var hz: Double
     var sec: Double
@@ -114,6 +115,9 @@ struct Moment: Decodable, Equatable, Hashable {
     let fromSec: Double
     let toSec: Double
     let padSec: Double
+    /// The pad after the heard stretch, present only when it differs from `padSec` (config version 5). `endSec`
+    /// already holds it, so the views draw the end from `endSec`.
+    var padAfterSec: Double? = nil
     let startSec: Double
     let endSec: Double
     let spotSec: Double
@@ -166,17 +170,24 @@ extension MeetingsAPI {
     struct MomentParams: Codable, Equatable {
         var meeting: String
         var target: MomentTarget
-        /// Seconds of audio around the target; the setting's when nil.
+        /// Seconds of audio before the target, and after it unless `padAfterSec` is given; the settings' when nil.
         var padSec: Double?
+        /// Seconds of audio after the target.
+        var padAfterSec: Double?
+        /// This tone for the call instead of the saved one; it sounds even while the saved tone is off.
+        var toneSound: MeetingsAPI.ToneSoundSetting?
         /// False skips the screen frames at the spot.
         var screen: Bool?
         /// At most this long from the span's start ("Clip 5s": 5); the pad stays.
         var lengthSec: Double?
 
-        init(meeting: String, target: MomentTarget, padSec: Double? = nil, screen: Bool? = nil, lengthSec: Double? = nil) {
+        init(meeting: String, target: MomentTarget, padSec: Double? = nil, padAfterSec: Double? = nil,
+             toneSound: MeetingsAPI.ToneSoundSetting? = nil, screen: Bool? = nil, lengthSec: Double? = nil) {
             self.meeting = meeting
             self.target = target
             self.padSec = padSec
+            self.padAfterSec = padAfterSec
+            self.toneSound = toneSound
             self.screen = screen
             self.lengthSec = lengthSec
         }
@@ -205,7 +216,8 @@ extension MeetingsAPI {
     enum TonePreview: MeetingsServiceMethod {
         static let name = "tone.preview"
 
-        struct Params: Codable, Equatable { var sound: ToneSound? }
+        /// A sine, a named preset or a sound file; the saved `playback.listen.tone.sound` when nil.
+        struct Params: Codable, Equatable { var sound: MeetingsAPI.ToneSoundSetting? }
 
         struct Result: Decodable, Equatable {
             let path: String

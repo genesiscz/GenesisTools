@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { TONE_PRESET_NAMES, toneSoundSettingSchema } from "@genesiscz/utils/meetings/config";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
 import {
     type KnownPeople,
@@ -11,11 +12,29 @@ import {
     PERSON_SOURCE_KINDS,
 } from "@genesiscz/utils/meetings/people-directory";
 import { meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
+import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import type { SpeakerHint, SpeakerLeave } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
 import { commentListenerSchema, meetingCommentSchema } from "../comment-schema";
 import { decisionActionSchema, journalEntrySchema, skipSchema } from "../decision-actions";
-import { MOMENT_ERROR_CODES, MOMENT_STATE_CODES, momentSchema, momentTargetSchema } from "../moment-schema";
+import {
+    configEditSchema,
+    dictionaryShowSchema,
+    matchPreviewRowSchema,
+    pairedPersonRefSchema,
+    phraseTestSchema,
+    projectRemovalSchema,
+    projectRenameSchema,
+    unpairedSchema,
+} from "../library-schema";
+import { matchDraftSchema } from "../match-preview";
+import {
+    MOMENT_ERROR_CODES,
+    MOMENT_STATE_CODES,
+    momentSchema,
+    momentTargetSchema,
+    toneSoundSchema,
+} from "../moment-schema";
 import type { MeetingsOverview } from "../overview";
 import { reviewRowsSchema } from "../review-row-schema";
 
@@ -292,8 +311,18 @@ const momentParams = z
     .object({
         meeting: meetingRef,
         target: momentTargetSchema,
-        /** Seconds of audio around an item, a range or a selection; `playback.listen.padSec` when absent. */
+        /**
+         * Seconds of audio before an item, a range or a selection, and after it unless `padAfterSec` is given;
+         * `playback.listen.padBeforeSec` and `padAfterSec` when absent.
+         */
         padSec: z.number().min(0).max(60).optional(),
+        /** Seconds of audio after it. */
+        padAfterSec: z.number().min(0).max(60).optional(),
+        /**
+         * This tone instead of `playback.listen.tone.sound`: a sine, a preset or a sound file (`play --tone`). It sounds
+         * for this call even when `playback.listen.tone.enabled` is off.
+         */
+        toneSound: toneSoundSettingSchema.optional(),
         /** False skips the screen frames at the spot. */
         screen: z.boolean().optional(),
         /** At most this long from the span's start (the window's "Clip 5s" on a selection: 5); the pad stays. */
@@ -329,19 +358,42 @@ const tonePreview = defineMethod({
     name: "tone.preview",
     params: z
         .object({
-            /** The sound to hear; the meetings config's `playback.listen.tone.sound` when absent. */
-            sound: z
-                .object({
-                    hz: z.number().min(50).max(8000),
-                    sec: z.number().min(0.02).max(2),
-                    volume: z.number().min(0).max(1),
-                })
-                .optional(),
+            /**
+             * The sound to hear: a sine `{ hz, sec, volume }`, a preset `{ preset, volume }` or a sound file
+             * `{ file, volume }`; the meetings config's `playback.listen.tone.sound` when absent.
+             */
+            sound: toneSoundSettingSchema.optional(),
         })
         .strict(),
-    result: z.object({ path: z.string(), sound: z.object({ hz: z.number(), sec: z.number(), volume: z.number() }) }),
-    resultName: "{ path, sound }",
-    doc: "The tone alone as a WAV in the clip cache, for a sound picker's Play button (a preset writes its hz, sec and volume).",
+    result: z.object({ path: z.string(), sound: toneSoundSchema }),
+    resultName: "{ path, sound: { hz, sec, volume, file?, preset? } }",
+    doc: "The tone alone as a WAV in the clip cache, for a sound picker's Play button. A sound file answers hz 0, its file and its length (cut to 2 s).",
+    effect: "read",
+});
+
+const tonePresets = defineMethod({
+    name: "tone.presets",
+    params: z.object({}).strict(),
+    result: z.object({
+        presets: z.array(
+            z.object({
+                name: z.enum(TONE_PRESET_NAMES),
+                label: z.string(),
+                kind: z.enum(["sine", "file"]),
+                /** The volume it plays at when the setting names none. */
+                volume: z.number(),
+                /** A sine preset's pitch and length. */
+                hz: z.number().optional(),
+                sec: z.number().optional(),
+                /** A file preset's sound file. */
+                file: z.string().optional(),
+                /** False when this Mac lacks the preset's file: a picker greys it out. */
+                available: z.boolean(),
+            })
+        ),
+    }),
+    resultName: "{ presets: { name, label, kind, volume, hz?, sec?, file?, available }[] }",
+    doc: "The named tones a sound picker offers: three sines and the Mac's own alert sounds. `config.set` of `global.playback.listen.tone.sound` to `{ preset }` picks one; `tone.preview` plays it.",
     effect: "read",
 });
 
@@ -506,6 +558,15 @@ const configUnset = defineMethod({
     result: configChangeResult,
     resultName: "{ path: string[], value }",
     doc: "Puts one meetings config value back to its default, as `config unset --json` does.",
+    effect: "reversible",
+});
+
+const configEdit = defineMethod({
+    name: "config.edit",
+    params: z.object({ edits: z.array(configEditSchema).min(1) }).strict(),
+    result: z.array(configChangeResult),
+    resultName: "{ path: string[], value }[]",
+    doc: "Several meetings config changes in one write, all or none, as `config edit --json` does (the settings page saves a project's match rules, its source folders among them, this way). An edit with `expect` is refused with `config-stale` when another editor changed its value.",
     effect: "reversible",
 });
 
@@ -751,6 +812,151 @@ const peopleUnmerge = defineMethod({
     effect: "reversible",
 });
 
+/**
+ * A known project's name as a command takes it: the handler checks its letters with the config's schema, so a refusal
+ * reads as the command's did.
+ */
+const projectName = z.string();
+
+const projectsAdd = defineMethod({
+    name: "projects.add",
+    params: z.object({ name: projectName }).strict(),
+    result: z.object({ name: z.string(), added: z.boolean() }),
+    resultName: "{ name, added }",
+    doc: "Adds a known project, as `projects add` does; added is false when it was known already.",
+    effect: "reversible",
+});
+
+const projectsRename = defineMethod({
+    name: "projects.rename",
+    params: z.object({ from: projectName, to: projectName }).strict(),
+    result: projectRenameSchema,
+    resultName: "{ from, to, meetings }",
+    doc: "Renames a project everywhere it is named (its settings, dictionary, source folder pairings and its meetings), as `projects rename --json` does. Renaming it back undoes it.",
+    effect: "reversible",
+});
+
+const projectsRemove = defineMethod({
+    name: "projects.remove",
+    params: z
+        .object({
+            name: projectName,
+            /** Leave the meetings that have it without a project; without it, such a project is refused. */
+            unassign: z.boolean().optional(),
+        })
+        .strict(),
+    result: projectRemovalSchema,
+    resultName: "{ name, unassigned, backup }",
+    doc: "Removes a project, kept in a backup file first, as `projects remove --json` does. Refused while meetings have it, unless unassign; a waiting folder question that names it is withdrawn from the decision inbox.",
+    effect: "destructive",
+    reaches: ["user"],
+});
+
+const projectsLabels = defineMethod({
+    name: "projects.labels",
+    params: z
+        .object({
+            project: projectName,
+            add: z.array(z.string()).optional(),
+            remove: z.array(z.string()).optional(),
+        })
+        .strict(),
+    result: z.object({ project: z.string(), labels: z.array(z.string()) }),
+    resultName: "{ project, labels }",
+    doc: "A project's known labels; add and remove change them, as `projects labels` does. A project nobody knows is refused, unless add makes it.",
+    effect: "reversible",
+});
+
+const projectsUnpair = defineMethod({
+    name: "projects.unpair",
+    params: z
+        .object({
+            /** A calendar entry id: the pairings it made, in every project (another source's pairing stays). */
+            entry: z.string().min(1).optional(),
+            /** With person: this person leaves this project, whatever paired them. */
+            project: projectName.optional(),
+            person: pairedPersonRefSchema.optional(),
+        })
+        .strict(),
+    result: z.object({ removed: z.array(unpairedSchema) }),
+    resultName: "{ removed: { project, name, email?, left }[] }",
+    doc: "Removes project pairings, as `projects unpair` does: the ones a calendar entry made (entry), or one person from one project (project and person). Refused without either.",
+    effect: "destructive",
+});
+
+const projectsPreview = defineMethod({
+    name: "projects.preview",
+    params: z
+        .object({
+            /** Match rules a person is editing, in place of the saved ones of the projects it names. */
+            draft: matchDraftSchema.optional(),
+            /** The newest meetings to check (20 when absent). */
+            limit: z.number().int().min(1).optional(),
+        })
+        .strict(),
+    result: z.array(matchPreviewRowSchema),
+    resultName: "MatchPreviewRow[]",
+    doc: "Which project each recent meeting matches by the saved rules and by a draft of them, as `projects preview --json` prints it. Reads only.",
+    effect: "read",
+});
+
+/** A dictionary level: a project's, or the global one when absent. */
+const dictionaryProject = projectName.optional();
+
+const dictionaryShow = defineMethod({
+    name: "dictionary.show",
+    params: z.object({ project: dictionaryProject }).strict(),
+    result: dictionaryShowSchema,
+    resultName: "{ project, abbrExpansion, entries }",
+    doc: "The merged dictionary (the global one, then the project's), each entry with its level, as `dictionary show --json` prints it. An unknown project is refused.",
+    effect: "read",
+});
+
+const dictionaryAdd = defineMethod({
+    name: "dictionary.add",
+    params: z
+        .object({
+            entry: dictionaryEntrySchema,
+            /** The project's dictionary instead of the global one; a new name joins the known projects. */
+            project: dictionaryProject,
+            /** A rename: the entry with this value is replaced in one write, in its place. */
+            replace: z.string().optional(),
+            /** Only add it: an entry with that value in the level is refused with `dictionary-exists` (an Undo's add). */
+            ifAbsent: z.boolean().optional(),
+        })
+        .strict(),
+    result: z.object({
+        entry: dictionaryEntrySchema,
+        /** `global` or `project <name>`. */
+        level: z.string(),
+        /** The project joined the known projects with this entry. */
+        projectAdded: z.boolean(),
+        /** The value of the entry it replaced (a rename). */
+        replaced: z.string().optional(),
+    }),
+    resultName: "{ entry, level, projectAdded, replaced? }",
+    doc: "Adds or replaces a dictionary entry, as `dictionary add` does. A refused entry changes nothing.",
+    effect: "reversible",
+});
+
+const dictionaryRemove = defineMethod({
+    name: "dictionary.remove",
+    params: z.object({ value: z.string(), project: dictionaryProject }).strict(),
+    result: z.object({ value: z.string(), level: z.string(), removed: z.boolean() }),
+    resultName: "{ value, level, removed }",
+    doc: "Removes a dictionary entry by its value, as `dictionary remove` does; removed is false when the level did not have it.",
+    effect: "reversible",
+});
+
+const dictionaryTest = defineMethod({
+    name: "dictionary.test",
+    params: z.object({ phrase: z.string(), project: dictionaryProject }).strict(),
+    result: phraseTestSchema,
+    resultName: "{ phrase, text, fired, suggestions, counts }",
+    doc: "What the scope's dictionary does to one phrase, with each entry that fired, as `dictionary test --json` prints it. Reads only.",
+    effect: "read",
+});
+
 export const meetingsApi = defineApi({
     id: "meetings-service",
     global: "meetings",
@@ -770,6 +976,7 @@ export const meetingsApi = defineApi({
         momentPlan,
         momentClip,
         tonePreview,
+        tonePresets,
         meetingAudio,
         meetingSpeakers,
         meetingScreen,
@@ -778,6 +985,7 @@ export const meetingsApi = defineApi({
         configRead,
         configSet,
         configUnset,
+        configEdit,
         meetingRows,
         commentStage,
         commentList,
@@ -789,6 +997,16 @@ export const meetingsApi = defineApi({
         peoplePlanMerge,
         peopleMerge,
         peopleUnmerge,
+        projectsAdd,
+        projectsRename,
+        projectsRemove,
+        projectsLabels,
+        projectsUnpair,
+        projectsPreview,
+        dictionaryShow,
+        dictionaryAdd,
+        dictionaryRemove,
+        dictionaryTest,
     ],
     notes: [
         "`subscribe { meeting?, events? }` (answered by the transport) starts the notifications; no events: all of them, no meeting: every meeting's.",

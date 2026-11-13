@@ -1,10 +1,37 @@
 import { logger } from "@genesiscz/utils/logger";
-import { languageSettings } from "@genesiscz/utils/meetings/config";
+import { languageSettings, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
+import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { contextFileText, contextMoment } from "./context-file";
 import { OpenedMeeting } from "./opened-meeting";
+import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { knownRoot, type SuggestRule, settledTermItems, suggestItems } from "./suggest";
 import type { WordCheckChoice } from "./word-check";
+
+const { log } = logger.scoped("meetings-suggest");
+
+/**
+ * One person under two names, as the people directory knows them for this meeting (its merges and aliases, from the
+ * meetings, the projects and the people book; never Contacts, so a suggest raises no dialog). A directory that does
+ * not read leaves the identity rules alone.
+ */
+async function directorySamePerson(options: {
+    store: MeetingStore;
+    config: MeetingsConfig;
+    meeting: string;
+}): Promise<SamePerson | undefined> {
+    try {
+        const known = await peopleDirectory({ store: options.store, config: options.config }).known("", {
+            meeting: options.meeting,
+            limit: 200,
+            kinds: ["meetings", "projects", "own"],
+        });
+        return directoryMatcher(known.people);
+    } catch (error) {
+        log.warn({ error, meeting: options.meeting }, "the people directory did not read; speakers fold by name only");
+        return undefined;
+    }
+}
 
 /**
  * Runs the rules on a meeting's transcript and adds what they find as suggested items, in one save: the CLI's
@@ -60,6 +87,9 @@ export async function runSuggest(options: {
         wordCheck,
         sourceLabels: languageSettings(config).render,
         restatedIdentifiers: config.global.suggest.restatedIdentifiers,
+        ...(rules.includes("speakers") || rules.includes("evidence")
+            ? { samePerson: await directorySamePerson({ store, config, meeting: record.id }) }
+            : {}),
         now: new Date().toISOString(),
     };
     let fresh: MeetingItem[] = [];
