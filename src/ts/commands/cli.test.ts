@@ -8,6 +8,7 @@ import { type CapturedOutput, captureOutput } from "@genesiscz/utils/test/captur
 import { Command } from "commander";
 import type { MeasureOptions, MeasureResult, WorkerSample } from "../lib/measure";
 import { registerAreasCommands } from "./areas";
+import { findSharedCopies } from "./copies";
 import { registerDepthCommands } from "./depth";
 import { registerImportsCommands } from "./imports";
 import { registerProgramCommands } from "./program";
@@ -1156,5 +1157,30 @@ describe("tools ts program options", () => {
             args: ["program", "cost", "--timeout", "2147484"],
         });
         expect(String(error)).toContain("Must be at most 2147483.");
+    });
+});
+
+describe("tools ts copies", () => {
+    // `copies src/hub` used to scan only src/hub, so no src/utils export entered the inventory and every run said 0.
+    test("reads the shared folder even when the targets leave it out, and reports copies in the targets only", async () => {
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), "ts-copies-")));
+        mkdirSync(join(dir, "shared"));
+        mkdirSync(join(dir, "tool"));
+        mkdirSync(join(dir, "other"));
+        const helper =
+            "export function parseWidgetName(raw: string): string {\n    return raw.trim().toLowerCase();\n}\n";
+        writeFileSync(join(dir, "shared", "names.ts"), helper);
+        writeFileSync(join(dir, "tool", "copy.ts"), helper.replace("export ", ""));
+        writeFileSync(join(dir, "other", "copy.ts"), helper.replace("export ", ""));
+
+        const found = await findSharedCopies({ paths: [join(dir, "tool")], shared: join(dir, "shared") });
+
+        expect(found.copies.map((copy) => [copy.file.endsWith("tool/copy.ts"), copy.name, copy.how])).toEqual([
+            [true, "parseWidgetName", "same-name"],
+        ]);
+        expect(found.files).toBe(1);
+        await expect(findSharedCopies({ paths: [join(dir, "tool")], shared: join(dir, "missing") })).rejects.toThrow(
+            "holds no TypeScript source"
+        );
     });
 });

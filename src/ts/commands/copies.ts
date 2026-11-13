@@ -1,9 +1,9 @@
-import { relative } from "node:path";
+import { relative, resolve } from "node:path";
 import type { Block } from "@genesiscz/utils/json2md";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAll } from "../lib/collect";
-import { emit, type FormatFlags, resolveFormat } from "../lib/format";
+import { emit, type FormatFlags, resolveFormat, UsageError } from "../lib/format";
 import { buildInventory, type SharedCopy, sharedCopies } from "../lib/inventory";
 import { addFormatOptions, addScanOptions, numberArg, runUsage } from "./options";
 
@@ -20,16 +20,46 @@ const HOW: Record<SharedCopy["how"], string> = {
     "same-body": "its body, under another name",
 };
 
+/**
+ * The copies of the exports of `shared` in the target paths. The shared folder is read as well, whatever the targets
+ * are: `copies src/hub` holds no src/utils file of its own, so without it there is no original to compare with. Only
+ * copies inside the targets are reported.
+ */
+export async function findSharedCopies(input: {
+    paths: string[];
+    shared?: string;
+    tests?: boolean;
+    ignore?: string[];
+}): Promise<{ shared: string; copies: SharedCopy[]; files: number; functions: number }> {
+    const rel = (file: string) => relative(process.cwd(), file);
+    const shared = rel(resolve(input.shared ?? "src/utils"));
+    const targets = collectAll(input.paths.length > 0 ? input.paths : ["src"], {
+        tests: input.tests === true,
+        ignore: input.ignore,
+    }).files.map(rel);
+    const originals = collectAll([shared], { ignore: input.ignore }).files.map(rel);
+
+    if (originals.length === 0) {
+        throw new UsageError(`--shared ${shared} holds no TypeScript source, so there is nothing to compare with`);
+    }
+
+    const within = new Set(targets);
+    const inventory = await buildInventory([...new Set([...targets, ...originals])]);
+    const copies = sharedCopies(inventory, shared).filter((copy) => within.has(copy.file));
+
+    const functions = inventory.functions.filter((fact) => within.has(fact.file)).length;
+
+    return { shared, copies, files: targets.length, functions };
+}
+
 async function runCopies(paths: string[], options: CopiesCliOptions): Promise<void> {
     const format = resolveFormat(options);
-    const shared = options.shared ?? "src/utils";
-    const { files } = collectAll(paths.length > 0 ? paths : ["src"], {
-        tests: options.tests === true,
+    const { shared, copies, files, functions } = await findSharedCopies({
+        paths,
+        shared: options.shared,
+        tests: options.tests,
         ignore: options.ignore,
     });
-    const rel = (file: string) => relative(process.cwd(), file);
-    const inventory = await buildInventory(files.map(rel));
-    const copies = sharedCopies(inventory, shared);
     const byOwner = new Map<string, SharedCopy[]>();
 
     for (const copy of copies) {
@@ -47,7 +77,7 @@ async function runCopies(paths: string[], options: CopiesCliOptions): Promise<vo
             ]),
             "",
             pc.dim(
-                `${copies.length} copies of ${byOwner.size} helpers that ${shared} exports, in ${inventory.functions.length} functions of ${files.length} files`
+                `${copies.length} copies of ${byOwner.size} helpers that ${shared} exports, in ${functions} functions of ${files} files`
             ),
         ],
         md: (): Block[] => [
@@ -57,7 +87,7 @@ async function runCopies(paths: string[], options: CopiesCliOptions): Promise<vo
                 { ul: list.map((copy) => `\`${copy.file}:${copy.line}\` ${copy.name}: ${HOW[copy.how]}`) },
             ]),
         ],
-        json: () => ({ shared, copies, scanned: { files: files.length, functions: inventory.functions.length } }),
+        json: () => ({ shared, copies, scanned: { files, functions } }),
     });
 }
 
