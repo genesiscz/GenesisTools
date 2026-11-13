@@ -5735,6 +5735,47 @@ test("audio processing kills expired children and names the affected audio", asy
     }
 });
 
+describe("playback of preserved audio", () => {
+    test("keeps the source's last speech end, and plays without one when the source no longer reads", async () => {
+        const { meetingAudio, meetingAudioPath } = await import("./lib/audio");
+        const path = join(mkdtempSync(join(tmpdir(), "owned-audio-")), "owned.ogg");
+        writeFileSync(path, "owned audio fixture");
+        const owned = {
+            sourceMeetingId: "owned-1",
+            path,
+            sha256: "a".repeat(64),
+            bytes: 19,
+            savedAt: "2026-11-09T18:00:00.000Z",
+        };
+        const record = meetingRecordSchema.parse({
+            id: "owned-audio",
+            title: "Owned audio",
+            start: "2026-11-09T17:00:00.000Z",
+            createdBy: "link",
+            createdAt: "2026-11-09T18:00:00.000Z",
+            updatedAt: "2026-11-09T18:00:00.000Z",
+            sources: { wisprflow: { meetingId: "owned-1" } },
+            audio: { sources: { wisprflow: owned } },
+        });
+        const evidence = spyOn(wisprflowSource, "evidence").mockImplementation(async () => ({
+            segments: [{ startSec: 0, endSec: 42, channel: "mic" as const }],
+            speaking: [],
+            files: [],
+            audioPath: "/fixture/provider.ogg",
+        }));
+        try {
+            expect(await meetingAudio(record)).toEqual({ audioPath: path, lastSpeechSec: 42 });
+            expect(await meetingAudioPath(record)).toBe(path);
+            evidence.mockImplementation(async () => {
+                throw new Error("fixture: the provider forgot the meeting");
+            });
+            expect(await meetingAudio(record)).toEqual({ audioPath: path });
+        } finally {
+            evidence.mockRestore();
+        }
+    });
+});
+
 describe("bounded audio probe", () => {
     const output = SafeJSON.stringify({
         streams: [{ codec_type: "video" }, { codec_type: "audio", channels: 2 }],
