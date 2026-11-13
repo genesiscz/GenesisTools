@@ -56,6 +56,7 @@ import {
     resolveVersionConflicts,
     resolveVersionText,
     spawnGit,
+    unpickedCommits,
 } from "./versions";
 import { createTaskLookup, pump } from "./watch-workers";
 
@@ -191,6 +192,28 @@ describe("safe restack helpers", () => {
         expect(added.exitCode, added.stderr.toString()).toBe(1);
         expect(added.stdout.toString()).toContain("OK\tfile.txt");
         expect(added.stdout.toString()).toContain("ADDED\textra.txt");
+    });
+
+    test("a commit that changes only the spaces inside a string is not taken as already upstream", () => {
+        const { cwd, git } = verifyRepo();
+        const commit = (from: string, text: string, message: string) => {
+            git("checkout", "-q", "--detach", from);
+            fs.writeFileSync(join(cwd, "f.ts"), `export const s = "${text}";\n`);
+            git("commit", "-qam", message);
+            return git("rev-parse", "HEAD");
+        };
+        fs.writeFileSync(join(cwd, "f.ts"), 'export const s = "x";\n');
+        git("add", "f.ts");
+        git("commit", "-qm", "base");
+        const base = git("rev-parse", "HEAD");
+        const upstream = commit(base, "a b", "upstream");
+        const spacesDiffer = commit(base, "ab", "spaces differ");
+        const sameChange = commit(base, "a b", "same change");
+        // Positive control: plain git cherry takes the spaces-only commit as upstream.
+        expect(git("cherry", upstream, spacesDiffer)).toStartWith("-");
+        expect(unpickedCommits({ cwd, upstream, head: spacesDiffer })).toEqual([spacesDiffer]);
+        expect(unpickedCommits({ cwd, upstream, head: sameChange })).toEqual([]);
+        expect(unpickedCommits({ cwd, upstream, head: spacesDiffer, limit: base })).toEqual([spacesDiffer]);
     });
 
     test("the verifier calls a patch CHANGED when only the spaces inside a string literal changed", () => {

@@ -17,7 +17,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { linkNativeFiles } from "./link-native";
 import { flag, loadRun, worktreeFor } from "./run";
-import { ensureConfigHooks, HOOKS_OFF } from "./versions";
+import { ensureConfigHooks, HOOKS_OFF, unpickedCommits } from "./versions";
 
 const run = loadRun();
 const pr = flag("--pr") ?? "";
@@ -70,23 +70,16 @@ if (existsSync(wt)) {
         timeout: 30_000,
     });
     // A restack (rebase plus force-push) leaves the old HEAD off the new head's ancestry while every one of its
-    // commits is there by patch; `git cherry` marks such commits "-", and one "+" means real unpublished work.
-    const cherry =
-        published.exitCode === 1
-            ? Bun.spawnSync(["git", "cherry", `origin/${branch}`, "HEAD"], {
-                  cwd: wt,
-                  stdout: "pipe",
-                  stderr: "pipe",
-                  env: env.getProcessEnv(),
-                  timeout: 30_000,
-              })
-            : null;
-    const restacked =
-        cherry?.exitCode === 0 &&
-        !cherry.stdout
-            .toString()
-            .split("\n")
-            .some((line) => line.startsWith("+"));
+    // commits is there by patch, byte for byte; one commit origin lacks means real unpublished work. A git failure
+    // counts as unpublished.
+    const unpublished = () => {
+        try {
+            return unpickedCommits({ cwd: wt, upstream: `origin/${branch}`, head: "HEAD" }).length;
+        } catch {
+            return 1;
+        }
+    };
+    const restacked = published.exitCode === 1 && unpublished() === 0;
 
     if (published.exitCode !== 0 && !restacked) {
         const reason =

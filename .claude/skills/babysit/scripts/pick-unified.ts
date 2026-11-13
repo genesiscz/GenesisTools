@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Carry judged round commits onto the integration branch, in order, in the checkout that has it. A commit already
- * there (same patch) is skipped; a conflict in only the plugin version files resolves to the higher version; any other
+ * there (same patch, spaces included) is skipped; a conflict in only the plugin version files resolves to the higher version; any other
  * conflict aborts that one pick and is listed, for a worker in a scratch worktree of the branch (versions.ts).
  *
  *   bun pick-unified.ts --branch <integration branch> [--repo <checkout>] <sha> [<sha> ...]
@@ -9,7 +9,7 @@
  * Refuses to start unless <checkout> is on <branch> with a clean tree. Exit 1 when any pick conflicted.
  */
 import { flag } from "./run";
-import { conflictedFiles, type GitRun, prepGit, resolveVersionConflicts } from "./versions";
+import { conflictedFiles, type GitRun, prepGit, resolveVersionConflicts, unpickedCommits } from "./versions";
 
 export function continueVersionPick(git: GitRun): { code: number; out: string; skipped?: boolean } {
     const continued = git(["cherry-pick", "--continue"]);
@@ -58,11 +58,7 @@ function main(): void {
 
         const subject = git(["log", "-1", "--format=%s", sha]).out.trim().slice(0, 90);
 
-        if (
-            git(["cherry", "HEAD", sha, `${sha}~1`])
-                .out.trim()
-                .startsWith("-")
-        ) {
+        if (unpickedCommits({ cwd: repo, upstream: "HEAD", head: sha, limit: `${sha}~1` }).length === 0) {
             console.log(`= ${sha} already on ${branch}: ${subject}`);
             continue;
         }

@@ -146,6 +146,51 @@ export function spawnGit(args: string[], options: GitSpawn = {}) {
     return result;
 }
 
+/**
+ * `git cherry <upstream> <head> [<limit>]` with verbatim patch ids: the commits of `upstream..head` (after `limit`)
+ * whose change `upstream` does not hold byte for byte. `git cherry` strips every space, so a commit that changes only
+ * the spaces inside a string literal reads as already upstream.
+ */
+export function unpickedCommits(options: { cwd: string; upstream: string; head: string; limit?: string }): string[] {
+    const { cwd, upstream, head, limit } = options;
+    const must = (args: string[], stdin?: Uint8Array) => {
+        const result = spawnGit(args, { cwd, stdin });
+        if (result.exitCode !== 0) {
+            throw new Error(`git ${args[0]}: ${result.stderr.toString().trim()}`);
+        }
+
+        return result.stdout.toString();
+    };
+    const patchIds = (range: string[]) => {
+        const log = must([
+            "log",
+            "-p",
+            "--no-merges",
+            "--no-color",
+            "--no-ext-diff",
+            "--binary",
+            "--format=commit %H",
+            ...range,
+        ]);
+        const ids = new Map<string, string>();
+        for (const line of must(["patch-id", "--verbatim"], Buffer.from(log)).split("\n")) {
+            const [id, commit] = line.split(" ");
+            if (id && commit) {
+                ids.set(commit, id);
+            }
+        }
+
+        return ids;
+    };
+    const own = [`${upstream}..${head}`, ...(limit ? [`^${limit}`] : [])];
+    const upstreamIds = new Set(patchIds([`${head}..${upstream}`]).values());
+    const ownIds = patchIds(own);
+    return must(["rev-list", "--no-merges", "--reverse", ...own])
+        .split("\n")
+        .filter(Boolean)
+        .filter((commit) => !upstreamIds.has(ownIds.get(commit) ?? ""));
+}
+
 export function conflictedFiles(git: GitRun): string[] {
     return git(["diff", "--name-only", "--diff-filter=U"]).out.split("\n").filter(Boolean);
 }
