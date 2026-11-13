@@ -279,6 +279,8 @@ export function unpushedState(root: string): UnpushedState | null {
             "HEAD",
             "--not",
             "--remotes",
+            // The upstream may be a local branch (`branch.<name>.remote = .`), which `--remotes` does not hold.
+            upstreamOid,
         ]);
 
         if (log === null) {
