@@ -87,6 +87,7 @@ import {
     readWidgetChanges,
     readWidgetDecisionEvents,
     realWidgetSources,
+    WIDGET_FORMS_LIMIT,
     type WidgetInboxWindow,
     type WidgetSources,
     widgetCardText,
@@ -3846,6 +3847,50 @@ describe("widget inbox notifications", () => {
         const snapshot = await widgetSnapshot({ root: await root(), sources, now });
         expect(snapshot.sessions.find((session) => session.target.sessionId === "live-asker")?.status).toBe("waiting");
         expect(snapshot.notifications?.needsAnswer).toBe(2);
+    });
+
+    test("pending forms past the cards' read limit still count, and the inbox says it is cut", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const now = Date.now();
+                const db = openPendingStore(toolDataDir("question", "qa.db"));
+                const insert = db.query(
+                    "INSERT INTO qa_pending (id,created_at,status,source,session_hint,project_path,cwd,items_json) VALUES (?,?,'pending','Question',?,'/fixture','/fixture','[]')"
+                );
+                const post = (from: number, to: number) =>
+                    db.transaction(() => {
+                        for (let index = from; index < to; index++) {
+                            insert.run(`form-${index}`, now - 10_000 + index, `overflow-fixture-${index}`);
+                        }
+                    })();
+                // The production sources: the cards read the newest WIDGET_FORMS_LIMIT forms, the badge every head.
+                const sources: WidgetSources = {
+                    sessions: async () => [],
+                    decisions: () => [],
+                    forms: realWidgetSources.forms,
+                    formHeads: realWidgetSources.formHeads,
+                    answers: () => [],
+                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                    inboxData: () => ({ answers: [], complete: true, truncated: false }),
+                };
+                const notifications = async () =>
+                    (await widgetSnapshot({ root: directory, sources, now })).notifications;
+
+                post(0, 3);
+                expect(await notifications()).toMatchObject({ needsAnswer: 3, truncated: false });
+
+                post(3, WIDGET_FORMS_LIMIT + 8);
+                db.close();
+                const cut = await notifications();
+                expect(cut).toMatchObject({ needsAnswer: WIDGET_FORMS_LIMIT + 8, truncated: true });
+                expect(cut?.sessions.filter((session) => session.needsAnswer > 0)).toHaveLength(WIDGET_FORMS_LIMIT);
+
+                await performWidgetAction({ root: directory, input: { action: "inbox-clear", at: now } });
+                expect((await notifications())?.needsAnswer).toBe(0);
+            }
+        );
     });
 });
 
