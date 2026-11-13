@@ -121,6 +121,7 @@ private struct HubPaneSettings: View {
     @AppStorage(HubSessionRows.hideSharedKey) private var sessionsHideShared = true
     @AppStorage(HubPRRowCI.key) private var prRowCI = HubPRRowCI.unusual.rawValue
     @AppStorage(HubPRRowHoverChecks.key) private var prHoverChecks = HubPRRowHoverChecks.onRest.rawValue
+    @AppStorage(HubPRDetailOpeningTab.key) private var prOpeningTab = HubPRDetailOpeningTab.auto.rawValue
     @AppStorage(HubFileTreeFold.key) private var filesFoldAbove = HubFileTreeFold.defaultAbove
     @AppStorage(TranscriptOutputFold.key) private var transcriptOutputFold = TranscriptOutputFold.defaultLines
     @AppStorage(HubChrome.glassButtonKey) private var glassButton = false
@@ -235,6 +236,13 @@ private struct HubPaneSettings: View {
                     options: HubPRRowHoverChecks.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
                     selection: Binding(
                         get: { HubPRRowHoverChecks.stored(prHoverChecks) }, set: { prHoverChecks = $0.rawValue }),
+                    minSegmentWidth: 90)
+                Divider()
+                NativeSettingsSegmented(
+                    "Open a PR on (redesign layouts)", identifier: HubPRDetailOpeningTab.key,
+                    options: HubPRDetailOpeningTab.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                    selection: Binding(
+                        get: { HubPRDetailOpeningTab.stored(prOpeningTab) }, set: { prOpeningTab = $0.rawValue }),
                     minSegmentWidth: 90)
                 Divider()
                 NativeSettingsRow(

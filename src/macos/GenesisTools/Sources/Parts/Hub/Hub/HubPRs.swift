@@ -3120,10 +3120,25 @@ struct PRDetailView: View {
         rows += PRChecksSection.sorted(detail?.checks ?? []).map { check in
             PanelFindRow(id: "check:\(check.id)", fields: [PanelFindField("link", check.name)], container: Self.checksID)
         }
-        rows += PRSessionsSection.rows(model: model, store: prs.sessions, pr: pr).map { row in
-            PanelFindRow(id: "session:\(row.id)", fields: [PanelFindField("title", row.session.displayTitle)], container: Self.sessionsID)
-        }
+        rows += Self.sessionFindRows(model: model, prs: prs, pr: pr)
         return rows
+    }
+
+    /// The id of the lazy container that holds the session rows, for a page that registers `sessionFindRows`.
+    static var sessionsFindContainer: String { sessionsID }
+
+    /// The agent sessions on the PR as find rows, under the ids their rows mark (`PRSessionsSection`).
+    static func sessionFindRows(model: HubModel, prs: PRsModel, pr: HubPR) -> [PanelFindRow] {
+        PRSessionsSection.rows(model: model, store: prs.sessions, pr: pr).map { row in
+            PanelFindRow(id: "session:\(row.id)", fields: [PanelFindField("title", row.session.displayTitle)], container: sessionsID)
+        }
+    }
+
+    /// The find rows of a page that shows the description and the agent sessions (the redesign layouts' About and
+    /// Overview pages). `markdown` is the description as the page draws it.
+    static func descriptionAndSessionFindRows(markdown: String?, model: HubModel, prs: PRsModel, pr: HubPR) -> [PanelFindRow] {
+        let description = markdown.map { [PanelFindRow(id: descriptionID, fields: [PanelFindField("desc", $0, markdown: true)])] } ?? []
+        return description + sessionFindRows(model: model, prs: prs, pr: pr)
     }
 
     /// A match in a folded section opens it first.
@@ -3170,6 +3185,8 @@ struct PRDescriptionView: View {
     let whole: Bool
     /// Where a long description folds: `foldHeight(column:)` of the overview's visible height.
     let foldHeight: CGFloat
+    /// False on a page that always shows the whole description: no Show less that could not fold it.
+    var foldable = true
     let choose: (Bool) -> Void
     @State private var overflows = false
     @GenReduceMotion private var reduceMotion
@@ -3202,7 +3219,7 @@ struct PRDescriptionView: View {
                             .frame(height: shownWhole ? 0 : 32)
                     }
                 }
-            if overflows {
+            if overflows, foldable {
                 Button {
                     GenMotion.perform(expanding: !shownWhole, reduceMotion: reduceMotion) { choose(!shownWhole) }
                 } label: {
