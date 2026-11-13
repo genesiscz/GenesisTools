@@ -73,9 +73,17 @@ async function setup(
     models = [
         { id: "m1", label: "M1", limitKey: "p" },
         { id: "m2", label: "M2", limitKey: "q" },
-    ]
+    ],
+    openError?: (context: { key: string; opened: number }) => Error | undefined
 ) {
-    const system = fakeSystem({ tools: ["t"], signals: Signals, defaultSignals: { ok: true }, models, reply });
+    const system = fakeSystem({
+        tools: ["t"],
+        signals: Signals,
+        defaultSignals: { ok: true },
+        models,
+        reply,
+        ...(openError ? { openError } : {}),
+    });
     const parsed = parseScenarios(
         [
             { id: "s1", steps: [{ user: "hi", expect: [{ check: { signal: "ok", is: true } }] }] },
@@ -175,6 +183,37 @@ describe("runPlan", () => {
             "four rate-limited conversations, four new ones"
         );
         assert.ok(view.records.filter((r) => r.cell.model === "m1").every((r) => r.attempt === 2));
+    });
+
+    it("waits for Retry-After when open itself is rate limited, and pauses only that model's key", async () => {
+        const progress: string[] = [];
+        const { system, input, options, store, base } = await setup(
+            () => ({ reply: "ok" }),
+            undefined,
+            ({ key, opened }) =>
+                key === "s1~m1~current~r1" && opened === 1
+                    ? new EvalSystemError("rate-limit", "429 on open", { retryAfterMs: 3000 })
+                    : undefined
+        );
+        const clock = fakeClock({ auto: true });
+        await runPlan(
+            input,
+            options({
+                clock,
+                concurrency: 1,
+                onProgress: (e) => progress.push(e.type === "limit" ? `limit ${e.limitKey}=${e.limit}` : e.type),
+            })
+        );
+
+        assert.ok(clock.sleeps.includes(3000), "the retry waited for Retry-After");
+        assert.ok(progress.includes("limit p=1"));
+        assert.ok(!progress.some((p) => p.startsWith("limit q")));
+        assert.equal(
+            system.log.opened.filter((o) => o.key === "s1~m1~current~r1").length,
+            1,
+            "the second open succeeded"
+        );
+        assert.equal((await loadRun(store.dir, base)).records.length, 8);
     });
 
     it("a blocked cell stops its other repeats; other cells run", async () => {

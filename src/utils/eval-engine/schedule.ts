@@ -45,6 +45,8 @@ export interface Limiter {
     /** Runs `task` when the key has a free slot and no pause. A rate-limit `EvalSystemError` from it penalizes the key. */
     run<T>(limitKey: string, task: () => Promise<T>): Promise<T>;
     penalize(limitKey: string, retryAfterMs?: number): void;
+    /** Whether `error` is a rate limit this limiter already penalized its key for (one thrown by a `run` task). */
+    penalized(error: unknown): boolean;
     limits(): Record<string, number>;
 }
 
@@ -75,6 +77,7 @@ export function createLimiter(options: {
 }): Limiter {
     const max = Math.max(1, Math.floor(options.max));
     const states = new Map<string, KeyState>();
+    const penalizedErrors = new WeakSet<object>();
     const state = (key: string): KeyState => {
         let s = states.get(key);
         if (!s) {
@@ -112,6 +115,7 @@ export function createLimiter(options: {
     };
     return {
         penalize,
+        penalized: (error) => typeof error === "object" && error !== null && penalizedErrors.has(error),
         limits: () => Object.fromEntries([...states].map(([key, s]) => [key, s.limit])),
         async run(key, task) {
             const s = state(key);
@@ -151,6 +155,7 @@ export function createLimiter(options: {
             } catch (error) {
                 if (error instanceof EvalSystemError && error.kind === "rate-limit") {
                     penalize(key, error.detail.retryAfterMs);
+                    penalizedErrors.add(error);
                 } else {
                     s.streak = 0;
                 }
@@ -382,8 +387,14 @@ export async function runPlan<TResolved, TSignals, THandle>(
                         kind: error.kind,
                         message: error.message,
                     });
-                    // A rate limit already paused the model's key in the limiter; other errors wait here, without a slot.
-                    if (error.kind !== "rate-limit") {
+                    // A rate limit from a send or a completion already paused its key in the limiter. Every other error
+                    // waits here, without a slot; a rate limit from `open`, which runs outside the limiter, also pauses
+                    // the model's key.
+                    if (!limiter.penalized(thrown)) {
+                        if (error.kind === "rate-limit") {
+                            limiter.penalize(model.limitKey, error.detail.retryAfterMs);
+                        }
+
                         open.release();
                         held = false;
                         await waitOnEvalClock(
