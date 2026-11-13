@@ -424,8 +424,10 @@ jobs:
         if: github.event_name == 'pull_request'
         run: git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
 
+      # A push to master has no base, so lint-rules scans the whole tree: 81 s to 157 s on the runners of
+      # 2026-11-11 to 2026-11-13, and three of six master runs hit the old 3 minute limit.
       - name: Run Biome check + repo lint rules
-        timeout-minutes: 3
+        timeout-minutes: 6
         shell: bash
         run: bash scripts/ci/lint-changed.sh "${{ github.event.pull_request.base.sha }}"
 
