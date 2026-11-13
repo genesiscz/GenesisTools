@@ -250,8 +250,36 @@ function seenRecentlyIn(options: {
     };
 }
 
+/**
+ * Whether each rule was explained since the last compaction, for one guard call. `compactedSince` reads up to 4 MiB of
+ * the transcript's tail, and a command can fire several familiar rules, so the answers are shared: the earliest
+ * explanation is asked first, and with no compaction since it (the usual case) every rule is settled by that one read.
+ * The answer is monotonic in `since` (none since t means none since any later t, one since t was since any earlier t),
+ * so a later question is answered from the earlier ones when it can be, and reads the tail only when it cannot.
+ */
 function explainedEarlierIn(payload: HookPayload, explained: Record<string, number>): (ruleId: string) => boolean {
     let transcript: string | undefined | null = null;
+    let noneFrom = Number.POSITIVE_INFINITY;
+    let someUntil = Number.NEGATIVE_INFINITY;
+    const compactedSince = (path: string, since: number): boolean => {
+        if (since >= noneFrom) {
+            return false;
+        }
+
+        if (since <= someUntil) {
+            return true;
+        }
+
+        const compacted = HARNESS_HOOK_FACTS[payload.harness].compactedSince(path, since);
+
+        if (compacted) {
+            someUntil = Math.max(someUntil, since);
+        } else {
+            noneFrom = Math.min(noneFrom, since);
+        }
+
+        return compacted;
+    };
 
     return (ruleId) => {
         const since = explained[ruleId];
@@ -266,7 +294,11 @@ function explainedEarlierIn(payload: HookPayload, explained: Record<string, numb
             return false;
         }
 
-        return !HARNESS_HOOK_FACTS[payload.harness].compactedSince(transcript, since);
+        if (noneFrom === Number.POSITIVE_INFINITY && someUntil === Number.NEGATIVE_INFINITY) {
+            compactedSince(transcript, Math.min(...Object.values(explained)));
+        }
+
+        return !compactedSince(transcript, since);
     };
 }
 
