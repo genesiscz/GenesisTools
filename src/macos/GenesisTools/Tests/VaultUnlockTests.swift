@@ -709,6 +709,19 @@ final class VaultUnlockTests: XCTestCase {
         // another code-loading variable besides NODE_PATH
         XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(environment: ["NODE_PATH=/x", "DYLD_INSERT_LIBRARIES=/x.dylib"]),
                                           session: session, settings: settings, trustedRoot: "/repo"))
+        // NODE_PATH whose value is not inside a listed agent app's bundle
+        for value in ["/tmp/evil/node_modules", "/Applications/Grok Bot.app/Contents/../../../tmp/evil",
+                      "/Applications/Grok Bot.app/Contents/Resources:/tmp/evil", "/Applications/Grok Bot.app/Contents/Resources:",
+                      "", "Resources/deps", "/Applications/Other.app/Contents/Resources", "/Applications/Grok Bot.app.evil/Contents/x",
+                      "/Users/alice/Applications/Grok Bot.app/Contents/Resources"] {
+            XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(environment: ["NODE_PATH=\(value)"]), session: session,
+                                              settings: settings, trustedRoot: "/repo"), "NODE_PATH=\(value)")
+        }
+        let grokDeps = "/Applications/Grok Bot.app/Contents/Resources/app.asar/dist/deps"
+        XCTAssertTrue(VaultAutoAllow.nodePath(grokDeps, isInsideBundlesOf: ["Grok Bot"]))
+        XCTAssertFalse(VaultAutoAllow.nodePath(grokDeps, isInsideBundlesOf: []), "no listed app: no NODE_PATH value passes")
+        XCTAssertFalse(VaultAutoAllow.nodePath("/Applications/.app/Contents/x", isInsideBundlesOf: ["", "..", "a/b"]),
+                       "an app name that is no plain bundle name lists nothing")
         // switched off, or no known checkout
         XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(), session: session, settings: .disabled, trustedRoot: "/repo"))
         XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(), session: session, settings: settings, trustedRoot: nil))
@@ -728,8 +741,11 @@ final class VaultUnlockTests: XCTestCase {
                        "src/ai/commands/usage/poll-daemon.ts", "no agent started it, and it passes")
         XCTAssertEqual(VaultAutoAllow.daemon(caller: from(script: "/repo/src/codex/daemon.ts"), settings: settings,
                                              trustedRoot: "/repo", runtime: onlyBun), "src/codex/daemon.ts")
-        XCTAssertNotNil(VaultAutoAllow.daemon(caller: from(environment: ["NODE_PATH=/x"]), settings: settings,
-                                              trustedRoot: "/repo", runtime: onlyBun), "the one tolerated variable")
+        XCTAssertNotNil(VaultAutoAllow.daemon(caller: from(environment: ["NODE_PATH=/Applications/Grok Bot.app/Contents/Resources/app.asar/dist/deps"]),
+                                              settings: settings, trustedRoot: "/repo", runtime: onlyBun),
+                        "the one tolerated variable, with an agent app's value")
+        XCTAssertNil(VaultAutoAllow.daemon(caller: from(environment: ["NODE_PATH=/x"]), settings: settings,
+                                           trustedRoot: "/repo", runtime: onlyBun), "NODE_PATH pointing at any other folder")
 
         XCTAssertNil(VaultAutoAllow.daemon(caller: from(script: "/repo/src/ai/index.ts"), settings: settings,
                                            trustedRoot: "/repo", runtime: onlyBun), "a script that is not on the list")
