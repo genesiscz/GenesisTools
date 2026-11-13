@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { MobileRoute } from "../../../src/utils/mobile/project";
+import type { MobileRoute } from "../../../src/utils/mobile/route";
 
 export const SCHEME = "devdashboard";
 

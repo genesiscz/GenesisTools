@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { mobileRoutesCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
+import type { MobileRoute } from "./route";
 import { SIMCTL_PRIVACY_SERVICES, type SimctlPrivacyService } from "./simulator";
 
 const log = logger.child({ component: "mobile.project" });
@@ -63,14 +64,7 @@ export interface AndroidAppConfig {
     apk?: string;
 }
 
-/** One screen of an app, reached by a deep link. */
-export interface MobileRoute {
-    /** A file-safe name, used in screenshot names: `03-qa.png`. */
-    name: string;
-    url: string;
-    /** The accessibility id (React Native testID) of the screen's root, which the Appium driver waits for. */
-    rootId?: string;
-}
+export type { MobileRoute };
 
 export const IOS_CONFIGURATIONS = ["Debug", "Release"] as const;
 export type IosConfiguration = (typeof IOS_CONFIGURATIONS)[number];
