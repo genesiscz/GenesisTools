@@ -1,11 +1,12 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { useQuery } from "@tanstack/react-query";
 import { CmuxSessionList } from "@/components/CmuxSessionList";
-import { cmuxApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 export function CmuxRoute() {
     const { data, isError, error } = useQuery({
         queryKey: ["cmux", "snapshot"],
-        queryFn: cmuxApi.snapshot,
+        queryFn: () => dashboard.call(ENDPOINTS.cmuxSnapshot, {}),
         refetchInterval: 2000,
     });
 

@@ -1,6 +1,6 @@
 import type { HostedPeer } from "@app/mcp-manager/lib/gateway/hosted-protocol";
 import { logger } from "@genesiscz/utils/logger";
-import { serveGenesisToolsHttp, UNKNOWN_CALLER } from "./http";
+import { closeGenesisToolsHttp, serveGenesisToolsHttp, UNKNOWN_CALLER } from "./http";
 import { resolveCallerFromPeer } from "./http-caller";
 
 /**
@@ -20,4 +20,9 @@ export function serveHostedGenesisTools(request: Request, peer: HostedPeer | nul
         "gateway hosted call"
     );
     return serveGenesisToolsHttp(request, caller);
+}
+
+/** Ends what the hosted server's loaded tool groups hold open; the gateway's child calls it when it is stopped. */
+export function closeHostedGenesisTools(): Promise<void> {
+    return closeGenesisToolsHttp();
 }

@@ -39,21 +39,16 @@ const { SafeJSON } = await import("@genesiscz/utils/json");
 describe("managed tier idempotency (real Agent rpc, real bound route)", () => {
     it("a retried keyed write over the relay returns its first answer and runs once", async () => {
         const { Router } = await import("@app/dev-dashboard/server/router");
-        const { ReceiptCache, withTableIdempotency } = await import("@app/dev-dashboard/server/bind");
+        const { ReceiptCache, bindHandler } = await import("@app/dev-dashboard/server/bind");
         const { handleE2eRpc } = await import("@app/dev-dashboard/server/transport/e2e-rpc");
         const { ENDPOINTS } = await import("@dd/contract");
         const agent = naclBoxCipher.keyPair();
         const device = naclBoxCipher.keyPair();
         let runs = 0;
         // A keyed-write row of the table, keyed by the same receipt cache the Mac's routes use.
-        const [dismiss] = withTableIdempotency(
-            [
-                {
-                    method: "POST",
-                    pattern: ENDPOINTS.qaDecisionsDismiss.path,
-                    handler: async () => ({ kind: "json", status: 200, body: { run: ++runs } }),
-                },
-            ],
+        const dismiss = bindHandler(
+            ENDPOINTS.qaDecisionsDismiss,
+            async () => ({ kind: "json", status: 200, body: { run: ++runs } }),
             new ReceiptCache()
         );
         const router = new Router().add(dismiss);
@@ -228,7 +223,7 @@ describe("createE2eTransport (managed tier, real Agent shim loopback)", () => {
         expect(await t.reachable()).toBe(false);
     });
 
-    it("adapts encrypted relay SSE into the real client QA subscription", async () => {
+    it("adapts encrypted relay SSE into the real client live subscription", async () => {
         const agent = naclBoxCipher.keyPair();
         const device = naclBoxCipher.keyPair();
         let streamOptions: Parameters<NonNullable<Parameters<typeof createE2eTransport>[0]["streamSseImpl"]>>[0] | undefined;
@@ -248,13 +243,13 @@ describe("createE2eTransport (managed tier, real Agent shim loopback)", () => {
             },
         });
         const received: string[] = [];
-        const subscription = transport
-            .client()
-            .qa.subscribe((entry) => received.push((entry as unknown as { id: string }).id));
+        const subscription = transport.client().live.subscribe(["qa"], {
+            onFrame: (frame) => received.push((frame.payload as unknown as { id: string }).id),
+        });
         await Promise.resolve();
 
         const nonce = naclBoxCipher.randomNonce();
-        const plaintext = new TextEncoder().encode('{"type":"qa","id":"encrypted-row"}');
+        const plaintext = new TextEncoder().encode('{"v":1,"channel":"qa","type":"entry","payload":{"id":"encrypted-row"}}');
         const ciphertext = naclBoxCipher.seal({
             plaintext,
             nonce,
@@ -269,7 +264,7 @@ describe("createE2eTransport (managed tier, real Agent shim loopback)", () => {
         });
 
         streamOptions?.onEvent({ data: encryptedFrame });
-        streamOptions?.onEvent({ data: '{"type":"qa","id":"plaintext-leak"}' });
+        streamOptions?.onEvent({ data: '{"v":1,"channel":"qa","type":"entry","payload":{"id":"plaintext-leak"}}' });
         expect(received).toEqual(["encrypted-row"]);
 
         subscription.close();

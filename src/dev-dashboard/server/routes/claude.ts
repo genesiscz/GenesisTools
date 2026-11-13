@@ -1,4 +1,6 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { type AiAggregator, defaultAiAggregator } from "@app/dev-dashboard/lib/ai-accounts/aggregator";
+import { bindHandler } from "@app/dev-dashboard/server/bind";
 import { aiHandlers } from "@app/dev-dashboard/server/routes/ai";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 
@@ -28,42 +30,30 @@ export function claudeRoutes(agg: AiAggregator = defaultAiAggregator()): RouteDe
     const h = aiHandlers(agg);
 
     return [
-        {
-            method: "GET",
-            pattern: "/api/claude/usage",
-            handler: () => h.usage({ providers: [ANTHROPIC_SUB] }),
-        },
-        {
-            method: "GET",
-            pattern: "/api/claude/usage/totals",
-            handler: (ctx) => {
-                const window = windowFromMinutes(parseMinutes(ctx.query.get("minutes")));
-                // Without this the alias summed every provider's recorded calls and
-                // reported codex and grok money as Claude spend. `SpendTotalsQuery`
-                // narrows by provider the same way the other two aliases do.
-                return h.spendTotals({ ...window, source: "calls", providers: [ANTHROPIC_SUB] });
-            },
-        },
-        {
-            method: "GET",
-            pattern: "/api/claude/usage/history",
-            handler: (ctx) => {
-                const account = ctx.query.get("account");
-                const buckets = ctx.query.get("buckets") ?? ctx.query.get("bucket");
-                const window = windowFromMinutes(parseMinutes(ctx.query.get("minutes")));
+        bindHandler(ENDPOINTS.claudeUsage, () => h.usage({ providers: [ANTHROPIC_SUB] })),
+        bindHandler(ENDPOINTS.claudeUsageTotals, (ctx) => {
+            const window = windowFromMinutes(parseMinutes(ctx.query.get("minutes")));
+            // Without this the alias summed every provider's recorded calls and
+            // reported codex and grok money as Claude spend. `SpendTotalsQuery`
+            // narrows by provider the same way the other two aliases do.
+            return h.spendTotals({ ...window, source: "calls", providers: [ANTHROPIC_SUB] });
+        }),
+        bindHandler(ENDPOINTS.claudeUsageHistory, (ctx) => {
+            const account = ctx.query.get("account");
+            const buckets = ctx.query.get("buckets") ?? ctx.query.get("bucket");
+            const window = windowFromMinutes(parseMinutes(ctx.query.get("minutes")));
 
-                return h.usageSeries({
-                    ...window,
-                    providers: [ANTHROPIC_SUB],
-                    accounts: account ? [account] : [],
-                    keys: buckets
-                        ? buckets
-                              .split(",")
-                              .map((bucket) => bucket.trim())
-                              .filter(Boolean)
-                        : [],
-                });
-            },
-        },
+            return h.usageSeries({
+                ...window,
+                providers: [ANTHROPIC_SUB],
+                accounts: account ? [account] : [],
+                keys: buckets
+                    ? buckets
+                          .split(",")
+                          .map((bucket) => bucket.trim())
+                          .filter(Boolean)
+                    : [],
+            });
+        }),
     ];
 }

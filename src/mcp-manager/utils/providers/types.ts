@@ -1,5 +1,9 @@
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import type { EnabledMcpServers, HarnessSyncMap, MCPServerMeta } from "@app/mcp-manager/utils/types.js";
+import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import chalk from "chalk";
 
 /**
  * Result of a write operation to a provider config.
@@ -94,6 +98,18 @@ export interface UnifiedMCPConfig {
     [key: string]: unknown;
 }
 
+/** What {@link MCPProvider.writeCycle} needs to write one harness file. */
+export interface WriteCycleInput<T> {
+    read: () => Promise<T>;
+    /** The next value, or `null` when there is nothing to write. May mutate and return `current`. */
+    change: (current: T) => T | null | Promise<T | null>;
+    /** The file text; `previous` is the text on disk ("" for a new file), for a serializer that keeps its trailing newline. */
+    serialize: (next: T, previous: string) => string;
+    path: string;
+    /** What the file holds, for the log: "Cursor MCP servers", "Claude user settings". */
+    describe: string;
+}
+
 /** Extra behaviour of a global enable. */
 export interface EnableServersOptions {
     /**
@@ -154,14 +170,37 @@ export abstract class MCPProvider {
     }
 
     /**
-     * Write content to config file with automatic backup.
-     * Creates backup AFTER user confirms but BEFORE writing.
+     * The one write of every harness file: read, change, serialize, diff against the bytes on disk,
+     * confirm (or `--yes`), back up, then replace the file atomically. A `change` that returns
+     * `null` leaves the file alone, even when the serializer would lay it out differently.
      */
-    protected async writeFileWithBackup(content: string): Promise<void> {
-        await this.backupManager.createBackup(this.configPath, this.providerName);
+    protected async writeCycle<T>(input: WriteCycleInput<T>): Promise<WriteResult> {
+        const next = await input.change(await input.read());
+
+        if (next === null) {
+            return WriteResult.NoChanges;
+        }
+
+        const oldContent = existsSync(input.path) ? await readFile(input.path, "utf-8") : "";
+        const newContent = input.serialize(next, oldContent);
+
+        if (oldContent === newContent) {
+            return WriteResult.NoChanges;
+        }
+
+        await this.backupManager.showDiff(oldContent, newContent, input.path);
+
+        if (!(await this.backupManager.askConfirmation())) {
+            logger.debug({ path: input.path, describe: input.describe }, "mcp-manager: write rejected");
+            return WriteResult.Rejected;
+        }
+
+        await this.backupManager.createBackup(input.path, this.providerName);
         // Atomic: these are other apps' configs (~/.claude.json, Codex, Grok, Cursor, Gemini). A full disk or
-        // a crash mid-write must leave the user's file as it was, never truncated.
-        atomicWriteFileSync(this.configPath, content, { mode: 0o600 });
+        // a crash mid-write must leave the user's file as it was, never truncated. It creates the folder too.
+        atomicWriteFileSync(input.path, newContent, { mode: 0o600 });
+        logger.info(chalk.green(`✓ Configuration written to ${input.path}`));
+        return WriteResult.Applied;
     }
 
     /**
@@ -175,12 +214,6 @@ export abstract class MCPProvider {
     abstract readConfig(): Promise<unknown>;
 
     /**
-     * Write the configuration file
-     * @returns WriteResult indicating whether changes were applied, no changes needed, or rejected
-     */
-    abstract writeConfig(config: unknown): Promise<WriteResult>;
-
-    /**
      * Get list of all MCP servers (enabled and disabled)
      */
     abstract listServers(): Promise<MCPServerInfo[]>;
@@ -189,25 +222,6 @@ export abstract class MCPProvider {
      * Get full configuration of a specific MCP server
      */
     abstract getServerConfig(serverName: string): Promise<UnifiedMCPServerConfig | null>;
-
-    /**
-     * Enable an MCP server
-     * @param serverName - Name of the server to enable
-     * @param projectPath - Optional project path for project-specific enabling (e.g., Claude projects)
-     */
-    abstract enableServer(serverName: string, projectPath?: string | null): Promise<void>;
-
-    /**
-     * Disable an MCP server
-     * @param serverName - Name of the server to disable
-     * @param projectPath - Optional project path for project-specific disabling (e.g., Claude projects)
-     */
-    abstract disableServer(serverName: string, projectPath?: string | null): Promise<void>;
-
-    /**
-     * Disable an MCP server for all projects (if applicable)
-     */
-    abstract disableServerForAllProjects(serverName: string): Promise<void>;
 
     /**
      * Enable multiple MCP servers in a single batch operation
@@ -265,24 +279,18 @@ export abstract class MCPProvider {
     abstract removeServers(serverNames: string[]): Promise<WriteResult>;
 
     /**
-     * Check if this provider supports a "disabled" state for servers.
-     * - Claude/Gemini: true (have disabledMcpServers/mcp.excluded lists)
-     * - Cursor/Codex: false (presence in config = enabled, no separate disabled state)
-     */
-    abstract supportsDisabledState(): boolean;
-
-    /**
      * Whether a server should be present (installed) in this provider's config
      * given its _meta.enabled state.
-     * - Providers WITH a native disabled state (e.g. Gemini) keep disabled
-     *   servers installed and mark them disabled.
-     * - Providers WITHOUT one (Cursor/Codex) only install enabled servers.
-     * - Claude overrides this: a globally-disabled server
-     *   (`_meta.enabled.claude === false`) must be ABSENT from ~/.claude.json,
-     *   because absence is the only global disable Claude Code honors.
+     * - The default fits a harness WITH a native disabled state (Gemini's
+     *   `mcp.excluded`): disabled servers stay installed and are marked disabled.
+     * - Cursor and Codex (presence means enabled) install only enabled servers.
+     * - Claude: a globally-disabled server (`_meta.enabled.claude === false`)
+     *   must be ABSENT from ~/.claude.json, because absence is the only global
+     *   disable Claude Code honors.
+     * - Grok decides every table in `syncServers`, so it installs none up front.
      */
-    shouldBeInstalled(serverConfig: UnifiedMCPServerConfig): boolean {
-        return this.supportsDisabledState() || this.isServerEnabledInMeta(serverConfig);
+    shouldBeInstalled(_serverConfig: UnifiedMCPServerConfig): boolean {
+        return true;
     }
 
     /**
@@ -329,11 +337,6 @@ export abstract class MCPProvider {
      * Convert provider-specific config to unified format
      */
     abstract toUnifiedConfig(config: unknown): Record<string, UnifiedMCPServerConfig>;
-
-    /**
-     * Convert unified config to provider-specific format
-     */
-    abstract fromUnifiedConfig(servers: Record<string, UnifiedMCPServerConfig>): unknown;
 
     /**
      * Apply harness home lists from the unified config.

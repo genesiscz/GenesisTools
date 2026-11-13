@@ -1,6 +1,6 @@
 import type { CatalogOptions } from "@app/ai-proxy/lib/providers/definition";
 import { resolveOpenAiSubToken } from "@app/ai-proxy/lib/providers/openai-sub-token";
-import { providerKey } from "@app/ai-proxy/lib/providers/registry";
+import { providerKey } from "@app/ai-proxy/lib/providers/provider-key";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { toProxyId } from "@genesiscz/utils/ai/grok";
 import { WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";

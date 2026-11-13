@@ -1,20 +1,24 @@
 import { existsSync, lstatSync } from "node:fs";
+import { rmDenyReason } from "./remove";
 import { run } from "./run";
 
 export type TrashResult = { ok: true; trashPath: string | null } | { ok: false; error: string };
 
 /**
  * A symbolic link, or a missing path, is refused before the Trash sees it: the review shows a target, and a link is
- * not the space the user chose to free.
+ * not the space the user chose to free. A path `tools rm` would never delete (its hard-deny verdict) is refused too.
  */
 function refuseUnsafe(path: string): string | null {
     try {
-        return lstatSync(path).isSymbolicLink()
-            ? `${path} is a symbolic link: the Trash would take its target, so it is refused`
-            : null;
+        if (lstatSync(path).isSymbolicLink()) {
+            return `${path} is a symbolic link: the Trash would take its target, so it is refused`;
+        }
     } catch {
         return `${path} does not exist`;
     }
+
+    const denied = rmDenyReason(path);
+    return denied ? `${path}: ${denied}` : null;
 }
 
 /** The system's own Trash command (macOS 15 and later): NSFileManager's trashItem, so no Finder, no Automation grant. */

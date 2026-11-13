@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { type LibraryHandle, startLibrary } from "./library";
 import { addEntry, removeEntry } from "./registry";
 import { resolveTemplateDir } from "./templates";
@@ -12,8 +11,6 @@ import { resolveTemplateDir } from "./templates";
  * the mount cache key and the lazy start all live in `startLibrary`'s http
  * handler, which the mount-cache unit tests deliberately do not touch.
  */
-
-setupStorageSandbox();
 
 let library: LibraryHandle;
 let base: string;

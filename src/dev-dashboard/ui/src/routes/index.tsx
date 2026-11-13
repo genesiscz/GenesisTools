@@ -1,3 +1,4 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { useQuery } from "@tanstack/react-query";
 import { SegmentedControl } from "@ui/components/segmented-control";
 import { useState } from "react";
@@ -8,7 +9,7 @@ import { PulseGraph } from "@/components/pulse/PulseGraph";
 import { WeatherCard } from "@/components/pulse/WeatherCard";
 import { WebappsPanel } from "@/components/webapps/WebappsPanel";
 import { useLive } from "@/hooks/useLive";
-import { fetchJson } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 interface TopProcess {
     pid: number;
@@ -93,7 +94,7 @@ export function IndexRoute() {
 
     const snap = useQuery<PulseSnapshot>({
         queryKey: ["pulse", "snap"],
-        queryFn: () => fetchJson<PulseSnapshot>("/api/system/pulse"),
+        queryFn: () => dashboard.call(ENDPOINTS.pulse, {}),
         // Live bus pushes ["pulse","snap"]; keep a slow fallback if stream dies.
         refetchInterval: 60_000,
         staleTime: 4_000,
@@ -104,19 +105,19 @@ export function IndexRoute() {
 
     const cpuHistory = useQuery<PulseSeries>({
         queryKey: ["pulse", "history", "cpu", rangeMinutesNum],
-        queryFn: () => fetchJson<PulseSeries>(`/api/system/pulse/history?metric=cpu&minutes=${rangeMinutesNum}`),
+        queryFn: () => dashboard.call(ENDPOINTS.pulseHistory, { metric: "cpu", minutes: rangeMinutesNum }),
         refetchInterval: 10000,
     });
 
     const memHistory = useQuery<PulseSeries>({
         queryKey: ["pulse", "history", "mem_free", rangeMinutesNum],
-        queryFn: () => fetchJson<PulseSeries>(`/api/system/pulse/history?metric=mem_free&minutes=${rangeMinutesNum}`),
+        queryFn: () => dashboard.call(ENDPOINTS.pulseHistory, { metric: "mem_free", minutes: rangeMinutesNum }),
         refetchInterval: rangeMinutesNum >= 1440 ? 60000 : 10000,
     });
 
     const weather = useQuery<WeatherSnapshot>({
         queryKey: ["weather"],
-        queryFn: () => fetchJson<WeatherSnapshot>("/api/weather"),
+        queryFn: () => dashboard.call(ENDPOINTS.weather, {}),
         refetchInterval: 600000,
     });
 

@@ -11,10 +11,10 @@ import {
     writeConfig,
 } from "@app/dev-dashboard/lib/tunnel/cloudflared";
 import { buildPairingPayload, persistPairing } from "@app/dev-dashboard/lib/tunnel/pairing";
-import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
+import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@genesiscz/utils/prompts/p";
 import { renderQr } from "@genesiscz/utils/qr";
 
 const TUNNEL_NAME = "devdashboard";
@@ -67,6 +67,7 @@ export async function runTunnelSetup(opts: TunnelSetupOptions): Promise<void> {
                 hint: "no domain needed — see the trust note",
             },
         ],
+        cancel: "back",
     });
 
     if (isCancel(domainChoice)) {
@@ -95,6 +96,7 @@ async function runOwnDomainBranch(opts: TunnelSetupOptions): Promise<void> {
     const hostname = await text({
         message: "Public hostname for the dashboard",
         placeholder: "mac.yourdomain.com",
+        cancel: "back",
     });
 
     if (isCancel(hostname)) {
@@ -143,7 +145,7 @@ async function runManagedBranch(opts: TunnelSetupOptions): Promise<void> {
         "Managed subdomain — read this"
     );
 
-    const proceed = await confirm({ message: "Continue with a managed subdomain (E2E-protected)?" });
+    const proceed = await confirm({ message: "Continue with a managed subdomain (E2E-protected)?", cancel: "back" });
 
     if (isCancel(proceed) || !proceed) {
         cancel("Cancelled — no managed subdomain reserved.");
@@ -153,6 +155,7 @@ async function runManagedBranch(opts: TunnelSetupOptions): Promise<void> {
     const desiredName = await text({
         message: "Desired subdomain name",
         placeholder: "martin",
+        cancel: "back",
     });
 
     if (isCancel(desiredName)) {
@@ -163,6 +166,7 @@ async function runManagedBranch(opts: TunnelSetupOptions): Promise<void> {
     const cloudApiToken = await text({
         message: "DevDashboard Cloud API token",
         placeholder: "ddc_…",
+        cancel: "back",
     });
 
     if (isCancel(cloudApiToken)) {

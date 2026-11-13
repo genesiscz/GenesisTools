@@ -1,4 +1,4 @@
-import { createCanvas, ImageData, loadImage } from "@napi-rs/canvas";
+import { loadCanvas } from "./canvas";
 
 export interface DecodedRgba {
     width: number;
@@ -8,6 +8,7 @@ export interface DecodedRgba {
 }
 
 export async function decodeImageRgba(input: string | Buffer): Promise<DecodedRgba> {
+    const { createCanvas, loadImage } = await loadCanvas();
     const image = await loadImage(input);
     const canvas = createCanvas(image.width, image.height);
     const ctx = canvas.getContext("2d");
@@ -21,6 +22,7 @@ export async function decodeImageRgbaScaled(
     width: number,
     height: number
 ): Promise<DecodedRgba> {
+    const { createCanvas, loadImage } = await loadCanvas();
     const image = await loadImage(input);
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext("2d");
@@ -31,7 +33,8 @@ export async function decodeImageRgbaScaled(
 }
 
 /** Encode raw RGBA bytes back into a PNG buffer. */
-export function encodeRgbaToPng(rgba: Uint8ClampedArray, width: number, height: number): Buffer {
+export async function encodeRgbaToPng(rgba: Uint8ClampedArray, width: number, height: number): Promise<Buffer> {
+    const { createCanvas, ImageData } = await loadCanvas();
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext("2d");
     ctx.putImageData(new ImageData(rgba, width, height), 0, 0);

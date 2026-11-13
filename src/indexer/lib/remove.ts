@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import type { IndexerManager } from "./manager";
 
@@ -50,6 +50,7 @@ export async function removeWorkflow({ manager, name, force }: RemoveWorkflowOpt
             message: "Select indexes to remove",
             options: displayNames.map((n) => ({ value: n, label: n })),
             required: true,
+            cancel: "back",
         });
 
         if (p.isCancel(selected)) {
@@ -76,6 +77,7 @@ export async function removeWorkflow({ manager, name, force }: RemoveWorkflowOpt
 
             const confirmed = await p.confirm({
                 message: `Remove "${pc.bold(indexName)}" and all its data?`,
+                cancel: "back",
             });
 
             if (p.isCancel(confirmed) || !confirmed) {

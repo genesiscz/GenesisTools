@@ -2,11 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { TimelyHttpError } from "@app/timely/api/errors";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { saveCookie } from "./cookie";
 import { fetchMemoriesForDates } from "./memories";
-
-setupStorageSandbox();
 
 const realFetch = globalThis.fetch;
 

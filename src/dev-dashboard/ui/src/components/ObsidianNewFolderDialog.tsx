@@ -1,4 +1,4 @@
-import { SafeJSON } from "@genesiscz/utils/json";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { Button } from "@ui/components/button";
 import {
     Dialog,
@@ -12,6 +12,7 @@ import { Input } from "@ui/components/input";
 import { Label } from "@ui/components/label";
 import { FolderPlus } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import { dashboard, withServerMessage } from "@/lib/dashboard-client";
 
 function parentLabel(parent: string): string {
     if (!parent) {
@@ -76,18 +77,7 @@ export function ObsidianNewFolderDialog({
         setError(null);
 
         try {
-            const res = await fetch("/api/obsidian/mkdir", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: SafeJSON.stringify({ relativeDir }),
-            });
-
-            if (!res.ok) {
-                const err = (await res.json().catch(() => ({ error: "Unknown error" }))) as { error?: string };
-                setError(err.error ?? "Could not create folder");
-                return;
-            }
-
+            await withServerMessage(dashboard.call(ENDPOINTS.obsidianMkdir, { relativeDir }));
             onCreated(relativeDir);
             onOpenChange(false);
         } catch (err) {

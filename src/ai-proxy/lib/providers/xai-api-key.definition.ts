@@ -1,12 +1,6 @@
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
-import { XaiApiKeyProvider } from "@app/ai-proxy/lib/providers/xai-api-key";
 import { listXaiProxyModels } from "@app/ai-proxy/lib/providers/xai-api-key.models";
-import { env } from "@genesiscz/utils/env";
-
-/** Alias-aware: an account relying on the legacy `X_AI_API_KEY` is told the variable that was actually read. */
-export function xaiApiKeyEnvName(): string {
-    return env.x.getApiEnvKey() ?? "XAI_API_KEY";
-}
+import { xaiApiKeyEnvName } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 
 export const xaiApiKeyDefinition: ProviderDefinition = {
     title: "xAI API",
@@ -29,7 +23,8 @@ export const xaiApiKeyDefinition: ProviderDefinition = {
     usage: { snapshot: null },
     routes: { chatViaResponses: true, reshapesChat: false, recoversCompaction: false },
     upstreamEndpoints: null,
-    create: (account) => XaiApiKeyProvider.create(account),
+    create: async (account) =>
+        (await import("@app/ai-proxy/lib/providers/xai-api-key")).XaiApiKeyProvider.create(account),
     suggestedModel: (account) => `${account.name}/${account.providerSlug}/grok-4.7`,
     introspect: async () => [],
 };

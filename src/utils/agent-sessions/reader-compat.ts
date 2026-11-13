@@ -140,10 +140,6 @@ export async function readCompatibilityTranscript<Kind extends AgentKind>(
     source: NativeSessionSource<Kind>,
     options: CompatibilityReadOptions = {}
 ): Promise<NativeTranscript<Kind>> {
-    if (!reader.scan) {
-        throw new Error(`${reader.kind} history reader does not expose source records`);
-    }
-
     const revision = sourceFingerprint({
         source,
         parserVersion: reader.parserVersion,
@@ -152,10 +148,6 @@ export async function readCompatibilityTranscript<Kind extends AgentKind>(
     const issues: NativeSourceIssue[] = [];
     let metadata: Omit<HistoryMetadataRecord, "providerId" | "sourceKey"> | undefined;
     if (options.readMetadata !== false) {
-        if (!reader.readMetadata) {
-            throw new Error(`${reader.kind} history reader does not expose metadata`);
-        }
-
         const result = await reader.readMetadata(source, { signal: options.signal });
         for (const issue of result.issues) {
             appendIssue(issues, issue);

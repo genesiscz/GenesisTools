@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { type Command, InvalidArgumentError } from "commander";
 import { DEFAULT_CLASSIFY, devMonitorSources, formatEvent, runDevMonitor } from "../lib/dev-monitor";
+import { monitorPreamble } from "../lib/dev-monitor-summary";
 
 function positiveNumber(value: string): number {
     const number = Number(value);
@@ -18,6 +19,8 @@ function positiveNumber(value: string): number {
 interface MonitorFlags {
     json?: boolean;
     fromStart?: boolean;
+    /** False with `--no-summary`. */
+    summary: boolean;
     minStallMs: number;
     minSlowMainMs: number;
     minProfileMs: number;
@@ -33,10 +36,11 @@ export function registerDevCommands(program: Command): void {
 
     dev.command("monitor")
         .description(
-            "Stream the app's hangs, long stalls, layout loops, slow main-thread work, frame drops, errors, link-relay trouble and crash reports, one line per event. Run it under the Monitor tool while you change the app."
+            "Stream the app's hangs, long stalls, layout loops, slow main-thread work, frame drops, errors, link-relay trouble, crash reports and command deadlines, one line per event, after a summary of what happened while no monitor ran. Run it under the Monitor tool while you change the app."
         )
         .option("--json", "one JSON object per event instead of a text line")
         .option("--from-start", "replay what the logs already hold, then follow them")
+        .option("--no-summary", "do not print the summary of what happened since the last monitor run")
         .option(
             "--min-stall-ms <ms>",
             "leave out recovered stalls and frame drops shorter than this",
@@ -64,8 +68,8 @@ export function registerDevCommands(program: Command): void {
         )
         .action(async (flags: MonitorFlags) => {
             const sources = devMonitorSources();
-            const start = `[${new Date().toTimeString().slice(0, 8)}] monitor watching ${sources.perfLog}, ${sources.genesisPerfLog}, ${sources.profileLog()}, ${sources.relayLog}, ${sources.hangs}, ${sources.crashes}`;
-            out.print(`${flags.json ? SafeJSON.stringify({ kind: "start", text: start }) : start}\n`);
+            out.print(monitorPreamble({ sources, json: flags.json === true, summary: flags.summary, now: new Date() }));
+
             await withInterrupt((signal) =>
                 runDevMonitor({
                     fromStart: flags.fromStart === true,

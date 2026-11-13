@@ -1,10 +1,9 @@
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AbsentLimit, absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { resolveSecret } from "@genesiscz/utils/security";
 import { withVaultPurpose } from "@genesiscz/utils/security/vault-purpose";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -48,24 +47,25 @@ export interface InfoAccount {
     label?: string;
 }
 
-interface SecretAccounts {
-    getAccountsByProvider(provider: "anthropic-sub"): AIAccountEntry[];
+/** An account with its long-lived token resolved: only the stdin-token match needs one. */
+interface TokenAccount extends InfoAccount {
+    longLivedToken?: string;
 }
 
 /**
  * The statusline runs this in every Claude session. With a name it reads the config's account list only:
- * `AIConfig.load()` decrypts every account's secrets, which reads the vault's master key from the keychain, and
- * macOS then asks the user whether `gt-claude` may use it. Only a token on stdin needs the stored tokens to compare.
+ * resolving a token reads the vault's master key from the keychain, and macOS then asks the user whether
+ * `gt-claude` may use it. Only a token on stdin needs the stored tokens to compare.
  */
 export async function resolveInfoAccount({
     name,
     readAccounts = readAnthropicAccounts,
-    loadSecrets = () => AIConfig.load(),
+    loadSecrets = readAnthropicLongLivedTokens,
     readToken = readStdinToken,
 }: {
     name: string | undefined;
     readAccounts?: () => Promise<InfoAccount[]>;
-    loadSecrets?: () => Promise<SecretAccounts>;
+    loadSecrets?: () => Promise<TokenAccount[]>;
     readToken?: () => Promise<string | null>;
 }): Promise<InfoAccount | null> {
     if (name) {
@@ -77,11 +77,26 @@ export async function resolveInfoAccount({
         return null;
     }
 
-    const config = await withVaultPurpose(
+    const accounts = await withVaultPurpose(
         "match this Claude session's token to a configured account, for the statusline",
         () => loadSecrets()
     );
-    return config.getAccountsByProvider("anthropic-sub").find((a) => a.tokens.longLivedToken === token) ?? null;
+    const match = accounts.find((a) => a.longLivedToken === token);
+    return match ? { name: match.name, ...(match.label ? { label: match.label } : {}) } : null;
+}
+
+/** The comparison is where the stored tokens are spent, so they are resolved here and nowhere earlier. */
+async function readAnthropicLongLivedTokens(): Promise<TokenAccount[]> {
+    const store = await AiConfigStore.readOnly();
+    const accounts = store.data().accounts.filter((a) => a.provider === "anthropic-sub");
+
+    return Promise.all(
+        accounts.map(async (a) => ({
+            name: a.name,
+            label: a.label,
+            longLivedToken: await resolveSecret(a.credentials.longLivedToken),
+        }))
+    );
 }
 
 async function readAnthropicAccounts(): Promise<InfoAccount[]> {

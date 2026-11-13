@@ -1,7 +1,4 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-
-setupStorageSandbox();
 
 describe("daemon task registration retention default", () => {
     test("a task registered without explicit retention gets a sane default, not undefined", async () => {

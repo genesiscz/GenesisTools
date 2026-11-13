@@ -6,10 +6,10 @@ import { parseReminderTime } from "@app/todo/lib/reminders";
 import { TodoStore } from "@app/todo/lib/store";
 import { buildSyncReport, type SyncReport, type SyncTarget, syncTodo } from "@app/todo/lib/sync";
 import type { OutputFormat, TodoPriority } from "@app/todo/lib/types";
-import * as p from "@clack/prompts";
 import { isInteractive, parseVariadic, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Command, Option } from "commander";
 import pc from "picocolors";
 
@@ -93,6 +93,7 @@ export function createAddCommand(): Command {
                         message: "Title",
                         placeholder: "What needs to be done?",
                         validate: (v) => (!v || v.length === 0 ? "Title is required" : undefined),
+                        cancel: "back",
                     });
 
                     if (p.isCancel(result)) {
@@ -108,6 +109,7 @@ export function createAddCommand(): Command {
                         message: "Priority",
                         options: PRIORITIES.map((pr) => ({ value: pr, label: pr })),
                         initialValue: "medium" as TodoPriority,
+                        cancel: "back",
                     });
 
                     if (p.isCancel(result)) {
@@ -122,6 +124,7 @@ export function createAddCommand(): Command {
                     const result = await p.text({
                         message: "Tags (comma-separated, optional)",
                         placeholder: "e.g. auth, backend",
+                        cancel: "back",
                     });
 
                     if (p.isCancel(result)) {
@@ -138,6 +141,7 @@ export function createAddCommand(): Command {
                     const result = await p.text({
                         message: "Description (optional)",
                         placeholder: "Additional details...",
+                        cancel: "back",
                     });
 
                     if (p.isCancel(result)) {

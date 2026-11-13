@@ -3,6 +3,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { HARNESS_FACTS, JOURNAL_DEFAULT_HARNESS } from "../lib/Generated/harness-facts";
+import { AGENT_HOST_MARKERS } from "../lib/Generated/host-markers";
 import { readProcessBasics } from "../lib/process-basics";
 import { accountEnvVarFor, type Harness, harnessFor } from "./harness";
 
@@ -49,16 +50,10 @@ interface PinHost {
 }
 
 /**
- * The apps that host agent sessions, each recognised by the variable it sets on every agent it starts.
- *
- * 🛑 A copy: the source is `T3_HOST_MARKERS` in `src/utils/t3code/host-markers.ts` (spread into `AGENT_HOST_MARKERS` in
- * `src/utils/ai/active-processes.ts`), which this standalone hook cannot
- * import. A new host is one row in BOTH tables; `record-hook.test.ts` fails while they differ.
+ * The apps that host agent sessions, generated from `src/utils/t3code/host-markers.ts` by scripts/gen-harness-plugin.ts,
+ * since this standalone hook cannot import it. `record-hook.test.ts` checks the table against `agentHostFromEnv`.
  */
-export const AGENT_HOST_MARKERS: readonly { kind: string; envKey: string; carriesId: boolean }[] = [
-    { kind: "t3", envKey: "T3CODE_THREAD_ID", carriesId: true },
-    { kind: "t3", envKey: "T3CODE_CLI_PATH", carriesId: false },
-];
+export { AGENT_HOST_MARKERS };
 
 /**
  * The host named by the env. No payload carries it: the marker is the host app's own variable. It is inherited,

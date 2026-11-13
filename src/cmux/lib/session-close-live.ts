@@ -15,22 +15,12 @@ import { loadAllSessionCmuxRefs, resolveRefsProvider, type SessionCmuxRefs } fro
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { argvWithChildDeadline } from "@genesiscz/utils/process/child-deadline";
 import { childPids, listProcesses, processesOnTty } from "@genesiscz/utils/process/processes";
-import { capture } from "@genesiscz/utils/process/ps";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { isShellProgram } from "@genesiscz/utils/shell/programs";
-import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
-import { killTmuxSessionExact, listTmuxClients, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
-import {
-    type LiveAgentSurface,
-    liveAgentSurfaces,
-    type ProcessQuery,
-    pickAdoptable,
-    tmuxPaneStillShown,
-    ttyProcessesShowAgent,
-    ttyRunsAgent,
-} from "./session-adopt";
+import { tmuxSendKeys } from "@genesiscz/utils/tmux/send-keys";
+import { killTmuxSessionExact, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
+import { type LiveAgentSurface, liveAgentSurfaces, pickAdoptable, ttyProcessesShowAgent } from "./session-adopt";
 import { SESSION_AGENT_IDS, type SessionAgentId } from "./session-agents";
 import {
     type AdoptedSession,
@@ -124,64 +114,6 @@ function isAlive(pid: number): boolean {
     }
 
     return true;
-}
-
-/** The child dies at this deadline even if this process is killed first (child-deadline.ts). */
-const CHILD_DEADLINE_MS = 8_000;
-/** The parent stops waiting a little later, in case the watchdog itself is stuck. */
-const CHILD_WAIT_MS = 10_000;
-
-/** One bounded child (ps, pgrep, tmux): a wedged tmux server must not hang `agents close`. */
-async function runBounded(argv: string[]): Promise<ProcessQuery> {
-    const [command, ...args] = argvWithChildDeadline(argv, CHILD_DEADLINE_MS);
-
-    if (!command) {
-        return { code: 127, stdout: "", stderr: "empty argv", timedOut: false };
-    }
-
-    const result = await capture(command, args, { timeoutMs: CHILD_WAIT_MS });
-    // 124 is the watchdog's exit on its deadline; null is the parent's timeout.
-    const timedOut = result.status === null || result.status === 124;
-
-    if (timedOut) {
-        log.warn({ argv }, "a child of agents close timed out; its answer is unknown");
-    }
-
-    return { code: result.status, stdout: result.stdout, stderr: result.stderr, timedOut };
-}
-
-/**
- * Right before keystrokes go into a --via-tmux session's surface: does it still display the agent's pane? A
- * session that is not tmux-joined needs no check. tmux not answering is a refusal, never a yes.
- */
-export async function tmuxPaneStillShownNow(
-    target: LiveAgentSurface
-): Promise<{ ok: true } | { ok: false; reason: string }> {
-    if (!target.tmux) {
-        return { ok: true };
-    }
-
-    const [panes, clients] = await Promise.all([listTmuxPanes(target.tmux.session), listTmuxClients()]);
-
-    if (!panes.ok || !clients.ok) {
-        return { ok: false, reason: panes.ok ? (clients.ok ? "" : clients.reason) : panes.reason };
-    }
-
-    return tmuxPaneStillShown({
-        joined: target.tmux,
-        surfaceTty: target.surface.tty,
-        panes: panes.items,
-        clients: clients.items,
-    });
-}
-
-/** Every live agent session in cmux with its tab and workspace titles (newest per surface, caller excluded). */
-/** The agents (`claude`, `codex`, `grok`) this user runs on one tty now. */
-export function agentsOnTtyNow(tty: string): Set<SessionAgentId> {
-    const own = processesOnTty(tty).filter(
-        (entry) => entry.uid === globalThis.process.getuid?.() && !entry.zombie && entry.command
-    );
-    return new Set(SESSION_AGENT_IDS.filter((agent) => own.some((entry) => ttyRunsAgent(entry.command ?? "", agent))));
 }
 
 /** The agents this user runs on each tty now (`ttys012`, no `/dev/`), from one process-table read. */
@@ -327,16 +259,13 @@ export function liveSessionCloseIO(store: SessionStore): SessionCloseIO {
         },
         async sendExit(record, text) {
             if (record.tmuxSession) {
-                const tmux = resolveTmuxBin();
                 // The agent's own pane (checked right before this), never whichever pane the session shows now.
                 const target = tmuxExitTarget(record) ?? `=${record.tmuxSession}:`;
                 for (const keys of [["-l", "--", text], ["Enter"]]) {
-                    const sent = await runBounded([tmux, "send-keys", "-t", target, ...keys]);
+                    const sent = await tmuxSendKeys(target, keys);
 
-                    if (sent.code !== 0) {
-                        throw new Error(
-                            `tmux send-keys to ${record.tmuxSession} ${sent.timedOut ? "timed out" : `failed (${sent.code}): ${sent.stderr.trim()}`}`
-                        );
+                    if (!sent.ok) {
+                        throw new Error(sent.detail);
                     }
 
                     if (keys[0] === "-l") {

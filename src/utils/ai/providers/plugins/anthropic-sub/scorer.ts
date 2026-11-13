@@ -265,8 +265,8 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 weeklyHeadroomPct: 0,
                 sessionUsableFraction: 0,
                 why: planDead
-                    ? `plan is ${account.subscriptionPlan ?? "not usable"} — Claude Code needs a paid subscription`
-                    : "subscription expired — renew at claude.ai",
+                    ? `plan is ${account.subscriptionPlan ?? "not usable"}. Claude Code needs a paid subscription`
+                    : "subscription expired, renew at claude.ai",
                 dataNote: "subscription expired",
             };
         }
@@ -289,7 +289,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 weeklyHeadroomPct: 0,
                 sessionUsableFraction: 0,
                 why: expired
-                    ? `login dead — run ${claudeLoginCommand(account.accountName)}`
+                    ? `login dead, run ${claudeLoginCommand(account.accountName)}`
                     : `usage unavailable${account.error ? `: ${account.error.slice(0, 80)}` : ""}`,
                 dataNote: expired ? "expired" : "no data",
             };
@@ -362,7 +362,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 sessionHeadroomPct: session.headroomPct,
                 weeklyHeadroomPct: binding.headroomPct,
                 sessionUsableFraction: usableFraction,
-                why: `${bindingName} exhausted — refills in ${fmtHours(binding.hoursToReset)}`,
+                why: `${bindingName} exhausted, refills in ${fmtHours(binding.hoursToReset)}`,
                 dataNote: staleNote,
                 limits,
                 ...absentField,
@@ -378,7 +378,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 sessionHeadroomPct: session.headroomPct,
                 weeklyHeadroomPct: binding.headroomPct,
                 sessionUsableFraction: usableFraction,
-                why: `would stall — ${sessionPhrase(session, false)}, needs ${Math.round(paceLine)}% to keep pace · ${weeklyPhrase(binding, bindingName)}`,
+                why: `would stall, ${sessionPhrase(session, false)}, needs ${Math.round(paceLine)}% to keep pace · ${weeklyPhrase(binding, bindingName)}`,
                 dataNote: staleNote,
                 limits,
             };
@@ -393,7 +393,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
             sessionHeadroomPct: session.headroomPct,
             weeklyHeadroomPct: binding.headroomPct,
             sessionUsableFraction: usableFraction,
-            why: `${fmtRate(weeklyRate)} sustainable — ${weeklyPhrase(binding, bindingName)} · ${sessionPhrase(session, sessionAbsent)}${usableNote}`,
+            why: `${fmtRate(weeklyRate)} sustainable, ${weeklyPhrase(binding, bindingName)} · ${sessionPhrase(session, sessionAbsent)}${usableNote}`,
             dataNote: staleNote,
             limits,
             ...absentField,

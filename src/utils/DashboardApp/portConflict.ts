@@ -14,8 +14,8 @@
  */
 import { logger } from "@genesiscz/utils/logger";
 import { getPortOwner, type PortOwner } from "@genesiscz/utils/network";
+import { defaultPlistLabel, isLaunchdInstalled } from "@genesiscz/utils/process/launchd-agent";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
-import { defaultPlistLabel, isLaunchdInstalled } from "./launchd";
 import { readPid, readPidRaw } from "./pidFile";
 import { readPreferences } from "./preferences";
 

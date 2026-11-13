@@ -1,6 +1,6 @@
 import { getStepCatalog } from "@app/automate/lib/registry";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import "@app/automate/lib/steps";

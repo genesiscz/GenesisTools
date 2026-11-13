@@ -37,10 +37,10 @@ struct AgentDraftsList: View {
                     .buttonStyle(.plain)
                     if !folded {
                         ForEach(drafts, id: \.id) { draft in
-                            AgentDraftRow(draft: draft, focused: model.focusedCard == "draft:\(draft.id)")
+                            AgentDraftRow(draft: draft, focused: model.focusedCard == ReviewCardID.proposalDraft(draft.id).rawValue)
                                 .rowButton(cornerRadius: 6) { model.revealDraft(draft.id) }
                                 // The button exists under the pointer or on the focused draft (`liveRow`).
-                                .liveRow(selected: model.focusedCard == "draft:\(draft.id)")
+                                .liveRow(selected: model.focusedCard == ReviewCardID.proposalDraft(draft.id).rawValue)
                         }
                     }
                 }

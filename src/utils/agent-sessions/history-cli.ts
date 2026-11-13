@@ -259,7 +259,7 @@ export function registerAgentHistoryCommand(
 
             let selected = hits;
             if (options.interactive && !hooks.interactiveFilters) {
-                const p = await import("@clack/prompts");
+                const p = await import("@genesiscz/utils/prompts/p");
                 const choice = await withCancel(
                     p.select({
                         message: `Which ${adapter.kind} session?`,
@@ -268,6 +268,7 @@ export function registerAgentHistoryCommand(
                             label: hit.title,
                             hint: `${hit.mtime.toISOString().slice(0, 10)} · ${hit.cwd} · ${hit.sourceHome ?? "native home"} · ${hit.sessionId.slice(0, 8)}`,
                         })),
+                        cancel: "back",
                     })
                 );
                 const picked = hits.find((hit) => (hit.sourceKey ?? hit.sessionId) === choice);

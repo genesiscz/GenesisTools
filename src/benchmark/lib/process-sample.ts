@@ -1,7 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { parseProcRssBytes, parseProcStatCpuMs, parseProcThreads } from "@genesiscz/utils/process/linux-proc";
-import { readProcessUsages } from "@genesiscz/utils/process/processes";
-import { parseCpuTime } from "@genesiscz/utils/process/ps";
+import { parseCpuTime, readProcessUsages } from "@genesiscz/utils/process/processes";
 
 const { log } = logger.scoped("benchmark-sample");
 

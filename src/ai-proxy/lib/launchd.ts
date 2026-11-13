@@ -2,7 +2,7 @@
  * Launchd agent for ai-proxy (macOS only, opt-in).
  *
  * Route decision (2026-08-31): reuse the generic plist writer in
- * `@genesiscz/utils/DashboardApp/launchd` rather than copy
+ * `@genesiscz/utils/process/launchd-agent` rather than copy
  * `src/youtube/lib/server/launchd.ts`. ai-proxy does NOT adopt the whole
  * `DashboardApp/lifecycle` path, because ai-proxy's `up` also owns the shared
  * cloudflared exposure tunnel and its `down` must never stop it — an invariant
@@ -24,7 +24,7 @@ import {
     plistPath,
     startLaunchd,
     uninstallLaunchd,
-} from "@genesiscz/utils/DashboardApp/launchd";
+} from "@genesiscz/utils/process/launchd-agent";
 
 export const AI_PROXY_LAUNCHD_LABEL = defaultPlistLabel("ai-proxy");
 

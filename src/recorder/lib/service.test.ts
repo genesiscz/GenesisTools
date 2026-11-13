@@ -17,7 +17,14 @@ import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import { cameraMoviePath } from "@genesiscz/utils/recording-editor/camera";
-import { applyOp, readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import {
+    applyOp,
+    type EditOp,
+    editOpSchema,
+    readProject,
+    wholeProject,
+    writeProject,
+} from "@genesiscz/utils/recording-editor/project";
 import type { RpcProgress } from "@genesiscz/utils/rpc/peer";
 import { type RpcNotification, RpcSocketClient, type RpcSocketClientOptions } from "@genesiscz/utils/rpc/socket-client";
 import {
@@ -40,13 +47,13 @@ import screenOpsFixture from "./__fixtures__/screen-hit-ops.json";
 import fixture from "./__fixtures__/service-protocol.json";
 import schemasFixture from "./__fixtures__/service-protocol.schemas.json";
 import * as edits from "./edit";
-import { editProject, readUndoSteps, redoEdit, undoEdit } from "./edit";
-import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
+import { editProject, type OwnedEdit, readUndoSteps, setEditOwner } from "./edit";
+import { EditSession, EditSessions, type ProjectChanged, withEditSession } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS, editorWindowKeyOf, shortRecordingId } from "./library";
 import { chaptersOfPart } from "./moments";
 import { applyEdit, callerParams, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
-import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
+import { editorGolden, helloMethods, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
 import * as serviceClient from "./service-client";
 import { hostCloseEditor, hostStill, ServiceConnectionLost, ServiceHost, withServiceClient } from "./service-client";
@@ -123,6 +130,24 @@ function holdComputations(count = 1) {
     };
 }
 
+/** The CLI's undo and redo with no service: each on a short-lived session of the edit file. */
+const undoEdit = (path: string) => withEditSession(path, (session) => session.undo({ by: "agent" }));
+const redoEdit = (path: string) => withEditSession(path, (session) => session.redo({ by: "agent" }));
+
+/**
+ * `withEditSession` on an edit, as each kind of session runs it: a resident one that this process holds (the service's
+ * for a window) and that every call finds, or a short-lived one per call, which keeps the history in the undo file.
+ */
+async function sessionOfKind(kind: "resident" | "short-lived", path: string) {
+    if (kind === "resident") {
+        const { session } = await openSession(path);
+        setEditOwner({ sessionOf: (editPath) => (editPath === path ? session : undefined) });
+        closing.push(() => setEditOwner(undefined));
+    }
+
+    return <T>(work: (session: OwnedEdit) => Promise<T> | T) => withEditSession(path, work);
+}
+
 async function openSession(path: string, saveDelayMs = 10_000) {
     const changes: ProjectChanged[] = [];
     const session = await EditSession.open(path, { onChange: (change) => changes.push(change), saveDelayMs });
@@ -156,24 +181,42 @@ describe("an edit session", () => {
         expect((await undoEdit(path)).project.texts?.map((text) => text.text)).toEqual(["A"]);
     });
 
-    test("undo and redo step through the session's history; a new change ends the redo", async () => {
-        const path = editFixture("gt-es-undo-");
-        const { session } = await openSession(path);
-        await session.apply([{ op: "text", from: 1, to: 2, text: "A" }], { by: "agent" });
-        await session.apply([{ op: "text", from: 3, to: 4, text: "B" }], { by: "agent" });
+    test.each(["resident", "short-lived"] as const)(
+        "undo and redo step through a %s session's history, collapse makes one step, a new change ends the redo",
+        async (kind) => {
+            const path = editFixture(`gt-es-undo-${kind}-`);
+            const edit = await sessionOfKind(kind, path);
+            const apply = (ops: EditOp[], options: { by: string; baseRevision?: number } = { by: "agent" }) =>
+                edit((session) => session.apply(ops, options));
+            await apply([{ op: "text", from: 1, to: 2, text: "A" }]);
+            await apply([{ op: "text", from: 3, to: 4, text: "B" }]);
 
-        const undone = await session.undo({ by: "editor" });
-        expect(undone.undone).toEqual(["text"]);
-        expect(undone.project.texts?.map((text) => text.text)).toEqual(["A"]);
-        expect((await session.redo({ by: "editor" })).project.texts?.map((text) => text.text)).toEqual(["A", "B"]);
-        await session.undo({ by: "editor" });
-        await session.apply([{ op: "volume", volume: 0.5 }], { by: "agent" });
-        await expect(session.redo({ by: "editor" })).rejects.toMatchObject({ code: RPC_ERRORS.nothingToRedo });
-        expect(session.current.revision).toBe(7);
-        await expect(
-            session.apply([{ op: "volume", volume: 0.4 }], { by: "editor", baseRevision: 6 })
-        ).rejects.toMatchObject({ code: RPC_ERRORS.staleRevision });
-    });
+            const undone = await edit((session) => session.undo({ by: "editor" }));
+            expect(undone.undone).toEqual(["text"]);
+            expect(undone.project.texts?.map((text) => text.text)).toEqual(["A"]);
+            const redone = await edit((session) => session.redo({ by: "editor" }));
+            expect(redone.project.texts?.map((text) => text.text)).toEqual(["A", "B"]);
+            await edit((session) => session.undo({ by: "editor" }));
+            await apply([{ op: "volume", volume: 0.5 }]);
+            await expect(edit((session) => session.redo({ by: "editor" }))).rejects.toMatchObject({
+                code: RPC_ERRORS.nothingToRedo,
+            });
+            expect(await edit((session) => session.current.revision)).toBe(7);
+            expect(readProject(path).revision).toBe(7);
+            await expect(
+                apply([{ op: "volume", volume: 0.4 }], { by: "editor", baseRevision: 6 })
+            ).rejects.toMatchObject({ code: RPC_ERRORS.staleRevision });
+
+            const depth = await edit((session) => session.undoDepth);
+            await apply([{ op: "marker", at: 1, label: "one" }]);
+            await apply([{ op: "marker", at: 2, label: "two" }]);
+            await edit((session) => session.collapseUndo(depth));
+            expect(await edit((session) => session.undoDepth)).toBe(depth + 1);
+            const collapsed = await edit((session) => session.undo({ by: "editor" }));
+            expect(collapsed.undone).toEqual(["marker", "marker"]);
+            expect(readProject(path).markers ?? []).toEqual([]);
+        }
+    );
 
     test("a save after another writer's save keeps both edits, and refuses with staleRevision when they clash", async () => {
         const path = editFixture("gt-es-stale-");
@@ -383,6 +426,50 @@ describe("one undo and redo journal for the session and the file", () => {
         const redone = await session.redo({ by: "editor" });
         expect(redone.redone).toEqual(["volume"]);
         expect(redone.project.audio.volume).toBe(0.4);
+    });
+
+    // Regression test: 2026-11-08 architecture review, C05 — a redo the file path kept was lost to a session's save
+    test("a redo the file path kept survives a session that undoes once more and closes", async () => {
+        const path = editFixture("gt-es-redo-kept-");
+        await editProject(path, [{ op: "volume", volume: 0.4 }]);
+        await editProject(path, [{ op: "text", from: 1, to: 2, text: "A" }]);
+        await undoEdit(path);
+        const { session } = await openSession(path);
+        await session.undo({ by: "editor" });
+        expect(session.redoDepth).toBe(2);
+        session.close();
+
+        expect((await redoEdit(path)).redone).toEqual(["volume"]);
+        const again = await redoEdit(path);
+        expect(again.redone).toEqual(["text"]);
+        expect({ volume: again.project.audio.volume, texts: again.project.texts?.map((text) => text.text) }).toEqual({
+            volume: 0.4,
+            texts: ["A"],
+        });
+    });
+
+    test("a short-lived session waits while another process saves, and refuses with staleRevision when it never ends", async () => {
+        const path = editFixture("gt-es-busy-");
+        await editProject(path, [{ op: "volume", volume: 0.4 }]);
+        const busy = Object.assign(new Error("Lock file is already being held"), { code: "ELOCKED" });
+        const real = EditSession.prototype.flush;
+        let refusals = 2;
+        const spy = spyOn(EditSession.prototype, "flush").mockImplementation(function (this: EditSession) {
+            if (this.dirty && refusals-- > 0) {
+                throw busy;
+            }
+
+            return real.call(this);
+        });
+        closing.push(() => spy.mockRestore());
+
+        expect((await undoEdit(path)).project.audio.volume).toBe(1);
+        expect(readProject(path).audio.volume).toBe(1);
+
+        refusals = Number.POSITIVE_INFINITY;
+        const revision = readProject(path).revision;
+        await expect(redoEdit(path)).rejects.toMatchObject({ code: RPC_ERRORS.staleRevision });
+        expect(readProject(path).revision).toBe(revision);
     });
 
     test("an undo in the session can be redone from the file after the session closes", async () => {
@@ -1855,6 +1942,92 @@ describe("the window's REPL methods on the service", () => {
         await expect(agent.call<{ fixed: string[] }>("movie.fix", { recording: path })).resolves.toMatchObject({
             fixed: [expect.stringContaining("Step")],
         });
+    });
+});
+
+describe("the movie method of every edit op", () => {
+    const window =
+        "the editor window's EditOpDiff writes it from a change made in the window, and a REPL caller sends it through apply()";
+    /** Ops whose movie method has another name, because the name says what the call does. */
+    const RENAMED: Record<string, string> = { cursorSmooth: "smoothCursor", autoSpeed: "speedBadge" };
+    /** Ops with no movie method, each with why. */
+    const NO_METHOD: Record<string, string> = {
+        audio: `Whether the export plays the recording's sound: ${window}.`,
+        exportSettings: `The export's saved codec, height and output: ${window}; export() takes them per call.`,
+        lanes: `The whole lane list at once: ${window}; addLane, removeLane and moveLane change one lane.`,
+        setZoom: `Changes a zoom by its id: ${window}, and check() offers it as a fix in its action ops.`,
+        setRedaction: `Changes a hidden part by its id: ${window}, and check() offers it as a fix in its action ops.`,
+        setText: `Changes a text by its id: ${window}, and check() offers it as a fix in its action ops.`,
+        setShape: `Changes a shape by its id: ${window}.`,
+        trim: `Moves one clip's edge on the timeline: ${window}; cut and keep work on source time.`,
+        deleteClip: `Deletes one clip of the timeline: ${window}; cut works on source time.`,
+        clipSpeed: `Plays one clip of the timeline faster: ${window}; speed works on source time.`,
+        removeClickCircles: `Takes back annotateClicks' circles: ${window}.`,
+        renameLane: `Names a lane: ${window}.`,
+    };
+    /** Ops whose movie method takes more fields than the op: the extra fields, and why. */
+    const EXTRA_FIELDS: Record<string, { fields: string[]; why: string }> = {
+        cutWords: {
+            fields: ["dryRun"],
+            why: "dryRun lists the cuts and saves nothing, so it is never part of a saved op.",
+        },
+        cutFillers: {
+            fields: ["dryRun"],
+            why: "dryRun lists the cuts and saves nothing, so it is never part of a saved op.",
+        },
+    };
+    /** Ops whose movie method of the same name is another action, and why. */
+    const OTHER_ACTION: Record<string, string> = {
+        duplicate:
+            "movie.duplicate copies the whole recording into a new library recording; the op copies one item of the edit by its id, which a REPL caller sends through apply().",
+    };
+    const jsonOf = (schema: z.ZodType) => z.toJSONSchema(schema, { io: "input", unrepresentable: "any" });
+
+    test("every op tag has a REPL method and a service method with the op's params, apart from the named ones", () => {
+        const methods = moviesApi.handles.find((handle) => handle.name === "Movie")?.methods ?? [];
+        // The service answers movie.<name> with these same descriptors (service.ts), and hello lists each one.
+        const served = new Set(helloMethods());
+        const variants = new Map<string, z.ZodObject>(
+            editOpSchema.options.map((variant) => [variant.shape.op.value, variant])
+        );
+        const tags = [...variants.keys()];
+        const named = [RENAMED, NO_METHOD, EXTRA_FIELDS, OTHER_ACTION].flatMap((list) => Object.keys(list));
+        expect(named.filter((tag) => !tags.includes(tag))).toEqual([]);
+        expect(new Set(named).size).toBe(named.length);
+        const problems: string[] = [];
+
+        for (const [tag, variant] of variants) {
+            const name = RENAMED[tag] ?? tag;
+            const method = methods.find((each) => each.name === name);
+
+            if (tag in NO_METHOD) {
+                if (method) {
+                    problems.push(`${tag}: has a method now, so it leaves NO_METHOD`);
+                }
+                continue;
+            }
+
+            if (method?.effect !== "reversible" || !served.has(`movie.${name}`)) {
+                problems.push(`${tag}: no reversible movie.${name} on the REPL and the service`);
+                continue;
+            }
+
+            const extra = EXTRA_FIELDS[tag]?.fields ?? [];
+            const taken = jsonOf(method.params);
+            const properties = Object.entries(taken.properties ?? {}).filter(([field]) => !extra.includes(field));
+            const withoutExtra = extra.length ? { ...taken, properties: Object.fromEntries(properties) } : taken;
+            const same = SafeJSON.stringify(withoutExtra) === SafeJSON.stringify(jsonOf(variant.omit({ op: true })));
+
+            if (tag in OTHER_ACTION ? same : !same) {
+                problems.push(
+                    tag in OTHER_ACTION
+                        ? `${tag}: movie.${name} takes the op's params now, so it leaves OTHER_ACTION`
+                        : `${tag}: movie.${name} takes other params than the op${extra.length ? ` beside ${extra.join(", ")}` : ""}`
+                );
+            }
+        }
+
+        expect(problems).toEqual([]);
     });
 });
 

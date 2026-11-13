@@ -11,7 +11,6 @@
 
 import { type CollectContext, collectRefReport, listAllRefs, type RefReport } from "@app/git/lib/merged/collect";
 import { executePrune, type PruneContext, planPrune } from "@app/git/lib/merged/prune";
-import * as p from "@clack/prompts";
 import { isInteractive, parseNonNegativeInt, suggestCommand } from "@genesiscz/utils/cli";
 import {
     BaseNotFoundError,
@@ -28,6 +27,7 @@ import {
     type RepoConfig,
 } from "@genesiscz/utils/git";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -296,7 +296,11 @@ async function pruneRefs({
             return 2;
         }
 
-        const ok = await p.confirm({ message: `Remove ${plans.length} ref(s) as listed?`, initialValue: false });
+        const ok = await p.confirm({
+            message: `Remove ${plans.length} ref(s) as listed?`,
+            initialValue: false,
+            cancel: "back",
+        });
 
         if (p.isCancel(ok) || !ok) {
             out.log.info("Cancelled. Nothing removed.");

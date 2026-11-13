@@ -253,8 +253,12 @@ every method, because nothing reached a handler.
 
 `contract/endpoint-table.ts` holds one row per non-board endpoint the phone and the web reach:
 `{ method, path, policy, timeout }` plus its input and output types. The server binds a row with
-`bindEndpoint(row, { input: <zod>, invalid, run })` (`server/bind.ts`), so zod stays in the server. One generic
-client method calls any row: `client.call(ENDPOINTS.qaDecisionsDismiss, { session, number, expectedRevision })`.
+`bindEndpoint(row, { input: <zod>, invalid, run })` (`server/bind.ts`), so zod stays in the server. A route whose
+handler already parses its own input is bound with `bindHandler(row, handler)` from the same file: the row gives the
+method, the path and the retry policy, and the handler body stays. Every non-board route is bound from a row; a hand
+pattern that shadows or repeats a row fails `server/registry.test.ts`. The web calls a row through the contract
+client in `ui/src/lib/dashboard-client.ts`; no UI file builds a URL by hand. One generic client method calls any row:
+`client.call(ENDPOINTS.qaDecisionsDismiss, { session, number, expectedRevision })`.
 
 - `read` changes nothing.
 - `keyed-write` answers a retry that carries the same `Idempotency-Key` with its first answer.

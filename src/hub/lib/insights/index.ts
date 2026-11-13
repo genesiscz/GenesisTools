@@ -25,8 +25,8 @@ import type { NativeScan } from "@genesiscz/utils/ai/transcripts/insights-types"
 import { transcriptParser } from "@genesiscz/utils/ai/transcripts/load";
 import { readTail } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { buildToolStats, buildTurnCosts, type CallPricer } from "@genesiscz/utils/ai/transcripts/turn-cost";
-import { type AgentId, spendDriver } from "@genesiscz/utils/ai/usage/spend/drivers";
-import { costOf, DEFAULT_PRICING, priceForCandidates, resolvePrice } from "@genesiscz/utils/ai/usage/spend/pricing";
+import type { AgentId } from "@genesiscz/utils/ai/usage/spend/drivers";
+import { priceUsage } from "@genesiscz/utils/ai/usage/spend/priced-usage";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
@@ -58,8 +58,9 @@ const STUCK_SCAN_CONCURRENCY = 4;
 /**
  * Bump when the cached JSON's shape, the cache key or the pricing behind its costs changes. 4: a Claude fast-mode
  * call got its fast-tier rates and Fable 5.2 got catalog prices, so a v3 entry holds standard-rate and $0 costs.
+ * 5: the hub prices through `priceUsage`, which adds one-hour writes and the recorded-cost rule.
  */
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 5;
 /** How old a heavy part a library caller gets when it does not say; the key already names the file state. */
 const CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 /** The stuck detector reads this much of the file's end for full tool inputs. */
@@ -71,33 +72,30 @@ const STUCK_TURNS = 120;
 export const INSIGHTS_PRICING_NOTE = `List prices from the model catalog (the rates ${toolCommand("ai-spend")} uses), per model call of this transcript; sub-agent transcripts are not included (the header's cost includes them); an estimate, not a bill`;
 
 /**
- * List price per call from the catalog, with its dated and context-banded rules applied. The model is looked up
- * through the harness's candidate ladder (`MonitorDriver.priceCandidates`), as the spend reports price it.
+ * List price per call, priced as the spend reports price it (`priceUsage`): the harness's candidate ladder, the
+ * catalog's dated, context-banded and service-tier rules, one-hour cache writes and the recorded-cost rule.
  */
 export function catalogPricer(agent: AgentId): CallPricer {
-    const ladder = spendDriver(agent);
-
     return (call) => {
         if (!call.model) {
             return null;
         }
 
-        const entry = priceForCandidates(ladder.priceCandidates(call.model), DEFAULT_PRICING)?.entry;
-
-        if (!entry) {
-            return null;
-        }
-
-        const at = call.at ? new Date(call.at) : undefined;
-        const price = resolvePrice(entry, {
-            ...(at && !Number.isNaN(at.getTime()) ? { at } : {}),
-            contextTokens: call.input + call.cacheRead + call.cacheWrite,
+        return priceUsage({
+            source: agent,
+            model: call.model,
+            at: call.at ?? undefined,
+            tokens: {
+                input: call.input,
+                output: call.output,
+                cacheWrite: call.cacheWrite,
+                cacheRead: call.cacheRead,
+                cacheWrite1h: call.cacheWrite1h,
+            },
+            aggregate: call.aggregate,
             serviceTier: call.serviceTier,
-        });
-        return costOf(
-            { input: call.input, output: call.output, cacheWrite: call.cacheWrite, cacheRead: call.cacheRead },
-            price
-        );
+            recordedCostUsd: call.recordedCostUsd,
+        }).costUSD;
     };
 }
 

@@ -1,7 +1,7 @@
 import { getDaemonPid } from "@app/automate/lib/daemon";
 import { getDb } from "@app/automate/lib/db";
 import { getDaemonStatus } from "@app/automate/lib/launchd";
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Bot } from "grammy";
 
 export function registerStatusCommand(bot: Bot): void {

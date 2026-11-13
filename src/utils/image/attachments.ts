@@ -5,6 +5,7 @@ import { readBoundedRegularFile } from "@genesiscz/utils/fs/bounded-read";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
+import { loadCanvas } from "./canvas";
 import { detectImageFormat } from "./detect-format";
 import { checkImageDimensions } from "./dimensions";
 
@@ -106,7 +107,7 @@ async function validateImageBytes(data: Buffer): Promise<StillFormat & { width: 
     }
 
     checkImageDimensions({ data, maxPixels: MAX_IMAGE_PIXELS });
-    const { loadImage } = await import("@napi-rs/canvas");
+    const { loadImage } = await loadCanvas();
     const image = await loadImage(data);
     if (image.width < 1 || image.height < 1 || image.width * image.height > MAX_IMAGE_PIXELS) {
         throw new Error("Image attachment must contain between 1 and 48 million pixels");

@@ -1,15 +1,12 @@
 #!/usr/bin/env bun
 
 import { runTool } from "@genesiscz/utils/cli";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure";
 import { registerDecisionsCommand } from "./commands/decisions";
 import { registerSendCommand } from "./commands/send";
 import { registerStartCommand } from "./commands/start";
 import { registerWebhookCommand } from "./commands/webhook";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 program

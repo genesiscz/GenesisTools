@@ -2,10 +2,14 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { toProviderChoice } from "@genesiscz/utils/ask/providers/detected";
 import { env } from "@genesiscz/utils/env";
 import { APICallError, type LanguageModel } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { type CallTarget, coreChat } from "./call";
+import { byId } from "../catalog/static";
+import { queryUsage } from "../usage/query";
+import { type CallTarget, coreChat, resolveCallTarget } from "./call";
+import type { ResolvedBinding } from "./types";
 
 /**
  * A streamed call whose request is refused used to end with "No output generated. Check the
@@ -116,5 +120,48 @@ describe("coreChat streaming errors", () => {
 
         expect(APICallError.isInstance(outcome)).toBe(true);
         expect(asked).toBe(1);
+    });
+});
+
+describe("coreChat usage row for a ResolvedBinding projected into a provider choice", () => {
+    test("records the account id, not the account name", async () => {
+        const model = byId("claude-haiku-5-5", "anthropic");
+
+        if (!model) {
+            throw new Error("fixture model claude-haiku-5-5 left the static catalog");
+        }
+
+        const language = new MockLanguageModelV4({
+            doGenerate: async () => ({
+                content: [{ type: "text", text: "pong" }],
+                finishReason: { unified: "stop", raw: "stop" },
+                usage: {
+                    inputTokens: { total: 3, noCache: 3, cacheRead: 0, cacheWrite: 0 },
+                    outputTokens: { total: 1, text: 1, reasoning: 0 },
+                },
+                warnings: [],
+            }),
+        }) as unknown as LanguageModel;
+        const resolved = {
+            account: { id: "acc_work", name: "work", provider: "anthropic-sub" },
+            plugin: { id: "anthropic-sub" },
+            binding: { accountId: "acc_work", providerId: "anthropic-sub", billed: false, language: () => language },
+            model,
+            via: "test",
+        } as unknown as ResolvedBinding;
+
+        const providerChoice = await toProviderChoice(resolved);
+        const callTarget = await resolveCallTarget({ providerChoice, app: "usage-id-test" });
+
+        expect(callTarget.accountId).toBe("acc_work");
+
+        const result = await coreChat({ target: callTarget, prompt: "ping" });
+        expect(result.content).toBe("pong");
+
+        const rows = queryUsage({
+            from: new Date(Date.now() - 60_000).toISOString(),
+            to: new Date(Date.now() + 60_000).toISOString(),
+        }).events;
+        expect(rows.map((row) => [row.app, row.accountId])).toEqual([["usage-id-test", "acc_work"]]);
     });
 });

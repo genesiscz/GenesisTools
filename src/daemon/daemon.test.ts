@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { readPidRecord, writePidFile } from "@genesiscz/utils/process/pidfile";
+import { EMPTY_HOLDER_GRACE_MS, readPidRecord, writePidFile } from "@genesiscz/utils/process/pidfile";
 import {
     attemptStaleTakeover,
     claimPidfile,
@@ -251,6 +251,9 @@ describe("characterization: the daemon's pid claim", () => {
         expect(readPidRecord(pidFile)?.pid).toBe(process.pid);
 
         writeFileSync(pidFile, "not a pid");
+        // An unreadable claim is an orphan only past the shared grace (EMPTY_HOLDER_GRACE_MS in pidfile.ts).
+        const created = new Date(Date.now() - EMPTY_HOLDER_GRACE_MS - 1_000);
+        utimesSync(pidFile, created, created);
         expect(await claim()).toBe("claimed");
         expect(readPidRecord(pidFile)?.pid).toBe(process.pid);
 

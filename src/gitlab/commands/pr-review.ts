@@ -329,7 +329,11 @@ async function pickEnum<T extends string>(options: {
     }
 
     if (value === true && isInteractive()) {
-        const picked = await p.select({ message: flag, options: values.map((v) => ({ value: v, label: v })) });
+        const picked = await p.select({
+            message: flag,
+            options: values.map((v) => ({ value: v, label: v })),
+            cancel: "back",
+        });
 
         return p.isCancel(picked) ? null : (values.find((v) => v === picked) ?? null);
     }

@@ -1,12 +1,21 @@
-import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
-import { requireConfig } from "@app/clarity/config";
 import { getClarityApi } from "@app/clarity/lib/api";
-import { discoverFillWeeks, executeFillPlan, loadFillMonth, planFill, unmappedInPeriod } from "@app/clarity/lib/fill";
+import type { FillEntryAction } from "@app/clarity/lib/fill";
 import type { ExecuteFillResult, FillEntryResult } from "@app/clarity/lib/fill-utils";
+import {
+    describeRefusal,
+    entryOutcome,
+    executeMonthFill,
+    type FillResult,
+    liveMonthFillDeps,
+    type MonthFillDeps,
+    minutesByDayOf,
+    previewMonthFill,
+    type ShownFillWeek,
+    shownWeeks,
+    weekRange,
+    weekRows,
+} from "@app/clarity/lib/month-fill";
 import { requireAdoTimeLogConfig } from "@app/clarity/ui/src/server/ado-config";
-import type { TimeEntryRecord } from "@genesiscz/utils/clarity";
-
-import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
 
 interface WeekPreviewTimelogEntry {
     workItemId: number;
@@ -31,6 +40,8 @@ interface WeekPreview {
         clarityCurrentMinutes?: number;
         clarityDayValues?: Record<string, number>;
         clarityOnly?: boolean;
+        /** What the fill does with the row; absent on a Clarity-only row. `no-row`: the hours cannot be booked. */
+        action?: Exclude<FillEntryAction, "nothing-to-clear">;
     }>;
     unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
     clarityTotalMinutes?: number;
@@ -46,263 +57,111 @@ export interface FillPreviewResult {
     userId?: number;
     /** Days carrying mapped hours that no Clarity period covers. The write drops those hours. */
     unresolvedDates?: string[];
+    /** Weeks of the month whose timesheet could not be read; the fill cannot write them. */
+    unreadableWeeks?: Array<{ timesheetId: number; error: string }>;
     diagnostics?: {
         reason: string;
         message: string;
     };
 }
 
-export async function getFillPreview(month: number, year: number, allowUnmapped = false): Promise<FillPreviewResult> {
-    const clarityConfig = await requireConfig();
-    const clarityApi = getClarityApi();
-    const { config: adoConfig, api: adoApi } = requireAdoTimeLogConfig();
-
-    const fill = await loadFillMonth({
-        adoApi,
-        mappings: clarityConfig.mappings,
-        month,
-        year,
-        allowUnmapped,
-        enrich: async (entries) => {
-            const uniqueIds = [...new Set(entries.map((e) => e.workItemId))];
-
-            if (uniqueIds.length === 0) {
-                return;
-            }
-
-            try {
-                const workItems = await enrichWorkItems(adoConfig, uniqueIds);
-
-                for (const entry of entries) {
-                    const wi = workItems.get(entry.workItemId);
-
-                    if (wi) {
-                        entry.workItemTitle = wi.title;
-                        entry.workItemType = wi.type ?? "";
-                    }
-                }
-            } catch {
-                // Non-fatal — titles will show as "#ID"
-            }
+/** The dashboard's fill clients: the TimeLog setup check worded for the Settings page, and the org for links. */
+export function dashboardFillDeps(options: { titles?: boolean } = {}): {
+    deps: MonthFillDeps;
+    adoInfo: () => { org: string; project: string } | undefined;
+} {
+    let ado: ReturnType<typeof requireAdoTimeLogConfig> | undefined;
+    const deps = liveMonthFillDeps({
+        titles: options.titles,
+        connect: () => {
+            ado ??= requireAdoTimeLogConfig();
+            return ado;
         },
     });
-    const { fillMap, unmappedByWi, adoExport, unmapped } = fill;
 
-    const totalMapped = [...fillMap.values()].reduce((s, f) => s + f.totalMinutes, 0);
-    const totalUnmapped = [...unmappedByWi.values()].reduce((s, v) => s + v, 0);
-    const adoInfo = { org: adoConfig.org, project: adoConfig.project };
+    return { deps, adoInfo: () => (ado ? { org: ado.config.org, project: ado.config.project } : undefined) };
+}
 
-    if (clarityConfig.mappings.length === 0) {
-        return {
-            weeks: [],
-            totalMapped,
-            totalUnmapped,
-            diagnostics: {
-                reason: "no_mappings",
-                message: "No ADO-to-Clarity mappings configured. Create mappings on the Mappings page first.",
-            },
-        };
-    }
+function renderWeek(week: ShownFillWeek): WeekPreview {
+    const { start, finishExclusive } = weekRange(week);
+    const rows = weekRows(week);
+    const bookedRows = new Set(rows.flatMap((row) => (row.entry.row ? [row.entry.row.timeEntryId] : [])));
+    const entries: WeekPreview["entries"] = rows.map((row) => ({
+        clarityTaskName: row.taskName,
+        clarityTaskCode: row.taskCode,
+        dayValues: row.minutesByDay,
+        totalMinutes: row.totalMinutes,
+        timelogEntries: row.timelogEntries,
+        clarityCurrentMinutes: row.clarityMinutes ?? 0,
+        clarityDayValues: row.clarityMinutesByDay,
+        action: row.entry.action === "nothing-to-clear" ? undefined : row.entry.action,
+    }));
+    let clarityTotalMinutes = 0;
 
-    if (fillMap.size === 0 && adoExport.entries.length === 0) {
-        return {
-            weeks: [],
-            totalMapped,
-            totalUnmapped,
-            diagnostics: {
-                reason: "no_ado_entries",
-                message: `No ADO timelog entries found for ${year}-${String(month).padStart(2, "0")}.`,
-            },
-        };
-    }
+    for (const clarityRow of week.clarityRows) {
+        const minutes = Math.round(clarityRow.segments.reduce((sum, segment) => sum + segment.value, 0) / 60);
+        clarityTotalMinutes += minutes;
 
-    if (fillMap.size === 0 && adoExport.entries.length > 0) {
-        return {
-            weeks: [],
-            totalMapped,
-            totalUnmapped,
-            diagnostics: {
-                reason: "all_unmapped",
-                message: `Found ${adoExport.entries.length} ADO entries but none match configured mappings. ${unmappedByWi.size} work items are unmapped.`,
-            },
-        };
-    }
-
-    // Checked before week discovery, the order the CLI uses: an unmapped work item is the
-    // actionable problem and must not sit behind an unrelated one.
-    if (unmapped.blocked) {
-        return {
-            weeks: [],
-            totalMapped,
-            totalUnmapped,
-            adoConfig: adoInfo,
-            diagnostics: {
-                reason: "unmapped_work_items",
-                message: `${unmapped.items.length} work item(s) carrying ${(unmapped.totalMinutes / 60).toFixed(1)}h have no Clarity mapping. Map them first, or re-run allowing unmapped work.`,
-            },
-        };
-    }
-
-    const { weeks: discovered, unresolvedDates, periods } = await discoverFillWeeks(clarityApi, fill);
-    const { userId } = periods;
-    // Discovery lists the weeks carrying fill dates first; the preview shows the month in date order.
-    const clarityWeeks = [...discovered].sort((a, b) => a.startDate.localeCompare(b.startDate));
-
-    if (clarityWeeks.length === 0) {
-        return {
-            weeks: [],
-            totalMapped,
-            totalUnmapped,
-            unresolvedDates,
-            adoConfig: adoInfo,
-            userId,
-            diagnostics: {
-                reason: "no_timesheet_weeks",
-                message:
-                    "Could not resolve any Clarity timesheet week for this month. Check the Clarity session in Settings.",
-            },
-        };
-    }
-
-    if (unresolvedDates.length > 0) {
-        return {
-            weeks: [],
-            totalMapped,
-            totalUnmapped,
-            unresolvedDates,
-            adoConfig: adoInfo,
-            userId,
-            diagnostics: {
-                reason: "unresolved_dates",
-                message: `No Clarity period covers ${unresolvedDates.join(", ")}. Filling would drop those hours, so the preview refuses the month.`,
-            },
-        };
-    }
-
-    const weekPreviews: WeekPreview[] = [];
-
-    for (const cw of clarityWeeks) {
-        const weekEntries: WeekPreview["entries"] = [];
-
-        for (const fillEntry of fillMap.values()) {
-            const weekDayValues: Record<string, number> = {};
-            let weekTotal = 0;
-
-            for (const [date, mins] of Object.entries(fillEntry.dayMinutes)) {
-                if (isDateInHalfOpenRange(date, cw.startDate, cw.finishDate)) {
-                    weekDayValues[date] = mins;
-                    weekTotal += mins;
-                }
-            }
-
-            if (weekTotal > 0) {
-                const weekTimelogs = (fillEntry.timelogEntries ?? []).filter((e) =>
-                    isDateInHalfOpenRange(e.date, cw.startDate, cw.finishDate)
-                );
-
-                weekEntries.push({
-                    clarityTaskName: fillEntry.mapping.clarityTaskName,
-                    clarityTaskCode: fillEntry.mapping.clarityTaskCode,
-                    dayValues: weekDayValues,
-                    totalMinutes: weekTotal,
-                    timelogEntries: weekTimelogs,
-                });
-            }
+        if (bookedRows.has(clarityRow.timeEntryId) || minutes === 0) {
+            continue;
         }
 
-        weekPreviews.push({
-            timesheetId: cw.timesheetId,
-            periodStart: cw.startDate,
-            periodFinish: cw.finishDate,
-            entries: weekEntries,
-            unmappedWorkItems: unmappedInPeriod(fill.unmappedEntries, cw.startDate, cw.finishDate),
+        // Hours Clarity holds on a row this fill leaves alone.
+        entries.push({
+            clarityTaskName: clarityRow.taskName,
+            clarityTaskCode: clarityRow.taskCode,
+            dayValues: {},
+            totalMinutes: 0,
+            timelogEntries: [],
+            clarityCurrentMinutes: minutes,
+            clarityDayValues: minutesByDayOf(clarityRow.segments),
+            clarityOnly: true,
         });
     }
 
-    // Fetch current Clarity state for each week (parallel)
-    await Promise.all(
-        weekPreviews.map(async (wp) => {
-            try {
-                const ts = await periods.record(wp.timesheetId);
+    return {
+        timesheetId: week.timesheetId,
+        periodStart: start,
+        periodFinish: finishExclusive,
+        entries,
+        unmappedWorkItems: week.unmappedWorkItems,
+        clarityTotalMinutes,
+        hasNotes: week.existingNotes > 0,
+        numberOfNotes: week.existingNotes,
+    };
+}
 
-                if (!ts) {
-                    return;
-                }
+export async function getFillPreview(month: number, year: number, allowUnmapped = false): Promise<FillPreviewResult> {
+    const { deps, adoInfo } = dashboardFillDeps({ titles: true });
+    const { plan, refusal } = await previewMonthFill({ month, year, allowUnmapped }, deps);
+    const totalMapped = [...plan.fill.fillMap.values()].reduce((sum, fill) => sum + fill.totalMinutes, 0);
+    const totalUnmapped = [...plan.fill.unmappedByWi.values()].reduce((sum, minutes) => sum + minutes, 0);
+    const base = { totalMapped, totalUnmapped, adoConfig: adoInfo(), userId: plan.userId };
 
-                const matchedTaskCodes = new Set<string>();
+    if (refusal) {
+        return {
+            ...base,
+            weeks: [],
+            ...("unresolvedDates" in refusal ? { unresolvedDates: refusal.unresolvedDates } : {}),
+            diagnostics: { reason: refusal.reason, message: describeRefusal(refusal, { month, year }) },
+        };
+    }
 
-                for (const entry of wp.entries) {
-                    const te = (ts.timeentries?._results ?? []).find(
-                        (e: TimeEntryRecord) => e.taskCode === entry.clarityTaskCode
-                    );
-                    const totalSeconds = te?.actuals?.segmentList?.total ?? 0;
-                    entry.clarityCurrentMinutes = Math.round(totalSeconds / 60);
-
-                    // Extract per-day values from Clarity segments
-                    const dayValues: Record<string, number> = {};
-
-                    for (const seg of te?.actuals?.segmentList?.segments ?? []) {
-                        const date = seg.start.split("T")[0];
-                        dayValues[date] = Math.round(seg.value / 60);
-                    }
-
-                    entry.clarityDayValues = dayValues;
-                    matchedTaskCodes.add(entry.clarityTaskCode);
-                }
-
-                // Add Clarity-only entries (tasks with hours in Clarity but no ADO mapping)
-                for (const te of (ts.timeentries?._results ?? []) as TimeEntryRecord[]) {
-                    if (matchedTaskCodes.has(te.taskCode)) {
-                        continue;
-                    }
-
-                    const totalSeconds = te.actuals?.segmentList?.total ?? 0;
-
-                    if (totalSeconds === 0) {
-                        continue;
-                    }
-
-                    const dayValues: Record<string, number> = {};
-
-                    for (const seg of te.actuals?.segmentList?.segments ?? []) {
-                        const date = seg.start.split("T")[0];
-                        dayValues[date] = Math.round(seg.value / 60);
-                    }
-
-                    wp.entries.push({
-                        clarityTaskName: te.taskName,
-                        clarityTaskCode: te.taskCode,
-                        dayValues: {},
-                        totalMinutes: 0,
-                        timelogEntries: [],
-                        clarityCurrentMinutes: Math.round(totalSeconds / 60),
-                        clarityDayValues: dayValues,
-                        clarityOnly: true,
-                    });
-                }
-
-                // Sum total from ALL Clarity timesheet entries (not just ADO-matched ones)
-                let weekClarityTotal = 0;
-
-                for (const te of ts.timeentries?._results ?? []) {
-                    weekClarityTotal += Math.round(((te as TimeEntryRecord).actuals?.segmentList?.total ?? 0) / 60);
-                }
-
-                wp.clarityTotalMinutes = weekClarityTotal;
-                wp.hasNotes = ts.hasNotes ?? false;
-                wp.numberOfNotes = ts.numberOfNotes ?? 0;
-            } catch {
-                // Non-fatal — clarity state indicators will be absent
-            }
-        })
+    const unreadableWeeks = plan.weeks.flatMap((week) =>
+        week.status === "unreadable" || week.status === "missing"
+            ? [
+                  {
+                      timesheetId: week.timesheetId,
+                      error: week.status === "missing" ? "came back empty" : String(week.error),
+                  },
+              ]
+            : []
     );
 
     return {
-        weeks: weekPreviews,
-        totalMapped,
-        totalUnmapped,
-        adoConfig: adoInfo,
-        userId,
+        ...base,
+        weeks: shownWeeks(plan).map(renderWeek),
+        ...(unreadableWeeks.length > 0 ? { unreadableWeeks } : {}),
     };
 }
 
@@ -317,53 +176,16 @@ const SkipReasons = {
     unchanged: "Clarity already holds these hours",
 } as const;
 
-export async function executeFill(
-    month: number,
-    year: number,
-    weekIds: number[],
-    allowUnmapped = false
-): Promise<ExecuteFillResult> {
-    const clarityConfig = await requireConfig();
-    const clarityApi = getClarityApi();
-    const { api: adoApi } = requireAdoTimeLogConfig();
+/** Every task of every requested week, with what the fill did to it. */
+export function renderFillResult(result: FillResult): ExecuteFillResult {
+    const counts = { success: 0, failed: 0, skipped: 0 };
+    const entries: FillEntryResult[] = [];
 
-    const fill = await loadFillMonth({ adoApi, mappings: clarityConfig.mappings, month, year, allowUnmapped });
-
-    // The preview refusing is not a guard: it only stops the client from OFFERING the write. This
-    // is the path that actually books hours, and it takes weekIds straight from the request.
-    if (fill.unmapped.blocked) {
-        throw new Error(
-            `Refusing to fill: ${fill.unmapped.items.length} work item(s) carrying ${(fill.unmapped.totalMinutes / 60).toFixed(1)}h have no Clarity mapping.`
-        );
-    }
-
-    // The sibling check. Hours on a day no opened period covers are never written, and the response
-    // would still report success for the weeks that did write.
-    const discovery = await discoverFillWeeks(clarityApi, fill);
-
-    if (discovery.unresolvedDates.length > 0) {
-        throw new Error(`Refusing to fill: no Clarity period covers ${discovery.unresolvedDates.join(", ")}.`);
-    }
-
-    const plan = await planFill({
-        api: clarityApi,
-        fill,
-        discovery,
-        weeks: { requested: weekIds },
-        missingRows: "every-task",
-    });
-    const { writes } = await executeFillPlan({ api: clarityApi, plan, postNotes: false });
-
-    let success = 0;
-    let failed = 0;
-    let skipped = 0;
-    const resultEntries: FillEntryResult[] = [];
-
-    for (const week of plan.weeks) {
+    for (const week of result.plan.weeks) {
         const timesheetId = week.timesheetId;
 
-        if (week.status !== "ready") {
-            resultEntries.push({
+        if (week.status === "missing" || week.status === "unreadable") {
+            entries.push({
                 clarityTaskName: `Timesheet #${timesheetId}`,
                 clarityTaskCode: "",
                 timesheetId,
@@ -371,9 +193,9 @@ export async function executeFill(
                 totalHours: 0,
                 segments: [],
                 status: "error",
-                error: `Timesheet ${timesheetId} not found`,
+                error: week.status === "missing" ? `Timesheet ${timesheetId} not found` : String(week.error),
             });
-            failed++;
+            counts.failed++;
             continue;
         }
 
@@ -383,9 +205,11 @@ export async function executeFill(
                 clarityTaskCode: entry.row?.taskCode ?? entry.fill.mapping.clarityTaskCode,
                 timesheetId,
             };
+            const outcome = entryOutcome(entry, result.execution);
+            const write = result.execution?.writes.get(entry);
 
-            if (entry.action === "no-row" || !entry.row) {
-                resultEntries.push({
+            if (!entry.row) {
+                entries.push({
                     ...base,
                     timeEntryId: 0,
                     totalHours: 0,
@@ -393,44 +217,60 @@ export async function executeFill(
                     status: "skipped",
                     error: `No time entry for task in timesheet ${timesheetId}`,
                 });
-                skipped++;
+                counts.skipped++;
                 continue;
             }
 
-            if (entry.action !== "write") {
-                resultEntries.push({
+            // A row with a write always has its outcome; any other row was left as it is.
+            if (!write) {
+                entries.push({
                     ...base,
                     timeEntryId: entry.row.timeEntryId,
                     totalHours: 0,
                     segments: [],
                     status: "skipped",
-                    error: SkipReasons[entry.action],
+                    error: entry.action === "unchanged" ? SkipReasons.unchanged : SkipReasons["nothing-to-clear"],
                 });
-                skipped++;
+                counts.skipped++;
                 continue;
             }
 
-            const outcome = writes.get(entry)!;
-
-            resultEntries.push({
+            entries.push({
                 ...base,
                 timeEntryId: entry.row.timeEntryId,
-                totalHours: outcome.totalSeconds / 3600,
+                totalHours: write.totalSeconds / 3600,
                 segments: entry.segments
-                    .filter((s) => s.value > 0)
-                    .map((s) => ({ date: s.start.split("T")[0], hours: s.value / 3600 })),
-                status: outcome.status,
-                ...(outcome.status === "error" ? { error: outcome.error } : {}),
-                debug: outcome.debug,
+                    .filter((segment) => segment.value > 0)
+                    .map((segment) => ({ date: segment.start.split("T")[0], hours: segment.value / 3600 })),
+                status: outcome === "written" ? "success" : "error",
+                ...(write.status === "error" ? { error: write.error } : {}),
+                debug: write.debug,
             });
 
-            if (outcome.status === "error") {
-                failed++;
+            if (outcome === "written") {
+                counts.success++;
             } else {
-                success++;
+                counts.failed++;
             }
         }
     }
 
-    return { success, failed, skipped, entries: resultEntries };
+    return { ...counts, entries };
+}
+
+export async function executeFill(
+    month: number,
+    year: number,
+    weekIds: number[],
+    allowUnmapped = false
+): Promise<ExecuteFillResult> {
+    const result = await executeMonthFill({ month, year, weekIds, allowUnmapped }, dashboardFillDeps().deps);
+
+    // The preview refusing only stops the client from OFFERING the write; this path books hours from weekIds it
+    // takes straight from the request, so it refuses on its own result.
+    if (result.refusal) {
+        throw new Error(`Refusing to fill: ${describeRefusal(result.refusal, { month, year })}`);
+    }
+
+    return renderFillResult(result);
 }

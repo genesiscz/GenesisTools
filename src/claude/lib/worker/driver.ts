@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { launchGateForVerdict } from "@app/claude/commands/exec";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { LONG_TOKEN_MIN_LENGTH, probeLongLivedToken } from "@genesiscz/utils/claude/token-verify";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
+import { resolveSecret } from "@genesiscz/utils/security";
 import { truncateDisplay } from "@genesiscz/utils/table";
 import { workerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
 import type { WorkerDriver } from "@genesiscz/utils/worker/driver";
@@ -26,21 +26,23 @@ const log = logger.child({ component: "claude:worker:driver" });
  * (WORKER_CAPABILITIES.claude.accountRequired).
  */
 async function resolvePinnedAccount(name: string | undefined): Promise<PinnedAccount> {
-    const config = await AIConfig.load();
-    const eligible = config.getAccountsByProvider("anthropic-sub").filter((a) => a.tokens.longLivedToken);
-    const names = eligible.map((a: AIAccountEntry) => a.name).join(", ");
+    const store = await AiConfigStore.load();
+    // Presence of the token is metadata: listing who has one reads no secret.
+    const eligible = store.accounts({ provider: "anthropic-sub" }).filter((a) => a.credentials.longLivedToken);
+    const names = eligible.map((a) => a.name).join(", ");
 
     if (!name) {
         throw new Error(`--account is required for a claude worker (no autopick). With a token: ${names}`);
     }
 
-    const match = eligible.find((a: AIAccountEntry) => a.name === name);
+    const match = eligible.find((a) => a.id === name) ?? eligible.find((a) => a.name === name);
 
     if (!match) {
         throw new Error(`Account "${name}" has no long-lived token. With a token: ${names}`);
     }
 
-    const token = match.tokens.longLivedToken ?? "";
+    // Resolved here, where the worker spends it.
+    const token = (await resolveSecret(match.credentials.longLivedToken)) ?? "";
 
     if (token.length < LONG_TOKEN_MIN_LENGTH) {
         // A truncated token 401s and Claude Code silently falls back to the

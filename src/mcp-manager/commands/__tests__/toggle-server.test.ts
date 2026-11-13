@@ -5,10 +5,7 @@ import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { logger } from "@genesiscz/utils/logger";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { createMockUnifiedConfig, MockMCPProvider } from "./test-utils.js";
-
-setupStorageSandbox();
 
 describe("toggleServer", () => {
     let mockProvider: MockMCPProvider;

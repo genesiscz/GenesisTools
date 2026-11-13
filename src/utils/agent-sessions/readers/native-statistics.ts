@@ -1,7 +1,7 @@
 import type { DriverLineParser, DriverUsageEvent } from "@genesiscz/utils/ai/usage/transcripts/types";
 import { type HistoryFileStatistics, type TokenUsage, zeroTokenUsage } from "../cache-types";
 import { scanJsonlRecords } from "../source-scan";
-import type { HistorySourceRecord, NativeSourceIssue } from "../types";
+import type { HistorySourceRecord, NativeSourceIssue, SupportedHistoryStatistics } from "../types";
 
 interface DayContribution {
     messages: number;
@@ -134,7 +134,7 @@ export class NativeStatisticsAccumulator {
         increment(day.modelCounts, event.model);
     }
 
-    result(issues: NativeSourceIssue[]): import("../types").HistoryStatisticsRead {
+    result(issues: NativeSourceIssue[]): SupportedHistoryStatistics {
         const dates = [...this.days.keys()].sort();
         const firstObserved = dates[0];
         this.summary.firstDate = firstObserved ?? null;
@@ -153,7 +153,7 @@ export class NativeStatisticsAccumulator {
                 modelCounts: value.modelCounts,
                 branchCounts: value.branchCounts,
             }));
-        return { summary: this.summary, days, issues, complete: issues.length === 0 };
+        return { supported: true, summary: this.summary, days, issues, complete: issues.length === 0 };
     }
 }
 

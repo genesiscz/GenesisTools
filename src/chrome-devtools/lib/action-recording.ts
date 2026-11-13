@@ -1,6 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { Conn, localDebuggerUrl, targets } from "./cdp";
+import { connect, targets } from "./cdp";
 
 const log = logger.child({ component: "chrome-devtools:action-recording" });
 export type BrowserLocator = {
@@ -174,7 +174,7 @@ export async function startActionRecording(options: {
         throw new Error("Choose an HTTP browser tab with a local debugging endpoint.");
     }
 
-    const connection = new Conn(localDebuggerUrl(target, options.port), { signal: options.signal });
+    const connection = connect(target, options.port, { signal: options.signal });
     const owner = crypto.randomUUID();
     const bindingName = BINDING + owner.replaceAll("-", "");
     const source = ACTION_RECORDING_SCRIPT.replaceAll("__GENESIS_RECORDING_OWNER__", owner).replaceAll(
