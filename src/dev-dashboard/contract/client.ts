@@ -62,9 +62,29 @@ export interface CallOptions {
     rawBody?: { data: string | ArrayBuffer | Blob; contentType: string };
     /**
      * A refusal whose body is the row's own answer shape (the focus miss is a 409, an incomplete form a 400) is
-     * returned instead of thrown. A body that is not JSON still throws.
+     * returned instead of thrown. Only a 4xx that is not an auth refusal, with a JSON object whose `ok` is false (the
+     * failure branch of every row that answers this way), is such an answer: any other refusal still throws
+     * `DashboardHttpError` with its status (`isAnswerRefusal`).
      */
     answerOnRefusal?: boolean;
+}
+
+/** The auth refusals: their body is the server's auth error, never a row's answer. */
+const AUTH_REFUSALS = new Set([401, 403, 407]);
+
+/** Whether a refused response carries the row's own failure answer (`CallOptions.answerOnRefusal`). */
+export function isAnswerRefusal(status: number, body: string): boolean {
+    if (status < 400 || status >= 500 || AUTH_REFUSALS.has(status)) {
+        return false;
+    }
+
+    try {
+        const parsed: unknown = SafeJSON.parse(body, { strict: true });
+        return typeof parsed === "object" && parsed !== null && "ok" in parsed && parsed.ok === false;
+    } catch {
+        // A body that is not JSON is a plain refusal, which the caller throws with its status.
+        return false;
+    }
 }
 
 /** A query string from the input left over after the path params: arrays as comma lists, undefined dropped. */
@@ -149,12 +169,8 @@ export function createDashboardClient(opts: DashboardClientOptions) {
         if (!res.ok) {
             const text = await res.text().catch(() => "");
 
-            if (answerOnRefusal) {
-                try {
-                    return SafeJSON.parse(text, { strict: true }) as T;
-                } catch {
-                    // Not an answer: fall through to the plain refusal.
-                }
+            if (answerOnRefusal && isAnswerRefusal(res.status, text)) {
+                return SafeJSON.parse(text, { strict: true }) as T;
             }
 
             throw new DashboardHttpError(path, res.status, text);
