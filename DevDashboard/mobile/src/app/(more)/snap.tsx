@@ -8,8 +8,8 @@ import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-g
 import { useDashboardClient } from "@/api/client-provider";
 import { SessionPicker } from "@/features/agents/components/SessionPicker";
 import { useAgentsBoard } from "@/features/agents/hooks";
-import { idempotencyKey } from "@/features/answer-queue/units";
 import { type Stroke, snapToSession, strokePath } from "@/features/snap/queries";
+import { idempotencyKey } from "@/lib/idempotency";
 import { MockBadge } from "@/ui/MockBadge";
 import { useThemeColors } from "@/theme/colors";
 

@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 import { useDashboardClient } from "@/api/client-provider";
 import { transcribeClip } from "@/features/agents/queries";
-import { idempotencyKey } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { useThemeColors } from "@/theme/colors";
 
 /** The longest clip; a spoken instruction is short, and the Mac refuses a body over 8 MB. */

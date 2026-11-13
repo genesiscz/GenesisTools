@@ -2,10 +2,10 @@ import type { ApprovalDetailDto, ApprovalReceiptDto, ApprovalVerdictDto, Pending
 import { Stack } from "expo-router";
 import { memo, useCallback, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
-import { idempotencyKey } from "@/features/answer-queue/units";
 import { useAnswerApproval, usePendingApprovals } from "@/features/approvals/hooks";
 import { BACKEND_LABELS, DIALOG_LABELS, receiptLine } from "@/features/approvals/queries";
 import { confirmWithFaceId } from "@/lib/face-id";
+import { idempotencyKey } from "@/lib/idempotency";
 import { useThemeColors } from "@/theme/colors";
 import { Empty } from "@/ui/Empty";
 import { MockBadge } from "@/ui/MockBadge";

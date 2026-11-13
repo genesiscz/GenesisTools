@@ -31,7 +31,7 @@ import {
     stopSession,
     transcriptQuery,
 } from "@/features/agents/queries";
-import { idempotencyKey } from "@/features/answer-queue/units";
+import { idempotencyKey } from "@/lib/idempotency";
 import { useLiveRefetchInterval } from "@/live/provider";
 
 /**

@@ -72,7 +72,7 @@ mock.module("@/features/agents/components/SteerComposer", () => ({
         return createElement("Text", { testID: "composer" }, first);
     },
 }));
-mock.module("@/features/answer-queue/units", () => ({ idempotencyKey: () => "key" }));
+mock.module("@/lib/idempotency", () => ({ idempotencyKey: () => "key" }));
 mock.module("@/lib/face-id", () => ({ confirmWithFaceId: async () => ({ ok: true }) }));
 mock.module("@/ui/Empty", () => ({
     Empty: ({ testID, title }: { testID?: string; title: string }) => createElement("Text", { testID }, title),

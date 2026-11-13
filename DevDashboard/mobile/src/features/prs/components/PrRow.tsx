@@ -2,9 +2,9 @@ import type { PrTriageRowDto, PrTriageVerdict } from "@dd/contract";
 import * as Linking from "expo-linking";
 import { useState } from "react";
 import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
-import { idempotencyKey } from "@/features/answer-queue/units";
 import { useFixPr, useMergePr, usePrChecks } from "@/features/prs/hooks";
 import { confirmWithFaceId } from "@/lib/face-id";
+import { idempotencyKey } from "@/lib/idempotency";
 import { type ThemeColors, useThemeColors } from "@/theme/colors";
 
 /** A line under a PR: what an action did. */

@@ -192,11 +192,6 @@ export const RECEIPT_LABEL: Record<ReceiptKind, string> = {
     uncertain: "Uncertain: check the session",
 };
 
-/**
- * Moved to `@/lib/idempotency`: every feature makes these keys, so no feature should depend on the answer queue for
- * one. Kept here only until the screens that still import it from this module move to the shared one.
- */
-export { idempotencyKey } from "@/lib/idempotency";
 
 /**
  * The queue with a stage the Mac took applied to its decision: the pick set (`""` clears it) and the note it staged.

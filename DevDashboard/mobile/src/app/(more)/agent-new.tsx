@@ -2,7 +2,6 @@ import type { AgentNewInput, AgentNewReceiptDto, LaunchAccountDto } from "@dd/co
 import { router, Stack } from "expo-router";
 import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { idempotencyKey } from "@/features/answer-queue/units";
 import { useLaunchOptions, useStartAgent } from "@/features/launch/hooks";
 import {
     type AccountPick,
@@ -14,6 +13,7 @@ import {
     sameLaunch,
     TIER_LABELS,
 } from "@/features/launch/queries";
+import { idempotencyKey } from "@/lib/idempotency";
 import { MockBadge } from "@/ui/MockBadge";
 import { SectionHeader } from "@/ui/SectionHeader";
 import { useThemeColors } from "@/theme/colors";
