@@ -1,6 +1,5 @@
 import { activityTimelinePage } from "@e2e/pages/ActivityTimelinePage.page";
 import { connectPage } from "@e2e/pages/ConnectPage.page";
-import { pairingUri } from "@e2e/pages/testAgent";
 
 // Activity Timeline done-gate. The app boots into /connect with no baseUrl, so this spec pairs first
 // (deep-linked pairing URI — the sim has no camera), then deep-links to /activity-timeline and drives
@@ -27,12 +26,7 @@ describe("ActivityTimelinePage", () => {
 
     before(async () => {
         if (await connectPage.isShown()) {
-            await connectPage.selectTier("cloudflared-self");
-            await connectPage.injectPairing(
-                pairingUri(),
-            );
-            await browser.waitUntil(async () => connectPage.isReachabilityState("reachable"), { timeout: 10_000 });
-            await connectPage.tapContinue();
+            await connectPage.pairWithTestAgent();
         }
 
         await activityTimelinePage.openViaDeepLink();

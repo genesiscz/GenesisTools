@@ -1,7 +1,6 @@
 import { connectPage } from "@e2e/pages/ConnectPage.page";
 import { moreNavPage } from "@e2e/pages/MoreNav.page";
 import { portKillerPage } from "@e2e/pages/PortKillerPage.page";
-import { pairingUri } from "@e2e/pages/testAgent";
 
 /**
  * Port Killer done-gate. The app boots into /connect when no baseUrl is set; pair first (same
@@ -20,12 +19,7 @@ import { pairingUri } from "@e2e/pages/testAgent";
 describe("PortKillerPage", () => {
     before(async () => {
         if (await connectPage.isShown().catch(() => false)) {
-            await connectPage.selectTier("cloudflared-self");
-            await connectPage.injectPairing(
-                pairingUri(),
-            );
-            await browser.waitUntil(async () => connectPage.isReachabilityState("reachable"), { timeout: 10_000 });
-            await connectPage.tapContinue();
+            await connectPage.pairWithTestAgent();
         }
 
         await moreNavPage.open("port-killer");

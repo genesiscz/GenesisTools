@@ -2,7 +2,6 @@ import { mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { connectPage } from "@e2e/pages/ConnectPage.page";
-import { pairingUri } from "@e2e/pages/testAgent";
 import { e2eRun } from "@e2e/run";
 
 /**
@@ -52,17 +51,7 @@ describe("Screen tour: one screenshot per screen", () => {
         if (await connectPage.isShown()) {
             await browser.pause(SETTLE_MS);
             await shoot(0, "connect");
-            await connectPage.selectTier("cloudflared-self");
-            await connectPage.injectPairing(pairingUri());
-            // A fast Agent can pair and leave the gate before the badge is ever read as reachable.
-            await browser.waitUntil(
-                async () => (await connectPage.isReachabilityState("reachable")) || !(await connectPage.isShown()),
-                { timeout: 15_000, timeoutMsg: "the pairing never became reachable" }
-            );
-
-            if (await connectPage.isShown()) {
-                await connectPage.tapContinue();
-            }
+            await connectPage.pairWithTestAgent();
         }
     });
 

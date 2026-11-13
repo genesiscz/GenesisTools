@@ -1,7 +1,6 @@
 import { connectPage } from "@e2e/pages/ConnectPage.page";
 import { moreNavPage } from "@e2e/pages/MoreNav.page";
 import { weatherPage } from "@e2e/pages/WeatherPage.page";
-import { pairingUri } from "@e2e/pages/testAgent";
 
 // The Weather feature done-gate (plan 09 / the "More" rest features). The app boots into /connect
 // whenever no baseUrl is set (root `Stack.Protected guard={baseUrl !== null}`), so this spec first
@@ -25,12 +24,7 @@ describe("WeatherPage", () => {
     before(async () => {
         // Pair so the auth gate opens, then navigate to the weather More screen.
         if (await connectPage.isShown()) {
-            await connectPage.selectTier("cloudflared-self");
-            await connectPage.injectPairing(
-                pairingUri(),
-            );
-            await browser.waitUntil(async () => connectPage.isReachabilityState("reachable"), { timeout: 10_000 });
-            await connectPage.tapContinue();
+            await connectPage.pairWithTestAgent();
         }
 
         await moreNavPage.open("weather");

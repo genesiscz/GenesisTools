@@ -1,6 +1,5 @@
 import { buildLogTailPage } from "@e2e/pages/BuildLogTailPage.page";
 import { connectPage } from "@e2e/pages/ConnectPage.page";
-import { pairingUri } from "@e2e/pages/testAgent";
 
 /**
  * Build Log Tail done-gate. Pairs (deep-linked pairing URI — the sim has no camera) to open the
@@ -19,12 +18,7 @@ describe("BuildLogTailPage", () => {
 
     before(async () => {
         if (await connectPage.isShown()) {
-            await connectPage.selectTier("cloudflared-self");
-            await connectPage.injectPairing(
-                pairingUri(),
-            );
-            await browser.waitUntil(async () => connectPage.isReachabilityState("reachable"), { timeout: 10_000 });
-            await connectPage.tapContinue();
+            await connectPage.pairWithTestAgent();
         }
 
         await buildLogTailPage.openViaDeepLink();

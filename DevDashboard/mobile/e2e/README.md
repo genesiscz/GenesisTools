@@ -125,7 +125,7 @@ import { appPage } from "@e2e/pages/app.page";
 
 before(async () => {
     if (await connectPage.isShown()) {
-        await connectPage.pairWithTestAgent();   // selects a tier, deep-links, waits reachable, taps Continue
+        await connectPage.pairWithTestAgent();   // selects a tier, deep-links, taps Pair, waits for the tabs
     }
 
     await appPage.openTab("Terminals");          // then land on your feature's tab (Pulse|Terminals|QA|Obsidian|More)

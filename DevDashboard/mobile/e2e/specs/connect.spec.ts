@@ -56,10 +56,8 @@ describe("ConnectPage", () => {
         }
 
         await connectPage.selectTier("cloudflared-self");
-        await connectPage.injectPairing(
-            pairingUri(),
-        );
-        await browser.waitUntil(async () => connectPage.isReachabilityState("reachable"), { timeout: 10_000 });
-        await connectPage.tapContinue();
+        // A successful Pair replaces the route with the tabs, so the connect screen is gone once it returns.
+        await connectPage.injectPairing(pairingUri());
+        expect(await connectPage.isShown()).toBe(false);
     });
 });

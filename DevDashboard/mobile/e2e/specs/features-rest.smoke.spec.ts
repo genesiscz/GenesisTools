@@ -4,7 +4,6 @@ import { containersPage } from "@e2e/pages/ContainersPage.page";
 import { daemonPage } from "@e2e/pages/DaemonPage.page";
 import { moreNavPage } from "@e2e/pages/MoreNav.page";
 import { weatherPage } from "@e2e/pages/WeatherPage.page";
-import { pairingUri } from "@e2e/pages/testAgent";
 
 /**
  * Combined smoke for the deferred "More" features (plan 09: claude-usage / daemon / containers /
@@ -26,12 +25,7 @@ import { pairingUri } from "@e2e/pages/testAgent";
 describe("Remaining features smoke (claude-usage / daemon / containers / weather)", () => {
     before(async () => {
         if (await connectPage.isShown()) {
-            await connectPage.selectTier("cloudflared-self");
-            await connectPage.injectPairing(
-                pairingUri(),
-            );
-            await browser.waitUntil(async () => connectPage.isReachabilityState("reachable"), { timeout: 10_000 });
-            await connectPage.tapContinue();
+            await connectPage.pairWithTestAgent();
         }
     });
 

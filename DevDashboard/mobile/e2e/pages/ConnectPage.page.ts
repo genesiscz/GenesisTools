@@ -1,6 +1,6 @@
 import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { BasePage } from "@e2e/pages/base.page";
-import { TEST_AGENT_BASE_URL } from "@e2e/pages/testAgent";
+import { confirmPairing, pairingUri, TEST_AGENT_BASE_URL } from "@e2e/pages/testAgent";
 
 type Tier = "lan" | "tailscale" | "cloudflared-self" | "managed";
 
@@ -82,14 +82,18 @@ class ConnectPage extends BasePage {
         await this.tap("lan-connect");
     }
 
-    /** Simulate a scanned pairing QR by deep-linking the pairing URI into the app (sim has no camera). */
+    /**
+     * Simulate a scanned pairing QR by deep-linking the pairing URI into the app (sim has no camera), tap Pair, and wait
+     * until the pairing has connected and the app shows the tabs. The connect screen is gone after this: a successful
+     * pair replaces the route, so there is no reachability badge or Continue button left to drive.
+     */
     async injectPairing(uri: string): Promise<void> {
         await browser.execute("mobile: deepLink", {
             url: uri,
             bundleId: getDevDashboardBundleId(),
         });
         // A link never connects by itself: the pair screen shows its address and waits for this tap.
-        await this.tap("pair-confirm");
+        await confirmPairing();
     }
 
     async tapContinue(): Promise<void> {
@@ -97,17 +101,13 @@ class ConnectPage extends BasePage {
     }
 
     /**
-     * One-shot: get from a fresh `/connect` screen to a paired+reachable state and tap Continue,
-     * using a deep-linked pairing URI against the local test agent. This is the canonical way for
-     * a feature spec's `before()` to clear the connect gate before driving its own tab — copy this
-     * call rather than re-deriving the deep-link string.
+     * One-shot: from a fresh `/connect` screen to a paired app on its tabs, using a deep-linked pairing URI against the
+     * local test agent. This is the canonical way for a feature spec's `before()` to clear the connect gate before
+     * driving its own tab — copy this call rather than re-deriving the deep-link string.
      */
     async pairWithTestAgent({ baseUrl = DEFAULT_TEST_AGENT, username = "e2e", tier = "cloudflared-self" }: { baseUrl?: string; username?: string; tier?: Tier } = {}): Promise<void> {
         await this.selectTier(tier);
-        const uri = `devdashboard://pair?tier=${tier}&baseUrl=${encodeURIComponent(baseUrl)}&username=${encodeURIComponent(username)}`;
-        await this.injectPairing(uri);
-        await this.waitUntilReachable();
-        await this.tapContinue();
+        await this.injectPairing(pairingUri({ tier, baseUrl, username }));
     }
 }
 

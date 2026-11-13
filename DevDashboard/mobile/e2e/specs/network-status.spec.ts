@@ -1,6 +1,5 @@
 import { connectPage } from "@e2e/pages/ConnectPage.page";
 import { networkStatusPage } from "@e2e/pages/NetworkStatusPage.page";
-import { pairingUri } from "@e2e/pages/testAgent";
 
 /**
  * Network & Transport Status done-gate. The app boots into /connect whenever no baseUrl is set, so
@@ -21,12 +20,7 @@ describe("NetworkStatusPage", () => {
         });
 
         if (onConnectScreen) {
-            await connectPage.selectTier("cloudflared-self");
-            await connectPage.injectPairing(
-                pairingUri(),
-            );
-            await browser.waitUntil(async () => connectPage.isReachabilityState("reachable"), { timeout: 10_000 });
-            await connectPage.tapContinue();
+            await connectPage.pairWithTestAgent();
         }
 
         await networkStatusPage.openViaDeepLink();
