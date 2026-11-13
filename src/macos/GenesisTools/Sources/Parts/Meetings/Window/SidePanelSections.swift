@@ -475,7 +475,7 @@ enum SidePanelCatalog {
                          value: .text(text(["tone", "onMissing"]) ?? "beep"), defaultValue: .text("beep"))
                 .requiring(toneOn, [.flag(true)], "Off while Tone is off."),
             numberRow(key: "longestClipSec", title: "Longest clip",
-                      detail: "A longer item or turn is shown, not played.",
+                      detail: "A longer item or speaker turn plays only its first part, this long.",
                       choices: [15, 30, 60, 120], value: number(["longestClipSec"]) ?? 30, defaultValue: 30,
                       store: .engine(path: "\(listenPath).longestClipSec")),
         ], footnote: "Applies from the next clip. The clip that plays keeps its sound.")
