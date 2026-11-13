@@ -478,6 +478,8 @@ final class MeetingsService {
     private var listeners: [UUID: @MainActor (MeetingsServiceSignal) -> Void] = [:]
     /// A kept subscription has a connection that heard its subscribe: events arrive.
     private(set) var isSubscribed = false
+    /// Counts `subscribe` and `unsubscribe` calls: a subscribe reply that lands after a later one is not the state.
+    private var subscriptionGeneration = 0
 
     init(folder: URL, timing: Timing = Timing(), pid: Int32 = ProcessInfo.processInfo.processIdentifier,
          checkout: Checkout? = nil,
@@ -570,15 +572,20 @@ final class MeetingsService {
     @discardableResult
     func subscribe(meeting: String? = nil, events: [String]? = nil) async throws -> [String] {
         let params = MeetingsAPI.Subscribe.Params(meeting: meeting, events: events)
+        subscriptionGeneration += 1
+        let generation = subscriptionGeneration
         // The connection opens before the subscription is kept: a new connection sends a kept one by itself, and this
         // call would send it a second time.
         let connected = await connection()
         subscription = params
-        guard connected != nil else {
+        guard let connected else {
             resumeSubscription()
             throw Unavailable(reason: "no Meetings service answers; the next connection subscribes")
         }
         let heard = try await call(MeetingsAPI.Subscribe.self, params, timeout: timing.helloTimeout).events
+        // An `unsubscribe()`, a newer subscribe or a closed connection while the reply was on its way: this reply is
+        // not an active subscription. A reconnect sends the kept one again and marks it (`attach`).
+        guard generation == subscriptionGeneration, client === connected else { return heard }
         restoreFailures = 0
         isSubscribed = true
         return heard
@@ -586,6 +593,7 @@ final class MeetingsService {
 
     /// Forgets the subscription and closes the connection, so the service can go idle.
     func unsubscribe() {
+        subscriptionGeneration += 1
         subscription = nil
         restoreFailures = 0
         isSubscribed = false
