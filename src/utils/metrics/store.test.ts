@@ -352,3 +352,28 @@ describe("a spool chunk in one transaction", () => {
         }
     });
 });
+
+test("a group by checkpoint over more checkpoints than SQLite takes as UNION terms still answers", () => {
+    const store = MetricsStore.open({ path: ":memory:" });
+
+    try {
+        for (let index = 0; index < 600; index++) {
+            store.addCheckpoint({ project: "shop", name: `c${index}`, at: 1_000 + index * 10 });
+        }
+
+        store.insert([
+            { project: "shop", metric: "cart.items", at: 500, value: 1, dims: {} },
+            { project: "shop", metric: "cart.items", at: 1_005, value: 2, dims: {} },
+            { project: "shop", metric: "cart.items", at: 6_995, value: 3, dims: {} },
+        ]);
+        const rows = store.query({ project: "shop", metric: "cart.items", groupBy: ["checkpoint"] }).rows;
+
+        expect(rows.map((row) => [row.group.checkpoint, row.values.count]).sort()).toEqual([
+            ["(before c0)", 1],
+            ["c0", 1],
+            ["c599", 1],
+        ]);
+    } finally {
+        store.close();
+    }
+});
