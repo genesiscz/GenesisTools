@@ -11,8 +11,12 @@ export interface ConfigMigration {
     /** Unique ID, format "YYYY-MM-DD-description". */
     id: string;
     description: string;
-    /** True when the target config is missing or behind. */
-    shouldRun: () => Promise<boolean>;
+    /**
+     * True when the target config is missing or behind. `"deferred"` when it is behind but this process cannot bring
+     * it forward now (the vault step in a non-interactive process without a master key): the chain then does not count
+     * as finished, and a later load in the same process asks again.
+     */
+    shouldRun: () => Promise<boolean | "deferred">;
     /** Responsible for its own atomicity (Storage locks). */
     run: () => Promise<void>;
 }
@@ -57,6 +61,15 @@ export const MIGRATION_SKIPPED_MESSAGE =
  */
 let migratedFor: string | null = null;
 
+/**
+ * The config path a step deferred on, and when. A deferral is no completion: the process asks again once
+ * `DEFERRED_RETRY_MS` has passed, so a master key that becomes reachable later still moves the credentials.
+ */
+let deferredFor: { path: string; at: number } | null = null;
+
+/** How long a deferred chain waits before it asks again; each ask reads the key ladder and logs the deferral. */
+const DEFERRED_RETRY_MS = 5 * 60_000;
+
 function currentConfigPath(): string {
     return new Storage("ai").getConfigPath();
 }
@@ -70,6 +83,10 @@ const CHAIN = [migrateAI, migrateConfigV4, migrateSecretsToVault];
 export async function ensureAiConfigMigrated(): Promise<MigrationFailure[]> {
     const configPath = currentConfigPath();
     if (migratedFor === configPath) {
+        return [];
+    }
+
+    if (deferredFor?.path === configPath && Date.now() - deferredFor.at < DEFERRED_RETRY_MS) {
         return [];
     }
 
@@ -91,11 +108,13 @@ export async function ensureAiConfigMigrated(): Promise<MigrationFailure[]> {
         return [];
     }
 
-    const failures = await runChain();
+    const { failures, deferred } = await runChain();
 
     // Latching the process guard after a failed step left a half-migrated config (plaintext credentials
-    // still in the file) with every later load in this process skipping the retry.
-    migratedFor = failures.length === 0 ? configPath : null;
+    // still in the file) with every later load in this process skipping the retry. A deferred step is not
+    // finished either: it gets its own, timed retry.
+    migratedFor = failures.length === 0 && deferred.length === 0 ? configPath : null;
+    deferredFor = failures.length === 0 && deferred.length > 0 ? { path: configPath, at: Date.now() } : null;
     return failures;
 }
 
@@ -103,17 +122,23 @@ export async function ensureAiConfigMigrated(): Promise<MigrationFailure[]> {
  * Runs each step whose `shouldRun` says yes, in order. A `shouldRun` that throws is skipped and reported; a
  * `run` that throws stops the chain, since the later steps may depend on it.
  */
-async function runChain(): Promise<MigrationFailure[]> {
+async function runChain(): Promise<{ failures: MigrationFailure[]; deferred: string[] }> {
     const failures: MigrationFailure[] = [];
+    const deferred: string[] = [];
 
     for (const migration of CHAIN) {
-        let due: boolean;
+        let due: boolean | "deferred";
 
         try {
             due = await migration.shouldRun();
         } catch (error) {
             logger.warn({ err: error, migration: migration.id }, "AI config migration: shouldRun threw, skipping");
             failures.push({ id: migration.id, phase: "shouldRun", error });
+            continue;
+        }
+
+        if (due === "deferred") {
+            deferred.push(migration.id);
             continue;
         }
 
@@ -132,7 +157,7 @@ async function runChain(): Promise<MigrationFailure[]> {
         }
     }
 
-    return failures;
+    return { failures, deferred };
 }
 
 /**
@@ -151,4 +176,5 @@ async function warnIfConfigIsBehind(reason: string): Promise<void> {
 /** Test seam: the chain is process-scoped, and tests switch config roots. */
 export function _resetMigrationStateForTest(): void {
     migratedFor = null;
+    deferredFor = null;
 }

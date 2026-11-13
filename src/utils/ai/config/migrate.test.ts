@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -115,6 +115,36 @@ describe("ensureAiConfigMigrated", () => {
         }
 
         expect(readFileSync(configPath(), "utf8")).toBe(before);
+    });
+
+    test("a deferred vault step does not latch, so a key reachable later still moves the credentials", async () => {
+        let key: Buffer | undefined;
+        _setMasterKeyProvidersForTest([
+            {
+                id: "keychain" as const,
+                available: async () => key !== undefined,
+                get: async () => key,
+                getSync: () => key,
+                set: async () => {},
+            },
+        ]);
+        const tty = process.stdin.isTTY;
+        // The deferral is for a headless process: a daemon has no terminal to ask for the key.
+        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+
+        try {
+            expect(await ensureAiConfigMigrated()).toEqual([]);
+            expect(readConfig().accounts[0].credentials.accessToken).toBe("sk-ant-oat01-live");
+
+            key = KEY;
+            setSystemTime(new Date(Date.now() + 6 * 60_000));
+            await ensureAiConfigMigrated();
+
+            expect(isSecureRef(readConfig().accounts[0].credentials.accessToken)).toBe(true);
+        } finally {
+            setSystemTime();
+            Object.defineProperty(process.stdin, "isTTY", { value: tty, configurable: true });
+        }
     });
 
     test("a clean chain latches, so a second call does no work", async () => {

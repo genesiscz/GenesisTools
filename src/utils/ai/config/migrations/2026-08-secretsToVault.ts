@@ -99,12 +99,14 @@ export const migrateSecretsToVault: ConfigMigration = {
         // A headless process (launchd, cron, CI) may have no reachable master key.
         // Deferring is right: the credentials keep working as they are, and the
         // next interactive run migrates them. Failing here would take the daemon
-        // down over a hygiene task it cannot complete.
+        // down over a hygiene task it cannot complete. "deferred", not false: the
+        // chain must not count as finished, so a key that becomes reachable later
+        // in this process still moves the credentials.
         if (!masterKeySync() && !isInteractive()) {
             logger.warn(
                 "plaintext credentials are present but no vault master key is reachable in this non-interactive process; deferring"
             );
-            return false;
+            return "deferred";
         }
 
         return true;
