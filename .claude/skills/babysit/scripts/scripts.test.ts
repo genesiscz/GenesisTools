@@ -91,13 +91,31 @@ describe("safe restack helpers", () => {
             stderr: "pipe",
         });
 
-    test("resolves whitespace and trailing commas but preserves real conflicts", () => {
+    test("resolves spaces between script tokens but preserves real conflicts", () => {
         expect(resolveSameText("a.ts", block("const x = [1, 2];", "const x=[1,2];")).text).toBe("const x = [1, 2];\n");
-        expect(resolveSameText("a.ts", block("const x = [1,];", "const x = [1];")).unresolved).toBe(0);
+        expect(resolveSameText("a.ts", block("    foo(); ", "foo();")).unresolved).toBe(0);
+        // A trailing comma is a token: the comparison is spaces only.
+        expect(resolveSameText("a.ts", block("const x = [1,];", "const x = [1];")).unresolved).toBe(1);
         expect(resolveSameText("a.ts", block("one", "two")).unresolved).toBe(1);
         expect(resolveSameText("a.ts", block('"a b"', '"ab"')).unresolved).toBe(1);
         expect(resolveSameText("a.ts", block('f(",]")', 'f("]")')).unresolved).toBe(1);
         expect(resolveSameText("a.ts", block("return x", "returnx")).unresolved).toBe(1);
+    });
+
+    test("fails closed on spaces that carry meaning", () => {
+        // A line break after `return` makes it return undefined.
+        const asi = `function f(value: number) {\n${block("    return\n        value;", "    return value;")}}\n`;
+        expect(resolveSameText("a.ts", asi).unresolved).toBe(1);
+        // TypeScript reads `a! = b` as an assignment and `a != b` as a comparison.
+        expect(resolveSameText("a.ts", block("a! = b;", "a != b;")).unresolved).toBe(1);
+        // The block sits inside a template literal, so its indentation is string content.
+        expect(resolveSameText("a.ts", `const s = \`\n${block("  hello", "hello")}\`;\n`).unresolved).toBe(1);
+        // Indentation is syntax in Python and YAML; files without a tokenizer resolve only when byte-identical.
+        expect(resolveSameText("a.py", block("    x = 1", "x = 1")).unresolved).toBe(1);
+        expect(resolveSameText("a.yaml", block("a: 1 ", "a: 1")).unresolved).toBe(1);
+        expect(resolveSameText("a.json", `{\n${block('    "a": [1, 2]', '"a":[1,2]')}}\n`).unresolved).toBe(0);
+        expect(resolveSameText("a.json", `{\n${block('    "a": 1.0', '"a": 1')}}\n`).unresolved).toBe(1);
+        expect(resolveSameText("a.json", `{\n${block('    "a": "x y"', '"a": "xy"')}}\n`).unresolved).toBe(1);
     });
 
     test("only resolves a version line when it is the version file's only conflict", () => {
@@ -222,7 +240,7 @@ describe("safe restack helpers", () => {
         fs.writeFileSync(join(cwd, "b.txt"), "after\n");
         must("commit", "-qam", "feature");
         must("checkout", "-q", "main");
-        fs.writeFileSync(join(cwd, "a.ts"), "const x = [1, 2,];\n");
+        fs.writeFileSync(join(cwd, "a.ts"), "const x = [1, 2];\n");
         must("commit", "-qam", "main");
         must("checkout", "-q", "feature");
         expect(git("rebase", "--empty=stop", "--reapply-cherry-picks", "main").exitCode).toBe(1);
@@ -234,7 +252,7 @@ describe("safe restack helpers", () => {
         });
         expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
         expect(result.stdout.toString()).toContain("summary: 1 files resolved");
-        expect(fs.readFileSync(join(cwd, "a.ts"), "utf8")).toBe("const x = [1, 2,];\n");
+        expect(fs.readFileSync(join(cwd, "a.ts"), "utf8")).toBe("const x = [1, 2];\n");
         expect(fs.readFileSync(join(cwd, "b.txt"), "utf8")).toBe("after\n");
     });
 });
