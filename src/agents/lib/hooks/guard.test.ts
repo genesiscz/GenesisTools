@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compactedInTail } from "@genesiscz/utils/agent-sessions/readers/session-compaction";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
 import { DEFAULT_HOOKS_CONFIG, lastConfigProblems, loadHooksConfig } from "./config";
@@ -10,9 +12,10 @@ import { type DetectFailure, expandRulePath, guardRules, loadCustomRules, loadRu
 import { evaluateCommand, evaluateGuard } from "./guard";
 import { repoRoot } from "./install";
 import { matchesGlob, resolveOutcome } from "./outcome";
-import type { HookPayload } from "./payload";
+import { HARNESS_HOOK_FACTS, type HookPayload } from "./payload";
 import { checkRuleExamples, replayCorpus } from "./rules-check";
 import { applyRuleSelection, applySetting, ruleEnabled, setRuleSelection } from "./set-config";
+import { MAIN_LOOP, recordGuardShown } from "./state";
 import { BUILT_IN_RULES } from "./tool-rules";
 
 describe("resolveOutcome", () => {
@@ -170,6 +173,138 @@ describe("evaluateGuard", () => {
         expect(evaluateGuard(payload({ command: "ls *(N)", harness: "claude" }), DEFAULT_HOOKS_CONFIG)?.outcome).toBe(
             "block"
         );
+    });
+});
+
+describe("the guard explains a rule once per loop", () => {
+    const COMMAND = "ls ~/Downloads/*.har 2>/dev/null | wc -l";
+    const EXPLAINED_AT = Date.parse("2026-11-11T10:00:00.000Z");
+
+    function fixture(): { dir: string; transcript: string } {
+        const dir = mkdtempSync(join(tmpdir(), "guard-explained-"));
+        const transcript = join(dir, "session.jsonl");
+        writeFileSync(transcript, `${SafeJSON.stringify({ type: "user", timestamp: "2026-11-11T09:00:00.000Z" })}\n`);
+        return { dir, transcript };
+    }
+
+    function payload(sessionId: string, transcript: string, agentId?: string): HookPayload {
+        return {
+            event: "PreToolUse",
+            tool: "Bash",
+            cwd: "/repo",
+            command: COMMAND,
+            model: "claude-opus-5",
+            harness: "claude",
+            caller: "claude",
+            sessionId,
+            transcriptPath: transcript,
+            ...(agentId ? { agentId } : {}),
+            nativeDiffFiles: [],
+            raw: {},
+        };
+    }
+
+    it("renders a repeat compact and lists only first-time rules to record; the user still reads it all", () => {
+        const first = evaluateCommand(COMMAND, DEFAULT_HOOKS_CONFIG);
+        const repeat = evaluateCommand(COMMAND, DEFAULT_HOOKS_CONFIG, { explainedEarlier: () => true });
+
+        expect(first.explainedRules).toEqual(["stderr-discarded-then-counted"]);
+        expect(first.message).toContain("wrong:");
+        expect(repeat.explainedRules).toEqual([]);
+        expect(repeat.message).toContain("(explained earlier in this session)");
+        expect(repeat.message).toContain("why: stderr is discarded");
+        expect(repeat.message).not.toContain("wrong:");
+        expect(repeat.message.startsWith("Blocked:")).toBe(true);
+        expect(repeat.userMessage).toBe(first.userMessage);
+        expect(repeat.userMessage).toContain("wrong:");
+    });
+
+    it("is compact on the second firing in a loop, long in another loop, and long again after a compaction", async () => {
+        const { dir, transcript } = fixture();
+        const sessionId = "sess-explained-loop";
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: dir }, () =>
+                explainOncePerLoop(sessionId, transcript)
+            );
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    async function explainOncePerLoop(sessionId: string, transcript: string): Promise<void> {
+        {
+            const first = evaluateGuard(payload(sessionId, transcript), DEFAULT_HOOKS_CONFIG);
+            expect(first?.message).toContain("wrong:");
+
+            await recordGuardShown(sessionId, {
+                contextRules: [],
+                loop: MAIN_LOOP,
+                explainedRules: first?.explainedRules ?? [],
+                at: EXPLAINED_AT,
+            });
+
+            expect(evaluateGuard(payload(sessionId, transcript), DEFAULT_HOOKS_CONFIG)?.message).toContain(
+                "(explained earlier in this session)"
+            );
+            expect(evaluateGuard(payload(sessionId, transcript, "agent-7"), DEFAULT_HOOKS_CONFIG)?.message).toContain(
+                "wrong:"
+            );
+
+            writeFileSync(
+                transcript,
+                `${SafeJSON.stringify({ type: "system", subtype: "compact_boundary", timestamp: "2026-11-11T10:05:00.000Z" })}\n`,
+                { flag: "a" }
+            );
+
+            const after = evaluateGuard(payload(sessionId, transcript), DEFAULT_HOOKS_CONFIG);
+            expect(after?.message).toContain("wrong:");
+            expect(after?.explainedRules).toEqual(["stderr-discarded-then-counted"]);
+        }
+    }
+
+    it("reads a compaction from each harness's own rows, and calls an unreadable tail compacted", () => {
+        const { dir, transcript } = fixture();
+
+        try {
+            const since = EXPLAINED_AT;
+            expect(HARNESS_HOOK_FACTS.claude.compactedSince(transcript, since)).toBe(false);
+            expect(HARNESS_HOOK_FACTS.claude.compactedSince(join(dir, "missing.jsonl"), since)).toBe(true);
+
+            const rollout = join(dir, "rollout-2026-11-11.jsonl");
+            writeFileSync(
+                rollout,
+                [
+                    SafeJSON.stringify({ type: "session_meta", timestamp: "2026-11-11T09:00:00.000Z" }),
+                    SafeJSON.stringify({ type: "compacted", timestamp: "2026-11-11T09:30:00.000Z" }),
+                    "",
+                ].join("\n")
+            );
+            expect(HARNESS_HOOK_FACTS.codex.compactedSince(rollout, since)).toBe(false);
+            writeFileSync(
+                rollout,
+                `${SafeJSON.stringify({ type: "event_msg", payload: { type: "context_compacted" }, timestamp: "2026-11-11T10:01:00.000Z" })}\n`,
+                { flag: "a" }
+            );
+            expect(HARNESS_HOOK_FACTS.codex.compactedSince(rollout, since)).toBe(true);
+
+            // A tail that starts after `since` cannot say what happened before it: unknown reads as compacted.
+            const dialect = { needle: "compacted", parse: () => ({ at: since + 1, compaction: false }) };
+            expect(compactedInTail(rollout, since, dialect, 40)).toBe(true);
+            expect(HARNESS_HOOK_FACTS.grok.compactedSince(transcript, since)).toBe(true);
+
+            // Grok: a compaction count of 0 in signals.json proves none happened; any other count is a maybe.
+            const grokDir = join(dir, "grok-session");
+            mkdirSync(grokDir);
+            const chat = join(grokDir, "chat_history.jsonl");
+            writeFileSync(chat, "");
+            writeFileSync(join(grokDir, "signals.json"), SafeJSON.stringify({ turnCount: 3, compactionCount: 0 }));
+            expect(HARNESS_HOOK_FACTS.grok.compactedSince(chat, since)).toBe(false);
+            writeFileSync(join(grokDir, "signals.json"), SafeJSON.stringify({ turnCount: 9, compactionCount: 1 }));
+            expect(HARNESS_HOOK_FACTS.grok.compactedSince(chat, since)).toBe(true);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 

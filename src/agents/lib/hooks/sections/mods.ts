@@ -2,6 +2,7 @@ import {
     asBoolean,
     asCount,
     boolOr,
+    type ConfigPreset,
     countOr,
     type HookConfigSection,
     listed,
@@ -34,10 +35,11 @@ const DEFAULT_MODS: ModsConfig = {
     cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
     tmpUsage: { enabled: false, minutes: 5 },
     agentsBand: { enabled: false, warnMinutes: 60 },
-    hooks: { tokens: false, dedupe: false },
+    hooks: { tokens: false, dedupe: false, metrics: true },
     log: { readings: false },
     sidebar: { hints: true, feedback: "line", focus: "command" },
     stall: { enabled: false, action: "button", minutes: 5 },
+    resumeGuard: { enabled: false, idleSeconds: 295, minTokens: 150_000, teammates: true },
 };
 
 /**
@@ -60,6 +62,7 @@ function mergeMods(stored: unknown, problems: string[]): ModsConfig {
     const log = partOf(held.log);
     const sidebar = partOf(held.sidebar);
     const stall = partOf(held.stall);
+    const resume = partOf(held.resumeGuard);
     const enabled = (key: string, fallback: boolean) => boolOr(partOf(held[key]).enabled, fallback);
     const git = partOf(held.git);
     const decisions = partOf(held.decisions);
@@ -152,7 +155,11 @@ function mergeMods(stored: unknown, problems: string[]): ModsConfig {
                 24 * 60
             ),
         },
-        hooks: { tokens: boolOr(hooks.tokens, base.hooks.tokens), dedupe: boolOr(hooks.dedupe, base.hooks.dedupe) },
+        hooks: {
+            tokens: boolOr(hooks.tokens, base.hooks.tokens),
+            dedupe: boolOr(hooks.dedupe, base.hooks.dedupe),
+            metrics: boolOr(hooks.metrics, base.hooks.metrics),
+        },
         log: { readings: boolOr(log.readings, base.log.readings) },
         sidebar: {
             hints: boolOr(sidebar.hints, base.sidebar.hints),
@@ -170,7 +177,26 @@ function mergeMods(stored: unknown, problems: string[]): ModsConfig {
             action: stall.action === "button" || stall.action === "auto" ? stall.action : base.stall.action,
             minutes: minutesOr(problems, "mods.stall.minutes", stall.minutes, base.stall.minutes, 120),
         },
+        resumeGuard: {
+            enabled: boolOr(resume.enabled, base.resumeGuard.enabled),
+            idleSeconds: limitedOr(
+                problems,
+                "resumeGuard.idleSeconds",
+                resume.idleSeconds,
+                base.resumeGuard.idleSeconds
+            ),
+            minTokens: limitedOr(problems, "resumeGuard.minTokens", resume.minTokens, base.resumeGuard.minTokens),
+            teammates: boolOr(resume.teammates, base.resumeGuard.teammates),
+        },
     };
+}
+
+/** A whole number inside the field's `MOD_NUMBER_LIMITS`, as the plugin reads it; else the default. */
+function limitedOr(problems: string[], field: string, value: unknown, fallback: number): number {
+    const limit = MOD_NUMBER_LIMITS[field];
+    const count = countOr(problems, { field: `mods.${field}`, value, fallback, min: limit?.min ?? 1 });
+
+    return limit && count > limit.max ? fallback : count;
 }
 
 /** A whole number of minutes from 1 to `max`, as the plugin reads it; else the default. */
@@ -198,6 +224,67 @@ const MOD_NUMBER_LIMITS: Record<string, { max: number; min?: number; why: string
     "git.checkouts": { max: 6, why: "each checkout takes a row above the prompt" },
     "agentsBand.warnMinutes": { max: 24 * 60, why: "a day" },
     "stall.minutes": { max: 120, why: "a reply left two hours is no longer a stall to resume" },
+    "resumeGuard.idleSeconds": {
+        min: 60,
+        max: 3600,
+        why: "the cache lives 5 minutes, and a refusal past an hour says little",
+    },
+    "resumeGuard.minTokens": {
+        min: 20_000,
+        max: 2_000_000,
+        why: "a fresh agent starts near 20k, and no context is larger than 2M",
+    },
+};
+
+/**
+ * The named values of mods keys, each with when to pick it (`config describe`, `config set <key> <name>`). The
+ * numbers are from the session-analyzer skill's `claude-ttl.md` reference, measured on 2026-11-11 over 75 days.
+ */
+const MOD_PRESETS: Record<string, readonly ConfigPreset[]> = {
+    "mods.resumeGuard.idleSeconds": [
+        {
+            name: "recommended",
+            value: 295,
+            why: "5 s before the measured edge. Pauses of 4:45 to 5:00 hit the cache in 10 of 11 cases; pauses of 5:00 to 5:15 hit in 3 of 15.",
+        },
+        {
+            name: "exact",
+            value: 300,
+            why: "The lifetime Anthropic sells. Use it when you measure idle time from the request start.",
+        },
+        {
+            name: "sure-miss",
+            value: 330,
+            why: "Refuses only when the miss is near certain (hit share above 5:30 is 6 of 30, above 6:00 it is 0 of 10). Fewer wrong refusals, a few missed ones.",
+        },
+        {
+            name: "early",
+            value: 270,
+            why: "Refuses from 4:30. Pick it only when a send usually reaches the agent many seconds late; pauses of 4:30 to 4:45 still hit in 7 of 8 cases, so most of these refusals are wrong.",
+        },
+    ],
+    "mods.resumeGuard.minTokens": [
+        {
+            name: "recommended",
+            value: 150_000,
+            why: "From here a fresh agent is cheaper when the follow-up needs half of the old context or less (break-even 132k for a 66k fresh start). It covers 98% of the rewrite cost (653 of 764 cold resumes in 75 days).",
+        },
+        {
+            name: "lean-agents",
+            value: 100_000,
+            why: "For sessions that start lean agents (about 28k); break-even there is 56k at half the context needed, 112k at three quarters.",
+        },
+        {
+            name: "fewer-refusals",
+            value: 200_000,
+            why: "Break-even when the follow-up needs two thirds of the context. Covers 93% of the cost with 15% fewer refusals.",
+        },
+        {
+            name: "only-large",
+            value: 300_000,
+            why: "The rule in the user's own instructions (never revive an agent idle for more than 5 minutes that holds more than 300k). Break-even at three quarters of the context needed. Covers 75% of the cost with 45% fewer refusals.",
+        },
+    ],
 };
 
 /** The values each text mods field takes, as `--help` and an error list them. */
@@ -281,10 +368,11 @@ export const MODS_HOOK_SECTION: HookConfigSection<ModsConfig> = {
         "mods.cacheBand.<enabled|warnMinutes|cautionMinutes|others>",
         "mods.tmpUsage.<enabled|minutes>",
         "mods.agentsBand.<enabled|warnMinutes>",
-        "mods.hooks.<tokens|dedupe>",
+        "mods.hooks.<tokens|dedupe|metrics>",
         "mods.sidebar.<hints|feedback|focus>",
         "mods.stall.<enabled|action|minutes>",
         "mods.log.<readings>",
+        "mods.resumeGuard.<enabled|idleSeconds|minTokens|teammates>",
     ],
     owns: (key) => key.startsWith("mods."),
     set: withMods,
@@ -292,4 +380,5 @@ export const MODS_HOOK_SECTION: HookConfigSection<ModsConfig> = {
     // panel rows is wired by the installer beside the entries.
     entries: () => [],
     doctor: () => [],
+    presets: MOD_PRESETS,
 };

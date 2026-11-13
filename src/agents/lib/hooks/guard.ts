@@ -1,11 +1,11 @@
-import { detectShellViolations, renderViolations } from "@genesiscz/utils/shell/rules";
+import { detectShellViolations, type RenderOptions, renderViolations } from "@genesiscz/utils/shell/rules";
 import type { ShellRule, ShellViolation } from "@genesiscz/utils/shell/rules/types";
 import type { HarnessName, HookOutcome, HooksConfig } from "./config";
 import { resolveModel } from "./model";
 import { LONG_MISREAD_DOWNGRADE, resolveOutcome } from "./outcome";
 import type { HookPayload } from "./payload";
-import { isTerminalTool, normalizeEvent } from "./payload";
-import { readContextCounts, safeSessionId } from "./state";
+import { HARNESS_HOOK_FACTS, hookCallerFacts, isTerminalTool, normalizeEvent } from "./payload";
+import { MAIN_LOOP, readHookState, safeSessionId } from "./state";
 
 export interface GuardViolation extends ShellViolation {
     /** The outcome after config, which may differ from `severity`. */
@@ -15,8 +15,12 @@ export interface GuardViolation extends ShellViolation {
 export interface GuardVerdict {
     outcome: HookOutcome;
     violations: GuardViolation[];
-    /** Text for the deny reason (block) or the additional context / advisory. */
+    /** Text for the model: the deny reason (block) or the additional context. */
     message: string;
+    /** Text for the user's `systemMessage`: every rule in full and the whole corrected command, as before 2026-11-11. */
+    userMessage: string;
+    /** Rules this message explained in full; the caller records them for the loop, so the next firing is compact. */
+    explainedRules: string[];
     /** Rule ids, in violation order, for the log line. */
     tags: string[];
     /** Blocks that became warns because the command is long; empty otherwise. */
@@ -38,6 +42,8 @@ export interface EvaluateOptions {
     cwd?: string;
     /** The rules to run. Default: the built-in registry; the hooks pass it plus the custom rules. */
     rules?: readonly ShellRule[];
+    /** Whether this loop already read the rule in full since its last compaction; it then gets the compact form. */
+    explainedEarlier?: (ruleId: string) => boolean;
 }
 
 /**
@@ -110,12 +116,26 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
     const demoted = kept.filter((violation) => violation.wasDemoted).map((violation) => violation.ruleId);
 
     const blocks = resolved.filter((violation) => violation.outcome === "block");
+    const explainedEarlier = options.explainedEarlier ?? (() => false);
+    const render = (shown: readonly GuardViolation[], heading: string, denied: boolean) => {
+        const explained = new Set(
+            shown.map((violation) => violation.ruleId).filter((ruleId) => explainedEarlier(ruleId))
+        );
+        const renderOptions: RenderOptions = { command, explained, denied, corrected: config.guard.corrected };
+        return {
+            message: renderViolations(shown, heading, renderOptions),
+            userMessage: renderViolations(shown, heading),
+            explainedRules: [
+                ...new Set(shown.map((violation) => violation.ruleId).filter((ruleId) => !explained.has(ruleId))),
+            ],
+        };
+    };
 
     if (blocks.length > 0) {
         return {
             outcome: "block",
             violations: resolved,
-            message: renderViolations(blocks, "Blocked: this command would produce a wrong answer or destroy work."),
+            ...render(blocks, "Blocked: this command would produce a wrong answer or destroy work.", true),
             tags: resolved.map((violation) => violation.ruleId),
             demoted,
             shownContextRules: [],
@@ -131,6 +151,8 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
             outcome: "allow",
             violations: resolved,
             message: "",
+            userMessage: "",
+            explainedRules: [],
             tags: resolved.map((violation) => violation.ruleId),
             demoted,
             shownContextRules: [],
@@ -146,7 +168,7 @@ export function evaluateCommand(command: string, config: HooksConfig, options: E
     return {
         outcome,
         violations: resolved,
-        message: renderViolations(shown, heading),
+        ...render(shown, heading, false),
         tags: shown.map((violation) => violation.ruleId),
         demoted,
         shownContextRules: shown
@@ -173,6 +195,36 @@ function modelFor(payload: HookPayload, config: HooksConfig): string {
     return resolved.model ?? "";
 }
 
+/** The loop a call belongs to: a subagent is its own loop, with its own context and its own compactions. */
+export function guardLoop(payload: HookPayload): string {
+    return payload.agentId ?? MAIN_LOOP;
+}
+
+/**
+ * Whether the loop already read a rule in full: it was explained to the loop, and the loop's transcript records no
+ * compaction since, because a compaction summary does not keep the explanation. The transcript is only read for a
+ * rule the loop was told before, so a first firing costs no read.
+ */
+function explainedEarlierIn(payload: HookPayload, explained: Record<string, number>): (ruleId: string) => boolean {
+    let transcript: string | undefined | null = null;
+
+    return (ruleId) => {
+        const since = explained[ruleId];
+
+        if (since === undefined) {
+            return false;
+        }
+
+        transcript ??= hookCallerFacts(payload).transcriptPath;
+
+        if (!transcript) {
+            return false;
+        }
+
+        return !HARNESS_HOOK_FACTS[payload.harness].compactedSince(transcript, since);
+    };
+}
+
 /** `null` means the guard has nothing to say: no rule fired, or this is not a shell call. */
 export function evaluateGuard(
     payload: HookPayload,
@@ -188,12 +240,14 @@ export function evaluateGuard(
     }
 
     const sessionId = safeSessionId(payload.sessionId);
+    const state = sessionId ? readHookState(sessionId).guard : null;
     const verdict = evaluateCommand(payload.command, config, {
         model: modelFor(payload, config),
         harness: payload.harness,
-        contextCounts: sessionId ? readContextCounts(sessionId) : {},
+        contextCounts: state?.contextNotes ?? {},
         cwd: payload.cwd,
         rules,
+        explainedEarlier: explainedEarlierIn(payload, state?.explained[guardLoop(payload)] ?? {}),
     });
 
     return verdict.outcome === "allow" ? null : verdict;

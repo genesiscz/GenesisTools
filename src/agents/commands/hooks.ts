@@ -63,7 +63,7 @@ import {
     withModsWatch,
 } from "../lib/hooks/mods";
 import { nativeDiffForced, nativeDiffState, setNativeDiff } from "../lib/hooks/native-diff";
-import { SETTABLE_KEYS, type SetResult, setHooksConfig } from "../lib/hooks/set-config";
+import { describeSetting, SETTABLE_KEYS, type SetResult, setHooksConfig } from "../lib/hooks/set-config";
 import { BUILT_IN_RULES } from "../lib/hooks/tool-rules";
 import { writeJsonFile } from "../lib/hooks/write-json";
 import { registerRuleCommands, registerRulePicker, ruleState, shortPath } from "./hooks-rules";
@@ -836,13 +836,59 @@ export function registerHooksCommands(program: Command): void {
             out.print(hooksConfigPath());
         });
 
+    config
+        .command("describe")
+        .description("One setting: its value, its default, and its named values with when to pick each")
+        .argument("<key>", "A settable key, e.g. mods.resumeGuard.minTokens")
+        .option("--json", "The description as JSON")
+        .action((key: string, options: { json?: boolean }) => {
+            let described: ReturnType<typeof describeSetting>;
+
+            try {
+                described = describeSetting(loadHooksConfig(), key);
+            } catch (err) {
+                logger.debug({ err, key }, "No single hooks setting to describe");
+                ui.err(err instanceof Error ? err.message : String(err));
+                process.exitCode = 1;
+                return;
+            }
+
+            if (options.json) {
+                out.result(described);
+                return;
+            }
+
+            const shown = (value: unknown) => (typeof value === "string" ? value : SafeJSON.stringify(value));
+            ui.raw(`${pc.bold(key)}: ${shown(described.value)}${described.named ? ` (${described.named})` : ""}`);
+            ui.raw(pc.dim(`default ${shown(described.defaultValue)}`));
+
+            if (described.presets.length === 0) {
+                return;
+            }
+
+            ui.raw("named values:");
+
+            for (const preset of described.presets) {
+                const mark = preset.value === described.value ? pc.green("●") : " ";
+                ui.raw(`${mark} ${pc.bold(preset.name)} = ${shown(preset.value)}`);
+                ui.raw(pc.dim(`    ${preset.why}`));
+            }
+
+            const example = described.presets[0]?.name ?? "";
+            ui.raw(
+                pc.dim(
+                    `Set one by name: ${suggestCommand("tools agents", { replaceCommand: ["hooks", "config", "set", key, example, "--write"] })}`
+                )
+            );
+        });
+
     registerRulePicker(config);
 
     config
         .command("set")
         .description("Change one setting, e.g. `shadow false` or `rules.find-from-root allow`")
         .argument("<key>", `One of: ${SETTABLE_KEYS.join(", ")}`)
-        .argument("<value>", "The new value")
+        .argument("<value>", "The new value, or a named value (`config describe <key>` lists them)")
         .option("--replace-subagent-line", "agentRow: replace another row command, keeping it for disable to restore")
         .option("--write", "Actually write; without it this is a dry run")
         .action(async (key: string, value: string, options: { write?: boolean; replaceSubagentLine?: boolean }) => {
@@ -967,6 +1013,7 @@ function registerMods(hooks: Command): void {
                         ? `continues by itself after ${mods.stall.minutes} min`
                         : "a continue button",
                 ],
+                ["mods.resumeGuard", mods.resumeGuard.enabled, resumeGuardDetail(config)],
             ];
 
             for (const [name, on, detail] of rows) {
@@ -1070,6 +1117,16 @@ function registerMods(hooks: Command): void {
         .action((options: { write?: boolean }) => {
             runPluginCommand({ args: ["uninstall", MODS_PLUGIN], write: Boolean(options.write) });
         });
+}
+
+/** `idle from 295 s (recommended) · from 150000 tokens (recommended) · teammates on`, for `mods status`. */
+function resumeGuardDetail(config: HooksConfig): string {
+    const field = (key: string, unit: string) => {
+        const described = describeSetting(config, `mods.resumeGuard.${key}`);
+        return `${String(described.value)} ${unit}${described.named ? ` (${described.named})` : ""}`;
+    };
+
+    return `idle from ${field("idleSeconds", "s")} · from ${field("minTokens", "tokens")} · teammates ${config.mods.resumeGuard.teammates ? "on" : "off"}`;
 }
 
 /** What happened to `subagentStatusLine`, for `mods enable|disable agentRow` and `install`. */

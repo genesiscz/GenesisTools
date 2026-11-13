@@ -5,12 +5,15 @@ import type {
     Register,
     RenderElement,
     Timer,
+    ToolCallInput,
     TurnStepChunk,
     TurnStepResult,
+    TurnUsage,
     UiPane,
 } from "claude-code";
 import { atom, read, update } from "claude-code";
 import type { FlippedFiles, ShownCalls } from "../types";
+import { agentClock } from "./agent-clock";
 import { agentModelStep, spawnWithModel } from "./agent-model";
 import { agentsBand, agentsRow, noteTranscript, recordSpawn } from "./agents-band";
 import { askOnRow } from "./ask-row";
@@ -37,6 +40,7 @@ import {
     takeLinkedPullRequestNote,
 } from "./links";
 import { startLiveClock } from "./live";
+import { resumeGuard } from "./resume-guard";
 import {
     type CallSection,
     collapseGitSyncEnabled,
@@ -391,6 +395,22 @@ function streamOf<C, R>(stage: AsyncGenerator<C, R>): HookStream<C, R> {
     return Object.assign(run(), { result });
 }
 
+/** Passes a model stream on unchanged and hands its stop chunk's usage (what the request cost) to `seen`. */
+async function* stepCostStage(
+    stream: HookStream<TurnStepChunk, TurnStepResult | undefined>,
+    seen: (usage: TurnUsage | null) => void
+): AsyncGenerator<TurnStepChunk, TurnStepResult | undefined> {
+    for await (const chunk of stream) {
+        if (chunk.kind === "stop") {
+            seen(chunk.usage);
+        }
+
+        yield chunk;
+    }
+
+    return stream.result;
+}
+
 /**
  * Every process a mod starts, one JSON line each in `<agents>/mods-log/processes-<day>.jsonl`: the command (each
  * argument cut at 120 characters), the folder, the function that asked (from the call stack), the session, the time
@@ -552,6 +572,7 @@ function hostOf($: EngineInterface): Host {
         env: (name) => (name === "HOME" ? $.env.get("HOME") : $.env.get("GENESIS_TOOLS_HOME")),
         cwd: () => $.session.cwd(),
         sessionId: () => $.session.id(),
+        model: () => $.session.model(),
         messages: () => $.session.messages(),
         agents: () => $.agent.list(),
         every: (ms, fn) => {
@@ -652,6 +673,8 @@ async function logShow($: EngineInterface, record: Record<string, unknown>): Pro
 // The features that share events. The engine takes one unmatched hook per event from a plugin, so each event
 // below has one hook that calls every feature's part in this order.
 const FEATURES: Feature[] = [
+    agentClock,
+    resumeGuard,
     decisions,
     inbox,
     gitBand,
@@ -675,6 +698,31 @@ const RELOAD_SPREAD_MS = 30_000;
 /** The features this session runs: all of them when watched, else only those that act beyond drawing. */
 function liveFeatures(): Feature[] {
     return isWatched ? FEATURES : FEATURES.filter((feature) => !feature.panelOnly);
+}
+
+/** The first refusal a feature's `guardTool` gives the call; a guard that throws is logged and lets the call go on. */
+async function guardOf(host: Host, e: ToolCallInput): Promise<string | undefined> {
+    for (const feature of liveFeatures()) {
+        if (!feature.guardTool) {
+            continue;
+        }
+
+        try {
+            const refusal = await feature.guardTool(host, e);
+
+            if (refusal !== undefined) {
+                return refusal;
+            }
+        } catch (error) {
+            await logMod(host, "errors", {
+                event: "guardTool",
+                tool: e.tool,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+
+    return undefined;
 }
 
 export const register: Register = (on) => {
@@ -741,6 +789,12 @@ export const register: Register = (on) => {
         const host = hostOf($);
         // Before the call runs, so its PostToolUse hook sees the mark; a no-op once this module set it.
         await announceSession($);
+        const refusal = await guardOf(host, e);
+
+        if (refusal !== undefined) {
+            return { deny: refusal };
+        }
+
         rememberToolPaths(e);
         const ends = liveFeatures().flatMap((feature) => feature.beforeTool?.(host, e) ?? []);
 
@@ -778,6 +832,24 @@ export const register: Register = (on) => {
 
         const settings = await settingsOf(host);
         let stream: HookStream<TurnStepChunk, TurnStepResult | undefined> = next(e);
+
+        // A subagent's or teammate's response cost: the resume guard keeps its context size per agent.
+        if (e.agentId !== undefined) {
+            const loop = { agentId: e.agentId };
+            stream = streamOf(
+                stepCostStage(stream, (usage) => {
+                    for (const feature of liveFeatures()) {
+                        try {
+                            feature.afterStep?.(host, loop, usage);
+                        } catch (error) {
+                            void logMod(host, "errors", { event: "afterStep", error: String(error) }).catch(
+                                () => undefined
+                            );
+                        }
+                    }
+                })
+            );
+        }
 
         if (settings.agentModel.enabled) {
             stream = streamOf(agentModelStep(stream, settings.agentModel.format));
