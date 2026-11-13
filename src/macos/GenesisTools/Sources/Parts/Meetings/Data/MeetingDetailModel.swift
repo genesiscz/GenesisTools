@@ -583,12 +583,6 @@ final class MeetingDetailModel {
 
     /// Renames the meeting through the journal (`set` with a title), with an Undo. An empty or unchanged title changes
     /// nothing.
-    func setSeats(_ seats: MeetingSeats) {
-        var action = DecisionAction(kind: "set")
-        action.seats = seats
-        journalChange("seats", action, done: "Updated seats and microphones", orRun: ["set", id, "--seats", MeetingsCLI.jsonArgument(seats)], reloadTranscript: false)
-    }
-
     func rename(to typed: String) {
         let title = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         let current = record.value?.title ?? window?.meeting(id)?.title
