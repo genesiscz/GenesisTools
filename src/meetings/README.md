@@ -304,6 +304,8 @@ malformed attendance files still fail.
   (30 at least) and call lines of its own carries someone else on the microphone. Its microphone lines name the people
   in the call as candidates (0.4); the user's sure microphone lines are capped at 0.7 and asked, and a line under 90 %
   stays its label's.
+- When the source favors the microphone but measured energy favors the call, a platform label stays open with known
+  people as candidates. The conflict alone confirms nobody; the range asks for listening.
 - A stuck speaking indicator: E3 showing the same one remote person for 6 min or more while a third of the lines are on
   the microphone is ignored for that stretch.
 - R20, swapped labels: in 5 min windows of a calibrated recording, the user's label sits on the call's channel (median
