@@ -4,8 +4,8 @@ import { Stack } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { useDashboardClient, useIsMockClient } from "@/api/client-provider";
+import { useIconBadgeStore } from "@/features/glance/badge-mode";
 import { idempotencyKey } from "@/lib/idempotency";
-import { getPref, setPref } from "@/lib/storage/kv";
 import { pushIdentity } from "@/push/push-keys";
 import { registerForPush } from "@/push/push";
 import { useThemeColors } from "@/theme/colors";
@@ -27,15 +27,18 @@ export default function NotificationsScreen() {
     const [registration, setRegistration] = useState<Registration>({ state: "working" });
     const [test, setTest] = useState<string | null>(null);
     const [sending, setSending] = useState(false);
-    const [badge, setBadge] = useState(true);
+    const badgeMode = useIconBadgeStore((state) => state.mode);
+    const loadBadgeMode = useIconBadgeStore((state) => state.load);
+    const chooseBadgeMode = useIconBadgeStore((state) => state.choose);
 
     useEffect(() => {
-        void getPref("dd.iconBadge").then((saved) => setBadge(saved !== "off"));
-    }, []);
+        void loadBadgeMode();
+    }, [loadBadgeMode]);
 
     const toggleBadge = (on: boolean) => {
-        setBadge(on);
-        void setPref("dd.iconBadge", on ? "waiting" : "off");
+        void chooseBadgeMode(on ? "waiting" : "off").catch((err: unknown) => {
+            console.warn("[notifications] icon badge setting not saved", err);
+        });
     };
 
     const register = useCallback(async () => {
@@ -123,13 +126,14 @@ export default function NotificationsScreen() {
                     <View className="flex-1 gap-1">
                         <Text style={{ color: c.textPrimary, fontWeight: "600" }}>Waiting count on the app icon</Text>
                         <Text style={{ color: c.textMuted, fontSize: 12 }}>
-                            Decisions, forms, open dialogs and tool calls that wait for you. Applies from the next start.
+                            Decisions, forms, open dialogs and tool calls that wait for you. Off clears the badge.
                         </Text>
                     </View>
                     <Switch
                         testID="switch-icon-badge"
                         accessibilityLabel="Waiting count on the app icon"
-                        value={badge}
+                        value={badgeMode !== "off"}
+                        disabled={badgeMode === null}
                         onValueChange={toggleBadge}
                     />
                 </View>
