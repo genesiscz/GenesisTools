@@ -30,4 +30,15 @@ final class RecorderHuntCardVoiceoversTests: XCTestCase {
         // The intro card is gone: its line plays nothing.
         XCTAssertEqual(placed(project(introSeconds: nil, endSeconds: 4)), ["v-end"])
     }
+
+    /// A voiceover or music row learns whether its file is gone from a check off the main thread, never in its body.
+    func testAPickedFileIsCheckedOffTheMainThread() async throws {
+        let file = NSTemporaryDirectory() + "voiceover-\(UUID().uuidString).mp3"
+        try Data("x".utf8).write(to: URL(fileURLWithPath: file))
+        defer { try? FileManager.default.removeItem(atPath: file) }
+        let thereIsMissing = await FileMissing.check(file)
+        XCTAssertFalse(thereIsMissing, "a file on disk")
+        let goneIsMissing = await FileMissing.check(file + ".gone")
+        XCTAssertTrue(goneIsMissing, "a file that is not there")
+    }
 }

@@ -116,9 +116,9 @@ struct VoiceoverSection: View {
 private struct VoiceoverRow: View {
     let model: EditorModel
     let clip: EditProject.Voiceover
+    @State private var missing = false
 
     var body: some View {
-        let missing = !FileManager.default.fileExists(atPath: clip.file)
         let plays = TimelineMap.outputTime(ofSource: clip.atUs, in: model.project)
         // A card's line plays where the export lays it: a card that went away or got shorter under it plays nothing.
         let cards = CardSpans(project: model.project, enabled: true)
@@ -167,5 +167,6 @@ private struct VoiceoverRow: View {
         }
         .accessibilityElement(children: .contain)
         .liveRow()
+        .fileMissing(clip.file, into: $missing)
     }
 }

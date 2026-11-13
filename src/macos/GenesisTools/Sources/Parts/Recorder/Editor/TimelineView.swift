@@ -583,9 +583,9 @@ private struct MusicLaneView: View {
     let music: EditProject.Music
     let scale: TimelineScale
     @State private var fileUs: Int64?
+    @State private var missing = false
 
     var body: some View {
-        let missing = !FileManager.default.fileExists(atPath: music.file)
         let lengthUs = model.durationUs
         let playedUs = music.loop == false
             ? min(lengthUs, max(0, (fileUs ?? lengthUs) - Int64(music.startMs ?? 0) * 1000))
@@ -616,6 +616,7 @@ private struct MusicLaneView: View {
                   duration.seconds.isFinite else { return }
             fileUs = Int64(duration.seconds * 1_000_000)
         }
+        .fileMissing(music.file, into: $missing)
         .instantTooltip(missing ? "The music file is missing: the export plays without music"
                         : "Music: \(URL(fileURLWithPath: music.file).lastPathComponent)\(speech.isEmpty ? "" : ", quieter under \(Plural.count(speech.count, "spoken part"))")")
         .accessibilityElement()
