@@ -8,6 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import {
     autoAllowCommand,
+    autoAllowCommandEntry,
     autoAllowDaemon,
     loadVaultAutoAllow,
     updateVaultAutoAllow,
@@ -498,11 +499,42 @@ describe("vault auto-allow settings", () => {
             SafeJSON.stringify({ version: 1, daemons: ["src/shop/daemon.ts"], daemonNotifyHours: -2 })
         );
         expect(loadVaultAutoAllow()).toMatchObject({ daemons: ["src/shop/daemon.ts"], daemonNotifyHours: 0 });
-        writeFileSync(vaultAutoAllowPath(), SafeJSON.stringify({ version: 1, daemonNotifyHours: "often" }));
+        writeFileSync(vaultAutoAllowPath(), SafeJSON.stringify({ version: 1, daemons: null }));
         expect(loadVaultAutoAllow()).toMatchObject({
             daemons: VAULT_AUTO_ALLOW_DEFAULTS.daemons,
             daemonNotifyHours: 24,
         });
+    });
+
+    test("a key of the wrong type fails as the app's decoder does, so an update never saves defaults over it", () => {
+        mkdirSync(dirname(vaultAutoAllowPath()), { recursive: true });
+        for (const bad of [{ enabled: "false" }, { daemonNotifyHours: "often" }, { commands: ["ai usage", 2] }]) {
+            const text = SafeJSON.stringify({ version: 1, ...bad });
+            writeFileSync(vaultAutoAllowPath(), text);
+            expect(() => loadVaultAutoAllow()).toThrow(/has a value of the wrong type in/);
+            expect(() => updateVaultAutoAllow((settings) => ({ ...settings, notify: false }))).toThrow(
+                /the vault window asks for every command/
+            );
+            expect(readFileSync(vaultAutoAllowPath(), "utf8")).toBe(text);
+        }
+    });
+
+    test("a missing file hands out arrays of its own, so a change in place never reaches the defaults", () => {
+        const before = SafeJSON.stringify(VAULT_AUTO_ALLOW_DEFAULTS);
+        updateVaultAutoAllow((settings) => {
+            settings.commands.push("shop sync");
+            settings.agentApps.splice(0);
+            settings.daemons.push("src/shop/daemon.ts");
+            return settings;
+        });
+        expect(SafeJSON.stringify(VAULT_AUTO_ALLOW_DEFAULTS)).toBe(before);
+    });
+
+    test("a command entry is exactly <tool> <subcommand>, the only shape the app can match", () => {
+        expect(autoAllowCommandEntry(["claude ", " warmup"])).toBe("claude warmup");
+        for (const bad of [["ai", "accounts", "list"], ["claude"], ["claude", "--all"]]) {
+            expect(() => autoAllowCommandEntry(bad)).toThrow(/is not <tool> <subcommand>/);
+        }
     });
 
     test("a file that is not a JSON object fails with its path instead of showing the defaults", () => {

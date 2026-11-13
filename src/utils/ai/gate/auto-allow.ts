@@ -61,6 +61,22 @@ export function autoAllowCommand(words: readonly string[]): string {
 }
 
 /**
+ * A command entry as the app matches it: exactly `<tool> <subcommand>`, because the app compares the tool and the first
+ * argument that is no flag, and nothing after it. Any other entry throws: it would be saved and never match.
+ */
+export function autoAllowCommandEntry(words: readonly string[]): string {
+    const command = autoAllowCommand(words);
+    const parts = command.split(" ");
+    if (parts.length !== 2 || parts.some((part) => part.startsWith("-"))) {
+        throw new Error(
+            `"${command}" is not <tool> <subcommand>; the app matches a tool and its first argument only, so "claude warmup" covers every "tools claude warmup ..." call`
+        );
+    }
+
+    return command;
+}
+
+/**
  * A daemon's entry as the app compares it: its script's path from the checkout's root, under `src/`. A path that
  * leaves the checkout, or names no script under `src/`, throws: the app would never match it.
  */
@@ -74,14 +90,33 @@ export function autoAllowDaemon(script: string): string {
     return entry;
 }
 
+/** The defaults with arrays of their own, so a change made in place never reaches VAULT_AUTO_ALLOW_DEFAULTS. */
+function defaultSettings(): VaultAutoAllowSettings {
+    return {
+        ...VAULT_AUTO_ALLOW_DEFAULTS,
+        commands: [...VAULT_AUTO_ALLOW_DEFAULTS.commands],
+        agentApps: [...VAULT_AUTO_ALLOW_DEFAULTS.agentApps],
+        daemons: [...VAULT_AUTO_ALLOW_DEFAULTS.daemons],
+    };
+}
+
+function isBoolean(value: unknown): value is boolean {
+    return typeof value === "boolean";
+}
+
+function isFiniteNumber(value: unknown): value is number {
+    return typeof value === "number" && Number.isFinite(value);
+}
+
 /**
- * The settings on disk, a missing key taking its default. A file that is not a JSON object throws with its path: the
- * app turns the feature off for such a file, so the CLI must not show the defaults as if they applied.
+ * The settings on disk, read as the app decodes them: a missing (or null) key takes its default, and a key of the
+ * wrong type makes the whole file invalid. Such a file, or one that is not a JSON object, throws with its path: the
+ * app turns the feature off for it, so the CLI must neither show the defaults as if they applied nor save them over it.
  */
 export function loadVaultAutoAllow(path = vaultAutoAllowPath()): VaultAutoAllowSettings {
     const read = readJsonFileForUpdateSync<Record<string, unknown>>(path, { accepts: isJsonObject });
     if (read.state === "missing") {
-        return { ...VAULT_AUTO_ALLOW_DEFAULTS };
+        return defaultSettings();
     }
 
     if (read.state !== "ok") {
@@ -89,18 +124,42 @@ export function loadVaultAutoAllow(path = vaultAutoAllowPath()): VaultAutoAllowS
     }
 
     const value = read.value;
-    return {
-        version: 1,
-        enabled: typeof value.enabled === "boolean" ? value.enabled : VAULT_AUTO_ALLOW_DEFAULTS.enabled,
-        notify: typeof value.notify === "boolean" ? value.notify : VAULT_AUTO_ALLOW_DEFAULTS.notify,
-        commands: isStringArray(value.commands) ? value.commands : [...VAULT_AUTO_ALLOW_DEFAULTS.commands],
-        agentApps: isStringArray(value.agentApps) ? value.agentApps : [...VAULT_AUTO_ALLOW_DEFAULTS.agentApps],
-        daemons: isStringArray(value.daemons) ? value.daemons : [...VAULT_AUTO_ALLOW_DEFAULTS.daemons],
-        daemonNotifyHours:
-            typeof value.daemonNotifyHours === "number" && Number.isFinite(value.daemonNotifyHours)
-                ? Math.max(0, value.daemonNotifyHours)
-                : VAULT_AUTO_ALLOW_DEFAULTS.daemonNotifyHours,
+    const defaults = defaultSettings();
+    const wrong: string[] = [];
+    const field = <K extends Exclude<keyof VaultAutoAllowSettings, "version">>(
+        key: K,
+        accepts: (raw: unknown) => raw is VaultAutoAllowSettings[K]
+    ): VaultAutoAllowSettings[K] => {
+        const raw = value[key];
+        if (raw === undefined || raw === null) {
+            return defaults[key];
+        }
+
+        if (!accepts(raw)) {
+            wrong.push(key);
+            return defaults[key];
+        }
+
+        return raw;
     };
+
+    const settings: VaultAutoAllowSettings = {
+        version: 1,
+        enabled: field("enabled", isBoolean),
+        notify: field("notify", isBoolean),
+        commands: field("commands", isStringArray),
+        agentApps: field("agentApps", isStringArray),
+        daemons: field("daemons", isStringArray),
+        daemonNotifyHours: Math.max(0, field("daemonNotifyHours", isFiniteNumber)),
+    };
+
+    if (wrong.length > 0) {
+        throw new Error(
+            `${path} has a value of the wrong type in ${wrong.join(", ")}; the vault window asks for every command until it is fixed`
+        );
+    }
+
+    return settings;
 }
 
 export function saveVaultAutoAllow(settings: VaultAutoAllowSettings, path = vaultAutoAllowPath()): void {

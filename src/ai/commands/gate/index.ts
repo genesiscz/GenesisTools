@@ -3,6 +3,7 @@ import { GATE_ONLY_TAG } from "@genesiscz/utils/ai/config/selectors";
 import {
     auditPath,
     autoAllowCommand,
+    autoAllowCommandEntry,
     autoAllowDaemon,
     GATE_API_KEY_PROVIDERS,
     GATE_PROVIDERS,
@@ -312,7 +313,7 @@ function registerAutoAllowCommands(gate: Command): void {
         .command("add <command...>")
         .description(`Put a command on the list: \`add claude warmup\` lets "${toolCommand("claude warmup")}" through`)
         .action((words: string[]) => {
-            const command = autoAllowCommand(words);
+            const command = autoAllowCommandEntry(words);
             changeAutoAllow((settings) => ({
                 ...settings,
                 commands: settings.commands.includes(command) ? settings.commands : [...settings.commands, command],
