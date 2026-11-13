@@ -55,6 +55,7 @@ import {
     prepGit,
     resolveVersionConflicts,
     resolveVersionText,
+    spawnGit,
 } from "./versions";
 import { createTaskLookup, pump } from "./watch-workers";
 
@@ -1090,6 +1091,14 @@ test("babysit control scripts use checkout-local executors", () => {
 
 describe("merge-prep version conflicts", () => {
     const manifest = (version: string) => `{\n    "name": "genesis-tools",\n    "version": "${version}"\n}\n`;
+
+    test("a git call past its deadline throws, so a stuck child cannot hold the resolver", () => {
+        const started = Date.now();
+        expect(() => spawnGit(["-c", "alias.hang=!sleep 5", "hang"], { timeoutMs: 300 })).toThrow(
+            "git hang did not finish within 0.3 s and was stopped"
+        );
+        expect(Date.now() - started).toBeLessThan(4_000);
+    });
 
     test("prepGit turns off hooks set in config, which ignore core.hooksPath", () => {
         const dir = fs.mkdtempSync(join(tmpdir(), "babysit-hooks-"));

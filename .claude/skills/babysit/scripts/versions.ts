@@ -107,14 +107,43 @@ export function ensureConfigHooks(main: string): string {
  * staged itself, hiding the conflict and an old version number). */
 export function prepGit(cwd: string): GitRun {
     return (args) => {
-        const p = Bun.spawnSync(["git", ...HOOKS_OFF, "-c", "rerere.enabled=false", ...args], {
+        const p = spawnGit([...HOOKS_OFF, "-c", "rerere.enabled=false", ...args], {
             cwd,
-            stdout: "pipe",
-            stderr: "pipe",
             env: { ...env.getProcessEnv(), GIT_EDITOR: "true" },
         });
         return { code: p.exitCode ?? 1, out: `${p.stdout.toString()}${p.stderr.toString()}` };
     };
+}
+
+/** The longest one git call of a restack may run. Hooks are off, but commit signing can still wait on its program
+ * forever, and one stuck child would hold resolve-same.ts past its round limit. */
+export const GIT_DEADLINE_MS = 300_000;
+
+interface GitSpawn {
+    cwd?: string;
+    stdin?: Uint8Array;
+    env?: Record<string, string | undefined>;
+    timeoutMs?: number;
+}
+
+/** `git <args>` with a deadline. On expiry it throws, so the script stops with that reason instead of reading the
+ * killed run as an ordinary exit code (a timed-out `rev-parse --verify` would read as "no such ref"). */
+export function spawnGit(args: string[], options: GitSpawn = {}) {
+    const timeout = options.timeoutMs ?? GIT_DEADLINE_MS;
+    const result = Bun.spawnSync(["git", ...args], {
+        cwd: options.cwd,
+        stdin: options.stdin ?? "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: options.env ?? env.getProcessEnv(),
+        timeout,
+    });
+    if (result.exitedDueToTimeout) {
+        const shown = args.filter((arg, i) => arg !== "-c" && args[i - 1] !== "-c").join(" ");
+        throw new Error(`git ${shown} did not finish within ${timeout / 1000} s and was stopped`);
+    }
+
+    return result;
 }
 
 export function conflictedFiles(git: GitRun): string[] {

@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { HOOKS_OFF } from "./versions";
+import { HOOKS_OFF, spawnGit } from "./versions";
 
 interface Resolution {
     text: string;
@@ -82,10 +82,8 @@ export function resolveSameText(file: string, text: string): Resolution {
 
 function run(cwd: string): number {
     const git = (args: string[]) =>
-        Bun.spawnSync(["git", ...HOOKS_OFF, "-c", "rerere.enabled=false", ...args], {
+        spawnGit([...HOOKS_OFF, "-c", "rerere.enabled=false", ...args], {
             cwd,
-            stdout: "pipe",
-            stderr: "pipe",
             env: { ...env.getProcessEnv(), GIT_EDITOR: "true" },
         });
     const stop = (message: string) => {

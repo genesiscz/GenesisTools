@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { spawnGit } from "./versions";
 
 interface PatchComparison {
     oldPatch: string;
@@ -115,7 +116,7 @@ function parseBranches(args: string[]): { branches: Branch[]; reference?: string
 function run(args: string[]): number {
     const { branches, reference, json } = parseBranches(args);
     const git = (args: string[], stdin?: Uint8Array) => {
-        const result = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe", ...(stdin ? { stdin } : {}) });
+        const result = spawnGit(args, { stdin });
         if (result.exitCode !== 0) {
             throw new Error(`git ${args[0]}: ${result.stderr.toString().trim()}`);
         }
@@ -145,10 +146,7 @@ function run(args: string[]): number {
         return id;
     };
     const blob = (ref: string, file: string): string | null => {
-        const result = Bun.spawnSync(["git", "rev-parse", "--verify", `${ref}:${file}`], {
-            stdout: "pipe",
-            stderr: "pipe",
-        });
+        const result = spawnGit(["rev-parse", "--verify", `${ref}:${file}`]);
         return result.exitCode === 0 ? result.stdout.toString().trim() : null;
     };
     const results = branches.map((branch) => {
