@@ -1158,7 +1158,9 @@ describe("no-static-readme-import", () => {
     });
 
     test("resolves a relative specifier against the importing file", () => {
-        // checkSource parses without a file name, so the relative case is pinned on the helper the rule calls.
+        // checkSource parses without a file name of its own, so this goes through rules() to prove it passes the path.
+        expect(rules('import { a } from "../readme";', "src/utils/cli/a.ts")).toContain(rule);
+        expect(rules('import { a } from "../utils/readme.ts";', "src/x/index.ts")).toContain(rule);
         expect(staticallyImportsReadme('import { a } from "../readme";', "src/utils/cli/a.ts")).toBe(true);
         expect(staticallyImportsReadme('import { a } from "../utils/readme.ts";', "src/x/index.ts")).toBe(true);
         expect(staticallyImportsReadme('import { a } from "./readme";', "src/x/lib/a.ts")).toBe(false);

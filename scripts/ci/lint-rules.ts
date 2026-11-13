@@ -80,8 +80,11 @@ interface Rule {
      * shared literal walk, which visits only `string` and `template_string` nodes.
      */
     matcher?: NapiConfig;
-    /** Given the node's source text (and the node, for a rule that needs its parent), does it violate? */
-    test: (text: string, node: SgNode) => boolean;
+    /**
+     * Given the node's source text (and the node, for a rule that needs its parent), does it violate? `file` is the
+     * repo-relative path being checked: a node parsed by `checkSource` has no file name of its own.
+     */
+    test: (text: string, node: SgNode, file: string) => boolean;
     /** Files where the pattern is the implementation, not a violation. */
     allowedIn?: RegExp;
     /** The rule runs only on these files. */
@@ -1037,7 +1040,7 @@ const RULES: Rule[] = [
             "A static import of @genesiscz/utils/readme loads the README renderer (cli-html and highlight.js, about 590 " +
             "modules and 110 to 220 ms) into every start of the tool. runTool already answers --readme; an entry " +
             "without runTool calls `await answerReadmeFlag(import.meta.dir)` from @genesiscz/utils/cli/readme-flag.",
-        test: (text, node) => staticallyImportsReadme(text, node.getRoot().filename()),
+        test: (text, _node, file) => staticallyImportsReadme(text, file),
         allowedIn: /(?:^|\/)src\/utils\/readme\.test\.ts$/,
     },
     {
@@ -2177,7 +2180,7 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
         const text = node.text();
 
         for (const rule of RULES) {
-            if (!rule.matcher && ruleApplies(rule, file, ratchets) && rule.test(text, node)) {
+            if (!rule.matcher && ruleApplies(rule, file, ratchets) && rule.test(text, node, file)) {
                 record(node, rule);
             }
         }
@@ -2189,7 +2192,7 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
         }
 
         for (const node of root.findAll(rule.matcher)) {
-            if (rule.test(node.text(), node)) {
+            if (rule.test(node.text(), node, file)) {
                 record(node, rule);
             }
         }
@@ -2686,13 +2689,10 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
                     guard((nodes) => {
                         for (const node of nodes) {
                             const text = node.text();
+                            const file = node.getRoot().filename();
 
                             for (const rule of RULES) {
-                                if (
-                                    !rule.matcher &&
-                                    ruleApplies(rule, node.getRoot().filename()) &&
-                                    rule.test(text, node)
-                                ) {
+                                if (!rule.matcher && ruleApplies(rule, file) && rule.test(text, node, file)) {
                                     push(node, rule);
                                 }
                             }
@@ -2714,7 +2714,7 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
                             { paths: scoped, matcher },
                             guard((nodes) => {
                                 for (const node of nodes) {
-                                    if (rule.test(node.text(), node)) {
+                                    if (rule.test(node.text(), node, node.getRoot().filename())) {
                                         push(node, rule);
                                     }
                                 }
