@@ -2587,7 +2587,11 @@ describe("design pages", () => {
         ]);
         expect(layout.edges[0].d).toBe("M260 88 V 135");
         expect(layout.edges[1].d).toBe("M762.5 88 C 762.5 111.5, 1092.5 111.5, 1092.5 135");
-        expect(layout.edges[2].d).toBe("M700 98 V 206");
+        // C1 sits above D1 in the same column, so the arrow from x 700 leaves through the gap left of C1 and enters
+        // D1 through the row gap: a straight line would cross C1.
+        expect(layout.edges[2].d).toBe(
+            "M700 98 L700 103 Q700 108 695 108 L623.5 108 Q617.5 108 617.5 114 L617.5 197 Q617.5 203 623.5 203 L698.5 203 Q700 203 700 204.5 L700 206"
+        );
         expect(layout.height).toBe(128 + 150 + 12);
     });
 

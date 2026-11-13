@@ -83,7 +83,9 @@ describe.skipIf(skip.onWindows || process.platform !== "darwin")("listBigFiles (
 
             const plain = join(root, "plain.txt");
             writeFileSync(plain, "a".repeat(64 * 1024));
-            execFileSync("ditto", ["--noclone", "--hfsCompression", plain, join(root, "sub", "packed.txt")]);
+            execFileSync("ditto", ["--noclone", "--hfsCompression", plain, join(root, "sub", "packed.txt")], {
+                env: process.env,
+            });
             const compressed = await listBigFiles({ roots: [root], minBytes: 0, compressedOnly: true });
             expect(names(compressed)).toEqual(["sub/packed.txt"]);
         } finally {
