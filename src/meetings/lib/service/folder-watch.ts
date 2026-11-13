@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { type FileIdentity, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { createWatcher, type WatcherOptions, type WatcherSubscription } from "@genesiscz/utils/fs/watcher";
@@ -78,6 +78,8 @@ export class MeetingsFolderWatch {
     }
 
     async start(): Promise<void> {
+        // A store nobody has written yet has no folder; the watch makes it, so later writes are heard without a restart.
+        mkdirSync(this.options.root, { recursive: true });
         // Native watchers report the real path (for example /private/tmp), even when the store was opened by an alias.
         this.watchedRoot = realpathSync(this.options.root);
         this.subscription = await createWatcher(this.watchedRoot, (events) => this.heard(events), {

@@ -1638,6 +1638,27 @@ describe("the Meetings service's connections", () => {
         }
     });
 
+    test("folder watch makes a missing meetings root, so writes that come later are heard without a restart", async () => {
+        const scratch = realpathSync(mkdtempSync(join(tmpdir(), "mtg-watch-missing-")));
+        const root = join(scratch, "not-yet", "meetings");
+        const source = fakeFolderEvents();
+        const heard = eventQueue();
+        const watcher = new MeetingsFolderWatch({
+            root,
+            emit: () => {},
+            commentsChanged: (meeting) => heard.push({ method: "comment.changed", params: { meeting } }),
+            subscribe: source.subscribe,
+            coalesceMs: 0,
+        });
+        await watcher.start();
+        try {
+            source.raise(join(root, "fixture", "comments.ndjson"));
+            expect(await heard.next()).toEqual({ method: "comment.changed", params: { meeting: "fixture" } });
+        } finally {
+            await watcher.stop();
+        }
+    });
+
     test("listener journal changes refresh the meeting's comment receiver state", async () => {
         const folder = fakeFolderEvents();
         const { service, store } = await startService({ watch: { subscribe: folder.subscribe, coalesceMs: 0 } });
