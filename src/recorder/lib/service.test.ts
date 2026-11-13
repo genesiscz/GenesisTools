@@ -1038,6 +1038,34 @@ describe("finishing a part export of an edit with cards", () => {
         expect(readFileSync(join(root, "part.srt"), "utf8")).toContain("00:00:05,500 --> 00:00:06,500");
     });
 
+    test("a polish of a movie nobody edited, with no step to run, saves nothing and does not fail", async () => {
+        const root = mkdtempSync(join(tmpdir(), "rs-polish-fresh-"));
+        const video = join(root, "talk.mp4");
+        writeFileSync(video, "movie");
+        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async ({ input }) => ({
+            path: input,
+            durationUs: 3_000_000,
+            width: 100,
+            height: 100,
+            displayWidth: 100,
+            displayHeight: 100,
+            rotation: 0,
+            bytes: 5,
+            codec: "h264",
+        }));
+        closing.push(() => probe.mockRestore());
+
+        const polished = await new Movie(video).polish({
+            removeIdle: false,
+            autoZoom: false,
+            normalize: false,
+            frame: false,
+        });
+
+        expect(polished.steps).toEqual([]);
+        expect(existsSync(edits.editPathOf(video))).toBe(false);
+    });
+
     test("a part's chapters have no intro chapter and start from the part", async () => {
         const { path, root } = cardedEdit("rs-finish-chapters-");
         const movie = join(root, "part.mp4");
