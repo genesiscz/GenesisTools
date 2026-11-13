@@ -27,7 +27,7 @@ interface RawLine {
     message?: RawMessage;
 }
 
-function num(value: number | undefined): number {
+function num(value: unknown): number {
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
@@ -51,10 +51,6 @@ export interface ClaudeCacheWrites {
     oneHour: number;
 }
 
-function tokenCount(value: unknown): number {
-    return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
 /**
  * A Claude call's cache writes. The nested `cache_creation` split, when the record has one, is the total
  * (five-minute plus one-hour writes); otherwise the top-level `cache_creation_input_tokens`. Every reader of a Claude
@@ -67,11 +63,11 @@ export function claudeCacheWrites(usage: {
     const nested = usage.cache_creation;
 
     if (!isObject(nested)) {
-        return { total: tokenCount(usage.cache_creation_input_tokens), oneHour: 0 };
+        return { total: num(usage.cache_creation_input_tokens), oneHour: 0 };
     }
 
-    const oneHour = tokenCount(nested.ephemeral_1h_input_tokens);
-    const total = tokenCount(nested.ephemeral_5m_input_tokens) + oneHour;
+    const oneHour = num(nested.ephemeral_1h_input_tokens);
+    const total = num(nested.ephemeral_5m_input_tokens) + oneHour;
     return { total, oneHour: Math.min(oneHour, total) };
 }
 
