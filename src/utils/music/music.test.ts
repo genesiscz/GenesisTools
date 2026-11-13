@@ -85,6 +85,77 @@ describe("music score and MIDI", () => {
         expect(midi.includes(Buffer.from([0x87, 0x40, 0x80, 60, 0, 0, 0x90, 60, 90]))).toBe(true);
     });
 
+    /** The note events of every track, in order: [tick, "on" | "off", pitch]. The encoder writes no running status. */
+    function noteEvents(midi: Buffer): Array<[number, "on" | "off", number]> {
+        const events: Array<[number, "on" | "off", number]> = [];
+        let at = 14;
+
+        const varlen = (): number => {
+            let value = 0;
+            for (;;) {
+                const byte = midi[at++] ?? 0;
+                value = (value << 7) | (byte & 0x7f);
+                if ((byte & 0x80) === 0) {
+                    return value;
+                }
+            }
+        };
+
+        while (at < midi.length) {
+            const end = at + 8 + midi.readUInt32BE(at + 4);
+            at += 8;
+            let tick = 0;
+            while (at < end) {
+                tick += varlen();
+                const status = midi[at++] ?? 0;
+                if (status === 0xff) {
+                    at++;
+                    const length = varlen();
+                    at += length;
+                } else if ((status & 0xf0) === 0xc0) {
+                    at += 1;
+                } else {
+                    const pitch = midi[at] ?? 0;
+                    if ((status & 0xf0) === 0x90 || (status & 0xf0) === 0x80) {
+                        events.push([tick, (status & 0xf0) === 0x90 ? "on" : "off", pitch]);
+                    }
+                    at += 2;
+                }
+            }
+        }
+
+        return events;
+    }
+
+    test("same-pitch notes on one tick each get a Note Off after their Note On, never on its tick before it", () => {
+        for (const starts of [
+            [0.5, 0.5],
+            [0.5, 0.5001],
+        ]) {
+            const events = noteEvents(
+                encodeMidi({
+                    ...minimal,
+                    parts: [
+                        {
+                            ...minimal.parts[0],
+                            notes: starts.map((at) => ({ at, duration: 1, midi: 60, velocity: 90 })),
+                        },
+                    ],
+                })
+            );
+            let held = 0;
+
+            for (const [, kind] of events) {
+                held += kind === "on" ? 1 : -1;
+                expect(held).toBeGreaterThanOrEqual(0);
+            }
+
+            expect(held).toBe(0);
+            expect(events.map(([, kind]) => kind)).toEqual(["on", "on", "off", "off"]);
+            expect(events.filter(([, kind]) => kind === "off").every(([tick]) => tick > events[0]![0])).toBe(true);
+        }
+    });
+
     test("keeps drums on channel 10 and skips it for pitched voices", () => {
         const part = minimal.parts[0];
         const score = {
