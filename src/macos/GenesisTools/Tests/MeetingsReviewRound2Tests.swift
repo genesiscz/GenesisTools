@@ -100,4 +100,19 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         XCTAssertEqual(struck.except, ["i3"], "a struck item stays out of Only this question")
         XCTAssertNil(MeetingDetailModel.reachAction(answer, struck: [], onlyThis: false, spelling: nil).lookAlikes)
     }
+
+    // MARK: A failed reach plan saves nothing (PR 799)
+
+    func testAFailedPlanIsNotAnEmptyPlan() throws {
+        let failure = MeetingsCLI.Failure(sentence: "The service did not answer.", detail: "decision.plan")
+        guard case .failed = MeetingDetailModel.planStep(.failure(failure)) else {
+            return XCTFail("a failed plan must not save the replacement unplanned")
+        }
+        guard case .apply = MeetingDetailModel.planStep(.success(nil)) else { return XCTFail("no plan reaches nothing: save") }
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: MeetingsReviewRowTests.reachJSON)
+        guard case .review(let planned) = MeetingDetailModel.planStep(.success(.init(entry: nil, skipped: [], reach: reach))) else {
+            return XCTFail("a plan that reaches more is reviewed")
+        }
+        XCTAssertEqual(planned, reach)
+    }
 }

@@ -168,11 +168,25 @@ extension MeetingDetailModel {
         }
         busyItems.insert(row.id)
         Task {
-            let plan = try? await Self.planDecision(meeting: id, action: action, reason: reason, service: service)
+            let planned: Result<MeetingsAPI.DecisionPlan.Result?, Error>
+            do {
+                planned = .success(try await Self.planDecision(meeting: id, action: action, reason: reason, service: service))
+            } catch {
+                planned = .failure(error)
+            }
             busyItems.remove(row.id)
-            guard let reach = plan?.reach, !reach.isEmpty else {
+            let reach: DecisionReach
+            switch Self.planStep(planned) {
+            case .apply:
                 apply(row, action, reason: reason)
                 return
+            case .failed(let error):
+                // A failed plan is not an empty one: saving now would bypass the sheet and drop what a replaced answer
+                // left out. The draft stays, and Retry plans again.
+                notices.push(.meetingsFailure(error) { [weak self] in self?.decide(row, action, askReach: askReach) })
+                return
+            case .review(let planned):
+                reach = planned
             }
             let pending = PendingReach(row: row, action: action, reason: reason, reach: reach)
             let struck = pending.initiallyStruck(remembered: carriedStruck[row.id] ?? [])
@@ -182,6 +196,24 @@ extension MeetingDetailModel {
             } else {
                 apply(row, Self.striking(action, struck), reason: reason)
             }
+        }
+    }
+
+    enum PlanStep {
+        /// The plan reaches nothing beyond the row: save at once.
+        case apply
+        /// The plan reaches more: the sheet asks, or the struck items are left out.
+        case review(DecisionReach)
+        /// The plan failed: nothing is saved.
+        case failed(Error)
+    }
+
+    static func planStep(_ planned: Result<MeetingsAPI.DecisionPlan.Result?, Error>) -> PlanStep {
+        switch planned {
+        case .failure(let error): return .failed(error)
+        case .success(let plan):
+            guard let reach = plan?.reach, !reach.isEmpty else { return .apply }
+            return .review(reach)
         }
     }
 
