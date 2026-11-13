@@ -168,6 +168,29 @@ test("--clip --no-start plans once without cutting, saving or starting a player"
     }
 });
 
+test("items reject by a filter that matches nothing succeeds and writes no journal entry", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Filter", start: "2026-11-09T10:00:00Z", createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const results: unknown[] = [];
+    const result = spyOn(out, "result").mockImplementation((data: unknown) => {
+        results.push(data);
+    });
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "reject" });
+        await program.parseAsync(["reject", record.id, "--kind", "term", "--json"], { from: "user" });
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(results.map((data) => SafeJSON.parse(String(data)))).toEqual([{ decided: [], skipped: [] }]);
+        expect(existsSync(join(store.folder(record.id), "decisions.ndjson"))).toBe(false);
+    } finally {
+        result.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
 test("the items column keeps a long quote's source inside its width", async () => {
     const store = new MeetingStore();
     const record = await store.create(

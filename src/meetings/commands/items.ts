@@ -30,7 +30,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
 import { planFindings } from "../lib/add-findings";
-import { decideResult, decisionOf, reopenResult } from "../lib/decide";
+import { decideResult, decisionOf, filteredNothing, reopenResult } from "../lib/decide";
 import { decisionActionSchema } from "../lib/decision-actions";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { OpenedMeeting } from "../lib/opened-meeting";
@@ -548,13 +548,16 @@ async function decide(
     const failed = (skipped: Array<{ needs: string }>) => skipped.some((skip) => skip.needs !== "nothing");
 
     try {
-        const decided = await withMeetingsClient((client) =>
-            client.call("decision.apply", {
-                meeting: record.id,
-                action: decisionOf({ status, ids, minConfidence, speaker: opts.speaker, proposed: opts.proposed }),
-                ...(opts.reason ? { reason: opts.reason } : {}),
-            })
-        );
+        const filtered = status === "rejected" && (opts.kind !== undefined || opts.where !== undefined);
+        const decided =
+            filteredNothing({ filtered, ids }) ??
+            (await withMeetingsClient((client) =>
+                client.call("decision.apply", {
+                    meeting: record.id,
+                    action: decisionOf({ status, ids, minConfidence, speaker: opts.speaker, proposed: opts.proposed }),
+                    ...(opts.reason ? { reason: opts.reason } : {}),
+                })
+            ));
         const result = decideResult(decided);
 
         if (opts.json) {

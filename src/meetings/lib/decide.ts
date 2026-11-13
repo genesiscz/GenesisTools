@@ -55,10 +55,17 @@ type DecideOptions = {
     record: MeetingRecord;
     status: "confirmed" | "rejected";
     ids: string[];
+    /** The ids came from a filter (`reject --kind/--where`): none matching decides nothing, which is no failure. */
+    filtered?: boolean;
     minConfidence?: number;
     speaker?: string;
     proposed?: string;
 } & ActorOptions;
+
+/** A filter that matched nothing (a cleanup run again): nothing decided, and no journal entry minted. */
+export function filteredNothing(options: { filtered?: boolean; ids: readonly string[] }): Decided | undefined {
+    return options.filtered && options.ids.length === 0 ? { skipped: [] } : undefined;
+}
 
 type ReopenOptions = { store: MeetingStore; record: MeetingRecord; ids: string[]; token?: string } & ActorOptions;
 
@@ -74,6 +81,11 @@ export async function decideItems(options: DecideOptions): Promise<DecideResult>
 
 /** `decideItems` with its journal entry, for `confirm --json` and `reject --json`. */
 export async function decideEntry(options: DecideOptions): Promise<Decided> {
+    const nothing = filteredNothing(options);
+    if (nothing) {
+        return nothing;
+    }
+
     const journal = new DecisionJournal({ store: options.store });
     return journal.apply({
         meeting: options.record.id,
