@@ -261,6 +261,41 @@ final class AutocompleteFieldTests: XCTestCase {
         XCTAssertEqual(count, 1, "the first text was replaced within the pause, so only the second was asked")
     }
 
+    /// A field in a disabled row (`.disabled(true)`) is a disabled AppKit field: SwiftUI sets `isEnabled` on the
+    /// representable's control, so neither a click nor Tab gives it the keyboard, and VoiceOver hears it as disabled.
+    /// Enabled again, it edits.
+    func testADisabledFieldIsADisabledAppKitField() throws {
+        var text = "Work"
+        var disabled = true
+        func field(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField, field.isEditable || !field.isEnabled { return field }
+            return view.subviews.lazy.compactMap { field(in: $0) }.first
+        }
+        func host() -> some View {
+            AutocompleteField("Name", text: Binding(get: { text }, set: { text = $0 }), items: [AutocompleteValue("Work")],
+                              onChoose: { _ in })
+                .disabled(disabled).frame(width: 260, height: 30)
+        }
+        let root = NSHostingView(rootView: AnyView(host()))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 260, height: 30), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = root
+        root.layoutSubtreeIfNeeded()
+        let disabledField = try XCTUnwrap(field(in: root))
+        XCTAssertFalse(disabledField.isEnabled)
+        XCTAssertFalse(disabledField.acceptsFirstResponder, "a click gives it no keyboard")
+        XCTAssertFalse(disabledField.canBecomeKeyView, "Tab skips it")
+
+        disabled = false
+        root.rootView = AnyView(host())
+        root.layoutSubtreeIfNeeded()
+        let enabledField = try XCTUnwrap(field(in: root))
+        XCTAssertTrue(enabledField.isEnabled)
+        XCTAssertTrue(enabledField.isEditable)
+    }
+
     /// While a newer text's search runs, the older answers still show but do not belong to the text: Down, Return, Tab
     /// and a click take none of them (an answer to "a" was taken for "ab" before its search finished).
     func testAnswersToAnOlderTextCannotBeTakenWhileTheNewSearchRuns() async throws {
