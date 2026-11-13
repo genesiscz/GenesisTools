@@ -3,8 +3,8 @@ import { Stack } from "expo-router";
 import { memo, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { idempotencyKey } from "@/features/answer-queue/units";
-import { useFillWeek, useTimesheetWeek } from "@/features/timesheet/hooks";
-import { acceptedForRevision, allAccepted, dayLine, hours, localDay, type ReviewAcceptance } from "@/features/timesheet/queries";
+import { useFillWeek, useLocalDay, useTimesheetWeek } from "@/features/timesheet/hooks";
+import { acceptedForRevision, allAccepted, dayLine, hours, type ReviewAcceptance } from "@/features/timesheet/queries";
 import { ensureDefaultReminder, setReminder } from "@/features/timesheet/reminder";
 import { confirmWithFaceId } from "@/lib/face-id";
 import { Empty } from "@/ui/Empty";
@@ -31,7 +31,7 @@ const RowCard = memo(function RowCard({ row, accepted, onToggle }: { row: Timesh
             </View>
             <Text style={{ color: c.textMuted, fontFamily: "monospace", fontSize: 11 }}>{row.code}</Text>
             <Text style={{ color: c.textSecondary, fontSize: 12 }}>{dayLine(row)}</Text>
-            {row.items.slice(0, 3).map((item) => (
+            {row.items.map((item) => (
                 <Text key={`${item.workItemId}-${item.minutes}`} numberOfLines={1} style={{ color: c.textMuted, fontSize: 12 }}>
                     {`${item.workItemId} ${item.title} · ${hours(item.minutes)}`}
                 </Text>
@@ -51,9 +51,17 @@ const RowCard = memo(function RowCard({ row, accepted, onToggle }: { row: Timesh
  */
 export default function TimesheetScreen() {
     const c = useThemeColors();
-    const [date] = useState(localDay);
+    const date = useLocalDay();
     const week = useTimesheetWeek(date);
     const [reviewed, setReviewed] = useState<ReviewAcceptance>({ revision: undefined, codes: new Set() });
+    const [reviewedDate, setReviewedDate] = useState(date);
+
+    // A new day starts a new review: acceptance never carries over to the week the new date loads.
+    if (reviewedDate !== date) {
+        setReviewedDate(date);
+        setReviewed({ revision: undefined, codes: new Set() });
+    }
+
     const [receipt, setReceipt] = useState<TimesheetFillReceiptDto | null>(null);
     const [gate, setGate] = useState<string | null>(null);
     const [reminder, setReminderOn] = useState<boolean | null>(null);
