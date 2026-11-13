@@ -209,7 +209,7 @@ extension ListsSketchB {
                             .lineLimit(1)
                             .fixedSize()
                         if let pr = entry.pr {
-                            Text(verbatim: (entry.prKind == "gitlab" ? "!" : "#") + "\(pr.number)")
+                            Text(verbatim: Forge(kind: entry.prKind)?.label(pr.number) ?? "#\(pr.number)")
                                 .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                                 .foregroundColor(Self.prColor(pr.state))
                                 .instantTooltip(pr.label(kind: entry.prKind))
