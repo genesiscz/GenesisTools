@@ -190,6 +190,34 @@ describe("CallTimeline", () => {
         expect(saved.attendance?.people.map((stay) => stay.toSec)).toEqual([3600, 1200]);
     });
 
+    test("storing platform attendance refreshes persisted roster windows in the same write", async () => {
+        const { store, record } = await newRecord({
+            end: "2026-11-02T16:00:00.000Z",
+            participants: [
+                {
+                    name: "Bob Example",
+                    firstSeenSec: 600,
+                    from: ["platform-roster"],
+                    stays: [{ fromSec: 600, source: "platform-roster", confidence: 1 }],
+                },
+            ],
+        });
+        await CallTimeline.stored(record).store(
+            store,
+            {
+                note: "fixture",
+                presence: [{ name: "Bob Example", fromSec: -50, toSec: 2405, joinedAtExact: true, leftAtExact: true }],
+            },
+            "teams"
+        );
+        const reopened = new MeetingStore(store.storage).read(record.id)!;
+        expect(reopened.participants[0]).toMatchObject({
+            firstSeenSec: 600,
+            stays: [{ fromSec: 0, toSec: 2405, source: "attendance", confidence: 1 }],
+        });
+        expect(reopened.history.at(-1)?.command).toBe("attendance");
+    });
+
     test("second 0 is the source's clock, else what the recorder stored, else the record's start", async () => {
         const { record } = await newRecord({
             recording: { clock: { source: "wisprflow", startedAt: "2026-11-02T15:00:02.000Z" } },
