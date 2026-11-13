@@ -5,7 +5,6 @@ import collections
 import json
 import math
 from pathlib import Path
-import shutil
 import statistics
 import subprocess
 import time
@@ -160,7 +159,7 @@ lsof=json.loads((root/'lsof-summary.json').read_text())
 table(['Time Prague','Claude','Codex','Grok','T3 logs','Genesis logs','Exit'],[[x['time'],*[x['counts'][k] for k in ['claude','codex','grok','t3','logs']],x['exit']] for x in lsof])
 add('## Artifacts and rerun')
 add()
-add('Durable raw measurement JSON, installation output, type evidence, limits and lsof summary are beside this note under `raw/`. Full private source-path mapping, copied corpus, process inventory and unfiltered lsof snapshots remain only in scratch. Raw measurements contain commands and filesystem metadata, never transcript contents. The scratch directory is `/tmp/cc/GenesisTools/3be725f0-a4da-4c83-8aba-66a2fb4aafec/compress/bench/`. It is temporary and may disappear at reboot.')
+add('Durable raw measurement JSON, installation output, type evidence, limits and lsof summary are beside this note under `raw/`. The exported JSON names each source as `<source kind-n>`: every source path in argv, stderr and metadata is replaced on the copy. Full private source-path mapping, copied corpus, process inventory and unfiltered lsof snapshots remain only in scratch. Raw measurements contain commands and filesystem metadata, never transcript contents. The scratch directory is `/tmp/cc/GenesisTools/3be725f0-a4da-4c83-8aba-66a2fb4aafec/compress/bench/`. It is temporary and may disappear at reboot.')
 add()
 add('Run from GenesisTools on APFS with a fresh scratch directory:')
 add('```bash\npython3 scripts/benchmarks/compress/transparent.py --scratch <fresh-scratch> --boundaries\npython3 scripts/benchmarks/compress/transparent-writers.py --scratch <fresh-scratch>\n```')
@@ -171,15 +170,31 @@ add('Outstanding evidence limits for the lead: cold-cache latency was intentiona
 
 raw=vault/'raw'
 raw.mkdir(exist_ok=True)
+# Every command row records its argv (ditto's first argument is the private source path) and its stderr, so a copy
+# into the vault replaces each source path from the runs' source-map.json files with `<source kind-n>`.
+private={}
+for folder in [root,root/'corpus-v2']:
+    if (folder/'source-map.json').exists():
+        for kind,paths in json.loads((folder/'source-map.json').read_text()).items():
+            for i,p in enumerate(paths):private.setdefault(p,'<source '+kind+'-'+str(i)+'>')
+def redact(value):
+    if isinstance(value,str):
+        for p,label in private.items():value=value.replace(p,label)
+        return value
+    if isinstance(value,list):return [redact(v) for v in value]
+    if isinstance(value,dict):return {k:redact(v) for k,v in value.items()}
+    return value
+def export(source,target):
+    target.write_text(json.dumps(redact(json.loads(source.read_text())),indent=2) if source.suffix=='.json' else redact(source.read_text()))
 for source,name in [(root/'corpus-v2/results.json','measurements-ditto.json'),(root/'corpus-v2/writers.json','measurements-afsctool.json'),(root/'results.json','exploratory-ditto-and-boundaries.json')]+[(root/n,n) for n in ['exact-boundaries.json','utimensat.json','lsof-summary.json','writer-types.json','kernel-compression-info.json','brew-install.txt']]:
-    shutil.copy2(source,raw/name)
+    export(source,raw/name)
 for source in [root.parent/'du/pair-before.json',root.parent/'du/pair-after.json']:
-    if source.exists():shutil.copy2(source,raw/source.name)
+    if source.exists():export(source,raw/source.name)
 report='\n'.join(lines)+'\n'
 charts={
  'space.svg':svg('Allocated bytes retained, 35 real files',algorithms,[100*sum(x['compressed']['allocated'] for x in allrows if x['algorithm']==alg)/sum(x['plain']['allocated'] for x in allrows if x['algorithm']==alg) for alg in algorithms],'%'),
  'compression.svg':svg('Median compression wall time, 105 observations per writer',algorithms,[statistics.median(samples([x for x in allrows if x['algorithm']==alg],'compression')) for alg in algorithms],' ms')}
 spec='@@ '+str(vault/'2026-11-12-ColdCompressBenchmark.md')+'\n<<< create\n'+report+'>>>\n'
 for name,body in charts.items():spec+='@@ '+str(vault/name)+'\n<<< create\n'+body+'\n>>>\n'
-p=subprocess.run(['bun','plugins/genesis-tools/skills/fable-replace/scripts/cli.ts'],input=spec.encode())
+p=subprocess.run(['bun','plugins/genesis-tools/skills/fable-replace/scripts/cli.ts'],input=spec.encode(),timeout=300)
 raise SystemExit(p.returncode)

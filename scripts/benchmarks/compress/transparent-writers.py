@@ -16,13 +16,19 @@ if (root/'writers.json').exists():
     raise SystemExit('Use a fresh corpus copy; existing compressed outputs would invalidate writer timings.')
 base = json.loads((root/'results.json').read_text())
 commands = []
-def run(argv, ok=(0,), stdout=subprocess.DEVNULL):
+# Every writer call has a deadline (see transparent.py): a stuck afsctool ends the run with a 'timeout' row.
+TIMEOUT_S = 1800
+def run(argv, ok=(0,), stdout=subprocess.DEVNULL, timeout=TIMEOUT_S):
     begin = time.monotonic_ns()
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    p = subprocess.run([str(v) for v in argv],stdout=stdout,stderr=subprocess.PIPE)
+    try:
+        p = subprocess.run([str(v) for v in argv],stdout=stdout,stderr=subprocess.PIPE,timeout=timeout)
+        code,stderr = p.returncode,p.stderr.decode(errors='replace')
+    except subprocess.TimeoutExpired as expired:
+        code,stderr = 'timeout','killed after %d s; %s' % (timeout,(expired.stderr or b'').decode(errors='replace'))
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
     row = dict(argv=[str(v) for v in argv],elapsed_ms=(time.monotonic_ns()-begin)/1e6,
-        cpu_ms=(after.ru_utime+after.ru_stime-before.ru_utime-before.ru_stime)*1000,exit=p.returncode,stderr=p.stderr.decode(errors='replace'))
+        cpu_ms=(after.ru_utime+after.ru_stime-before.ru_utime-before.ru_stime)*1000,exit=code,stderr=stderr)
     commands.append(row)
     if p.returncode not in ok:
         raise RuntimeError(row)
