@@ -221,6 +221,37 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(protected.hidden.lowPriority, 1, "a rejected stale patch cannot replace newer visibility counts")
     }
 
+    /// An answer that comes with no rows patch (an older service, a command's reply, another window's event) marks
+    /// its row from the journal entry: a row held in place shows the answer it got and who gave it at once, and keeps
+    /// them when the re-read fails. The complete row the service sends next still replaces the marked one.
+    func testAMarkedRowShowsItsAnswerAndWhoGaveItBeforeTheReRead() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let initial = try rows()
+        detail.rows = .loaded(initial)
+        let json = #"""
+        {"token":"t-answer","at":"2026-11-09T17:32:38.000Z","meeting":"m","actor":{"kind":"window"},"reason":"heard it twice",
+         "action":{"kind":"answer","question":"q1","answer":"Dana Example"},"question":"q1","decided":["q1"],
+         "changes":[{"id":"q1","before":{"id":"q1","kind":"question","status":"suggested"},
+                     "after":{"id":"q1","kind":"question","status":"confirmed","answer":"Dana Example"}}]}
+        """#
+        detail.markRows(try JSONDecoder().decode(JournalEntry.self, from: Data(json.utf8)))
+        let row = try XCTUnwrap(detail.rows.value?.rows.first)
+        XCTAssertEqual(row.status, "confirmed")
+        XCTAssertEqual(row.answer, "Dana Example", "the held row's choices mark the answer, and its fold shows it")
+        XCTAssertEqual(DecisionState.of(row.choices[0], in: row), .confirmed)
+        XCTAssertEqual(ReviewRowView.decidedWords(row), "Confirmed by you: heard it twice")
+
+        var after = initial.rows[0]
+        after.status = "confirmed"
+        after.answer = "Dana Example"
+        after.decision = .init(token: "t-answer", actor: .window, by: "you", action: "answer", reason: "heard it twice",
+                               question: "q1", at: "2026-11-09T17:32:38.123Z")
+        let patch = rowPatch([.init(id: "q1", before: initial.rows[0], after: after)], order: initial.rows.map(\.id))
+        let current = try XCTUnwrap(detail.rows.value)
+        XCTAssertEqual(patch.applying(to: current, token: "t-answer", latest: detail.rowDecisionTokens).rows[0], after,
+                       "the marked row is this decision's row, so the service's complete row replaces it")
+    }
+
     func testTheDecisionPatchUpdatesTheRecordAndAnOldReplyUsesTheReadPath() throws {
         let detail = MeetingDetailModel(id: "m", window: nil)
         let initial = try rows()

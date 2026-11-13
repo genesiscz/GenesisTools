@@ -755,12 +755,32 @@ struct ReviewRow: Decodable, Equatable, Identifiable {
     let sources: [RowSource]
     /// What the row's play button plays.
     let target: MomentTarget
-    let decision: Decision?
+    var decision: Decision?
     /// What a decided row was decided as: a question's answer, a word's spelling, a range's speaker.
     var answer: String? = nil
 
     var isOpen: Bool { status == "suggested" }
     var isQuestion: Bool { kind == "question" }
+
+    /// What a decided item was decided as (`decidedAs` in src/meetings/lib/review-rows.ts): a confirmed question's
+    /// answer, a confirmed word's spelling, a confirmed range's speaker; nothing for an open or a rejected item.
+    static func decidedAs(_ item: MeetingItem) -> String? {
+        guard item.status == "confirmed" else { return nil }
+        switch item.kind {
+        case "question": return item.answer
+        case "term": return item.proposed
+        case "speaker-range": return item.speaker
+        default: return nil
+        }
+    }
+}
+
+extension ReviewRow.Decision {
+    /// The decision as `meeting.rows` names it, from the journal entry that made it (`reviewRow` in review-rows.ts).
+    init(_ entry: JournalEntry) {
+        self.init(token: entry.token, actor: entry.actor, by: MeetingsWords.actor(entry.actor), action: entry.action.kind,
+                  reason: entry.reason, question: entry.question, at: entry.at)
+    }
 }
 
 /// `meeting.rows`'s answer.
@@ -809,7 +829,15 @@ struct ReviewRowsPatch: Decodable, Equatable {
             let present = index.map { rows[$0] }
             var optimistic = change.before
             if let status = change.after?.status { optimistic?.status = status }
-            guard present == change.before || present == change.after || present == optimistic else {
+            // `markRows` also sets the answer and this entry's decision, so a row the event marked is still this read.
+            var marked = optimistic
+            marked?.answer = change.after?.answer
+            let unmarked = present.map { row -> ReviewRow in
+                var row = row
+                if row.decision?.token == token { row.decision = change.before?.decision }
+                return row
+            }
+            guard present == change.before || present == change.after || present == optimistic || unmarked == marked else {
                 conflicted = true
                 continue
             }
