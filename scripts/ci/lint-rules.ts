@@ -2525,17 +2525,33 @@ export function changedFiles(base: string, { cwd = process.cwd() }: { cwd?: stri
 
     const changed = new Set(diff.stdout.toString().split("\0").filter(Boolean));
     checkRatchetGrowth({ from, cwd, changed });
-    const ruleInputs = new Set([
-        "biome.json",
-        "scripts/ci/lint-rules.ts",
-        "scripts/ci/lint-changed.sh",
-        ...RATCHET_INPUTS,
-    ]);
-    if ([...changed].some((file) => ruleInputs.has(file))) {
+
+    if ([...changed].some(isRuleInput)) {
         return null;
     }
 
     return changed;
+}
+
+/** The files a rule is made of, besides the ratchet lists: a change to one can expose an unchanged offender. */
+const RULE_INPUTS = new Set([
+    "biome.json",
+    "scripts/ci/lint-rules.ts",
+    "scripts/ci/lint-changed.sh",
+    "scripts/ci/harness-guard.ts",
+    "scripts/ci/harness-guard-allowlist.ts",
+    "scripts/ci/swift-lint-rules.ts",
+    "scripts/ci/swift-row-ratchet.ts",
+    "src/utils/agent/identity/terminals.ts",
+    ...RATCHET_INPUTS,
+]);
+
+/** A roster's matcher, owner and helpers: a tightened matcher or a narrower `allowedIn` reaches files nobody changed. */
+const ROSTER_RULE_INPUT = /^scripts\/ci\/rosters\/(?:index\.ts|define\.ts|swift\.ts|[^/]+\.definition\.ts)$/;
+
+/** Whether a change to `file` must rescan the whole tree. */
+export function isRuleInput(file: string): boolean {
+    return RULE_INPUTS.has(file) || ROSTER_RULE_INPUT.test(file);
 }
 
 export async function targetFiles(): Promise<string[]> {
