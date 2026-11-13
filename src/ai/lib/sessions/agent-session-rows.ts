@@ -259,6 +259,9 @@ async function nativeRowsOf(
             excludeAgents: true,
             ...(options.filePaths === undefined ? {} : { filePaths: options.filePaths }),
             ...(cutoff === undefined ? {} : { mtimeFrom: cutoff }),
+            // "Newest" here means most recently written, so the catalog cuts by mtime; its refresh is then bounded
+            // to the newest transcripts instead of the whole Codex or Grok history.
+            ...(options.limit === undefined ? {} : { limit: options.limit, catalogOrder: "mtime" as const }),
         },
         ...(options.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
         ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
@@ -306,9 +309,7 @@ async function nativeRowsOf(
         return rows;
     }
 
-    // The cap is applied here and not passed to `catalog`: `catalog` cuts by session START
-    // (`firstTimestamp`), and "newest" here means most recently written, so a long session that is
-    // still being written must not lose its place to sessions started after it.
+    // The catalog already cut by mtime; this cut again covers the rows the loop skipped (no session id).
     return rows.sort((left, right) => right.mtime - left.mtime).slice(0, options.limit);
 }
 
