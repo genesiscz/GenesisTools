@@ -11,8 +11,8 @@
  * - rpc-ingest: 20 000 events through a service's `ingest` in batches of 1000, over its socket (events/s).
  * - q100k-* / q1m-*: one query each at 100 k and 1 M events of one metric (ms): group by a declared dim, by two dims,
  *   by `time:hour`, a filter on a declared dim, a filter on an undeclared dim, p90 by a declared dim, and by
- *   `checkpoint` (5 checkpoints of the project: four in the first 160 s, so the 100 k metric's 259 s split into five
- *   groups, and one at day 15 of the 1 M metric's 30 days).
+ *   `checkpoint` (5 checkpoints of the project: four that split the 100 k metric's 3 days (259 200 s at one event per
+ *   2.592 s) into five groups of 20 000 events, and one at day 15 of the 1 M metric's 30 days).
  * Each arm reports min / median / max of wall time and the process CPU time of the median run. The native-code gate
  * of the design: a median query above 250 ms at 1 M events, or a door's ingest below 50 000 events per second.
  */
@@ -51,13 +51,16 @@ const AGENTS = Array.from({ length: 10 }, (_, i) => `agent${i}`);
 const TOOLS = ["Bash", "Read", "Edit", "Write", "Grep", "Glob", "Agent", "Skill"];
 const EVENTS = ["PostToolUse", "SessionStart", "SubagentStart", "Stop", "UserPromptSubmit", "PreToolUse"];
 const T0 = Date.UTC(2026, 9, 1);
+/** One event every 2.592 s: the 1 M metric spans 30 days, the 100 k metric 3 days. */
+const EVENT_STEP_MS = 2_592;
+const Q100K_SPAN_MS = 100_000 * EVENT_STEP_MS;
 
-/** A deterministic event: about the shape of a hook injection, spread over 30 days. */
+/** A deterministic event: about the shape of a hook injection, one every `EVENT_STEP_MS`. */
 function eventAt(i: number, metric: string): StoredEvent {
     return {
         project: "bench",
         metric,
-        at: T0 + Math.floor((i * 2_592_000_000) / 1_000_000),
+        at: T0 + i * EVENT_STEP_MS,
         value: (i * 7919) % 10_000,
         dims: {
             agent: AGENTS[i % AGENTS.length] ?? "agent0",
@@ -184,7 +187,10 @@ for (const [metric, count] of [
     queryStore.define({ project: "bench", metric, unit: "chars", dims: ["agent", "event"] });
 }
 
-for (const [index, at] of [40_000, 80_000, 120_000, 160_000, 15 * 86_400_000].entries()) {
+for (const [index, at] of [1, 2, 3, 4]
+    .map((k) => (k * Q100K_SPAN_MS) / 5)
+    .concat(15 * 86_400_000)
+    .entries()) {
     queryStore.addCheckpoint({ project: "bench", name: `cp${index + 1}`, at: T0 + at });
 }
 
