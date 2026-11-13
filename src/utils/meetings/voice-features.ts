@@ -29,6 +29,8 @@ const RATE = 8000;
 const SAMPLES = 400;
 const FRAME_SEC = SAMPLES / RATE;
 const MAX_FRAMES = (8 * 3600) / FRAME_SEC;
+/** The longest stretch of feature math between two turns of the event loop. */
+const VOICE_SLICE_MS = 20;
 const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0;
 
 /** Pitch by normalized autocorrelation, 60 to 400 Hz. Silence/unvoiced frames return null. */
@@ -127,9 +129,16 @@ export async function voiceFrames(options: { audioPath: string; signal?: AbortSi
     const frames: VoiceFrame[] = [];
     const frameBytes = SAMPLES * 2 * 4;
     let pending = new Uint8Array(frameBytes),
-        filled = 0;
+        filled = 0,
+        sliceStart = performance.now();
     try {
         for await (const chunk of proc.stdout) {
+            // The pitch search is CPU work on the service's own event loop, and buffered pipe chunks resume this loop
+            // as microtasks: without a turn of the loop between slices an hour of audio held every other request.
+            if (performance.now() - sliceStart > VOICE_SLICE_MS) {
+                await new Promise<void>((resolve) => setImmediate(resolve));
+                sliceStart = performance.now();
+            }
             let offset = 0;
             while (offset < chunk.length) {
                 const take = Math.min(frameBytes - filled, chunk.length - offset);
@@ -189,6 +198,11 @@ export function lineVoices(options: { frames: readonly VoiceFrame[]; spans: read
         return { index: span.index, channels };
     });
 }
+
+/** How much nearer its own voice than the next an unanchored line must be to take that voice's anchored name. */
+const MIN_NAMED_CONFIDENCE = 0.25;
+/** The farthest (squared, in the weighted standardized space) an unanchored line may sit from a named voice. */
+const MAX_NAMED_DISTANCE = 4;
 
 /** Deterministic standardized k-means. Confirmed line anchors fix identity; a cluster without anchors has no name. */
 export function clusterVoices(options: {
@@ -266,7 +280,14 @@ export function clusterVoices(options: {
             const own = distance(points[i]!, centers[id]!);
             const other = Math.min(...centers.filter((_, j) => j !== id).map((c) => distance(points[i]!, c)));
             const confidence = k === 1 ? 1 : Math.max(0, Math.min(1, (other - own) / (other + 1e-8)));
-            return [line.index, { id, confidence, ...(names[id] ? { speaker: names[id] } : {}) }] as const;
+            // A cluster is acoustic likeness, not identification: an unanchored line takes the anchored name only
+            // when it is clearly nearer that voice than any other and near it at all; a tie or an outlier stays
+            // nobody's until something else decides it.
+            const anchored = options.anchors?.has(line.index) === true;
+            const named =
+                names[id] !== undefined &&
+                (anchored || (confidence >= MIN_NAMED_CONFIDENCE && own <= MAX_NAMED_DISTANCE));
+            return [line.index, { id, confidence, ...(named ? { speaker: names[id] } : {}) }] as const;
         })
     );
     return options.lines.map(({ cluster: _previous, ...line }) => ({

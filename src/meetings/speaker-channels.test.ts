@@ -19,7 +19,7 @@ import { MEETING_PLATFORMS } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { assessIndicator } from "./lib/speaker-indicator";
 import { suggestItems } from "./lib/suggest";
-import { lineDeviceCandidates } from "./lib/voice";
+import { anchoredMeetingVoices, lineDeviceCandidates } from "./lib/voice";
 import { clearLanguage, lineLanguages } from "./lib/word-languages";
 
 const USER = "Una Example";
@@ -1007,6 +1007,81 @@ test("streamed synthetic stereo voice features preserve pitch, level, silence an
     expect(clustered.every((line) => line.cluster!.confidence > 0.9)).toBe(true);
     expect(measureVoice(new Float32Array(400)).pitchHz).toBeNull();
     expect(() => clusterVoices({ lines, voices: 0, channel: 0 })).toThrow();
+});
+
+test("a voice cluster names an unanchored line only on a clear, near match", () => {
+    const voice = (pitchHz: number, rms = 0.05) => ({ rms, lowBandShare: 0.5, tilt: 0.1, pitchHz, voicedShare: 1 });
+    const line = (index: number, pitchHz: number) => ({ index, channels: [voice(pitchHz), voice(pitchHz, 0.001)] });
+    const named = (lines: Array<ReturnType<typeof line>>, anchors: Array<[number, string]>) =>
+        clusterVoices({ lines, voices: 2, channel: 0, anchors: new Map(anchors) }).map((one) => one.cluster?.speaker);
+
+    // Two anchors with one voice tie: the line between them stays unnamed, the anchors keep their names.
+    expect(
+        named(
+            [line(0, 150), line(1, 150), line(2, 150)],
+            [
+                [0, "Alice"],
+                [1, "Bob"],
+            ]
+        )
+    ).toEqual(["Alice", "Bob", undefined]);
+    // Far from both anchored voices: an outlier is nobody yet; a line near Bob is Bob.
+    expect(
+        named(
+            [line(0, 120), line(1, 210), line(2, 205), line(3, 400)],
+            [
+                [0, "Alice"],
+                [1, "Bob"],
+            ]
+        )
+    ).toEqual(["Alice", "Bob", "Bob", undefined]);
+});
+
+test("a confirmed line anchors only the channel that carries its voice", () => {
+    const voice = (rms: number, pitchHz: number) => ({ rms, lowBandShare: 0.5, tilt: 0.1, pitchHz, voicedShare: 1 });
+    const anchoredRecord = meetingRecordSchema.parse({
+        ...record,
+        items: [
+            {
+                id: "i1",
+                kind: "speaker-range",
+                label: "Voice",
+                fromSec: 0,
+                toSec: 0,
+                speaker: "Remy Example",
+                status: "confirmed",
+                rules: [],
+                suggestedAt: START,
+            },
+        ],
+    });
+    const features = [
+        { index: 0, channels: [voice(0.01, 150), voice(0.1, 150)] },
+        { index: 1, channels: [voice(0.05, 120), voice(0.001, 120)] },
+    ];
+    const clustered = anchoredMeetingVoices({
+        record: anchoredRecord,
+        transcript: [
+            { speaker: "Voice", startSec: 0, text: "From the call." },
+            { speaker: "Room", startSec: 5, text: "In the room." },
+        ],
+        features,
+        voices: 2,
+        channel: 0,
+        micChannel: 0,
+    });
+
+    expect(clustered.map((line) => line.cluster?.speaker)).toEqual([undefined, undefined]);
+    expect(
+        anchoredMeetingVoices({
+            record: anchoredRecord,
+            transcript: [{ speaker: "Voice", startSec: 0, text: "From the call." }],
+            features: features.slice(0, 1),
+            voices: 1,
+            channel: 1,
+            micChannel: 0,
+        })[0]?.cluster?.speaker
+    ).toBe("Remy Example");
 });
 
 test("attendance chat id is forwarded byte-for-byte through CallTimeline", async () => {
