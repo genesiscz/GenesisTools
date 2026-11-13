@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { connectChildStdio } from "./child-stdio";
+import { CHILD_STDIN_HIGH_WATER_BYTES, connectChildStdio } from "./child-stdio";
 import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
 import { failedCallLevel, LineBuffer, Outbox, RpcPeer, type RpcProgress } from "./peer";
 import {
@@ -409,6 +409,74 @@ describe("a peer on a child's stdio", () => {
         const [first, second] = await outcomes;
         expect(first).toEqual({ status: "fulfilled", value: { ok: true } });
         expect(second.status === "rejected" && String(second.reason)).toBe("Error: agent closed its stdout");
+    });
+
+    test("a child that stops reading its stdin reaches the backlog limit and its connection ends", async () => {
+        const pipe = childPipe();
+        const { peer } = connectChildStdio({
+            child: {
+                ...pipe.child,
+                // The pipe is full and stays full: no flush ever finishes.
+                stdin: {
+                    write: (chunk: string) => pipe.written.push(chunk),
+                    flush: () => new Promise<never>(() => {}),
+                },
+            },
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        const waiting = peer.request("render.export", {}, { timeoutMs: 60_000 });
+        const frame = { text: "x".repeat(1024 * 1024) };
+
+        for (let index = 0; index < 10; index++) {
+            peer.notify("frame", frame);
+        }
+
+        expect(peer.closed).toBe(true);
+        await expect(waiting).rejects.toThrow("stopped reading");
+        expect(pipe.written).toHaveLength(1);
+    });
+
+    test("past the high-water mark a message waits for the writes before it, in order, and written() waits for it", async () => {
+        const pipe = childPipe();
+        const flushes: Array<() => void> = [];
+        const { peer, written } = connectChildStdio({
+            child: {
+                ...pipe.child,
+                stdin: {
+                    write: (chunk: string) => pipe.written.push(chunk),
+                    flush: () => new Promise<void>((resolve) => flushes.push(resolve)),
+                },
+            },
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        const half = "y".repeat(CHILD_STDIN_HIGH_WATER_BYTES / 2 + 1);
+        const methods = () => pipe.written.map((line) => Reflect.get(SafeJSON.parse(line, { strict: true }), "method"));
+        let done = false;
+
+        peer.notify("one", { half });
+        peer.notify("two", { half });
+        peer.notify("three", { half });
+        const all = written().then(() => {
+            done = true;
+        });
+
+        for (const expected of [["one"], ["one", "two"], ["one", "two", "three"]]) {
+            await Bun.sleep(0);
+            expect(methods()).toEqual(expected);
+            expect(done).toBe(false);
+            flushes.shift()?.();
+        }
+
+        await all;
+        expect(done).toBe(true);
+        expect(peer.closed).toBe(false);
+        peer.close("done");
     });
 
     test("a dialect without the jsonrpc field writes none and reads messages without it", async () => {

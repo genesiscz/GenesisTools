@@ -17,11 +17,18 @@ export interface ChildStdioOptions extends Omit<RpcPeerOptions, "write" | "onBac
     exitGraceMs?: number;
 }
 
+/**
+ * The bytes handed to stdin and not flushed yet, past which the next message waits in the peer's outbox. There it
+ * counts toward `OUTBOX_LIMIT_BYTES`, so a child that stopped reading ends its connection instead of piling up writes.
+ */
+export const CHILD_STDIN_HIGH_WATER_BYTES = 64 * 1024;
+
 export interface ChildStdioConnection {
     peer: RpcPeer;
     /**
-     * Settles once every message handed to stdin so far is written and flushed; rejects with the error of a write
-     * that failed. A caller that must order its next message after an answer awaits it.
+     * Settles once every message the peer sent so far is written to stdin and flushed, the ones its outbox still holds
+     * included; rejects with the error of a write that failed. A caller that must order its next message after an
+     * answer awaits it.
      */
     written(): Promise<void>;
 }
@@ -39,18 +46,47 @@ export function connectChildStdio(options: ChildStdioOptions): ChildStdioConnect
     const { child, exitReason: reasonFor, exitGraceMs = 2000, ...peerOptions } = options;
     const exitReason = reasonFor ?? ((code: number) => `${options.label} exited with code ${code}`);
     let last: Promise<void> = Promise.resolve();
+    let inFlight = 0;
     let peer: RpcPeer | undefined;
 
+    // Below the high-water mark a message goes to stdin at once. Past it the write takes none of it: the peer's outbox
+    // holds it, where the backlog limit applies, and each write that finishes flushes the outbox again.
     const write = (bytes: Buffer): number => {
+        if (inFlight > 0 && inFlight + bytes.length > CHILD_STDIN_HIGH_WATER_BYTES) {
+            return 0;
+        }
+
+        inFlight += bytes.length;
         // The write starts now, so messages reach stdin in the order the peer sent them; its completion is tracked.
         const current = (async () => {
             await child.stdin.write(bytes.toString());
             await child.stdin.flush?.();
         })();
-        current.catch((error) => peer?.close(message(error)));
+        current.then(
+            () => {
+                inFlight -= bytes.length;
+                peer?.flush();
+            },
+            (error) => {
+                inFlight -= bytes.length;
+                peer?.close(message(error));
+            }
+        );
         last = Promise.all([last, current]).then(() => undefined);
         last.catch(() => undefined);
         return bytes.length;
+    };
+    const written = async (): Promise<void> => {
+        // A finished write hands the outbox's next messages to stdin before `last` settles, so a `last` that changed
+        // while it was awaited means more went out: that is awaited too.
+        for (;;) {
+            const pending = last;
+            await pending;
+
+            if (pending === last) {
+                return;
+            }
+        }
     };
     const connected = new RpcPeer({ ...peerOptions, write });
     peer = connected;
@@ -71,7 +107,7 @@ export function connectChildStdio(options: ChildStdioOptions): ChildStdioConnect
         }
     });
 
-    return { peer: connected, written: () => last };
+    return { peer: connected, written };
 }
 
 async function readStdout(
