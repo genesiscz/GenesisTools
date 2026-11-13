@@ -55,6 +55,7 @@ export function addQualityQuestions(options: {
     const ids: string[] = [];
     for (const { group, parts } of groups) {
         for (const part of parts) {
+            const confidence = part.reduce((lowest, line) => Math.min(lowest, line.confidence), 1);
             const fromSec = part[0]!.fromSec,
                 toSec = part.at(-1)!.fromSec;
             const known = options.record.items.find(
@@ -65,7 +66,9 @@ export function addQualityQuestions(options: {
                     item.fromSec === fromSec &&
                     item.toSec === toSec
             );
-            if (known) {
+            if (known?.kind === "question") {
+                known.priority ??= 1;
+                known.confidence ??= confidence;
                 ids.push(known.id);
                 continue;
             }
@@ -98,6 +101,8 @@ export function addQualityQuestions(options: {
                 toSec,
                 question: "Who speaks in this " + group + "?",
                 group,
+                confidence,
+                priority: 1,
                 choices: [
                     ...new Set([
                         ...part.flatMap((line) => line.speaker ?? []),
