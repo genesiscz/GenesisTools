@@ -31,7 +31,7 @@ export const byChannel = defineMethod({
     params: byChannelOptionsSchema,
     result: z.unknown(),
     effect: "reversible",
-    doc: "Plan speaker ranges from microphone shares and explicit seats. dryRun defaults to true and writes nothing. Read screen --at before attributing an idea that refers to the screen.",
+    doc: "Read screen --at before attributing an idea shown on screen. Plan speaker ranges from microphone shares and explicit seats. dryRun defaults to true and writes nothing.",
 });
 
 export const ref = z.object({ ref: z.string().min(1) });
@@ -152,7 +152,7 @@ export const evidence = defineMethod({
         }),
     result: z.unknown(),
     effect: "read",
-    doc: "Channel evidence; table returns compact per-line evidence, raw includes seats and project roles. Read screen --at before attributing an idea referring to the screen.",
+    doc: "Read screen --at before attributing an idea shown on screen. Channel evidence; table returns compact per-line evidence, raw includes seats and project roles.",
 });
 export const transcript = defineMethod({
     name: "transcript",
@@ -647,7 +647,6 @@ export const meetingsToolsetApi = defineApi({
                 transcript,
                 evidence,
                 voice,
-                editPerson,
                 acousticInspect,
                 acousticCollect,
                 voiceCollect,
