@@ -2165,7 +2165,7 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
 
         if (RAW_CLACK_IMPORT_RULE.matcher && ruleApplies(RAW_CLACK_IMPORT_RULE, file, ratchets)) {
             for (const node of root.findAll(RAW_CLACK_IMPORT_RULE.matcher)) {
-                if (RAW_CLACK_IMPORT_RULE.test(node.text(), node)) {
+                if (RAW_CLACK_IMPORT_RULE.test(node.text(), node, file)) {
                     record(node, RAW_CLACK_IMPORT_RULE);
                 }
             }
@@ -2789,7 +2789,7 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
                 { paths: clackScoped, matcher: RAW_CLACK_IMPORT_RULE.matcher },
                 guard((nodes) => {
                     for (const node of nodes) {
-                        if (RAW_CLACK_IMPORT_RULE.test(node.text(), node)) {
+                        if (RAW_CLACK_IMPORT_RULE.test(node.text(), node, node.getRoot().filename())) {
                             push(node, RAW_CLACK_IMPORT_RULE);
                         }
                     }
