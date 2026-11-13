@@ -66,6 +66,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { claudeSessionsDir, liveClaudeSessionIds } from "@genesiscz/utils/claude/peer-message";
+import { openPaths } from "@genesiscz/utils/compress/transparent";
 import { env } from "@genesiscz/utils/env";
 import { readBoundedRegularFileSync } from "@genesiscz/utils/fs/bounded-read";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -323,21 +324,6 @@ function protectedEntries(): Protection {
     return { ids: [...new Set(ids)], paths: [...new Set(paths)] };
 }
 
-export function openPaths(): string[] {
-    // lint-rules-ignore: a deletion guard needs every open AND mapped file (lsof's mem rows), which the process layer does not read
-    const p = Bun.spawnSync(["lsof", "-n", "-Fn", "-w"], { stdout: "pipe", stderr: "pipe" });
-    const out = p.stdout.toString();
-
-    if (p.exitCode !== 0 || p.stderr.length > 0 || !out.includes("\nn/")) {
-        throw new Error(`lsof listing incomplete (exit ${p.exitCode}): refusing to judge what is open`);
-    }
-
-    return out
-        .split("\n")
-        .filter((line) => line.startsWith("n/"))
-        .map((line) => line.slice(1));
-}
-
 /**
  * One lsof listing as a set of every open path and every folder above one, so "does a process hold a file open
  * inside this entry" is one lookup. A listing here holds about 57,000 paths (2026-11-05), and a scan of all of them per
@@ -347,7 +333,7 @@ export class OpenFiles {
     private readonly held = new Set<string>();
 
     constructor(
-        paths: readonly string[],
+        paths: Iterable<string>,
         /** When the listing started: a file opened after this moment may be missing from it. */
         readonly takenAt = Date.now()
     ) {
@@ -374,10 +360,10 @@ export class OpenFiles {
     }
 }
 
-/** A fresh listing; a failed one throws, as {@link openPaths} does. */
-export function openFiles(): OpenFiles {
+/** A fresh listing; a failed, partial or empty one throws, as {@link openPaths} does. */
+export async function openFiles(): Promise<OpenFiles> {
     const takenAt = Date.now();
-    return new OpenFiles(openPaths(), takenAt);
+    return new OpenFiles(await openPaths(), takenAt);
 }
 
 /**
@@ -391,14 +377,14 @@ export const OPEN_FILES_MAX_AGE_MS = 5_000;
 /** The listing to judge with now: the last one while it is at most `maxAgeMs` old, else a new one. */
 export function recentOpenFiles(
     maxAgeMs: number,
-    read: () => OpenFiles = openFiles,
+    read: () => Promise<OpenFiles> = openFiles,
     now: () => number = Date.now
-): () => OpenFiles {
+): () => Promise<OpenFiles> {
     let last: OpenFiles | null = null;
 
-    return () => {
+    return async () => {
         if (!last || now() - last.takenAt > maxAgeMs) {
-            last = read();
+            last = await read();
         }
 
         return last;
@@ -878,16 +864,16 @@ export function judgeOwn(
 /**
  * Why apply must not move `path` now, or null, for both plan kinds: scanning earlier candidates may take minutes, and
  * a `tools rm` run can put an aside copy under the entry or a process can open a file in it meanwhile. `open` is a
- * listing at most {@link OPEN_FILES_MAX_AGE_MS} old (a new one when left out); the move it clears is undone when the
+ * listing at most {@link OPEN_FILES_MAX_AGE_MS} old, which the caller reads; the move it clears is undone when the
  * listing after the last move shows a file open in the entry. The pending asides are read here, fresh, so they are
  * the last thing read before the rename; both the lexical and the canonical path are checked. A failed lsof listing
- * throws and stops apply: an old snapshot cannot authorize a deletion. Tests pass `open` and `pending`.
+ * throws in the caller's read and stops apply: an old snapshot cannot authorize a deletion. Tests pass `pending`.
  */
 export function moveBlocker(
     path: string,
-    fresh: { open?: OpenFiles; pending?: readonly PendingAside[] } = {}
+    fresh: { open: OpenFiles; pending?: readonly PendingAside[] }
 ): string | null {
-    const open = fresh.open ?? openFiles();
+    const { open } = fresh;
     let real: string;
 
     try {
@@ -1000,7 +986,7 @@ function validOwnSession(own: unknown): own is NonNullable<Plan["ownSession"]> {
 
 const gb = (bytes: number) => `${(bytes / 1e9).toFixed(2)} GB`;
 
-function ownSessionDryRun(id: string): void {
+async function ownSessionDryRun(id: string): Promise<void> {
     if (!SESSION_UUID.test(id)) {
         console.error(`✖ --own-session needs the full session uuid, got ${SafeJSON.stringify(id)}`);
         process.exit(2);
@@ -1021,7 +1007,7 @@ function ownSessionDryRun(id: string): void {
         process.exit(2);
     }
 
-    const open = openFiles();
+    const open = await openFiles();
     const candidates: Candidate[] = [];
     const skipped: Record<string, number> = {};
 
@@ -1055,16 +1041,16 @@ function ownSessionDryRun(id: string): void {
     process.exit(0);
 }
 
-function main(): void {
+async function main(): Promise<void> {
     // A missing or empty value (an unset "$SESSION") is refused, never read as "no session": the regular run lists
     // every other session's entries.
     if (!has("--apply") && has("--own-session")) {
-        ownSessionDryRun(flag("--own-session") ?? "");
+        await ownSessionDryRun(flag("--own-session") ?? "");
     }
 
     if (!has("--apply")) {
         const protection = protectedEntries();
-        const open = openFiles();
+        const open = await openFiles();
         const pending = pendingAsideDirs();
         const candidates: Candidate[] = [];
         const skipped: Record<string, number> = {};
@@ -1174,8 +1160,12 @@ function main(): void {
             }
 
             const now = own
-                ? judgeOwn(planned.path, { sessionDirs: own.dirs, open: open(), minAgeMinutes: own.minAgeMinutes })
-                : judge(planned.path, protection ?? protectedEntries(), open());
+                ? judgeOwn(planned.path, {
+                      sessionDirs: own.dirs,
+                      open: await open(),
+                      minAgeMinutes: own.minAgeMinutes,
+                  })
+                : judge(planned.path, protection ?? protectedEntries(), await open());
 
             if (typeof now === "string" || now.ino !== planned.ino) {
                 const why = typeof now === "string" ? now : "replaced";
@@ -1189,7 +1179,7 @@ function main(): void {
             // reads a new listing.
             const plannedSt = lstatSync(planned.path, { throwIfNoEntry: false });
             const leftBehind = !own && plannedSt !== undefined && isRegularQuarantine(planned.path, plannedSt);
-            const blocker = moveBlocker(planned.path, { open: leftBehind ? openFiles() : open() });
+            const blocker = moveBlocker(planned.path, { open: leftBehind ? await openFiles() : await open() });
             if (blocker) {
                 refused[blocker] = (refused[blocker] ?? 0) + 1;
                 continue;
@@ -1231,7 +1221,7 @@ function main(): void {
 
         // The listing after the last move clears the delete. lsof names a file by its current path, so a file opened
         // in a moved entry since that entry's check shows inside the quarantine, and the entry goes back to its place.
-        const after = openFiles();
+        const after = await openFiles();
 
         for (const entry of moved) {
             if (after.holds(entry.to)) {
@@ -1296,5 +1286,5 @@ function removeSpentPlans(appliedPlan: string): void {
 }
 
 if (import.meta.main) {
-    main();
+    await main();
 }

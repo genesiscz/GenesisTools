@@ -1,21 +1,13 @@
 import { enhanceHelp, isInteractive } from "@genesiscz/utils/cli";
 import { configureLogger, logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
-import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
+import { clackBackend } from "@genesiscz/utils/prompts/p/clack-backend";
 
 // Use inquirer backend for this tool
-p.setBackend(inquirerBackend);
-
-import { Command, Option } from "commander";
-import { showHelp } from "./utils/command.utils.js";
-import { defaultProviders } from "./utils/providers/index.js";
-import type { MCPProvider } from "./utils/providers/types.js";
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
+p.setBackend(clackBackend);
 
 import { runTool } from "@genesiscz/utils/cli";
+import { Command, Option } from "commander";
 import {
     authClient,
     authLogin,
@@ -49,7 +41,10 @@ import {
     syncServers,
 } from "./commands/index.js";
 import { STATIC_CLIENT_REDIRECT_URI_DEFAULT } from "./lib/auth/constants.ts";
+import { showHelp } from "./utils/command.utils.js";
 import { setGlobalOptions } from "./utils/config.utils.js";
+import { defaultProviders } from "./utils/providers/index.js";
+import type { MCPProvider } from "./utils/providers/types.js";
 
 /**
  * Collect --project values: repeatable flag, each value may be comma-separated
@@ -545,20 +540,7 @@ enhanceHelp(program);
 
 // Main function
 async function main() {
-    try {
-        await runTool(program, { tool: "mcp-manager" });
-    } catch (error: unknown) {
-        const opts = program.opts();
-        if (error instanceof Error) {
-            logger.error(`✖ Error: ${error.message}`);
-            if (opts.verbose) {
-                logger.error(error.stack);
-            }
-        } else {
-            logger.error(`✖ Error: ${error}`);
-        }
-        process.exit(1);
-    }
+    await runTool(program, { tool: "mcp-manager" });
 }
 
 // Run the tool

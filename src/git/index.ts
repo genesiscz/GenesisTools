@@ -196,18 +196,7 @@ Storage:
 }
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "git" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(message);
-
-        if (error instanceof Error && error.stack) {
-            logger.debug(error.stack);
-        }
-
-        process.exit(1);
-    }
+    await runTool(program, { tool: "git" });
 }
 
 main().catch((err) => {

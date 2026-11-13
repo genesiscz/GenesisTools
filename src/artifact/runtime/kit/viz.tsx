@@ -1,7 +1,28 @@
-import { type CSSProperties, useId } from "react";
+import { type CSSProperties, useId, useLayoutEffect, useRef } from "react";
 import { TONE_COLOR } from "./charts";
+import { readableTextOn } from "./color";
 import { TONE_DOT, TONE_TEXT, type Tone } from "./primitives";
+import { useColorSchemeTick } from "./theme";
 import { useTooltip } from "./tooltip";
+
+/** Read opaque computed fills after CSS resolves light-dark() and color-mix(). */
+function useReadableFills() {
+    const root = useRef<HTMLDivElement>(null);
+    useColorSchemeTick();
+    useLayoutEffect(() => {
+        const cells = [...(root.current?.querySelectorAll<HTMLElement>("[data-readable-fill]") ?? [])];
+        const fills = cells.map((cell) => getComputedStyle(cell).backgroundColor);
+        const colors = new Map<string, string>();
+
+        cells.forEach((cell, i) => {
+            const fill = fills[i];
+            const color = colors.get(fill) ?? readableTextOn(fill);
+            colors.set(fill, color);
+            cell.style.color = color;
+        });
+    });
+    return root;
+}
 
 /**
  * Small dependency-free visuals that sit INSIDE other components: a sparkline
@@ -233,10 +254,11 @@ export function Heatmap({
     const hi = max ?? (flat.length > 0 ? Math.max(...flat) : 1);
     const color = TONE_COLOR[tone];
     const fmt = format ?? ((v: number): string => String(v));
+    const readableRoot = useReadableFills();
 
     return (
-        <div className="my-3">
-            {title ? <div className="mb-1 text-xs uppercase tracking-wide text-dim">{title}</div> : null}
+        <div ref={readableRoot} className="my-3">
+            {title ? <div className="mb-1 text-xs text-dim">{title}</div> : null}
             <div className="overflow-x-auto">
                 <table className="border-separate border-spacing-0.5 font-mono text-[0.72rem]">
                     <thead>
@@ -273,10 +295,11 @@ export function Heatmap({
                                         <td
                                             key={`${c}-${col}`}
                                             title={`${row} / ${col}: ${fmt(value)}`}
+                                            data-readable-fill=""
                                             className="h-7 min-w-8 rounded px-1 text-center"
                                             style={{
                                                 background: heatCellBackground(color, share),
-                                                color: share > 0.55 ? "var(--bg)" : "var(--text)",
+                                                color: "var(--text)",
                                             }}
                                         >
                                             {showValues ? fmt(value) : ""}
@@ -394,6 +417,7 @@ function CapacityCell({ row, colLabel, load, capacity, unit, format, fullAt, hea
             : heat
               ? { background: heatCellBackground("var(--info)", share, 68) }
               : {};
+    style.color = heat && status !== "idle" ? "var(--text)" : undefined;
 
     if (status === "over") {
         style.outline = "1.5px solid var(--err)";
@@ -403,6 +427,7 @@ function CapacityCell({ row, colLabel, load, capacity, unit, format, fullAt, hea
     return (
         <td
             data-status={status}
+            data-readable-fill={heat && status !== "idle" ? "" : undefined}
             aria-label={description}
             tabIndex={0}
             className={`${base} ${status === "over" ? "font-bold text-err" : status === "full" ? "font-bold text-ink" : status === "idle" ? "text-dim" : "text-ink"}`}
@@ -419,7 +444,7 @@ function CapacityCell({ row, colLabel, load, capacity, unit, format, fullAt, hea
 
 /**
  * Load against capacity per row (a person, a role) and column (a sprint).
- * Over-capacity cells get an inset outline, bold err text and a hidden
+ * Over-capacity cells get an inset error outline, bold text and a hidden
  * sentence, so colour is never the only cue and the grid never shifts.
  */
 export function CapacityGrid({
@@ -433,6 +458,7 @@ export function CapacityGrid({
     title,
 }: CapacityGridProps) {
     const titleId = useId();
+    const readableRoot = useReadableFills();
     const columns = cols.map((col) => (typeof col === "string" ? { label: col } : col));
     const sum = (values: Array<number | null>): number =>
         values.reduce<number>((acc, v) => acc + (typeof v === "number" ? v : 0), 0);
@@ -440,7 +466,7 @@ export function CapacityGrid({
     const totalCell = "px-1.5 py-[3px] text-center font-mono tabular-nums text-dim";
 
     return (
-        <div className="my-3">
+        <div ref={readableRoot} className="my-3">
             {title ? (
                 <div id={titleId} className="mb-1 text-xs text-dim">
                     {title}
@@ -572,16 +598,18 @@ function SegmentCell({ segment }: { segment: SegmentBarItem }) {
         <li
             {...tooltip}
             tabIndex={segment.title ? 0 : undefined}
-            className="min-w-[52px] cursor-default px-1.5 py-2.5 text-center font-mono text-sm font-bold leading-[normal] text-canvas transition-[translate,filter] duration-200 motion-safe:hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info"
+            data-readable-fill=""
+            className="min-w-[52px] cursor-default px-1.5 py-2.5 text-center font-mono text-sm font-bold leading-[normal] text-canvas transition-transform duration-200 motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-info"
             style={{
                 flexGrow: segment.weight ?? 1,
                 flexShrink: 1,
                 flexBasis: 0,
                 background: segment.color ?? TONE_COLOR[segment.tone ?? "info"],
+                color: "var(--bg)",
             }}
         >
             {segment.label}
-            {segment.sub ? <small className="block text-[13px] font-medium opacity-85">{segment.sub}</small> : null}
+            {segment.sub ? <small className="block text-[13px] font-medium">{segment.sub}</small> : null}
             {segment.title ? <span className="sr-only">{`, ${segment.title}`}</span> : null}
         </li>
     );
@@ -595,8 +623,9 @@ function SegmentCell({ segment }: { segment: SegmentBarItem }) {
  * instead of clipping the last ones.
  */
 export function SegmentBar({ segments, labels, ariaLabel = "Segments" }: SegmentBarProps) {
+    const readableRoot = useReadableFills();
     return (
-        <div>
+        <div ref={readableRoot}>
             <ol aria-label={ariaLabel} className="mt-1.5 mb-2 flex flex-wrap gap-1 overflow-hidden rounded-[10px]">
                 {segments.map((segment, i) => (
                     <SegmentCell key={`${segment.label}-${i}`} segment={segment} />

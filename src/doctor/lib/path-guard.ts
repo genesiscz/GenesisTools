@@ -1,41 +1,6 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { basename, isAbsolute, sep } from "node:path";
-
-/**
- * Paths no doctor action may remove, whatever finding names them: VM and container disks (deleting one destroys every
- * container, image and volume inside, and a sparse disk looks 926 GiB large to `st_size`), the Photos library, and
- * Tresorit's sync database. Matched against the real path, with `~` meaning the home folder.
- */
-export const VM_DATA_DENY_GLOBS = [
-    "~/Library/Containers/com.docker.docker/**",
-    "~/Library/Group Containers/*.docker/**",
-    "~/Library/Group Containers/*.dev.orbstack/**",
-    "~/.orbstack/**",
-    "~/.colima/**",
-    "~/.lima/**",
-    "~/.minikube/**",
-    "~/.k3d/**",
-    "~/.docker/machine/**",
-    "~/.local/share/containers/**",
-    "~/.tart/**",
-    "~/Library/Application Support/rancher-desktop/**",
-    "~/Library/Application Support/multipass/**",
-    "/var/root/Library/Application Support/multipassd/**",
-    "/private/var/root/Library/Application Support/multipassd/**",
-    "~/Library/Containers/com.utmapp.UTM/**",
-    "~/Parallels/**",
-    "**/*.vmwarevm/**",
-    "**/*.pvm/**",
-    "**/*.utm/**",
-    "**/*.photoslibrary/**",
-];
-
-/** File names that are always VM disks or sync databases, wherever they sit. */
-export const VM_DISK_NAMES = new Set(["Docker.raw", "data.img.raw", "swap.img", "diffdisk", "basedisk", "disk.img"]);
-export const VM_DISK_EXTENSIONS = [".vmdk", ".vdi", ".hdd", ".qcow2", ".raw"];
-
-/** The one VM-shaped file a doctor rule may remove: an Android emulator's user-data disk (the AVD definition stays). */
-const ANDROID_USERDATA_GLOB = "~/.android/avd/*.avd/userdata-qemu.img.qcow2";
+import { isAbsolute, sep } from "node:path";
+import { pathGlobRegex, vmDataReason } from "@genesiscz/utils/rm/rules";
 
 /** System locations no rule removes inside, whatever allow root an analyzer declares. Real paths. */
 export const SYSTEM_DENY_PREFIXES = [
@@ -51,53 +16,6 @@ export const SYSTEM_DENY_PREFIXES = [
     "/cores/",
     "/dev/",
 ];
-
-function globToRegex(glob: string, home: string): RegExp {
-    const expanded = glob.replace(/^~(?=$|\/)/, home);
-    const escaped = expanded.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-    const pattern = escaped
-        .replace(/\*\*\//g, "§ANYDIRS§")
-        .replace(/\*\*/g, "§ANY§")
-        .replace(/\*/g, "[^/]*")
-        .replace(/§ANYDIRS§/g, "(?:.*/)?")
-        .replace(/§ANY§/g, ".*");
-    return new RegExp(`^${pattern}$`);
-}
-
-/** Why `path` is a VM or container disk, a Photos library or a sync database; null when it is none of these. */
-export function vmDataReason(path: string, home: string): string | null {
-    if (globToRegex(ANDROID_USERDATA_GLOB, home).test(path)) {
-        return null;
-    }
-
-    const name = basename(path);
-
-    if (VM_DISK_NAMES.has(name)) {
-        return `${name} is a VM disk: deleting it destroys every container, image and volume inside. Prune inside the guest instead.`;
-    }
-
-    if (VM_DISK_EXTENSIONS.some((ext) => name.endsWith(ext))) {
-        return `${name} is a virtual machine disk image`;
-    }
-
-    if (name === "local.db" && path.includes("/.tresorit/")) {
-        return "Tresorit's sync database";
-    }
-
-    const candidates = [path, `${path}/`];
-
-    for (const glob of VM_DATA_DENY_GLOBS) {
-        const regex = globToRegex(glob, home);
-
-        if (candidates.some((candidate) => regex.test(candidate))) {
-            return glob.includes("photoslibrary")
-                ? "inside the Photos library"
-                : "inside a VM or container data folder: prune inside the guest instead";
-        }
-    }
-
-    return null;
-}
 
 export type PathGuardResult = { ok: true; realPaths: string[] } | { ok: false; error: string };
 
@@ -137,7 +55,7 @@ function insideAllowRoot(real: string, roots: string[]): boolean {
             continue;
         }
 
-        const regex = globToRegex(root, "");
+        const regex = pathGlobRegex(root, "");
         let probe = real;
 
         while (probe.length > 1) {

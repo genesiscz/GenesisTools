@@ -53,7 +53,7 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
                     return makeResult("skipped", { reason: "not_configured" }, start);
                 }
 
-                const api = createApi(config.botToken);
+                const api = createApi(config.botToken, config.apiRoot);
                 const chatId = telegramChatFor(config, "notifications");
                 const message = ctx.interpolate(params.message ?? "");
                 const parseMode = params.parse_mode;

@@ -10,7 +10,7 @@ import {
     symlinkSync,
     writeFileSync,
 } from "node:fs";
-import * as fsPromises from "node:fs/promises";
+import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cleanPackageCacheAction, DevCachesAnalyzer } from "@app/doctor/analyzers/dev-caches";
@@ -19,6 +19,7 @@ import { type ActDeps, type ActOptions, pathsHash, runAct } from "@app/doctor/li
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import { runOne } from "@app/doctor/lib/executor";
 import * as packages from "@app/doctor/lib/global-packages";
+import { removeForDoctor } from "@app/doctor/lib/remove";
 import { removePathsAction } from "@app/doctor/lib/remove-action";
 import * as commands from "@app/doctor/lib/run";
 import { evaluateScanGate } from "@app/doctor/lib/scan-gate";
@@ -35,6 +36,7 @@ import {
 } from "@app/macos/lib/kit-fixtures";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as rm from "@genesiscz/utils/rm";
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), "doctor-act-")));
 
@@ -170,6 +172,17 @@ function folder(path: string): string {
     mkdirSync(path, { recursive: true });
     writeFileSync(join(path, "data.bin"), Buffer.alloc(4096, 1));
     return path;
+}
+
+/** What the rm trash returns for one moved path; the tests spy the move, so nothing reaches a trash. */
+function fakeBatch(path: string): rm.TrashBatch {
+    return {
+        id: "fixture-batch",
+        createdAt: new Date(0).toISOString(),
+        drainAfter: new Date(0).toISOString(),
+        caller: null,
+        items: [{ original: path, stored: join(path, "..", "stored"), kind: "dir", rule: "doctor:fixture" }],
+    };
 }
 
 const realRemove = async (path: string): Promise<void> => {
@@ -314,9 +327,10 @@ describe("doctor act guards", () => {
             emit: () => {},
         };
         const snapshot = spyOn(packages, "writeSnapshot").mockResolvedValue(undefined);
-        const remove = spyOn(fsPromises, "rm").mockImplementation(async () => {
+        const remove = spyOn(rm, "moveToTrash").mockImplementation(() => {
             throw new Error("unsafe rm reached");
         });
+        const drainer = spyOn(rm, "kickDrainer").mockImplementation(() => undefined);
         try {
             for (const mode of ["git", "parent-link", "normal"]) {
                 const fixtureHome = join(home, mode);
@@ -350,16 +364,21 @@ describe("doctor act guards", () => {
                 };
                 remove.mockClear();
                 if (mode === "normal") {
-                    remove.mockResolvedValue(undefined);
+                    remove.mockReturnValue(fakeBatch(cache));
                 }
                 const result = await action.execute({ runId: "fixture-cache", dryRun: false }, finding);
                 expect(result.status).toBe(mode === "normal" ? "ok" : "failed");
                 expect(remove.mock.calls.length).toBe(mode === "normal" ? 1 : 0);
+                if (mode === "normal") {
+                    expect(remove.mock.calls[0]?.[0][0]?.rule).toBe("doctor:dev-caches");
+                    expect(remove.mock.calls[0]?.[1].graceMinutes).toBe(0);
+                }
             }
             expect(snapshot.mock.calls.length).toBe(3);
         } finally {
             snapshot.mockRestore();
             remove.mockRestore();
+            drainer.mockRestore();
         }
     });
 
@@ -1017,5 +1036,112 @@ describe("doctor act stale and log failures", () => {
         expect(run.result.items.map((item) => item.status)).toEqual(["ok", "ok"]);
         expect(run.result.items[0]?.error).toContain("ENOSPC");
         expect(existsSync(one) || existsSync(two)).toBe(false);
+    });
+});
+
+describe("doctor removals go through the tools rm verdict", () => {
+    function spyTrash() {
+        const move = spyOn(rm, "moveToTrash").mockImplementation(() => {
+            throw new Error("the trash primitive must not be reached");
+        });
+        const drainer = spyOn(rm, "kickDrainer").mockImplementation(() => {
+            throw new Error("the drainer must not start");
+        });
+        return {
+            move,
+            restore: () => {
+                move.mockRestore();
+                drainer.mockRestore();
+            },
+        };
+    }
+
+    it("refuses a keychain, a config.protect entry and a VM disk, while the trash primitive throws", async () => {
+        const keychains = join(home, "Library", "Keychains");
+        const keychain = join(keychains, "login.keychain-db");
+        mkdirSync(keychains, { recursive: true });
+        writeFileSync(keychain, "x");
+        const precious = folder(join(allowed, "precious"));
+        const disk = join(allowed, "guest.qcow2");
+        writeFileSync(disk, "x");
+        const configPath = rm.rmConfigPath();
+        const savedConfig = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
+        rm.saveRmConfig({ ...rm.defaultRmConfig(), protect: [precious] });
+        const homedir = spyOn(os, "homedir").mockReturnValue(home);
+        const trash = spyTrash();
+        try {
+            const analyzer = new FixtureAnalyzer([join(home, "Library")], home, () => [
+                { id: "f:keychain", paths: [keychain] },
+                { id: "f:protect", paths: [precious] },
+            ]);
+            const run = await runAct(
+                opts(["f:keychain", "f:protect"]),
+                deps(analyzer, { remove: undefined, trash: undefined })
+            );
+
+            expect(run.result.items.map((item) => item.status)).toEqual(["failed", "failed"]);
+            expect(run.result.items[0]?.error).toContain(`protected: ${keychains}`);
+            expect(run.result.items[1]?.error).toContain(`protected: ${precious}`);
+
+            const vm = await removeForDoctor(disk, { analyzerId: "fixture" });
+
+            expect(vm.removed).toBe(false);
+            expect(vm.refusal).toContain("virtual machine disk image");
+            expect(trash.move).not.toHaveBeenCalled();
+            expect(existsSync(keychain) && existsSync(precious) && existsSync(disk)).toBe(true);
+        } finally {
+            trash.restore();
+            homedir.mockRestore();
+            if (savedConfig === null) {
+                rmSync(configPath, { force: true });
+            } else {
+                writeFileSync(configPath, savedConfig);
+            }
+        }
+    });
+
+    it("the Trash method asks the same verdict before the trash command runs", async () => {
+        const keychains = join(home, "Library", "Keychains");
+        const keychain = join(keychains, "login.keychain-db");
+        mkdirSync(keychains, { recursive: true });
+        writeFileSync(keychain, "x");
+        const homedir = spyOn(os, "homedir").mockReturnValue(home);
+        const command = spyOn(commands, "run").mockImplementation(async () => {
+            throw new Error("the trash command must not run");
+        });
+        try {
+            const analyzer = new FixtureAnalyzer([join(home, "Library")], home, () => [
+                { id: "f:keychain", paths: [keychain] },
+            ]);
+            const run = await runAct(opts(["f:keychain"], { method: "trash" }), deps(analyzer, { trash: undefined }));
+
+            expect(run.result.items[0]?.status).toBe("failed");
+            expect(run.result.items[0]?.error).toContain(`protected: ${keychains}`);
+            expect(command).not.toHaveBeenCalled();
+            expect(existsSync(keychain)).toBe(true);
+        } finally {
+            command.mockRestore();
+            homedir.mockRestore();
+        }
+    });
+
+    it("an ordinary cache reaches the rm trash under the doctor rule with no grace, and starts the drainer", async () => {
+        const cache = folder(join(allowed, "old-cache"));
+        const move = spyOn(rm, "moveToTrash").mockReturnValue(fakeBatch(cache));
+        const drainer = spyOn(rm, "kickDrainer").mockImplementation(() => undefined);
+        try {
+            const removal = await removeForDoctor(cache, { analyzerId: "fixture" });
+
+            expect(removal).toEqual({ removed: true });
+            expect(move).toHaveBeenCalledTimes(1);
+            expect(move.mock.calls[0]?.[0][0]?.rule).toBe("doctor:fixture");
+            expect(move.mock.calls[0]?.[0][0]?.target.path).toBe(cache);
+            expect(move.mock.calls[0]?.[1].graceMinutes).toBe(0);
+            expect(drainer).toHaveBeenCalledTimes(1);
+            expect(await removeForDoctor(join(allowed, "gone"), { analyzerId: "fixture" })).toEqual({ removed: false });
+        } finally {
+            move.mockRestore();
+            drainer.mockRestore();
+        }
     });
 });

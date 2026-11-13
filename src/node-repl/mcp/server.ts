@@ -10,7 +10,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { mcpTimeoutHint, ReplEngine, resultMessage } from "../lib/engine";
-import { createToolsets, parseToolsetList } from "../lib/toolsets";
+import { createToolsets, isToolsetId, parseToolsetList, toolsetOneLine } from "../lib/toolsets";
 
 // stdio MCP server: stdout carries JSON-RPC frames, so every diagnostic goes through the
 // logger (file plus the gated stderr stream), never console.log.
@@ -206,12 +206,33 @@ export function createServer(engine: ReplEngine, options: { toolsetLines?: reado
     return server;
 }
 
+/**
+ * One line per preloaded toolset for the `js` description. A table toolset's line comes from its row and loads
+ * nothing (the worker loads it); only a `/abs/module.ts#ExportName` entry, which has no row, is imported here.
+ */
+async function toolsetLinesOf(entries: readonly string[]): Promise<string[]> {
+    const lines: string[] = [];
+
+    for (const entry of entries) {
+        if (isToolsetId(entry)) {
+            lines.push(toolsetOneLine(entry));
+            continue;
+        }
+
+        const { loaded, failed } = await createToolsets([entry]);
+        lines.push(...loaded.map((toolset) => toolset.oneLine()));
+        lines.push(...failed.map((failure) => `${failure.id}: did not load: ${failure.reason}`));
+    }
+
+    return lines;
+}
+
 export async function startMcpServer(
     options: { toolsets?: readonly string[]; name?: string; maxOutputChars?: number } = {}
 ): Promise<void> {
     const toolsets = parseToolsetList(options.toolsets ?? []);
     const engine = new ReplEngine({ toolsets, maxOutputChars: options.maxOutputChars, timeoutHint: mcpTimeoutHint });
-    const toolsetLines = (await createToolsets(toolsets)).map((toolset) => toolset.oneLine());
+    const toolsetLines = await toolsetLinesOf(toolsets);
     await serveStdio({
         name: options.name ?? "node-repl",
         server: createServer(engine, { toolsetLines }),

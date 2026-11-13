@@ -1,7 +1,7 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { assertApiKeySourceAllowed } from "@app/ai-proxy/lib/providers/api-key-guard";
-import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
-import { relayHeaders, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
+import { defaultApiKeyEnvName, maskApiKey } from "@app/ai-proxy/lib/providers/api-key-state";
+import { type ExchangeFetch, exchange, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
 import {
     harvestResponsesOutput,
@@ -22,14 +22,6 @@ import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
 
 export { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 
-function maskKey(key: string): string {
-    if (key.length <= 8) {
-        return "****";
-    }
-
-    return `${key.slice(0, 4)}…${key.slice(-4)}`;
-}
-
 /**
  * OpenAI-compatible xAI API key provider (`https://api.x.ai/v1`).
  * Bills the team API key (not Grok subscription). Catalog comes from GET /models.
@@ -40,11 +32,13 @@ export class XaiApiKeyProvider implements ProxyProvider {
     private readonly account: AiProxyAccountConfig;
     private readonly apiKey: string;
     private readonly baseUrl: string;
+    private readonly fetch: ExchangeFetch;
 
-    constructor(account: AiProxyAccountConfig, apiKey: string) {
+    constructor(account: AiProxyAccountConfig, apiKey: string, fetch: ExchangeFetch = fetchDirect) {
         this.account = account;
         this.accountFingerprint = accountConfigFingerprint(account);
         this.apiKey = apiKey;
+        this.fetch = fetch;
         this.baseUrl = (account.baseUrl ?? XAI_API_BASE_URL).replace(/\/$/, "");
     }
 
@@ -111,7 +105,6 @@ export class XaiApiKeyProvider implements ProxyProvider {
      * words}) is a superset of OpenAI's json format — passed through as-is.
      */
     async audioTranscriptions(req: Request, upstreamModel: string, form: FormData): Promise<Response> {
-        const started = performance.now();
         const upstream = new FormData();
 
         for (const [key, value] of form.entries()) {
@@ -128,55 +121,16 @@ export class XaiApiKeyProvider implements ProxyProvider {
             upstream.append("file", file, file instanceof File ? file.name : "audio");
         }
 
-        try {
-            const response = await fetchDirect(`${this.baseUrl}/stt`, {
-                method: "POST",
-                body: upstream,
-                signal: req.signal,
-                headers: { Authorization: `Bearer ${this.apiKey}` },
-            });
-
-            const elapsedMs = Math.round(performance.now() - started);
-            logger[response.ok ? "debug" : "warn"](
-                { account: this.account.name, upstreamModel, path: "/stt", status: response.status, elapsedMs },
-                `ai-proxy: xai-api-key upstream stt ${response.ok ? "ok" : "failed"}`
-            );
-
-            return new Response(response.body, {
-                status: response.status,
-                headers: relayHeaders(response),
-            });
-        } catch (err) {
-            if (req.signal.aborted) {
-                logger.debug({ account: this.account.name, path: "/stt" }, "ai-proxy: xai-api-key client aborted");
-                return new Response(null, { status: 499 });
-            }
-
-            logger.warn(
-                {
-                    err,
-                    account: this.account.name,
-                    upstreamModel,
-                    path: "/stt",
-                    elapsedMs: Math.round(performance.now() - started),
-                },
-                "ai-proxy: xai-api-key upstream stt threw"
-            );
-
-            return new Response(
-                SafeJSON.stringify({
-                    error: {
-                        message: err instanceof Error ? err.message : String(err),
-                        type: "upstream_error",
-                        code: "xai_api_fetch_failed",
-                    },
-                }),
-                {
-                    status: 502,
-                    headers: { "Content-Type": "application/json" },
-                }
-            );
-        }
+        return exchange({
+            fetch: this.fetch,
+            request: {
+                url: `${this.baseUrl}/stt`,
+                init: { method: "POST", body: upstream, headers: { Authorization: `Bearer ${this.apiKey}` } },
+            },
+            signal: req.signal,
+            log: { provider: "xai-api-key", account: this.account.name, route: "/stt", fields: { upstreamModel } },
+            failureCode: "xai_api_fetch_failed",
+        });
     }
 
     async getUsage(): Promise<UsageSummary> {
@@ -190,7 +144,7 @@ export class XaiApiKeyProvider implements ProxyProvider {
             return {
                 accountName: this.account.name,
                 provider: "xai-api-key",
-                summary: `API key ${maskKey(this.apiKey)} present. Inference has no usage endpoint — set ${managementEnv} + teamId for Management API usage.`,
+                summary: `API key ${maskApiKey(this.apiKey)} present. Inference has no usage endpoint — set ${managementEnv} + teamId for Management API usage.`,
             };
         }
 
@@ -218,7 +172,7 @@ export class XaiApiKeyProvider implements ProxyProvider {
             return {
                 accountName: this.account.name,
                 provider: "xai-api-key",
-                summary: `API key ${maskKey(this.apiKey)} present; Management API usage failed: ${
+                summary: `API key ${maskApiKey(this.apiKey)} present; Management API usage failed: ${
                     err instanceof Error ? err.message : String(err)
                 }`,
             };
@@ -226,91 +180,39 @@ export class XaiApiKeyProvider implements ProxyProvider {
     }
 
     private async forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
-        const started = performance.now();
         // xAI has no item store: item_reference pointers are inlined from the
         // proxy's own store on the way in and output items remembered on the
         // way out (see wham-item-store.ts).
         const isResponses = path === "/responses";
         const itemScope = whamItemScope(req);
         const clientBody = isResponses ? inlineResponsesItemReferencesInBodyText(itemScope, bodyText) : bodyText;
-        const upstreamBody = rewriteBodyModel(clampXaiReasoningEffort(clientBody, upstreamModel), upstreamModel);
-        const url = `${this.baseUrl}${path}`;
-
-        try {
-            const upstream = await fetchDirect(url, {
-                method: "POST",
-                body: upstreamBody,
-                signal: req.signal,
-                headers: {
-                    Authorization: `Bearer ${this.apiKey}`,
-                    "Content-Type": "application/json",
-                    Accept: req.headers.get("Accept") ?? "application/json",
+        const relayed = await exchange({
+            fetch: this.fetch,
+            request: {
+                url: `${this.baseUrl}${path}`,
+                init: {
+                    method: "POST",
+                    body: rewriteBodyModel(clampXaiReasoningEffort(clientBody, upstreamModel), upstreamModel),
+                    headers: {
+                        Authorization: `Bearer ${this.apiKey}`,
+                        "Content-Type": "application/json",
+                        Accept: req.headers.get("Accept") ?? "application/json",
+                    },
                 },
-            });
+            },
+            signal: req.signal,
+            log: { provider: "xai-api-key", account: this.account.name, route: path, fields: { upstreamModel } },
+            failureCode: "xai_api_fetch_failed",
+        });
 
-            const elapsedMs = Math.round(performance.now() - started);
-
-            if (!upstream.ok) {
-                logger.warn(
-                    {
-                        account: this.account.name,
-                        upstreamModel,
-                        path,
-                        status: upstream.status,
-                        elapsedMs,
-                    },
-                    "ai-proxy: xai-api-key upstream request failed"
-                );
-            } else {
-                logger.debug(
-                    {
-                        account: this.account.name,
-                        upstreamModel,
-                        path,
-                        status: upstream.status,
-                        elapsedMs,
-                    },
-                    "ai-proxy: xai-api-key upstream request ok"
-                );
-            }
-
-            const body = isResponses ? await harvestResponsesOutput(itemScope, upstream) : upstream.body;
-
-            return new Response(body, {
-                status: upstream.status,
-                headers: relayHeaders(upstream),
-            });
-        } catch (err) {
-            if (req.signal.aborted) {
-                logger.debug({ account: this.account.name, path }, "ai-proxy: xai-api-key client aborted");
-                return new Response(null, { status: 499 });
-            }
-
-            logger.warn(
-                {
-                    err,
-                    account: this.account.name,
-                    upstreamModel,
-                    path,
-                    elapsedMs: Math.round(performance.now() - started),
-                },
-                "ai-proxy: xai-api-key upstream fetch threw"
-            );
-
-            return new Response(
-                SafeJSON.stringify({
-                    error: {
-                        message: err instanceof Error ? err.message : String(err),
-                        type: "upstream_error",
-                        code: "xai_api_fetch_failed",
-                    },
-                }),
-                {
-                    status: 502,
-                    headers: { "Content-Type": "application/json" },
-                }
-            );
+        if (!isResponses) {
+            return relayed;
         }
+
+        return new Response(await harvestResponsesOutput(itemScope, relayed), {
+            status: relayed.status,
+            headers: relayed.headers,
+        });
     }
 }
 

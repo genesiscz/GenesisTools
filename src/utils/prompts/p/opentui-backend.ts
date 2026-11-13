@@ -1,11 +1,12 @@
+import { promptCancelSymbol } from "@genesiscz/utils/prompts/cancel";
 import type { PromptBackend } from "@genesiscz/utils/prompts/p/backend";
 import type {
     ConfirmOpts,
     Log,
     MultiSelectOpts,
     PasswordOpts,
+    SelectOption,
     SelectOpts,
-    SelectValue,
     Spinner,
     TextOpts,
     TypedConfirmOpts,
@@ -20,7 +21,9 @@ export interface LogEntry {
     timestamp: string;
 }
 
-const resolvers = new Map<string, (value: PromptTaskValue) => void>();
+type TaskAnswer = { cancelled: false; value: PromptTaskValue } | { cancelled: true };
+
+const resolvers = new Map<string, (answer: TaskAnswer) => void>();
 const logEntries: LogEntry[] = [];
 const logSubscribers = new Set<(entries: LogEntry[]) => void>();
 
@@ -28,15 +31,22 @@ function nextTaskId(): string {
     return `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function enqueue<T extends PromptTaskValue>(task: PromptTask, coerce: (value: PromptTaskValue) => T): Promise<T> {
-    return new Promise<T>((resolve) => {
-        resolvers.set(task.id, (value) => resolve(coerce(value)));
+function enqueue<T>(task: PromptTask, coerce: (value: PromptTaskValue) => T): Promise<T | symbol> {
+    return new Promise<T | symbol>((resolve, reject) => {
+        resolvers.set(task.id, (answer) => {
+            if (answer.cancelled) {
+                resolve(promptCancelSymbol);
+                return;
+            }
+
+            try {
+                resolve(coerce(answer.value));
+            } catch (error) {
+                reject(error);
+            }
+        });
         usePromptStore.getState().enqueue(task);
     });
-}
-
-function isSelectValue(value: PromptTaskValue): value is SelectValue {
-    return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 }
 
 function coerceText(value: PromptTaskValue): string {
@@ -47,23 +57,36 @@ function coerceBoolean(value: PromptTaskValue): boolean {
     return value === true;
 }
 
-function coerceSelectValue(value: PromptTaskValue): SelectValue {
-    if (isSelectValue(value)) {
-        return value;
-    }
-
-    return "";
+/**
+ * The prompt store holds primitive values, while a facade option may hold any value. The store gets each option's
+ * index as its value, and the answer index maps back to the option's own value.
+ */
+function indexed<V>(options: SelectOption<V>[]): SelectOption[] {
+    return options.map((option, index) => ({ value: index, label: option.label, hint: option.hint }));
 }
 
-function coerceSelectValues(value: PromptTaskValue): SelectValue[] {
-    if (!Array.isArray(value)) {
-        return [];
-    }
-
-    return value.filter((item): item is SelectValue => isSelectValue(item));
+function indexOfValue<V>(options: SelectOption<V>[], value: V | undefined): number | undefined {
+    const index = options.findIndex((option) => option.value === value);
+    return index >= 0 ? index : undefined;
 }
 
-export function completeTask(id: string, value: PromptTaskValue): void {
+function optionValues<V>(options: SelectOption<V>[], value: PromptTaskValue): V[] {
+    const picked = Array.isArray(value) ? value : [value];
+    return picked.flatMap((item) => (typeof item === "number" && options[item] ? [options[item].value] : []));
+}
+
+/** The option the answer index points at. An option whose own value is `undefined` is still a selection. */
+function optionValue<V>(options: SelectOption<V>[], value: PromptTaskValue): V {
+    const option = typeof value === "number" ? options[value] : undefined;
+
+    if (!option) {
+        throw new Error("opentuiBackend select answered with no option");
+    }
+
+    return option.value;
+}
+
+function settleTask(id: string, answer: TaskAnswer): void {
     const resolver = resolvers.get(id);
 
     if (!resolver) {
@@ -72,7 +95,16 @@ export function completeTask(id: string, value: PromptTaskValue): void {
 
     resolvers.delete(id);
     usePromptStore.getState().complete(id);
-    resolver(value);
+    resolver(answer);
+}
+
+export function completeTask(id: string, value: PromptTaskValue): void {
+    settleTask(id, { cancelled: false, value });
+}
+
+/** The user dismissed the prompt (Escape). The prompt answers `promptCancelSymbol`, which the facade settles. */
+export function cancelTask(id: string): void {
+    settleTask(id, { cancelled: true });
 }
 
 export function opentuiBackend(_renderer: CliRenderer): PromptBackend {
@@ -105,9 +137,33 @@ export function opentuiBackend(_renderer: CliRenderer): PromptBackend {
         // clack default (the real backend) does honor PasswordOpts.validate.
         password: (opts: PasswordOpts) =>
             enqueue({ id: nextTaskId(), type: "text", opts: { message: opts.message } }, coerceText),
-        select: (opts: SelectOpts) => enqueue({ id: nextTaskId(), type: "select", opts }, coerceSelectValue),
-        multiselect: (opts: MultiSelectOpts) =>
-            enqueue({ id: nextTaskId(), type: "multiselect", opts }, coerceSelectValues),
+        select: <V>(opts: SelectOpts<V>) =>
+            enqueue(
+                {
+                    id: nextTaskId(),
+                    type: "select",
+                    opts: {
+                        message: opts.message,
+                        options: indexed(opts.options),
+                        initialValue: indexOfValue(opts.options, opts.initialValue),
+                    },
+                },
+                (value) => optionValue(opts.options, value)
+            ),
+        multiselect: <V>(opts: MultiSelectOpts<V>) =>
+            enqueue(
+                {
+                    id: nextTaskId(),
+                    type: "multiselect",
+                    opts: {
+                        message: opts.message,
+                        options: indexed(opts.options),
+                        required: opts.required,
+                        initialValues: opts.initialValues?.flatMap((v) => indexOfValue(opts.options, v) ?? []),
+                    },
+                },
+                (value) => optionValues(opts.options, value)
+            ),
 
         spinner: (): Spinner => {
             let message = "";

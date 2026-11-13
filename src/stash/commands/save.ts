@@ -61,12 +61,13 @@ async function maybePromptSameName(args: {
         return "abort";
     }
 
-    const { confirm, note } = await import("@clack/prompts");
+    const { confirm, note } = await import("@genesiscz/utils/prompts/p");
     note(diff, `Aggregate diff: v_prev → v_next for "${args.existingName}"`);
     const answer = await confirm({
         message: `Bump "${args.existingName}" to a new version with these changes?`,
         active: "yes (write v_next)",
         inactive: "no (abort)",
+        cancel: "back",
     });
 
     return answer === true ? "proceed" : "abort";
@@ -112,7 +113,7 @@ export async function saveCommand(opts: SaveOptions): Promise<void> {
             ui.info(suggestCommand("tools stash save", { add: ["--mode", "all"], subcommand: ["save"] }));
             process.exit(1);
         }
-        const { select } = await import("@clack/prompts");
+        const { select } = await import("@genesiscz/utils/prompts/p");
         const sel = await select({
             message: "What to save?",
             options: [
@@ -122,6 +123,7 @@ export async function saveCommand(opts: SaveOptions): Promise<void> {
                 { value: "regions", label: "Marked regions (// #region @stash:<name> blocks in changed files)" },
                 { value: "patch", label: "Interactive hunk picker (git-add-p style)" },
             ],
+            cancel: "back",
         });
         if (typeof sel !== "string") {
             ui.warn("cancelled");
@@ -386,7 +388,7 @@ async function pickRegionsInteractively(args: { projectRoot: string; name: strin
         arr.push({ file: r.filePath, startLine: r.startLine, endLine: r.endLine });
         byName.set(r.name, arr);
     }
-    const { multiselect } = await import("@clack/prompts");
+    const { multiselect } = await import("@genesiscz/utils/prompts/p");
     const sel = await multiselect({
         message: `Pick regions to include in stash "${args.name}":`,
         // The region name is the author marker tag (`@stash:<region-name>`), NOT the stash name —
@@ -398,6 +400,7 @@ async function pickRegionsInteractively(args: { projectRoot: string; name: strin
             hint: hits.map((h) => `${h.file}:${h.startLine}-${h.endLine}`).join(", "),
         })),
         required: true,
+        cancel: "back",
     });
     if (!Array.isArray(sel) || sel.length === 0) {
         ui.warn("cancelled");

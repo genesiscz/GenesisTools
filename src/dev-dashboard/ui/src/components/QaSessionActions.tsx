@@ -1,3 +1,4 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import {
     resumeCommandFor,
     type SessionActionState,
@@ -9,7 +10,7 @@ import { IconButton } from "@ui/components/icon-button";
 import { Crosshair, Hash, PanelsTopLeft, TerminalSquare } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { QaCmuxPickerDialog } from "@/components/QaCmuxPickerDialog";
-import { cmuxApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 const ACTION_BUTTON_CLASS = "size-6 text-inherit hover:bg-[var(--dd-border)]/50 hover:text-[var(--dd-text-secondary)]";
 
@@ -66,7 +67,7 @@ export function QaSessionActions({ sessionId }: { sessionId: string | null | und
     // Shared with every other card and with the cmux page: one poll, not one per card.
     const snapshotQuery = useQuery({
         queryKey: ["cmux", "snapshot"],
-        queryFn: () => cmuxApi.snapshot().then((r) => r.snapshot),
+        queryFn: () => dashboard.call(ENDPOINTS.cmuxSnapshot, {}).then((r) => r.snapshot),
         staleTime: 15_000,
         retry: false,
     });
@@ -96,11 +97,21 @@ export function QaSessionActions({ sessionId }: { sessionId: string | null | und
         setFocusError(null);
 
         try {
-            const result = await cmuxApi.focusSession(id);
+            // A miss answers 409 with the same body as a hit, so the card shows the reason instead of an error.
+            const result = await dashboard.call(
+                ENDPOINTS.cmuxFocusSession,
+                { sessionId: id },
+                { answerOnRefusal: true }
+            );
 
             if (!result.ok) {
                 setFocusError(`${result.error} ${result.remedy}`);
             }
+        } catch (err) {
+            // The dashboard is unreachable or the answer was cut off; the caller has no catch of its own.
+            setFocusError(
+                `focus request failed: ${err instanceof Error ? err.message : String(err)} Check that the dashboard server is still running.`
+            );
         } finally {
             setFocusing(false);
         }

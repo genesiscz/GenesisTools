@@ -3,9 +3,9 @@
 // Register all step handlers (http, file, git, json, text, array, notify, parallel, loop)
 import "./steps/index";
 
-import * as p from "@clack/prompts";
 import { env } from "@genesiscz/utils/env";
 import { formatDuration } from "@genesiscz/utils/format.ts";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import type { RunLogger } from "./run-logger.ts";
 import { executeStep, isParallelChild, setStepRunnerMeta } from "./step-runner.ts";
@@ -254,6 +254,7 @@ async function promptForMissingVars(preset: Preset, ctx: ExecutionContext): Prom
             message: def.description || `Enter value for "${key}":`,
             placeholder: def.default != null ? String(def.default) : undefined,
             defaultValue: def.default != null ? String(def.default) : undefined,
+            cancel: "back",
         });
 
         if (p.isCancel(answer)) {

@@ -16,7 +16,7 @@ import { closeDatabase, getCacheStats } from "@app/github/lib/cache";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
 import { checkAuth, getRateLimit } from "@genesiscz/utils/github/octokit";
 import { detectRepoFromGit, parseGitHubUrl } from "@genesiscz/utils/github/url-parser";
-import { logger, out } from "@genesiscz/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend as _inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
 
@@ -420,10 +420,6 @@ async function main(): Promise<void> {
     // Otherwise, parse command line
     try {
         await runTool(program, { tool: "github" });
-    } catch (error) {
-        logger.error({ error }, "Command failed");
-        out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
-        process.exit(1);
     } finally {
         closeDatabase();
     }

@@ -15,8 +15,8 @@ import { join } from "node:path";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { renderAnnotationPlan } from "@genesiscz/utils/image";
+import { loadCanvas } from "@genesiscz/utils/image/canvas";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { NativeCaptureControls, nativeScreens, nativeTargetRegion, validateNativeCapturePlan } from "./capture-native";
 import {
     type Action,
@@ -991,6 +991,7 @@ export async function runClickmap(opts: ClickmapOptions): Promise<ClickmapResult
     // so 1 image px == 1 point and gridlines land exactly on labeled coords.
     const w = Math.round(match.w);
     const h = Math.round(match.h);
+    const { createCanvas, loadImage } = await loadCanvas();
     const raw = await loadImage(rawPath);
     const scaled = createCanvas(w, h);
     const sctx = scaled.getContext("2d");

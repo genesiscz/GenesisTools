@@ -14,7 +14,7 @@ import { qaDecisionRoutes } from "@app/dev-dashboard/server/routes/qa-decisions"
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import { postDecisions } from "@app/question/lib/decisions/store";
 import { z } from "zod";
-import { bindEndpoint, ReceiptCache, withTableIdempotency } from "./bind";
+import { bindEndpoint, bindHandler, ReceiptCache } from "./bind";
 
 function ctx({
     method = "POST",
@@ -182,25 +182,27 @@ describe("bindEndpoint on the act row", () => {
     });
 });
 
-describe("withTableIdempotency", () => {
-    it("keys a hand-written route that is a keyed-write row, and leaves a read alone", async () => {
+describe("bindHandler", () => {
+    it("keys a hand-written handler of a keyed-write row, and leaves a read alone", async () => {
         let writes = 0;
         let reads = 0;
-        const [answer, list] = withTableIdempotency(
-            [
-                {
-                    method: "POST",
-                    pattern: "/api/qa/pending/:id/answer",
-                    handler: async () => ({ kind: "json", status: 200, body: { write: ++writes } }),
-                },
-                {
-                    method: "GET",
-                    pattern: "/api/qa/pending",
-                    handler: async () => ({ kind: "json", status: 200, body: { read: ++reads } }),
-                },
-            ],
-            new ReceiptCache()
+        const receipts = new ReceiptCache();
+        const answer = bindHandler(
+            ENDPOINTS.qaPendingAnswer,
+            async () => ({ kind: "json", status: 200, body: { write: ++writes } }),
+            receipts
         );
+        const list = bindHandler(
+            ENDPOINTS.qaPending,
+            async () => ({ kind: "json", status: 200, body: { read: ++reads } }),
+            receipts
+        );
+        expect([answer.method, answer.pattern, list.method, list.pattern]).toEqual([
+            "POST",
+            "/api/qa/pending/:id/answer",
+            "GET",
+            "/api/qa/pending",
+        ]);
         const keyed = { "idempotency-key": "k1" };
 
         await answer.handler(ctx({ pathname: "/api/qa/pending/ask_1/answer", headers: keyed }));

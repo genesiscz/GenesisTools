@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 
-import * as p from "@clack/prompts";
 import { runTool } from "@genesiscz/utils/cli";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Command } from "commander";
 import pc from "picocolors";
 import { registerConfigCommand } from "./commands/config";
@@ -16,8 +15,6 @@ import { registerStatusCommand } from "./commands/status";
 import { registerStopCommand } from "./commands/stop";
 import { runInteractiveMenu } from "./interactive/menu";
 import { ensureStorage } from "./lib/config";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 
@@ -46,12 +43,7 @@ async function main(): Promise<void> {
         return;
     }
 
-    try {
-        await runTool(program, { tool: "daemon" });
-    } catch (error) {
-        p.log.error(error instanceof Error ? error.message : String(error));
-        process.exit(1);
-    }
+    await runTool(program, { tool: "daemon" });
 }
 
 main().catch((err) => {

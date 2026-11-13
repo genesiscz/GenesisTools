@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { changeLogPath } from "@genesiscz/utils/agents/change-log";
 import { env } from "@genesiscz/utils/env";
 import { isDatalessFile, namesCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
@@ -32,7 +33,6 @@ import {
     readCapped,
     recordFileToolEdit,
     recordScriptedEdits,
-    sessionChangesPath,
 } from "../../changes/log";
 import { gitObjectSink } from "../../changes/objects";
 import { type DiffConfig, diffFor, type HooksConfig } from "../config";
@@ -46,13 +46,20 @@ import {
     type AttributionContext,
     actorOf,
     attribute,
+    FOREIGN_WINDOW_MS,
     gitOperation,
     inFlightRoots,
+    isOurs,
     othersTouches,
+    type Rule,
     readOnlyCommand,
     recordTouches,
+    rootIsOwn,
+    scriptTexts,
+    sessionWrites,
     summaryLine,
     type Touch,
+    type Writes,
 } from "./attribution";
 import { alreadyGone, beforeCopier, beforeCopy, leftOutOfCapture } from "./before";
 import { transcriptOf } from "./capture";
@@ -61,7 +68,15 @@ import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
 import { type FullDiffPart, fullDiffLine, overflowPart, writeFullDiff } from "./full";
-import { appendMentions, canonical, covers, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./mentions";
+import {
+    activeSessions,
+    appendMentions,
+    canonical,
+    loadMentions,
+    type Mentions,
+    mentionsFrom,
+    mentionsOf,
+} from "./mentions";
 import { namedChanges } from "./named";
 import { type DiffBlock, fitMessage, highlightRange, hunkRange, renderBlock, renderPatch, themedDress } from "./render";
 import { terminalColumns } from "./terminal";
@@ -77,8 +92,10 @@ export interface DiffDecision {
     files: string[];
     /** Changed files left to another writer, for the decision log. */
     others?: string[];
-    /** Why each printed file counted as this call's: named, named folder, mentioned, runner or writer. */
+    /** The rule that made each printed file this call's (`Rule` in `attribution.ts`, or `writer`). */
     attributed?: Record<string, string>;
+    /** The rule that kept each file in `others` out: `read-only`, `other-named`, `other-wrote`, `foreign-owned`, `unproven`. */
+    declined?: Record<string, string>;
     /** What the message carried, for the decision log and `diff log`. */
     stats?: { chars: number; blocks: number; elided: number; dropped: number; fullDiff?: string };
     /** Set on a background call's diff, taken when its task ended (`flushDeferred`). */
@@ -607,10 +624,10 @@ function ownedRename(
         return false;
     }
 
-    const fromKind = attribute({ file: pair.from, root: options.root, context: options.context });
-    const toKind = attribute({ file: pair.to, root: options.root, context: options.context });
-
-    return fromKind !== "others" && fromKind !== "ambiguous" && toKind !== "others" && toKind !== "ambiguous";
+    return (
+        isOurs(attribute({ file: pair.from, root: options.root, context: options.context })) &&
+        isOurs(attribute({ file: pair.to, root: options.root, context: options.context }))
+    );
 }
 
 /**
@@ -1531,10 +1548,13 @@ export function runDiffPost({
     maxChars,
     drawnByMod = false,
     deferred = false,
+    changeLogs,
 }: {
     payload: HookPayload;
     config: HooksConfig;
     record?: EditRecorder;
+    /** The folder of the session change logs that attribution reads as proof; a test passes its own. */
+    changeLogs?: string;
     /** The message budget when it must share the hook's one message (`flushDeferred`); else `diff.maxMessageChars`. */
     maxChars?: number;
     /** A background call's diff taken when its task ended (`flushDeferred`): its note is one the mod does not draw. */
@@ -1609,7 +1629,7 @@ export function runDiffPost({
     let scratch = 0;
     let created = 0;
     const suppressed = new Map<DiffCategory, number>();
-    const attribution = attributionContext({ payload, since, dir });
+    const attribution = attributionContext({ payload, since, dir, changeLogs });
     let operation: string | null | undefined;
     const operationOf = (): string | null => {
         operation ??= gitOperation(payload.command);
@@ -1628,7 +1648,7 @@ export function runDiffPost({
     const touches: Touch[] = [];
     const historyNotes: string[] = [];
     const renameNotes: string[] = [];
-    const unattributed: Array<{ path: string; root: string }> = [];
+    const unattributed: Array<{ path: string; root: string; rule: Rule }> = [];
     // Changed files the root pass reached after `maxFiles` blocks: named in a note. Their patches
     // go in the full diff; the message still stops at the cap. The capture directory is removed
     // before that file is written, so the patch is taken while the before-state is still on disk.
@@ -1712,15 +1732,16 @@ export function runDiffPost({
 
             // Before any copy is read: a change another session made is neither rendered, nor
             // claimed (which would steal that session's render), nor logged as this session's.
-            const kind = attribute({ file: file.path, root, context: attribution });
+            const verdict = attribute({ file: file.path, root, context: attribution });
+            const kind = verdict.kind;
 
             // A rebase that stopped, a cherry-pick, a stash pop: what git wrote is not the command's
             // edit. Only a file the command names itself still renders (`git checkout -- a.ts`).
             // A commit made after the move is the command's own (`git rebase master && git commit`).
+            // A file nobody can prove is named by that line too: git brought it, which says more than "no proof".
             if (
                 kind !== "named" &&
-                kind !== "others" &&
-                kind !== "ambiguous" &&
+                (isOurs(verdict) || verdict.rule === "unproven") &&
                 !ownCommits.has(file.path) &&
                 operationOf()
             ) {
@@ -1733,8 +1754,8 @@ export function runDiffPost({
                 touch(file.path, kind);
             }
 
-            if (kind === "others" || kind === "ambiguous") {
-                unattributed.push({ path: file.path, root });
+            if (!isOurs(verdict)) {
+                unattributed.push({ path: file.path, root, rule: verdict.rule });
                 continue;
             }
 
@@ -1810,10 +1831,7 @@ export function runDiffPost({
             }
 
             files.push(file.path);
-            attributed[file.path] =
-                kind === "named" && !covers({ mentions: attribution.named, file: file.path, root, reach: "file" })
-                    ? "named folder"
-                    : kind;
+            attributed[file.path] = verdict.rule;
             blocks.push(block);
         }
 
@@ -1854,7 +1872,7 @@ export function runDiffPost({
         // stays theirs. Neither is captured, claimed, logged or rendered as this session's.
         if (attribution.readOnly() || unattributed.some((item) => item.path === change.path)) {
             if (!unattributed.some((item) => item.path === change.path)) {
-                unattributed.push({ path: change.path, root: dirname(change.path) });
+                unattributed.push({ path: change.path, root: dirname(change.path), rule: "read-only" });
             }
 
             continue;
@@ -1975,14 +1993,25 @@ export function runDiffPost({
               const kind = classifyChange({ path: item.path, patch: "", root: item.root });
               return kind !== "log" && kind !== "generated";
           });
+    const byOthers = othersWorthALine.filter((item) => item.rule !== "unproven");
+    const unproven = othersWorthALine.filter((item) => item.rule === "unproven");
     const notes = [
         ...historyNotes,
         ...renameNotes,
         ...(uncapturedFiles.length > 0
             ? [summaryLine({ label: "dirty file(s) changed with no captured before-state", files: uncapturedFiles })]
             : []),
-        ...(othersWorthALine.length > 0 && diff.othersSummary === "line"
-            ? [summaryLine({ label: "file(s) changed by others in this root", files: othersWorthALine })]
+        // Two lines, because they ask for two different things: the first is another writer's work, the
+        // second is a change nobody can prove, which may be this command's own (a build's output in a
+        // checkout that other sessions work in).
+        ...(diff.othersSummary === "line"
+            ? [
+                  { label: "file(s) changed by others in this root", files: byOthers },
+                  {
+                      label: "file(s) changed while the command ran, with no proof they are this session's",
+                      files: unproven,
+                  },
+              ].flatMap((line) => (line.files.length > 0 ? [summaryLine(line)] : []))
             : []),
         ...(notShown.length > 0 ? [`${notShown.length} more changed file(s) past diff.maxFiles ${diff.maxFiles}`] : []),
         ...(blocks.length > 0 && normalizeEvent(payload.event) === "posttoolusefailure"
@@ -1990,6 +2019,7 @@ export function runDiffPost({
             : []),
     ];
     const others = unattributed.map((item) => item.path);
+    const declined = Object.fromEntries(unattributed.map((item) => [item.path, item.rule]));
 
     if (blocks.length === 0) {
         const reason = silentReason({
@@ -2004,10 +2034,10 @@ export function runDiffPost({
         });
 
         if (notes.length === 0) {
-            return { decision: "silent", reason, files: [], others };
+            return { decision: "silent", reason, files: [], others, declined };
         }
 
-        return { decision: "noted", reason, message: notes.join("\n"), files: [], others };
+        return { decision: "noted", reason, message: notes.join("\n"), files: [], others, declined };
     }
 
     if (drawnByMod) {
@@ -2040,6 +2070,7 @@ export function runDiffPost({
                 files,
                 attributed,
                 others,
+                declined,
                 stats: { chars: message.length, blocks: blocks.length, elided: 0, dropped: 0, fullDiff: path },
             };
         }
@@ -2080,6 +2111,7 @@ export function runDiffPost({
         files,
         attributed,
         others,
+        declined,
         stats: {
             chars: message.length,
             blocks: blocks.length,
@@ -2095,10 +2127,12 @@ function attributionContext({
     payload,
     since,
     dir,
+    changeLogs,
 }: {
     payload: HookPayload;
     since: number;
     dir: string;
+    changeLogs?: string;
 }): AttributionContext {
     const session = payload.sessionId ?? "";
     const actor = actorOf(payload);
@@ -2115,8 +2149,10 @@ function attributionContext({
     let readOnly: boolean | undefined;
     let others: Map<string, Touch[]> | undefined;
     let busy: Set<string> | undefined;
-
-    return {
+    let writes: Writes | undefined;
+    let scripts: Array<{ path: string; text: string }> | undefined;
+    const ownRoots = new Map<string, boolean>();
+    const context: AttributionContext = {
         session,
         since,
         now,
@@ -2141,7 +2177,45 @@ function attributionContext({
             busy ??= inFlightRoots({ session, now });
             return busy;
         },
+        writes: () => {
+            // A test never reads the real change logs under the home folder: it passes its own folder.
+            writes ??=
+                isTestProcess() && !changeLogs
+                    ? { mine: new Map(), theirs: new Map() }
+                    : sessionWrites({ session, since, ...(changeLogs ? { dir: changeLogs } : {}) });
+            return writes;
+        },
+        scripts: () => {
+            scripts ??= scriptTexts(named.paths);
+            return scripts;
+        },
+        ownRoot: (root) => {
+            let own = ownRoots.get(root);
+
+            if (own === undefined) {
+                const foreign = [...context.others()].flatMap(([path, touches]) =>
+                    touches.some((touch) => touch.session !== session && !touch.session.startsWith(`${session}:`))
+                        ? [path]
+                        : []
+                );
+
+                own = rootIsOwn({
+                    root,
+                    session,
+                    since,
+                    busy: context.busyRoots(),
+                    touched: foreign,
+                    writes: context.writes(),
+                    active: activeSessions({ since: since - FOREIGN_WINDOW_MS }),
+                });
+                ownRoots.set(root, own);
+            }
+
+            return own;
+        },
     };
+
+    return context;
 }
 
 /**
@@ -2205,7 +2279,7 @@ function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], { since
             return;
         }
 
-        const file = sessionChangesPath(payload.sessionId);
+        const file = changeLogPath(payload.sessionId);
         const known = new Set(captures.map((item) => item.path));
         const sink = gitObjectSink(undefined, (line) => hookDiag(line));
         const event = {
@@ -2266,7 +2340,7 @@ export function recordFileToolChange(payload: HookPayload): void {
         }
 
         recordFileToolEdit(
-            sessionChangesPath(payload.sessionId),
+            changeLogPath(payload.sessionId),
             {
                 provider: payload.harness,
                 session: payload.sessionId,

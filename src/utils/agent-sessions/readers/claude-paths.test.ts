@@ -90,3 +90,13 @@ describe("classifyPath against the shared session-path fixtures", () => {
         });
     }
 });
+
+test("readSpawnLink names a sub-agent transcript's lead session from its folder, and none for a session's own", async () => {
+    const { reader } = resolveHistoryProvider("claude");
+    const root = "/fixture/projects";
+
+    expect(await reader.readSpawnLink(source(root, join(root, "-shop", "lead", "subagents", "agent-a.jsonl")))).toEqual(
+        { parentSessionId: "lead" }
+    );
+    expect(await reader.readSpawnLink(source(root, join(root, "-shop", "lead.jsonl")))).toBeNull();
+});

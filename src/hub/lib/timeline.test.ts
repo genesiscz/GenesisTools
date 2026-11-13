@@ -247,18 +247,14 @@ function deps(overrides: Partial<TimelineDeps> = {}): TimelineDeps {
     };
 }
 
+/**
+ * A fresh home for the rest of the test. `Storage` resolves GENESIS_TOOLS_HOME when it builds a path, so the
+ * variable stays set while the storage is used; the per-file preload home comes back with the next file.
+ */
 async function scratchStorage(): Promise<Storage> {
-    const home = mkdtempSync(`${tmpdir()}/gt-timeline-`);
-    let storage: Storage | undefined;
-    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
-        storage = new Storage("hub");
-    });
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(`${tmpdir()}/gt-timeline-`));
 
-    if (!storage) {
-        throw new Error("no scratch storage");
-    }
-
-    return storage;
+    return new Storage("hub");
 }
 
 function event(id: string, atText: string, extra: Partial<TimelineEvent> = {}): TimelineEvent {

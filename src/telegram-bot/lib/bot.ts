@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Bot, BotError, type CommandContext, type Context } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { type CallbackRouter, createCallbackRouter, registerCallbackRouter } from "./callbacks";

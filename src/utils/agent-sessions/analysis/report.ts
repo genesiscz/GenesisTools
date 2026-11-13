@@ -54,7 +54,7 @@ export interface SessionReport {
         calls: number;
         models: string[];
         compactions: number | null;
-        /** Calls the harness wrote for its sub-agents inside this transcript. */
+        /** Calls of the session's agents: side-chain rows of its transcript, and the calls of its agent transcripts. */
         subagentCalls: number;
     };
     tokens: { input: number; cacheRead: number; cacheWrite: number; output: number };

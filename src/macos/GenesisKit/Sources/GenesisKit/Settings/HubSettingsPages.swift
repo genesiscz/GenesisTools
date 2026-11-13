@@ -23,7 +23,14 @@ public enum HubSettingsPages {
                     id: panesPageID, title: "Panes", symbol: "rectangle.split.3x1", tint: .teal,
                     subtitle: "Defaults for the diff, the Inbox, the PR overview, Activity, the Agents list, the Agent processes pane and the Worktree cleanup pane."
                 ) {
-                    HubPaneSettings(preferences: preferences)
+                    // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current page.
+                    HubLayoutView(.usageSettings) {
+                        UsageSettingsSketchPanesA(preferences: preferences)
+                    } compact: {
+                        UsageSettingsSketchPanesB(preferences: preferences)
+                    } classic: {
+                        HubPaneSettings(preferences: preferences)
+                    }
                 },
                 NativeSettingsPage(
                     id: historyPageID, title: "History", symbol: "clock.arrow.circlepath", tint: .purple,
@@ -47,6 +54,7 @@ private struct HubAppearanceSettings: View {
 
     var body: some View {
         VStack(spacing: 18) {
+            HubLayoutSettings()
             NativeSettingsCard(
                 "Window style", subtitle: "Hub keeps the hub's own dark look. Native uses the look of this window."
             ) {
@@ -112,6 +120,7 @@ private struct HubPaneSettings: View {
     @AppStorage(HubActivityRows.commitPrefixKey) private var activityCommitPrefix = false
     @AppStorage(HubSessionRows.hideSharedKey) private var sessionsHideShared = true
     @AppStorage(HubPRRowCI.key) private var prRowCI = HubPRRowCI.unusual.rawValue
+    @AppStorage(HubPRRowHoverChecks.key) private var prHoverChecks = HubPRRowHoverChecks.onRest.rawValue
     @AppStorage(HubFileTreeFold.key) private var filesFoldAbove = HubFileTreeFold.defaultAbove
     @AppStorage(TranscriptOutputFold.key) private var transcriptOutputFold = TranscriptOutputFold.defaultLines
     @AppStorage(HubChrome.glassButtonKey) private var glassButton = false
@@ -224,6 +233,13 @@ private struct HubPaneSettings: View {
                     selection: Binding(get: { HubPRRowCI.stored(prRowCI) }, set: { prRowCI = $0.rawValue }),
                     minSegmentWidth: 90)
                 Divider()
+                NativeSettingsSegmented(
+                    "Load failed checks for a PR row's tooltip", identifier: "hub.prs.hoverChecks",
+                    options: HubPRRowHoverChecks.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                    selection: Binding(
+                        get: { HubPRRowHoverChecks.stored(prHoverChecks) }, set: { prHoverChecks = $0.rawValue }),
+                    minSegmentWidth: 90)
+                Divider()
                 NativeSettingsRow(
                     "Fold a files folder above",
                     detail: "A folder with more changed files starts folded, unless it holds half of the change or more. 0 never folds."
@@ -253,6 +269,8 @@ private struct HubPaneSettings: View {
                     detail: "Off: Glass stays in View → Glass (⌘⇧G), the command palette and Appearance.",
                     identifier: "hub.chrome.glassButton", isOn: $glassButton)
             }
+            // `hub.panes#lists` opens the page at this card: its PR row settings sit far below the fold.
+            .nativeSettingsAnchor("lists")
             Text("The panes in the hub show the same controls. Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)

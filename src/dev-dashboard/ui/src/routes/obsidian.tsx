@@ -1,3 +1,4 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import {
     expandedDirsForFolderToggle,
     expandedDirsForNote,
@@ -14,14 +15,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ObsidianReader } from "@/components/ObsidianReader";
 import { ObsidianTree } from "@/components/ObsidianTree";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { obsidianApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 function noteDisplayName(path: string): string {
     return path.split("/").pop() ?? path;
 }
 
 export function ObsidianRoute() {
-    const { data, error } = useQuery({ queryKey: ["obsidian", "tree"], queryFn: obsidianApi.tree });
+    const { data, error } = useQuery({
+        queryKey: ["obsidian", "tree"],
+        queryFn: () => dashboard.call(ENDPOINTS.obsidianTree, {}),
+    });
     const navigate = useNavigate({ from: "/obsidian" });
     const { note, open } = useSearch({ from: "/obsidian" });
     const isMobile = useMediaQuery("(max-width: 768px)");

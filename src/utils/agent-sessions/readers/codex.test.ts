@@ -5,10 +5,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { JsonRecord } from "@genesiscz/utils/agent-sessions/source-scan";
+import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { codexHistoryReader } from "../compact-readers";
 import type { NativeSessionSource } from "../types";
 import {
     codexProjectionCachePath,
+    codexSpawnLink,
     createCodexHistoryOperations,
     readCodexMetadata,
     readCodexProjectionFingerprint,
@@ -18,6 +21,7 @@ import {
 } from "./codex";
 import { CODEX_MODEL_HEAD_BYTES } from "./codex-model";
 import { codexIndexRows } from "./codex-title";
+import { type CodexContext, updateCodexContext } from "./codex-usage-context";
 import { SESSION_MODEL_TAIL_BYTES } from "./session-model";
 
 const CHILD_ID = "11111111-2222-4333-8444-555555555555";
@@ -1434,4 +1438,134 @@ test("the session index is parsed once for discovery and title search: id or ses
         { id: "t-1", title: "First", updatedAt: "2026-10-30T10:00:00Z" },
         { id: "t-2", title: "Older shape", updatedAt: 1761818400 },
     ]);
+});
+
+/** The first line of a Codex sub-agent rollout: the spawn link in `thread_spawn`, copied to the payload's top level. */
+function spawnedHeader(options: {
+    id: string;
+    parent: string;
+    depth: number;
+    nickname: string;
+    role: string;
+    path: string;
+}) {
+    return line({
+        timestamp: "2026-10-05T10:00:00.000Z",
+        ordinal: 0,
+        type: "session_meta",
+        payload: {
+            session_id: PARENT_ID,
+            id: options.id,
+            parent_thread_id: options.parent,
+            timestamp: "2026-10-05T10:00:00.000Z",
+            cwd: "/work/app",
+            source: {
+                subagent: {
+                    thread_spawn: {
+                        parent_thread_id: options.parent,
+                        depth: options.depth,
+                        agent_path: options.path,
+                        agent_nickname: options.nickname,
+                        agent_role: options.role,
+                    },
+                },
+            },
+            thread_source: "subagent",
+            agent_nickname: options.nickname,
+            agent_role: options.role,
+            agent_path: options.path,
+            base_instructions: { text: "x".repeat(20_000) },
+        },
+    });
+}
+
+function rolloutSource(text: string | Uint8Array, suffix = ""): NativeSessionSource<"codex"> {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-spawn-"));
+    const root = join(home, "sessions");
+    mkdirSync(root);
+    const path = join(root, `rollout-2026-10-05T10-00-00-${CHILD_ID}.jsonl${suffix}`);
+    writeFileSync(path, text);
+    return { kind: "codex", root, sourceHome: home, filePath: path, dataPaths: [path], metadataPaths: [] };
+}
+
+test("readSpawnLink reads the spawner, depth, role and names from the header, whatever follows", async () => {
+    const header = spawnedHeader({
+        id: CHILD_ID,
+        parent: PARENT_ID,
+        depth: 2,
+        nickname: "Cicero",
+        role: "worker",
+        path: "/root/astra1_runtime",
+    });
+    const source = rolloutSource(header + line({ type: "turn_context", payload: { turn_id: "t1", model: "m" } }));
+
+    expect(await codexHistoryReader.readSpawnLink(source)).toEqual({
+        parentSessionId: PARENT_ID,
+        depth: 2,
+        role: "worker",
+        nickname: "Cicero",
+        agentPath: "/root/astra1_runtime",
+    });
+});
+
+test("readSpawnLink reads the native header shape: source.subagent.thread_spawn with no thread_source field", async () => {
+    const source = rolloutSource(
+        line({
+            timestamp: "2026-10-05T10:00:00.000Z",
+            type: "session_meta",
+            payload: {
+                id: CHILD_ID,
+                session_id: PARENT_ID,
+                cwd: "/work/app",
+                source: {
+                    subagent: { thread_spawn: { parent_thread_id: PARENT_ID, depth: 1, agent_nickname: "Ada" } },
+                },
+            },
+        })
+    );
+
+    expect(await codexHistoryReader.readSpawnLink(source)).toEqual({
+        parentSessionId: PARENT_ID,
+        depth: 1,
+        nickname: "Ada",
+    });
+});
+
+test("readSpawnLink answers null for a rollout nobody spawned and for one that cannot be read", async () => {
+    const lead = rolloutSource(
+        line({ type: "session_meta", payload: { id: PARENT_ID, session_id: PARENT_ID, thread_source: "user" } })
+    );
+    const missing = { ...lead, filePath: join(lead.root, "gone.jsonl"), dataPaths: [] };
+
+    expect(await codexHistoryReader.readSpawnLink(lead)).toBeNull();
+    expect(await codexHistoryReader.readSpawnLink(missing)).toBeNull();
+});
+
+test("readSpawnLink reads a compressed rollout (.jsonl.zst) as its plain copy", async () => {
+    const text = spawnedHeader({
+        id: CHILD_ID,
+        parent: PARENT_ID,
+        depth: 1,
+        nickname: "Cicero",
+        role: "worker",
+        path: "/root/a",
+    });
+    const plain = rolloutSource(text);
+    const zst = rolloutSource(compressBytes(Buffer.from(text)), ".zst");
+
+    expect(await codexHistoryReader.readSpawnLink(zst)).toEqual(await codexHistoryReader.readSpawnLink(plain));
+    expect((await codexHistoryReader.readSpawnLink(zst))?.nickname).toBe("Cicero");
+});
+
+test("the usage context reads the spawner through the same header parse", () => {
+    const context: CodexContext = {};
+    const payload = {
+        id: CHILD_ID,
+        source: { subagent: { thread_spawn: { parent_thread_id: PARENT_ID, agent_path: "/root/review_fixes" } } },
+    };
+
+    updateCodexContext(context, "session_meta", payload, "2026-10-05T10:00:00.000Z");
+
+    expect(context).toMatchObject({ threadId: CHILD_ID, parentThreadId: PARENT_ID, agentPath: "/root/review_fixes" });
+    expect(codexSpawnLink(payload)).toEqual({ parentSessionId: PARENT_ID, agentPath: "/root/review_fixes" });
 });

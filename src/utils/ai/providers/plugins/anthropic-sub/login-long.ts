@@ -1,10 +1,10 @@
-import * as p from "@clack/prompts";
 import { orgMismatch, probeTokenOrg } from "@genesiscz/utils/claude/account-fingerprint";
 import { INFERENCE_SCOPE, ONE_YEAR_SECONDS } from "@genesiscz/utils/claude/auth";
 import { LONG_TOKEN_MIN_LENGTH, verifyLongLivedToken } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import type { AccountEntry } from "../../../config/schema";
 import type { AccountFlowContext, LoginFlag, LoginOutcome, LoginVariant } from "../../account-features";
@@ -70,7 +70,7 @@ export async function mintLongLivedToken(
     // retry deliberately does not discriminate; only the caller-facing outcome
     // does (PR #360 review r2 t3).
     while (exchange.status !== "ok") {
-        const again = await p.confirm({ message: "Try pasting the code again?", initialValue: true });
+        const again = await p.confirm({ message: "Try pasting the code again?", initialValue: true, cancel: "back" });
 
         if (p.isCancel(again) || !again) {
             return null;
@@ -208,6 +208,7 @@ export async function confirmTokenIdentity(
         const overwriteUnverified = await p.confirm({
             message: `Save unverified anyway? If this token belongs to another account, every session launched as "${accountName}" will bill that account.`,
             initialValue: false,
+            cancel: "back",
         });
 
         if (p.isCancel(overwriteUnverified) || !overwriteUnverified) {
@@ -253,7 +254,7 @@ export async function confirmTokenIdentity(
         )
     );
 
-    const proceed = await p.confirm({ message: "Save anyway?", initialValue: false });
+    const proceed = await p.confirm({ message: "Save anyway?", initialValue: false, cancel: "back" });
 
     if (p.isCancel(proceed) || !proceed) {
         p.cancel("Cancelled — nothing written.");
@@ -299,6 +300,7 @@ async function promptForPastedToken(accountName: string): Promise<string> {
                 return `Token looks truncated (${trimmed.length} chars, expected ~108). Copy the whole line.`;
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(token)) {
@@ -413,6 +415,7 @@ async function askMethod(): Promise<"mint" | "paste"> {
                 hint: `from ${SETUP_COMMAND} in another terminal`,
             },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(picked)) {

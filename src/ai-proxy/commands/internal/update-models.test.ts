@@ -3,10 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { captureOutput } from "@genesiscz/utils/test/capture-out";
-
-setupStorageSandbox();
 
 const scratch = mkdtempSync(join(tmpdir(), "gt-update-models-"));
 

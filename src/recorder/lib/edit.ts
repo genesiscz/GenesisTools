@@ -93,8 +93,8 @@ export interface OpenedProject {
     /** A redo: the ops of the change it made again. */
     redone?: string[];
     /**
-     * `editProject` and `undoEdit` on the file: true when they saved a revision. Absent when an open session made the
-     * change, since the session tells its subscribers itself.
+     * `editProject` on the file: true when it saved a revision. Absent when an open session made the change, since the
+     * session tells its subscribers itself.
      */
     saved?: boolean;
 }
@@ -203,7 +203,8 @@ export function setEditOwner(owner: EditOwner | undefined): void {
     editOwner = owner;
 }
 
-function ownedEdit(editPath: string): OwnedEdit | undefined {
+/** The session of this process that holds the edit now, if one does (`withEditSession` runs on it). */
+export function ownedEdit(editPath: string): OwnedEdit | undefined {
     return editOwner?.sessionOf(editPath);
 }
 
@@ -391,9 +392,9 @@ export async function computeEdit({
 }
 
 /** How often an edit runs again on a newer file before it refuses with `staleRevision`. */
-const EDIT_REPLAYS = 3;
+export const EDIT_REPLAYS = 3;
 /** A save that finds another process saving the edit waits this long before it reads the file again. */
-const ARBITER_BUSY_WAIT_MS = 25;
+export const ARBITER_BUSY_WAIT_MS = 25;
 
 /**
  * Applies ops in order to the file as it is now (the window may have saved since the last read) and saves once. One
@@ -820,158 +821,6 @@ export function pushUndo({
 /** How many steps the edit has to undo now. */
 export function undoDepth(editPath: string): number {
     return ownedEdit(editPath)?.undoDepth ?? readUndo(editPath).length;
-}
-
-/** Makes every step pushed since the undo had `depth` steps into one, so a multi-step change undoes at once. */
-export function collapseUndo(editPath: string, depth: number): void {
-    const owned = ownedEdit(editPath);
-
-    if (owned) {
-        owned.collapseUndo(depth);
-        owned.flush();
-        return;
-    }
-
-    const steps = readUndo(editPath);
-    const added = steps.slice(depth);
-    const first = added[0];
-    const last = added.at(-1);
-
-    if (!first || !last || added.length < 2) {
-        return;
-    }
-
-    atomicWriteFileSync(
-        undoPath(editPath),
-        SafeJSON.stringify({
-            steps: [
-                ...steps.slice(0, depth),
-                {
-                    before: first.before,
-                    afterRevision: last.afterRevision,
-                    ops: added.flatMap((step) => step.ops ?? []),
-                },
-            ],
-        })
-    );
-}
-
-/**
- * Puts the edit back as it was before its last change made through `apply`, the REPL or this undo's door. Refused
- * when the edit changed since (the editor window saved it, which has its own ⌘Z), so an undo never throws away
- * someone else's work.
- */
-export async function undoEdit(value: string): Promise<OpenedProject> {
-    const owned = ownedEdit(editPathOf(value));
-
-    if (owned) {
-        const answer = await owned.undo({ by: "agent" });
-        owned.flush();
-        return { path: editPathOf(value), project: answer.project, fresh: false, undone: answer.undone };
-    }
-
-    const opened = await openProject(value);
-    const { steps, redo } = readJournal(opened.path);
-    const last = steps.at(-1);
-
-    if (!last) {
-        throw new Error(
-            "nothing to undo: no change was made to this edit through apply or the REPL since it was opened"
-        );
-    }
-
-    if (last.afterRevision !== opened.project.revision) {
-        throw new Error(
-            `the edit changed since the last change made here (revision ${opened.project.revision}${opened.project.updatedBy ? ` by ${opened.project.updatedBy}` : ""}, not ${last.afterRevision}); undo it where it was made, for example ⌘Z in the editor window`
-        );
-    }
-
-    const attempt = saveIfAt(opened.path, opened.project.revision, () => {
-        const saved = writeProject(opened.path, { ...last.before, revision: opened.project.revision });
-        // The edit now reads as it did after the step before; that step's revision is the one just saved, so a second
-        // undo goes one step further back.
-        const rest = steps.slice(0, -1);
-
-        if (rest.length) {
-            rest[rest.length - 1] = { ...rest[rest.length - 1], afterRevision: saved.revision };
-        }
-
-        // The edit as this undo found it, so `redo` can write it back while nothing changed after the undo.
-        const redone = [...redo, { after: opened.project, undoneRevision: saved.revision, ops: last.ops }];
-        atomicWriteFileSync(
-            undoPath(opened.path),
-            SafeJSON.stringify({ steps: rest, redo: redone.slice(-UNDO_STEPS) })
-        );
-        log.debug({ path: opened.path, revision: saved.revision, left: rest.length, ops: last.ops }, "edit undone");
-        return {
-            path: opened.path,
-            project: saved,
-            fresh: false as const,
-            undone: last.ops ?? [],
-            saved: true as const,
-        };
-    });
-    if (attempt.outcome !== "saved") {
-        throw new Error(
-            `undo refused: the edit ${attempt.outcome === "busy" ? "is being saved by another writer" : "changed since it was read"}`
-        );
-    }
-    return attempt.value;
-}
-
-/**
- * Makes the last change `undoEdit` took back again. Refused when the edit changed since that undo: a new change drops
- * the steps to redo, as ⇧⌘Z in the window does.
- */
-export async function redoEdit(value: string): Promise<OpenedProject> {
-    const owned = ownedEdit(editPathOf(value));
-
-    if (owned) {
-        const answer = await owned.redo({ by: "agent" });
-        owned.flush();
-        return { path: editPathOf(value), project: answer.project, fresh: false, redone: answer.redone };
-    }
-
-    const opened = await openProject(value);
-    const { steps, redo } = readJournal(opened.path);
-    const last = redo.at(-1);
-
-    if (!last || last.undoneRevision !== opened.project.revision) {
-        throw new Error(
-            last
-                ? `nothing to redo: the edit changed since the undo (revision ${opened.project.revision}, not ${last.undoneRevision})`
-                : "nothing to redo: no undo was made here since the last change"
-        );
-    }
-
-    const attempt = saveIfAt(opened.path, opened.project.revision, () => {
-        const saved = writeProject(opened.path, { ...last.after, revision: opened.project.revision });
-        const rest = redo.slice(0, -1);
-
-        // The next step to redo was undone before this one; it may run once this redo is the edit's newest revision.
-        if (rest.length) {
-            rest[rest.length - 1] = { ...rest[rest.length - 1], undoneRevision: saved.revision };
-        }
-
-        const again = [...steps, { before: opened.project, afterRevision: saved.revision, ops: last.ops }];
-        atomicWriteFileSync(undoPath(opened.path), SafeJSON.stringify({ steps: again.slice(-UNDO_STEPS), redo: rest }));
-        log.debug({ path: opened.path, revision: saved.revision, left: rest.length, ops: last.ops }, "edit redone");
-        return {
-            path: opened.path,
-            project: saved,
-            fresh: false as const,
-            redone: last.ops ?? [],
-            saved: true as const,
-        };
-    });
-
-    if (attempt.outcome !== "saved") {
-        throw new Error(
-            `redo refused: the edit ${attempt.outcome === "busy" ? "is being saved by another writer" : "changed since it was read"}`
-        );
-    }
-
-    return attempt.value;
 }
 
 export { EXPORT_FORMATS, type ExportFormat };

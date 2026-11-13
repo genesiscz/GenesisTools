@@ -292,6 +292,98 @@ function builtinProtected(home: string): string[] {
     ];
 }
 
+/**
+ * Paths no removal may take, wherever they sit: VM and container disks (deleting one destroys every container, image
+ * and volume inside, and a sparse disk looks 926 GiB large to `st_size`) and the Photos library. Matched against the
+ * path, with `~` meaning the home folder.
+ */
+export const VM_DATA_DENY_GLOBS = [
+    "~/Library/Containers/com.docker.docker/**",
+    "~/Library/Group Containers/*.docker/**",
+    "~/Library/Group Containers/*.dev.orbstack/**",
+    "~/.orbstack/**",
+    "~/.colima/**",
+    "~/.lima/**",
+    "~/.minikube/**",
+    "~/.k3d/**",
+    "~/.docker/machine/**",
+    "~/.local/share/containers/**",
+    "~/.tart/**",
+    "~/Library/Application Support/rancher-desktop/**",
+    "~/Library/Application Support/multipass/**",
+    "/var/root/Library/Application Support/multipassd/**",
+    "/private/var/root/Library/Application Support/multipassd/**",
+    "~/Library/Containers/com.utmapp.UTM/**",
+    "~/Parallels/**",
+    "**/*.vmwarevm/**",
+    "**/*.pvm/**",
+    "**/*.utm/**",
+    "**/*.photoslibrary/**",
+];
+
+/** File names that are always VM disks, wherever they sit. */
+export const VM_DISK_NAMES = new Set(["Docker.raw", "data.img.raw", "swap.img", "diffdisk", "basedisk", "disk.img"]);
+export const VM_DISK_EXTENSIONS = [".vmdk", ".vdi", ".hdd", ".qcow2", ".raw"];
+
+/** The one VM-shaped file a removal may take: an Android emulator's user-data disk (the AVD definition stays). */
+const ANDROID_USERDATA_GLOB = "~/.android/avd/*.avd/userdata-qemu.img.qcow2";
+
+/** The globs know only `/`: a Windows path (`C:\Users\x\a.photoslibrary\db`) is matched with its separators turned into `/`. */
+function withForwardSlashes(path: string): string {
+    return path.replaceAll("\\", "/");
+}
+
+/** A path glob as a regex: a double star with a slash is any folders, a double star anything, a single star one segment, and a leading `~` the home folder. */
+export function pathGlobRegex(glob: string, home: string): RegExp {
+    const expanded = glob.replace(/^~(?=$|\/)/, () => withForwardSlashes(home));
+    const escaped = expanded.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    const pattern = escaped
+        .replace(/\*\*\//g, "§ANYDIRS§")
+        .replace(/\*\*/g, "§ANY§")
+        .replace(/\*/g, "[^/]*")
+        .replace(/§ANYDIRS§/g, "(?:.*/)?")
+        .replace(/§ANY§/g, ".*");
+    return new RegExp(`^${pattern}$`);
+}
+
+/** Why `path` is a VM or container disk, a Photos library or Tresorit's sync database; null when it is none of these. */
+export function vmDataReason(nativePath: string, home: string): string | null {
+    // Match on forward slashes only; the caller keeps its native path for the filesystem.
+    const path = withForwardSlashes(nativePath);
+
+    if (pathGlobRegex(ANDROID_USERDATA_GLOB, home).test(path)) {
+        return null;
+    }
+
+    const name = basename(path);
+
+    if (VM_DISK_NAMES.has(name)) {
+        return `${name} is a VM disk: deleting it destroys every container, image and volume inside. Prune inside the guest instead.`;
+    }
+
+    if (VM_DISK_EXTENSIONS.some((ext) => name.endsWith(ext))) {
+        return `${name} is a virtual machine disk image`;
+    }
+
+    if (name === "local.db" && path.includes("/.tresorit/")) {
+        return "Tresorit's sync database";
+    }
+
+    const candidates = [path, `${path}/`];
+
+    for (const glob of VM_DATA_DENY_GLOBS) {
+        const regex = pathGlobRegex(glob, home);
+
+        if (candidates.some((candidate) => regex.test(candidate))) {
+            return glob.includes("photoslibrary")
+                ? "inside the Photos library"
+                : "inside a VM or container data folder: prune inside the guest instead";
+        }
+    }
+
+    return null;
+}
+
 /** Why no rule and no approval may delete `target`, or null. */
 export function hardDenyReason(target: RmTarget, ctx: Pick<RmRuleContext, "config" | "cwd" | "home">): string | null {
     const p = target.canonical;
@@ -351,6 +443,12 @@ export function hardDenyReason(target: RmTarget, ctx: Pick<RmRuleContext, "confi
         if (isSameOrInside(p, guarded) || isInside(guarded, p)) {
             return `protected: ${guarded}`;
         }
+    }
+
+    const vmData = vmDataReason(p, home) ?? vmDataReason(target.path, ctx.home);
+
+    if (vmData) {
+        return vmData;
     }
 
     if (target.kind === "dir" && isMountPoint(p)) {

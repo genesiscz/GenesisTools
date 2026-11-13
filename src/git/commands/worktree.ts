@@ -14,7 +14,6 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -34,6 +33,7 @@ import {
     writeLocalRepoConfig,
 } from "@genesiscz/utils/git";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -142,6 +142,7 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
                 { value: "reset", label: "Reset", hint: "answer every question from the defaults" },
             ],
             initialValue: "keep",
+            cancel: "back",
         });
 
         if (p.isCancel(action) || action === "keep") {
@@ -159,6 +160,7 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
                     { value: "plansSync", label: "plansSync", hint: String(current.plansSync ?? false) },
                 ],
                 required: true,
+                cancel: "back",
             });
 
             if (p.isCancel(picked)) {
@@ -184,6 +186,7 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
             message: "Base directory for new worktrees",
             options: presets.map((preset) => ({ value: preset.value, label: preset.label, hint: preset.example })),
             initialValue: start.base,
+            cancel: "back",
         });
 
         if (p.isCancel(picked)) {
@@ -200,6 +203,7 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
             placeholder: "bun install",
             initialValue: start.install ?? "",
             defaultValue: "",
+            cancel: "back",
         });
 
         if (p.isCancel(typed)) {
@@ -214,6 +218,7 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
         const confirmed = await p.confirm({
             message: "Copy .claude/plans back to the main checkout after each commit in a worktree?",
             initialValue: start.plansSync ?? true,
+            cancel: "back",
         });
 
         if (p.isCancel(confirmed)) {
@@ -237,7 +242,10 @@ export async function runConfig(options: WorktreeOptions): Promise<number> {
     };
 
     p.note(formatRepoConfig({ git: { worktrees: next.git?.worktrees } }), "About to write");
-    const confirmed = await p.confirm({ message: `Write to ${repoRoot}/.git/genesis-tools.config.json?` });
+    const confirmed = await p.confirm({
+        message: `Write to ${repoRoot}/.git/genesis-tools.config.json?`,
+        cancel: "back",
+    });
 
     if (p.isCancel(confirmed) || !confirmed) {
         p.cancel("Nothing written.");
@@ -298,7 +306,12 @@ async function runInit(options: WorktreeOptions): Promise<number> {
     const addArgs = options.create
         ? ["worktree", "add", "-b", branch, target, options.base ?? "HEAD"]
         : ["worktree", "add", target, branch];
-    const added = await git.executor.exec(addArgs);
+    const added = await git.executor.exec(addArgs, {
+        timeout: {
+            ms: 600_000,
+            reason: "a new worktree checks out the whole tree and runs the post-checkout hook, which installs",
+        },
+    });
 
     if (!added.success) {
         out.log.error(`git worktree add failed: ${added.stderr.trim()}`);

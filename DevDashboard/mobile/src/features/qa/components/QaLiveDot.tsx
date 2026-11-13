@@ -1,5 +1,5 @@
 import { Text, View } from "react-native";
-import type { QaLiveStatus } from "@/features/qa/subscription";
+import type { QaLiveStatus } from "@/features/qa/live-feed";
 import { useThemeColors } from "@/theme/colors";
 
 interface QaLiveDotProps {

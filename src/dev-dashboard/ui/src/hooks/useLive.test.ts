@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { LiveChannel } from "@app/dev-dashboard/lib/live/types";
+import type { LiveChannel, LiveDataFrame } from "@app/dev-dashboard/lib/live/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { QueryClient } from "@tanstack/react-query";
 import {
     AI_USAGE_KEYS,
     channelsFromKey,
     type LiveConnectionDeps,
+    LiveConnectionManager,
     liveChannelsKey,
     openLiveConnection,
 } from "./useLive";
@@ -194,5 +195,151 @@ describe("openLiveConnection", () => {
 
         expect(cleanup).toBeUndefined();
         expect(created).toHaveLength(0);
+    });
+
+    test("a caller's onFrame gets every data frame and no system frame", () => {
+        const created: FakeEventSource[] = [];
+        const frames: LiveDataFrame[] = [];
+        const deps = { ...fakeDeps(created), onFrame: (frame: LiveDataFrame) => frames.push(frame) };
+
+        openLiveConnection("handoffs,pending", true, deps);
+        created[0]?.hello("conn-1");
+        const pending = { v: 1, channel: "pending", type: "snapshot", payload: { forms: [] } };
+        const handoff = { v: 1, channel: "handoffs", type: "event", payload: { id: "h1", ev: "claim", ts: "t" } };
+        created[0]?.onmessage?.({ data: SafeJSON.stringify(pending) } as MessageEvent);
+        created[0]?.onmessage?.({ data: SafeJSON.stringify(handoff) } as MessageEvent);
+
+        expect(frames).toEqual([pending, handoff] as LiveDataFrame[]);
+    });
+
+    test("onStatus says down on an error and up again on the next frame", () => {
+        const created: FakeEventSource[] = [];
+        const statuses: boolean[] = [];
+        const deps = { ...fakeDeps(created), onStatus: (down: boolean) => statuses.push(down) };
+
+        openLiveConnection("qa", true, deps);
+        created[0]?.onerror?.();
+        created[0]?.hello("conn-2");
+
+        expect(statuses).toEqual([true, false]);
+    });
+});
+
+/**
+ * Every `useLive` used to own an EventSource, so /qa (the QA feed, its pending forms, the handoff tab) held three
+ * `/api/live` streams. The manager is the one stream behind all of them; these tests drive it with the fake source and
+ * a manual queue in place of the microtask that batches one render's registrations.
+ */
+describe("LiveConnectionManager", () => {
+    function manager() {
+        const created: FakeEventSource[] = [];
+        const queued: Array<() => void> = [];
+        const live = new LiveConnectionManager({
+            qc: { setQueryData: () => {}, invalidateQueries: async () => {} } as unknown as QueryClient,
+            EventSourceCtor: fakeDeps(created).EventSourceCtor,
+            schedule: (run) => queued.push(run),
+        });
+        const flush = () => {
+            for (const run of queued.splice(0)) {
+                run();
+            }
+        };
+
+        return { live, created, flush };
+    }
+
+    function consumer(channels: LiveChannel[]) {
+        const frames: string[] = [];
+        const statuses: boolean[] = [];
+        const state = { connId: null as string | null, lastError: null as string | null };
+
+        return {
+            frames,
+            statuses,
+            state,
+            consumer: {
+                channels,
+                listeners: () => ({
+                    onFrame: (frame: LiveDataFrame) => frames.push(frame.channel),
+                    onStatus: (down: boolean) => statuses.push(down),
+                }),
+                setConnId: (id: string | null) => {
+                    state.connId = id;
+                },
+                setLastError: (message: string | null) => {
+                    state.lastError = message;
+                },
+            },
+        };
+    }
+
+    function send(source: FakeEventSource | undefined, channel: LiveChannel): void {
+        const frame = { v: 1, channel, type: "event", payload: {} };
+        source?.onmessage?.({ data: SafeJSON.stringify(frame) } as MessageEvent);
+    }
+
+    test("the consumers of one render share one stream with the union of their channels", () => {
+        const { live, created, flush } = manager();
+        const qa = consumer(["qa"]);
+        const pending = consumer(["pending", "qa"]);
+
+        live.register(qa.consumer);
+        live.register(pending.consumer);
+        flush();
+
+        expect(created).toHaveLength(1);
+        expect(new URL(created[0]?.url ?? "", "http://x").searchParams.get("channels")).toBe("pending,qa");
+
+        created[0]?.hello("conn-1");
+        send(created[0], "qa");
+        send(created[0], "pending");
+        created[0]?.onerror?.();
+
+        expect(qa.frames).toEqual(["qa"]);
+        expect(pending.frames).toEqual(["qa", "pending"]);
+        expect([qa.state.connId, pending.state.connId]).toEqual(["conn-1", "conn-1"]);
+        expect([qa.statuses, pending.statuses]).toEqual([
+            [false, false, false, true],
+            [false, false, false, true],
+        ]);
+        expect(qa.state.lastError).toBe("live stream disconnected");
+    });
+
+    test("a consumer whose channels the stream carries joins it without a reopen and gets its connection id", () => {
+        const { live, created, flush } = manager();
+        const first = consumer(["ports", "pulse"]);
+        const second = consumer(["ports"]);
+
+        live.register(first.consumer);
+        flush();
+        created[0]?.hello("conn-1");
+        live.register(second.consumer);
+        flush();
+
+        expect(created).toHaveLength(1);
+        expect(second.state.connId).toBe("conn-1");
+    });
+
+    test("a consumer that adds a channel reopens the stream; the last one to leave closes it", () => {
+        const { live, created, flush } = manager();
+        const qa = consumer(["qa"]);
+        const handoffs = consumer(["handoffs"]);
+
+        const leaveQa = live.register(qa.consumer);
+        flush();
+        const leaveHandoffs = live.register(handoffs.consumer);
+        flush();
+
+        expect(created).toHaveLength(2);
+        expect(created[0]?.closed).toBe(true);
+        expect(new URL(created[1]?.url ?? "", "http://x").searchParams.get("channels")).toBe("handoffs,qa");
+
+        leaveHandoffs();
+        leaveQa();
+        flush();
+
+        expect(created).toHaveLength(2);
+        expect(created[1]?.closed).toBe(true);
+        expect(handoffs.state.connId).toBeNull();
     });
 });

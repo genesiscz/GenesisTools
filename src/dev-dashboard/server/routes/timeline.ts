@@ -1,6 +1,8 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { getAllRecentRuns } from "@app/dev-dashboard/lib/daemon-view/aggregator";
 import { mergeTimeline } from "@app/dev-dashboard/lib/timeline/merge";
 import { listTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
+import { bindHandler } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { defaultDbPath } from "@app/question/commands/log";
@@ -17,41 +19,37 @@ const MERGE_SOURCE_LIMIT = 200;
 
 export function timelineRoutes(): RouteDef[] {
     return [
-        {
-            method: "GET",
-            pattern: "/api/timeline",
-            handler: async (ctx) => {
-                const sinceParam = Number.parseInt(ctx.query.get("since") ?? "", 10);
-                const since = Number.isFinite(sinceParam) ? sinceParam : startOfTodayMs();
+        bindHandler(ENDPOINTS.timeline, async (ctx) => {
+            const sinceParam = Number.parseInt(ctx.query.get("since") ?? "", 10);
+            const since = Number.isFinite(sinceParam) ? sinceParam : startOfTodayMs();
 
-                let db: ReturnType<typeof openReadModel> | undefined;
-                try {
-                    const runs = getAllRecentRuns(MERGE_SOURCE_LIMIT);
-                    const ttydSessions = await listTtyd();
+            let db: ReturnType<typeof openReadModel> | undefined;
+            try {
+                const runs = getAllRecentRuns(MERGE_SOURCE_LIMIT);
+                const ttydSessions = await listTtyd();
 
-                    db = openReadModel(defaultDbPath());
-                    const qaEntries = queryEntries(db, { limit: MERGE_SOURCE_LIMIT });
+                db = openReadModel(defaultDbPath());
+                const qaEntries = queryEntries(db, { limit: MERGE_SOURCE_LIMIT });
 
-                    const events = mergeTimeline({ runs, qaEntries, ttydSessions, since });
-                    logger.debug(
-                        {
-                            route: "GET /api/timeline",
-                            since,
-                            runs: runs.length,
-                            qa: qaEntries.length,
-                            ttyd: ttydSessions.length,
-                            events: events.length,
-                        },
-                        "dev-dashboard: timeline merged"
-                    );
+                const events = mergeTimeline({ runs, qaEntries, ttydSessions, since });
+                logger.debug(
+                    {
+                        route: "GET /api/timeline",
+                        since,
+                        runs: runs.length,
+                        qa: qaEntries.length,
+                        ttyd: ttydSessions.length,
+                        events: events.length,
+                    },
+                    "dev-dashboard: timeline merged"
+                );
 
-                    return { kind: "json", status: 200, body: events };
-                } catch (err) {
-                    return errorResult(err);
-                } finally {
-                    db?.close();
-                }
-            },
-        },
+                return { kind: "json", status: 200, body: events };
+            } catch (err) {
+                return errorResult(err);
+            } finally {
+                db?.close();
+            }
+        }),
     ];
 }

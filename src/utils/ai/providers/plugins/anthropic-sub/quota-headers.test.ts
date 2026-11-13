@@ -2,11 +2,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, mock, spyOn } fro
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import * as usagePollStorageModule from "@genesiscz/utils/ai/usage-poll/storage";
 import { __resetUsagePollStorage, usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -148,15 +146,23 @@ function stubFetch(): void {
     }) as typeof fetch;
 }
 
-function account(tokens: AIAccountEntry["tokens"]): AIAccountEntry {
-    return { name: "work", provider: "anthropic-sub", tokens, subscriptionPlan: "claude_max" } as AIAccountEntry;
+function account(credentials: AccountEntry["credentials"]): AccountEntry {
+    return {
+        id: "acc_work",
+        name: "work",
+        provider: "anthropic-sub",
+        enabled: true,
+        billing: { mode: "subscription" },
+        credentials,
+        useEnvApiKey: false,
+        subscriptionPlan: "claude_max",
+    };
 }
 
 const withPair = () => account({ accessToken: "access-1", refreshToken: "refresh-1", longLivedToken: LONG_LIVED });
 
-async function poll(entry: AIAccountEntry, extra: Record<string, unknown> = {}) {
-    // `config` is only read by the profile paths, which the mocked subscription module never takes.
-    return pollAccount({ account: entry, config: {} as unknown as AIConfig, gate: {}, now: NOW, ...extra });
+async function poll(entry: AccountEntry, extra: Record<string, unknown> = {}) {
+    return pollAccount({ account: entry, gate: {}, now: NOW, ...extra });
 }
 
 /** An endpoint reading with the Fable limit, as `/api/oauth/usage` answers it. */

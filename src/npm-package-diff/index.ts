@@ -7,7 +7,6 @@ import { isVerbose, runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { expandTilde as resolvePathWithTilde } from "@genesiscz/utils/paths";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import * as TOML from "@iarna/toml";
 import boxen from "boxen";
 import chalk from "chalk";
@@ -19,9 +18,6 @@ import { filesize } from "filesize";
 import { minimatch } from "minimatch";
 import ora, { type Ora } from "ora";
 import { collectInstalledFiles, type FileMetadata } from "./lib/collect-files";
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
 
 const _require = createRequire(import.meta.url);
 

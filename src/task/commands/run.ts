@@ -7,10 +7,10 @@ import { resolveRunMode } from "@app/task/lib/run-mode";
 import { runTask } from "@app/task/lib/runner";
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { suggestClearOlderThanSeq, suggestTail } from "@app/task/lib/suggest-flags";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -75,6 +75,7 @@ export function registerRunCommand(program: Command): void {
 
                         return undefined;
                     },
+                    cancel: "back",
                 });
 
                 if (p.isCancel(picked)) {

@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { CACHE_DIR, cacheFilePath } from "./paths";
+import { removeForDoctor } from "./remove";
 import type { AnalyzerResult } from "./types";
 
 interface CacheEntry {
@@ -50,5 +51,9 @@ export async function wipeCache(): Promise<void> {
         return;
     }
 
-    await rm(CACHE_DIR, { recursive: true, force: true });
+    const removal = await removeForDoctor(CACHE_DIR, { analyzerId: "cache" });
+
+    if (removal.refusal) {
+        throw new Error(`Refusing to wipe the doctor cache: ${removal.refusal}`);
+    }
 }

@@ -16,7 +16,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
-import { CdpDeadlineError, Conn, localDebuggerUrl } from "./cdp.ts";
+import { CdpDeadlineError, type Conn, connect } from "./cdp.ts";
 import type { CaptureChannel, RecordedEvent } from "./channels.ts";
 import { ensureCaptureDir, metaPath, recorderPidPath } from "./paths.ts";
 import { SegmentWriter } from "./segments.ts";
@@ -455,7 +455,7 @@ export async function connectBrowser(
         webSocketDebuggerUrl: string;
     };
 
-    const conn = new Conn(localDebuggerUrl(v, port), { ...opts, signal });
+    const conn = connect(v, port, { ...opts, signal });
     try {
         await conn.send("Browser.getVersion", {}, undefined, { signal });
         return conn;

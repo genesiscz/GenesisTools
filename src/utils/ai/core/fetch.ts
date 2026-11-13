@@ -20,6 +20,12 @@ export interface AuthFetchOptions {
      */
     refresh?: (rejected: string) => Promise<string>;
     /**
+     * Writes the token onto the request headers. Defaults to `Authorization: Bearer <token>`; a
+     * provider whose endpoint wants more identification per token (Codex's workspace header, the
+     * Grok CLI proxy's client headers) sets them here, so a retry carries them for the new token.
+     */
+    authorize?: (headers: Headers, token: string) => void;
+    /**
      * Retries on 429 and 5xx. Defaults to 0 ON PURPOSE.
      *
      * Every current caller sits underneath the ai-sdk, which already retries the
@@ -55,14 +61,27 @@ function backoffMs(response: Response, attempt: number, baseDelayMs: number, max
  * Every caller here sends a JSON string; keep it that way or pass maxRetries: 0.
  */
 export function composeAuthFetch(options: AuthFetchOptions): typeof fetch {
-    const { getToken, refresh, maxRetries = 0, baseDelayMs = 500, maxDelayMs = 30_000 } = options;
+    const {
+        getToken,
+        refresh,
+        authorize = (headers: Headers, token: string) => headers.set("Authorization", `Bearer ${token}`),
+        maxRetries = 0,
+        baseDelayMs = 500,
+        maxDelayMs = 30_000,
+    } = options;
     const transport = options.fetch ?? fetch;
     const { log } = logger.scoped("ai-core");
 
     const authFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        // The caller's cancel, from init or carried by a Request input. It is checked around every
+        // token read and before the refresh: reading a token can refresh an expired grant, and a
+        // refresh token is single-use, so a cancelled request must not spend one.
+        const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
         const send = (bearer: string): Promise<Response> => {
-            const headers = new Headers(init?.headers);
-            headers.set("Authorization", `Bearer ${bearer}`);
+            signal?.throwIfAborted();
+            // A Request input carries its own headers; init replaces them, so they are copied first.
+            const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+            authorize(headers, bearer);
             return transport(input, { ...init, headers });
         };
 
@@ -74,6 +93,7 @@ export function composeAuthFetch(options: AuthFetchOptions): typeof fetch {
         let refreshed = false;
 
         for (let attempt = 0; ; attempt++) {
+            signal?.throwIfAborted();
             const bearer = await getToken();
             let response = await send(bearer);
 
@@ -81,6 +101,7 @@ export function composeAuthFetch(options: AuthFetchOptions): typeof fetch {
                 refreshed = true;
                 log.debug({ url: String(input) }, "upstream rejected the token; forcing a refresh and retrying once");
                 await discard(response);
+                signal?.throwIfAborted();
                 response = await send(await refresh(bearer));
             }
 
@@ -94,7 +115,7 @@ export function composeAuthFetch(options: AuthFetchOptions): typeof fetch {
                 "upstream is rate limited or unavailable; backing off"
             );
             await discard(response);
-            await abortableSleep(delay, init?.signal ?? undefined);
+            await abortableSleep(delay, signal ?? undefined);
         }
     };
 

@@ -1,4 +1,4 @@
-import { resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/account-config";
+import { resolveGithubCopilotDataDir } from "@app/ai-proxy/lib/providers/account-paths";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { probeCopilotModels } from "@genesiscz/utils/ai/github-copilot/probe-models";
 import type { CopilotModelRecord } from "@genesiscz/utils/ai/github-copilot/types";

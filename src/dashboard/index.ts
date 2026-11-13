@@ -237,7 +237,4 @@ for (const sub of dashboardApp.commanderCommand.commands) {
     program.addCommand(sub);
 }
 
-await runTool(program, { tool: "dashboard" }).catch((err: unknown) => {
-    logger.error("dashboard launcher failed", err);
-    process.exit(1);
-});
+await runTool(program, { tool: "dashboard" });

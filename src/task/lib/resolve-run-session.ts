@@ -1,7 +1,7 @@
 import { buildTimestampedSessionName } from "@app/task/lib/session-name";
 import type { TaskSessionStore } from "@app/task/lib/session-store";
 import type { ResolvedRunSession, SessionReuseMode } from "@app/task/types";
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 
 export interface ResolveRunSessionOptions {
     /** Explicit --session flag: reuse-continue with warnings, no prompt. */
@@ -28,6 +28,7 @@ async function promptReuseChoice(requested: string): Promise<SessionReuseMode | 
             { value: "reuse-continue" as const, label: "Re-use and continue" },
             { value: "prefix" as const, label: "Prefix and generate session" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {

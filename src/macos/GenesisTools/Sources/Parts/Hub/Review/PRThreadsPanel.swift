@@ -1896,6 +1896,73 @@ private struct PRBadge: View {
     }
 }
 
+/// The button and keyboard requests reach a host that stays mounted across every redesign tab.
+struct PRSubmitReviewButton: View {
+    @ObservedObject var model: ReviewModel
+    @ObservedObject var store: PRThreadsStore
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if !model.selectedThreads.isEmpty {
+                Button("Fix \(Plural.count(model.selectedThreads.count, "thread"))…") { model.fixRequests += 1 }
+                    .disabled(!store.canWrite || store.busy != nil)
+                    .instantTooltip("Send the selected threads to an agent; choose the agent first")
+                IconButton(systemName: "xmark.circle", tooltip: "Clear the Fix selection") { model.clearThreadSelection() }
+            }
+            Button("Submit review…") { model.submitRequests += 1 }
+                .disabled(!store.canWrite || store.busy != nil)
+                .instantTooltip("Publish pending drafts as one review; asks first")
+        }
+    }
+}
+
+/// The PR detail owns its watcher across tab changes and stops that exact model on replacement or exit.
+struct PRVariantReviewLifetime: View {
+    let model: ReviewModel
+
+    var body: some View {
+        Color.clear
+            .onAppear { model.start() }
+            .onDisappear { model.stop() }
+    }
+}
+
+struct PRSubmitReviewHost: View {
+    @ObservedObject var model: ReviewModel
+    @ObservedObject var store: PRThreadsStore
+    @State private var submitting = false
+    @State private var fixing = false
+
+    var body: some View {
+        Color.clear
+            .popover(isPresented: Binding(get: { submitting || fixing }, set: { if !$0 { submitting = false; fixing = false } }), arrowEdge: .top) {
+                if fixing {
+                    FixThreadsForm(model: model, store: store) { fixing = false }
+                } else {
+                    SubmitReviewForm(store: store) { submitting = false }
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                VStack(alignment: .trailing, spacing: 8) {
+                    if let notice = store.notice {
+                        NoticePill(text: notice, isError: notice.hasPrefix("Failed")) { store.notice = nil }
+                    }
+                    if let notice = model.notice {
+                        NoticePill(text: notice, isError: notice.lowercased().contains("failed") || notice.lowercased().contains("could not")) { model.notice = nil }
+                    }
+                }
+                .frame(maxWidth: 560, alignment: .trailing)
+                .padding(14)
+            }
+            .onChange(of: model.submitRequests) { _, _ in
+                if store.canWrite, store.busy == nil { fixing = false; submitting = true }
+            }
+            .onChange(of: model.fixRequests) { _, _ in
+                if store.canWrite, store.busy == nil, !model.selectedThreads.isEmpty { submitting = false; fixing = true }
+            }
+    }
+}
+
 /// Comment / Approve / Request changes with an optional summary. Submitting asks again in an
 /// NSAlert that names the PR and the number of drafts: it is the one path to `pr publish`.
 private struct SubmitReviewForm: View {

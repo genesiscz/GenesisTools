@@ -111,6 +111,7 @@ async function pickSpec(): Promise<SettingSpec | null> {
     const chosen = await p.select({
         message: "Which default?",
         options: JEV_SETTINGS.map((spec) => ({ value: spec.key, label: spec.key, hint: spec.describe })),
+        cancel: "back",
     });
     if (p.isCancel(chosen)) {
         return null;
@@ -124,11 +125,12 @@ async function askValue(spec: SettingSpec): Promise<string | null> {
         const chosen = await p.select({
             message: `${spec.key}?`,
             options: spec.values.map((value) => ({ value, label: value })),
+            cancel: "back",
         });
         return p.isCancel(chosen) ? null : String(chosen);
     }
 
-    const typed = await p.text({ message: `${spec.key}?`, placeholder: spec.fallback });
+    const typed = await p.text({ message: `${spec.key}?`, placeholder: spec.fallback, cancel: "back" });
     return p.isCancel(typed) || typed.length === 0 ? null : typed;
 }
 

@@ -1,7 +1,7 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { runTaskEditor } from "../interactive/task-editor";

@@ -11,11 +11,11 @@
     --text: light-dark(#18202c, #e8ecf3);
     --text-2: light-dark(#3c4656, #b3bccb);
     --dim: light-dark(#5d6878, #8a95a8);
-    --accent: light-dark(#0369a1, #38bdf8);
-    --ok: light-dark(#4d7c0f, #a3e635);
-    --warn: light-dark(#a15c07, #f5b942);
-    --err: light-dark(#be123c, #fb7185);
-    --info: light-dark(#0369a1, #38bdf8);
+    --accent: light-dark(#075985, #38bdf8);
+    --ok: light-dark(#3f650c, #a3e635);
+    --warn: light-dark(#864800, #f5b942);
+    --err: light-dark(#a90e34, #fb7185);
+    --info: light-dark(#075985, #38bdf8);
     --radius: 12px;
     --font-body: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
     --font-heading: "Space Grotesk", ui-sans-serif, -apple-system, "SF Pro Display", "Segoe UI", system-ui, sans-serif;

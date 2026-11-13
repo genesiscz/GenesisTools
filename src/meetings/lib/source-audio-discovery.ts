@@ -4,33 +4,19 @@ import { join } from "node:path";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import type { MeetingSourceId, SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import type {
+    LocalAudioFile,
+    LocalAudioMeeting,
+    LocalSourceAudio,
+    MeetingSourceId,
+} from "@genesiscz/utils/meetings/sources";
 import { MEETING_SOURCE_IDS } from "@genesiscz/utils/meetings/sources";
 import { z } from "zod";
 import { preservedSourceAudio, preserveSourceAudio } from "./source-audio";
 
 const { log } = logger.scoped("meetings-audio-discovery");
 
-export interface LocalAudioFile {
-    sourceMeetingId: string;
-    path: string;
-}
-
-export interface LocalAudioMeeting {
-    sourceMeetingId: string;
-    title: string;
-    start: string;
-    end?: string;
-}
-
-/** Local-only provider access. None of these members may load transcripts, evidence or a remote service. */
-export interface LocalSourceAudio {
-    readonly id: MeetingSourceId;
-    files(): Promise<LocalAudioFile[]>;
-    legacyFiles(meetingsRoot: string): Promise<LocalAudioFile[]>;
-    catalog(): Promise<LocalAudioMeeting[]>;
-    load(sourceMeetingId: string): Promise<SourceMeeting | null>;
-}
+export type { LocalAudioFile, LocalAudioMeeting, LocalSourceAudio };
 
 function linkedRecords(store: MeetingStore, sourceId: string, sourceMeetingId: string): MeetingRecord[] {
     return store.list().filter((record) => record.sources[sourceId]?.meetingId === sourceMeetingId);

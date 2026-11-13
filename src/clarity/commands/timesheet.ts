@@ -1,8 +1,7 @@
-import * as clack from "@clack/prompts";
 import type { TimeEntryRecord, TimesheetRecord } from "@genesiscz/utils/clarity";
-
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import * as clack from "@genesiscz/utils/prompts/p";
 import Table from "cli-table3";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -202,6 +201,7 @@ export function registerTimesheetCommand(program: Command): void {
             const confirm = await clack.confirm({
                 message: `Submit timesheet ${timesheetId}?`,
                 initialValue: false,
+                cancel: "back",
             });
 
             if (clack.isCancel(confirm) || !confirm) {
@@ -240,6 +240,7 @@ export function registerTimesheetCommand(program: Command): void {
             const confirm = await clack.confirm({
                 message: `Revert timesheet ${timesheetId} to allow edits?`,
                 initialValue: false,
+                cancel: "back",
             });
 
             if (clack.isCancel(confirm) || !confirm) {

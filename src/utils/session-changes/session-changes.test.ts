@@ -1,18 +1,17 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { parseCodexRollout } from "@genesiscz/utils/agent-sessions/readers/codex-changes";
 import { findCodexRollout, isCodexRolloutPath } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
+import { changeLogPath } from "@genesiscz/utils/agents/change-log";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { readClaudeTranscriptFolded } from "./fold";
 import {
     analyzeCommand,
-    applyReplacement,
     computeSessionChanges,
     type ExclusionReason,
     expandVariables,
@@ -22,13 +21,13 @@ import {
     lastChangedTurns,
     loadSessionChanges,
     mergeTurnFiles,
-    parseClaudeTranscript,
     pathExclusion,
     type SessionChangesInput,
+    type SessionToolCall,
+    type SessionTranscript,
     type StageKind,
     storeBlobs,
 } from "./index";
-import { emptyParseState, parseLines, readClaudeTranscript } from "./transcript";
 
 const REPO = "/tmp/fixture-repo";
 const OTHER = "/tmp/fixture-other";
@@ -50,45 +49,6 @@ const at = (seconds: number): string => new Date(Date.UTC(2026, 0, 2, 10, 0, 0) 
 
 type Line = Record<string, unknown>;
 
-function prompt(promptId: string, text: string, seconds: number): Line {
-    return {
-        type: "user",
-        promptId,
-        uuid: `msg-${promptId}`,
-        timestamp: at(seconds),
-        cwd: REPO,
-        message: { role: "user", content: text },
-    };
-}
-
-function use(id: string, name: string, input: Record<string, unknown>, seconds: number): Line {
-    return {
-        type: "assistant",
-        timestamp: at(seconds),
-        cwd: REPO,
-        message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] },
-    };
-}
-
-function result(
-    promptId: string,
-    id: string,
-    seconds: number,
-    extra: { toolUseResult?: unknown; isError?: boolean } = {}
-): Line {
-    return {
-        type: "user",
-        promptId,
-        timestamp: at(seconds),
-        cwd: REPO,
-        message: {
-            role: "user",
-            content: [{ type: "tool_result", tool_use_id: id, is_error: extra.isError === true }],
-        },
-        toolUseResult: extra.toolUseResult,
-    };
-}
-
 function jsonl(lines: Line[]): string {
     return lines.map((line) => SafeJSON.stringify(line, { strict: true })).join("\n");
 }
@@ -96,6 +56,7 @@ function jsonl(lines: Line[]): string {
 function row(turn: string, path: string, seconds: number, extra: Partial<LoggedChange> = {}): LoggedChange {
     return {
         ts: at(seconds),
+        provider: "claude",
         session: "fixture-session",
         turn,
         tool: "Bash",
@@ -346,100 +307,71 @@ describe("pathExclusion", () => {
     });
 });
 
-describe("parseClaudeTranscript", () => {
-    it("reads turns, file-tool before/after text, failures, harness detections and subagent calls", () => {
-        const main = jsonl([
-            prompt("p1", "change a", 0),
-            use("t-edit", "Edit", { file_path: `${REPO}/a.ts`, old_string: "one", new_string: "$& two" }, 1),
-            result("p1", "t-edit", 2, {
-                toolUseResult: { originalFile: "one\n", oldString: "one", newString: "$& two" },
-            }),
-            use("t-new", "Write", { file_path: `${REPO}/new.ts`, content: "fresh\n" }, 3),
-            result("p1", "t-new", 4, { toolUseResult: { type: "create", originalFile: null, content: "fresh\n" } }),
-            use("t-bad", "Edit", { file_path: `${REPO}/b.ts`, old_string: "zz", new_string: "yy" }, 5),
-            result("p1", "t-bad", 6, { isError: true }),
-            use("t-sh", "Bash", { command: "bun scripts/codemod.ts" }, 7),
-            result("p1", "t-sh", 8, {
-                toolUseResult: {
-                    bashEditDiff: {
-                        files: [
-                            { filePath: `${REPO}/c.ts`, hunks: [{ oldStart: 3, oldLines: 1 }] },
-                            { filePath: `${REPO}/d.ts`, hunks: [{ oldStart: 0, oldLines: 0 }] },
-                        ],
-                    },
-                },
-            }),
-            use("t-agent", "Agent", { prompt: "help" }, 9),
-            result("p1", "t-agent", 30),
-            prompt("p2", "and big.ts", 40),
-            {
-                type: "file-history-snapshot",
-                messageId: "msg-p2",
-                snapshot: {
-                    messageId: "msg-p2",
-                    trackedFileBackups: { "big.ts": { backupFileName: "big@v2", realParentDir: REPO } },
-                },
-            },
-            use("t-big", "Edit", { file_path: `${REPO}/big.ts`, old_string: "old", new_string: "new" }, 41),
-            result("p2", "t-big", 42, { toolUseResult: { originalFile: null, oldString: "old", newString: "new" } }),
-        ]);
-        const subagent = jsonl([
-            { type: "user", promptId: "sub-prompt", timestamp: at(10), cwd: REPO, message: { content: "task" } },
-            use("t-sub", "Write", { file_path: `${REPO}/by-agent.ts`, content: "agent\n" }, 11),
-            result("sub-prompt", "t-sub", 12, { toolUseResult: { type: "create", originalFile: null } }),
-        ]);
-        const transcript = parseClaudeTranscript("fixture-session", {
-            main,
-            subagents: [{ agentId: "agent-1", content: subagent, parentToolUseId: "t-agent" }],
-            readBackup: (name) => (name === "big@v2" ? "old body\n" : null),
-        });
-        const call = (id: string) => transcript.calls.find((item) => item.id === id);
+/** Epoch ms of `at(seconds)`, as a reader records a call's start and finish. */
+const ms = (seconds: number): number => Date.parse(at(seconds));
 
-        expect(transcript.turns.map((turn) => [turn.turnId, turn.index, turn.prompt])).toEqual([
-            ["p1", 0, "change a"],
-            ["p2", 1, "and big.ts"],
-        ]);
-        expect(call("t-edit")).toMatchObject({ turnId: "p1", before: "one\n", after: "$& two\n", isError: false });
-        expect(call("t-new")).toMatchObject({ before: null, after: "fresh\n" });
-        expect(call("t-bad")?.isError).toBe(true);
-        expect(call("t-sh")?.harnessDetected).toEqual([
-            { path: `${REPO}/c.ts`, created: false },
-            { path: `${REPO}/d.ts`, created: true },
-        ]);
-        expect(call("t-sub")).toMatchObject({ agentId: "agent-1", turnId: "p1", before: null });
-        expect(call("t-big")).toMatchObject({ turnId: "p2", before: "old body\n", after: "new body\n" });
-        expect(applyReplacement("a b", "b", "$&$&", false)).toBe("a $&$&");
-    });
-});
+/** A tool call of a provider-neutral transcript fixture, in the main thread, started and finished at these seconds. */
+function call(
+    id: string,
+    turnId: string,
+    name: string,
+    [started, finished]: [number, number],
+    extra: Partial<SessionToolCall> = {}
+): SessionToolCall {
+    return {
+        id,
+        turnId,
+        name,
+        startedAt: ms(started),
+        finishedAt: ms(finished),
+        cwd: REPO,
+        agentId: null,
+        isError: false,
+        filePath: null,
+        command: null,
+        ...extra,
+    };
+}
+
+function shell(id: string, turnId: string, command: string, seconds: [number, number]): SessionToolCall {
+    return call(id, turnId, "Bash", seconds, { command });
+}
+
+/** A provider-neutral transcript: its turns as `[turnId, prompt, seconds]`, in order, and its calls. */
+function transcriptOf(
+    sessionId: string,
+    turns: [string, string, number][],
+    calls: SessionToolCall[]
+): SessionTranscript {
+    return {
+        sessionId,
+        turns: turns.map(([turnId, prompt, seconds], index) => ({ turnId, index, at: at(seconds), prompt })),
+        calls,
+        cwds: [REPO],
+    };
+}
 
 describe("computeSessionChanges", () => {
-    const transcript = parseClaudeTranscript("fixture-session", {
-        main: jsonl([
-            prompt("p1", "fix a", 0),
-            use("edit-a", "Edit", { file_path: `${REPO}/src/a.ts`, old_string: "one", new_string: "two" }, 1),
-            result("p1", "edit-a", 2, { toolUseResult: { originalFile: "one\n" } }),
-            use("write-spec", "Write", { file_path: `${TEMP}/notes.md`, content: "notes\n" }, 3),
-            result("p1", "write-spec", 4, { toolUseResult: { type: "create", originalFile: null } }),
-            use("edit-bad", "Edit", { file_path: `${REPO}/src/c.ts`, old_string: "x", new_string: "y" }, 5),
-            result("p1", "edit-bad", 6, { isError: true }),
-            use("checkout", "Bash", { command: "git checkout -m other-branch" }, 10),
-            result("p1", "checkout", 12),
-            use("sed", "Bash", { command: "sed -i 's/a/b/' src/b.ts" }, 20),
-            result("p1", "sed", 21),
-            use("test", "Bash", { command: `bun run test > ${TEMP}/t.log 2>&1` }, 30),
-            result("p1", "test", 40),
-            prompt("p2", "look around", 100),
-            use("rg", "Bash", { command: "rg -n foo src" }, 101),
-            result("p2", "rg", 102),
-            use("codemod", "Bash", { command: "bun scripts/codemod.ts" }, 110),
-            result("p2", "codemod", 115),
-            use("worktree-test", "Bash", { command: `cd ${OTHER} && bun run test` }, 120),
-            result("p2", "worktree-test", 130),
-            prompt("p3", "add a dependency", 200),
-            use("add", "Bash", { command: "bun add zod" }, 201),
-            result("p3", "add", 205),
-        ]),
-    });
+    const transcript = transcriptOf(
+        "fixture-session",
+        [
+            ["p1", "fix a", 0],
+            ["p2", "look around", 100],
+            ["p3", "add a dependency", 200],
+        ],
+        [
+            call("edit-a", "p1", "Edit", [1, 2], { filePath: `${REPO}/src/a.ts`, before: "one\n", after: "two\n" }),
+            call("write-spec", "p1", "Write", [3, 4], { filePath: `${TEMP}/notes.md`, before: null, after: "notes\n" }),
+            call("edit-bad", "p1", "Edit", [5, 6], { filePath: `${REPO}/src/c.ts`, isError: true }),
+            shell("checkout", "p1", "git checkout -m other-branch", [10, 12]),
+            shell("sed", "p1", "sed -i 's/a/b/' src/b.ts", [20, 21]),
+            shell("test", "p1", `bun run test > ${TEMP}/t.log 2>&1`, [30, 40]),
+            shell("rg", "p2", "rg -n foo src", [101, 102]),
+            shell("codemod", "p2", "bun scripts/codemod.ts", [110, 115]),
+            shell("worktree-test", "p2", `cd ${OTHER} && bun run test`, [120, 130]),
+            shell("add", "p3", "bun add zod", [201, 205]),
+        ]
+    );
     const log: LoggedChange[] = [
         row("p1", `${REPO}/src/x.ts`, 12),
         row("p1", `${REPO}/src/y.ts`, 12),
@@ -529,29 +461,24 @@ describe("computeSessionChanges", () => {
     });
 
     it("attributes a log row to the shell call that finished closest to it", () => {
-        const twoCalls = parseClaudeTranscript("fixture-session", {
-            main: jsonl([
-                prompt("p1", "two commands", 0),
-                use("first", "Bash", { command: "rg -n foo" }, 1),
-                result("p1", "first", 2),
-                use("second", "Bash", { command: "bun scripts/codemod.ts" }, 50),
-                result("p1", "second", 60),
-            ]),
-        });
+        const twoCalls = transcriptOf(
+            "fixture-session",
+            [["p1", "two commands", 0]],
+            [shell("first", "p1", "rg -n foo", [1, 2]), shell("second", "p1", "bun scripts/codemod.ts", [50, 60])]
+        );
         const matched = compute({ transcript: twoCalls, log: [row("p1", `${REPO}/src/a.ts`, 60)] });
 
         expect(matched.turns[0]?.files[0]).toMatchObject({ path: `${REPO}/src/a.ts`, toolUseIds: ["second"] });
 
         // A row that names its call is attributed to it, whatever its timestamp says.
-        const twoWriters = parseClaudeTranscript("fixture-session", {
-            main: jsonl([
-                prompt("p1", "two codemods", 0),
-                use("first", "Bash", { command: "bun scripts/codemod-a.ts" }, 1),
-                result("p1", "first", 2),
-                use("second", "Bash", { command: "bun scripts/codemod-b.ts" }, 50),
-                result("p1", "second", 60),
-            ]),
-        });
+        const twoWriters = transcriptOf(
+            "fixture-session",
+            [["p1", "two codemods", 0]],
+            [
+                shell("first", "p1", "bun scripts/codemod-a.ts", [1, 2]),
+                shell("second", "p1", "bun scripts/codemod-b.ts", [50, 60]),
+            ]
+        );
         const named = compute({
             transcript: twoWriters,
             log: [row("p1", `${REPO}/src/a.ts`, 60, { toolUseId: "first" })],
@@ -560,13 +487,11 @@ describe("computeSessionChanges", () => {
     });
 
     it("lists a named target nothing captured only when no change log covered the command", () => {
-        const sedOnly = parseClaudeTranscript("fixture-session", {
-            main: jsonl([
-                prompt("p1", "edit by sed", 100),
-                use("sed", "Bash", { command: "sed -i 's/a/b/' src/a.ts" }, 101),
-                result("p1", "sed", 102),
-            ]),
-        });
+        const sedOnly = transcriptOf(
+            "fixture-session",
+            [["p1", "edit by sed", 100]],
+            [shell("sed", "p1", "sed -i 's/a/b/' src/a.ts", [101, 102])]
+        );
 
         expect(compute({ transcript: sedOnly }).files.map((file) => [file.path, file.confidence])).toEqual([
             [`${REPO}/src/a.ts`, "low"],
@@ -584,17 +509,19 @@ describe("computeSessionChanges", () => {
         expect(scopedTurn("p3")?.files).toEqual([]);
     });
 
+    const writeScript = (id: string, body: string, seconds: [number, number]) =>
+        shell(id, "p1", `cat > gen.sh <<'EOF'\n${body}\nEOF`, seconds);
+    const runScript = shell("run", "p2", "zsh gen.sh", [11, 12]);
+
     it("still reads a heredoc script an earlier turn wrote when onlyTools runs it", () => {
-        const scripted = parseClaudeTranscript("fixture-session", {
-            main: jsonl([
-                prompt("p1", "write a script", 0),
-                use("heredoc", "Bash", { command: "cat > gen.sh <<'EOF'\necho hi > src/out.ts\nEOF" }, 1),
-                result("p1", "heredoc", 2),
-                prompt("p2", "run it", 10),
-                use("run", "Bash", { command: "zsh gen.sh" }, 11),
-                result("p2", "run", 12),
-            ]),
-        });
+        const scripted = transcriptOf(
+            "fixture-session",
+            [
+                ["p1", "write a script", 0],
+                ["p2", "run it", 10],
+            ],
+            [writeScript("heredoc", "echo hi > src/out.ts", [1, 2]), runScript]
+        );
         const runLog = [row("p1", `${REPO}/gen.sh`, 2), row("p2", `${REPO}/src/out.ts`, 12)];
         const whole = compute({ transcript: scripted, log: runLog });
         const scoped = compute({ transcript: scripted, log: runLog, onlyTools: ["run"] });
@@ -606,23 +533,19 @@ describe("computeSessionChanges", () => {
 
     it("keeps a call's analysis across asks of one session, and still replays the script it wrote", () => {
         // A resident process asks again as the session grows: the second ask sees the script's run appended.
-        const first = parseClaudeTranscript("kept-session", {
-            main: jsonl([
-                prompt("p1", "write a script", 0),
-                use("heredoc", "Bash", { command: "cat > gen.sh <<'EOF'\necho hi > src/out.ts\nEOF" }, 1),
-                result("p1", "heredoc", 2),
-            ]),
-        });
-        const grown = parseClaudeTranscript("kept-session", {
-            main: jsonl([
-                prompt("p1", "write a script", 0),
-                use("heredoc", "Bash", { command: "cat > gen.sh <<'EOF'\necho hi > src/out.ts\nEOF" }, 1),
-                result("p1", "heredoc", 2),
-                prompt("p2", "run it", 10),
-                use("run", "Bash", { command: "zsh gen.sh" }, 11),
-                result("p2", "run", 12),
-            ]),
-        });
+        const first = transcriptOf(
+            "kept-session",
+            [["p1", "write a script", 0]],
+            [writeScript("heredoc", "echo hi > src/out.ts", [1, 2])]
+        );
+        const grown = transcriptOf(
+            "kept-session",
+            [
+                ["p1", "write a script", 0],
+                ["p2", "run it", 10],
+            ],
+            [writeScript("heredoc", "echo hi > src/out.ts", [1, 2]), runScript]
+        );
         const runLog = [row("p1", `${REPO}/gen.sh`, 2), row("p2", `${REPO}/src/out.ts`, 12)];
         const ask = (sessionId: string, transcript: typeof first) =>
             computeSessionChanges({
@@ -645,21 +568,18 @@ describe("computeSessionChanges", () => {
 
     it("replays a cached script overwrite on a warm refresh", () => {
         const writes = [
-            prompt("p1", "write twice", 0),
-            use("first-write", "Bash", { command: "cat > gen.sh <<'EOF'\necho hi > src/old.ts\nEOF" }, 1),
-            result("p1", "first-write", 2),
-            use("second-write", "Bash", { command: "cat > gen.sh <<'EOF'\necho hi > src/new.ts\nEOF" }, 3),
-            result("p1", "second-write", 4),
+            writeScript("first-write", "echo hi > src/old.ts", [1, 2]),
+            writeScript("second-write", "echo hi > src/new.ts", [3, 4]),
         ];
-        const first = parseClaudeTranscript("rewrite-session", { main: jsonl(writes) });
-        const grown = parseClaudeTranscript("rewrite-session", {
-            main: jsonl([
-                ...writes,
-                prompt("p2", "run it", 10),
-                use("run", "Bash", { command: "zsh gen.sh" }, 11),
-                result("p2", "run", 12),
-            ]),
-        });
+        const first = transcriptOf("rewrite-session", [["p1", "write twice", 0]], writes);
+        const grown = transcriptOf(
+            "rewrite-session",
+            [
+                ["p1", "write twice", 0],
+                ["p2", "run it", 10],
+            ],
+            [...writes, runScript]
+        );
         const log = [row("p1", `${REPO}/gen.sh`, 4), row("p2", `${REPO}/src/new.ts`, 12)];
         const ask = (sessionId: string, transcript: typeof first) =>
             computeSessionChanges({
@@ -682,16 +602,14 @@ describe("computeSessionChanges", () => {
     it("analyzes a kept call again when a script it runs changed on a later ask", () => {
         // The run call keeps its id, text and directory, but the script an earlier call wrote is another one now.
         const transcriptWith = (script: string) =>
-            parseClaudeTranscript("changed-script-session", {
-                main: jsonl([
-                    prompt("p1", "write a script", 0),
-                    use("write", "Bash", { command: `cat > gen.sh <<'EOF'\n${script}\nEOF` }, 1),
-                    result("p1", "write", 2),
-                    prompt("p2", "run it", 10),
-                    use("run", "Bash", { command: "zsh gen.sh" }, 11),
-                    result("p2", "run", 12),
-                ]),
-            });
+            transcriptOf(
+                "changed-script-session",
+                [
+                    ["p1", "write a script", 0],
+                    ["p2", "run it", 10],
+                ],
+                [writeScript("write", script, [1, 2]), runScript]
+            );
         const log = [row("p1", `${REPO}/gen.sh`, 2), row("p2", `${REPO}/src/new.ts`, 12)];
         const ask = (sessionId: string, script: string) =>
             computeSessionChanges({
@@ -722,84 +640,44 @@ describe("computeSessionChanges", () => {
         expect(logOnly.turns[0]?.excluded.map((item) => item.reason)).toEqual(["temp-dir"]);
     });
 
+    it("loadSessionChanges reads the session's change log itself when the caller passes no rows", () => {
+        const sessionId = `log-reader-${process.pid}`;
+        const file = changeLogPath(sessionId);
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, `${jsonl([{ ...row("p1", `${REPO}/src/made.ts`, 1), session: sessionId }])}\n`);
+
+        const loaded = loadSessionChanges({ sessionId, home: HOME, tempDirs: [TEMP], repoRoot });
+        const passed = loadSessionChanges({ sessionId, home: HOME, tempDirs: [TEMP], repoRoot, log: [] });
+
+        expect(loaded.transcriptPath).toBeNull();
+        expect(loaded.files.map((item) => [item.path, item.via])).toEqual([[`${REPO}/src/made.ts`, "bash"]]);
+        expect(passed.files).toEqual([]);
+    });
+
     it("never reports an unknown after-state as a deleted file", () => {
-        const sedOnly = parseClaudeTranscript("fixture-session", {
-            main: jsonl([
-                prompt("p1", "edit by sed", 100),
-                use("sed", "Bash", { command: "sed -i 's/a/b/' src/a.ts" }, 101),
-                result("p1", "sed", 102),
-            ]),
-        });
+        const sedOnly = transcriptOf(
+            "fixture-session",
+            [["p1", "edit by sed", 100]],
+            [shell("sed", "p1", "sed -i 's/a/b/' src/a.ts", [101, 102])]
+        );
         const [named] = compute({ transcript: sedOnly }).files;
 
         expect(named).toMatchObject({ path: `${REPO}/src/a.ts`, skipped: "no-before-state" });
         expect(named?.afterOid).toBeUndefined();
 
-        // The first edit applies to the checkpoint, the second does not: the before-state is known, the after is not.
-        const broken = parseClaudeTranscript("fixture-session", {
-            main: jsonl([
-                prompt("p1", "two edits", 0),
-                snapshotLine("msg-p1", { "a.ts": { backupFileName: "a@v1", backupTime: at(0), realParentDir: REPO } }),
-                use("e1", "Edit", { file_path: `${REPO}/a.ts`, old_string: "one", new_string: "two" }, 1),
-                result("p1", "e1", 2, { toolUseResult: { originalFile: null } }),
-                use("e2", "Edit", { file_path: `${REPO}/a.ts`, old_string: "absent", new_string: "x" }, 3),
-                result("p1", "e2", 4, { toolUseResult: { originalFile: null } }),
-            ]),
-            readBackup: (name) => (name === "a@v1" ? "one\n" : null),
-        });
+        // The first edit's before- and after-state are known, the second's neither: the file's before is, its after is not.
+        const broken = transcriptOf(
+            "fixture-session",
+            [["p1", "two edits", 0]],
+            [
+                call("e1", "p1", "Edit", [1, 2], { filePath: `${REPO}/a.ts`, before: "one\n", after: "two\n" }),
+                call("e2", "p1", "Edit", [3, 4], { filePath: `${REPO}/a.ts` }),
+            ]
+        );
         const [file] = compute({ transcript: broken }).files;
 
         expect(file).toMatchObject({ beforeOid: gitBlobOid(Buffer.from("one\n")), skipped: "no-after-state" });
         expect(file?.afterOid).toBeUndefined();
-    });
-});
-
-function snapshotLine(messageId: string, trackedFileBackups: Record<string, unknown>): Line {
-    return { type: "file-history-snapshot", messageId, snapshot: { messageId, trackedFileBackups } };
-}
-
-describe("checkpoint seeds", () => {
-    it("does not seed a turn from a backup file a later entry of the same name overwrote", () => {
-        // Claude reuses `name@v1` after a resume, so the file on disk holds the LATER state.
-        const main = jsonl([
-            prompt("p1", "first visit", 0),
-            {
-                type: "file-history-delta",
-                snapshotMessageId: "msg-p1",
-                trackingPath: `${REPO}/a.ts`,
-                backup: { backupFileName: "a@v1", backupTime: at(1), realParentDir: REPO },
-            },
-            use("e1", "Edit", { file_path: `${REPO}/a.ts`, old_string: "one", new_string: "two" }, 2),
-            result("p1", "e1", 3, { toolUseResult: { originalFile: null } }),
-            prompt("p2", "after a resume", 100),
-            {
-                type: "file-history-delta",
-                snapshotMessageId: "msg-p2",
-                trackingPath: `${REPO}/a.ts`,
-                backup: { backupFileName: "a@v1", backupTime: at(101), realParentDir: REPO },
-            },
-            use("e2", "Edit", { file_path: `${REPO}/a.ts`, old_string: "two", new_string: "three" }, 102),
-            result("p2", "e2", 103, { toolUseResult: { originalFile: null } }),
-        ]);
-        const transcript = parseClaudeTranscript("fixture-session", { main, readBackup: () => "two\n" });
-        const call = (id: string) => transcript.calls.find((item) => item.id === id);
-
-        expect(call("e1")?.before).toBeUndefined();
-        expect(call("e1")?.after).toBeUndefined();
-        expect(call("e2")).toMatchObject({ before: "two\n", after: "three\n" });
-    });
-
-    it("leaves a call unknown when its edit does not apply to the seeded state", () => {
-        const main = jsonl([
-            prompt("p1", "edit", 0),
-            snapshotLine("msg-p1", { "a.ts": { backupFileName: "a@v1", backupTime: at(0), realParentDir: REPO } }),
-            use("e1", "Edit", { file_path: `${REPO}/a.ts`, old_string: "gone", new_string: "x" }, 1),
-            result("p1", "e1", 2, { toolUseResult: { originalFile: null } }),
-        ]);
-        const transcript = parseClaudeTranscript("fixture-session", { main, readBackup: () => "other\n" });
-
-        expect(transcript.calls[0]?.before).toBeUndefined();
-        expect(compute({ transcript }).files[0]).toMatchObject({ skipped: "no-before-state" });
     });
 });
 
@@ -947,72 +825,6 @@ describe("parseCodexRollout", () => {
                 parseCodexRollout("thread-reader", rollout).calls.map((call) => call.id)
             );
         });
-    });
-});
-
-describe("parseLines", () => {
-    it("keeps the input of a file tool only: no rule reads another tool's input again, and a fold keeps them all", () => {
-        const state = emptyParseState();
-        parseLines(
-            jsonl([
-                prompt("p1", "go", 0),
-                use("t-read", "Read", { file_path: "/x/a.ts" }, 1),
-                use("t-bash", "Bash", { command: "ls" }, 2),
-                use("t-edit", "Edit", { file_path: "/x/a.ts", old_string: "a", new_string: "b" }, 3),
-            ]),
-            null,
-            state
-        );
-
-        expect([...state.calls.keys()]).toEqual(["t-read", "t-bash", "t-edit"]);
-        expect(state.calls.get("t-bash")?.command).toBe("ls");
-        expect([...state.inputs.keys()]).toEqual(["t-edit"]);
-    });
-});
-
-describe("readClaudeTranscriptFolded", () => {
-    it("equals a full read as the main and sub-agent files grow, with the cross-file steps applied", () => {
-        const dir = mkdtempSync(join(tmpdir(), "gt-session-fold-"));
-        const main = join(dir, "fold-session.jsonl");
-        const agents = join(dir, "fold-session", "subagents");
-        mkdirSync(agents, { recursive: true });
-        writeFileSync(
-            join(agents, "agent-a1.meta.json"),
-            SafeJSON.stringify({ toolUseId: "t-agent" }, { strict: true })
-        );
-        const agent = join(agents, "agent-a1.jsonl");
-        const lines = (items: Line[]) => `${jsonl(items)}\n`;
-        const same = () => {
-            const folded = readClaudeTranscriptFolded(main, { minBytes: 0 });
-            expect(folded).toEqual(readClaudeTranscript(main));
-            return folded;
-        };
-
-        // A turn without prompt text: the sub-agent's prompt line fills it, as the full read does.
-        writeFileSync(
-            main,
-            lines([
-                prompt("p1", "", 0),
-                use("t-agent", "Agent", { prompt: "help" }, 1),
-                use("t-main", "Bash", { command: "ls" }, 2),
-            ])
-        );
-        writeFileSync(agent, lines([prompt("p1", "from the agent", 3)]));
-        same();
-
-        // The sub-agent answers a call of the main file, then makes its own.
-        appendFileSync(agent, lines([result("p1", "t-main", 4), use("t-sub", "Bash", { command: "pwd" }, 5)]));
-        same();
-
-        // A line no rule reads between two that are read, and text outside ASCII: the fold decodes only the lines a
-        // parse reads, from the raw bytes, and must find the same lines and the same text.
-        appendFileSync(main, `{"type":"attachment","note":"příliš žluťoučký kůň"}\n`);
-        appendFileSync(main, lines([result("p1", "t-agent", 6), prompt("p2", "další krok 🚀", 7)]));
-        const final = same();
-        expect(final.calls.find((call) => call.id === "t-main")?.finishedAt).not.toBeNull();
-        expect(final.turns.find((turn) => turn.turnId === "p1")?.prompt).toBe("from the agent");
-        expect(final.calls.find((call) => call.id === "t-sub")?.agentId).toBe("a1");
-        expect(final.turns.find((turn) => turn.turnId === "p2")?.prompt).toBe("další krok 🚀");
     });
 });
 

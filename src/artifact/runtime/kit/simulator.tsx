@@ -186,7 +186,7 @@ export function Simulator({ title, initial, steps, interval = 1400 }: SimulatorP
                     >
                         <div className="mb-2 font-mono text-[0.7rem] uppercase tracking-wider text-dim">Log</div>
                         {frame.logs.length === 0 ? (
-                            <div className="font-mono text-xs text-dim/60">(empty)</div>
+                            <div className="font-mono text-xs text-dim">(empty)</div>
                         ) : (
                             frame.logs.map((line, i) => (
                                 <div key={i} className="font-mono text-xs leading-relaxed text-ink/90">

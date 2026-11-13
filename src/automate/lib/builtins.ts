@@ -1,8 +1,8 @@
 // src/automate/lib/builtins.ts
 
-import * as p from "@clack/prompts";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as p from "@genesiscz/utils/prompts/p";
 import { resolveExpression, resolveParams } from "./expressions.ts";
 import type { ExecutionContext, PresetStep, StepHandlerResult } from "./types.ts";
 
@@ -83,6 +83,7 @@ async function handlePrompt(step: PresetStep, ctx: ExecutionContext, start: numb
         message,
         placeholder: defaultValue,
         defaultValue,
+        cancel: "back",
     });
 
     if (p.isCancel(answer)) {

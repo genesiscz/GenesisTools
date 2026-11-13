@@ -1,5 +1,10 @@
 // The `mods` section of the hooks file as this plugin reads it. No engine types here: the CLI's own tests import
-// this file to hold its defaults equal to `src/agents/lib/hooks/config.ts`, outside the plugin's type world.
+// this file outside the plugin's type world. The defaults are generated from `src/agents/lib/hooks/config.ts` into
+// `mods-defaults.ts` by scripts/gen-harness-plugin.ts.
+
+import { MODS_DEFAULTS } from "./mods-defaults";
+
+export { MODS_DEFAULTS };
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -7,11 +12,11 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * The `mods` section of the hooks file, one object per feature (`tools agents hooks config set mods.<feature>.<field>`).
- * The CLI keeps the same shape and defaults in `src/agents/lib/hooks/config.ts` (`ModsConfig`); a test holds the two
- * equal, since this plugin runs outside the repository and cannot import it.
+ * The CLI keeps the same shape in `src/agents/lib/hooks/config.ts` (`ModsConfig`); this plugin runs outside the
+ * repository and cannot import it, so `scripts/gen-harness-plugin.ts` writes the CLI's defaults into `mods-defaults.ts`.
  */
 export interface ModsSettings {
-    diff: { fullDiff: boolean; collapseGitSync: boolean };
+    diff: { fullDiff: boolean; collapseGitSync: boolean; bottomRow: boolean; filesOnly: boolean };
     idleCompact: { enabled: boolean; minutes: number; minTokens: number };
     agentModel: { enabled: boolean; format: "label" | "short" | "version" };
     /** Read by the CLI's agents panel command (`hooks/agent-row.ts`), not by a hook of this plugin. */
@@ -39,7 +44,8 @@ export interface ModsSettings {
     cacheBand: { enabled: boolean; warnMinutes: number; cautionMinutes: number; others: boolean };
     tmpUsage: { enabled: boolean; minutes: number };
     agentsBand: { enabled: boolean; warnMinutes: number };
-    hooks: { tokens: boolean; dedupe: boolean };
+    /** `metrics`: each injection also goes to the `tools metrics` spool as `agent-context / hook.injection`. */
+    hooks: { tokens: boolean; dedupe: boolean; metrics: boolean };
     /**
      * `readings`: every refresh and reading goes to `mods-log/<feature>.jsonl` too (the git rows of each pass, the
      * session files reading, the answers scans). Commands, failures, the hook ledger and what the links mod changed
@@ -48,36 +54,12 @@ export interface ModsSettings {
     log: { readings: boolean };
     sidebar: { hints: boolean; feedback: "line" | "toast" | "both"; focus: "command" | "always" | "never" };
     stall: { enabled: boolean; action: "button" | "auto"; minutes: number };
+    /**
+     * Refuses once a SendMessage to an agent of the session idle for `idleSeconds` (60 to 3600) or more with a context
+     * of `minTokens` (20,000 to 2,000,000) or more; `teammates` covers teammates too.
+     */
+    resumeGuard: { enabled: boolean; idleSeconds: number; minTokens: number; teammates: boolean };
 }
-
-/** Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`. */
-export const MODS_DEFAULTS: ModsSettings = {
-    diff: { fullDiff: true, collapseGitSync: true },
-    idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
-    agentModel: { enabled: false, format: "label" },
-    agentRow: { enabled: false, format: "version", effort: true },
-    decisions: { enabled: false, chip: "any", expand: "waiting", history: "collapsed", enter: "stage-then-send" },
-    inbox: { enabled: false, chip: "any", expand: "none" },
-    links: { enabled: false },
-    git: {
-        enabled: false,
-        labels: "full",
-        checkouts: 3,
-        cwd: "touched",
-        expand: "first",
-        name: "repo-folder",
-        earlier: "show",
-    },
-    askRow: { enabled: false },
-    spinner: { enabled: false },
-    cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
-    tmpUsage: { enabled: false, minutes: 5 },
-    agentsBand: { enabled: false, warnMinutes: 60 },
-    hooks: { tokens: false, dedupe: false },
-    log: { readings: false },
-    sidebar: { hints: true, feedback: "line", focus: "command" },
-    stall: { enabled: false, action: "button", minutes: 5 },
-};
 
 function whole(value: unknown, min: number, max: number, fallback: number): number {
     return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max ? value : fallback;
@@ -154,6 +136,7 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
     const log = part("log");
     const sidebar = part("sidebar");
     const stall = part("stall");
+    const resume = part("resumeGuard");
     const enabled = (key: string, fallback: boolean) => bool(part(key).enabled, fallback);
     const git = part("git");
     const decisions = part("decisions");
@@ -163,6 +146,8 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
         diff: {
             fullDiff: bool(diff.fullDiff, bool(held.fullDiff, d.diff.fullDiff)),
             collapseGitSync: bool(diff.collapseGitSync, bool(held.collapseGitSync, d.diff.collapseGitSync)),
+            bottomRow: bool(diff.bottomRow, d.diff.bottomRow),
+            filesOnly: bool(diff.filesOnly, d.diff.filesOnly),
         },
         idleCompact: {
             enabled: bool(idle.enabled, legacyIdle ?? d.idleCompact.enabled),
@@ -242,7 +227,11 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
             enabled: bool(agents.enabled, d.agentsBand.enabled),
             warnMinutes: whole(agents.warnMinutes, 1, 24 * 60, d.agentsBand.warnMinutes),
         },
-        hooks: { tokens: bool(hooks.tokens, d.hooks.tokens), dedupe: bool(hooks.dedupe, d.hooks.dedupe) },
+        hooks: {
+            tokens: bool(hooks.tokens, d.hooks.tokens),
+            dedupe: bool(hooks.dedupe, d.hooks.dedupe),
+            metrics: bool(hooks.metrics, d.hooks.metrics),
+        },
         sidebar: {
             hints: bool(sidebar.hints, d.sidebar.hints),
             feedback:
@@ -259,6 +248,12 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
             enabled: bool(stall.enabled, d.stall.enabled),
             action: stall.action === "button" || stall.action === "auto" ? stall.action : d.stall.action,
             minutes: whole(stall.minutes, 1, 120, d.stall.minutes),
+        },
+        resumeGuard: {
+            enabled: bool(resume.enabled, d.resumeGuard.enabled),
+            idleSeconds: whole(resume.idleSeconds, 60, 3600, d.resumeGuard.idleSeconds),
+            minTokens: whole(resume.minTokens, 20_000, 2_000_000, d.resumeGuard.minTokens),
+            teammates: bool(resume.teammates, d.resumeGuard.teammates),
         },
     };
 }

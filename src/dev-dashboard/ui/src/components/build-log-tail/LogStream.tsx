@@ -1,11 +1,12 @@
 import type { ClassifiedLogEntry, LogEntry, LogLineClass } from "@app/dev-dashboard/contract/dto";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
 import { classifyLogLine } from "@app/dev-dashboard/lib/daemon-view/classify";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LiveSseIndicator } from "@/components/LiveSseIndicator";
-import { fetchJson } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 import { appendLiveWithCap, BACKLOG_LIMIT, trimRowRefsForEvictedLive } from "./live-cap";
 
 interface Props {
@@ -71,7 +72,7 @@ export function LogStream({ logFile }: Props) {
                 return [];
             }
 
-            const all = await fetchJson<LogEntry[]>(paths.daemonRunLog(logFile));
+            const all = await dashboard.call(ENDPOINTS.daemonRunLog, { logFile });
             return (Array.isArray(all) ? all : []).slice(-BACKLOG_LIMIT);
         },
         enabled: logFile !== null,

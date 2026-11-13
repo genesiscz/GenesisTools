@@ -6,7 +6,7 @@ import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import { paneList, rpc, type SurfaceSplitResult, windowList } from "@genesiscz/utils/cmux/lib/socket";
 import { sameCmuxId, surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { applySplitTree } from "@genesiscz/utils/cmux/split-tree";
-import { createWorkspaceWithName } from "@genesiscz/utils/cmux/workspace";
+import { createWorkspaceWithName, pasteCommandLine } from "@genesiscz/utils/cmux/workspace";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface ApplyOptions extends LaunchCommandOptions {
@@ -190,7 +190,8 @@ async function fillPane(pane: PlannedPane, paneId: string, workspaceId: string, 
             { workspaceId, surfaceId, sessionId: session.candidate.sessionId, enter: opts.enter },
             "[claude-cmux] sending launch command"
         );
-        await runCmuxOk(["send", ...surfaceTargetArgs(surfaceId, workspaceId), payload]);
+        // Pasted, then Enter: plain `cmux send` reads a backslash in the quoted launch line as a key.
+        await pasteCommandLine(surfaceTargetArgs(surfaceId, workspaceId), payload);
     }
 
     return skipped;

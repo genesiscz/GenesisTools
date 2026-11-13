@@ -1,8 +1,8 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { logger } from "@genesiscz/utils/logger";
+import * as captureModule from "@genesiscz/utils/process/capture";
 import * as os from "@genesiscz/utils/process/os";
-import * as ps from "@genesiscz/utils/process/ps";
 import {
     collectHostMetrics,
     type HostSources,
@@ -131,7 +131,7 @@ describe("collectTopProcesses", () => {
 
     test("on Windows the names come from the snapshot, with no CIM query per row", async () => {
         const platform = spyOn(os, "processPlatform").mockReturnValue("win32");
-        const capture = spyOn(ps, "captureSync");
+        const capture = spyOn(captureModule, "captureSync");
         const entry = (pid: number, name: string, rssBytes: number) => ({
             pid,
             ppid: 4,

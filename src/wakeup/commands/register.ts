@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import {
@@ -71,15 +71,18 @@ export async function runRegisterFlow(storage: Storage): Promise<void> {
                             return "Provide a server host";
                         }
                     },
+                    cancel: "back",
                 }),
             name: () =>
                 p.text({
                     message: "Device name",
                     initialValue: config.client?.name ?? "",
+                    cancel: "back",
                 }),
             password: () =>
                 p.password({
                     message: "Device password",
+                    cancel: "back",
                 }),
             iface: async () => {
                 if (interfaceOptions.length === 0) {
@@ -90,6 +93,7 @@ export async function runRegisterFlow(storage: Storage): Promise<void> {
                     message: "Network interface to use",
                     options: [...interfaceOptions, { value: "manual", label: "Enter values manually" }],
                     initialValue: interfaceOptions[0]?.value ?? "manual",
+                    cancel: "back",
                 });
             },
             mac: async ({ results }) => {
@@ -106,6 +110,7 @@ export async function runRegisterFlow(storage: Storage): Promise<void> {
                     message: "Target MAC",
                     placeholder: "01:23:45:67:89:ab",
                     initialValue: config.client?.mac ?? "",
+                    cancel: "back",
                 });
             },
             broadcast: async ({ results }) => {
@@ -122,6 +127,7 @@ export async function runRegisterFlow(storage: Storage): Promise<void> {
                     message: "Broadcast address",
                     placeholder: "255.255.255.255",
                     initialValue: config.client?.broadcast ?? config.server?.broadcast ?? "",
+                    cancel: "back",
                 });
             },
         },

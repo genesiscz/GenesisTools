@@ -1,7 +1,6 @@
 import { assertApiKeySourceAllowed } from "@app/ai-proxy/lib/providers/api-key-guard";
-import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
-import { providerKey } from "@app/ai-proxy/lib/providers/registry";
-import { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
+import { providerKey } from "@app/ai-proxy/lib/providers/provider-key";
+import { resolveXaiApiKey, XAI_API_BASE_URL, xaiApiKeyEnvName } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { byProvider } from "@genesiscz/utils/ai/catalog";
 import {
@@ -112,7 +111,10 @@ export async function listXaiProxyModels(account: AiProxyAccountConfig): Promise
     // same guard as provider construction — otherwise an account without
     // `allowEnvApiKey` would burn an ambient XAI_API_KEY here anyway.
     try {
-        assertApiKeySourceAllowed({ account, source: resolved.source, envName: defaultApiKeyEnvName(account) });
+        // `defaultApiKeyEnvName` for an xAI account, spelled out: api-key-state reads the definition table, which loads
+        // this file.
+        const envName = account.apiKeyEnv ?? xaiApiKeyEnvName();
+        assertApiKeySourceAllowed({ account, source: resolved.source, envName });
     } catch (err) {
         logger.warn(
             { err, account: account.name },

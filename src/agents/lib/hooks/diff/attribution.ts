@@ -9,39 +9,76 @@ import {
     renameSync,
     statSync,
 } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, extname, join, relative, sep } from "node:path";
+import { changeLogPath, changeLogPathIn, readChangeLogFile, walkChangeLogs } from "@genesiscz/utils/agents/change-log";
 import { commandTokenIndex, commandWord, scanShell, splitPipeline, tokenize } from "@genesiscz/utils/shell/scan";
 import { commandEditsFiles } from "../../changes/log";
 import { hookDiag } from "../log";
 import { hookDataRoot, touchesPath } from "../paths";
 import type { HookPayload } from "../payload";
-import { covers, type Mentions, readSessionState } from "./mentions";
+import { canonical, covers, loadFileTimes, type Mentions, readSessionState } from "./mentions";
 import { assertPrivateFile } from "./private-dir";
 
 /**
  * Who changed a file the post phase found. A root is shared: other sessions, other harnesses and
  * the user's editor all write into it while this command runs, and `git status` cannot say who.
+ * So a file is this call's only with PROOF, and every verdict names the rule that gave it (`Rule`);
+ * the decision log keeps the rule for the files it printed and for the ones it declined.
  *
  * The order, strongest first:
  *
- *   1. `named`     the current command's text names the file, or a directory strictly inside the
- *                  root that holds it.
- *   2. `mentioned` an EARLIER tool input of this session named the file, its directory, or a
- *                  glob without `**` that matches it (see `Reach` in `mentions.ts`).
- *   3. `ambiguous` another session took it: a row in the touches ledger from a command that
- *                  overlapped this one, or another session has a command still running in the
- *                  same root. Two runners overlapping in one root cannot be told apart, so this
- *                  is "not provably ours", not "provably theirs".
- *   4. `runner`    nothing above, and the command runs a program. A codemod (`bun x.ts`,
- *                  `fable-replace`, a formatter) legitimately changes files it never names, and
- *                  this is how they stay visible.
- *   5. `others`    a read-only command (`git status`, `rg`, `cat`) cannot have written anything.
+ *   1. `read-only`     the command cannot write (`git status`, `rg`, `cat`). Not ours.
+ *   2. `named`         the command's text names the file. Ours.
+ *   3. `other-named`   another actor named the file during this call (the touches ledger, a call of
+ *                      this session still in flight). Theirs.
+ *      `other-wrote`   another session's change log holds a write of the file inside this call's
+ *                      window, and this session has no later proof on it. Theirs.
+ *   4. `named-folder`  the command names a folder strictly inside the root that holds the file. Ours.
+ *   5. `scripted`      a script the command names holds the file's path. Ours.
+ *   6. `foreign-owned` another session wrote the file in the hour before the call, and this session
+ *                      has no later proof on it. Theirs.
+ *   7. `own-file`      this session wrote the file before (any age), or a file tool of it named the
+ *                      file (a Read, an Edit, a Write), or an earlier command named the exact path.
+ *                      Never a folder, a glob or a search. Ours.
+ *   8. `own-root`      nothing above, and the root is this session's alone: its path holds this
+ *                      session's id, or no other session worked in it for an hour. Ours.
+ *   9. `unproven`      nothing above. Not shown as a diff; the note names the files.
  *
- * 🛑 Residual risk of step 4: a writer that leaves no trace (the user's editor, a session without
- * these hooks, a background job) that changes a file during a runner command in the same root is
- * still attributed to that command. The ledger only knows about sessions that run these hooks.
+ * Measured 2026-11-12 on two days of decisions (1,693 printed files) joined with every session's
+ * transcript: 115 files were printed in a shared checkout while another session worked there, and
+ * the command did not name them. The old order gave them to the call because an earlier mention
+ * counted before any other writer was asked, and because any command that runs a program counted
+ * as proof with no evidence at all (`timeout 40 docker system df` was shown a patch another
+ * session's agent wrote into the same folder). `tools agents hooks diff audit` repeats the join.
+ *
+ * 🛑 Residual risk: a writer that leaves no trace (the user's editor, a session without these
+ * hooks) that changes a file this session has proof on (rules 4, 5, 7), during this call.
  */
 export type Attribution = "named" | "mentioned" | "runner" | "others" | "ambiguous";
+
+/** The rule that decided one file. The log stores it; `diff log` and `diff audit` print it. */
+export type Rule =
+    | "read-only"
+    | "named"
+    | "other-named"
+    | "other-wrote"
+    | "named-folder"
+    | "scripted"
+    | "foreign-owned"
+    | "own-file"
+    | "own-root"
+    | "unproven";
+
+/** `kind` is what the touches ledger and the render pass act on; `rule` is why. */
+export interface Verdict {
+    kind: Attribution;
+    rule: Rule;
+}
+
+/** Whether a verdict makes the file this call's. */
+export function isOurs(verdict: Verdict): boolean {
+    return verdict.kind !== "others" && verdict.kind !== "ambiguous";
+}
 
 /** Commands that cannot write a file on their own (a redirect still can; that is checked apart). */
 const READ_ONLY = new Set([
@@ -445,6 +482,184 @@ export function inFlightRoots({
     return roots;
 }
 
+/** How long before a call another session's write, or its work in a root, still counts against this call. */
+export const FOREIGN_WINDOW_MS = 60 * 60 * 1000;
+
+/** Proof from the change logs and the file tools: who worked on which file, and when (epoch ms). */
+export interface Writes {
+    /** This session's last proof on a file: its last logged write, or its last Read, Edit or Write of it. */
+    mine: Map<string, number>;
+    /** The last logged write of a file by ANOTHER session, no older than `FOREIGN_WINDOW_MS` before the call. */
+    theirs: Map<string, { session: string; at: number }>;
+}
+
+/**
+ * Reads `Writes` for one call. Other sessions' logs are read only when they were written inside the
+ * window (their mtime); this session's log is read whole, because its own write counts at any age.
+ * Never throws: a log that cannot be read costs proof, never the command.
+ */
+export function sessionWrites({
+    session,
+    since,
+    dir,
+}: {
+    session: string;
+    since: number;
+    /** The change-log folder; tests pass their own. */
+    dir?: string;
+}): Writes {
+    const mine = loadFileTimes(session);
+    const theirs: Writes["theirs"] = new Map();
+    const from = since - FOREIGN_WINDOW_MS;
+    const own = (path: string, at: number) => {
+        if (Number.isFinite(at) && at > (mine.get(path) ?? 0)) {
+            mine.set(path, at);
+        }
+    };
+    let sawOwn = false;
+
+    try {
+        for (const { sessionId, rows } of walkChangeLogs({ since: from, ...(dir ? { dir } : {}) })) {
+            sawOwn ||= sessionId === session;
+
+            for (const row of rows) {
+                const at = Date.parse(row.ts);
+                const path = canonical(row.path);
+
+                if (sessionId === session) {
+                    own(path, at);
+                } else if (Number.isFinite(at) && at >= from && at > (theirs.get(path)?.at ?? 0)) {
+                    theirs.set(path, { session: sessionId, at });
+                }
+            }
+        }
+
+        if (!sawOwn && session.length > 0) {
+            for (const row of readChangeLogFile(dir ? changeLogPathIn(dir, session) : changeLogPath(session)).rows) {
+                own(canonical(row.path), Date.parse(row.ts));
+            }
+        }
+    } catch (err) {
+        hookDiag("Could not read the change logs, so no write counts as proof", { err, session });
+    }
+
+    return { mine, theirs };
+}
+
+/**
+ * Whether `root` is this session's alone for one call: its path holds the session's id (a worktree
+ * under the session's own folder), or no other session shows work in it since an hour before the
+ * call (a command in flight, a touch, a logged write, a Bash call of a session that works there).
+ */
+export function rootIsOwn({
+    root,
+    session,
+    since,
+    busy,
+    touched,
+    writes,
+    active,
+}: {
+    root: string;
+    session: string;
+    since: number;
+    busy: Set<string>;
+    /** Files OTHER SESSIONS took during the call. A parallel call of this session does not make the root shared. */
+    touched: Iterable<string>;
+    writes: Writes;
+    /** Other sessions that began a Bash call in the window, with the roots they work in. */
+    active: Array<{ session: string; roots: string[] }>;
+}): boolean {
+    if (session.length > 0 && root.includes(session)) {
+        return true;
+    }
+
+    if (busy.has(root)) {
+        return false;
+    }
+
+    const floor = root.endsWith(sep) ? root : `${root}${sep}`;
+
+    for (const path of touched) {
+        if (path.startsWith(floor)) {
+            return false;
+        }
+    }
+
+    for (const [path, write] of writes.theirs) {
+        if (write.at >= since - FOREIGN_WINDOW_MS && path.startsWith(floor)) {
+            return false;
+        }
+    }
+
+    return !active.some((other) => other.session !== session && other.roots.includes(root));
+}
+
+/** Extensions of a file a command runs as a program: its text can name the files it writes. */
+const SCRIPT_EXTENSIONS = new Set([
+    ".ts",
+    ".tsx",
+    ".mts",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".py",
+    ".sh",
+    ".zsh",
+    ".bash",
+    ".rb",
+    ".php",
+    ".swift",
+    ".pl",
+]);
+const SCRIPT_MAX_BYTES = 256 * 1024;
+/** A bare file name shorter than this is too common to be proof (`index.ts`, `README.md`). */
+const DISTINCT_NAME_CHARS = 14;
+
+/** The text of every script file among `paths` (what the command names), for rule `scripted`. Never throws. */
+export function scriptTexts(paths: Iterable<string>): Array<{ path: string; text: string }> {
+    const out: Array<{ path: string; text: string }> = [];
+
+    for (const path of paths) {
+        if (!SCRIPT_EXTENSIONS.has(extname(path))) {
+            continue;
+        }
+
+        try {
+            const stat = statSync(path);
+
+            if (stat.isFile() && stat.size <= SCRIPT_MAX_BYTES) {
+                out.push({ path, text: readFileSync(path, "utf8") });
+            }
+        } catch {
+            // A named path that is no file (yet): the usual case for an output path.
+        }
+    }
+
+    return out;
+}
+
+/** Whether a script the command runs spells `file`: its absolute path, its path in the root, or a distinct name. */
+export function scriptNames({
+    scripts,
+    file,
+    root,
+}: {
+    scripts: Array<{ path: string; text: string }>;
+    file: string;
+    root: string;
+}): boolean {
+    const inRoot = relative(root, file);
+    const name = basename(file);
+    const needles = [
+        file,
+        ...(inRoot.includes("/") ? [inRoot] : []),
+        ...(name.length >= DISTINCT_NAME_CHARS ? [name] : []),
+    ];
+
+    return scripts.some((script) => script.path !== file && needles.some((needle) => script.text.includes(needle)));
+}
+
 export interface AttributionContext {
     session: string;
     /** The command's start, in ms. */
@@ -461,6 +676,12 @@ export interface AttributionContext {
      * a background call): theirs, not this call's, even when this session mentioned them earlier.
      */
     siblings: () => Set<string>;
+    /** Who wrote which file, from the change logs and this session's file tools. */
+    writes: () => Writes;
+    /** The scripts the command names, read once. */
+    scripts: () => Array<{ path: string; text: string }>;
+    /** Whether a root is this session's alone (`rootIsOwn`); asked once per root, not per file. */
+    ownRoot: (root: string) => boolean;
 }
 
 export function attribute({
@@ -471,14 +692,14 @@ export function attribute({
     file: string;
     root: string;
     context: AttributionContext;
-}): Attribution {
+}): Verdict {
     // A command that only reads changed nothing, even a file it names (`cat src/a.ts`): the change is another writer's.
     if (context.readOnly()) {
-        return "others";
+        return { kind: "others", rule: "read-only" };
     }
 
     if (covers({ mentions: context.named, file, root, reach: "file" })) {
-        return "named";
+        return { kind: "named", rule: "named" };
     }
 
     // Before the mention index, which is per SESSION: a subagent's Edit, or a parallel call, puts the
@@ -493,7 +714,19 @@ export function attribute({
             .get(file)
             ?.some((touch) => touch.kind === "named")
     ) {
-        return "others";
+        return { kind: "others", rule: "other-named" };
+    }
+
+    const writes = context.writes();
+    const theirs = writes.theirs.get(file);
+    const mine = writes.mine.get(file);
+    const theirsIsNewer = theirs !== undefined && (mine === undefined || theirs.at > mine);
+
+    // An Edit or a Write of another session leaves no touch, only its change-log row. Inside this
+    // call's window it beats a folder the command names: `cd $G && bun test src/` claimed a file
+    // another session edited under `src/` while the tests ran.
+    if (theirs && theirsIsNewer && theirs.at >= context.since) {
+        return { kind: "others", rule: "other-wrote" };
     }
 
     // A FOLDER the command names covers every file in it, which says less than naming the file: it
@@ -501,18 +734,30 @@ export function attribute({
     // after `cd $G`, also resolved against the first `cd` and claimed a subagent's `wizard.ts` edit
     // recorded 2 s earlier.
     if (covers({ mentions: context.named, file, root, reach: "deep" })) {
-        return "named";
+        return { kind: "named", rule: "named-folder" };
     }
 
-    if (covers({ mentions: context.mentions(), file, root, reach: "file" })) {
-        return "mentioned";
+    if (scriptNames({ scripts: context.scripts(), file, root })) {
+        return { kind: "named", rule: "scripted" };
     }
 
-    if (context.others().has(file) || context.busyRoots().has(root)) {
-        return "ambiguous";
+    // Before this session's own earlier proof: an old Read of the file does not make another
+    // session's fresh write this call's (2026-11-11: `swift test --filter …` was shown
+    // `dev-monitor.ts`, which this session had read hours before and another session was editing).
+    if (theirsIsNewer) {
+        return { kind: "others", rule: "foreign-owned" };
     }
 
-    return "runner";
+    if (mine !== undefined || covers({ mentions: context.mentions(), file, root, reach: "file" })) {
+        return { kind: "mentioned", rule: "own-file" };
+    }
+
+    // A file another actor took during this call without naming it is nobody's to prove.
+    if (!context.others().has(file) && context.ownRoot(root)) {
+        return { kind: "runner", rule: "own-root" };
+    }
+
+    return { kind: "ambiguous", rule: "unproven" };
 }
 
 /** `N file(s) changed by others in this root: a.ts, b.ts and 3 more`, relative to their roots. */

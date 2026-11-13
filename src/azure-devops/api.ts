@@ -6,8 +6,10 @@
  */
 
 import type {
+    AdoFetch,
     AdoRequest,
     AdoResponse,
+    ApiOptions,
     AttachmentReferenceApi,
     CommentFormat,
     CommentsResponse,
@@ -38,7 +40,7 @@ import type {
     WorkItemCommentsApiResponse,
 } from "@app/azure-devops/api.types";
 import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
-import { AzAuthError, extractAzLoginSuggestion } from "@app/azure-devops/cli.utils";
+import { AdoHttpError, AzAuthError, extractAzLoginSuggestion } from "@app/azure-devops/cli.utils";
 import { extractOrgName } from "@app/azure-devops/config";
 import { adoOrganizationOf } from "@app/azure-devops/lib/comments";
 import type { CatalogField, TypeFieldInput } from "@app/azure-devops/lib/field-manifest";
@@ -71,6 +73,13 @@ import { $ } from "bun";
 
 // Azure DevOps API resource ID (constant for all Azure DevOps organizations)
 export const AZURE_DEVOPS_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";
+
+/** How long one Azure DevOps request may take, the body included, before `send` gives up. */
+export const ADO_REQUEST_TIMEOUT_MS = 30_000;
+
+function isTimeoutError(error: unknown): boolean {
+    return typeof error === "object" && error !== null && "name" in error && error.name === "TimeoutError";
+}
 
 // Re-export Dashboard for backwards compatibility
 export type { Dashboard };
@@ -116,9 +125,24 @@ export class Api {
     private config: AzureConfig;
     private cachedToken: string | null = null;
     private tokenExpiry: number = 0;
+    private readonly http: AdoFetch;
+    private readonly tokenSource: (() => Promise<string>) | undefined;
+    private readonly timeoutMs: number;
 
-    constructor(config: AzureConfig) {
+    constructor(config: AzureConfig, options: ApiOptions = {}) {
         this.config = config;
+        this.http = options.fetch ?? ((url, init) => fetch(url, init));
+        this.tokenSource = options.accessToken;
+        this.timeoutMs = options.timeoutMs ?? ADO_REQUEST_TIMEOUT_MS;
+    }
+
+    /**
+     * An Api for one organization, before any project is known (`configure`, the project picker). Only the
+     * organization-level methods (`getProjectId`, `getProjects`, `getOrgId`) make sense on it; every request still
+     * goes through `send`, so the sign-out, sign-in page, HTML and timeout checks apply.
+     */
+    static forOrganization(org: string, options: ApiOptions = {}): Api {
+        return new Api({ org, project: "", projectId: "", apiResource: AZURE_DEVOPS_RESOURCE_ID }, options);
     }
 
     // ============= Static URL Builders =============
@@ -224,17 +248,6 @@ export class Api {
     }
 
     /**
-     * Org-scoped URL from raw org string (for static methods that don't have a config).
-     */
-    static orgUrlRaw(org: string, path: string[], queryParams?: Record<string, string | undefined>): string {
-        return buildUrl({
-            base: org,
-            segments: ["_apis", ...path],
-            queryParams: { "api-version": "7.1", ...Api.filterParams(queryParams) },
-        });
-    }
-
-    /**
      * Work item web UI URL (not API, no api-version).
      * `{org}/{project}/_workitems/edit/{id}`
      */
@@ -252,6 +265,10 @@ export class Api {
      * Caches token for 5 minutes to avoid repeated az CLI calls
      */
     private async getAccessToken(): Promise<string> {
+        if (this.tokenSource) {
+            return this.tokenSource();
+        }
+
         if (this.cachedToken && Date.now() < this.tokenExpiry - 60_000) {
             logger.debug("[api] Using cached access token");
             return this.cachedToken;
@@ -338,11 +355,7 @@ export class Api {
             payload = SafeJSON.stringify(body);
         }
 
-        const response = await fetch(url, {
-            method,
-            headers,
-            body: payload,
-        });
+        const response = await this.fetchWithTimeout(url, { method, headers, body: payload }, `${method} ${shortUrl}`);
 
         const elapsed = Date.now() - startTime;
         logger.debug(`[api] ${method} response: ${response.status} ${response.statusText} (${elapsed}ms)`);
@@ -363,7 +376,7 @@ export class Api {
         if (!response.ok) {
             const errorText = await response.text();
             logger.debug(`[api] Error response body: ${errorText.slice(0, 200)}`);
-            throw new Error(`API Error ${response.status}: ${errorText}`);
+            throw new AdoHttpError({ method, url, status: response.status, body: errorText });
         }
 
         const type = response.headers.get("content-type") ?? "";
@@ -376,6 +389,21 @@ export class Api {
         }
 
         return response;
+    }
+
+    /** The one place a request leaves: the injected `fetch` with the request timeout as its signal. */
+    private async fetchWithTimeout(url: string, init: RequestInit, label: string): Promise<Response> {
+        try {
+            return await this.http(url, { ...init, signal: AbortSignal.timeout(this.timeoutMs) });
+        } catch (error) {
+            if (isTimeoutError(error)) {
+                throw new Error(`Azure DevOps did not answer ${label} within ${this.timeoutMs / 1000} s`, {
+                    cause: error,
+                });
+            }
+
+            throw error;
+        }
     }
 
     /**
@@ -441,11 +469,11 @@ export class Api {
 
         const token = await this.getAccessToken();
         // A redirect would carry the Authorization header to a host the check above never saw.
-        const response = await fetch(url, {
-            method: "GET",
-            headers: { Authorization: `Bearer ${token}` },
-            redirect: "manual",
-        });
+        const response = await this.fetchWithTimeout(
+            url,
+            { method: "GET", headers: { Authorization: `Bearer ${token}` }, redirect: "manual" },
+            `GET binary ${shortUrl}`
+        );
 
         const elapsed = Date.now() - startTime;
         logger.debug(`[api] GET binary response: ${response.status} ${response.statusText} (${elapsed}ms)`);
@@ -456,7 +484,7 @@ export class Api {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`API Error ${response.status}: ${errorText}`);
+            throw new AdoHttpError({ method: "GET", url, status: response.status, body: errorText });
         }
 
         return response.arrayBuffer();
@@ -1428,7 +1456,23 @@ export class Api {
         fields: string[],
         options: { asOf?: string } = {}
     ): Promise<Map<number, Record<string, unknown>>> {
-        const result = new Map<number, Record<string, unknown>>();
+        const rows = await this.getWorkItemFieldRows(ids, fields, options);
+        const result = new Map(rows.map((row) => [row.id, row.fields]));
+
+        logger.debug(`[api] Fetched fields for ${result.size}/${ids.length} work items`);
+        return result;
+    }
+
+    /**
+     * The batch read under `getWorkItemFields`, with each item's `rev`: 200 ids per request, rows in the order
+     * the server answers.
+     */
+    async getWorkItemFieldRows(
+        ids: number[],
+        fields: string[],
+        options: { asOf?: string } = {}
+    ): Promise<Array<{ id: number; rev: number; fields: Record<string, unknown> }>> {
+        const rows: Array<{ id: number; rev: number; fields: Record<string, unknown> }> = [];
         const batchSize = 200;
 
         for (let i = 0; i < ids.length; i += batchSize) {
@@ -1438,18 +1482,16 @@ export class Api {
                 fields: fields.join(","),
                 ...(options.asOf ? { asOf: options.asOf } : {}),
             });
-            const response = await this.get<{ value: Array<{ id: number; fields?: Record<string, unknown> }> }>(
-                url,
-                `fields batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`
-            );
+            const response = await this.get<{
+                value: Array<{ id: number; rev: number; fields?: Record<string, unknown> }>;
+            }>(url, `fields batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`);
 
             for (const item of response.value) {
-                result.set(item.id, item.fields ?? {});
+                rows.push({ id: item.id, rev: item.rev, fields: item.fields ?? {} });
             }
         }
 
-        logger.debug(`[api] Fetched fields for ${result.size}/${ids.length} work items`);
-        return result;
+        return rows;
     }
 
     /**
@@ -1656,88 +1698,35 @@ export class Api {
         return result.value.map((tag) => tag.name);
     }
 
-    /**
-     * Get project ID from organization and project name
-     * This is a static method because it doesn't require an existing config instance
-     */
-    static async getProjectId(org: string, project: string): Promise<string> {
-        logger.debug(`[api:static] Fetching project ID for: ${project}`);
-        const result =
-            await $`az account get-access-token --resource ${AZURE_DEVOPS_RESOURCE_ID} --query accessToken -o tsv`.quiet();
-        const token = result.text().trim();
+    // ============= Organization lookups (use Api.forOrganization) =============
 
-        const url = Api.orgUrlRaw(org, ["projects", encodeURIComponent(project)]);
-        logger.debug(`[api:static] GET ${url.replace(org, "")}`);
-
-        const response = await fetch(url, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
-        logger.debug(`[api:static] Response: ${response.status} ${response.statusText}`);
-
-        if (!response.ok) {
-            throw new Error(`Failed to get project info: ${response.status} ${response.statusText}`);
-        }
-
-        const data = (await response.json()) as { id: string };
-        logger.debug(`[api:static] Project ID: ${data.id}`);
+    /** The id of one project of this organization, by its name. */
+    async getProjectId(project: string): Promise<string> {
+        const url = Api.orgUrl(this.config, ["projects", encodeURIComponent(project)]);
+        const data = await this.get<{ id: string }>(url, `project id of ${project}`);
+        logger.debug(`[api] Project ID: ${data.id}`);
         return data.id;
     }
 
-    /**
-     * Get all projects from an organization
-     */
-    static async getProjects(org: string): Promise<Array<{ id: string; name: string }>> {
-        logger.debug(`[api:static] Fetching all projects from: ${org}`);
-        const result =
-            await $`az account get-access-token --resource ${AZURE_DEVOPS_RESOURCE_ID} --query accessToken -o tsv`.quiet();
-        const token = result.text().trim();
-
-        const url = Api.orgUrlRaw(org, ["projects"]);
-        logger.debug(`[api:static] GET ${url.replace(org, "")}`);
-
-        const response = await fetch(url, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
-        logger.debug(`[api:static] Response: ${response.status} ${response.statusText}`);
-
-        if (!response.ok) {
-            throw new Error(`Failed to get projects: ${response.status} ${response.statusText}`);
-        }
-
-        const data = (await response.json()) as { value: Array<{ id: string; name: string }> };
-        logger.debug(`[api:static] Found ${data.value.length} projects`);
+    /** Every project of this organization, sorted by name. */
+    async getProjects(): Promise<Array<{ id: string; name: string }>> {
+        const url = Api.orgUrl(this.config, ["projects"]);
+        const data = await this.get<{ value: Array<{ id: string; name: string }> }>(url, "projects");
+        logger.debug(`[api] Found ${data.value.length} projects`);
         return data.value.map((p) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name));
     }
 
     /**
-     * Get the organization GUID from the Azure DevOps connectionData endpoint.
-     * The instanceId returned is the org GUID used by third-party extensions like TimeLog.
-     *
-     * Uses api-version 5.0-preview — the connectionData endpoint rejects 7.x.
+     * The organization GUID from the connectionData endpoint: the id third-party extensions like TimeLog use.
+     * The endpoint rejects 7.x, so it asks for api-version 5.0-preview.
      */
-    static async getOrgId(org: string): Promise<string> {
-        logger.debug("[api:static] Fetching organization ID");
-        const result =
-            await $`az account get-access-token --resource ${AZURE_DEVOPS_RESOURCE_ID} --query accessToken -o tsv`.quiet();
-        const token = result.text().trim();
-
-        // connectionData needs its own api-version — orgUrlRaw forces 7.1 which returns 400
+    async getOrgId(): Promise<string> {
         const url = buildUrl({
-            base: org,
+            base: this.config.org,
             segments: ["_apis", "connectionData"],
             queryParams: { "api-version": "5.0-preview" },
         });
-        logger.debug(`[api:static] GET ${url.replace(org, "")}`);
-
-        const response = await fetch(url, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
-
-        if (!response.ok) {
-            throw new Error(`Failed to get org connection data: ${response.status} ${response.statusText}`);
-        }
-
-        const data: unknown = await response.json();
+        const data = await this.get<unknown>(url, "organization id");
         const instanceId =
             data && typeof data === "object" && "instanceId" in data && typeof data.instanceId === "string"
                 ? data.instanceId
@@ -1747,7 +1736,7 @@ export class Api {
             throw new Error("Azure DevOps connectionData response did not include instanceId");
         }
 
-        logger.debug(`[api:static] Org ID: ${instanceId}`);
+        logger.debug(`[api] Org ID: ${instanceId}`);
         return instanceId;
     }
 }

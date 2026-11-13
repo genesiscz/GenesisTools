@@ -25,6 +25,26 @@ private final class WriteLog: @unchecked Sendable {
 /// The hub's decision surfaces as the user reads them (UX audit 2026-10-27): the Decisions pane's words, and the Inbox
 /// card's words, keys and states.
 final class HubInboxUXTests: XCTestCase {
+    @MainActor
+    func testFormDraftsSurviveCardRecreationWithoutCrossingForms() {
+        let inbox = HubInboxModel()
+        let first = inbox.formDraft(for: "form-a")
+        first.picked["question"] = ["a"]
+        first.texts["question"] = "A draft answer"
+        first.fileTagsText["question"] = "@src/example.swift"
+        let other = inbox.formDraft(for: "form-b")
+        XCTAssertTrue(other.picked.isEmpty)
+        XCTAssertTrue(other.texts.isEmpty)
+        XCTAssertTrue(other.fileTagsText.isEmpty)
+        other.texts["question"] = "Another answer"
+        let reopened = inbox.formDraft(for: "form-a")
+        XCTAssertTrue(first === reopened)
+        XCTAssertEqual(reopened.picked["question"], ["a"])
+        XCTAssertEqual(reopened.texts["question"], "A draft answer")
+        XCTAssertEqual(reopened.fileTagsText["question"], "@src/example.swift")
+        XCTAssertEqual(other.texts["question"], "Another answer")
+    }
+
     /// P4: the Decisions pane's caption follows the Decision click setting, and its empty text says what is empty.
     func testTheDecisionsPaneSaysWhatAClickDoesAndWhatIsEmpty() {
         XCTAssertEqual(DecisionsView.caption(stages: true).text, "A click stages an option · Send delivers")

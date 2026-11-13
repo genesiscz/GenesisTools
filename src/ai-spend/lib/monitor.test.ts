@@ -31,10 +31,8 @@ import type { PricingTable } from "@genesiscz/utils/ai/usage/spend/types";
 import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { monitorEnvelope } from "./register";
 
-setupStorageSandbox();
 // CLAUDE_CONFIG_DIR / CODEX_HOME / GROK_HOME would drag real transcript trees
 // into every fixture-home assertion below.
 isolateAgentHomeEnv();

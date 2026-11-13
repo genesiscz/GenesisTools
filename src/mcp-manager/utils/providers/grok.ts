@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
@@ -9,7 +9,6 @@ import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { claudeJsonPath, defaultNativeHome, nativeHome } from "@genesiscz/utils/providers/session-paths";
 import * as TOML from "@iarna/toml";
-import chalk from "chalk";
 import type { GrokGenericConfig, GrokMCPServerConfig } from "./grok.types.js";
 import {
     claudeEnabledPluginServers,
@@ -20,7 +19,7 @@ import {
     readPluginMcpServers,
 } from "./plugins.js";
 import type { MCPServerInfo, UnifiedMCPConfig, UnifiedMCPServerConfig } from "./types.js";
-import { MCPProvider, WriteResult } from "./types.js";
+import { MCPProvider, type WriteResult } from "./types.js";
 
 function stringList(value: unknown): string[] {
     return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -95,10 +94,6 @@ export class GrokProvider extends MCPProvider {
         return existsSync(this.configPath);
     }
 
-    supportsDisabledState(): boolean {
-        return true;
-    }
-
     /**
      * `sync` never installs a Grok table up front: `syncServers` decides every table itself, so a
      * server without a grok decision gets none, and a server Grok already loads elsewhere gets no copy.
@@ -117,31 +112,16 @@ export class GrokProvider extends MCPProvider {
         return TOML.parse(content) as GrokGenericConfig;
     }
 
-    async writeConfig(config: unknown): Promise<WriteResult> {
-        const dir = path.dirname(this.configPath);
-
-        if (!existsSync(dir)) {
-            mkdirSync(dir, { recursive: true });
-        }
-
-        const newContent = TOML.stringify(config as TOML.JsonMap);
-        const oldContent = (await this.configExists()) ? await readFile(this.configPath, "utf-8") : "";
-
-        if (oldContent === newContent) {
-            return WriteResult.NoChanges;
-        }
-
-        await this.backupManager.showDiff(oldContent, newContent, this.configPath);
-        const confirmed = await this.backupManager.askConfirmation();
-
-        if (!confirmed) {
-            return WriteResult.Rejected;
-        }
-
-        await this.writeFileWithBackup(newContent);
-        logger.info(chalk.green(`✓ Configuration written to ${this.configPath}`));
-
-        return WriteResult.Applied;
+    private update(
+        change: (config: GrokGenericConfig) => GrokGenericConfig | null | Promise<GrokGenericConfig | null>
+    ): Promise<WriteResult> {
+        return this.writeCycle({
+            read: () => this.readConfig(),
+            change,
+            serialize: (next) => TOML.stringify(next as TOML.JsonMap),
+            path: this.configPath,
+            describe: "Grok MCP servers",
+        });
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -354,46 +334,47 @@ export class GrokProvider extends MCPProvider {
      * `[mcp_servers.<server>]` table for this.
      */
     async setPluginServersEnabled(serverNames: string[], enabled: boolean): Promise<WriteResult> {
-        const config = await this.readConfig();
-        const names = new Set(
-            (await this.discoverPluginServers(config))
-                .map((server) => server.name)
-                .filter((name) => serverNames.includes(name))
-        );
+        return this.update(async (config) => {
+            const names = new Set(
+                (await this.discoverPluginServers(config))
+                    .map((server) => server.name)
+                    .filter((name) => serverNames.includes(name))
+            );
 
-        if (names.size === 0) {
-            return WriteResult.NoChanges;
-        }
-
-        const current = stringList(config.disabled_mcp_servers);
-
-        if (enabled) {
-            const kept = current.filter((name) => !names.has(name));
-
-            if (kept.length === current.length) {
-                return WriteResult.NoChanges;
+            if (names.size === 0) {
+                return null;
             }
 
-            if (kept.length === 0) {
-                delete config.disabled_mcp_servers;
+            const current = stringList(config.disabled_mcp_servers);
+
+            if (enabled) {
+                const kept = current.filter((name) => !names.has(name));
+
+                if (kept.length === current.length) {
+                    return null;
+                }
+
+                if (kept.length === 0) {
+                    delete config.disabled_mcp_servers;
+                } else {
+                    config.disabled_mcp_servers = kept;
+                }
             } else {
-                config.disabled_mcp_servers = kept;
+                const missing = [...names].filter((name) => !current.includes(name));
+
+                if (missing.length === 0) {
+                    return null;
+                }
+
+                config.disabled_mcp_servers = [...current, ...missing];
             }
-        } else {
-            const missing = [...names].filter((name) => !current.includes(name));
 
-            if (missing.length === 0) {
-                return WriteResult.NoChanges;
-            }
-
-            config.disabled_mcp_servers = [...current, ...missing];
-        }
-
-        logger.debug(
-            { configPath: this.configPath, names: [...names], enabled },
-            "mcp-manager: Grok plugin MCP switch"
-        );
-        return this.writeConfig(config);
+            logger.debug(
+                { configPath: this.configPath, names: [...names], enabled },
+                "mcp-manager: Grok plugin MCP switch"
+            );
+            return config;
+        });
     }
 
     async getServerConfig(serverName: string): Promise<UnifiedMCPServerConfig | null> {
@@ -402,51 +383,40 @@ export class GrokProvider extends MCPProvider {
         return server ? this.grokToUnified(server) : null;
     }
 
-    async enableServer(serverName: string, _projectPath?: string | null): Promise<void> {
-        await this.enableServers([serverName]);
-    }
-
-    async disableServer(serverName: string, _projectPath?: string | null): Promise<void> {
-        await this.disableServers([serverName]);
-    }
-
-    async disableServerForAllProjects(serverName: string): Promise<void> {
-        await this.disableServer(serverName);
-    }
-
     /**
      * Turn servers on: a table gets `enabled = true`, and the name leaves `disabled_mcp_servers`,
      * which would keep it off whatever the table says. A server Grok takes from ~/.claude.json,
      * ~/.cursor/mcp.json or a plugin has no table and needs none: leaving the list is enough.
      */
     async enableServers(serverNames: string[], _projectPath?: string | null): Promise<WriteResult> {
-        const config = await this.readConfig();
-        const inherited = await this.inheritedWinners(config);
+        return this.update(async (config) => {
+            const inherited = await this.inheritedWinners(config);
 
-        for (const name of serverNames) {
-            const table = config.mcp_servers?.[name];
+            for (const name of serverNames) {
+                const table = config.mcp_servers?.[name];
 
-            if (!table && !inherited.has(name)) {
-                throw new Error(`Servers do not exist: ${name}. Use installServer to add them.`);
+                if (!table && !inherited.has(name)) {
+                    throw new Error(`Servers do not exist: ${name}. Use installServer to add them.`);
+                }
+
+                if (table) {
+                    table.enabled = true;
+                }
             }
 
-            if (table) {
-                table.enabled = true;
+            const current = stringList(config.disabled_mcp_servers);
+            const kept = current.filter((name) => !serverNames.includes(name));
+
+            if (kept.length !== current.length) {
+                if (kept.length === 0) {
+                    delete config.disabled_mcp_servers;
+                } else {
+                    config.disabled_mcp_servers = kept;
+                }
             }
-        }
 
-        const current = stringList(config.disabled_mcp_servers);
-        const kept = current.filter((name) => !serverNames.includes(name));
-
-        if (kept.length !== current.length) {
-            if (kept.length === 0) {
-                delete config.disabled_mcp_servers;
-            } else {
-                config.disabled_mcp_servers = kept;
-            }
-        }
-
-        return this.writeConfig(config);
+            return config;
+        });
     }
 
     /**
@@ -455,61 +425,58 @@ export class GrokProvider extends MCPProvider {
      * source; verified with `grok mcp doctor`, "server is disabled in config.toml").
      */
     async disableServers(serverNames: string[], _projectPath?: string | null): Promise<WriteResult> {
-        const config = await this.readConfig();
-        const inherited = await this.inheritedWinners(config);
-        const current = stringList(config.disabled_mcp_servers);
-        const listed: string[] = [];
+        return this.update(async (config) => {
+            const inherited = await this.inheritedWinners(config);
+            const current = stringList(config.disabled_mcp_servers);
+            const listed: string[] = [];
 
-        for (const name of serverNames) {
-            const table = config.mcp_servers?.[name];
+            for (const name of serverNames) {
+                const table = config.mcp_servers?.[name];
 
-            if (table) {
-                table.enabled = false;
-            } else if (inherited.has(name) && !current.includes(name)) {
-                listed.push(name);
+                if (table) {
+                    table.enabled = false;
+                } else if (inherited.has(name) && !current.includes(name)) {
+                    listed.push(name);
+                }
             }
-        }
 
-        if (listed.length > 0) {
-            config.disabled_mcp_servers = [...current, ...listed];
-        }
+            if (listed.length > 0) {
+                config.disabled_mcp_servers = [...current, ...listed];
+            }
 
-        return this.writeConfig(config);
+            return config;
+        });
     }
 
     async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<WriteResult> {
-        const grokConfig = await this.readConfig();
+        return this.update((grokConfig) => {
+            if (!grokConfig.mcp_servers) {
+                grokConfig.mcp_servers = {};
+            }
 
-        if (!grokConfig.mcp_servers) {
-            grokConfig.mcp_servers = {};
-        }
-
-        grokConfig.mcp_servers[serverName] = this.unifiedToGrok(stripMeta(config));
-
-        return this.writeConfig(grokConfig);
+            grokConfig.mcp_servers[serverName] = this.unifiedToGrok(stripMeta(config));
+            return grokConfig;
+        });
     }
 
     async removeServers(serverNames: string[]): Promise<WriteResult> {
-        const config = await this.readConfig();
-        let changed = false;
+        return this.update((config) => {
+            let changed = false;
 
-        for (const name of serverNames) {
-            if (config.mcp_servers?.[name]) {
-                delete config.mcp_servers[name];
-                changed = true;
+            for (const name of serverNames) {
+                if (config.mcp_servers?.[name]) {
+                    delete config.mcp_servers[name];
+                    changed = true;
+                }
             }
-        }
 
-        if (!changed) {
-            return WriteResult.NoChanges;
-        }
-
-        return this.writeConfig(config);
+            return changed ? config : null;
+        });
     }
 
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
-        // Read first, then replace ONLY mcp_servers. fromUnifiedConfig builds a fresh
-        // object, so writing its result straight out drops every other top-level key:
+        // Read first, then replace ONLY mcp_servers. A sync that built a fresh object
+        // and wrote it straight out dropped every other top-level key:
         // disabled_mcp_servers, [features], [telemetry], [skills], [plugins] and
         // [toolset.*] are lost outright, while [cli], [models], [ui], [marketplace] and
         // [privacy] come back as DEFAULTS on the next grok start, which is why the loss
@@ -525,38 +492,39 @@ export class GrokProvider extends MCPProvider {
         //   ~/.claude.json or ~/.cursor/mcp.json gets no config.toml copy.
         // - A table the given servers do not name stays, like Claude and Codex: a partial sync
         //   (`gateway`'s `only`) used to drop every other table.
-        const config = await this.readConfig();
-        const next: Record<string, GrokMCPServerConfig> = { ...(config.mcp_servers ?? {}) };
-        const inherited = await this.inheritedWinners(config);
+        return this.update(async (config) => {
+            const next: Record<string, GrokMCPServerConfig> = { ...(config.mcp_servers ?? {}) };
+            const inherited = await this.inheritedWinners(config);
 
-        for (const [name, unified] of Object.entries(servers)) {
-            if (unified._meta?.enabled?.grok === undefined) {
-                continue;
+            for (const [name, unified] of Object.entries(servers)) {
+                if (unified._meta?.enabled?.grok === undefined) {
+                    continue;
+                }
+
+                const enabled = this.isServerEnabledInMeta(unified);
+                const converted = this.unifiedToGrok(stripMeta(unified));
+                const elsewhere = inherited.get(name);
+                if (enabled && config.disabled_mcp_servers) {
+                    config.disabled_mcp_servers = config.disabled_mcp_servers.filter((disabled) => disabled !== name);
+                }
+
+                if (
+                    enabled &&
+                    !next[name] &&
+                    elsewhere &&
+                    sameGrokDefinition(converted, this.unifiedToGrok(elsewhere.config))
+                ) {
+                    logger.debug({ name, via: elsewhere.via }, "mcp-manager: Grok already loads this server; no copy");
+                    continue;
+                }
+
+                converted.enabled = enabled;
+                next[name] = converted;
             }
 
-            const enabled = this.isServerEnabledInMeta(unified);
-            const converted = this.unifiedToGrok(stripMeta(unified));
-            const elsewhere = inherited.get(name);
-            if (enabled && config.disabled_mcp_servers) {
-                config.disabled_mcp_servers = config.disabled_mcp_servers.filter((disabled) => disabled !== name);
-            }
-
-            if (
-                enabled &&
-                !next[name] &&
-                elsewhere &&
-                sameGrokDefinition(converted, this.unifiedToGrok(elsewhere.config))
-            ) {
-                logger.debug({ name, via: elsewhere.via }, "mcp-manager: Grok already loads this server; no copy");
-                continue;
-            }
-
-            converted.enabled = enabled;
-            next[name] = converted;
-        }
-
-        config.mcp_servers = next;
-        return this.writeConfig(config);
+            config.mcp_servers = next;
+            return config;
+        });
     }
 
     toUnifiedConfig(config: unknown): Record<string, UnifiedMCPServerConfig> {
@@ -568,19 +536,6 @@ export class GrokProvider extends MCPProvider {
         }
 
         return result;
-    }
-
-    fromUnifiedConfig(servers: Record<string, UnifiedMCPServerConfig>): unknown {
-        const config: GrokGenericConfig = { mcp_servers: {} };
-
-        for (const [name, unified] of Object.entries(servers)) {
-            const enabled = this.isServerEnabledInMeta(unified);
-            const converted = this.unifiedToGrok(stripMeta(unified));
-            converted.enabled = enabled;
-            config.mcp_servers![name] = converted;
-        }
-
-        return config;
     }
 
     private grokToUnified(grok: GrokMCPServerConfig): UnifiedMCPServerConfig {

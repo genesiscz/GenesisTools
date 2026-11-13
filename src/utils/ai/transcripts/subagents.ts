@@ -1,23 +1,26 @@
 /**
  * The sub-agents of one Claude session, read from its `<session>/subagents/` directory: one
- * `agent-<id>.jsonl` transcript per agent, most with an `agent-<id>.meta.json` beside it.
+ * `agent-<id>.jsonl` transcript per agent, most with an `agent-<id>.meta.json` beside it. The agents of a
+ * Workflow tool run sit one level deeper (`subagents/workflows/<runId>/`) and are listed too.
  *
  * A session's Agent tool calls only name the agents its loaded turns started, and a tool call's
  * return says nothing about a background agent or a teammate that still works. The directory has
  * every agent, and each transcript's last record says whether that agent is still working.
  */
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import {
     claudeSubagentFiles,
     claudeSubagentIdOf,
-    claudeSubagentsDir,
+    claudeSubagentTranscripts,
+    claudeWorkflowRunOf,
 } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { nonEmptyString as text } from "@genesiscz/utils/string";
 import { scanClaudeToolCalls } from "./file-scan";
 import type { ResolvedTranscript } from "./resolve";
 
@@ -29,9 +32,20 @@ import type { ResolvedTranscript } from "./resolve";
  */
 export type SubagentState = "running" | "done" | "stopped";
 
+/** What a sub-agent's own files say about the Workflow tool run that started it. */
+export interface SubagentWorkflow {
+    /** The run folder's name (`wf_…`). `tools ai sessions workflows` reads the run itself. */
+    runId: string;
+    /** The agent's label in the run (the meta file's description). */
+    label: string | null;
+    phase: string | null;
+}
+
 export interface SessionSubagent {
     /** The agent id from the file name (`agent-<id>.jsonl`). */
     id: string;
+    /** The Workflow tool run that started it; null for an agent the session or another agent started. */
+    workflow: SubagentWorkflow | null;
     /** A teammate's name; null for a plain sub-agent. */
     name: string | null;
     description: string | null;
@@ -61,8 +75,16 @@ export interface SessionSubagent {
     /** When its transcript was last written. */
     lastAt: string;
     state: SubagentState;
+    /** The size of every file in `files`. */
     bytes: number;
+    /** The transcript it wrote last: the one to tail. */
     filePath: string;
+    /**
+     * Every transcript of this agent id, oldest first. Almost always one. A workflow agent that the lead revives with
+     * SendMessage keeps its first transcript in the run folder and writes the revival into a second file directly in
+     * the sub-agent folder, with no meta file.
+     */
+    files: string[];
 }
 
 export interface SessionSubagents {
@@ -93,10 +115,6 @@ type JsonRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is JsonRecord {
     return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function text(value: unknown): string | null {
-    return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function readSlice(fd: number, position: number, length: number): string {
@@ -299,8 +317,10 @@ function readAgentFresh(
         const meta = readMeta(claudeSubagentFiles(dir, id).meta);
         const working = resolveHistoryProvider("claude").reader.midWork(records);
         const scanned = scan ? scanClaudeToolCalls(filePath) : null;
+        const runId = claudeWorkflowRunOf(filePath);
         const agent: Omit<SessionSubagent, "state"> = {
             id,
+            workflow: runId ? { runId, label: text(meta.description), phase: text(meta.workflowPhase) } : null,
             name: text(meta.name),
             description: text(meta.description),
             agentType: text(meta.agentType),
@@ -318,6 +338,7 @@ function readAgentFresh(
             lastAt: new Date(stat.mtimeMs).toISOString(),
             bytes: stat.size,
             filePath,
+            files: [filePath],
             ...(scanned ? { toolCalls: scanned.toolCalls, agentCalls: scanned.agentCalls } : {}),
         };
         return { agent, working, stat: { ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs } };
@@ -331,7 +352,59 @@ function readAgentFresh(
     }
 }
 
-/** Every sub-agent of a Claude session, oldest first. Other providers have none on disk: an empty list. */
+/**
+ * One agent from the several files that carry its id, oldest first. Who it is comes from the oldest file that says
+ * (the run folder's file has the meta; the revival file has none), where it stands comes from the newest.
+ */
+function mergeAgentFiles(parts: SessionSubagent[]): SessionSubagent {
+    const newest = parts.at(-1);
+    const [oldest] = parts;
+
+    if (!oldest || !newest || parts.length === 1) {
+        return parts[0] as SessionSubagent;
+    }
+
+    const firstOf = <K extends keyof SessionSubagent>(key: K): SessionSubagent[K] =>
+        (parts.find((part) => part[key] !== null && part[key] !== undefined) ?? oldest)[key];
+    const toolCalls = parts.some((part) => part.toolCalls !== undefined)
+        ? parts.reduce((sum, part) => sum + (part.toolCalls ?? 0), 0)
+        : undefined;
+    const agentCalls = parts.some((part) => part.agentCalls !== undefined)
+        ? parts.flatMap((part) => part.agentCalls ?? [])
+        : undefined;
+
+    return {
+        ...oldest,
+        workflow: firstOf("workflow"),
+        name: firstOf("name"),
+        description: firstOf("description"),
+        agentType: firstOf("agentType"),
+        model: firstOf("model"),
+        toolUseId: firstOf("toolUseId"),
+        spawnDepth: firstOf("spawnDepth"),
+        requestShape: firstOf("requestShape"),
+        teamName: firstOf("teamName"),
+        taskKind: firstOf("taskKind"),
+        spawnPrompt: firstOf("spawnPrompt"),
+        startedAt: firstOf("startedAt"),
+        isFork: parts.some((part) => part.isFork),
+        transcriptModel: newest.transcriptModel ?? firstOf("transcriptModel"),
+        lastAt: newest.lastAt,
+        state: newest.state,
+        bytes: parts.reduce((sum, part) => sum + part.bytes, 0),
+        filePath: newest.filePath,
+        files: parts.flatMap((part) => part.files),
+        ...(toolCalls === undefined ? {} : { toolCalls }),
+        ...(agentCalls === undefined ? {} : { agentCalls }),
+    };
+}
+
+/**
+ * Every sub-agent of a Claude session, oldest first, one per agent id: the agents the session and its agents started,
+ * and the agents of its Workflow tool runs (each with `workflow.runId`). An id with two files is one agent
+ * (`files`): listed per file, session 1d7131fa had 7 ids twice, and a tree of them had two nodes with one id
+ * (2026-11-10). Other providers have none on disk: an empty list.
+ */
 export function listSubagents(resolved: ResolvedTranscript, options: ListSubagentsOptions = {}): SessionSubagents {
     const now = options.now ?? Date.now();
     const staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_MS;
@@ -339,29 +412,12 @@ export function listSubagents(resolved: ResolvedTranscript, options: ListSubagen
         return { sessionId: resolved.sessionId, subagents: [] };
     }
 
-    const dir = claudeSubagentsDir(resolved.filePath);
-    let entries: string[];
-    try {
-        entries = readdirSync(dir);
-    } catch (error) {
-        // Most sessions never spawn a sub-agent, so a missing directory is the normal case. Logging it with its
-        // stack on every hub poll wrote hundreds of MB a day into the day log.
-        const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
-        if (!missing) {
-            logger.debug({ error, dir }, "[transcripts] sub-agent directory unreadable");
-        }
-
-        return { sessionId: resolved.sessionId, subagents: [] };
-    }
-
+    // Most sessions never spawn a sub-agent: a missing folder lists as nothing and is not logged.
     const wanted = options.ids ? new Set(options.ids) : null;
-    const subagents = entries
-        .filter((entry) => {
-            const id = claudeSubagentIdOf(entry);
-            return id !== null && (wanted ? wanted.has(id) : true);
-        })
-        .map((entry) =>
-            readAgent(dir, entry, {
+    const files = claudeSubagentTranscripts(resolved.filePath)
+        .filter((file) => (wanted ? wanted.has(file.agentId) : true))
+        .map((file) =>
+            readAgent(file.dir, basename(file.transcript), {
                 now,
                 staleAfterMs,
                 scan: options.scan === true,
@@ -370,6 +426,16 @@ export function listSubagents(resolved: ResolvedTranscript, options: ListSubagen
         )
         .filter((agent): agent is SessionSubagent => agent !== null)
         .sort((a, b) => (a.startedAt ?? a.lastAt).localeCompare(b.startedAt ?? b.lastAt));
-    logger.trace({ dir, count: subagents.length }, "[transcripts] listed sub-agents");
+    const byId = new Map<string, SessionSubagent[]>();
+
+    for (const file of files) {
+        byId.set(file.id, [...(byId.get(file.id) ?? []), file]);
+    }
+
+    const subagents = [...byId.values()].map(mergeAgentFiles);
+    logger.trace(
+        { session: resolved.filePath, count: subagents.length, files: files.length },
+        "[transcripts] listed sub-agents"
+    );
     return { sessionId: resolved.sessionId, subagents };
 }

@@ -35,7 +35,7 @@ import type { DriverRoot, MonitorDriver } from "./types";
  *     ccusage treats it as authoritative; here it is NOT the list price but the
  *     Grok CLI's plan metering (0.34x list since 2026-09-16), so it rides on the
  *     event as `recordedCostUsd` and prices only a model without a catalog rate
- *     (`recordedCost: "metering"` below, applied by `chooseCost` in `reports/cost.ts`).
+ *     (`recordedCost: "metering"` below, applied by `priceUsage` in `priced-usage.ts`).
  *   - a row sums the turn's `modelCalls`, so it is `aggregate` and prices at the
  *     base band: no single request's prompt length survives.
  *   - dedup is `eventId|model`, falling back to the token fingerprint.

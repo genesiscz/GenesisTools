@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { mergeTelegramWebhookIngress, type TelegramWebhookIngressRule } from "@app/ai-proxy/lib/tunnel/cloudflared";
 import { renderUnifiedDiff } from "@genesiscz/utils/diff";
 import { logger } from "@genesiscz/utils/logger";
-import type { CaptureResult } from "@genesiscz/utils/process/ps";
+import type { CaptureResult } from "@genesiscz/utils/process/capture";
 import { assertTestSafePath } from "@genesiscz/utils/storage/real-home-guard";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 

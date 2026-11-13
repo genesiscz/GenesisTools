@@ -3,11 +3,8 @@ import type { ListJsonOutput, ListOptions } from "@app/mcp-manager/commands/list
 import { listServers } from "@app/mcp-manager/commands/list.js";
 import type { MCPServerInfo } from "@app/mcp-manager/utils/providers/types.js";
 import { logger, out } from "@genesiscz/utils/logger";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { REDACTED } from "../../lib/auth/constants.ts";
 import { MockMCPProvider } from "./test-utils.js";
-
-setupStorageSandbox();
 
 describe("listServers", () => {
     let mockProvider: MockMCPProvider;
