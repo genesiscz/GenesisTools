@@ -1184,9 +1184,14 @@ export async function stageAnswer(
 
 /**
  * Prepares the session's answers, submits its own prompt, then acknowledges that exact batch. A failed submission
- * leaves answers pending for a retry or next-prompt injection. Nothing is typed into a terminal pane.
+ * leaves answers pending for a retry or next-prompt injection. Nothing is typed into a terminal pane. `extra` lines
+ * (answers no store holds) go out in the same message after the batch; only the batch is acknowledged, and
+ * `submitted` says whether the message left, so the caller forgets its extra lines only then.
  */
-export async function sendStaged(host: Host): Promise<{ text?: string; numbers?: number[]; error?: string }> {
+export async function sendStaged(
+    host: Host,
+    { extra = [] }: { extra?: readonly string[] } = {}
+): Promise<{ text?: string; numbers?: number[]; error?: string; submitted?: boolean }> {
     const sent = await questionCommand(host, ["send", "--in-session"]);
     await logMod(host, "decisions", { event: "send", promoted: sent.promoted, error: sent.error });
     if (typeof sent.error === "string") {
@@ -1202,16 +1207,17 @@ export async function sendStaged(host: Host): Promise<{ text?: string; numbers?:
 
     let submitted = false;
     try {
-        await host.submit(message);
+        await host.submit([message, ...extra].join("\n"));
         submitted = true;
         const ack = await questionCommand(host, ["send", "--ack-prompt", JSON.stringify(receipt)]);
 
         if (typeof ack.error === "string") {
-            return { error: ack.error };
+            return { error: ack.error, submitted };
         }
 
         return {
             text: message,
+            submitted,
             numbers: Array.isArray(ack.numbers) ? ack.numbers.filter((n): n is number => typeof n === "number") : [],
         };
     } catch (error) {
@@ -1221,7 +1227,7 @@ export async function sendStaged(host: Host): Promise<{ text?: string; numbers?:
                 return { error: `${String(error)}; could not release the pending batch: ${released.error}` };
             }
         }
-        return { error: String(error) };
+        return { error: String(error), submitted };
     } finally {
         await refreshAnswers(host, "send", true);
     }

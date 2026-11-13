@@ -61,6 +61,11 @@ const MARK = "\u2060";
 const typed = new Map<number, string>();
 /** The set picked on a several-letter decision the log does not have: no store holds it, so the sidebar does. */
 const localPick = new Map<number, string>();
+/**
+ * Each decision's option press still running. The next press of the same decision waits for it, so it toggles the set
+ * that press left: two quick presses on a and c staged `a`, then `c`, and the second write lost the first.
+ */
+const pressing = new Map<number, Promise<void>>();
 
 /** A press on `letter` of a several-letter decision the log does not have: it only ticks, nothing reaches the prompt. */
 export function tickLocal(decision: Pick<ShownDecision, "n" | "options">, letter: string): string {
@@ -80,15 +85,78 @@ function setLocal(n: number, letters: string): string {
     return letters;
 }
 
-/** The one line per ticked decision (`D16: ac)`), and the ticks forgotten: they leave in the prompt exactly once. */
-function takeLocalLines(): string[] {
-    const lines = [...localPick]
-        .sort(([a], [b]) => a - b)
-        .map(([n, letters]) => stagedMessage({ [String(n)]: `${letters})` }));
+/** The set staged for decision `n` now: the log's draft when the log holds it, else the sidebar's own ticks. */
+function stagedSetOf(n: number): string {
+    const logged = answersOf()?.decisions.find((decision) => decision.n === n);
 
-    localPick.clear();
+    return logged ? (logged.draftOption ?? "") : (localPick.get(n) ?? "");
+}
 
-    return lines;
+/** Runs one option press of decision `n` after the press before it, whatever that one's outcome. */
+function afterPress(n: number, press: () => Promise<void>): Promise<void> {
+    const run = (pressing.get(n) ?? Promise.resolve()).then(press);
+    const tail = run.catch(() => undefined);
+    pressing.set(n, tail);
+    void tail.then(() => {
+        if (pressing.get(n) === tail) {
+            pressing.delete(n);
+        }
+    });
+
+    return run;
+}
+
+/**
+ * The ticks still to send: those of a decision that waits and that the log does not hold. A tick of a decision
+ * answered or replaced since, or one the log took over, is not sent again (`settleTicks` forgets or moves it).
+ */
+function pendingTicks(): Map<number, string> {
+    const logged = new Set((answersOf()?.decisions ?? []).map((decision) => decision.n));
+    const waiting = new Set(
+        currentDecisions()
+            .filter(isWaiting)
+            .map((decision) => decision.n)
+    );
+
+    return new Map([...localPick].filter(([n]) => waiting.has(n) && !logged.has(n)));
+}
+
+/** One line per ticked decision (`D16: ac)`), in number order. */
+function localLines(ticks: ReadonlyMap<number, string>): string[] {
+    return [...ticks].sort(([a], [b]) => a - b).map(([n, letters]) => stagedMessage({ [String(n)]: `${letters})` }));
+}
+
+/** Forgets the ticks that reached the prompt, so they leave exactly once; a tick changed meanwhile stays. */
+function forgetTicks(sent: ReadonlyMap<number, string>): void {
+    for (const [n, letters] of sent) {
+        if (localPick.get(n) === letters) {
+            localPick.delete(n);
+        }
+    }
+}
+
+/**
+ * Reconciles the ticks with the decisions after a read: a decision that no longer waits loses its ticks, and one the
+ * log now holds gets them staged there, unless the log already has a staged set of its own.
+ */
+async function settleTicks(host: Host): Promise<void> {
+    const shown = new Map(currentDecisions().map((decision) => [decision.n, decision]));
+    const logged = new Set((answersOf()?.decisions ?? []).map((decision) => decision.n));
+
+    for (const [n, letters] of [...localPick]) {
+        const decision = shown.get(n);
+
+        if (decision && isWaiting(decision) && !logged.has(n)) {
+            continue;
+        }
+
+        localPick.delete(n);
+
+        if (decision && isWaiting(decision) && !decision.draftOption) {
+            const moved = await stageAnswer(host, n, { option: letters });
+            await logMod(host, "decisions", { event: "ticks-moved", n, letters, error: moved.error });
+        }
+    }
 }
 
 /** The answer field's local text, including edits not yet staged in the store. */
@@ -313,8 +381,21 @@ function currentDecisions(): ShownDecision[] {
     return shownDecisions(answersOf()?.decisions ?? [], chat);
 }
 
-async function readChat(host: Host): Promise<void> {
+/** Tests: settles once every option press started so far has finished. */
+export async function decisionPressesDone(): Promise<void> {
+    await Promise.all([...pressing.values()]);
+}
+
+/** Tests: no chat read yet, no ticks, no press running. */
+export function forgetDecisions(): void {
+    chat = { open: [] };
+    localPick.clear();
+    pressing.clear();
+}
+
+export async function readChat(host: Host): Promise<void> {
     chat = chatDecisions(await host.messages());
+    await settleTicks(host);
     host.redraw();
     await findAskRows(
         host,
@@ -450,16 +531,24 @@ export async function sendDecisionAnswers(
     host: Host,
     request: { outgoing: string; how: "send" | "fill" }
 ): Promise<void> {
-    const ticked = localPick.size > 0;
+    // Ticks on a decision the log does not have travel as one line each after the store's batch. They are forgotten
+    // only once the prompt took them: a fill or a send that fails keeps them for the next try.
+    const ticks = pendingTicks();
+    const lines = localLines(ticks);
 
-    if (!request.outgoing && !ticked) {
+    if (!request.outgoing && lines.length === 0) {
         return;
     }
 
     if (request.how === "fill") {
-        const lines = takeLocalLines();
+        try {
+            await host.fill({ text: [request.outgoing, ...lines].filter(Boolean).join("\n"), mode: "replace" });
+        } catch (error) {
+            await pressed(host, "decisions-fill", `Not in the prompt: ${String(error)}`, "error");
+            return;
+        }
 
-        await host.fill({ text: [request.outgoing, ...lines].filter(Boolean).join("\n"), mode: "replace" });
+        forgetTicks(ticks);
         await pressed(host, "decisions-fill", "In the prompt; the answers stay staged until the agent records them.");
         return;
     }
@@ -470,20 +559,27 @@ export async function sendDecisionAnswers(
             return text === (decision?.draft ?? decision?.answer);
         })
     );
-    // Ticks on a decision the log does not have go to the prompt as one line each; the store's answers follow.
-    const lines = takeLocalLines();
-
-    if (lines.length > 0) {
-        await host.fill({ text: `${lines.join("\n")}\n`, mode: "append" });
-
-        if (!request.outgoing) {
-            await pressed(host, "decisions-send", "The ticked answers are in the prompt; send it to answer.");
-            return;
-        }
-    }
 
     await pressed(host, "decisions-send", "Sending…", "busy");
-    const sent = await sendStaged(host);
+
+    if (!request.outgoing) {
+        try {
+            await host.submit(lines.join("\n"));
+        } catch (error) {
+            await pressed(host, "decisions-send", `Not sent: ${String(error)}`, "error");
+            return;
+        }
+
+        forgetTicks(ticks);
+        await pressed(host, "decisions-send", `Sent ${plural(lines.length, "answer")}.`);
+        return;
+    }
+
+    const sent = await sendStaged(host, { extra: lines });
+
+    if (sent.submitted) {
+        forgetTicks(ticks);
+    }
 
     if (sent.error || !sent.text) {
         await pressed(host, "decisions-send", `Not sent: ${sent.error ?? "nothing staged"}`, "error");
@@ -501,8 +597,76 @@ export async function sendDecisionAnswers(
     await pressed(
         host,
         "decisions-send",
-        `Sent ${plural(sent.numbers?.length ?? 0, "answer")}; the decision log marks them sent.`
+        `Sent ${plural((sent.numbers?.length ?? 0) + lines.length, "answer")}; the decision log marks them sent.`
     );
+}
+
+/**
+ * Stages in the decision store: an option toggles, the answer field stores its text (Enter on an empty field clears
+ * it). A decision the store cannot take gets its answer put in the prompt instead, or, for a several-letter one, ticked
+ * in the sidebar until it is sent.
+ */
+async function stageDecision(
+    host: Host,
+    {
+        decision,
+        answer,
+        key,
+    }: { decision: Pick<ShownDecision, "n" | "multiple">; answer: { option?: string; text?: string }; key: string }
+): Promise<void> {
+    await pressed(host, key, "Staging in the decision log…", "busy");
+    const done = await stageAnswer(host, decision.n, answer);
+    const words = answer.option ? `${answer.option})` : (answer.text ?? "");
+
+    if (!done.error) {
+        localPick.delete(decision.n);
+        await pressed(host, key, words ? `Staged ${words}; the widget shows it too.` : "Unstaged.");
+        return;
+    }
+
+    // Only tick, the last tick's removal too: the one `D<n>: ac)` line is written when the person sends or puts it in
+    // the prompt, so an emptied set must leave the ticks empty rather than keep the letter just unticked.
+    if (/not waiting/.test(done.error) && answer.option !== undefined && decision.multiple) {
+        const ticked = setLocal(decision.n, answer.option);
+
+        await pressed(host, key, ticked ? `Ticked ${ticked})` : "Unticked.");
+        return;
+    }
+
+    if (/not waiting/.test(done.error) && words) {
+        await host.fill({ text: `D${decision.n}: ${words}\n`, mode: "append" });
+        await pressed(
+            host,
+            key,
+            `The decision log does not have DECISION ${decision.n}; "D${decision.n}: ${words}" is in the prompt instead.`
+        );
+        return;
+    }
+
+    await pressed(host, key, `Not staged: ${done.error}`, "error");
+}
+
+/** A press on an option row: it waits for this decision's press before it, then toggles the set that one left. */
+export function pressDecisionOption(
+    host: Host,
+    decision: Pick<ShownDecision, "n" | "options" | "multiple" | "draftOption">,
+    letter: string
+): Promise<void> {
+    return afterPress(decision.n, () =>
+        stageDecision(host, {
+            decision,
+            answer: { option: pickAfterPress({ ...decision, draftOption: stagedSetOf(decision.n) }, letter) },
+            key: `d${decision.n}-${letter}`,
+        })
+    );
+}
+
+/**
+ * What the Staged block shows and what send and put in prompt carry: the store's batch, then one line per local tick.
+ * Empty means the block is not drawn; ticks alone still draw it, with its send.
+ */
+export function stagedPreview(outgoing: string): string {
+    return [outgoing, ...localLines(pendingTicks())].filter(Boolean).join("\n");
 }
 
 /** The Decisions sidebar: a summary line, the decisions by state, each opening to its options and [jump to]. */
@@ -527,41 +691,11 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
 
         return flipped.has(decision.n) ? !byDefault : byDefault;
     };
-    /**
-     * Stages in the decision store: an option toggles, the answer field stores its text (Enter on an empty field
-     * clears it). A decision the store cannot take gets its answer put in the prompt instead.
-     */
-    const stage = async (decision: ShownDecision, answer: { option?: string; text?: string }, key: string) => {
-        await pressed(host, key, "Staging in the decision log…", "busy");
-        const done = await stageAnswer(host, decision.n, answer);
-        const words = answer.option ? `${answer.option})` : (answer.text ?? "");
-
-        if (!done.error) {
-            localPick.delete(decision.n);
-            await pressed(host, key, words ? `Staged ${words}; the widget shows it too.` : "Unstaged.");
-            return;
-        }
-
-        if (/not waiting/.test(done.error) && words) {
-            if (answer.option !== undefined && decision.multiple) {
-                // Only tick: the one `D<n>: ac)` line is written when the person sends or puts it in the prompt.
-                const ticked = setLocal(decision.n, answer.option);
-
-                await pressed(host, key, ticked ? `Ticked ${ticked})` : "Unticked.");
-                return;
-            }
-
-            await host.fill({ text: `D${decision.n}: ${words}\n`, mode: "append" });
-            await pressed(
-                host,
-                key,
-                `The decision log does not have DECISION ${decision.n}; "D${decision.n}: ${words}" is in the prompt instead.`
-            );
-            return;
-        }
-
-        await pressed(host, key, `Not staged: ${done.error}`, "error");
-    };
+    const stage = (decision: ShownDecision, answer: { option?: string; text?: string }, key: string) =>
+        stageDecision(host, { decision, answer, key });
+    const pressOption = (decision: ShownDecision, letter: string) => pressDecisionOption(host, decision, letter);
+    const preview = stagedPreview(outgoing);
+    const ticks = localLines(pendingTicks());
     const send = (how: "send" | "fill") => sendDecisionAnswers(host, { outgoing, how });
 
     /**
@@ -710,7 +844,7 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                         </Text>
                     ) : null}
                     {decision.options.map((option) => {
-                        const stagedSet = decision.draftOption ?? localPick.get(decision.n) ?? "";
+                        const stagedSet = stagedSetOf(decision.n);
                         const isStaged = stagedSet.includes(option.letter);
                         const isPicked = picked.includes(option.letter);
                         const several = isWaiting(decision) && decision.multiple === true;
@@ -741,14 +875,7 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                                 : several
                                   ? `Ticks ${option.letter}) with the other staged options of DECISION ${decision.n}; [send] sends every staged answer.`
                                   : `Stages ${option.letter}) as the answer to DECISION ${decision.n}; [send] sends every staged answer.`,
-                            onPress: () =>
-                                void stage(
-                                    decision,
-                                    {
-                                        option: pickAfterPress({ ...decision, draftOption: stagedSet }, option.letter),
-                                    },
-                                    `d${decision.n}-${option.letter}`
-                                ),
+                            onPress: () => void pressOption(decision, option.letter),
                         });
                     })}
                     {!isWaiting(decision) && said
@@ -847,11 +974,11 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
             )}
             {list.length === 0 ? dimNote(kit, "No decisions in this session yet.") : null}
             {first ? group(first.title, waitingRows) : null}
-            {outgoing ? (
+            {preview ? (
                 <Box flexDirection="column" marginTop={1}>
-                    {sectionTitle(kit, "Staged", `(${staged.length})`)}
+                    {sectionTitle(kit, "Staged", `(${staged.length + ticks.length})`)}
                     {dimNote(kit, "send submits exactly this:")}
-                    {outgoing.split("\n").flatMap((line, index) =>
+                    {preview.split("\n").flatMap((line, index) =>
                         wrapWords(line, width, 6).map((text, part) => (
                             <Text key={`staged-${index}-${part}`} color="cyan" wrap="truncate-end">
                                 {text}
