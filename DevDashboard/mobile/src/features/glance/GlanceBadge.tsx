@@ -1,9 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
 import * as Notifications from "expo-notifications";
 import { useEffect } from "react";
-import { useDashboardClient, useIsMockClient } from "@/api/client-provider";
+import { useIsMockClient } from "@/api/client-provider";
 import { useIconBadgeStore } from "@/features/glance/badge-mode";
-import { badgeNumber, glanceQuery } from "@/features/glance/queries";
+import { useGlance } from "@/features/glance/hooks";
+import { badgeNumber } from "@/features/glance/queries";
 
 /**
  * The app icon's badge (F18): the waiting count from the Mac's glance, decisions, forms, open dialogs and tool calls
@@ -12,11 +12,10 @@ import { badgeNumber, glanceQuery } from "@/features/glance/queries";
  * Renders nothing.
  */
 export function GlanceBadge() {
-    const client = useDashboardClient();
     const mode = useIconBadgeStore((state) => state.mode);
     const load = useIconBadgeStore((state) => state.load);
     const mock = useIsMockClient();
-    const glance = useQuery({ ...glanceQuery(client), enabled: !mock && mode === "waiting" });
+    const glance = useGlance(!mock && mode === "waiting");
     const count = mode === null ? null : mock ? 0 : badgeNumber(glance.data, mode);
 
     useEffect(() => {
