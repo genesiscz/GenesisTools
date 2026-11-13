@@ -16,6 +16,9 @@ public final class FailureNoticeModel: ObservableObject {
             detailsMarkdown = report.detailsMarkdown()
             rawMarkdown = Self.rawMarkdown(report)
             stackText = Self.stackText(report)
+            // A report enriched after delivery (`addingCallLog`) brings its events, or another failure its time.
+            timeText = Self.timeText(report)
+            stepCount = Self.stepCount(report)
         }
     }
     @Published public var detailsOpen: Bool
@@ -50,11 +53,19 @@ public final class FailureNoticeModel: ObservableObject {
         detailsMarkdown = report.detailsMarkdown()
         rawMarkdown = Self.rawMarkdown(report)
         stackText = Self.stackText(report)
+        timeText = Self.timeText(report)
+        stepCount = Self.stepCount(report)
+    }
+
+    static func timeText(_ report: FailureReport) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .none
         formatter.timeStyle = .medium
-        timeText = formatter.string(from: report.time)
-        stepCount = FailureLog.events(in: report.log).count
+        return formatter.string(from: report.time)
+    }
+
+    static func stepCount(_ report: FailureReport) -> Int {
+        FailureLog.events(in: report.log).count
     }
 
     /// "Raw log": everything the report knows as plain text (`FailureReport.rawText`), in one code block.

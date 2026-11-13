@@ -74,6 +74,20 @@ final class FailureNoticeTests: XCTestCase {
         XCTAssertNil(model.stackText)
     }
 
+    /// A report delivered with an empty log and enriched later (`addingCallLog`, `deliver`) counts the events it has
+    /// now, and a report for another failure shows its own time: both stayed at the first report's values.
+    @MainActor
+    func testAReplacedReportUpdatesItsStepCountAndTime() {
+        let first = FailureReport(headline: "The camera failed.", log: "", time: Date(timeIntervalSince1970: 0))
+        let model = FailureNoticeModel(report: first, detailsOpen: false, retry: nil, dismiss: {})
+        XCTAssertEqual(model.stepCount, 0)
+        model.report = FailureReport(headline: "The camera failed.", log: Self.cameraFailure, time: Date(timeIntervalSince1970: 3_725))
+        XCTAssertGreaterThan(model.stepCount, 0)
+        XCTAssertEqual(model.stepCount, FailureLog.events(in: Self.cameraFailure).count)
+        XCTAssertEqual(model.timeText, FailureNoticeModel.timeText(model.report))
+        XCTAssertNotEqual(model.timeText, FailureNoticeModel.timeText(first))
+    }
+
     @MainActor
     func testDetailsOfferAFoldableStackTrace() throws {
         let report = FailureReport(headline: "The camera failed.", log: Self.cameraFailure)
