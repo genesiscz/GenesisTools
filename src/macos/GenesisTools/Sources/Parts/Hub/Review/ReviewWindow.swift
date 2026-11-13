@@ -1610,7 +1610,7 @@ final class ReviewModel: ObservableObject {
         }
     }
 
-    private func showStoredProposal(_ document: ProposalDocument, chosen: Bool) {
+    func showStoredProposal(_ document: ProposalDocument, chosen: Bool) {
         // Checked against the PR on screen when the read ends, not when it began.
         if let identity = pr?.payload?.pr.identity, document.number > 0, document.identity != identity {
             notice = "\(document.agent)'s review is of \(document.label), not \(identity.label)."
@@ -1620,7 +1620,7 @@ final class ReviewModel: ObservableObject {
         if !chosen, proposal != nil { return }
         proposal = document
         if let next = Self.scope(showing: document, over: scope, chosen: chosen) {
-            setScope(next)
+            setScope(next, requestingNavigation: chosen)
         }
         if builtRenderer != nil {
             pushComments()
@@ -1885,8 +1885,10 @@ final class ReviewModel: ObservableObject {
         if builtRenderer != nil { pushComments() }
     }
 
-    func setScope(_ next: DiffScope) {
-        navigationRequests += 1
+    /// `requestingNavigation`: a deliberate pick, so a redesign layout shows Changes. The automatic attach of a stored
+    /// review passes false: its background lookup moved the reader off Threads or Overview with no action of theirs.
+    func setScope(_ next: DiffScope, requestingNavigation: Bool = true) {
+        if requestingNavigation { navigationRequests += 1 }
         guard next != scope else { return }
         scope = next
         // A PR push on screen (Reload, a version, a compare) moves the commits list and the agent note with it.
