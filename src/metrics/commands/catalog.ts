@@ -9,7 +9,7 @@ import type { MetricCatalogEntry, SpoolFileState } from "@genesiscz/utils/metric
 import { renderCliHeader, renderCliKeyRow } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import { printCatalog } from "../lib/display";
-import { collect, parseWhen } from "../lib/filters";
+import { collect, parseTimeFlag } from "../lib/filters";
 import { withService } from "../lib/service";
 
 const { log } = logger.scoped("metrics-cli");
@@ -139,7 +139,7 @@ async function define(project: string, metric: string, flags: DefineFlags): Prom
 }
 
 async function prune(flags: { before: string }): Promise<void> {
-    const before = parseWhen(flags.before, "--before");
+    const before = parseTimeFlag(flags.before, "--before");
 
     await withService(async (client) => {
         const { removed } = await client.call("prune", { before });

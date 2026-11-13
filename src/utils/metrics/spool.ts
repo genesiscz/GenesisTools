@@ -1,9 +1,10 @@
 import { appendFileSync, closeSync, mkdirSync, openSync, readdirSync, readSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { formatLocalDate } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import { assertDimName, assertName, checkCheckpoint, checkEvent } from "./dims";
+import { assertDimName, assertMetricsName, checkCheckpoint, checkEvent } from "./dims";
 import type { MetricsStore } from "./store";
 import type { MetricCheckpointInput, MetricDefinition, MetricEvent, StoredEvent } from "./types";
 
@@ -43,12 +44,6 @@ export function spoolDir(): string {
     return toolDataDir("metrics", "spool");
 }
 
-/** `YYYY-MM-DD` of this Mac's local day. */
-export function localDay(at = Date.now()): string {
-    const date = new Date(at);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
 export function spoolFileName(writer: string, day: string): string {
     if (!WRITER.test(writer)) {
         throw new Error(`spool writer ${SafeJSON.stringify(writer)} is not letters, digits, "_" or "-" (40 at most)`);
@@ -78,7 +73,8 @@ export function appendSpoolLines(options: { dir?: string; writer: string; lines:
 
     const dir = options.dir ?? spoolDir();
     mkdirSync(dir, { recursive: true });
-    appendFileSync(join(dir, spoolFileName(options.writer, localDay(options.now))), options.lines.join(""));
+    const day = formatLocalDate(new Date(options.now ?? Date.now()));
+    appendFileSync(join(dir, spoolFileName(options.writer, day)), options.lines.join(""));
 }
 
 export interface DrainResult {
@@ -140,8 +136,8 @@ function definitionOf(raw: unknown): MetricDefinition | undefined {
 
     try {
         return {
-            project: assertName("project", project),
-            metric: assertName("metric", metric),
+            project: assertMetricsName("project", project),
+            metric: assertMetricsName("metric", metric),
             ...(typeof unit === "string" ? { unit } : {}),
             ...(typeof description === "string" ? { description } : {}),
             ...(dims ? { dims: dims.map(assertDimName) } : {}),
@@ -160,7 +156,7 @@ interface ParsedLines {
 }
 
 /** The events and definitions of whole lines; a bad line is counted and logged with its line number. */
-function parseLines(text: string, context: { path: string; firstLine: number; now: number }): ParsedLines {
+function parseSpoolLines(text: string, context: { path: string; firstLine: number; now: number }): ParsedLines {
     const lines = text.split("\n");
     const events: StoredEvent[] = [];
     const definitions: MetricDefinition[] = [];
@@ -287,7 +283,7 @@ function drainFile(
         const text = chunk.subarray(0, last >= 0 ? last : take).toString("utf8");
         const parsed =
             last >= 0
-                ? parseLines(text, { path, firstLine: lineNo + 1, now: options.now })
+                ? parseSpoolLines(text, { path, firstLine: lineNo + 1, now: options.now })
                 : { events: [], definitions: [], checkpoints: [], lines: 1, bad: 1 };
 
         if (last < 0) {
@@ -328,7 +324,7 @@ function drainFile(
 export function drainSpool(store: MetricsStore, options: DrainOptions = {}): DrainResult {
     const dir = options.dir ?? spoolDir();
     const now = options.now ?? Date.now();
-    const today = localDay(now);
+    const today = formatLocalDate(new Date(now));
     const result: DrainResult = { files: 0, lines: 0, events: 0, checkpoints: 0, bad: 0, removed: [] };
     let names: string[];
 

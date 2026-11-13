@@ -1,3 +1,4 @@
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { openMetricsService } from "@genesiscz/utils/metrics/service-client";
@@ -5,8 +6,8 @@ import { metricsDbPath } from "@genesiscz/utils/metrics/spool";
 import { MetricsStore } from "@genesiscz/utils/metrics/store";
 import type { MetricCheckpoint } from "@genesiscz/utils/metrics/types";
 import type { Command } from "commander";
-import { localTime, printCheckpoints } from "../lib/display";
-import { FlagError, parseWhen } from "../lib/filters";
+import { printCheckpoints } from "../lib/display";
+import { FlagError, parseTimeFlag } from "../lib/filters";
 import { withFlags, withService } from "../lib/service";
 
 interface AddFlags {
@@ -34,7 +35,7 @@ async function add(project: string, name: string, flags: AddFlags): Promise<void
     const params = {
         project,
         name,
-        ...(flags.at ? { at: parseWhen(flags.at, "--at") } : {}),
+        ...(flags.at ? { at: parseTimeFlag(flags.at, "--at") } : {}),
         ...(flags.commit ? { commit: flags.commit } : {}),
         ...(flags.repo ? { repo: flags.repo } : {}),
         ...(flags.note ? { note: flags.note } : {}),
@@ -43,7 +44,9 @@ async function add(project: string, name: string, flags: AddFlags): Promise<void
 
     await withService(async (client) => {
         const checkpoint = await client.call("checkpoint.add", params);
-        out.printlnErr(`Checkpoint ${checkpoint.project} / ${checkpoint.name} at ${localTime(checkpoint.at, true)}`);
+        out.printlnErr(
+            `Checkpoint ${checkpoint.project} / ${checkpoint.name} at ${formatLocalDateTimeStamp(checkpoint.at)}`
+        );
         out.result(checkpoint);
     });
 }

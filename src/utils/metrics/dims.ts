@@ -1,4 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 import type { Dims, DimValue, MetricCheckpointInput, StoredEvent } from "./types";
 
 /**
@@ -30,7 +31,8 @@ export function assertDimName(name: string): string {
     return name;
 }
 
-export function assertName(kind: "project" | "metric" | "checkpoint", name: string): string {
+/** A project, metric or checkpoint name, as `NAME` allows it. */
+export function assertMetricsName(kind: "project" | "metric" | "checkpoint", name: string): string {
     if (!NAME.test(name)) {
         throw new MetricsInputError(
             `${kind} name ${SafeJSON.stringify(name)} must start with a letter or digit and use only letters, digits, ".", "_", ":" or "-" (100 at most)`
@@ -38,10 +40,6 @@ export function assertName(kind: "project" | "metric" | "checkpoint", name: stri
     }
 
     return name;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isDimValue(value: unknown): value is DimValue {
@@ -74,7 +72,7 @@ export type EventCheck = { ok: true; event: StoredEvent } | { ok: false; reason:
 
 /** An untrusted event (a spool line, an `ingest` element) as the store takes it, or why it is refused. */
 export function checkEvent(raw: unknown, now: number): EventCheck {
-    if (!isRecord(raw)) {
+    if (!isObject(raw)) {
         return { ok: false, reason: "an event is a JSON object" };
     }
 
@@ -101,7 +99,7 @@ export function checkEvent(raw: unknown, now: number): EventCheck {
     const dims: Dims = {};
 
     if (raw.dims !== undefined && raw.dims !== null) {
-        if (!isRecord(raw.dims)) {
+        if (!isObject(raw.dims)) {
             return { ok: false, reason: "dims is an object" };
         }
 
@@ -153,7 +151,7 @@ export type CheckpointCheck =
  * absent when not given: the store then keeps an existing checkpoint's time, or takes `now` for a new one.
  */
 export function checkCheckpoint(raw: unknown, now: number): CheckpointCheck {
-    if (!isRecord(raw)) {
+    if (!isObject(raw)) {
         return { ok: false, reason: "a checkpoint is a JSON object" };
     }
 

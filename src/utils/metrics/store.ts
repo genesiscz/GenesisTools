@@ -12,7 +12,7 @@ import {
     checkpointWindows,
     resolveCheckpointBounds,
 } from "./checkpoints";
-import { assertDimName, assertName, checkCheckpoint, isDimName, MetricsInputError } from "./dims";
+import { assertDimName, assertMetricsName, checkCheckpoint, isDimName, MetricsInputError } from "./dims";
 import { METRICS_MIGRATION_SCOPE, METRICS_MIGRATIONS } from "./migrations";
 import {
     type AggregateOptions,
@@ -338,8 +338,8 @@ export class MetricsStore {
 
     /** Declares a metric: its unit, description and the dims that get an index. A later call adds dims. */
     define(definition: MetricDefinition): MetricCatalogEntry {
-        const project = assertName("project", definition.project);
-        const metric = assertName("metric", definition.metric);
+        const project = assertMetricsName("project", definition.project);
+        const metric = assertMetricsName("metric", definition.metric);
         const dims = (definition.dims ?? []).map(assertDimName);
 
         this.db.transaction(() => {

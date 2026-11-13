@@ -5,6 +5,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { MAX_INGEST_EVENTS } from "@genesiscz/utils/metrics/protocol";
 import type { MetricsServiceClient } from "@genesiscz/utils/metrics/service-client";
 import type { MetricEvent } from "@genesiscz/utils/metrics/types";
+import { isObject } from "@genesiscz/utils/object";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import {
     INJECTION_METRIC,
@@ -19,10 +20,6 @@ const CHUNK_BYTES = 1024 * 1024;
 /** The old hook ledger log: one line per hook answer, with no session id. */
 export function defaultHooksLogPath(): string {
     return genesisToolsDir("agents", "mods-log", "hooks.jsonl");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function strings(value: unknown): string[] {
@@ -45,7 +42,7 @@ export function hooksLogLine(line: string): HooksLogLine {
         return { kind: "bad", reason: "no JSON" };
     }
 
-    if (!isRecord(parsed)) {
+    if (!isObject(parsed)) {
         return { kind: "bad", reason: "not an object" };
     }
 
