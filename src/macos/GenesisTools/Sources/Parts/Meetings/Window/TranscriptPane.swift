@@ -61,11 +61,25 @@ struct TranscriptBlocksPane: View {
     @State private var timingTo = ""
     @State private var timingModel = "onnx-community/whisper-large-v3-turbo_timestamped"
     @State private var timingLanguage = "cs"
+    @AppStorage("meetings.transcript.applyAbove") private var applyAbove = 70
+    @State private var probing = false
+
+    private var filteredEntries: [TranscriptLine] {
+        entries.map { entry in
+            guard let confidence = entry.confidence, entry.band != "confirmed" else { return entry }
+            guard let name = entry.suggestedSpeaker else { return entry }
+            return TranscriptLine(id: entry.id, startSec: entry.startSec,
+                                  speaker: confidence * 100 >= Double(applyAbove) ? name : "[\(name): \(Int((confidence * 100).rounded())) %]",
+                                  text: entry.text, endSec: entry.endSec, words: entry.words,
+                                  confidence: confidence, suggestedSpeaker: name, sourceIndex: entry.sourceIndex, questioned: entry.questioned, guess: confidence * 100 < Double(applyAbove), band: entry.band)
+        }
+    }
 
     var body: some View {
         let blocks = TranscriptBlock.filter(built, query: filter)
         VStack(spacing: 0) {
             header
+            ListenPresenceStrip(detail: detail, duration: durationSec ?? entries.last?.endSec ?? 1)
             Divider()
             if blocks.isEmpty {
                 EmptyState(symbol: "magnifyingglass", text: "No line holds “\(filter)”")
@@ -90,7 +104,7 @@ struct TranscriptBlocksPane: View {
         let marks = MeetingDetailModel.lineMarks(entries: entries, hints: detail.speakers.value?.hints ?? [],
                                                  items: detail.record.value?.items ?? [],
                                                  comments: detail.comments.value?.comments ?? [])
-        return TranscriptBlock.build(from: entries, durationSec: durationSec, marks: marks,
+        return TranscriptBlock.build(from: filteredEntries, durationSec: durationSec, marks: marks,
                                      breakAfterGapSec: MeetingsPreferences.Transcript.breakAfterGapSec(blockBreakSec))
     }
 
@@ -105,14 +119,28 @@ struct TranscriptBlocksPane: View {
 
     @ViewBuilder
     private var header: some View {
-        HStack(spacing: 8) {
+        WrapLayout(spacing: 8, lineSpacing: 6) {
+            Picker("Apply above", selection: $applyAbove) {
+                ForEach([50, 60, 70, 80, 90], id: \.self) { value in Text("\(value) %").tag(value) }
+            }.frame(width: 140)
+            .accessibilityIdentifier("meetings.transcript.threshold")
+            Button("Probe") { probing.toggle() }
+                .popover(isPresented: $probing) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach([50, 60, 70, 80, 90], id: \.self) { value in
+                            let probe = ListenTranscriptQuality.probe(entries, percent: value)
+                            Button("\(value) %: \(probe.applied) applied, \(probe.guesses) guesses, \(probe.open) open, \(probe.questions) long-stretch questions") {
+                                applyAbove = value
+                                probing = false
+                            }
+                        }
+                    }.padding()
+                }
             if showsHeader {
                 Text("Transcript").font(.system(size: 12, weight: .semibold))
             }
             if let headerField {
-                headerField.frame(maxWidth: .infinity)
-            } else {
-                Spacer(minLength: 6)
+                headerField.frame(minWidth: 160, idealWidth: 220, maxWidth: 320)
             }
             if detail.busy.contains("word-timings") {
                 ProgressView().controlSize(.small)
@@ -195,7 +223,14 @@ struct TranscriptBlocksPane: View {
 
     private func popover(_ blocks: [TranscriptBlock]) -> AnyView {
         guard let chosen = wordSelection ?? TranscriptSelection.lines(selectedLines) else { return AnyView(EmptyView()) }
-        return AnyView(SelectionPopover(
+        return AnyView(VStack(alignment: .leading, spacing: 8) {
+            ForEach(selectedLines) { line in
+                let sourceIndex = entries.indices.contains(line.index) ? (entries[line.index].sourceIndex ?? line.index) : line.index
+                if let match = detail.record.value?.evidence?.voice?.lines[String(sourceIndex)] {
+                    ListenVoiceScores(match: match)
+                }
+            }
+            SelectionPopover(
             selection: chosen,
             clipLengthSec: clipSec > 0 ? clipSec : MeetingsPreferences.Transcript.clipSec.defaultValue,
             stage: { selection, text in
@@ -215,7 +250,8 @@ struct TranscriptBlocksPane: View {
             speakerEvidence: (detail.record.value?.items ?? []).filter { item in
                 item.kind == "speaker-range" && (item.toSec ?? 0) >= chosen.from.atSec && (item.fromSec ?? 0) <= chosen.to.atSec
             }.compactMap(\.speakerEvidenceText),
-            close: { clearSelection() }))
+            close: { clearSelection() })
+        })
     }
 
     private func clearSelection() {

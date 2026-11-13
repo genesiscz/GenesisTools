@@ -71,6 +71,8 @@ struct DecisionAction: Codable, Equatable, Hashable {
     var question: String?
     var answer: String?
     var comment: String?
+    struct VoiceSegment: Codable, Equatable, Hashable { var fromWord: Int; var speaker: String }
+    var segments: [VoiceSegment]?
     /// answer: "leave" keeps the questions that look alike open ("Only this question"); nil settles them.
     var lookAlikes: String?
     /// answer: the targets and look-alikes struck in the "This also affects" sheet; they stay as they were and leave
@@ -147,11 +149,12 @@ struct DecisionAction: Codable, Equatable, Hashable {
         return action
     }
 
-    static func answer(_ question: String, _ answer: String, comment: String? = nil) -> DecisionAction {
+    static func answer(_ question: String, _ answer: String, comment: String? = nil, segments: [VoiceSegment]? = nil) -> DecisionAction {
         var action = DecisionAction(kind: "answer")
         action.question = question
         action.answer = answer
         action.comment = comment
+        action.segments = segments
         return action
     }
 
@@ -735,6 +738,9 @@ struct ReviewRow: Decodable, Equatable, Identifiable {
     var status: String
     let confidence: Double?
     let priority: Double?
+    var group: String? = nil
+    var reach: Double? = nil
+    var comment: String? = nil
     /// The one-line text `items` prints.
     let what: String
     let parts: [RowPart]

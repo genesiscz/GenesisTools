@@ -49,6 +49,11 @@ export const DECISION_ACTION_OPTIONS = [
         question: itemRef,
         answer: z.string(),
         comment: z.string().optional(),
+        segments: z
+            .array(z.object({ fromWord: z.number().int().nonnegative(), speaker: z.string().min(1) }))
+            .min(1)
+            .max(64)
+            .optional(),
         /**
          * `leave`: the questions that look alike stay open (the window's "Only this question", R22). The default
          * settles them with the same answer, as `listen` does.

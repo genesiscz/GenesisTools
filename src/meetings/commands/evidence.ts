@@ -155,6 +155,10 @@ async function evidence(
                     {
                         meeting: record.id,
                         selfName: found.selfName,
+                        indicator: {
+                            knownLines: lines.filter((line) => !line.speakingUnknown).length,
+                            unknownLines: lines.filter((line) => line.speakingUnknown).length,
+                        },
                         volume,
                         channels: energy.calibration ?? null,
                         files: found.files,
@@ -183,7 +187,7 @@ async function evidence(
 
         out.println(view.toString());
         ui.dim(
-            `${lines.length} lines · ${found.segments.length} channel segments · ${found.speaking.length} speaking readings · ${lines.filter((line) => line.tie).length} ties (two voices equal) · "?" = no channel segment overlaps the line`
+            `${lines.length} lines · ${found.segments.length} channel segments · ${found.speaking.length} speaking readings · ${lines.filter((line) => line.speakingUnknown).length} lines with unknown indicator · ${lines.filter((line) => line.tie).length} ties (two voices equal) · "?" = no channel segment overlaps the line`
         );
 
         const channels = energy.calibration;

@@ -492,11 +492,7 @@ describe("--with-suggested (R4.2)", () => {
                 correctionsOf(withItems, config, { withSuggested, dictionary: false, format: "txt" })
             ).entries.map((entry) => entry.speaker);
 
-        expect(shown(true)).toEqual([
-            "Alice Example",
-            '[nejasné: "Carol Example"; 1) Bob Example 44 %]',
-            "Dave Example",
-        ]);
+        expect(shown(true)).toEqual(["[Alice Example: 50 %]", "[Bob Example: 44 %]", "Dave Example"]);
         expect(shown(false)).toEqual(["Carol Example", "Carol Example", "Carol Example"]);
     });
 });
@@ -680,7 +676,7 @@ describe("a label the platform named", () => {
                 evidence: {
                     selfName: "Alice Example",
                     segments: [{ startSec: 0, endSec: 5, channel: "system", liveName: "Rob Example" }],
-                    speaking: [{ tSec: 1, speaking: ["Rob Example"], muted: [] }],
+                    speaking: [{ tSec: 0, speaking: ["Rob Example"], muted: [] }],
                     files: [],
                 },
                 now: "2026-11-02T15:00:00.000Z",
@@ -772,9 +768,9 @@ describe("speaker candidate scores (G31)", () => {
                 line("Carol Example", 20, "A pak tamto.", 2),
             ],
             readings: [
-                { tSec: 2, speaking: ["Bob Example"] },
-                { tSec: 12, speaking: ["Bob Example", "Dan Example"] },
-                { tSec: 22, speaking: ["Bob Example"] },
+                { tSec: 0, speaking: ["Bob Example"] },
+                { tSec: 10, speaking: ["Bob Example", "Dan Example"] },
+                { tSec: 20, speaking: ["Bob Example"] },
             ],
             liveName: "Bob Example",
         });
@@ -791,13 +787,13 @@ describe("speaker candidate scores (G31)", () => {
                 { kind: "voice", rule: "E4", lines: 3 },
             ]),
         });
-        // Dan: E3 on two lines of three (a reading counts for the lines around it), 0.5 × 2 / 3, against a voice nobody
-        // listed (0.2, no attendance): 0.3 × 0.33 / 0.53.
+        // Dan is observed on one of three lines; the read ends exclusively at the next observation.
+        // 0.5 × 1 / 3 against the unlisted voice's 0.2 gives 0.3 × 0.167 / 0.367.
         expect(scores[1]).toEqual({
             speaker: "Dan Example",
-            confidence: 0.19,
+            confidence: 0.14,
             lines: 3,
-            evidence: [{ kind: "voice", rule: "E3", lines: 2 }],
+            evidence: [{ kind: "voice", rule: "E3", lines: 1 }],
         });
         expect(total(scores)).toBeLessThanOrEqual(1);
     });
@@ -1127,7 +1123,7 @@ describe("evidence rule after a leave", () => {
             evidence: {
                 selfName: "Alice Example",
                 segments: [{ startSec: 100, endSec: 110, channel: "system", liveName: "Dave Example" }],
-                speaking: [{ tSec: 102, speaking: ["Bob Example", "Alice Example"], muted: [] }],
+                speaking: [{ tSec: 100, speaking: ["Bob Example", "Alice Example"], muted: [] }],
                 files: [],
             },
             now: "2026-11-02T15:00:00.000Z",
@@ -2188,6 +2184,7 @@ describe("questions (R2.3)", () => {
             fromSec: 120,
             toSec: 146,
             question: "Who?",
+            choices: ["Carol Example", "Carol Sample"],
             decides,
             rules: [],
             suggestedAt: now,
@@ -2856,6 +2853,7 @@ test("raw evidence uses explicit attendance for both presence and stays", () => 
     });
     expect(raw.lines[0]?.present).toEqual(["New Example"]);
     expect(raw.people.find((person) => person.name === "New Example")?.stays).toEqual([{ fromSec: 0, toSec: 100 }]);
+    expect(raw.indicator!.knownLines + raw.indicator!.unknownLines).toBe(raw.lines.length);
 });
 
 test("identical single-word names match without accepting partial single-word names", () => {
@@ -6378,6 +6376,195 @@ test("raw facts expose indicator gaps, prehistory, indicator-only people and unk
     const compact = compactEvidence(raw);
     expect(compact.split("\n")).toHaveLength(transcript.length + 1);
     expect(compact).toContain("|e?|s[");
+});
+
+test("unknown failed or gapped indicator observations award no E3 evidence", () => {
+    const source = {
+        ...meeting,
+        transcript: [
+            line(
+                "Alice Example",
+                0,
+                "This sentence has enough words to ask who speaks during this call and to keep the observation test meaningful."
+            ),
+            line("Alice Example", 20, "The second sentence is beyond the validity of the last good reading."),
+        ],
+    };
+    const common = {
+        record,
+        meeting: source,
+        rules: ["evidence" as const],
+        dictionary: { abbrExpansion: "every" as const, entries: [] },
+        sourceWords: [],
+        now: meeting.start,
+    };
+    const segments = [{ startSec: 0, endSec: 25, channel: "system" as const, liveName: "Bob Example" }];
+    const good = suggestItems({
+        ...common,
+        evidence: {
+            selfName: "Alice Example",
+            segments,
+            speaking: [{ tSec: 0, speaking: ["Bob Example"], validUntilSec: 10 }],
+            files: [],
+        },
+    });
+    expect(good.some((item) => item.rules.includes(MeetingRule.SpeakingIndicator))).toBe(true);
+    const failed = suggestItems({
+        ...common,
+        evidence: {
+            selfName: "Alice Example",
+            segments,
+            speaking: [
+                { tSec: 0, speaking: [], speakingUnknown: true, validUntilSec: 5 },
+                { tSec: 5, speaking: ["Bob Example"], validUntilSec: 15 },
+            ],
+            files: [],
+        },
+    });
+    expect(failed.some((item) => item.rules.includes(MeetingRule.SpeakingIndicator))).toBe(false);
+});
+
+test("canonical matched call embeddings feed speaker rules without asking, while unknown or absent voices do not", () => {
+    const transcript = [
+        line(
+            "Alice Example",
+            0,
+            "This call sentence has enough words to become a question if the evidence remains uncertain."
+        ),
+        line("Alice Example", 5, "End."),
+    ];
+    const match = {
+        model: "fixture-model",
+        quality: "matched" as const,
+        person: "Bob Example",
+        candidates: [{ person: "Bob Example", score: 0.8 }],
+        reason: "cosine and margin passed",
+    };
+    const run = ({
+        quality,
+        present = true,
+        conflict = false,
+    }: {
+        quality: "matched" | "unknown";
+        present?: boolean;
+        conflict?: boolean;
+    }) =>
+        suggestItems({
+            record: meetingRecordSchema.parse({
+                ...record,
+                evidence: {
+                    voice: {
+                        version: 1,
+                        source: "/fixture.wav",
+                        enrolment: "/fixture-enrolment.json",
+                        lines: { "0": { ...match, quality } },
+                    },
+                },
+            }),
+            meeting: conflict
+                ? {
+                      ...meeting,
+                      speakers: [{ speakerId: 1, name: "Bob Example", origin: "platform" }],
+                      transcript: transcript.map((entry) => ({ ...entry, speaker: "Bob Example" })),
+                  }
+                : { ...meeting, transcript },
+            rules: ["evidence"],
+            dictionary: { entries: [], abbrExpansion: "every" },
+            sourceWords: [],
+            now: meeting.start,
+            presence: [
+                { name: "Alice Example", self: true, fromSec: 0, toSec: 10 },
+                { name: "Bob Example", fromSec: present ? 0 : 20, toSec: 30 },
+            ],
+            evidence: {
+                selfName: "Alice Example",
+                segments: conflict
+                    ? [
+                          { startSec: 0, endSec: 4, channel: "mic" },
+                          { startSec: 4, endSec: 5, channel: "system" },
+                      ]
+                    : [],
+                speaking: [],
+                files: [],
+            },
+            energyMicShare: () => 0.1,
+        });
+    const matched = run({ quality: "matched" });
+    expect(matched).toContainEqual(
+        expect.objectContaining({
+            kind: "speaker-range",
+            speaker: "Bob Example",
+            confidence: 0.8,
+            rules: [MeetingRule.VoiceEmbedding],
+        })
+    );
+    expect(matched.filter((item) => item.kind === "question")).toHaveLength(0);
+    expect(run({ quality: "unknown" }).some((item) => item.rules.includes(MeetingRule.VoiceEmbedding))).toBe(false);
+    expect(
+        run({ quality: "matched", present: false }).some((item) => item.rules.includes(MeetingRule.VoiceEmbedding))
+    ).toBe(false);
+    expect(run({ quality: "matched", conflict: true })).toContainEqual(
+        expect.objectContaining({
+            speaker: "Bob Example",
+            confidence: 0.8,
+            rules: [MeetingRule.VoiceEmbedding],
+        })
+    );
+});
+
+test("question selection and review order use uncertain words without changing displayed priority", async () => {
+    const { reviewRows } = await import("./lib/review-rows");
+    const entries = [
+        line("Voice", 0, Array(20).fill("design").join(" ")),
+        line("Voice", 100, Array(200).fill("design").join(" ")),
+    ];
+    const pending = meetingRecordSchema.parse({
+        ...record,
+        participants: [{ name: "Alice Example" }, { name: "Bob Example" }],
+        items: [0.1, 0.5].map((confidence, index) => ({
+            id: `i${index + 1}`,
+            kind: "speaker-range",
+            status: "suggested",
+            label: "Voice",
+            fromSec: index * 100,
+            toSec: index * 100,
+            speaker: "Alice Example",
+            confidence,
+            rules: [],
+            suggestedAt: meeting.start,
+        })),
+    });
+    const options = {
+        record: pending,
+        meeting: { ...meeting, transcript: entries },
+        rules: [],
+        dictionary: { entries: [], abbrExpansion: "every" as const },
+        sourceWords: [],
+        listenBelow: 0.8,
+        minPriority: 0,
+        now: meeting.start,
+    };
+    const selected = suggestItems({ ...options, questionBudget: 1 }).filter((item) => item.kind === "question");
+    expect(selected.map((item) => item.decides)).toEqual([["i2"]]);
+    const questions = suggestItems({ ...options, questionBudget: 2 }).filter((item) => item.kind === "question");
+    expect(questions.every((item) => item.priority! >= 1 && item.priority! <= 3)).toBe(true);
+    const roundTripped = meetingRecordSchema.parse(
+        SafeJSON.parse(SafeJSON.stringify({ ...pending, items: questions }))
+    );
+    expect(openQuestions(roundTripped).map((item) => item.decides)).toEqual([["i2"], ["i1"]]);
+    expect(reviewRows(roundTripped, { minPriority: 0 }).rows.map((item) => item.id)).toEqual(
+        openQuestions(roundTripped).map((item) => item.id)
+    );
+    const repeated = meetingRecordSchema.parse({
+        ...pending,
+        items: questions.map((item) => ({ ...item, decides: Array(40).fill(item.decides[0]) })),
+    });
+    expect(openQuestions(repeated).map((item) => item.fromSec)).toEqual([100, 0]);
+    const legacy = meetingRecordSchema.parse({
+        ...pending,
+        items: questions.map((item) => ({ ...item, evidence: undefined, priority: item.fromSec === 0 ? 3 : 1 })),
+    });
+    expect(openQuestions(legacy).map((item) => item.fromSec)).toEqual([0, 100]);
 });
 
 test("conflicting microphone segments and call energy open a platform label instead of silently retaining it", () => {

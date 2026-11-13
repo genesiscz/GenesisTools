@@ -36,6 +36,7 @@ export async function readRows(
         ...(linked ? { linked } : {}),
         ...(config ? { minPriority: config.global.playback.listen.minPriority } : {}),
         ...(params.lowPriority ? { lowPriority: params.lowPriority } : {}),
+        ...(params.applyAbove === undefined ? {} : { applyAbove: params.applyAbove }),
     });
 }
 

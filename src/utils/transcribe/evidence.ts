@@ -197,6 +197,7 @@ export function lineEvidence(
         const muteReads = evidence.speaking.filter(
             (observation) =>
                 observation.muted !== undefined &&
+                (observation.validUntilSec ?? observation.tSec + MUTED_CARRY_SEC) > startSec &&
                 observation.tSec >= startSec - MUTED_CARRY_SEC &&
                 observation.tSec < endSec
         );
@@ -208,7 +209,7 @@ export function lineEvidence(
         const muted = counted[0]?.muted?.filter((name) => counted.every((reading) => reading.muted?.includes(name)));
 
         const present = presence
-            ?.filter((stay) => startSec >= stay.fromSec - 5 && startSec <= stay.toSec + 5)
+            ?.filter((stay) => startSec >= stay.fromSec && startSec < stay.toSec)
             .map((stay) => stay.name);
 
         return {
@@ -222,7 +223,10 @@ export function lineEvidence(
             ...(tie ? { tie: true } : {}),
             ...(winner && winner !== SELF && best?.liveName ? { liveName: best.liveName } : {}),
             speaking,
-            speakingUnknown: !validAtStart || atStart?.speakingUnknown === true,
+            speakingUnknown:
+                !validAtStart ||
+                atStart?.speakingUnknown === true ||
+                readings.some((reading) => reading.speakingUnknown),
             ...(present ? { present: [...new Set(present)] } : {}),
             ...(entry.speakerId !== undefined ? { refinedSpeakerId: entry.speakerId } : {}),
             ...(best?.voiceId !== undefined ? { liveVoiceId: best.voiceId } : {}),

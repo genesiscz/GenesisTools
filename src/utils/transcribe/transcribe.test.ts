@@ -646,7 +646,7 @@ describe("lineEvidence", () => {
         expect(lines[2]!.winner).toBeUndefined();
         expect(lines[3]!.micShare).toBeUndefined();
         // The reading during the line (Carol) and the state at its start (Alice, shown since second 2).
-        expect(lines[2]!.speaking).toEqual({ "Alice Example": 1, "Carol Example": 1 });
+        expect(lines[2]!.speaking).toEqual({ "Carol Example": 1 });
     });
 
     test("the label-by-voice table counts ties and lines without evidence apart", () => {

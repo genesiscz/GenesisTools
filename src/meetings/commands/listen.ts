@@ -27,14 +27,17 @@ import { clipPlayer, cutClip, playClip } from "../lib/audio";
 import { MeetingComments } from "../lib/comments";
 import { callerActor } from "../lib/decision-journal";
 import type { Finding } from "../lib/findings";
+import { personKey, personPresent } from "../lib/listen-answers";
 import {
     type ClipSettings,
     clipSettings,
     type ListenSettings,
     questionClip,
+    refineSplitClip,
     writeQuestionClips,
 } from "../lib/listen-clips";
 import { listenQuestionFindings, selectedQuestionIds } from "../lib/listen-input";
+import { addQualityQuestions, clipProgress, qualityVoiceFeatures } from "../lib/listen-quality";
 import {
     type AskedQuestion,
     type ListenAdapter,
@@ -57,10 +60,13 @@ import {
 import { speakerAnswerScores } from "../lib/review-rows";
 import { openMeetingsClient } from "../lib/service/client";
 import { fail, TOOL } from "../lib/shared";
+import { enrolMeetingVoices } from "../lib/voice-enrolment";
 
 const PAD_CHOICES = [5, 10] as const;
 const AGAIN = "\u0000again";
 const OTHER = "\u0000other";
+const COMMENT = "\u0000comment";
+const PAUSE = "\u0000pause";
 const SKIP = "\u0000skip";
 const STOP = "\u0000stop";
 const SPLIT = "\u0000split";
@@ -98,11 +104,19 @@ async function askedPads(config: MeetingsConfigStore): Promise<ListenPads | unde
  */
 async function somethingElse(vocabulary: string[], context: string[]): Promise<string | undefined> {
     const picked = await searchSelect<string>({
-        message: ["Who or what is it?", ...context].join("\n"),
+        message: ["Search or own comment:", ...context].join("\n"),
         items: vocabulary.map((value) => ({ value, label: value })),
         typed: {
-            label: (query) => (query ? `Use "${query}" as typed` : "Type to filter, or type a new answer"),
-            resolve: (query) => query.trim() || undefined,
+            label: (query) => {
+                const matched = vocabulary.find((name) => personKey(name) === personKey(query));
+                return matched
+                    ? "Use " + matched
+                    : query
+                      ? "Use '" + query + "' as typed"
+                      : "Type to filter, or type a new answer";
+            },
+            resolve: (query) =>
+                vocabulary.find((name) => personKey(name) === personKey(query)) ?? (query.trim() || undefined),
         },
     });
     return typeof picked === "symbol" ? undefined : picked;
@@ -160,6 +174,19 @@ function choiceRows(options: {
             paint: pc.magenta,
         },
         {
+            value: COMMENT,
+            label: "Something else…",
+            hint: "leave a comment; keep this question open",
+            kind: "action",
+            glyph: "✎",
+        },
+        {
+            value: PAUSE,
+            label: "Pause / resume (space)",
+            kind: "action",
+            glyph: "⏯",
+        },
+        {
             value: NONE_OF_THESE,
             label: "None of these",
             hint: "rejects the items it decides",
@@ -213,10 +240,20 @@ async function ask(options: {
     scores?: Map<string, number>;
     /** The styled header line: question number, progress and time range. */
     header?: string;
+    plan: ReturnType<typeof questionClip>;
 }): Promise<ListenOutcome> {
     const { question, earlier } = options;
     const repeat = options.repeatGapMs === undefined ? {} : { repeatGapMs: options.repeatGapMs };
     let playing = playClip(options.player, options.clip, { delayMs: options.delayMs, ...repeat });
+    let paused = false;
+    const togglePause = () => {
+        if (paused) {
+            playing.resume();
+        } else {
+            playing.pause();
+        }
+        paused = !paused;
+    };
     const shown = options.context
         ? contextLines(options.context)
         : options.said
@@ -243,26 +280,83 @@ async function ask(options: {
                     ...(options.scores ? { scores: options.scores } : {}),
                 }),
                 formatSubmitted: (row) => row.label,
+                onSpace: togglePause,
+                liveContext: () => [
+                    clipProgress({
+                        duration:
+                            options.plan.toSec -
+                            options.plan.fromSec +
+                            options.plan.padSec +
+                            (options.plan.padAfterSec ?? options.plan.padSec),
+                        position: playing.positionSec,
+                        askedFrom: options.plan.padSec,
+                        askedTo: options.plan.padSec + options.plan.toSec - options.plan.fromSec,
+                        tone:
+                            options.plan.toneAtSec === undefined
+                                ? undefined
+                                : options.plan.toneAtSec - options.plan.fromSec + options.plan.padSec,
+                    }),
+                ],
+                footer: "↑↓ move  enter pick  esc back  space pause/resume",
             });
 
             if (clack.isCancel(picked)) {
                 return "back";
             }
 
-            if (picked === STOP || picked === SKIP || picked === SPLIT) {
-                return picked === STOP ? "stop" : picked === SKIP ? "skip" : "split";
+            if (picked === STOP || picked === SKIP) {
+                return picked === STOP ? "stop" : "skip";
+            }
+            if (picked === SPLIT) {
+                playing.stop();
+                const voices = await clack.multiselect({
+                    message: "Pick the voices in speaking order (space selects, enter continues):",
+                    options: [...new Set([...choices, ...options.vocabulary])].map((name) => ({
+                        value: name,
+                        label: name,
+                    })),
+                    required: true,
+                });
+                if (clack.isCancel(voices)) {
+                    playing = playClip(options.player, options.clip, repeat);
+                    paused = false;
+                    continue;
+                }
+                return { answer: voices.join(", then ") };
             }
 
             if (picked === AGAIN) {
                 playing.stop();
                 playing = playClip(options.player, options.clip, repeat);
+                paused = false;
                 continue;
             }
 
-            // The clip keeps playing while the answer is typed.
-            const answer = picked === OTHER ? await somethingElse(options.vocabulary, shown) : String(picked);
+            if (picked === PAUSE) {
+                togglePause();
+                continue;
+            }
+            if (picked === COMMENT) {
+                playing.stop();
+                const comment = await clack.text({ message: "Your comment:" });
+                if (!clack.isCancel(comment) && comment?.trim()) {
+                    return { answer: "", comment: comment.trim() };
+                }
+                playing = playClip(options.player, options.clip, repeat);
+                paused = false;
+                continue;
+            }
+            if (picked === OTHER) {
+                playing.stop();
+            }
+            const answer =
+                picked === OTHER
+                    ? await somethingElse([...new Set([...choices, ...options.vocabulary])], shown)
+                    : String(picked);
 
             if (!answer) {
+                playing = playClip(options.player, options.clip, repeat);
+                paused = false;
                 continue;
             }
 
@@ -274,6 +368,7 @@ async function ask(options: {
 
             if (clack.isCancel(comment)) {
                 playing = playClip(options.player, options.clip, repeat);
+                paused = false;
                 continue;
             }
 
@@ -337,6 +432,12 @@ interface ListenOptions {
     timeout?: string;
     clipOut?: string;
     json?: boolean;
+    enrolVoices?: boolean;
+    prepareOnly?: boolean;
+    spotCheck?: string;
+    longStretchWords?: string;
+    group?: string;
+    applyAbove?: string;
 }
 
 /** `--clip-out <dir>`: the questions' clips as files. No sound, no terminal and no round, so nothing is changed (MC22). */
@@ -389,21 +490,39 @@ class TerminalAdapter implements ListenAdapter {
 
     async ask(asked: AskedQuestion): Promise<ListenOutcome> {
         const { store, meeting, transcript, listen } = this.deps;
-        const { question } = asked;
+        const question =
+            asked.question.about === "speaker"
+                ? {
+                      ...asked.question,
+                      choices: asked.question.choices.filter((name) =>
+                          personPresent(asked.record, name, asked.question.fromSec)
+                      ),
+                  }
+                : asked.question;
         const view = questionView(asked.record, question, transcript, SAID_MAX_CHARS);
         const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
+        const plan = await refineSplitClip({
+            plan: questionClip({ record: asked.record, question, transcript, ...this.deps.clips }),
+            question,
+            audioPath: this.deps.audioPath,
+        });
         await cutClip({
             audioPath: this.deps.audioPath,
             outPath: clip,
-            ...questionClip({ record: asked.record, question, transcript, ...this.deps.clips }),
+            ...plan,
         });
         const part = asked.part ? ` · part ${asked.part.n}/${asked.part.of}` : "";
-        const priority = view.priority === undefined ? "" : ` · priority ${view.priority}`;
+        const priority =
+            (view.priority === undefined ? "" : ` · priority ${view.priority}`) +
+            (typeof question.evidence?.reach === "number" ? ` · affects ${question.evidence.reach} ranges` : "");
         return await ask({
             question,
             clip,
+            plan,
             player: this.deps.player,
-            vocabulary: this.deps.vocabulary,
+            vocabulary: [...new Set([...question.choices, ...this.deps.vocabulary])].filter((name) =>
+                personPresent(asked.record, name, question.fromSec)
+            ),
             delayMs: listen.delaySec * 1000,
             ...(listen.repeat.enabled ? { repeatGapMs: listen.repeat.gapSec * 1000 } : {}),
             ...(view.said ? { said: view.said } : {}),
@@ -429,7 +548,11 @@ class TerminalAdapter implements ListenAdapter {
         const { meeting } = this.deps;
 
         if (note.kind === "decided") {
-            ui.ok(note.outcome === "skip" ? `${note.label} skipped` : `${note.label}: ${note.outcome.answer}`);
+            ui.ok(
+                note.outcome === "skip"
+                    ? `${note.label} skipped`
+                    : `${note.label} → ${note.outcome.answer || "comment saved; still open"}\n`
+            );
 
             if (note.settled.length > 0) {
                 ui.dim(`  the same answer settled ${note.settled.length} more: ${note.settled.join(" ")}`);
@@ -498,7 +621,9 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
         }
 
         const answer = { answer: opts.answer, ...(opts.comment ? { comment: opts.comment } : {}) };
-        const adapter = new GivenAnswerAdapter(answer, (line, tone) => (tone === "ok" ? ui.ok(line) : ui.dim(line)));
+        const adapter = new GivenAnswerAdapter(answer, (line, tone) =>
+            tone === "ok" ? process.stderr.write(`${line}\n`) : ui.dim(line)
+        );
         return { adapter, budget: 1, joinRunningRound: true, actor: callerActor() };
     },
     terminal: async ({ store, meeting, opened, first, settings }) => {
@@ -573,6 +698,67 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
 
+    const applyAbove = opts.applyAbove === undefined ? undefined : Number(opts.applyAbove) / 100;
+    if (applyAbove !== undefined && (!Number.isFinite(applyAbove) || applyAbove < 0 || applyAbove > 1)) {
+        fail("--apply-above must be a percentage between 0 and 100");
+        return;
+    }
+    if (opts.enrolVoices) {
+        const result = await enrolMeetingVoices({ opened: OpenedMeeting.of(store, meeting), store });
+        out.result(SafeJSON.stringify(result));
+        return;
+    }
+    const group = opts.group ?? (opts.spotCheck ? "spot-check" : opts.longStretchWords ? "long-stretch" : "all");
+    if (!["all", "rules", "spot-check", "long-stretch"].includes(group)) {
+        fail("--group must be rules, spot-check, long-stretch or all");
+        return;
+    }
+    if (opts.spotCheck || opts.longStretchWords) {
+        const entries = (await OpenedMeeting.of(store, meeting).meeting()).transcript;
+        const spotCheck = opts.spotCheck === undefined ? undefined : Number(opts.spotCheck);
+        const longStretchWords = opts.longStretchWords === undefined ? undefined : Number(opts.longStretchWords);
+        if (
+            [spotCheck, longStretchWords].some(
+                (value) => value !== undefined && (!Number.isInteger(value) || value <= 0)
+            )
+        ) {
+            fail("Spot-check count and long-stretch word count must be positive integers");
+            return;
+        }
+        const opened = OpenedMeeting.of(store, meeting);
+        const features = opts.longStretchWords ? await qualityVoiceFeatures(opened) : undefined;
+        meeting = await store.update(meeting.id, { command: "listen", change: "quality question groups" }, (record) => {
+            addQualityQuestions({
+                record,
+                entries,
+                spotCheck,
+                longStretchWords,
+                features,
+                channel: record.evidence?.channels?.layout === "right-mic" ? 0 : 1,
+                below: opts.applyAbove ? Number(opts.applyAbove) / 100 : undefined,
+            });
+        });
+    }
+    if (opts.prepareOnly) {
+        out.result(
+            SafeJSON.stringify({
+                meeting: meeting.id,
+                questions: openQuestions(meeting)
+                    .filter((question) => group === "all" || (question.group ?? "rules") === group)
+                    .map((question) => question.id),
+            })
+        );
+        return;
+    }
+    let selected: string[] | undefined =
+        group === "all"
+            ? undefined
+            : openQuestions(meeting)
+                  .filter((question) => (question.group ?? "rules") === group)
+                  .map((question) => question.id);
+    for (const name of ["rules", "spot-check", "long-stretch"]) {
+        ui.dim(name + ": " + openQuestions(meeting).filter((question) => (question.group ?? "rules") === name).length);
+    }
     if (opts.subscribeAnswers) {
         await subscribe(meeting, store, opts);
         return;
@@ -603,7 +789,10 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             } else if (opts.json) {
                 out.result(SafeJSON.stringify(result.entry, null, 2));
             } else {
-                ui.ok(`${opts.item} answered: ${opts.answer}`);
+                const answered = result.entry.changes.find((change) => change.after?.kind === "question")?.after;
+                ui.ok(
+                    `${opts.item} → ${answered?.kind === "question" && answered.status === "confirmed" ? answered.answer : "comment saved; still open"}\n`
+                );
             }
         } catch (error) {
             fail(error);
@@ -618,7 +807,6 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
 
-    let selected: string[] | undefined;
     let pendingFindings: Finding[] | undefined;
     try {
         if (opts.questions) {
@@ -725,8 +913,8 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             logPath: join(store.folder(meeting.id), ANSWER_LOG_FILE),
             adapter: chosen.adapter,
             ...(itemId ? { only: itemId } : {}),
+            budget: opts.spotCheck ? Number(opts.spotCheck) : chosen.budget,
             ...(selected ? { selected } : {}),
-            budget: chosen.budget,
             minPriority: settings.global.playback.listen.minPriority,
             listenBelow: settings.global.suggest.listenBelow,
             ...(chosen.joinRunningRound ? { joinRunningRound: true } : {}),
@@ -749,6 +937,41 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
 
         try {
             await session.run();
+            if (opts.spotCheck) {
+                const roundIds = new Set(selected ?? session.applied().flatMap((entry) => entry.decided));
+                const sample =
+                    store
+                        .read(meeting.id)
+                        ?.items.filter(
+                            (item) =>
+                                roundIds.has(item.id) &&
+                                item.kind === "question" &&
+                                item.group === "spot-check" &&
+                                item.status === "confirmed"
+                        ) ?? [];
+                const changed = sample.filter(
+                    (item) => item.kind === "question" && item.answer !== item.evidence?.originalSpeaker
+                ).length;
+                await store.update(meeting.id, { command: "listen", change: "spot-check result" }, (record) => {
+                    record.review ??= {};
+                    record.review.listen ??= {};
+                    record.review.listen.spotChecks ??= [];
+                    record.review.listen.spotChecks.push({
+                        at: new Date().toISOString(),
+                        answered: sample.length,
+                        changed,
+                        questionIds: sample.map((item) => item.id),
+                    });
+                });
+                ui.info(
+                    "Spot check: " +
+                        changed +
+                        "/" +
+                        sample.length +
+                        " changed" +
+                        (sample.length ? " (" + Math.round((100 * changed) / sample.length) + " %)" : "")
+                );
+            }
         } finally {
             process.off("exit", onExit);
             process.off("SIGINT", onSigint);
@@ -786,6 +1009,18 @@ export function registerListenCommand(program: Command): void {
             "--questions <file|Q12,Q13|->",
             "store ad-hoc question findings from JSON at round start, or select stored questions"
         )
+        .option("--apply-above <percent>", "confidence threshold for quality questions")
+        .option("--spot-check <n>", "ask a random sample of 50 to 69 percent lines and report the share changed")
+        .option(
+            "--enrol-voices",
+            "enrol remote seats from isolated call audio with an already installed model; score and store line evidence"
+        )
+        .option(
+            "--prepare-only",
+            "prepare selected quality questions without playing audio or starting a listening round"
+        )
+        .option("--long-stretch-words <n>", "ask every guess stretch of this many words or more")
+        .option("--group <group>", "rules, spot-check, long-stretch or all")
         .option("--answer <text>", `answer --item without listening ("${NONE_OF_THESE}" rejects what it decides)`)
         .option("--comment <text>", "with --answer: a note kept on the question")
         .option("--except <items...>", "with --answer: leave these item ids or question numbers out")

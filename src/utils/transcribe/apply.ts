@@ -43,6 +43,8 @@ export interface UnclearPassage {
     speaker?: string;
     heard?: string;
     readings: string[];
+    /** A question-owned speaker proposal, shown as a guess while the question is open. */
+    guess?: { name: string; confidence?: number };
 }
 
 /** A mark on the passage `heard` of the line that starts at `atSec`. */
@@ -71,8 +73,26 @@ function writtenMark(mark: TranscriptMark, notes: DictionaryNotes): string {
     return notes === "sup" ? `${mark.heard} <sup>(\`${meaning}\`)</sup>` : `${mark.heard} (${meaning})`;
 }
 
+/** A complete unclear mark supplied as the final reading, on the configured language's label. */
+export function isUnclearMarker(text: string, label: string): boolean {
+    return text.startsWith(`[${label}:`) && text.endsWith("]");
+}
+
+function passageMarker(label: string, raw: string, passage: UnclearPassage): string {
+    if (passage.guess) {
+        const { name, confidence } = passage.guess;
+        return confidence === undefined ? `[${name}]` : `[${name}: ${Math.round(confidence * 100)} %]`;
+    }
+
+    return unclearMarker(label, raw, passage.readings);
+}
+
 /** `[nejasné: "Speaker 5"; 1) Alice 2) Carol]`: the raw text, then each reading, so the reader sees what is open. */
 export function unclearMarker(label: string, raw: string, readings: string[]): string {
+    if (readings.length === 1 && isUnclearMarker(readings[0]!, label)) {
+        return readings[0]!;
+    }
+
     const listed = readings.map((reading, index) => `${index + 1}) ${reading}`).join(" ");
     return `[${label}: "${raw}"${listed ? `; ${listed}` : ""}]`;
 }
@@ -374,7 +394,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
 
             if (open) {
                 speakerMarked.add(line);
-                line.speaker = unclearMarker(unclearLabel, passage.speaker!, passage.readings);
+                line.speaker = passageMarker(unclearLabel, passage.speaker!, passage);
                 counts.unclear += 1;
             }
         }
@@ -543,7 +563,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         for (const line of lines) {
             if (inRange(line, passage) && word.test(line.text)) {
                 const placeholder = `\uE001${unclearMarked.length}\uE001`;
-                unclearMarked.push(unclearMarker(unclearLabel, heard, passage.readings));
+                unclearMarked.push(passageMarker(unclearLabel, heard, passage));
                 line.text = line.text.replace(word, placeholder);
                 counts.unclear += 1;
             }

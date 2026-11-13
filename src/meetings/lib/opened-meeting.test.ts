@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -188,6 +188,34 @@ describe("CallTimeline", () => {
             "teams"
         );
         expect(saved.attendance?.people.map((stay) => stay.toSec)).toEqual([3600, 1200]);
+    });
+
+    test("storing platform attendance refreshes persisted roster windows in the same write", async () => {
+        const { store, record } = await newRecord({
+            end: "2026-11-02T16:00:00.000Z",
+            participants: [
+                {
+                    name: "Bob Example",
+                    firstSeenSec: 600,
+                    from: ["platform-roster"],
+                    stays: [{ fromSec: 600, source: "platform-roster", confidence: 1 }],
+                },
+            ],
+        });
+        await CallTimeline.stored(record).store(
+            store,
+            {
+                note: "fixture",
+                presence: [{ name: "Bob Example", fromSec: -50, toSec: 2405, joinedAtExact: true, leftAtExact: true }],
+            },
+            "teams"
+        );
+        const reopened = new MeetingStore(store.storage).read(record.id)!;
+        expect(reopened.participants[0]).toMatchObject({
+            firstSeenSec: 600,
+            stays: [{ fromSec: 0, toSec: 2405, source: "attendance", confidence: 1 }],
+        });
+        expect(reopened.history.at(-1)?.command).toBe("attendance");
     });
 
     test("second 0 is the source's clock, else what the recorder stored, else the record's start", async () => {
@@ -583,4 +611,53 @@ test("all opened readers share independently identified goodbye windows without 
     expect(presence?.find((stay) => stay.name === "Carol Example")?.toSec).toBe(10);
     expect(presence?.find((stay) => stay.name === "Bob Example")?.toSec).toBe(90);
     expect(SafeJSON.stringify(new MeetingStore(store.storage).read(record.id))).toBe(before);
+    await store.update(record.id, { command: "test", change: "exact platform leave" }, (next) => {
+        next.attendance!.people[0]!.toSec = 12;
+        next.attendance!.people[0]!.leftAtExact = true;
+    });
+    const exact = new MeetingStore(store.storage).read(record.id)!;
+    const exactBefore = SafeJSON.stringify(exact);
+    const exactPresence = await OpenedMeeting.of(store, exact, { source: modified, sourceMeetingId: "abc" }).presence();
+    expect(exactPresence?.find((stay) => stay.name === "Carol Example")?.toSec).toBe(12);
+    expect(SafeJSON.stringify(new MeetingStore(store.storage).read(record.id))).toBe(exactBefore);
+});
+
+test("collect persists only a canonically identified departure and read-only presence retains it", async () => {
+    const { store, record } = await newRecord({
+        participants: [
+            { name: "Alice Example", self: true, firstSeenSec: 0, from: ["platform-roster"] },
+            { name: "Bob Example", firstSeenSec: 0, from: ["platform-roster"] },
+        ],
+    });
+    const source = fakeSource({
+        evidence: {
+            selfName: "Alice Example",
+            segments: [{ startSec: 0, endSec: 100, channel: "system" }],
+            speaking: [],
+            files: [],
+        },
+    });
+    const base = await source.load("abc");
+    source.load = async () => ({
+        ...base,
+        transcript: [
+            { speaker: "Alice Example", startSec: 0, text: "Začneme." },
+            { speaker: "Voice", startSec: 40, text: "Hele, já už musím, mějte se." },
+            { speaker: "Alice Example", startSec: 45, text: "Díky, čau." },
+            { speaker: "Voice", startSec: 90, text: "Tak budeme pokračovat." },
+        ],
+    });
+    const opened = OpenedMeeting.of(store, record, { source, sourceMeetingId: "abc" });
+    await opened.collect();
+    const reopened = new MeetingStore(store.storage).read(record.id)!;
+    expect(reopened.participants.find((one) => one.name === "Bob Example")?.stays).toEqual([
+        { fromSec: 0, toSec: 40, source: "goodbye", confidence: 0.8 },
+    ]);
+    const before = readFileSync(store.path(record.id), "utf8");
+    expect(
+        (await OpenedMeeting.of(store, reopened, { source, sourceMeetingId: "abc" }).presence())?.find(
+            (stay) => stay.name === "Bob Example"
+        )?.toSec
+    ).toBe(40);
+    expect(readFileSync(store.path(record.id), "utf8")).toBe(before);
 });

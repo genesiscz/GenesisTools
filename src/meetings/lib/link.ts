@@ -115,6 +115,10 @@ export function applySource(options: {
     }
 
     record.participants = mergeParticipants(record.participants, meeting.participants);
+    if (meeting.observations) {
+        record.evidence ??= {};
+        record.evidence.indicator = meeting.observations;
+    }
     record.calendar ??= meeting.calendar;
 }
 
@@ -192,7 +196,31 @@ async function linkSourceUnlocked(options: {
         });
     }
 
+    const names = new Set(meeting.participants.map((person) => person.name.toLowerCase()));
+    const titleWords = new Set(
+        meeting.title
+            .toLowerCase()
+            .split(/\W+/)
+            .filter((word) => word.length > 3)
+    );
+    const suggested = [
+        ...new Set(
+            options.store
+                .list()
+                .filter(
+                    (record) =>
+                        record.project &&
+                        (record.participants.filter((person) => names.has(person.name.toLowerCase())).length >= 2 ||
+                            record.title
+                                .toLowerCase()
+                                .split(/\W+/)
+                                .filter((word) => titleWords.has(word)).length >= 2)
+                )
+                .map((record) => record.project!)
+        ),
+    ];
     const { project } = await resolveProject({
+        suggested,
         config: options.config,
         flag: options.project,
         current: existing?.project,
@@ -229,6 +257,7 @@ async function linkSourceUnlocked(options: {
             ...(meeting.end ? { end: meeting.end } : {}),
             sources: { [ref.source]: block },
             participants: meeting.participants,
+            ...(meeting.observations ? { evidence: { indicator: meeting.observations } } : {}),
             ...(meeting.calendar ? { calendar: meeting.calendar } : {}),
         },
         { command: options.command, change: `created from ${change}` }

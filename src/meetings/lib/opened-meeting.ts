@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { type ChannelCalibration, channelEnergy, type SilentCallSpan } from "@genesiscz/utils/meetings/energy";
@@ -16,7 +17,9 @@ import { loadPresence } from "./attendance";
 import { CallTimeline } from "./call-timeline";
 import { identifiedDepartures } from "./departure";
 import { callSilentSpans, energyMicShareFor, type MicEnergy, storeCalibration } from "./energy";
+import { personStays, rosterPresence } from "./person-stays";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./platforms";
+import { missingProjectWarning } from "./project";
 import { preservedSourceAudio, withPreservedSourceAudio } from "./source-audio";
 import { type LinkedSource, linkedSource, type SourceRef, sourceRefOf } from "./sources";
 import { assessIndicator } from "./speaker-indicator";
@@ -138,23 +141,52 @@ export class OpenedMeeting {
         const attendance = this.current.attendance;
 
         if (attendance) {
-            ui.dim(
-                `attendance: ${attendance.people.length} stays, as the meeting record keeps them (${attendance.from})`
+            const named = (await this.timeline()).named(attendance.people);
+            const extra = rosterPresence(this.current, await this.transcriptEndSec()).filter(
+                (stay) => !named.some((known) => known.name === stay.name)
             );
-            return this.departurePresence((await this.timeline()).named(attendance.people));
+            return this.departurePresence([...named, ...extra]);
         }
 
-        const duration = (await this.meeting()).transcript.reduce(
-            (end, line) => Math.max(end, (line.startSec ?? 0) + 5),
-            0
-        );
-        const roster = this.current.participants.flatMap((person) => {
-            const stays =
-                person.stays ??
-                (person.firstSeenSec === undefined ? [] : [{ fromSec: person.firstSeenSec, toSec: undefined }]);
-            return stays.map((stay) => ({ name: person.name, fromSec: stay.fromSec, toSec: stay.toSec ?? duration }));
+        const duration = await this.transcriptEndSec();
+        const roster = rosterPresence(this.current, duration);
+        if (roster.length === 0) {
+            return undefined;
+        }
+        const meeting = await this.meeting();
+        const evidence = await this.evidence();
+        const selfName = this.current.participants.find((person) => person.self)?.name;
+        if (!evidence || !selfName) {
+            return roster;
+        }
+        const energy = await this.energy();
+        const lines = lineEvidence(meeting.transcript, evidence, roster).map((line) => ({
+            ...line,
+            energyMic: energy.share?.(line.startSec, line.endSec),
+        }));
+        const hints = speakerStats(meeting.transcript, { participants: meeting.speakers, presence: roster }).hints;
+        const departures = identifiedDepartures({
+            hints,
+            lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
+            selfName,
+            presence: roster,
+            ignoredIndicator: assessIndicator({ lines, selfName }).ignored,
         });
-        return this.departurePresence(roster.length > 0 ? roster : undefined);
+        return personStays({
+            record: this.current,
+            durationSec: duration,
+            lines,
+            departures,
+            silenceMinutes: (await this.config()).global.suggest.leaveSilenceMinutes,
+            callSilent: this.current.evidence?.channels?.callSilent,
+        }).flatMap((person) =>
+            person.stays.map((stay) => ({
+                name: person.name,
+                self: person.self,
+                fromSec: stay.fromSec,
+                toSec: stay.toSec ?? duration,
+            }))
+        );
     }
 
     /** Every reader sees the same independently identified goodbye boundary, without changing stored evidence. */
@@ -181,6 +213,9 @@ export class OpenedMeeting {
             ignoredIndicator: assessIndicator({ lines, selfName }).ignored,
         });
         return presence.map((stay) => {
+            if (stay.leftAtExact === true) {
+                return stay;
+            }
             const departure = departures.find(
                 (event) => event.name === stay.name && event.atSec >= stay.fromSec && event.atSec < stay.toSec
             );
@@ -239,7 +274,13 @@ export class OpenedMeeting {
 
     /** The meetings config, read once. */
     config(): Promise<MeetingsConfig> {
-        this.configOnce ??= new MeetingsConfigStore().read();
+        this.configOnce ??= new MeetingsConfigStore().read().then((config) => {
+            const warning = missingProjectWarning(this.current, config);
+            if (warning) {
+                ui.warn(warning);
+            }
+            return config;
+        });
         return this.configOnce;
     }
 
@@ -366,6 +407,60 @@ export class OpenedMeeting {
         if (calibration) {
             const { layout, reason } = calibration;
             notes.push({ ok: layout !== "unknown", text: `audio channels: ${layout}${reason ? ` (${reason})` : ""}` });
+        }
+
+        try {
+            const meeting = await this.meeting();
+            const evidence = await this.evidence();
+            const selfName = this.current.participants.find((person) => person.self)?.name;
+            if (evidence && selfName && this.current.participants.length) {
+                const durationSec = await this.transcriptEndSec();
+                const presence = rosterPresence(this.current, durationSec);
+                const energy = await this.energy();
+                const lines = lineEvidence(meeting.transcript, evidence, presence).map((line) => ({
+                    ...line,
+                    energyMic: energy.share?.(line.startSec, line.endSec),
+                }));
+                const hints = speakerStats(meeting.transcript, { participants: meeting.speakers, presence }).hints;
+                const departures = identifiedDepartures({
+                    hints,
+                    lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
+                    selfName,
+                    presence,
+                    ignoredIndicator: assessIndicator({ lines, selfName }).ignored,
+                });
+                const derived = personStays({
+                    record: this.current,
+                    durationSec,
+                    lines,
+                    departures,
+                    silenceMinutes: (await this.config()).global.suggest.leaveSilenceMinutes,
+                    callSilent: this.current.evidence?.channels?.callSilent,
+                });
+                const participants = this.current.participants.map((person) => {
+                    const stays = derived.find((one) => one.name === person.name)?.stays;
+                    return stays?.length ? { ...person, stays } : person;
+                });
+                if (SafeJSON.stringify(participants) !== SafeJSON.stringify(this.current.participants)) {
+                    this.current = await this.store.update(
+                        this.current.id,
+                        { command: "collect", change: "derive person stays from identified events" },
+                        (next) => {
+                            next.participants = participants;
+                        }
+                    );
+                    notes.push({
+                        ok: true,
+                        text: "person stays: identified departures and observed silent call windows",
+                    });
+                }
+            }
+        } catch (err) {
+            log.debug({ err, meeting: this.current.id }, "person stays not derived");
+            notes.push({
+                ok: false,
+                text: "person stays not derived: " + (err instanceof Error ? err.message : String(err)),
+            });
         }
 
         log.debug({ meeting: this.current.id, notes }, "collected");

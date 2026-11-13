@@ -14,6 +14,7 @@ export interface SourceMeeting {
     start: string;
     end?: string;
     participants: MeetingParticipant[];
+    observations?: SpeakingObservation[];
     /** The diarized speakers with their number and who named them (platform, llm, self). */
     speakers: Participant[];
     transcript: TranscriptEntry[];

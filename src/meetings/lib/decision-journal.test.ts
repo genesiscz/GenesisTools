@@ -13,6 +13,7 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { SpeakerHint } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
@@ -26,9 +27,21 @@ import {
     JOURNAL_FILE,
     journalEntrySchema,
 } from "./decision-journal";
+import { parsePersonAnswer, personKey, personPresent } from "./listen-answers";
+import {
+    addQualityQuestions,
+    clipProgress,
+    qualityLines,
+    sampleLines,
+    splitVoiceStretch,
+    thresholdProbe,
+    uncertainSharedCallRanges,
+} from "./listen-quality";
+import { personStays } from "./person-stays";
 import { reviewRow } from "./review-rows";
 import { assignmentReach } from "./speaker-assign";
 import { correctTranscript } from "./transcript-corrections";
+import { enrolRemoteVoices, scoreRemoteLines } from "./voice-enrolment";
 
 const now = "2026-11-09T18:00:00.000Z";
 let stores = 0;
@@ -1446,4 +1459,636 @@ describe("a decision and what it carries are one transaction", () => {
             new MeetingStore(fx.store.storage).read(fx.meeting.id)?.items.find((one) => one.id === "i4")
         ).toMatchObject({ answer: "ADA", status: "confirmed" });
     });
+});
+
+describe("workshop listen contracts", () => {
+    test("unmatched prose persists as a comment and never becomes a speaker", async () => {
+        const fx = await fixture([
+            {
+                id: "i1",
+                kind: "speaker-range",
+                status: "suggested",
+                label: "Voice",
+                fromSec: 10,
+                toSec: 10,
+                speaker: "Alice Example",
+                rules: [],
+                suggestedAt: now,
+            },
+            question("i2", {
+                about: "speaker",
+                heard: undefined,
+                fromSec: 10,
+                toSec: 10,
+                choices: ["Alice Example", "Bob Example"],
+                decides: ["i1"],
+            }),
+        ]);
+        await fx.journal.apply({
+            meeting: fx.meeting.id,
+            actor: person,
+            action: { kind: "answer", question: "i2", answer: "I cannot hear the second sentence" },
+        });
+        const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(reopened.items.find((item) => item.id === "i2")).toMatchObject({
+            status: "suggested",
+            comment: "I cannot hear the second sentence",
+        });
+        expect(reopened.items.find((item) => item.id === "i1")).toMatchObject({
+            status: "suggested",
+            speaker: "Alice Example",
+        });
+    });
+
+    test("ordered people persist word segments and render separate turns", async () => {
+        const fx = await fixture([
+            {
+                id: "i1",
+                kind: "speaker-range",
+                status: "suggested",
+                label: "Voice",
+                fromSec: 10,
+                toSec: 10,
+                rules: [],
+                suggestedAt: now,
+            },
+            question("i2", {
+                about: "speaker",
+                heard: undefined,
+                fromSec: 10,
+                toSec: 10,
+                choices: ["Alice Example", "Bob Example"],
+                decides: ["i1"],
+            }),
+        ]);
+        const transcript = [{ startSec: 10, speaker: "Voice", text: "First sentence. Second sentence." }];
+        const journal = new DecisionJournal({
+            store: fx.store,
+            split: { transcript: async () => transcript },
+            ledger: () => {},
+            now: () => new Date(now),
+        });
+        await journal.apply({
+            meeting: fx.meeting.id,
+            actor: person,
+            action: { kind: "answer", question: "i2", answer: "Alice Example, then Bob Example" },
+        });
+        const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(reopened.items.find((item) => item.id === "i1")).toMatchObject({
+            segments: [
+                { fromWord: 0, speaker: "Alice Example" },
+                { fromWord: 2, speaker: "Bob Example" },
+            ],
+        });
+        expect(
+            correctTranscript({
+                record: reopened,
+                transcript,
+                config: meetingsConfigSchema.parse({}),
+                format: "txt",
+            }).entries.map((entry) => [entry.speaker, entry.text])
+        ).toEqual([
+            ["Alice Example", "First sentence."],
+            ["Bob Example", "Second sentence."],
+        ]);
+    });
+
+    test("name matching ignores accents and order, but never turns a comment into an invented identity", () => {
+        expect(personKey("Éxample Alice")).toBe(personKey("Alice Example"));
+        expect(parsePersonAnswer({ text: "example alice", people: ["Alice Example"] })).toEqual({
+            kind: "people",
+            people: ["Alice Example"],
+        });
+        expect(parsePersonAnswer({ text: "this sounded unclear", people: ["Alice Example"] }).kind).toBe("comment");
+        expect(
+            parsePersonAnswer({
+                text: "me, then someone I cannot identify",
+                people: ["Alice Example"],
+                self: "Alice Example",
+            }).kind
+        ).toBe("comment");
+        expect(
+            parsePersonAnswer({
+                text: "Alice Example, then Bob Example",
+                people: ["Alice Example", "Alice Example (Engineering)", "Bob Example"],
+            })
+        ).toEqual({ kind: "people", people: ["Alice Example", "Bob Example"] });
+    });
+
+    test("roster first seen and identified departure survive persisted roundtrip", async () => {
+        const fx = await fixture([]);
+        await fx.store.update(fx.meeting.id, { command: "test", change: "roster" }, (record) => {
+            record.participants = [
+                { name: "Alice Example", self: true, firstSeenSec: 0, from: ["platform-roster"] },
+                { name: "Bob Example", firstSeenSec: 600, from: ["platform-roster"] },
+            ];
+            const derived = personStays({
+                record,
+                durationSec: 3000,
+                departures: [{ name: "Bob Example", atSec: 2400, reason: "sole-remote" }],
+            });
+            record.participants = record.participants.map((person) => ({
+                ...person,
+                stays: derived.find((one) => one.name === person.name)!.stays,
+            }));
+        });
+        const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(reopened.participants[1]).toMatchObject({
+            firstSeenSec: 600,
+            stays: [{ fromSec: 600, toSec: 2400, source: "goodbye", confidence: 0.8 }],
+        });
+    });
+
+    test("later attendance replaces roster stays after reopen and preserves manual windows", async () => {
+        const fx = await fixture([]);
+        await fx.store.update(fx.meeting.id, { command: "test", change: "late attendance" }, (record) => {
+            record.participants = [
+                {
+                    name: "Bob Example",
+                    firstSeenSec: 600,
+                    from: ["platform-roster"],
+                    stays: [{ fromSec: 600, source: "platform-roster", confidence: 1 }],
+                },
+            ];
+            record.attendance = {
+                from: "teams",
+                people: [{ name: "Bob Example", fromSec: 550, toSec: 2405, joinedAtExact: true, leftAtExact: true }],
+            };
+        });
+        let reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        const derived = personStays({ record: reopened, durationSec: 3000 });
+        expect(derived[0]!.stays).toEqual([{ fromSec: 550, toSec: 2405, source: "attendance", confidence: 1 }]);
+        await fx.store.update(fx.meeting.id, { command: "test", change: "persist stays" }, (record) => {
+            record.participants[0]!.stays = derived[0]!.stays;
+        });
+        reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(reopened.participants[0]!.firstSeenSec).toBe(600);
+        expect(reopened.participants[0]!.stays).toEqual(derived[0]!.stays);
+        await fx.store.update(fx.meeting.id, { command: "test", change: "refresh attendance" }, (record) => {
+            record.attendance!.people[0]!.toSec = 2500;
+        });
+        reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(personStays({ record: reopened, durationSec: 3000 })[0]!.stays[0]!.toSec).toBe(2500);
+        await fx.store.update(fx.meeting.id, { command: "test", change: "manual window" }, (record) => {
+            record.participants[0]!.stays = [{ fromSec: 700, toSec: 2000, source: "hand", confidence: 1 }];
+        });
+        reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(personStays({ record: reopened, durationSec: 3000 })[0]!.stays).toEqual([
+            { fromSec: 700, toSec: 2000, source: "hand", confidence: 1 },
+        ]);
+    });
+
+    test("quality probe conserves lines, sample has no replacement, alternating features split four parts", () => {
+        const record = meetingRecordSchema.parse({
+            id: "quality",
+            title: "",
+            start: now,
+            createdAt: now,
+            createdBy: "new",
+            items: [0.55, 0.75, 0.95].map((confidence, index) => ({
+                id: "i" + (index + 1),
+                kind: "speaker-range",
+                label: "Voice",
+                fromSec: index * 10,
+                toSec: index * 10,
+                confidence,
+                speaker: "Alice Example",
+                rules: [],
+                status: "suggested",
+                suggestedAt: now,
+            })),
+        });
+        const entries = [0, 10, 20].map((startSec) => ({ startSec, speaker: "Voice", text: "one two three" }));
+        const lines = qualityLines(record, entries);
+        expect(thresholdProbe(lines, [50, 70, 90]).map((row) => [row.applied, row.open])).toEqual([
+            [3, 0],
+            [2, 1],
+            [1, 2],
+        ]);
+        expect(sampleLines(lines, 20, () => 0.5)).toHaveLength(1);
+        expect(addQualityQuestions({ record, entries, spotCheck: 20 })).toHaveLength(1);
+        const prepared = record.items.find((item) => item.kind === "question" && item.group === "spot-check");
+        expect(prepared).toMatchObject({ priority: 1, confidence: 0.55 });
+        if (prepared?.kind !== "question") {
+            throw new Error("The quality question was not prepared");
+        }
+        delete prepared.priority;
+        delete prepared.confidence;
+        expect(addQualityQuestions({ record, entries, spotCheck: 20 })).toEqual([prepared.id]);
+        expect(prepared).toMatchObject({ priority: 1, confidence: 0.55 });
+        prepared.priority = 2.5;
+        prepared.confidence = 0.6;
+        expect(addQualityQuestions({ record, entries, spotCheck: 20 })).toEqual([prepared.id]);
+        expect(prepared).toMatchObject({ priority: 2.5, confidence: 0.6 });
+        const parts = splitVoiceStretch(
+            Array.from({ length: 12 }, (_, index) => ({ pitchHz: Math.floor(index / 3) % 2 ? 210 : 120 }))
+        );
+        expect(parts.map((part) => part.length)).toEqual([3, 3, 3, 3]);
+    });
+
+    test("remote enrolment excludes mixed windows and held-out scoring uses canonical model gate", () => {
+        const record = meetingRecordSchema.parse({
+            id: "voice",
+            title: "",
+            start: now,
+            createdAt: now,
+            createdBy: "new",
+        });
+        const channel = (fromSec: number, embedding: number[]) => ({
+            quality: "ready" as const,
+            track: "isolated-call" as const,
+            source: { audioPath: "/fixture.wav", size: 42, mtimeMs: 1 },
+            channel: 1 as const,
+            model: "fixture-model",
+            fromSec,
+            toSec: fromSec + 3,
+            embedding,
+        });
+        const embeddings = [
+            { index: 0, channels: [channel(0, [1, 0])] },
+            { index: 1, channels: [channel(10, [0, 1])] },
+            { index: 2, channels: [channel(20, [0, 1])] },
+        ];
+        const samples = enrolRemoteVoices({
+            record,
+            embeddings,
+            remote: [
+                { name: "Alice Example", fromSec: 0, toSec: 5 },
+                { name: "Bob Example", fromSec: 10, toSec: 30 },
+            ],
+        });
+        expect(samples).toHaveLength(3);
+        expect(scoreRemoteLines({ embeddings, samples }).find((line) => line.index === 2)?.match.person).toBe(
+            "Bob Example"
+        );
+    });
+});
+
+test("speaker evidence propagation improves unasked compatible ranges and the journal can undo it", async () => {
+    const range = (id: string, fromSec: number, signature = "group-a") => ({
+        id,
+        kind: "speaker-range",
+        status: "suggested",
+        label: "Voice",
+        fromSec,
+        toSec: fromSec,
+        speaker: "Bob Example",
+        confidence: 0.55,
+        rules: [],
+        suggestedAt: now,
+        evidence: { signature, choices: ["Alice Example", "Bob Example"] },
+    });
+    const fx = await fixture([
+        range("i1", 10),
+        range("i2", 20),
+        range("i3", 30, "other-group"),
+        question("i4", {
+            about: "speaker",
+            heard: undefined,
+            fromSec: 10,
+            toSec: 10,
+            signature: "group-a",
+            evidence: { labels: ["Voice"] },
+            choices: ["Alice Example", "Bob Example"],
+            decides: ["i1"],
+        }),
+    ]);
+    const before = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+    const result = await fx.journal.apply({
+        meeting: fx.meeting.id,
+        actor: person,
+        action: { kind: "answer", question: "i4", answer: "Alice Example" },
+    });
+    const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+    expect(reopened.items.find((item) => item.id === "i2")).toMatchObject({
+        speaker: "Alice Example",
+        confidence: 0.85,
+        status: "suggested",
+        evidence: { propagatedFrom: "i4" },
+    });
+    expect(reopened.items.find((item) => item.id === "i3")).toEqual(before.items.find((item) => item.id === "i3"));
+    await fx.journal.revert({ meeting: fx.meeting.id, actor: person, token: result.entry!.token });
+    expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
+});
+
+test("a resolved departure is vetoed by later valid speech, and silence needs observed quiet call coverage", () => {
+    const record = meetingRecordSchema.parse({
+        id: "stays",
+        title: "",
+        start: now,
+        createdAt: now,
+        createdBy: "new",
+        participants: [{ name: "Bob Example", firstSeenSec: 0, from: ["platform-roster"] }],
+    });
+    const lines = lineEvidence(
+        [
+            { speaker: "Voice", startSec: 5, text: "Hello" },
+            { speaker: "Voice", startSec: 90, text: "I am still here" },
+        ],
+        {
+            segments: [],
+            speaking: [
+                { tSec: 5, speaking: ["Bob Example"], validUntilSec: 15 },
+                { tSec: 90, speaking: ["Bob Example"], validUntilSec: 100 },
+            ],
+        }
+    );
+    expect(
+        personStays({
+            record,
+            durationSec: 900,
+            lines,
+            departures: [{ name: "Bob Example", atSec: 40, reason: "indicator" }],
+        })[0]!.stays[0]!.toSec
+    ).toBeUndefined();
+    expect(personStays({ record, durationSec: 900, lines, silenceMinutes: 10 })[0]!.stays[0]!.toSec).toBeUndefined();
+    const quiet = personStays({
+        record,
+        durationSec: 900,
+        lines,
+        silenceMinutes: 10,
+        callSilent: [{ fromSec: 94, toSec: 900 }],
+    })[0]!.stays[0]!;
+    expect(quiet).toMatchObject({ toSec: 95, source: "silence", confidence: 0.5 });
+    record.participants[0]!.stays = [{ fromSec: 0, toSec: 40, source: "hand", confidence: 1 }];
+    expect(personPresent(record, "Bob Example", 39.9)).toBe(true);
+    expect(personPresent(record, "Bob Example", 40)).toBe(false);
+});
+
+test("remote held-out fixture attributes at least ninety percent and unavailable extraction stays explicit", () => {
+    const source = { audioPath: "/fixture.wav", size: 42, mtimeMs: 1 };
+    const samples = ["Alice Example", "Bob Example"].map((person, index) => ({
+        person,
+        source: source.audioPath,
+        model: "fixture-model",
+        channel: 1 as const,
+        fromSec: index * 5,
+        toSec: index * 5 + 3,
+        embedding: index ? [0, 1] : [1, 0],
+        confirmed: true as const,
+    }));
+    const held = Array.from({ length: 20 }, (_, index) => ({
+        index,
+        channels: [
+            {
+                quality: "ready" as const,
+                track: "isolated-call" as const,
+                source,
+                channel: 1 as const,
+                model: "fixture-model",
+                fromSec: 100 + index * 5,
+                toSec: 103 + index * 5,
+                embedding: index % 2 ? [0.01, 1] : [1, 0.01],
+            },
+        ],
+    }));
+    const matches = scoreRemoteLines({ embeddings: held, samples });
+    expect(
+        matches.filter((line) => line.match.person === samples[line.index % 2]!.person).length / held.length
+    ).toBeGreaterThanOrEqual(0.9);
+    expect(
+        scoreRemoteLines({
+            embeddings: [
+                {
+                    index: 21,
+                    channels: [
+                        {
+                            quality: "unknown",
+                            reason: "too quiet",
+                            track: "isolated-call",
+                            source,
+                            channel: 1,
+                            fromSec: 210,
+                            toSec: 213,
+                        },
+                    ],
+                },
+            ],
+            samples,
+        })[0]!.match
+    ).toMatchObject({ quality: "unknown", reason: "too quiet", candidates: [] });
+});
+
+test("items-add accepts a shared evidence group and its answer improves an unasked range", async () => {
+    const fx = await fixture([]);
+    const transcript = [
+        { startSec: 10, speaker: "Voice", text: "This is the first substantial stretch with many words." },
+        { startSec: 20, speaker: "Voice", text: "A shorter related stretch." },
+    ];
+    const journal = new DecisionJournal({
+        store: fx.store,
+        split: { transcript: async () => transcript },
+        ledger: () => {},
+    });
+    await journal.apply({
+        meeting: fx.meeting.id,
+        actor: person,
+        action: {
+            kind: "add",
+            findings: [
+                {
+                    ref: "first",
+                    kind: "speaker-range",
+                    from: 10,
+                    to: 10,
+                    label: "Voice",
+                    speaker: "Bob Example",
+                    candidates: ["Alice Example", "Bob Example"],
+                    signature: "pair",
+                    confidence: 0.55,
+                    reason: "shared channel fixture",
+                },
+                {
+                    kind: "speaker-range",
+                    from: 20,
+                    to: 20,
+                    label: "Voice",
+                    speaker: "Bob Example",
+                    candidates: ["Alice Example", "Bob Example"],
+                    signature: "pair",
+                    confidence: 0.55,
+                    reason: "shared channel fixture",
+                },
+                {
+                    kind: "question",
+                    about: "speaker",
+                    from: 10,
+                    to: 10,
+                    question: "Who speaks?",
+                    choices: ["Alice Example", "Bob Example"],
+                    signature: "pair",
+                    decides: ["first"],
+                },
+            ],
+        },
+    });
+    await journal.apply({
+        meeting: fx.meeting.id,
+        actor: person,
+        action: { kind: "answer", question: "i3", answer: "Alice Example" },
+    });
+    expect(
+        new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items.find((item) => item.id === "i2")
+    ).toMatchObject({ status: "suggested", speaker: "Alice Example", confidence: 0.85 });
+});
+
+test("shared-call unknown ranges retain remote candidates only inside their stays and never name a person", () => {
+    const record = meetingRecordSchema.parse({
+        id: "shared",
+        title: "",
+        start: now,
+        createdAt: now,
+        createdBy: "new",
+        participants: [
+            { name: "Bob Example", from: ["user"] },
+            {
+                name: "Carol Example",
+                firstSeenSec: 600,
+                stays: [{ fromSec: 600, toSec: 2400, source: "hand", confidence: 1 }],
+                from: ["user"],
+            },
+        ],
+        seats: { room: [], remote: [{ name: "Bob Example" }, { name: "Carol Example", fromSec: 600, toSec: 2400 }] },
+    });
+    const lines = lineEvidence(
+        [
+            { startSec: 700, speaker: "Bob Example", text: "An uncertain call turn with unreadable indicator." },
+            { startSec: 2500, speaker: "Bob Example", text: "The other person has left." },
+        ],
+        { speaking: [], segments: [{ startSec: 0, endSec: 3000, channel: "system", liveName: "Bob Example" }] }
+    );
+    const ranges = uncertainSharedCallRanges({ record, lines });
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0]).toMatchObject({
+        fromSec: 700,
+        toSec: 700,
+        candidates: ["Bob Example", "Carol Example"],
+        evidence: { sharedCallUnknown: true },
+    });
+    expect(ranges[0]!.speaker).toBeUndefined();
+});
+
+test("the terminal clip bar keeps the asked forty-to-sixty percent span as its play head moves", () => {
+    const plan = { duration: 10, askedFrom: 4, askedTo: 6, tone: 1, width: 50 };
+    const first = clipProgress({ ...plan, position: 2.5 });
+    const later = clipProgress({ ...plan, position: 7.5 });
+    expect(first.length).toBeLessThanOrEqual(80);
+    expect(first.slice(20, 31)).toBe("━".repeat(11));
+    expect(later.slice(20, 31)).toBe(first.slice(20, 31));
+    expect(first.indexOf("┃")).toBe(12);
+    expect(later.indexOf("┃")).toBe(37);
+    expect(first.indexOf("♪")).toBe(5);
+});
+
+test("voice source indices survive an earlier multi-voice transcript expansion", () => {
+    const record = meetingRecordSchema.parse({
+        id: "voice-indices",
+        title: "",
+        start: now,
+        createdAt: now,
+        createdBy: "new",
+        items: [
+            {
+                id: "i1",
+                kind: "speaker-range",
+                label: "Voice",
+                fromSec: 10,
+                toSec: 10,
+                status: "confirmed",
+                voices: ["Alice Example", "Bob Example"],
+                segments: [
+                    { fromWord: 0, speaker: "Alice Example" },
+                    { fromWord: 2, speaker: "Bob Example" },
+                ],
+                rules: [],
+                suggestedAt: now,
+            },
+        ],
+        evidence: {
+            voice: {
+                version: 1,
+                source: "/fixture.wav",
+                enrolment: "/fixture.json",
+                lines: { "1": { model: "fixture", quality: "unknown", candidates: [], reason: "short" } },
+            },
+        },
+    });
+    const rendered = correctTranscript({
+        record,
+        transcript: [
+            { startSec: 10, speaker: "Voice", text: "First sentence. Second sentence." },
+            { startSec: 20, speaker: "Voice", text: "Another sentence." },
+        ],
+        config: meetingsConfigSchema.parse({}),
+        format: "json",
+    });
+    expect(rendered.entries).toHaveLength(3);
+    expect(rendered.entries[2]).toMatchObject({ startSec: 20, sourceIndex: 1 });
+});
+
+test("a forty-line question leads and its answer raises the compatible five-line stretch after reopen", async () => {
+    const { suggestItems } = await import("./suggest");
+    const { openQuestions } = await import("./questions");
+    const ranges = [
+        { id: "i1", fromSec: 0, toSec: 39, label: "Voice", speaker: "Alice Example" },
+        { id: "i2", fromSec: 100, toSec: 104, label: "Voice", speaker: "Alice Example" },
+        { id: "i3", fromSec: 200, toSec: 200, label: "Other", speaker: "Dan Example" },
+    ];
+    const entries = [
+        ...Array.from({ length: 40 }, (_, index) => ({ startSec: index, speaker: "Voice" })),
+        ...Array.from({ length: 5 }, (_, index) => ({ startSec: index + 100, speaker: "Voice" })),
+        { startSec: 200, speaker: "Other" },
+    ].map((entry) => ({ ...entry, text: "We will prepare the design document for the next meeting." }));
+    const fx = await fixture(
+        ranges.map((range) => ({
+            ...range,
+            kind: "speaker-range",
+            status: "suggested",
+            confidence: 0.5,
+            rules: [],
+            suggestedAt: now,
+        }))
+    );
+    await fx.store.update(fx.meeting.id, { command: "test", change: "rank the unasked ranges" }, (record) => {
+        record.participants = [
+            { name: "Alice Example", from: ["hand"] },
+            { name: "Bob Example", from: ["hand"] },
+        ];
+        record.items.push(
+            ...suggestItems({
+                record,
+                meeting: {
+                    sourceMeetingId: "fixture",
+                    title: "Harbor sync",
+                    start: record.start,
+                    folders: [],
+                    speakers: [],
+                    participants: record.participants,
+                    transcript: entries,
+                },
+                rules: [],
+                dictionary: { entries: [], abbrExpansion: "every" },
+                sourceWords: [],
+                listenBelow: 0.6,
+                questionBudget: 1,
+                minPriority: 0,
+                now,
+            })
+        );
+    });
+    const before = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+    const first = openQuestions(before)[0]!;
+    expect(first.decides).toEqual(["i1"]);
+    await fx.journal.apply({
+        meeting: fx.meeting.id,
+        actor: person,
+        action: { kind: "answer", question: first.id, answer: "Bob Example" },
+    });
+    const after = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+    expect(after.items.find((item) => item.id === "i2")).toMatchObject({
+        speaker: "Bob Example",
+        confidence: 0.8,
+        evidence: { propagatedFrom: first.id },
+    });
+    expect(after.items.find((item) => item.id === "i3")).toEqual(before.items.find((item) => item.id === "i3"));
 });

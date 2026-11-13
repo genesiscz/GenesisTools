@@ -4,6 +4,7 @@ import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/reco
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { type Presence, presenceSections } from "@genesiscz/utils/transcribe/speakers";
 import { type LoadedPresence, loadPresence } from "./attendance";
+import { personStays } from "./person-stays";
 import { type LinkedSource, linkedSource, sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-timeline");
@@ -159,6 +160,16 @@ export class CallTimeline {
             (next) => {
                 next.attendance = { from, people: stored };
                 next.sections = sections;
+                const stays = new Map(
+                    personStays({
+                        record: next,
+                        durationSec: endSec ?? Math.max(0, ...stored.map((stay) => stay.toSec)),
+                    }).map((person) => [person.name, person.stays])
+                );
+                next.participants = next.participants.map((person) => ({
+                    ...person,
+                    stays: stays.get(person.name) ?? person.stays,
+                }));
             }
         );
     }

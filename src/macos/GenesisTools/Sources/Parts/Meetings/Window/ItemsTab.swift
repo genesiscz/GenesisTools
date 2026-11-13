@@ -65,6 +65,10 @@ struct ItemsTab: View {
     /// The list's width in whole points, for the shape of the folded rows (`ReviewRowView.foldedFit`); nil until the
     /// first layout.
     @State private var listWidth: CGFloat?
+    @AppStorage("meetings.rows.questionGroup") private var questionGroup = "all"
+    @State private var qualityFailure: String?
+    @AppStorage("meetings.listen.spotCheckCount") private var qualityCount = 20
+    @AppStorage("meetings.listen.longStretchWords") private var qualityWords = 50
 
     var body: some View {
         LoadablePane(state: detail.rows, reading: "Reading the items…", retry: detail.loadRows) { rows in
@@ -97,7 +101,7 @@ struct ItemsTab: View {
         let visible = MeetingDetailModel.visibleRows(rows.rows, order: MeetingsPreferences.Rows.Order(rawValue: order) ?? .priority,
                                                    decided: MeetingsPreferences.Rows.Decided(rawValue: decided) ?? .inPlace,
                                                    keeping: detail.heldFolds)
-        let shown = kind.rows(visible)
+        let shown = kind.rows(visible).filter { questionGroup == "all" || ($0.group ?? "rules") == questionGroup }
         let ids = shown.map(\.id)
         let items = detail.record.value?.items ?? []
         // The bar above the list says how many rows wait when it shows; the list's own title says it when it does not.
@@ -107,6 +111,40 @@ struct ItemsTab: View {
                 // A lazy stack, not a List: for an accessibility client a List built, measured and recycled every row
                 // it held (2026-11-06/07). The stack holds only the rows near the viewport.
                 LazyVStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Stepper("\(qualityCount) samples", value: $qualityCount, in: 1...100).fixedSize()
+                        Stepper("\(qualityWords)+ words", value: $qualityWords, in: 10...500, step: 10).fixedSize()
+                    }.font(.caption)
+                    HStack {
+                        Button("Prepare spot check") {
+                            Task { do { try await detail.prepareListenQuality("spot-check", count: qualityCount); questionGroup = "spot-check" } catch { qualityFailure = error.localizedDescription } }
+                        }
+                        Button("Prepare long stretches") {
+                            Task { do { try await detail.prepareListenQuality("long-stretch", words: qualityWords); questionGroup = "long-stretch" } catch { qualityFailure = error.localizedDescription } }
+                        }
+                    }
+                    if let qualityFailure { Text(qualityFailure).foregroundStyle(.red) }
+                    let checked = items.filter { $0.group == "spot-check" && $0.status == "confirmed" }
+                    if !checked.isEmpty {
+                        let changed = checked.filter { item in
+                            if case .string(let original)? = item.evidence?["originalSpeaker"] { return item.answer != original }
+                            return false
+                        }.count
+                        Text("Spot check: \(changed)/\(checked.count) changed (\(Int(100 * Double(changed) / Double(checked.count))) %)").font(.caption)
+                    }
+                    if let checks = detail.record.value?.review?.listen?.spotChecks, !checks.isEmpty {
+                        DisclosureGroup("Spot-check history") {
+                            ForEach(Array(checks.enumerated()), id: \.offset) { _, check in
+                                Text("\(check.at): \(check.changed)/\(check.answered) changed").font(.caption)
+                            }
+                        }
+                    }
+                    Picker("Question group", selection: $questionGroup) {
+                        Text("All").tag("all")
+                        ForEach(["rules", "spot-check", "long-stretch"], id: \.self) { group in
+                            Text("\(group) (\(rows.rows.filter { ($0.group ?? "rules") == group && $0.isQuestion }.count))").tag(group)
+                        }
+                    }.pickerStyle(.segmented)
                     if !barShows {
                         ItemsHeader(text: Self.waitingWords(open: open))
                     }

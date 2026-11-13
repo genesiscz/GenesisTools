@@ -27,7 +27,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `people merge <a> <b> [--name <name>] [--yes]`, `people unmerge <token>` | Show two people as one. Without `--yes` it prints the meetings that name either of them and the speaker labels renamed to them, and writes nothing; with `--yes` it writes the merge and prints its token, which `unmerge` takes. No meeting record changes |
 | `people assign <meeting> <person> --from <time> [--to <time>] [--label <label>] [--line <time>]… [--plan]`, `people unassign <meeting> <token>` | Give lines of one meeting to a person without renaming the whole label: a stretch (one label's lines with `--label`, every voice's without it) or single lines by their start. The corrected transcript, `show` and `speakers stats` show them as that person. `--plan` prints what it would give and the other stretches it may reach, and saves nothing. `unassign` undoes it by the token it printed |
 | `evidence <meeting> [--attendance <platform>\|<file>] [--files] [--json]` | Which voice each label's lines are: audio channel and the platform's speaking indicator, plus the volume check (`--format json`, or its short form `--json`: one row per line) |
-| `suggest <meeting> [--rules speakers,evidence,terms] [--attendance <platform>\|<file>]` | Run the rules and add what they find as suggested items. A second run adds no item it already made and no question while the meeting has `questionCap` open. It first retires (rejects, with `evidence.retired`) the suggested words that a dictionary entry or the slang rule settles now, and the questions that decided only them |
+| `suggest <meeting> [--rules speakers,evidence,terms] [--attendance <platform>\|<file>] [--attendance-id <threadId>]` | Run the rules and add what they find as suggested items. A second run adds no item it already made and no question while the meeting has `questionCap` open. It first retires (rejects, with `evidence.retired`) the suggested words that a dictionary entry or the slang rule settles now, and the questions that decided only them |
 | `items <meeting> [--status …] [--kind …]` | The items with status, confidence and rules |
 | `rows <meeting> [--all] [--json]` | The review rows, as the Meetings window shows them: questions first in the order `listen` asks (priority, then time), then the other items by time; a decided row keeps its place. Each row has its question as parts (who, what was said, when, what it asks, what it settles, the reason), its choices with their role (suggested, presumed, candidate, heard, earlier answer, none of these, several voices, skip) and the engine's confidence where it has one, its edit kind, what it needs, its sources and who decided it last. Open questions below `playback.listen.minPriority` are counted, and `--all` shows them. `--json` prints `{ meeting, rows, hidden }` (REPL: `meetings.open(id).items.rows()`; the Meetings service: `meeting.rows`) |
 | `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>] [--reason <text>] [--json]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker`. An item confirmed already is left as it is (`needs: "nothing"` in `--json`, exit 0), so its first Undo token still works; a skip that needs a value or an answer exits 1. `--reason` is kept in the decision journal and on each item it decided. `--json` prints `{ decided, token, skipped, entry }`; `entry` is the journal entry, with who decided (the actor), the reason and every item before and after |
@@ -36,7 +36,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `journal <meeting> [--item i42\|Q12] [--limit <n>] [--json]` | Who decided what in the meeting, when and why, newest first: one entry per decision (a person in the window, a person in `listen`, a person at the command line, an agent with its harness and session, a rule), with its reason and the items it changed. An Undo names the entry it undid. Comments sent to the listening agent are entries too (kind `comment`). `--json` prints `{ meeting, entries }` |
 | `serve [--detach] [--status] [--stop] [--no-idle]` | The Meetings service: the one owner of the meetings store while it runs, which the window, the CLI and agents reach over `<genesis-tools>/meetings-service/service.sock` (`service.json` beside it names its pid and checkout). A command finds it by itself and answers in its own process when none runs, with the same output. It exits after 10 minutes with no connection and when its code changes. `--stop` stops it (none running is no failure). The settings page's library is on it too: `projects.add`, `projects.rename`, `projects.remove`, `projects.labels`, `projects.unpair`, `projects.preview`, `dictionary.show`, `dictionary.add`, `dictionary.remove`, `dictionary.test` and `config.edit`, which `projects`, `dictionary` and `config edit` call with the same output |
 | `reopen <meeting> <ids…> [--token <token>] [--reason <text>] [--json]` | Put confirmed or rejected items back to suggested (the Undo of confirm and reject). `--token` undoes one decision, by the token that `confirm --json` or `reject --json` printed; when another decision changed one of its items since, it is refused with `[item-changed]`. A question is reopened only by `listen`, and a confirm's line in the corrections ledger stays |
-| `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--json] [--with-suggested] [--timestamps] [--play-links] [--no-frontmatter] [--no-dictionary]` | The transcript with renames, confirmed items and the dictionary. `--json` is the short form of `--format json`. `--timestamps` shows the start time of each paragraph; `--play-links` (md) links each start time to its moment through the router preset `meetings-play`, and implies `--timestamps`; `--no-frontmatter` (md) leaves out the front matter; `--no-dictionary` does not apply the dictionary. In md an expansion and a term's `meaning` (first mention) are a `<sup>`; txt, srt and vtt keep them in parentheses. An open question shows as `[nejasné: "<raw>"; 1) … 2) …]` (`languages.<global.language>.render.unclearLabel`); `--with-suggested` applies the top reading instead. Each applied item that did not change the transcript is a warning (`i42 did not apply: no "X" at 37:43`, `… 2 lines start at 37:43`, `… i41 changed "X" first`). In md the front matter's `speakers` maps each person after the corrections to their line count; `unattributed` holds the source labels nobody named |
+| `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--json] [--with-suggested] [--timestamps] [--play-links] [--no-frontmatter] [--no-dictionary]` | The transcript with renames, confirmed items and the dictionary. `--json` is the short form of `--format json`. `--timestamps` shows the start time of each paragraph; `--play-links` (md) links each start time to its moment through the router preset `meetings-play`, and implies `--timestamps`; `--no-frontmatter` (md) leaves out the front matter; `--no-dictionary` does not apply the dictionary. In md an expansion and a term's `meaning` (first mention) are a `<sup>`; txt, srt and vtt keep them in parentheses. An open question shows as `[nejasné: "<raw>"; 1) … 2) …]` (`languages.<global.language>.render.unclearLabel`); `--with-suggested` includes suggestions, but a range owned by an open speaker question remains a guess `[Name: NN %]` at every confidence until answered or confirmed. Without that flag, question choices carry no borrowed range confidence. A term proposal that is already a complete unclear mark is rendered once. Each applied item that did not change the transcript is a warning (`i42 did not apply: no "X" at 37:43`, `… 2 lines start at 37:43`, `… i41 changed "X" first`). In md the front matter's `speakers` maps each person after the corrections to their line count; `unattributed` holds the source labels nobody named |
 | `record start [--meeting <ref> \| --source wisprflow:<id> \| --title <text>] [--project] [--display all\|follow-focus\|main\|<index>]` | Record the screen: a frame when it changes, OCR per frame; creates the meeting (with the calendar event around now) unless one is named |
 | `record pause`, `record resume`, `record stop`, `record status` | Control the running recording over its socket; stop answers after the last frames, the summary and the collect, and lists the frames per display in status |
 | `record mark <label>` | A marker at this moment of the running recording (REPL: `meetings.open(id).mark(label)`): the record keeps it, and the meeting's `recording.json` lists it at its movie time, so the editor shows it |
@@ -269,7 +269,16 @@ people) on each look until the record has an end, for up to 10 min.
 A rule's finding is an item with a confidence and the rules that produced it. A person confirms or rejects it; only
 confirmed items change a transcript. `--with-suggested` previews the rest: it applies a suggested item at
 `global.suggest.applyAbove` (0.5) or more, and one with no confidence (a person's own); a lower one is marked unclear,
-as an open question is.
+as an open question is. A range owned by an open speaker question stays a guess at every confidence until
+answered or confirmed.
+
+Suggest uses the linked source's title and transcript clock when it looks up attendance, including for a renamed
+copy. Unavailable platform attendance produces a warning, skips E2 and saves the other suggestions. A missing or
+ambiguous Teams chat lists cached candidate titles and IDs, ordered by last-message proximity rather than call
+start. These candidates do not prove which chat belongs to the call. Select a known chat with
+`tools meetings suggest <meeting> --attendance teams --attendance-id <threadId>` or the REPL's
+`meeting.items.suggest({ attendance: 'teams', attendanceId: '<threadId>' })`. Invalid input and unreadable or
+malformed attendance files still fail.
 
 - `speaker-range`: lines of a label that belong to someone else. RA (Teams attendance) names the people in the call
   as candidates, or the one person left; R1 and R5 mark a goodbye the label keeps talking after, R13 when another
@@ -677,3 +686,50 @@ The Meetings window offers Add question or term, clean duplication, question pri
 The transcript's native confidence selector defaults to 70 percent. The service loads the available threshold previews together, and changing the selector chooses a loaded result without a new source read. The selector is saved per app; it changes no meeting or global suggestion configuration. CLI `transcript --with-suggested --apply-above 0.7` uses the same corrections engine for a one-off preview. Open question ranges keep their guessed speaker percentage until answered.
 
 For a meeting-local room person, use `attendance <meeting> --add "Alice Example" --from 0 --to 600 --at-mic`. `--via "Bob Example"` instead names a remote device owner. These finite stays and canonical microphone groups reopen from the meeting record. The native people strip and `meeting.people.edit` use the same implementation. Imported platform speaking and muted names also join automatic question candidates. `Meeting.editPerson` exposes the same operation in the REPL.
+
+## Listening with uncertain evidence
+
+Speaker-question selection and the terminal/native queue rank by `(1 - confidence) × words × distinct answer targets`.
+The displayed priority and its minimum filter keep their existing scale. Questions without word counts, including older
+records, retain priority order. Matching candidate names alone never multiply reach or establish one voice identity.
+
+Suggested speaker names under 70% remain explicit guesses by default. `transcript <meeting> --with-suggested
+--apply-above 80` and `rows <meeting> --apply-above 80` change the read's threshold; they do not change saved
+confidences. The Meetings transcript has the same local threshold picker and Probe. Confirmed answers remain applied.
+
+`transcript <meeting> --probe-thresholds 50,60,70,80` prints the applied, guessed, open and long-stretch counts at each threshold.
+`--spot-check 20` samples distinct lines at 50–69%, asks a short round and keeps its changed/answered result.
+`--long-stretch-words 50` prepares longer uncertain stretches, split at canonical call-channel pitch/level or turn
+changes. `--prepare-only` saves questions without playback. `--group rules|spot-check|long-stretch|all` selects a group.
+The native Items tab has the same preparation controls, group counts, sample result and history. Preparation counts
+are adjustable there. `global.suggest.longStretchWords` sets automatic long-stretch preparation.
+
+A speaker answer must match a known person. Accents, name order and parenthetical affiliations do not affect matching.
+Unmatched prose is kept as a comment and the question remains open. Somebody else chooses a person; Something else
+writes a comment. Multiple names in speaking order store ordered voices; sentence boundaries split turns when they
+are available. Native Two voices also accepts an explicit word boundary. Ambiguous boundaries retain both names in
+an unclear mark. Space pauses/resumes the terminal clip at its current position; entering text pauses playback.
+Split clips use saved acoustic word timings when available, otherwise a bounded quiet-gap search, with at least
+1.5 seconds before the split. All question clips include the final quoted line through its end.
+
+The source roster keeps self, first-seen times and finite manual windows. A failed, obscured or missing speaking read
+is unknown, never an empty-room observation or a repeated speaker. A good read expires at the earlier of the next
+read and ten seconds, exclusively. `collect` persists person stays from canonical identified departure events;
+later valid speaking observations or confirmed voice assignments veto the inferred leave. Silence requires an
+observed quiet call window, with `global.suggest.leaveSilenceMinutes` (10 by default); its confidence remains 50%.
+Manual `attendance --add/--remove`, `--from/--to` and the native people strip use the same room-person editor.
+
+`listen <meeting> --enrol-voices` explicitly extracts isolated-call voice embeddings using an already installed
+canonical model. Calibrate physical channels and set remote seats first. Enrollment uses solo remote windows or
+human-confirmed single-voice lines. A held-out window cannot score itself. Cosine similarity is not a probability;
+ambiguous, unavailable or below-gate lines stay unknown with provenance in `voice-embeddings.json`. The original
+source audio is never rewritten. The native people controls show enrollment results and canonical voice features.
+No model is downloaded by a read or ordinary listening command.
+
+The REPL Meeting handle exposes `editPerson`, `voiceFeatures`, `prepareListen`, and `enrolVoices`, routed through the
+same service contracts. `lines({withSuggested:true,applyAbove:0.8})` and `items.rows({applyAbove:0.8})` accept thresholds
+as fractions. The CLI threshold uses percentages. Set the project before polishing so its dictionary can apply;
+project suggestions use earlier shared attendees/title words, and an unassigned meeting warns when dictionaries exist.
+Agent findings may attach an explicit `signature` and `candidates` to speaker ranges and the same `signature` to their
+question. Only matching labels and evidence identities propagate an answer to unasked ranges. Unknown call-channel
+observations produce unresolved candidate ranges, never an inferred shared voice identity or propagated answer.

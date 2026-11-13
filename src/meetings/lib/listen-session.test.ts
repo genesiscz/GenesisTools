@@ -427,7 +427,7 @@ describe("listen session", () => {
         expect(await fx.session(adapter, { only: "i2", budget: 1, join: true }).run()).toBe("done");
         expect(fx.item("i2")).toMatchObject({ status: "confirmed", answer: "Bob Example", comment: "clear" });
         expect(fx.item("i1")).toMatchObject({ status: "suggested" });
-        expect(printed).toEqual(["Q2 answered: Bob Example"]);
+        expect(printed).toEqual(["✓ Q2 → Bob Example\n"]);
         expect(fx.events()).toEqual(["round-start", "answered", "round-end"]);
     });
 });
@@ -583,7 +583,7 @@ describe("listen --clip-out (MC22)", () => {
         const spot = askedSpotSec(asQuestion(record.items[0]), words);
         expect(written[0]).toMatchObject({ padSec: 5, toneAtSec: spot - listen.tone.leadSec });
         expect(written[0]!.fromSec).toBeLessThan(spot);
-        expect(written[1]).toMatchObject({ fromSec: 60, toSec: 61, padSec: listen.tone.leadSec + SPEAKER_PAD_SEC });
+        expect(written[1]).toMatchObject({ fromSec: 60, toSec: 65, padSec: listen.tone.leadSec + SPEAKER_PAD_SEC });
         expect(fx.read()).toEqual(record);
     });
 });

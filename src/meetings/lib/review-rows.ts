@@ -7,8 +7,9 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { z } from "zod";
 import { actorText } from "./decision-journal";
 import { itemWhat } from "./item-text";
+import { personPresent } from "./listen-answers";
 import { momentsInText } from "./moment-schema";
-import { inputNeeded, NONE_OF_THESE, type QuestionItem, questionLabel, questionView } from "./questions";
+import { inputNeeded, NONE_OF_THESE, type QuestionItem, questionLabel, questionRank, questionView } from "./questions";
 import type {
     ClockTime,
     ReviewRow,
@@ -28,9 +29,9 @@ export * from "./review-row-schema";
  * its sources, its Moment and its last decision. The Meetings window, `tools meetings rows`, `items` and the REPL print
  * from these rows, so a question reads the same everywhere and the window computes nothing itself.
  *
- * The order is one rule (G32): questions first, the most valuable first (priority, highest first) and then by time,
- * which is the order `listen` asks them in; then every other item by time, then by id. A decision changes neither
- * priority nor time, so a decided row stays where it was (R16). Open questions under `playback.listen.minPriority` are
+ * The order is one rule (G32): questions first, by uncertain words and distinct answer targets, then by time,
+ * which is the order `listen` asks them in; then every other item by time, then by id. Legacy and term questions use
+ * their priority. A decision does not move its row (R16). Open questions under `playback.listen.minPriority` are
  * left out, as `listen` leaves them, and counted (G13).
  */
 
@@ -661,9 +662,17 @@ export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?:
         status: item.status,
         ...confidenceOf(item.confidence),
         ...(item.kind === "question" && item.priority !== undefined ? { priority: item.priority } : {}),
+        ...(item.kind === "question" && item.group ? { group: item.group } : {}),
+        ...(item.kind === "question" && typeof item.evidence?.reach === "number" ? { reach: item.evidence.reach } : {}),
+        ...(item.kind === "question" && item.comment ? { comment: item.comment } : {}),
         what: itemWhat(item),
         parts,
-        choices: choicesOf(record, item),
+        choices: choicesOf(record, item).filter(
+            (choice) =>
+                item.kind !== "question" ||
+                item.about !== "speaker" ||
+                personPresent(record, choice.value, item.fromSec)
+        ),
         edit: EDITS[item.kind],
         ...(needs ? { needs } : {}),
         sources: sourcesOf(item, parts, lines),
@@ -685,7 +694,7 @@ export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?:
     };
 }
 
-/** The row order (see the module comment): questions by priority then time, then the rest by time, then id. */
+/** The row order (see the module comment): questions by uncertain-word score then time, then the rest by time and id. */
 function rowOrder(a: MeetingItem, b: MeetingItem): number {
     const aQuestion = a.kind === "question";
     const bQuestion = b.kind === "question";
@@ -695,7 +704,7 @@ function rowOrder(a: MeetingItem, b: MeetingItem): number {
     }
 
     if (a.kind === "question" && b.kind === "question") {
-        const byPriority = (b.priority ?? 0) - (a.priority ?? 0);
+        const byPriority = questionRank(b) - questionRank(a);
 
         if (byPriority !== 0) {
             return byPriority;

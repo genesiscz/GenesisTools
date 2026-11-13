@@ -25,6 +25,8 @@ struct ReviewRowView: View, Equatable {
     var choiceKeys = true
     /// The row's draft in its editor, for "Use mine instead".
     var draft: String?
+    @State private var editingVoices = false
+    @State private var writingListenComment = false
     /// The row is in `detail.changingRows`: its answer is being changed.
     var changingAnswer = false
     /// Which of `foldedShapes` a folded row draws (`foldedFit`, from the list's width).
@@ -141,6 +143,7 @@ struct ReviewRowView: View, Equatable {
                     revertButton(words: true)
                 }
             }
+            if let comment = row.comment { Text(comment).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
             if !Self.shownSources(row).isEmpty { sources }
         }
     }
@@ -168,6 +171,9 @@ struct ReviewRowView: View, Equatable {
             if let priority = row.priority, row.isOpen {
                 Text(verbatim: "Priority \(priority.formatted(.number.precision(.fractionLength(0...2))))")
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+            }
+            if let reach = row.reach, row.isQuestion {
+                Text("Affects \(Int(reach)) ranges").font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             if let player, let span = playingSpan() {
                 // R25, G-ROW-1: the playing row's own timeline takes the header's free room, so the row keeps its height.
@@ -342,6 +348,17 @@ struct ReviewRowView: View, Equatable {
                              number: choiceKeys && selected && index < 9 ? index + 1 : nil, enabled: !busy) {
                     detail.choose(choice, on: row)
                 }
+            }
+            if row.isQuestion && detail.record.value?.items.first(where: { $0.id == row.id })?.about == "speaker" {
+                GhostButton("Somebody else…", symbol: "person.crop.circle.badge.questionmark", tooltip: "Search for the person") { detail.edit(row) }
+                GhostButton("Something else…", symbol: "text.bubble", tooltip: "Comment and keep the question open") { writingListenComment = true }
+                    .popover(isPresented: $writingListenComment) {
+                        ListenCommentEditor(row: row, detail: detail) { writingListenComment = false }
+                    }
+                GhostButton("Two voices…", symbol: "person.2", tooltip: "Choose speakers in order and the word split") { editingVoices = true }
+                    .popover(isPresented: $editingVoices) {
+                        ListenVoicesEditor(row: row, detail: detail) { editingVoices = false }
+                    }
             }
             if row.edit != "none" {
                 GhostButton(row.choices.contains { $0.role == "split" } ? "Somebody else…" : Self.editWord(row.edit), symbol: "pencil", tooltip: "Type your own \(Self.editWord(row.edit).lowercased()) (Return)") {
@@ -752,14 +769,22 @@ private struct RowEditor: View {
     let row: ReviewRow
     let detail: MeetingDetailModel
     @FocusState private var focused: Bool
+    @FocusState private var reasonFocused: Bool
+    @FocusState private var commentFocused: Bool
     /// A speaker range's voice: the person picker under the field (R23), open with the editor while
     /// `meetings.rows.openPersonPicker` is on.
     @State private var picking = false
+    @State private var commenting = false
+    @State private var commentText = ""
+    @State private var resumesAfterTyping = false
     @AppStorage(MeetingsPreferences.Rows.openPersonPicker.key) private var opensPicker =
         MeetingsPreferences.Rows.openPersonPicker.defaultValue
 
     /// A speaker range is confirmed as a person: the picker ranks the people in the call at its start first.
-    private var picksPerson: Bool { row.kind == "speaker-range" && row.edit == "person" }
+    private var picksPerson: Bool {
+        (row.kind == "speaker-range" && row.edit == "person") ||
+        (row.isQuestion && detail.record.value?.items.first(where: { $0.id == row.id })?.about == "speaker")
+    }
 
     private var draft: Binding<String> {
         Binding(get: { detail.drafts[row.id] ?? "" }, set: { detail.drafts[row.id] = $0 })
@@ -777,13 +802,25 @@ private struct RowEditor: View {
                     .popover(isPresented: $picking, arrowEdge: .bottom) {
                         SpeakerNamePopover(name: draft, atSec: row.startSec) { name in
                             picking = false
-                            detail.decide(row, .confirm([row.id], speaker: name))
+                            detail.decide(row, row.isQuestion ? .answer(row.id, name) : .confirm([row.id], speaker: name))
                         }
                     }
                 if picksPerson {
                     IconButton(systemName: "person.crop.circle.badge.questionmark", tooltip: "Pick the person from the people you know") {
                         picking = true
                     }
+                }
+                if row.isQuestion {
+                    GhostButton("Something else…", symbol: "text.bubble", tooltip: "Comment and keep this question open") { commenting = true }
+                        .popover(isPresented: $commenting) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                TextField("Your comment", text: $commentText).frame(width: 320).focused($commentFocused)
+                                Button("Save comment") {
+                                    detail.decide(row, .answer(row.id, "", comment: commentText), askReach: false)
+                                    commenting = false
+                                }.disabled(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }.padding()
+                        }
                 }
                 GhostButton("Save", symbol: "return", tooltip: "Save it (Return); it is confirmed so") { detail.submitDraft(on: row) }
                     .disabled(MeetingDetailModel.draftDecision(detail.drafts[row.id], on: row) == nil)
@@ -792,6 +829,7 @@ private struct RowEditor: View {
             TextField("Reason (optional): kept with the decision", text: Binding(get: { detail.reasons[row.id] ?? "" },
                                                                                  set: { detail.reasons[row.id] = $0 }))
                 .textFieldStyle(.roundedBorder).frame(maxWidth: 420)
+                .focused($reasonFocused)
                 .accessibilityLabel("Reason for \(row.label)")
                 .accessibilityIdentifier("meetings.row.\(row.id).reason")
                 .onSubmit { detail.submitDraft(on: row) }
@@ -800,13 +838,25 @@ private struct RowEditor: View {
             focused = true
             if picksPerson && opensPicker { picking = true }
         }
+        .onChange(of: focused || reasonFocused || commentFocused) { _, active in
+            if active {
+                resumesAfterTyping = detail.window?.player.phase == .playing
+                detail.window?.player.pause()
+            } else if resumesAfterTyping && !commenting && !picking {
+                detail.window?.player.resume()
+                resumesAfterTyping = false
+            }
+        }
+        .onDisappear {
+            if resumesAfterTyping { detail.window?.player.resume() }
+        }
     }
 
     private var prompt: String {
         switch row.edit {
         case "spelling": return "The right spelling"
         case "person": return "Who it is"
-        default: return "Type what you heard"
+        default: return "Search or own comment:"
         }
     }
 }

@@ -95,6 +95,7 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     let question: String?
     let choices: [String]?
     let answer: String?
+    var group: String? = nil
     let priority: Double?
     let evidence: [String: JSONValue]?
 
@@ -165,8 +166,36 @@ struct MeetingRecordView: Decodable, Equatable {
     let end: String?
     var items: [MeetingItem]
     let context: [MeetingContextRef]
+    struct Review: Decodable, Equatable {
+        struct Listen: Decodable, Equatable {
+            struct SpotCheck: Decodable, Equatable { let at: String; let answered: Int; let changed: Int; let questionIds: [String] }
+            var spotChecks: [SpotCheck]?
+        }
+        var listen: Listen?
+    }
+    var review: Review? = nil
     var speakers: Speakers
-    struct Person: Decodable, Equatable { var name: String; var from: [String]?; var `self`: Bool? }
+    struct Person: Decodable, Equatable {
+        struct Stay: Decodable, Equatable { var fromSec: Double; var toSec: Double?; var source: String; var confidence: Double? }
+        var name: String; var from: [String]?
+        var isSelf: Bool? = nil
+        var firstSeenSec: Double? = nil
+        var stays: [Stay]? = nil
+        private enum CodingKeys: String, CodingKey { case name, from, isSelf = "self", firstSeenSec, stays }
+    }
+    struct Evidence: Decodable, Equatable {
+        struct Indicator: Decodable, Equatable { var tSec: Double; var validUntilSec: Double?; var speaking: [String]; var speakingUnknown: Bool?; var reason: String?; var muted: [String]? }
+        var indicator: [Indicator]?
+        struct Voice: Decodable, Equatable {
+            struct Match: Decodable, Equatable {
+                struct Candidate: Decodable, Equatable { let person: String; let score: Double }
+                let model: String; let candidates: [Candidate]; let person: String?; let quality: String; let reason: String
+            }
+            let lines: [String: Match]
+        }
+        var voice: Voice?
+    }
+    var evidence: Evidence? = nil
     struct Stay: Decodable, Equatable { var name: String; var fromSec: Double; var toSec: Double }
     struct Attendance: Decodable, Equatable { var from: String; var people: [Stay] }
     struct Seats: Decodable, Equatable {
@@ -179,8 +208,6 @@ struct MeetingRecordView: Decodable, Equatable {
     var seats: Seats? = nil
     let recording: Recording?
     let sources: [String: JSONValue]
-    struct History: Decodable, Equatable { var command: String; var change: String }
-    var history: [History]? = nil
     var copySource: String? {
         guard let entry = history?.first, entry.command == "duplicate" else { return nil }
         return entry.change.replacingOccurrences(of: "duplicated from ", with: "").replacingOccurrences(of: " without items", with: "")
@@ -232,6 +259,12 @@ struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
     /// command `transcript --format json` leaves it out, and the transcript blocks compute it then.
     var endSec: Double? = nil
     var words: [TranscriptWord]? = nil
+    var confidence: Double? = nil
+    var suggestedSpeaker: String? = nil
+    var sourceIndex: Int? = nil
+    var questioned: Bool? = nil
+    var guess: Bool? = nil
+    var band: String? = nil
     var rowID: String { id ?? "\(startSec ?? -1)-\(speaker)-\(text.prefix(24))" }
 }
 

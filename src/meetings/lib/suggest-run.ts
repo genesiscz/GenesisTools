@@ -7,6 +7,7 @@ import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/
 import { isEnglishWord } from "@genesiscz/utils/transcribe/terms";
 import { contextEntryText } from "./context-file";
 import { indicatorFacts } from "./indicator-facts";
+import { addQualityQuestions, qualityVoiceFeatures } from "./listen-quality";
 import { OpenedMeeting } from "./opened-meeting";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { type SuggestRule, settledTermItems, suggestItems } from "./suggest";
@@ -123,6 +124,15 @@ export async function runSuggest(options: {
             : {}),
         now: new Date().toISOString(),
     };
+    let features: Awaited<ReturnType<typeof qualityVoiceFeatures>> | undefined;
+    if (rules.includes("evidence")) {
+        try {
+            features = await qualityVoiceFeatures(opened);
+        } catch (error) {
+            log.warn({ error, meeting: record.id }, "voice change points unavailable");
+            warnings.push("Voice change points unavailable; long stretches remain open for listening");
+        }
+    }
     let fresh: MeetingItem[] = [];
     let retired: string[] = [];
     const known = (word: string) =>
@@ -148,6 +158,15 @@ export async function runSuggest(options: {
             retired = [...settled.keys()];
             fresh = suggestItems({ ...inputs, record: current });
             current.items.push(...fresh);
+            const quality = addQualityQuestions({
+                record: current,
+                entries: meeting.transcript,
+                longStretchWords: config.global.suggest.longStretchWords,
+                below: Math.max(0.7, config.global.suggest.applyAbove),
+                features,
+                channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
+            });
+            fresh.push(...current.items.filter((item) => quality.includes(item.id)));
         });
     } finally {
         wordCheck?.dispose();

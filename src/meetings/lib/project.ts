@@ -1,4 +1,5 @@
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -10,6 +11,21 @@ import {
 import * as p from "@genesiscz/utils/prompts/p";
 
 const { log } = logger.scoped("meetings-project");
+
+import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
+import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+
+export function missingProjectWarning(record: MeetingRecord, config: MeetingsConfig): string | undefined {
+    const projects = Object.entries(config.projects)
+        .filter(([, project]) => (project.dictionary?.entries.length ?? 0) > 0)
+        .map(([name]) => name);
+    return !record.project && projects.length
+        ? "This meeting has no project; project dictionaries exist (" +
+              projects.join(", ") +
+              "). Set it: " +
+              toolCommand("meetings set", record.id, "--project", "<name>")
+        : undefined;
+}
 
 const NEW_PROJECT = "\u0000new";
 const NO_PROJECT = "\u0000none";
@@ -29,6 +45,7 @@ export async function resolveProject(options: {
     flag?: string;
     current?: string;
     facts?: ProjectMatchFacts;
+    suggested?: string[];
     /** Never prompt, even in a terminal (the daemon, `--yes`). */
     quiet?: boolean;
 }): Promise<ResolvedProject> {
@@ -58,11 +75,16 @@ export async function resolveProject(options: {
         return { how: "none" };
     }
 
-    const rest = Object.keys(config.projects).filter((name) => !matched.includes(name));
+    const ranked = [...new Set([...matched, ...(options.suggested ?? [])])].filter((name) => name in config.projects);
+    const rest = Object.keys(config.projects).filter((name) => !ranked.includes(name));
     const picked = await p.select({
         message: "Which project is this meeting for?",
         options: [
-            ...matched.map((name) => ({ value: name, label: name, hint: "matches" })),
+            ...ranked.map((name) => ({
+                value: name,
+                label: name,
+                hint: matched.includes(name) ? "matches" : "similar earlier meeting",
+            })),
             ...rest.map((name) => ({ value: name, label: name })),
             { value: NEW_PROJECT, label: "New project…" },
             { value: NO_PROJECT, label: "No project for now" },
