@@ -780,9 +780,17 @@ export async function momentFrames(
 
     try {
         // Loaded here: listen asks for Moments without a screen and should not load the OCR readers.
-        const { meetingScreen, readOcrRows } = await import("./screen-boxes");
+        const { meetingScreen } = await import("./screen-boxes");
         const { foldText } = await import("@genesiscz/utils/macos/ocr-boxes");
-        const screen = await meetingScreen({ store, record, atSec, windowSec: 0 });
+        const wanted = words.map(foldText).filter(Boolean);
+        // The words' blocks come from the rows this lookup reads anyway: a second read of ocr.jsonl grew with the recording.
+        const screen = await meetingScreen({
+            store,
+            record,
+            atSec,
+            windowSec: 0,
+            ...(wanted.length > 0 ? { blocks: true as const } : {}),
+        });
         const frames: MomentFrame[] = screen.displays.flatMap((display) => {
             const frame = display.frames.at(-1);
             return frame
@@ -797,19 +805,14 @@ export async function momentFrames(
                   ]
                 : [];
         });
-        const wanted = words.map(foldText).filter(Boolean);
-
         if (wanted.length === 0 || frames.length === 0) {
             return frames;
         }
 
-        const files = new Set(frames.map((frame) => frame.file));
-        const ocrPath = join(folder, "ocr.jsonl");
-        const rows = existsSync(ocrPath) ? readOcrRows(ocrPath).filter((row) => files.has(row.file)) : [];
         const hits = frames.map((frame) => {
-            const block = rows
-                .find((row) => row.file === frame.file)
-                ?.blocks.find((one) => wanted.some((word) => foldText(one.text).includes(word)));
+            const block = screen.frameBlocks?.[frame.file]?.find((one) =>
+                wanted.some((word) => foldText(one.text).includes(word))
+            );
             return block
                 ? {
                       ...frame,

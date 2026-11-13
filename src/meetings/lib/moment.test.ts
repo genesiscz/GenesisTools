@@ -42,6 +42,7 @@ import {
 } from "./moment";
 import { OpenedMeeting } from "./opened-meeting";
 import { askedSpotSec, heardClip, type QuestionItem } from "./questions";
+import * as screenBoxes from "./screen-boxes";
 import { resolveToneSound } from "./tone-sound";
 
 const now = "2026-11-09T10:00:00.000Z";
@@ -642,6 +643,47 @@ describe("the screen at a Moment (R41)", () => {
         ]);
         expect(await momentFrames(store, recorded, 2)).toEqual([]);
         expect(await momentFrames(store, { ...recorded, id: "2026-11-09_11-00-other" }, 30)).toEqual([]);
+    });
+
+    test("the words' block comes from the rows the screen lookup read: ocr.jsonl is not read a second time", async () => {
+        const store = new MeetingStore(new Storage("meetings-moment-screen-hit"));
+        const at = (sec: number) => new Date(Date.parse(now) + sec * 1000).toISOString();
+        const recorded = meetingRecordSchema.parse({
+            ...meeting,
+            recording: { status: "stopped", spans: [{ from: at(0), to: at(120) }] },
+        });
+        const folder = store.folder(recorded.id);
+        mkdirSync(folder, { recursive: true });
+        const bounds = { x: 1, y: 2, width: 3, height: 4 };
+        const rows = [
+            { file: "frames/a.jpg", at: at(5), displayId: 1, text: "Agenda", blocks: [] },
+            {
+                file: "frames/c.jpg",
+                at: at(40),
+                displayId: 1,
+                text: "Budget plan",
+                blocks: [{ text: "Budget plan", confidence: 1, bounds }],
+            },
+        ];
+        writeFileSync(join(folder, "ocr.jsonl"), rows.map((row) => SafeJSON.stringify(row)).join("\n"));
+        const reads = spyOn(screenBoxes, "readOcrRows");
+
+        try {
+            expect(await momentFrames(store, recorded, 45, ["budget"])).toEqual([
+                {
+                    file: "frames/c.jpg",
+                    path: join(folder, "frames/c.jpg"),
+                    at: at(40),
+                    meetingSec: 40,
+                    displayId: 1,
+                    hit: { text: "Budget plan", box: bounds },
+                },
+            ]);
+            // Once, by the screen lookup itself.
+            expect(reads).toHaveBeenCalledTimes(1);
+        } finally {
+            reads.mockRestore();
+        }
     });
 });
 
