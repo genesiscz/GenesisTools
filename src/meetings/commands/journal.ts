@@ -137,7 +137,7 @@ async function journal(ref: string, opts: JournalOptions): Promise<void> {
         out.println(pc.dim(`    token ${entry.token}${undone}`));
     }
 
-    ui.dim(`Undo one: ${TOOL} reopen ${record.id} <items> --token <token>`);
+    ui.dim(`Undo one: ${TOOL} reopen ${record.id} --token <token> (add item ids to undo it for those items only)`);
 }
 
 export function registerJournalCommand(program: Command): void {

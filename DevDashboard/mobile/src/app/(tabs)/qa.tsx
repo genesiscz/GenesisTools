@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { QaFeed } from "@/features/qa/components/QaFeed";
 import { QaFilterBar } from "@/features/qa/components/QaFilterBar";
 import { QaLiveDot } from "@/features/qa/components/QaLiveDot";
-import { useMarkRead, useQaLog, useQaStream } from "@/features/qa/hooks";
+import { useMarkRead, useQaLive, useQaLog } from "@/features/qa/hooks";
 import {
     filterQa,
     mergeQaRows,
@@ -18,11 +18,11 @@ import { MockBadge } from "@/ui/MockBadge";
 import { useThemeColors } from "@/theme/colors";
 
 /**
- * QA LIVE-STREAM screen. Persisted log (`useQaLog`) merged with the live SSE buffer (`useQaStream`),
+ * QA LIVE-STREAM screen. Persisted log (`useQaLog`) merged with the live `qa` channel's window (`useQaLive`),
  * deduped by id, filtered by project / tag / free text, rendered as a `QaFeed`. Tapping a card
  * toggles read/unread optimistically (a session-local override) and persists via `useMarkRead`
  * (`POST /api/qa/read`), which invalidates the log so the server `readAt` reconciles on the next
- * fetch. On AppState resume the stream re-opens and the log refetches (the web resync model).
+ * fetch. On AppState resume the live stream re-opens and its connect resync refetches the log.
  *
  * Consumes ONLY the QA feature hooks (D32) — no raw `useQuery`/`subscribe` here.
  */
@@ -31,7 +31,7 @@ export default function QaScreen() {
     const insets = useSafeAreaInsets();
 
     const logQuery = useQaLog();
-    const { live, status } = useQaStream({ onResume: () => void logQuery.refetch() });
+    const { live, status } = useQaLive();
     const markRead = useMarkRead();
 
     const [selectedProjects, setSelectedProjects] = useState<Set<string>>(() => new Set());

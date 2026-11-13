@@ -1,4 +1,4 @@
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { CallbackListener } from "./callback-server";
 import { type AuthorizationInteraction, type AuthorizationUrlAction, readAuthorizationCode } from "./login-ui";
 

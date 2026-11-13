@@ -383,6 +383,23 @@ final class FocusSettingsTests: XCTestCase {
                        "a user list must not silently re-enable a password manager")
     }
 
+    func testTimerWindowSettingRoundTripsAndDecidesTheWindowAtStart() {
+        XCTAssertEqual(FocusSettings().timerWindow, .automatic)
+        for mode in FocusSettings.TimerWindow.allCases {
+            var settings = FocusSettings()
+            settings.timerWindow = mode
+            XCTAssertEqual(FocusSettings.from(appConfig: ["focus": settings.storedFields]).timerWindow, mode)
+        }
+        XCTAssertEqual(FocusSettings.from(appConfig: ["focus": ["timerWindow": "sometimes"]]).timerWindow, .automatic,
+                       "an unknown value falls back to the default")
+
+        XCTAssertTrue(FocusController.showsTimerAtStart(.automatic, wasVisible: false, running: true))
+        XCTAssertTrue(FocusController.showsTimerAtStart(.onRequest, wasVisible: true, running: false))
+        XCTAssertFalse(FocusController.showsTimerAtStart(.onRequest, wasVisible: false, running: true),
+                       "a running phase does not open the window under When opened")
+        XCTAssertFalse(FocusController.showsTimerAtStart(.off, wasVisible: true, running: true))
+    }
+
     func testTitleModes() {
         var settings = FocusSettings()
         XCTAssertEqual(settings.title("PR #65", appName: "Brave"), "PR #65")

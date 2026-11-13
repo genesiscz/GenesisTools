@@ -1,14 +1,10 @@
 import { runTool } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure";
 import { registerContactsCommand } from "./commands/contacts";
 import { registerHistoryCommand } from "./commands/history";
 import { registerListenCommand } from "./commands/listen";
 import { registerWatchCommand } from "./commands/watch";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 program
@@ -23,7 +19,4 @@ registerContactsCommand(program);
 registerHistoryCommand(program);
 registerWatchCommand(program);
 
-await runTool(program, { tool: "telegram" }).catch((err) => {
-    out.error(err);
-    process.exit(1);
-});
+await runTool(program, { tool: "telegram" });

@@ -560,8 +560,8 @@ export async function hubPr({
     let project: ProjectRef;
     let number: number;
     let repo: string;
-    let repoRoot: string | null = null;
-    let worktrees = new Map<string, string>();
+    let root: string | null;
+    let factsRepo: string | null = null;
 
     if ("url" in parsedRef) {
         const fromUrl = parsePrUrl(parsedRef.url);
@@ -575,14 +575,7 @@ export async function hubPr({
         repo = basename(project.path);
         // A PR opened by its page (the browser extension, a link) still gets its diff and worktree when
         // the project is cloned under a repo root: without it the hub had no checkout to show it from.
-        const root = await prof.measureAsync("show.checkout", () => localCheckoutOf(project));
-
-        if (root) {
-            const local = await prof.measureAsync("show.worktrees", () => localWorktrees([root]));
-            repoRoot = local.main ?? root;
-            repo = basename(repoRoot);
-            worktrees = worktreeByBranch(local.all);
-        }
+        root = await prof.measureAsync("show.checkout", () => localCheckoutOf(project));
     } else {
         const facts = await prof.measureAsync("show.facts", () => repoFacts({ path: parsedRef.path }));
 
@@ -598,12 +591,31 @@ export async function hubPr({
             );
         }
 
-        const root = facts.root;
-        const local = await prof.measureAsync("show.worktrees", () => localWorktrees([root]));
         project = fromOrigin;
         number = parsedRef.number;
-        repoRoot = local.main ?? root;
-        repo = facts.repo ?? basename(repoRoot);
+        root = facts.root;
+        repo = facts.repo ?? basename(root);
+        factsRepo = facts.repo ?? null;
+    }
+
+    // A fresh ask (no stored answer may be served; the hub's default): the host's answer and the branch names depend
+    // only on the project and its checkout, so they start now and the worktrees are read meanwhile. Under a load of
+    // 100 the local git legs took 6.6 s before `gh pr view` even started (2026-11-09, PR show 18.1 s).
+    const fresh = !(maxCacheAgeSeconds !== undefined && maxCacheAgeSeconds > 0);
+    const host = fresh ? askHost({ project, number, cwd: root ?? process.cwd(), runner }) : null;
+    const checkout = root;
+    const branches = fresh && checkout ? prof.measureAsync("show.branches", () => localBranchNames(checkout)) : null;
+    // A local leg that throws first must not leave these two unhandled; the fetch below still awaits them.
+    host?.catch(() => undefined);
+    branches?.catch(() => undefined);
+    let repoRoot: string | null = null;
+    let worktrees = new Map<string, string>();
+
+    if (root) {
+        const main = root;
+        const local = await prof.measureAsync("show.worktrees", () => localWorktrees([main]));
+        repoRoot = local.main ?? main;
+        repo = factsRepo ?? basename(repoRoot);
         worktrees = worktreeByBranch(local.all);
     }
 
@@ -614,10 +626,28 @@ export async function hubPr({
         key,
         maxAgeSeconds: maxCacheAgeSeconds,
         isValid: (stored) => !head || Boolean(stored.headSha?.toLowerCase().startsWith(head)),
-        fetch: () => fetchHubPr({ project, number, repo, repoRoot, worktrees, runner }),
+        fetch: () => fetchHubPr({ project, number, repo, repoRoot, worktrees, runner, host, branches }),
     });
     log.debug({ key, hit, head }, "hub pr");
     return value;
+}
+
+/** The host's view of one PR and who is logged in there, asked together. */
+function askHost({
+    project,
+    number,
+    cwd,
+    runner,
+}: {
+    project: ProjectRef;
+    number: number;
+    cwd: string;
+    runner: CommandRunner;
+}): Promise<[Awaited<ReturnType<typeof viewPr>>, string | null]> {
+    return Promise.all([
+        prof.measureAsync(`show.view ${project.path}#${number}`, () => viewPr({ project, number, cwd, runner })),
+        prof.measureAsync(`show.viewer ${project.host}`, () => viewerLogin({ project, cwd, runner })),
+    ]);
 }
 
 async function fetchHubPr({
@@ -627,6 +657,8 @@ async function fetchHubPr({
     repoRoot,
     worktrees,
     runner,
+    host,
+    branches: started,
 }: {
     project: ProjectRef;
     number: number;
@@ -634,14 +666,17 @@ async function fetchHubPr({
     repoRoot: string | null;
     worktrees: Map<string, string>;
     runner: CommandRunner;
+    /** Already asked (`hubPr`'s fresh ask); else asked here. */
+    host: ReturnType<typeof askHost> | null;
+    branches: Promise<Set<string>> | null;
 }): Promise<HubPrDetail> {
     const cwd = repoRoot ?? process.cwd();
-    const [viewed, viewer, branches] = await Promise.all([
-        prof.measureAsync(`show.view ${project.path}#${number}`, () => viewPr({ project, number, cwd, runner })),
-        prof.measureAsync(`show.viewer ${project.host}`, () => viewerLogin({ project, cwd, runner })),
-        repoRoot
-            ? prof.measureAsync("show.branches", () => localBranchNames(repoRoot))
-            : Promise.resolve(new Set<string>()),
+    const [[viewed, viewer], branches] = await Promise.all([
+        host ?? askHost({ project, number, cwd, runner }),
+        started ??
+            (repoRoot
+                ? prof.measureAsync("show.branches", () => localBranchNames(repoRoot))
+                : Promise.resolve(new Set<string>())),
     ]);
     log.debug({ project: project.path, number, error: viewed.error, warnings: viewed.warnings }, "hub pr");
 

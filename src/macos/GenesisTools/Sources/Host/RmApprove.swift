@@ -81,6 +81,8 @@ struct RmApproveItem: Decodable {
 /// One row change the CLI sends after the window opened: `{"method":"rm.item","params":{"path":…,"bytes":…}}`.
 struct RmApproveItemUpdate: Decodable {
     var path: String
+    /// The aside copy the update is for; nil for an in-place row, and from a CLI that sends one row per path.
+    var storedAt: String?
     var bytes: Int64?
     var empty: Bool?
     var folderStats: RmApproveFolderStats?
@@ -95,9 +97,15 @@ private struct RmApproveLine: Decodable {
 }
 
 extension RmApproveParams {
-    /// The params with one row changed; a path the request does not name changes nothing.
+    /// The params with one row changed; a path the request does not name changes nothing. The update names its row by
+    /// path and `storedAt`, so a copy and another row of its path keep their own sizes; an older CLI names the path
+    /// only, and its window has one row per path.
     func applying(_ update: RmApproveItemUpdate) -> RmApproveParams {
-        guard var request, let index = request.items.firstIndex(where: { $0.path == update.path }) else { return self }
+        let exact = { (item: RmApproveItem) in item.path == update.path && item.storedAt == update.storedAt }
+        let byPath = { (item: RmApproveItem) in update.storedAt == nil && item.path == update.path }
+        guard var request, let index = request.items.firstIndex(where: exact) ?? request.items.firstIndex(where: byPath) else {
+            return self
+        }
         var item = request.items[index]
         if let bytes = update.bytes { item.bytes = bytes }
         if let empty = update.empty { item.empty = empty }
@@ -648,9 +656,13 @@ func approveRm(_ params: RmApproveParams) {
         model.onVerified = { method, _ in
             deadline.cancel()
             let selected = model.selectedItems.map(\.path)
+            // Where each ticked row is now: the CLI tells two rows of one path apart by it (`selected` for an older CLI).
+            let selectedAt = model.selectedItems.map(\.location)
             let disposal = model.disposal.isEmpty ? RmWindowContent.trashDisposal : model.disposal
             let remember = rememberIds.indices.contains(model.rememberIndex) ? rememberIds[model.rememberIndex] : "once"
-            let extra: [String: Any] = ["selected": selected, "disposal": disposal, "remember": remember, "note": ""]
+            let extra: [String: Any] = [
+                "selected": selected, "selectedAt": selectedAt, "disposal": disposal, "remember": remember, "note": "",
+            ]
             record("allowed", ["method": method, "selected": selected.count, "disposal": disposal, "remember": remember])
             logClick("rm.approve decision=allow method=\(method) selected=\(selected.count)/\(model.items.count) disposal=\(disposal) remember=\(remember)")
             emitResultAndStay(["decision": "allow", "method": method, "reason": ""].merging(extra) { _, new in new })

@@ -6,7 +6,8 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { EditOp } from "@genesiscz/utils/recording-editor/project";
 import { readProject } from "@genesiscz/utils/recording-editor/project";
-import { editPathOf, editProject, type OpenedProject, redoEdit, undoEdit } from "./edit";
+import { editPathOf, editProject, type OpenedProject } from "./edit";
+import { withEditSession } from "./edit-session";
 import { resolveRecording } from "./library";
 import { ServiceConnectionLost, withServiceClient } from "./service-client";
 import { readLiveService, type ServiceEntry } from "./service-protocol";
@@ -29,19 +30,25 @@ const EDIT_CALL_TIMEOUT_MS = 10 * 60_000;
 const callerPath = (value: string): string => resolveRecording(value);
 
 /**
- * The params that name a file, per Movie method and per edit op of the same name, beyond `file` (a file in every
- * one): the service resolves a relative path against its own folder, so each is resolved here first (CLI-F3).
- * A new path param goes into this table.
+ * The params that name a file against the caller's cwd, per Movie method and per edit op of the same name; a name
+ * missing here has `file` only. The service resolves a relative path against its own folder, so each is resolved
+ * here first (CLI-F3). A new path param goes into this table.
  */
-const PATH_PARAMS: Readonly<Record<string, readonly string[]>> = {
-    duplicate: ["to"],
-    introCard: ["logo"],
-    frame: ["background.image"],
-};
+const PATH_PARAMS: ReadonlyMap<string, readonly string[]> = new Map([
+    ["duplicate", ["file", "to"]],
+    ["introCard", ["file", "logo"]],
+    ["frame", ["file", "background.image"]],
+    // The camera's file is not a cwd path: cameraBubbleSchema says "a bare name is beside the source movie", and the
+    // in-process camera op stores it as written, so it goes to the service as written.
+    ["camera", []],
+    // The export's chosen file; "" (back to the default name) stays "".
+    ["exportSettings", ["output"]],
+]);
+const DEFAULT_PATH_PARAMS: readonly string[] = ["file"];
 
-/** A file path as the caller means it: `~/` is the home folder, a relative path is against this cwd; "" stays "". */
+/** A file path as the caller means it: `~` and `~/` are the home folder, a relative path is against this cwd; "" stays "". */
 function callerFile(value: string): string {
-    return value === "" ? value : resolve(value.replace(/^~(?=[/\\])/, homedir()));
+    return value === "" ? value : resolve(value.replace(/^~(?=[/\\]|$)/, homedir()));
 }
 
 /**
@@ -51,7 +58,7 @@ function callerFile(value: string): string {
 export function callerParams(name: string, params: Record<string, unknown>): Record<string, unknown> {
     const next: Record<string, unknown> = { ...params };
 
-    for (const key of ["file", ...(PATH_PARAMS[name] ?? [])]) {
+    for (const key of PATH_PARAMS.get(name) ?? DEFAULT_PATH_PARAMS) {
         const [head, field] = key.split(".");
         const value = next[head];
 
@@ -202,12 +209,14 @@ export async function applyEdit(
     });
 }
 
-/** `tools recorder undo`: through the running service (`edit.undo`), else in this process (`undoEdit`). */
+/** `tools recorder undo`: through the running service (`edit.undo`), else on a short-lived session in this process. */
 export async function undoLastEdit(value: string, options: { dir?: string } = {}): Promise<OpenedProject> {
     const entry = readLiveService(options.dir);
 
     if (!entry) {
-        return undoEdit(value);
+        const path = editPathOf(value);
+        const { project, undone } = await withEditSession(path, (session) => session.undo({ by: "agent" }));
+        return { path, project, fresh: false, undone };
     }
 
     const answer = await withServiceClient(entry, (client) =>
@@ -216,12 +225,14 @@ export async function undoLastEdit(value: string, options: { dir?: string } = {}
     return openedOf(value, answer);
 }
 
-/** `tools recorder redo`: through the running service (`edit.redo`), else in this process (`redoEdit`). */
+/** `tools recorder redo`: through the running service (`edit.redo`), else on a short-lived session in this process. */
 export async function redoLastEdit(value: string, options: { dir?: string } = {}): Promise<OpenedProject> {
     const entry = readLiveService(options.dir);
 
     if (!entry) {
-        return redoEdit(value);
+        const path = editPathOf(value);
+        const { project, redone } = await withEditSession(path, (session) => session.redo({ by: "agent" }));
+        return { path, project, fresh: false, redone };
     }
 
     const answer = await withServiceClient(entry, (client) =>

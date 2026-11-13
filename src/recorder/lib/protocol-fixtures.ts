@@ -70,8 +70,9 @@ export function protocolJsonSchemas(): ProtocolSchemas {
 }
 
 /**
- * One example of every edit op, as the zod schema reads it (defaults filled in). A new op tag without an example
- * fails service.test.ts, so the Swift side always gets a case to decode.
+ * One example of every edit op, as the zod schema reads it (defaults filled in). A plain setting op (one the bare tag
+ * already is, `{ op: "motion" }`) needs no entry here: `exampleOps()` adds its bare form. Any other new op tag without
+ * an example fails service.test.ts, so the Swift side always gets a case to decode.
  */
 const EXAMPLE_OPS: readonly unknown[] = [
     { op: "split", at: 2 },
@@ -336,6 +337,16 @@ export function editOpTags(): string[] {
     return editOpSchema.options.map((option) => option.shape.op.value);
 }
 
+/** EXAMPLE_OPS, then the bare form of every op tag it lacks that is a whole op by itself (a plain setting op). */
+function exampleOps(): unknown[] {
+    const listed = new Set(EXAMPLE_OPS.map((op) => Object(op).op));
+    const bare = editOpTags()
+        .filter((tag) => !listed.has(tag))
+        .map((tag) => ({ op: tag }))
+        .filter((op) => editOpSchema.safeParse(op).success);
+    return [...EXAMPLE_OPS, ...bare].map((op) => editOpSchema.parse(op));
+}
+
 /** Ids by kind and order of appearance (`z1`, `r2`), so a golden edit is the same file on every run. */
 function stableIds(project: EditProject): EditProject {
     const renumber = <T extends { id: string }>(items: readonly T[] | undefined, prefix: string): T[] | undefined =>
@@ -390,7 +401,6 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
     ]);
     const looks = apply([
         { op: "frame", aspect: "16:9", fit: "cover", padding: 0.08 },
-        { op: "clicks", highlight: true, sound: true },
         { op: "motion", blur: 0.4 },
         { op: "exportSettings", codec: "hevc", maxHeight: 1080, format: "mp4", subtitles: "vtt", chapters: false },
         { op: "volume", volume: 0.8 },
@@ -399,6 +409,7 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
     ]);
     const tracked = editProjectSchema.parse({
         ...looks,
+        clicks: { highlight: true, sound: true },
         cursor: { show: true, size: 1.5, smoothing: 0.6, hideAfterMs: 3000 },
         captions: { show: true, size: 0.05, position: "top" },
         keys: { show: true, position: "bottom", durationMs: 1500 },
@@ -601,8 +612,9 @@ export interface EditorGolden {
 }
 
 /**
- * Three hits of a meeting's screen search (a shown line, a display the movie does not show, a line in the letterboxed
- * display), as screen-search.json held them on 2026-11-05; kept here so this fixture does not move with that one.
+ * Four hits of a meeting's screen search (a shown line, a display the movie does not show, a line in the letterboxed
+ * display), as screen-search.json held them on 2026-11-05; kept here so this fixture does not move with that one. The
+ * last is the first frame again, because the plan shows it a second time: one file, two moments.
  */
 const SCREEN_HITS: ScreenHit[] = [
     {
@@ -632,6 +644,15 @@ const SCREEN_HITS: ScreenHit[] = [
         shown: true,
         boxes: [{ text: "Tokén list", x: 0.2, y: 0.725, width: 0.25, height: 0.045 }],
     },
+    {
+        sec: 14.5,
+        untilSec: 15,
+        displayId: 1,
+        file: "frames/0001.jpg",
+        lines: ["API token: sk-123"],
+        shown: true,
+        boxes: [{ text: "API token: sk-123", x: 0.1, y: 0.35, width: 0.4, height: 0.05 }],
+    },
 ];
 
 export interface ScreenHitOpsFixture {
@@ -656,7 +677,7 @@ export function editorGolden(): EditorGolden {
         about: "Made from the TypeScript source by scripts/recorder/write-protocol-fixtures.ts. The Swift tests decode every op with EditOp and every project with EditProject, write them back, and compare; the op tags must match EditOp's cases, and every method the editor window calls must be in methods (the service's hello).",
         methods: helloMethods(),
         opTags: editOpTags(),
-        ops: EXAMPLE_OPS.map((op) => editOpSchema.parse(op)),
+        ops: exampleOps(),
         projects: goldenProjects(),
     };
 }

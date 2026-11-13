@@ -1,24 +1,23 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import { type Canvas, createCanvas, loadImage, type SKRSContext2D } from "@napi-rs/canvas";
+import type { Canvas, SKRSContext2D } from "@napi-rs/canvas";
 import {
     ANNOTATION_PRESETS,
     type Annotation,
-    type AnnotationPlanFile,
     type AnnotationPreset,
     type AnnotationRect,
     DEFAULT_PRESET,
     GRID_DEFAULTS,
     type GridStyle,
     type LabelChipStyle,
-    type LabelPosition,
     type PresetName,
     parseRect,
     type ShapeLabel,
     type ShapeStyle,
+    validateAnnotations,
 } from "./annotation-plan";
+import { type CanvasModule, loadCanvas } from "./canvas";
 import { canvasFont } from "./canvas-fonts";
-
-const KNOWN_KINDS = ["highlight", "box", "ellipse", "arrow", "label", "blur", "crop", "grid"] as const;
+import { clampedSpot, type LabelSize, type PlacedLabel, placeLabel } from "./mark-layout";
 
 export interface RenderPlanInput {
     /** Image path or PNG/JPEG bytes. */
@@ -32,77 +31,6 @@ export interface RenderPlanResult {
     width: number;
     height: number;
     warnings: string[];
-}
-
-export function validateAnnotations(annotations: unknown): asserts annotations is Annotation[] {
-    if (!Array.isArray(annotations) || annotations.length === 0) {
-        throw new Error(`annotations must be a non-empty array — kinds: ${KNOWN_KINDS.join(", ")}`);
-    }
-
-    for (const [i, a] of annotations.entries()) {
-        if (a === null || typeof a !== "object" || typeof (a as { kind?: unknown }).kind !== "string") {
-            throw new Error(`annotations[${i}] must be an object with a "kind" — kinds: ${KNOWN_KINDS.join(", ")}`);
-        }
-
-        const kind = (a as { kind: string }).kind;
-        if (!KNOWN_KINDS.includes(kind as (typeof KNOWN_KINDS)[number])) {
-            throw new Error(`annotations[${i}] has unknown kind "${kind}" — valid kinds: ${KNOWN_KINDS.join(", ")}`);
-        }
-
-        const obj = a as Record<string, unknown>;
-        if (
-            (kind === "highlight" || kind === "box" || kind === "ellipse" || kind === "blur" || kind === "crop") &&
-            !obj.rect
-        ) {
-            throw new Error(`annotations[${i}] (${kind}) requires "rect"`);
-        }
-
-        if (kind === "arrow" && (!obj.from || !obj.to)) {
-            throw new Error(`annotations[${i}] (arrow) requires "from" and "to"`);
-        }
-
-        if (kind === "label" && (!obj.at || typeof obj.text !== "string")) {
-            throw new Error(`annotations[${i}] (label) requires "at" and "text"`);
-        }
-    }
-}
-
-/**
- * `--annotate <value>` sniffing (decision 4): starts with `{`/`[` → inline
- * JSON, else a path to a plan file. A bare array is shorthand for
- * `{ annotations: [...] }`.
- */
-export async function loadAnnotationPlanValue(value: string): Promise<AnnotationPlanFile> {
-    const trimmed = value.trim();
-    let parsed: unknown;
-
-    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-        parsed = SafeJSON.parse(trimmed);
-    } else {
-        const file = Bun.file(trimmed);
-        if (!(await file.exists())) {
-            throw new Error(`annotation plan not found: ${trimmed} (pass inline JSON or a plan.json path)`);
-        }
-
-        parsed = SafeJSON.parse(await file.text());
-    }
-
-    if (!parsed || typeof parsed !== "object") {
-        throw new Error("invalid annotation plan: expected a JSON object or array");
-    }
-
-    const plan: AnnotationPlanFile = Array.isArray(parsed)
-        ? { annotations: parsed as Annotation[] }
-        : (parsed as AnnotationPlanFile);
-    validateAnnotations(plan.annotations);
-
-    if (plan.preset !== undefined && !(plan.preset in ANNOTATION_PRESETS)) {
-        throw new Error(
-            `unknown preset "${plan.preset}" — valid presets: ${Object.keys(ANNOTATION_PRESETS).join(", ")}`
-        );
-    }
-
-    return plan;
 }
 
 function clampRect(rect: AnnotationRect, width: number, height: number): AnnotationRect {
@@ -128,68 +56,122 @@ function shapePath(ctx: SKRSContext2D, kind: "highlight" | "box" | "ellipse", r:
     }
 }
 
-interface ChipMetrics {
-    x: number;
-    y: number;
-    w: number;
-    h: number;
+interface ChipLayout {
+    size: LabelSize;
+    lines: string[];
+    padX: number;
+    padY: number;
+    lineHeight: number;
 }
 
-function drawChip(
-    ctx: SKRSContext2D,
-    text: string,
-    style: Required<LabelChipStyle>,
-    place: (chipW: number, chipH: number) => { x: number; y: number },
-    bounds: { width: number; height: number }
-): ChipMetrics {
+/** A chip's size: the widest line plus padding; each "\n" adds a line. */
+function measureChip(ctx: SKRSContext2D, text: string, style: Required<LabelChipStyle>): ChipLayout {
     ctx.font = canvasFont({ sizePx: style.fontSize, weight: 600 });
     const padX = Math.round(style.fontSize * 0.5);
     const padY = Math.round(style.fontSize * 0.3);
-    const textW = ctx.measureText(text).width;
-    const w = Math.ceil(textW + padX * 2);
-    const h = Math.ceil(style.fontSize + padY * 2);
-    const pos = place(w, h);
-    const x = Math.max(0, Math.min(pos.x, bounds.width - w));
-    const y = Math.max(0, Math.min(pos.y, bounds.height - h));
+    const lineHeight = Math.round(style.fontSize * 1.3);
+    const lines = text.split("\n");
+    const textW = Math.max(...lines.map((line) => ctx.measureText(line).width));
+    const size = {
+        w: Math.ceil(textW + padX * 2),
+        h: Math.ceil(style.fontSize + padY * 2 + (lines.length - 1) * lineHeight),
+    };
 
+    return { size, lines, padX, padY, lineHeight };
+}
+
+function paintChip(
+    ctx: SKRSContext2D,
+    layout: ChipLayout,
+    style: Required<LabelChipStyle>,
+    at: { x: number; y: number }
+): void {
+    const { size, lines, padX, padY, lineHeight } = layout;
+    ctx.font = canvasFont({ sizePx: style.fontSize, weight: 600 });
     ctx.fillStyle = style.bg;
     ctx.beginPath();
-    ctx.roundRect(x, y, w, h, Math.min(8, h / 2));
+    ctx.roundRect(at.x, at.y, size.w, size.h, Math.min(8, size.h / 2));
     ctx.fill();
     ctx.fillStyle = style.fg;
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    ctx.fillText(text, x + padX, y + h / 2 + 1);
-    return { x, y, w, h };
+
+    for (const [index, line] of lines.entries()) {
+        ctx.fillText(line, at.x + padX, at.y + padY + style.fontSize / 2 + 1 + index * lineHeight);
+    }
 }
 
-function placeShapeLabel(
-    rect: AnnotationRect,
-    position: LabelPosition,
-    gap: number
-): (chipW: number, chipH: number) => { x: number; y: number } {
-    return (chipW, chipH) => {
-        const above = rect.y - chipH - gap;
-        // fall INSIDE the rect when the chip would leave the image (drawChip
-        // clamps the bottom/right overflow against the image bounds)
-        const top = above >= 0 ? above : rect.y + gap;
-        const bottom = rect.y + rect.h + gap;
+/** A free label at a point, pushed back inside the image. */
+function drawChip(
+    ctx: SKRSContext2D,
+    text: string,
+    style: Required<LabelChipStyle>,
+    at: { x: number; y: number },
+    bounds: { width: number; height: number }
+): void {
+    const layout = measureChip(ctx, text, style);
+    paintChip(ctx, layout, style, {
+        x: Math.max(0, Math.min(at.x, bounds.width - layout.size.w)),
+        y: Math.max(0, Math.min(at.y, bounds.height - layout.size.h)),
+    });
+}
 
-        switch (position) {
-            case "top-left":
-                return { x: rect.x, y: top };
-            case "top-right":
-                return { x: rect.x + rect.w - chipW, y: top };
-            case "bottom-left":
-                return { x: rect.x, y: bottom };
-            case "bottom-right":
-                return { x: rect.x + rect.w - chipW, y: bottom };
-            case "top":
-                return { x: rect.x + (rect.w - chipW) / 2, y: top };
-            case "bottom":
-                return { x: rect.x + (rect.w - chipW) / 2, y: bottom };
-        }
+function chipStyleOf(label: ShapeLabel, preset: AnnotationPreset): Required<LabelChipStyle> {
+    return {
+        bg: label.style?.bg ?? preset.labelChip.bg,
+        fg: label.style?.fg ?? preset.labelChip.fg,
+        fontSize: label.style?.fontSize ?? preset.labelChip.fontSize,
     };
+}
+
+/**
+ * A shape's label: the first spot of mark-layout's order that stays in the image and covers no earlier label
+ * (`taken`, which gets this chip). When none fits, the requested spot clamped into the image, with a warning.
+ */
+function drawShapeLabel(opts: {
+    ctx: SKRSContext2D;
+    rect: AnnotationRect;
+    label: ShapeLabel;
+    preset: AnnotationPreset;
+    gap: number;
+    bounds: { width: number; height: number };
+    taken: AnnotationRect[];
+    warn: (message: string) => void;
+}): void {
+    const { ctx, rect, label, preset, gap, bounds, taken } = opts;
+    const style = chipStyleOf(label, preset);
+    const layout = measureChip(ctx, label.text, style);
+    const request = {
+        rect,
+        size: layout.size,
+        position: label.position ?? "top-left",
+        gap,
+        offset: label.offset,
+        leader: label.leader,
+    };
+    const area = { x: 0, y: 0, w: bounds.width, h: bounds.height };
+    const placement = placeLabel({ request, bounds: area, obstacles: taken });
+    let placed: PlacedLabel;
+
+    if (placement.ok) {
+        placed = placement.label;
+    } else {
+        placed = clampedSpot(request, area);
+        opts.warn(`label "${label.text.split("\n")[0]}" fits nowhere free in the image; drawn at ${request.position}`);
+    }
+
+    if (placed.leader) {
+        ctx.strokeStyle = style.bg;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(placed.leader.from.x, placed.leader.from.y);
+        ctx.lineTo(placed.leader.to.x, placed.leader.to.y);
+        ctx.stroke();
+    }
+
+    paintChip(ctx, layout, style, placed.chip);
+    taken.push(placed.chip);
 }
 
 function drawShape(opts: {
@@ -200,8 +182,10 @@ function drawShape(opts: {
     label: ShapeLabel | undefined;
     preset: AnnotationPreset;
     bounds: { width: number; height: number };
+    taken: AnnotationRect[];
+    warn: (message: string) => void;
 }): void {
-    const { ctx, kind, rect, style, label, preset, bounds } = opts;
+    const { ctx, kind, rect, style, label, preset } = opts;
     const stroke = style?.stroke ?? preset.shape.stroke;
     const strokeWidth = style?.strokeWidth ?? preset.shape.strokeWidth;
     const fill = style?.fill ?? preset.shape.fill;
@@ -218,19 +202,13 @@ function drawShape(opts: {
         shapePath(ctx, kind, rect, radius);
         ctx.strokeStyle = stroke;
         ctx.lineWidth = strokeWidth;
-        ctx.setLineDash(style?.dash ?? []);
+        ctx.setLineDash(style?.dash ?? [...(preset.shape.dash ?? [])]);
         ctx.stroke();
         ctx.setLineDash([]);
     }
 
     if (label?.text) {
-        const chipStyle: Required<LabelChipStyle> = {
-            bg: label.style?.bg ?? preset.labelChip.bg,
-            fg: label.style?.fg ?? preset.labelChip.fg,
-            fontSize: label.style?.fontSize ?? preset.labelChip.fontSize,
-        };
-        const gap = Math.max(4, Math.round(strokeWidth));
-        drawChip(ctx, label.text, chipStyle, placeShapeLabel(rect, label.position ?? "top-left", gap), bounds);
+        drawShapeLabel({ ...opts, label, gap: Math.max(4, Math.round(strokeWidth)) });
     }
 }
 
@@ -249,7 +227,7 @@ function drawArrow(
     ctx.strokeStyle = stroke;
     ctx.lineWidth = strokeWidth;
     ctx.lineCap = "round";
-    ctx.setLineDash(style?.dash ?? []);
+    ctx.setLineDash(style?.dash ?? [...(preset.shape.dash ?? [])]);
     ctx.beginPath();
     ctx.moveTo(from.x, from.y);
     // stop the shaft short of the tip so the head stays crisp
@@ -266,7 +244,13 @@ function drawArrow(
     ctx.fill();
 }
 
-function drawBlur(ctx: SKRSContext2D, canvas: Canvas, rect: AnnotationRect, strength: number): void {
+function drawBlur(
+    createCanvas: CanvasModule["createCanvas"],
+    ctx: SKRSContext2D,
+    canvas: Canvas,
+    rect: AnnotationRect,
+    strength: number
+): void {
     // snapshot the CURRENT composite so earlier annotations blur too
     const snapshot = createCanvas(canvas.width, canvas.height);
     snapshot.getContext("2d").drawImage(canvas, 0, 0);
@@ -348,6 +332,7 @@ function drawGrid(
  * byte-identical PNG. Draws in array order; `crop` entries apply LAST.
  */
 export async function renderAnnotationPlan(opts: RenderPlanInput): Promise<RenderPlanResult> {
+    const { createCanvas, loadImage } = await loadCanvas();
     validateAnnotations(opts.annotations);
     const preset = ANNOTATION_PRESETS[opts.preset ?? DEFAULT_PRESET];
     if (!preset) {
@@ -362,6 +347,11 @@ export async function renderAnnotationPlan(opts: RenderPlanInput): Promise<Rende
     const ctx = canvas.getContext("2d");
     ctx.drawImage(image, 0, 0);
     const bounds = { width: image.width, height: image.height };
+    const taken: AnnotationRect[] = [];
+    const warn = (message: string): void => {
+        warnings.push(message);
+    };
+    const presetOf = (name: PresetName | undefined): AnnotationPreset => (name ? ANNOTATION_PRESETS[name] : preset);
 
     for (const [i, a] of opts.annotations.entries()) {
         switch (a.kind) {
@@ -373,11 +363,21 @@ export async function renderAnnotationPlan(opts: RenderPlanInput): Promise<Rende
                     throw new Error(`annotations[${i}] (${a.kind}) has a zero-size rect`);
                 }
 
-                drawShape({ ctx, kind: a.kind, rect, style: a.style, label: a.label, preset, bounds });
+                drawShape({
+                    ctx,
+                    kind: a.kind,
+                    rect,
+                    style: a.style,
+                    label: a.label,
+                    preset: presetOf(a.preset),
+                    bounds,
+                    taken,
+                    warn,
+                });
                 break;
             }
             case "arrow":
-                drawArrow(ctx, a.from, a.to, a.style, preset);
+                drawArrow(ctx, a.from, a.to, a.style, presetOf(a.preset));
                 break;
             case "label":
                 drawChip(
@@ -388,7 +388,7 @@ export async function renderAnnotationPlan(opts: RenderPlanInput): Promise<Rende
                         fg: a.style?.fg ?? preset.labelChip.fg,
                         fontSize: a.style?.fontSize ?? preset.labelChip.fontSize,
                     },
-                    () => ({ x: a.at.x, y: a.at.y }),
+                    a.at,
                     bounds
                 );
                 break;
@@ -399,7 +399,7 @@ export async function renderAnnotationPlan(opts: RenderPlanInput): Promise<Rende
                     break;
                 }
 
-                drawBlur(ctx, canvas, rect, a.strength ?? preset.blurStrength);
+                drawBlur(createCanvas, ctx, canvas, rect, a.strength ?? preset.blurStrength);
                 break;
             }
             case "grid":

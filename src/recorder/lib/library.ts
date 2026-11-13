@@ -1,13 +1,14 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
+import { ensureFaceReady, faceReadiness, openFace } from "@app/macos/lib/permissions/part-readiness";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { classifyPid } from "@genesiscz/utils/process-identity";
-import { readRecordingManifest, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
+import { readRecordingManifestSafe, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
+import { liveRecordingFolders } from "@genesiscz/utils/screen-recorder/live";
 import { recordingStores } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { z } from "zod";
 
@@ -58,6 +59,8 @@ export interface LibraryRow {
     movieFrames?: number;
     /** `edit.json` exists: the recording was edited. */
     edited: boolean;
+    /** A running recorder still writes into the folder (a live entry names it), as the window's card says. */
+    recording?: true;
     /** How the recording ended (`done`, `failed`, `discarded`), when its recorder wrote it. */
     outcome?: string;
     /** The movie's length, when the recorder wrote it. */
@@ -103,24 +106,42 @@ export interface LiveRecordingRef {
     movie?: string;
 }
 
+/** The movies an unwritten `<name>.edit.json` can name beside it, the preferred kind first. */
+const PLAIN_MOVIE_EXTENSIONS = [".mp4", ".mov", ".m4v", ".webm", ".mkv"];
+
 /** The shortest prefix of a library id that names one recording (a short id is far longer). */
 const SHORT_ID_MIN_LENGTH = 12;
 
 /**
  * The running recording an id names: its live id or the end of it (`list --live`), or its library id, whole or a
- * prefix such as the short id (`start`'s started event and `list` print those).
+ * prefix such as the short id (`start`'s started event and `list` print those). A whole id wins; an end or a prefix
+ * that fits several running recordings is refused, as resolveRecording refuses a short id of two, because a stop
+ * of the wrong one cannot be undone.
  */
 export function findLiveEntry<T extends { id: string; folder?: string }>(entries: T[], id: string): T | undefined {
-    return entries.find((entry) => {
-        if (entry.id === id || entry.id.endsWith(id)) {
-            return true;
-        }
+    const exact = entries.find(
+        (entry) => entry.id === id || (entry.folder !== undefined && basename(entry.folder) === id)
+    );
 
+    if (exact) {
+        return exact;
+    }
+
+    const matches = entries.filter((entry) => {
         const library = entry.folder ? basename(entry.folder) : undefined;
         return (
-            library !== undefined && (library === id || (id.length >= SHORT_ID_MIN_LENGTH && library.startsWith(id)))
+            entry.id.endsWith(id) ||
+            (library !== undefined && id.length >= SHORT_ID_MIN_LENGTH && library.startsWith(id))
         );
     });
+
+    if (matches.length > 1) {
+        throw new Error(
+            `"${id}" names ${matches.length} running recordings: ${describeLiveEntries(matches)}. Give more of the id.`
+        );
+    }
+
+    return matches[0];
 }
 
 /** The running recordings for an error: each live id, with its short library id when it has one. */
@@ -154,47 +175,69 @@ export function framesCell(row: LibraryRow): string {
     return row.durationMs === undefined ? String(row.frames) : "—";
 }
 
-/** Every library recording, newest first. */
+/**
+ * Every recording of every store (the library and the meetings' screen recordings), newest first by `startedAt`, the
+ * folder name breaking a tie, and only then cut to `limit`: the same reader as the Recordings window (RecorderMenu
+ * `readRecents`), so `last` is the first row of `list` and the window's first card. A `root` lists that one folder.
+ */
 export function listLibrary(options: string | { root?: string; limit?: number } = {}): LibraryRow[] {
-    const { root = recordingsLibraryDir(), limit = Infinity } =
-        typeof options === "string" ? { root: options } : options;
-    if (!existsSync(root)) {
-        return [];
-    }
-
+    const { root, limit = Infinity } = typeof options === "string" ? { root: options } : options;
+    const roots = root === undefined ? recordingStores().map((store) => store.root()) : [root];
     const rows: LibraryRow[] = [];
+    const live = liveRecordingFolders();
 
-    const folders = readdirSync(root, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => {
-            const match = /^(?:library|video)-(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/.exec(entry.name);
-            const time = match
-                ? new Date(`${match[1]}T${match[2]}:${match[3]}:${match[4]}`).getTime()
-                : statSync(join(root, entry.name)).birthtimeMs;
-            return { name: entry.name, time };
-        })
-        .sort((a, b) => b.time - a.time || b.name.localeCompare(a.name));
-
-    for (const { name } of folders) {
-        if (rows.length >= Math.max(0, limit)) {
-            break;
+    for (const dir of roots) {
+        if (!existsSync(dir)) {
+            continue;
         }
-        const row = libraryRow(join(root, name));
 
-        if (row) {
-            rows.push(row);
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            const row = entry.isDirectory() ? libraryRow(join(dir, entry.name), live) : undefined;
+
+            if (row) {
+                rows.push(row);
+            }
         }
     }
 
-    return rows.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    return rows
+        .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || basename(b.folder).localeCompare(basename(a.folder)))
+        .slice(0, Math.max(0, limit));
 }
 
-/** One recording folder as `list --json` gives it (`tools recorder show`); undefined without a readable manifest. */
-export function libraryRow(folder: string): LibraryRow | undefined {
-    const manifest = readRecordingManifest(folder);
+/**
+ * One recording folder as `list --json` gives it (`tools recorder show`); undefined when it holds no recording.json or
+ * the file is not JSON. A manifest the schema refuses still gives a row from its own keys, as the window lists it.
+ */
+export function libraryRow(folder: string, live: ReadonlySet<string> = liveRecordingFolders()): LibraryRow | undefined {
+    const read = readRecordingManifestSafe(folder);
+
+    if (!read) {
+        return undefined;
+    }
+
+    const recording = live.has(resolve(folder)) ? { recording: true as const } : {};
+
+    const manifest = read.manifest;
 
     if (!manifest) {
-        return undefined;
+        // The window lists such a folder too (readRecents takes any JSON object): each field on its own.
+        log.warn({ folder, problem: read.problem }, "recording.json does not match the schema; listed from its keys");
+        const text = (key: string) => {
+            const value = read.raw[key];
+            return typeof value === "string" && value ? value : undefined;
+        };
+        return {
+            id: text("id") ?? basename(folder),
+            title: text("title") ?? basename(folder),
+            folder,
+            startedAt: text("startedAt") ?? statSync(join(folder, "recording.json")).mtime.toISOString(),
+            ...(text("endedAt") ? { endedAt: text("endedAt") } : {}),
+            movie: movieOf(folder),
+            frames: Array.isArray(read.raw.frames) ? read.raw.frames.length : 0,
+            edited: existsSync(join(folder, "edit.json")),
+            ...recording,
+        };
     }
 
     const end = recordingEndSchema.safeParse(manifest.settings).data ?? {};
@@ -211,6 +254,7 @@ export function libraryRow(folder: string): LibraryRow | undefined {
         ...(end.video?.durationMs === undefined ? {} : { durationMs: end.video.durationMs }),
         ...(end.video?.frames === undefined ? {} : { movieFrames: end.video.frames }),
         ...(end.outcome === "failed" && manifest.warnings[0] ? { reason: manifest.warnings[0] } : {}),
+        ...recording,
     };
 }
 
@@ -235,11 +279,36 @@ function recordingOfUnwrittenEdit(path: string): string | undefined {
         return undefined;
     }
 
+    // Only a movie of that name: "talk.gif" or "talk.srt" sorts before "talk.mp4". The first kind listed wins.
     const name = file.slice(0, -".edit.json".length);
-    const movie = readdirSync(folder).find(
-        (entry) => !entry.endsWith(".json") && basename(entry, extname(entry)) === name
-    );
+    const rank = (entry: string) => PLAIN_MOVIE_EXTENSIONS.indexOf(extname(entry).toLowerCase());
+    const movie = readdirSync(folder)
+        .filter((entry) => basename(entry, extname(entry)) === name && rank(entry) >= 0)
+        .sort((a, b) => rank(a) - rank(b))[0];
     return movie ? join(folder, movie) : undefined;
+}
+
+/**
+ * The path an editor window is named by in editor-open.json, by the one rule both sides keep (Swift
+ * EditorWindows.openState and names): a recording folder (its `edit.json`, its own movie, the folder) by the folder,
+ * any other edit by its movie, so two plain movies in one folder are two windows and `open` resolves to a movie.
+ */
+export function editorWindowKeyOf(path: string): string {
+    const file = basename(path);
+
+    if (file === "edit.json") {
+        return dirname(path);
+    }
+
+    if (file.endsWith(".edit.json")) {
+        return recordingOfUnwrittenEdit(path) ?? path;
+    }
+
+    if (/\.(mp4|mov|m4v)$/i.test(file)) {
+        return existsSync(join(dirname(path), "recording.json")) ? dirname(path) : path;
+    }
+
+    return path;
 }
 
 export function resolveRecording(value: string, { alive }: { alive?: (pid: number) => boolean } = {}): string {
@@ -260,10 +329,16 @@ export function resolveRecording(value: string, { alive }: { alive?: (pid: numbe
     }
 
     if (value === "last") {
-        const newest = listLibrary({ limit: 1 })[0];
+        // The newest that has ended: a folder a recorder still writes into is not one to edit, move or rename yet.
+        const rows = listLibrary();
+        const newest = rows.find((row) => !row.recording);
 
         if (!newest) {
-            throw new Error("The recordings library is empty; record one with " + toolCommand("recorder start") + ".");
+            throw new Error(
+                rows.length > 0
+                    ? "The only recording still records; stop it first with " + toolCommand("recorder stop") + "."
+                    : "The recordings library is empty; record one with " + toolCommand("recorder start") + "."
+            );
         }
 
         return newest.folder;
@@ -316,15 +391,7 @@ export function resolveRecording(value: string, { alive }: { alive?: (pid: numbe
 
 /** Builds the app with the recorder part when the installed one lacks it. */
 export async function ensureRecorderPart(onStep?: (line: string) => void): Promise<void> {
-    const status = appStatus();
-
-    if (status.built && status.parts.includes("recorder")) {
-        return;
-    }
-
-    onStep?.("GenesisTools.app has no recorder part yet: building it (about a minute)");
-    log.info({ parts: status.parts }, "recorder: adding the recorder part");
-    await buildApp({ onStep, parts: { add: ["recorder"] } });
+    await ensureFaceReady("--recorder", { build: "allow", stale: "accept", onStep });
 }
 
 /**
@@ -332,18 +399,15 @@ export async function ensureRecorderPart(onStep?: (line: string) => void): Promi
  * turn's limit kills it halfway, and the build went on as an orphan holding the app's build lock (R2-NR3).
  */
 export function requireRecorderPart(doing: string): void {
-    const status = appStatus();
+    const readiness = faceReadiness("--recorder", { build: "refuse", stale: "accept" });
 
-    if (status.built && status.parts.includes("recorder")) {
+    if (readiness.ready) {
         return;
     }
 
-    const missing = status.built
-        ? "the installed GenesisTools.app has no recorder part"
-        : "GenesisTools.app is not installed";
-    log.debug({ doing, built: status.built, parts: status.parts }, "recorder: refused, no recorder part");
+    log.debug({ doing, reason: readiness.reason }, "recorder: refused, the app cannot serve the recorder face");
     throw new Error(
-        `${doing} needs the recorder part of GenesisTools.app, and ${missing}. Nothing was started. Add it from a shell (a build of about a minute, longer than a turn): ${toolCommand("macos permissions build --add-part recorder")}`
+        `${doing} cannot run: ${readiness.sentence} (from a shell: the build takes about a minute, longer than a turn)`
     );
 }
 
@@ -424,11 +488,7 @@ export async function waitForEditorOpen({ timeoutMs }: { timeoutMs: number }): P
 /** Runs `open` with these arguments; throws with its message when it fails. */
 export function openWithApp(args: string[]): void {
     log.debug({ args }, "recorder: open the app");
-    const result = spawnSync("open", args, { encoding: "utf8" });
-
-    if (result.status !== 0) {
-        throw new Error(`open failed (${result.status}): ${(result.stderr || result.error?.message || "").trim()}`);
-    }
+    openFace(args);
 }
 
 /** The `open` arguments of a recorder window: a new process that hands them to the running recorder face. */
@@ -706,6 +766,8 @@ export interface SnapshotRequest {
     tab?: EditorTab;
     selectZoom?: number;
     selectClip?: number;
+    /** The edit's marker at that index, selected as a click on its flag does. */
+    selectMarker?: number;
     part?: { from: number; to: number };
     range?: { from: number; to: number };
     comment?: number;
@@ -733,6 +795,7 @@ export function snapshotArgv(request: SnapshotRequest): string[] {
         ...pair("--tab", request.tab),
         ...pair("--select-zoom", request.selectZoom),
         ...pair("--select-clip", request.selectClip),
+        ...pair("--select-marker", request.selectMarker),
         ...span("--part", request.part),
         ...span("--range", request.range),
         ...pair("--comment", request.comment),

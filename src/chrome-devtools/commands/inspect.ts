@@ -1,5 +1,8 @@
 /** cookies / rm-cookie / console / eval / nav / shot / grid / trace — page and browser inspection. */
+
+import { isMarkSide } from "@genesiscz/utils/chrome-devtools/shots/part";
 import { navigateSpa, type PageCondition, waitForPage } from "@genesiscz/utils/chrome-devtools/spa";
+import { ANNOTATION_PRESETS, isPresetName } from "@genesiscz/utils/image";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import {
@@ -12,6 +15,7 @@ import {
 } from "../lib/cdp.ts";
 import { cdpLikeOf } from "../lib/cdp-like-adapter.ts";
 import { artifactPath } from "../lib/platform.ts";
+import { imageFormatOf, loadWebPlan, takeQuickShot, type WebPlan } from "../lib/shots/quick.ts";
 import { attachTab, ignoreSigpipe, positiveNumber, resolvePort, suggest, withPage, withPort } from "./shared.ts";
 
 type NavOptions = {
@@ -35,6 +39,62 @@ function describeCondition(condition: PageCondition): string {
     }
 
     return parts.join(" with ");
+}
+
+interface ShotOptions {
+    port?: string;
+    match?: string;
+    full?: boolean;
+    mark: string[];
+    label: string[];
+    at?: string;
+    clip?: string;
+    pad?: string;
+    annotate?: string;
+    preset?: string;
+    raw?: boolean;
+}
+
+function collect(value: string, previous: string[]): string[] {
+    return [...previous, value];
+}
+
+/** The web plan from --annotate, plus one mark per --mark; the flags' clip, pad and preset win over the plan's. */
+async function quickPlan(opts: ShotOptions): Promise<WebPlan> {
+    const plan: WebPlan = opts.annotate ? await loadWebPlan(opts.annotate) : { marks: [], pixels: [] };
+    if (opts.preset !== undefined && !isPresetName(opts.preset)) {
+        throw new Error(`unknown preset "${opts.preset}" — valid: ${Object.keys(ANNOTATION_PRESETS).join(", ")}`);
+    }
+
+    const at = opts.at;
+    if (at !== undefined && !isMarkSide(at)) {
+        throw new Error(`--at must be above, below, left, right, inside or a position name, got ${at}`);
+    }
+
+    const marks = opts.mark.map((target, index) => ({
+        target,
+        ...(opts.label[index] ? { label: opts.label[index] } : {}),
+        ...(at ? { at } : {}),
+    }));
+    const pad = opts.pad === undefined ? undefined : Number(opts.pad);
+    if (pad !== undefined && !(Number.isFinite(pad) && pad >= 0)) {
+        throw new Error(`--pad must be a number of pixels, got ${opts.pad}`);
+    }
+
+    return {
+        ...plan,
+        marks: [...plan.marks, ...marks],
+        ...(opts.preset && isPresetName(opts.preset) ? { preset: opts.preset } : {}),
+        ...(opts.clip !== undefined || pad !== undefined
+            ? {
+                  clip: {
+                      ...plan.clip,
+                      ...(opts.clip !== undefined ? { around: opts.clip } : {}),
+                      ...(pad !== undefined ? { pad } : {}),
+                  },
+              }
+            : {}),
+    };
 }
 
 export function registerInspect(program: Command): void {
@@ -365,13 +425,67 @@ Examples:
         });
 
     withPage(program.command("shot"))
-        .description("screenshot the tab")
-        .argument("[path]", "output PNG", artifactPath("shot.png"))
-        .option("--full", "capture beyond the viewport")
-        .action(async (path: string, opts: { port?: string; match?: string; full?: boolean }) => {
+        .description(
+            "screenshot the tab; with --mark or --annotate, an annotated image of what it shows now plus the marks in image pixels (--raw adds the raw image)"
+        )
+        .argument(
+            "[path]",
+            "output image: .png (full size), or .webp with marks (at most 1200 px wide, quality 60)",
+            artifactPath("shot.png")
+        )
+        .option("--full", "capture beyond the viewport (plain screenshot only)")
+        .option(
+            "--mark <locator>",
+            "box an element (testid=x, css=…, text=…, role=dialog, label=/re/; repeat for more)",
+            collect,
+            []
+        )
+        .option("--label <text>", "the label of the --mark at the same place in the list (repeat)", collect, [])
+        .option("--at <side>", "label side of every --mark: above, below, left, right, inside, or a position name")
+        .option("--clip <locator>", "crop around this instead of around the marks")
+        .option("--pad <px>", "pixels around the crop (default 20)")
+        .option(
+            "--annotate <plan>",
+            "a plan: items with a target are marks on the page, items with a rect draw in image pixels (inline JSON, .json, .jsonc or .ts)"
+        )
+        .option("--preset <name>", `look of the marks: ${Object.keys(ANNOTATION_PRESETS).join(", ")}`)
+        .option("--raw", "with marks: also write the raw image, full size, as <stem>.original.png")
+        .action(async (path: string, opts: ShotOptions) => {
+            const marked = opts.mark.length > 0 || opts.annotate !== undefined;
+            const format = imageFormatOf(path);
+            if (format === null || (!marked && format !== "png")) {
+                out.log.error(`${path}: the output must end in .png${marked ? " or .webp" : ""}; nothing was written`);
+                process.exit(1);
+            }
+
             const page = await attachTab(opts);
-            out.println(await page.screenshot(path, opts.full === true));
-            process.exit(0);
+            if (!marked) {
+                out.println(await page.screenshot(path, opts.full === true));
+                process.exit(0);
+            }
+
+            try {
+                const result = await takeQuickShot({
+                    cdp: cdpLikeOf(page),
+                    plan: await quickPlan(opts),
+                    out: path,
+                    raw: opts.raw === true,
+                });
+                if (!result.ok) {
+                    out.log.error(`no shot: ${result.problems.join("; ")}`);
+                    process.exit(1);
+                }
+
+                for (const note of result.notes) {
+                    out.log.info(note);
+                }
+
+                out.println([result.files.annotated, result.files.raw, result.files.marks].filter(Boolean).join("\n"));
+                process.exit(0);
+            } catch (error) {
+                out.log.error(error instanceof Error ? error.message : String(error));
+                process.exit(1);
+            }
         });
 
     withPort(program.command("grid"))

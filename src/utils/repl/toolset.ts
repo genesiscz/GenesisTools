@@ -17,7 +17,7 @@ export interface ToolsetContext {
 
 /**
  * One preloadable REPL API: a global (or several) built once per kernel spawn, documented by its descriptor, and
- * disposed on reset and exit. A new toolset is one subclass and one line in the kernel's `REPL_TOOLSETS` table.
+ * disposed on reset and exit. A new toolset is one subclass and one row in the kernel's `REPL_TOOLSETS` table.
  */
 /**
  * A method's Promise says so when it is printed as JSON: without `await`, JSON.stringify(movie.info()) wrote `{}`
@@ -251,7 +251,17 @@ export abstract class ReplToolset {
     async dispose(): Promise<void> {}
 }
 
-export type ReplToolsetFactory = () => ReplToolset;
+/**
+ * One row of the kernel's `REPL_TOOLSETS` table. `--help`, id parsing and the MCP start line read `summary` and
+ * `global` without loading anything; only a run that names the toolset calls `load`, which imports its module.
+ */
+export interface ReplToolsetRow {
+    /** The --help line. A test pins it to the loaded toolset's api.summary. */
+    summary: string;
+    /** The global binding when it is not the id. Pinned to api.global by the same test. */
+    global?: string;
+    load: () => Promise<ReplToolset>;
+}
 
 /** Names that inspection, `await`, JSON and test matchers read off any object; a missing one is not a mistake. */
 const PROBED = new Set([

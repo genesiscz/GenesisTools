@@ -1,12 +1,22 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    realpathSync,
+    statSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
+import { connectChildStdio } from "./child-stdio";
 import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
-import { LineBuffer, Outbox, RpcPeer, type RpcProgress } from "./peer";
+import { failedCallLevel, LineBuffer, Outbox, RpcPeer, type RpcProgress } from "./peer";
 import {
     readLiveServiceEntry,
     type ServiceHost,
@@ -222,6 +232,42 @@ test("disconnect settles an abort-ignoring handler and skips queued mutations", 
     expect(calls).toEqual(["hang"]);
 });
 
+// An internal RpcError (a failed live microphone change) and a refused notification were logged at debug only, so
+// neither reached the console; a notification gets no reply, so nobody heard of it.
+test("a failed call is a warning when it is internal, info for a notification, and debug for a refused request", () => {
+    const refused = new RpcError(1001, "no such display");
+    expect(failedCallLevel(refused, false)).toBe("debug");
+    expect(failedCallLevel(refused, true)).toBe("info");
+    expect(failedCallLevel(new RpcError(JSON_RPC_ERRORS.internal, "the mic did not change"), false)).toBe("warn");
+    expect(failedCallLevel(new Error("boom"), false)).toBe("warn");
+});
+
+test("a peer logs a refused notification at info and a refused request at debug", async () => {
+    const log = logger.scoped("rpc-test").log;
+    const info = spyOn(log, "info");
+    const debug = spyOn(log, "debug");
+    try {
+        const peer = new RpcPeer({
+            write: (bytes) => bytes.length,
+            invalid: "answer",
+            log,
+            label: "test",
+            handle: async () => {
+                throw new RpcError(1001, "no such display");
+            },
+        });
+        peer.receive(
+            Buffer.from('{"jsonrpc":"2.0","method":"audio.mute"}\n{"jsonrpc":"2.0","id":1,"method":"audio.mute"}\n')
+        );
+        await peer.queue;
+        expect(info.mock.calls.map((call) => call[1])).toContain("test call refused");
+        expect(debug.mock.calls.map((call) => call[1])).toContain("test call refused");
+    } finally {
+        info.mockRestore();
+        debug.mockRestore();
+    }
+});
+
 test("RPC frames are bounded across fragments and normal lines still decode", () => {
     const lines = new LineBuffer();
     expect(lines.push(Buffer.from("ok\npart"))).toEqual(["ok"]);
@@ -346,6 +392,102 @@ describe("the outbox of a reader that stops reading", () => {
     });
 });
 
+describe("a peer on a child's stdio", () => {
+    function childPipe() {
+        const written: string[] = [];
+        let stdout!: ReadableStreamDefaultController<Uint8Array>;
+        return {
+            written,
+            emit: (text: string) => stdout.enqueue(new TextEncoder().encode(text)),
+            end: () => stdout.close(),
+            child: {
+                stdin: { write: (chunk: string) => written.push(chunk) },
+                stdout: new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        stdout = controller;
+                    },
+                }),
+            },
+        };
+    }
+
+    test("the end of stdout rejects every waiting request with the exit reason", async () => {
+        const pipe = childPipe();
+        const exited = Promise.withResolvers<number>();
+        const { peer } = connectChildStdio({
+            child: { ...pipe.child, exited: exited.promise },
+            exitReason: (code) => `the agent exited with code ${code}`,
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        const first = peer.request("one", {}, { timeoutMs: 60_000 });
+        const second = peer.request("two", {}, { timeoutMs: 60_000 });
+
+        const outcomes = Promise.allSettled([first, second]);
+
+        pipe.end();
+        exited.resolve(3);
+
+        expect((await outcomes).map((outcome) => outcome.status === "rejected" && String(outcome.reason))).toEqual([
+            "Error: the agent exited with code 3",
+            "Error: the agent exited with code 3",
+        ]);
+        expect(peer.closed).toBe(true);
+    });
+
+    test("a last reply without a newline before the end of stdout still resolves its call", async () => {
+        const pipe = childPipe();
+        const { peer } = connectChildStdio({
+            child: pipe.child,
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            handle: async () => null,
+        });
+        const answered = peer.request("one", {}, { timeoutMs: 60_000 });
+        const left = peer.request("two", {}, { timeoutMs: 60_000 });
+        const outcomes = Promise.allSettled([answered, left]);
+
+        pipe.emit('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}');
+        pipe.end();
+
+        const [first, second] = await outcomes;
+        expect(first).toEqual({ status: "fulfilled", value: { ok: true } });
+        expect(second.status === "rejected" && String(second.reason)).toBe("Error: agent closed its stdout");
+    });
+
+    test("a dialect without the jsonrpc field writes none and reads messages without it", async () => {
+        const pipe = childPipe();
+        const notifications: string[] = [];
+        const { peer, written } = connectChildStdio({
+            child: pipe.child,
+            dialect: { jsonrpcField: false, cancel: false, progress: false },
+            invalid: "ignore",
+            log: logger.scoped("rpc-test").log,
+            label: "agent",
+            onNotification: ({ method }) => notifications.push(method),
+            handle: async ({ method }) => ({ answered: method }),
+        });
+        const reply = peer.request<{ ok: boolean }>("thread/read", { threadId: "t" });
+
+        pipe.emit('{"method":"turn/started","params":{}}\n{"id":"s-1","method":"approve","params":{}}\n');
+        pipe.emit('{"id":1,"result":{"ok":true}}\n');
+
+        expect(await reply).toEqual({ ok: true });
+        await Bun.sleep(0);
+        await written();
+        expect(notifications).toEqual(["turn/started"]);
+        expect(pipe.written.map((line) => SafeJSON.parse(line, { strict: true }))).toEqual([
+            { id: 1, method: "thread/read", params: { threadId: "t" } },
+            { id: "s-1", result: { answered: "approve" } },
+        ]);
+        expect(pipe.written.join("")).not.toContain("jsonrpc");
+        peer.close("done");
+    });
+});
+
 describe("the service host (service-host.ts)", () => {
     const hosted: Array<ServiceHost<Role>> = [];
 
@@ -389,6 +531,22 @@ describe("the service host (service-host.ts)", () => {
         expect(first.status).toBe("started");
         expect(readLiveServiceEntry(dir)).toMatchObject({ protocol: 7, code: "code-a", pid: process.pid });
         expect(await host(dir)).toMatchObject({ status: "running", entry: { pid: process.pid } });
+    });
+
+    // The service reads private data for whoever connects, and `hello` is no login: another account on this Mac must
+    // not reach its folder or its socket, whether the start makes the folder or finds it open (umask 022).
+    test("a start leaves its folder owner-only (0700) and its socket owner-only (0600)", async () => {
+        const base = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const made = join(base, "made");
+        const found = join(base, "found");
+        mkdirSync(found, { mode: 0o755 });
+        chmodSync(found, 0o755);
+
+        for (const dir of [made, found]) {
+            expect((await host(dir)).status).toBe("started");
+            expect(statSync(dir).mode & 0o777).toBe(0o700);
+            expect(statSync(serviceSocketPath(dir)).mode & 0o777).toBe(0o600);
+        }
     });
 
     test("subscribe reaches onSubscribe with its own params, and emit passes the service's filter", async () => {

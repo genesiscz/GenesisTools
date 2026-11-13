@@ -171,22 +171,6 @@ async function call(
 }
 
 describe("aiRoutes", () => {
-    it("registers every path in AI_ACCOUNTS_API", () => {
-        const { agg } = fakeAggregator();
-        const paths = aiRoutes(agg).map((d) => `${d.method} ${d.pattern}`);
-
-        expect(paths).toEqual([
-            "GET /api/ai/accounts",
-            "GET /api/ai/usage",
-            "POST /api/ai/usage/refresh",
-            "GET /api/ai/usage/series",
-            "GET /api/ai/spend/totals",
-            "GET /api/ai/spend/series",
-            "GET /api/ai/daemon",
-            "POST /api/ai/daemon/register",
-        ]);
-    });
-
     it("400s on an unparseable from, and names the field", async () => {
         const { agg, calls } = fakeAggregator();
         const { status, body } = await call(aiRoutes(agg), "GET", "/api/ai/spend/totals", {

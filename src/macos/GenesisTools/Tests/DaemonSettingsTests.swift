@@ -106,6 +106,18 @@ final class DaemonSettingsTests: XCTestCase {
         XCTAssertEqual(DaemonFormat.percent(0.07445442875481387), "7.4%")
     }
 
+    /// A card's title leads with the window's failures, so "Last run ok" never sits above a red Fail % (C56a).
+    func testTheStateTitleLeadsWithRecentFailures() throws {
+        let task = try XCTUnwrap(JSONDecoder().decode(DaemonStatsPayload.self, from: Data(statsJSON.utf8)).tasks.first)
+        XCTAssertEqual(DaemonFormat.stateTitle(enabled: true, stats: task, running: false, lastRunInFlight: false),
+                       "2 of 10 runs failed or timed out · last run ok")
+        XCTAssertEqual(DaemonFormat.stateTitle(enabled: false, stats: task, running: false, lastRunInFlight: false),
+                       "Off · 2 of 10 runs failed or timed out · last run ok")
+        XCTAssertEqual(DaemonFormat.stateTitle(enabled: true, stats: task, running: true, lastRunInFlight: false), "Running now")
+        XCTAssertEqual(DaemonFormat.stateTitle(enabled: true, stats: nil, running: false, lastRunInFlight: false),
+                       "No run in the last 24 hours")
+    }
+
     func testDelayedRetryAcknowledgementPreservesNewerTypingAndSubmissions() {
         var draft = "11:00"
         var submitted = draft

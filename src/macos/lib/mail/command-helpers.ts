@@ -10,7 +10,6 @@ import {
 } from "@app/macos/lib/mail/columns";
 import { EmlxBodyExtractor } from "@app/macos/lib/mail/emlx";
 import { formatResultsTable } from "@app/macos/lib/mail/format";
-import * as p from "@clack/prompts";
 import { isInteractive, printLn } from "@genesiscz/utils/cli";
 import { parseVariadic } from "@genesiscz/utils/cli/variadic";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -18,6 +17,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { MailMessage } from "@genesiscz/utils/macos/mail/types";
 import type { MailFilterOptions } from "@genesiscz/utils/macos/mail-sql";
+import * as p from "@genesiscz/utils/prompts/p";
 
 // ─── Column resolution ──────────────────────────────────────
 
@@ -58,6 +58,7 @@ async function pickColumnsInteractively(): Promise<MailColumnKey[] | null> {
         })),
         initialValues: [...DEFAULT_LIST_COLUMNS],
         required: true,
+        cancel: "back",
     });
 
     if (p.isCancel(result)) {

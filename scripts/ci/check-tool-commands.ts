@@ -9,7 +9,7 @@
  * API, with an isolated binding checker that never resolves imports) and checks each named command against the tree:
  *
  * - the first word is a tool: a `src/<tool>` entry (letter case ignored, as the macOS dispatcher
- *   does), or an alias in the root `tools` dispatcher;
+ *   does), or an alias in `TOOL_ALIASES` (`@genesiscz/utils/cli/tool-names`);
  * - each following command word is registered under that tool: `.command("<word>")`,
  *   `.alias(…)`, `.aliases([…])`, `new Command("<word>")`, `buildGroup("<word>")`, a
  *   `commandName: "<word>"` registry entry, a lazy registrar key (`clones: async () => import(…)`),
@@ -30,6 +30,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { TOOL_ALIASES } from "@genesiscz/utils/cli/tool-names";
 import { out } from "@genesiscz/utils/logger";
 import { calleeName, parseSource, stringValue, unwrap, walk } from "@genesiscz/utils/ts/source/parse";
 import { resolveSpecifier } from "@genesiscz/utils/ts/source/resolve";
@@ -47,7 +48,7 @@ export interface ToolCommandRef {
 
 export interface CommandIndex {
     hasTool(tool: string): boolean;
-    alias(tool: string): string[] | undefined;
+    alias(tool: string): readonly string[] | undefined;
     commandWords(tool: string): ReadonlySet<string>;
     /** Command words declared with positional arguments: what follows them is a value. */
     argumentCommands?(tool: string): ReadonlySet<string>;
@@ -603,47 +604,6 @@ function utilsModuleFile(src: string, path: string): string | undefined {
     );
 }
 
-/** `["voice-memos", ["macos", "voice-memos"]]` pairs of the root dispatcher's alias table. */
-function dispatcherAliases(root: string): Map<string, string[]> {
-    const aliases = new Map<string, string[]>();
-    const dispatcher = join(root, "tools");
-
-    if (!existsSync(dispatcher)) {
-        return aliases;
-    }
-
-    const { source } = parseSource("tools.ts", readFileSync(dispatcher, "utf8"));
-
-    walk(source, (node) => {
-        if (!ts.isArrayLiteralExpression(node) || node.elements.length !== 2) {
-            return;
-        }
-
-        const [name, target] = node.elements;
-        const alias = stringValue(name);
-
-        if (!alias || !ts.isArrayLiteralExpression(target) || target.elements.length === 0) {
-            return;
-        }
-
-        const words: string[] = [];
-
-        for (const element of target.elements) {
-            const word = stringValue(element);
-
-            if (word === undefined) {
-                return;
-            }
-
-            words.push(word);
-        }
-
-        aliases.set(alias, words);
-    });
-
-    return aliases;
-}
-
 /** The tools, dispatcher aliases and registered command words of the tree at `root`. */
 export function buildCommandIndex(root: string): CommandIndex {
     const src = join(root, "src");
@@ -664,7 +624,7 @@ export function buildCommandIndex(root: string): CommandIndex {
         }
     }
 
-    const aliases = dispatcherAliases(root);
+    const aliases = TOOL_ALIASES;
     const byTool = new Map<string, Registrations>();
 
     const registrations = (tool: string): Registrations => {

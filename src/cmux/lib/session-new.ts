@@ -2,10 +2,10 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { CMUX_IDENTITY_ENV } from "@genesiscz/utils/cmux/caller-enricher";
-import { runCmux, runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 
 import { windowList } from "@genesiscz/utils/cmux/lib/socket";
-import { parseCmuxTree } from "@genesiscz/utils/cmux/live-layout";
+import { liveTree } from "@genesiscz/utils/cmux/live-layout";
 import { focusedPlace } from "@genesiscz/utils/cmux/open-command";
 import {
     buildWorkspaceCreateArgs,
@@ -16,7 +16,7 @@ import { env } from "@genesiscz/utils/env";
 import { levenshteinDistance } from "@genesiscz/utils/fuzzy-match";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
-import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
+import { tmuxSendKeys } from "@genesiscz/utils/tmux/send-keys";
 import { createTmuxSession, killTmuxSession, listTmuxPanes } from "@genesiscz/utils/tmux/sessions";
 import { agentRunCommand, type SessionAgentId, withPidNote } from "./session-agents";
 
@@ -296,14 +296,6 @@ export function devTmuxSessionName(cwd: string, name: string | undefined, nonce:
     return `cmux-${slug || "repo"}-${id || "x"}`;
 }
 
-export function tmuxLiteralSendArgv(tmuxBin: string, session: string, command: string): string[] {
-    return [tmuxBin, "send-keys", "-t", session, "-l", "--", command];
-}
-
-export function tmuxEnterArgv(tmuxBin: string, session: string): string[] {
-    return [tmuxBin, "send-keys", "-t", session, "Enter"];
-}
-
 /**
  * The window the new workspace belongs to.
  *
@@ -420,15 +412,6 @@ export async function startDevSession(input: SessionNewRequest, io: SessionNewIO
     };
 }
 
-async function spawnTmux(argv: string[]): Promise<void> {
-    const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "pipe" });
-    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-
-    if (code !== 0) {
-        throw new Error(`tmux ${argv[1] ?? "command"} failed: ${stderr.trim() || `exit ${code}`}`);
-    }
-}
-
 export function liveRepoFs(): RepoFs {
     return {
         isDirectory(path) {
@@ -501,23 +484,26 @@ export function liveSessionIO(): SessionNewIO {
             return { pane: panes.items[0].pane, sessionCreatedMs: panes.items[0].sessionCreatedMs };
         },
         sendTmuxKeys: async (session, command) => {
-            const tmux = resolveTmuxBin();
-            await spawnTmux(tmuxLiteralSendArgv(tmux, session, command));
+            const typed = await tmuxSendKeys(session, ["-l", "--", command]);
+
+            if (!typed.ok) {
+                throw new Error(typed.detail);
+            }
+
             await Bun.sleep(TMUX_ENTER_DELAY_MS);
-            await spawnTmux(tmuxEnterArgv(tmux, session));
+            const entered = await tmuxSendKeys(session, ["Enter"]);
+
+            if (!entered.ok) {
+                throw new Error(entered.detail);
+            }
         },
         killTmuxSession: (session) => killTmuxSession(session),
         repoFs: liveRepoFs(),
         nonce: () => randomBytes(3).toString("hex"),
         ensureTitle: (input) => ensureWorkspaceTitle(input),
         surfaceIds: async (surface) => {
-            const result = await runCmux(["--id-format", "both", "tree"], { json: true });
-
-            if (result.code !== 0) {
-                throw new Error(`cmux tree failed (${result.code}): ${result.stderr.trim()}`);
-            }
-
-            const live = parseCmuxTree(result.stdout).surfaces.get(surface);
+            // Throws when the bounded tree read fails: a wedged cmux is not "no such surface".
+            const live = (await liveTree()).surfaces.get(surface);
             return live ? { workspaceId: live.workspaceId, surfaceId: live.id } : null;
         },
     };

@@ -78,6 +78,8 @@ public struct UsageSettings: Codable, Equatable, Sendable {
     public var coverageStrip = true
     /// Fable and other scoped windows get lanes of their own.
     public var scopedWindows = false
+    /// The Limits table leaves out a window column no account has a reading for.
+    public var hideEmptyColumns = true
     /// The Spend tab's stack.
     public var spendStack: UsageSpendStack = .provider
     /// The hub digest draws a small cone beside each account's forecast.
@@ -105,6 +107,7 @@ public struct UsageSettings: Codable, Equatable, Sendable {
         eventMarkers = value(.eventMarkers, defaults.eventMarkers)
         coverageStrip = value(.coverageStrip, defaults.coverageStrip)
         scopedWindows = value(.scopedWindows, defaults.scopedWindows)
+        hideEmptyColumns = value(.hideEmptyColumns, defaults.hideEmptyColumns)
         spendStack = value(.spendStack, defaults.spendStack)
         digestCone = value(.digestCone, defaults.digestCone)
     }

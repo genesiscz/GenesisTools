@@ -29,7 +29,7 @@ import type {
 } from "@app/doctor/lib/types";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
-import { captureSync } from "@genesiscz/utils/process/ps";
+import { captureSync } from "@genesiscz/utils/process/capture";
 
 export const TEMP_LEAKS_ANALYZER_ID = "temp-leaks";
 

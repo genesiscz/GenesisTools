@@ -7,7 +7,7 @@ protocol RecorderHostFace: AnyObject {
     /// Opens (or brings back) the editor of `path` and answers its window number.
     func openEditor(path: String, focus: Bool, atSeconds: Double?, tab: InspectorTab?) async throws -> Int
     func showLibrary(focus: Bool)
-    func showPicker()
+    func showPicker(focus: Bool)
     /// `{ front?, open: [{ path, title, window }] }`, the rows editor-open.json holds.
     func openWindows() -> [String: Any]
     /// Closes the editor `path` names (its folder, edit or movie) or window number `window`, and answers its number;
@@ -41,7 +41,7 @@ enum RecorderHostMethods {
                 let params = Params(request)
                 switch try params.string("which") {
                 case "library": face.showLibrary(focus: params.bool("focus") ?? true)
-                case "picker": face.showPicker()
+                case "picker": face.showPicker(focus: params.bool("focus") ?? true)
                 case let other: throw invalid("window.show: which is \"library\" or \"picker\", not \"\(other)\"")
                 }
                 return ["shown": true]
@@ -104,7 +104,8 @@ enum RecorderHostMethods {
             "camera.start": method { request in
                 let folder = try Params(request).folder()
                 switch await face.startCamera(folder: folder) {
-                case .started: return ["started": true]
+                // The preview's window: the recording leaves it out of the movie from its first segment.
+                case let .started(windowIDs): return ["started": true, "windowIds": windowIDs]
                 case .denied:
                     throw Failure.remote(code: RecorderServiceHost.Code.cameraDenied,
                                          message: "Camera access is off for GenesisTools (System Settings → Privacy & Security → Camera)")
@@ -242,7 +243,7 @@ final class LiveRecorderFace: RecorderHostFace {
     }
 
     func showLibrary(focus: Bool) { LibraryWindow.shared.show(focus: focus) }
-    func showPicker() { CapturePicker.shared.show() }
+    func showPicker(focus: Bool) { CapturePicker.shared.show(focus: focus) }
     func openWindows() -> [String: Any] { EditorWindows.shared.openState() }
     func closeEditor(path: String?, window: Int?) throws -> Int? { try EditorWindows.shared.close(path: path, window: window) }
     func startCamera(folder: URL) async -> CameraBubble.StartAnswer { await CameraBubble.shared.start(folder: folder) }

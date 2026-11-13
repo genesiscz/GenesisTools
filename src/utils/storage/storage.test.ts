@@ -135,6 +135,23 @@ describe("Storage GENESIS_TOOLS_HOME override", () => {
         env.testing.set("GENESIS_TOOLS_HOME", "");
         expect(new Storage("ask").getConfigPath()).toBe(join(home, ".genesis-tools", "ask", "config.json"));
     });
+
+    it("an instance built under one home writes into the home that is set when it writes", async () => {
+        const first = mkdtempSync(join(tmpdir(), "gt-home-a-"));
+        const second = mkdtempSync(join(tmpdir(), "gt-home-b-"));
+        env.testing.set("GENESIS_TOOLS_HOME", first);
+        const storage = new Storage("moving-home");
+
+        env.testing.set("GENESIS_TOOLS_HOME", second);
+        await storage.setConfig({ home: "second" });
+        await storage.putCacheFile("probe.json", { home: "second" }, "1 hour");
+
+        const secondConfig = join(second, ".genesis-tools", "moving-home", "config.json");
+        expect(storage.getConfigPath()).toBe(secondConfig);
+        expect(SafeJSON.parse(readFileSync(secondConfig, "utf8"), { strict: true })).toEqual({ home: "second" });
+        expect(fs.existsSync(join(second, ".genesis-tools", "moving-home", "cache", "probe.json"))).toBe(true);
+        expect(fs.existsSync(join(first, ".genesis-tools", "moving-home"))).toBe(false);
+    });
 });
 
 describe("Storage configFileMode", () => {

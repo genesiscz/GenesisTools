@@ -5,6 +5,31 @@ import type { AgentLeftEvent, AgentMode, FeedEvent, SessionPaths } from "./types
 const log = logger.child({ component: "agents:leave" });
 
 /**
+ * How long a login that ended by a signal, a `--once --timeout` or a dead pid keeps its agent on the bus, waiting
+ * for the agent's next login. Measured in the 2026-11-08 swarm: Monitor re-arms came back after 3 to 34 s, one
+ * after 79 s. A re-arm inside it writes no presence event; a lapse after it writes one `agent_left` (`lapsed`).
+ */
+export const REARM_GRACE_MS = 90_000;
+
+export function rearmUntil(now: number = Date.now()): string {
+    return new Date(now + REARM_GRACE_MS).toISOString();
+}
+
+/** Does a login that ended this way get a re-arm grace instead of a leave? A harness kills a Monitor's login. */
+export function endsInRearm(reason: "signal" | "clean_exit" | "cap"): boolean {
+    return reason === "signal";
+}
+
+/** A login that ended in a way its agent restarts, and has not been replaced yet. */
+export interface PendingRearm {
+    loginId: string;
+    /** When the login ended (the `logged_out` ts). */
+    since: string;
+    /** Its `rearm_until`. */
+    until: string;
+}
+
+/**
  * Names of the agents still on the bus: each one logged in at some point and has not left since.
  *
  * A `--once` receiver logs out after every message and logs in again, so `logged_out` is not leaving;
@@ -27,18 +52,28 @@ export function presentAgents(events: readonly FeedEvent[]): Map<string, string>
  * written) must not take the replacement off the bus. A leave without a login id (`tools agents leave`) ends
  * whichever login is current.
  */
-function presence(events: readonly FeedEvent[]): Map<string, { name: string; loginId: string | undefined }> {
-    const present = new Map<string, { name: string; loginId: string | undefined }>();
+function presence(events: readonly FeedEvent[]): Map<string, CurrentLogin> {
+    const present = new Map<string, CurrentLogin>();
 
     for (const event of events) {
-        if (event.type === "logged_in") {
-            present.set(event.agent_id, { name: event.agent_name, loginId: event.login_id });
-        } else if (event.type === "agent_left" && endsCurrentLogin(present.get(event.agent_id), event.login_id)) {
-            present.delete(event.agent_id);
-        }
+        trackPresence(present, event);
     }
 
     return present;
+}
+
+/** An agent on the bus, with the login that put it there (undefined for a login from before login ids). */
+interface CurrentLogin {
+    name: string;
+    loginId: string | undefined;
+}
+
+function trackPresence(present: Map<string, CurrentLogin>, event: FeedEvent): void {
+    if (event.type === "logged_in") {
+        present.set(event.agent_id, { name: event.agent_name, loginId: event.login_id });
+    } else if (event.type === "agent_left" && endsCurrentLogin(present.get(event.agent_id), event.login_id)) {
+        present.delete(event.agent_id);
+    }
 }
 
 function endsCurrentLogin(current: { loginId: string | undefined } | undefined, leaving: string | undefined): boolean {
@@ -84,16 +119,19 @@ export async function logInAndAnnounceJoin(
 }
 
 /**
- * When a login ends, is that the agent leaving, and why? One `--once` cycle that ends on mail is not; every end of a
- * stream login is, because nobody listens for that agent afterwards (`ended`: the watch stopped on its own, an error
- * for instance). A `--once` timeout or cap is announced by the login itself, where it knows which one it was.
+ * When a login ends, is that the agent leaving, and why? One `--once` cycle that ends on mail is not, and neither is
+ * a killed login or a `--once --timeout` (both re-arm, see `REARM_GRACE_MS`). Every other end of a stream login is,
+ * because nobody listens for that agent afterwards (`ended`: the watch stopped on its own, an error for instance).
+ * A `--once` receiver that waited the whole cap is announced by the login itself (`cap`).
  */
 export function leaveReasonOf(
     mode: "stream" | "once",
     reason: "signal" | "clean_exit" | "cap"
 ): AgentLeftEvent["reason"] | null {
-    if (reason === "signal") {
-        return "signal";
+    // A killed login (a harness Monitor expiring after 30 minutes) is a re-arm, not a leave: its `logged_out`
+    // carries `rearm_until`, and `announceLapses` writes the leave only when no new login follows.
+    if (endsInRearm(reason)) {
+        return null;
     }
 
     if (mode === "stream") {
@@ -145,4 +183,192 @@ export async function announceLeave(
     }
 
     return appended;
+}
+
+/**
+ * The re-arm fold: who is on the bus with which login, and the logins that ended with a `rearm_until` and were not
+ * replaced. Every watching login keeps one from the events it reads, so it can tell when a lapse is due without
+ * reading the whole feed; `pendingRearms` is the same fold over a whole feed.
+ */
+export interface RearmTracker {
+    present: Map<string, CurrentLogin>;
+    pending: Map<string, PendingRearm>;
+}
+
+/**
+ * The re-arm fold over a whole feed. Folding the feed's later events once more leaves it as it is, so a login can seed
+ * it from the whole feed and then fold everything after its cursor.
+ */
+export function rearmTrackerFrom(events: readonly FeedEvent[]): RearmTracker {
+    const tracker: RearmTracker = { present: new Map(), pending: new Map() };
+
+    for (const event of events) {
+        trackRearm(tracker, event);
+    }
+
+    return tracker;
+}
+
+/**
+ * Fold one feed event into `tracker`. A `logged_out` or `agent_left` counts only when it ends the agent's current
+ * login: the slot is released before the old login writes its `logged_out`, so a replacement can log in, and even
+ * end with its own grace, before the old one's late `logged_out` lands. That late event must not overwrite the
+ * replacement's grace.
+ */
+export function trackRearm(tracker: RearmTracker, event: FeedEvent): void {
+    if (event.type === "logged_out") {
+        const current = tracker.present.get(event.agent_id);
+
+        if (event.rearm_until && event.login_id && current && endsCurrentLogin(current, event.login_id)) {
+            tracker.pending.set(event.agent_id, {
+                loginId: event.login_id,
+                since: event.ts,
+                until: event.rearm_until,
+            });
+        }
+
+        return;
+    }
+
+    const endsLogin =
+        event.type === "logged_in" ||
+        (event.type === "agent_left" && endsCurrentLogin(tracker.present.get(event.agent_id), event.login_id));
+
+    if (endsLogin) {
+        tracker.pending.delete(event.agent_id);
+    }
+
+    trackPresence(tracker.present, event);
+}
+
+/** The agents on the bus whose current login ended with a `rearm_until` and was not replaced. */
+export function pendingRearms(events: readonly FeedEvent[]): Map<string, PendingRearm & { agentName: string }> {
+    const tracker = rearmTrackerFrom(events);
+    const result = new Map<string, PendingRearm & { agentName: string }>();
+
+    for (const [agentId, entry] of tracker.pending) {
+        const current = tracker.present.get(agentId);
+
+        if (current) {
+            result.set(agentId, { ...entry, agentName: current.name });
+        }
+    }
+
+    return result;
+}
+
+/** Is a re-arm in `pending` past its `rearm_until`? A cheap check before `announceLapses` takes the feed lock. */
+export function hasDueRearm(pending: ReadonlyMap<string, PendingRearm>, now: number = Date.now()): boolean {
+    for (const entry of pending.values()) {
+        if (Date.parse(entry.until) <= now) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Write one `agent_left` with `reason: "lapsed"` for every agent whose re-arm is past its `rearm_until`. Decided
+ * under the feed lock, so several watching logins (and `runStaleSweep`) never write the same lapse twice, and a new
+ * login that landed first cancels it.
+ */
+export async function announceLapses(paths: SessionPaths, now: number = Date.now()): Promise<FeedEvent[]> {
+    const appended = await appendFeedEvents(paths, (events) => {
+        const due = [...pendingRearms(events)].filter(([, entry]) => Date.parse(entry.until) <= now);
+
+        if (due.length === 0) {
+            return [];
+        }
+
+        const lapsing = new Set(due.map(([agentId]) => agentId));
+        const remaining = [...presentAgents(events)]
+            .filter(([agentId]) => !lapsing.has(agentId))
+            .map(([, name]) => name);
+
+        return due.map(
+            ([agentId, entry]): NonMessageInput => ({
+                type: "agent_left",
+                agent_id: agentId,
+                agent_name: entry.agentName,
+                reason: "lapsed",
+                remaining,
+                login_id: entry.loginId,
+                lapsed_since: entry.since,
+            })
+        );
+    });
+
+    if (appended.length > 0) {
+        log.debug({ agents: appended.map((event) => event.type === "agent_left" && event.agent_name) }, "lapsed");
+    }
+
+    return appended;
+}
+
+/**
+ * Announce the lapses due at `now`, then drop from `pending` every re-arm due at that same `now`. One cutoff for
+ * both: a re-arm that falls due while `announceLapses` waits for the feed lock was not announced, so it must stay for
+ * the next check. A dropped one is settled: its lapse is in the feed (written here or by another watcher), or a new
+ * login replaced it.
+ */
+export async function announceDueLapses(
+    paths: SessionPaths,
+    pending: Map<string, PendingRearm>,
+    now: number = Date.now()
+): Promise<FeedEvent[]> {
+    const appended = await announceLapses(paths, now);
+
+    for (const [agentId, entry] of pending) {
+        if (Date.parse(entry.until) <= now) {
+            pending.delete(agentId);
+        }
+    }
+
+    return appended;
+}
+
+/** Why a recipient will not read a message now; `message` reports it to the sender. */
+export interface NotListening {
+    agent_id: string;
+    /** `rearming`: its login ended and the grace for the next one runs. `left`: it left the bus. */
+    state: "rearming" | "left" | "never_logged_in";
+    /** When the login ended or the leave was written. */
+    since?: string;
+    /** With `left`: the leave's reason. */
+    reason?: AgentLeftEvent["reason"];
+}
+
+/**
+ * The recipients among `agentIds` that are not listening right now. A `--once` receiver between two cycles counts
+ * as listening: it is on the bus and reads its mail at its next login.
+ */
+export function notListening(events: readonly FeedEvent[], agentIds: readonly string[]): NotListening[] {
+    const present = presence(events);
+    const rearming = pendingRearms(events);
+    const result: NotListening[] = [];
+
+    for (const agentId of agentIds) {
+        const pending = rearming.get(agentId);
+
+        if (pending) {
+            result.push({ agent_id: agentId, state: "rearming", since: pending.since });
+            continue;
+        }
+
+        if (present.has(agentId)) {
+            continue;
+        }
+
+        const lastLeave = events.findLast(
+            (event): event is AgentLeftEvent => event.type === "agent_left" && event.agent_id === agentId
+        );
+        result.push(
+            lastLeave
+                ? { agent_id: agentId, state: "left", since: lastLeave.ts, reason: lastLeave.reason }
+                : { agent_id: agentId, state: "never_logged_in" }
+        );
+    }
+
+    return result;
 }

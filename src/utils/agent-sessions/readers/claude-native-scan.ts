@@ -1,6 +1,7 @@
 import type { NativeCall, NativeScan, ToolTiming } from "@genesiscz/utils/ai/transcripts/insights-types";
 import { eachLine } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { parseTranscriptLine } from "@genesiscz/utils/ai/transcripts/parse-line";
+import { claudeServiceTier } from "@genesiscz/utils/ai/usage/spend/parse";
 import { isObject } from "@genesiscz/utils/object";
 
 function count(value: unknown): number {
@@ -63,6 +64,12 @@ export function scanClaudeNative(text: string): NativeScan {
             if (id && !seenMessages.has(id)) {
                 seenMessages.add(id);
                 const usage = isObject(message.usage) ? message.usage : {};
+                const serviceTier = claudeServiceTier(usage);
+                const cacheWrite = count(usage.cache_creation_input_tokens);
+                // The one-hour share, read as the spend loader reads it, so a call prices alike in both.
+                const cacheWrite1h = isObject(usage.cache_creation)
+                    ? Math.min(count(usage.cache_creation.ephemeral_1h_input_tokens), cacheWrite)
+                    : 0;
                 const call: NativeCall = {
                     ordinal,
                     messageId: id,
@@ -71,8 +78,11 @@ export function scanClaudeNative(text: string): NativeScan {
                     input: count(usage.input_tokens),
                     output: count(usage.output_tokens),
                     cacheRead: count(usage.cache_read_input_tokens),
-                    cacheWrite: count(usage.cache_creation_input_tokens),
+                    cacheWrite,
                     reasoning: 0,
+                    ...(serviceTier ? { serviceTier } : {}),
+                    ...(cacheWrite1h > 0 ? { cacheWrite1h } : {}),
+                    ...(typeof record.costUSD === "number" ? { recordedCostUsd: count(record.costUSD) } : {}),
                 };
                 scan.calls.push(call);
             }

@@ -14,12 +14,15 @@ import {
     RAW_AGENT_ENV_RATCHET,
     RAW_TERMINAL_ENV_RATCHET,
 } from "./agent-context-ratchet";
+import { EXEC_DEADLINE_RATCHET } from "./exec-deadline-ratchet";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import {
+    AI_CONFIG_IMPORT_RATCHET,
     BARE_REQUIRE_RATCHET,
     changedFiles,
     checkSource,
     checkSwiftSource,
+    countRatchetShortfalls,
     type Finding,
     maskSwiftNonCode,
     namesToolCommand,
@@ -27,6 +30,8 @@ import {
     pluginsDisabledFor,
     ratchetAdditions,
     staleRatchetEntries,
+    staticallyImportsCanvas,
+    staticallyImportsReadme,
     withinCountRatchets,
 } from "./lint-rules";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
@@ -883,6 +888,35 @@ describe("no-sync-poll-loop", () => {
     });
 });
 
+describe("no-raw-clack-import", () => {
+    test("flags @clack/prompts in every import shape, in a source file and a test file", () => {
+        for (const source of [
+            'import * as p from "@clack/prompts";',
+            'import { select, isCancel } from "@clack/prompts";',
+            'import type { Option } from "@clack/prompts";',
+            'export { spinner } from "@clack/prompts";',
+            'const { confirm } = await import("@clack/prompts");',
+        ]) {
+            expect({ source, rules: rules(source) }).toEqual({ source, rules: ["no-raw-clack-import"] });
+            expect({ source, rules: rules(source, "src/example.test.ts") }).toEqual({
+                source,
+                rules: ["no-raw-clack-import"],
+            });
+        }
+    });
+
+    test("the facade, its backends and the ratcheted meetings file may import it; @clack/core is another module", () => {
+        const source = 'import * as clack from "@clack/prompts";';
+        expect(rules(source, "src/utils/prompts/p/clack-backend.ts")).toEqual([]);
+        expect(rules(source, "src/utils/prompts/p/__tests__/clack-backend.test.ts")).toEqual([]);
+        expect(rules(source, "src/meetings/commands/listen.ts")).toEqual([]);
+        expect(rules(source, "src/meetings/commands/other.ts")).toEqual(["no-raw-clack-import"]);
+        expect(rules('import * as p from "@genesiscz/utils/prompts/p";')).toEqual([]);
+        expect(rules('import { Prompt } from "@clack/core";')).toEqual([]);
+        expect(rules('log.info("moved off @clack/prompts");')).toEqual([]);
+    });
+});
+
 describe("no-process-tool-spawn", () => {
     test("flags ps, lsof and pgrep in every spawn shape", () => {
         for (const source of [
@@ -937,6 +971,30 @@ describe("no-process-tool-spawn", () => {
         expect(rules(source, "src/utils/process/ps.ts")).toEqual([]);
         expect(rules(source, "scripts/benchmarks/process/process-child.ts")).toEqual([]);
         expect(rules(`// lint-rules-ignore: Linux fallback\n${source}`)).toEqual([]);
+    });
+
+    test("flags an import of the ps adapter outside the process layer, in every import shape", () => {
+        for (const source of [
+            'import { batchPsInfo } from "@genesiscz/utils/process/ps";',
+            'import type { PsRow } from "@genesiscz/utils/process/ps";',
+            `import * as ps from "${["@app", "utils/process/ps"].join("/")}";`,
+            'import { listPsTable } from "../process/ps.ts";',
+            'export { parseCpuTime } from "@genesiscz/utils/process/ps";',
+            'const { listPsRows } = await import("@genesiscz/utils/process/ps");',
+        ]) {
+            expect({ source, rules: rules(source) }).toEqual({ source, rules: ["no-process-tool-spawn"] });
+        }
+    });
+
+    test("the process layer, the benchmarks and tests may import the ps adapter, and another ps module is not it", () => {
+        const source = 'import { batchPsInfo } from "@genesiscz/utils/process/ps";';
+        expect(rules(source, "src/utils/process/processes.ts")).toEqual([]);
+        expect(rules('import { batchPsInfo } from "./ps";', "src/utils/process/processes.ts")).toEqual([]);
+        expect(rules(source, "scripts/benchmarks/process/process-child.ts")).toEqual([]);
+        expect(rules(source, "src/port/__tests__/scanner.test.ts")).toEqual([]);
+        expect(rules('import { runningTurnPids } from "./ps";', "src/utils/worker/turns.ts")).toEqual([]);
+        expect(rules('import { readProcessRows } from "@genesiscz/utils/process/processes";')).toEqual([]);
+        expect(rules('import { captureSync } from "@genesiscz/utils/process/capture";')).toEqual([]);
     });
 });
 
@@ -1085,6 +1143,59 @@ describe("no-tool-command-in-utils", () => {
     });
 });
 
+describe("no-static-readme-import", () => {
+    const rule = "no-static-readme-import";
+
+    test("flags a static import or re-export of the README module, by alias or by relative path", () => {
+        expect(rules('import { printReadmeAndExit } from "@genesiscz/utils/readme";', "src/x/index.ts")).toContain(
+            rule
+        );
+        // The legacy alias is built from parts, so the package-boundary guard does not read this fixture as an import.
+        const legacyAlias = ["@app", "utils/readme.ts"].join("/");
+        expect(rules(`import { printReadmeAndExit } from "${legacyAlias}";`, "src/x/index.ts")).toContain(rule);
+        expect(rules('export { printReadmeAndExit } from "@genesiscz/utils/readme";', "src/x/a.ts")).toContain(rule);
+        expect(rules('import "@genesiscz/utils/readme";', "src/x/index.ts")).toContain(rule);
+    });
+
+    test("resolves a relative specifier against the importing file", () => {
+        // checkSource parses without a file name, so the relative case is pinned on the helper the rule calls.
+        expect(staticallyImportsReadme('import { a } from "../readme";', "src/utils/cli/a.ts")).toBe(true);
+        expect(staticallyImportsReadme('import { a } from "../utils/readme.ts";', "src/x/index.ts")).toBe(true);
+        expect(staticallyImportsReadme('import { a } from "./readme";', "src/x/lib/a.ts")).toBe(false);
+    });
+
+    test("passes the dynamic import, a type-only import and other modules named readme", () => {
+        expect(rules('const m = await import("@genesiscz/utils/readme");', "src/x/index.ts")).not.toContain(rule);
+        expect(rules('import type { X } from "@genesiscz/utils/readme";', "src/x/index.ts")).not.toContain(rule);
+        expect(rules('import { a } from "./readme";', "src/x/lib/a.ts")).not.toContain(rule);
+        expect(rules('import { a } from "@genesiscz/utils/readme-flag";', "src/x/index.ts")).not.toContain(rule);
+    });
+});
+
+describe("no-canvas-import-outside-owner", () => {
+    const rule = "no-canvas-import-outside-owner";
+
+    test("flags a value import or re-export of the canvas addon outside its owner", () => {
+        expect(rules('import { createCanvas } from "@napi-rs/canvas";', "src/control/lib/a.ts")).toContain(rule);
+        expect(rules('import { type Canvas, loadImage } from "@napi-rs/canvas";', "src/utils/image/a.ts")).toContain(
+            rule
+        );
+        expect(rules('import { type Canvas } from "@napi-rs/canvas";', "src/x/a.ts")).toContain(rule);
+        expect(rules('export { createCanvas } from "@napi-rs/canvas";', "src/x/a.ts")).toContain(rule);
+        expect(rules('import "@napi-rs/canvas";', "src/x/a.ts")).toContain(rule);
+    });
+
+    test("passes the owner, a type-only import, tests, a dynamic import and other packages", () => {
+        expect(rules('import { createCanvas } from "@napi-rs/canvas";', "src/utils/image/canvas.ts")).not.toContain(
+            rule
+        );
+        expect(rules('import type { Canvas } from "@napi-rs/canvas";', "src/control/lib/a.ts")).not.toContain(rule);
+        expect(rules('import { createCanvas } from "@napi-rs/canvas";', "src/x/a.test.ts")).not.toContain(rule);
+        expect(rules('const m = await import("@napi-rs/canvas");', "src/x/a.ts")).not.toContain(rule);
+        expect(staticallyImportsCanvas('import { a } from "@napi-rs/canvas-extra";')).toBe(false);
+    });
+});
+
 describe("no-bun-only-import-meta", () => {
     const rule = "no-bun-only-import-meta";
 
@@ -1138,6 +1249,65 @@ describe("no-bare-require-in-utils", () => {
     });
 });
 
+describe("no-aiconfig-import", () => {
+    const rule = "no-aiconfig-import";
+
+    test("flags a static, a type-only, a re-exported and a dynamic import of the retired facade and its projection", () => {
+        expect(rules('import { AIConfig } from "@genesiscz/utils/ai/AIConfig";', "src/x/a.ts")).toContain(rule);
+        expect(rules('import type { AIConfig } from "../AIConfig";', "src/utils/ai/x.ts")).toContain(rule);
+        expect(rules('export { AIConfig } from "./AIConfig";', "src/utils/ai/index.ts")).toContain(rule);
+        expect(rules('const m = await import("@genesiscz/utils/ai/AIConfig.ts");', "src/x/a.ts")).toContain(rule);
+        expect(rules('import { projectToV3 } from "./config/store-bridge";', "src/utils/ai/x.ts")).toContain(rule);
+        expect(rules('import { toV3Account } from "./v3-adapter";', "src/utils/ai/config/x.ts")).toContain(rule);
+    });
+
+    test("passes the store, account-ops and the v3 type names that outlive the facade", () => {
+        expect(
+            rules('import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";', "src/x/a.ts")
+        ).not.toContain(rule);
+        expect(
+            rules('import { patchAccount } from "@genesiscz/utils/ai/config/account-ops";', "src/x/a.ts")
+        ).not.toContain(rule);
+        expect(
+            rules('import type { AIConfigData } from "@genesiscz/utils/config/ai.types";', "src/x/a.ts")
+        ).not.toContain(rule);
+        expect(rules('const m = await import("./AiConfigStore");', "src/x/a.ts")).not.toContain(rule);
+    });
+
+    test("every ratchet entry still imports a retired module, so a deleted file leaves the list", async () => {
+        const stale: string[] = [];
+
+        // Checked under another path: the listed path itself is exempt from the rule.
+        for (const file of AI_CONFIG_IMPORT_RATCHET) {
+            const source = await Bun.file(file)
+                .text()
+                .catch(() => "");
+
+            if (!rules(source, "src/ratchet-probe.ts").includes(rule)) {
+                stale.push(file);
+            }
+        }
+
+        expect(stale).toEqual([]);
+    });
+});
+
+describe("no-pricing-steps-outside-priced-usage", () => {
+    const rule = "no-pricing-steps-outside-priced-usage";
+
+    test("flags a pricing step outside the priced-usage module, and passes its owners, tests and priceUsage", () => {
+        expect(rules("const e = priceFor(model, table);", "src/hub/lib/x.ts")).toContain(rule);
+        expect(rules("const p = resolvePrice(entry, {});", "src/utils/agent-sessions/x.ts")).toContain(rule);
+        expect(rules("const f = priceForCandidates(models, table);", "src/ai-spend/lib/x.ts")).toContain(rule);
+        expect(rules("const p = resolvePrice(entry, {});", "src/utils/ai/usage/spend/priced-usage.ts")).not.toContain(
+            rule
+        );
+        expect(rules("const e = priceFor(model, table);", "src/utils/ai/usage/spend/pricing.ts")).not.toContain(rule);
+        expect(rules("const e = priceFor(model, table);", "src/utils/ai/usage/spend/x.test.ts")).not.toContain(rule);
+        expect(rules("const q = priceUsage(usage);", "src/hub/lib/x.ts")).not.toContain(rule);
+    });
+});
+
 describe("no-transcript-format-outside-readers", () => {
     const rule = "no-transcript-format-outside-readers";
 
@@ -1151,6 +1321,19 @@ describe("no-transcript-format-outside-readers", () => {
         // An LLM chat message is not a transcript record, and a bare role names nothing provider-specific.
         expect(rules('const m = \'{"role":"user","content":"hi"}\';', "src/jev/lib/x.ts")).not.toContain(rule);
         expect(rules('const role = "assistant";', "src/ask/lib/x.ts")).not.toContain(rule);
+    });
+
+    test("flags the Claude change parse's raw-line probes outside the readers, not a bare API block type", () => {
+        expect(rules("const MARKERS = ['\"promptId\"', '\"tool_use\"'];", "src/hub/lib/x.ts")).toContain(rule);
+        expect(rules("const marker = '\"file-history-';", "src/hub/lib/x.ts")).toContain(rule);
+        expect(rules('const probe = `"promptId":"${turn}"`;', "src/agents/lib/changes/x.ts")).toContain(rule);
+        expect(
+            rules("const MARKERS = ['\"promptId\"', '\"file-history-'];", "src/utils/agent-sessions/readers/claude.ts")
+        ).not.toContain(rule);
+        expect(rules('if (block.type === "tool_use") {}', "src/ask/lib/x.ts")).not.toContain(rule);
+        expect(
+            rules('switch (msg.type) { case "file-history-snapshot": break; }', "src/utils/agents/x.ts")
+        ).not.toContain(rule);
     });
 
     test("every ratchet entry still names the transcript format, so a migrated file leaves the list", async () => {
@@ -1748,5 +1931,86 @@ describe("no-proxy-provider-branch", () => {
         }
 
         expect(stale).toEqual([]);
+    });
+});
+
+describe("no-exec-without-deadline", () => {
+    const rule = "no-exec-without-deadline";
+    const found = (source: string, file = "src/example/run.ts") =>
+        checkSource(file, source, { ratchets: false })
+            .filter((item) => item.rule === rule)
+            .map((item) => item.text);
+
+    test("an Executor call with no timeout is found, and one that names a bound, or another exec API, is not", () => {
+        expect(
+            found(
+                [
+                    'git.exec(["status"]);',
+                    'executor.execOrThrow(args, "failed");',
+                    "run.git.executor.exec(args, { cwd });",
+                    'new Executor({ cwd }).exec(argv, { env: { A: "1" } });',
+                    'git.exec(["fetch"], { timeout: { ms: 600_000, reason: "a fetch" } });',
+                    'git.exec(["push"], { timeout });',
+                    'executor.execOrThrow(args, "failed", { timeout: 5_000 });',
+                    'git.exec(["status"], { ...options });',
+                    "git.exec(args, options);",
+                    "/^a(b)$/.exec(line);",
+                    'db.exec("CREATE TABLE t (a)");',
+                    "pattern.exec(text);",
+                ].join("\n")
+            )
+        ).toEqual([
+            'git.exec(["status"])',
+            'executor.execOrThrow(args, "failed")',
+            "run.git.executor.exec(args, { cwd })",
+            'new Executor({ cwd }).exec(argv, { env: { A: "1" } })',
+        ]);
+        expect(found('git.exec(["status"]);', "src/utils/cli/executor.ts")).toEqual([]);
+    });
+
+    test("every count on the roster is the file's real number of calls, and the list only names files that exist", async () => {
+        const stale: string[] = [];
+
+        for (const [file, allowed] of EXEC_DEADLINE_RATCHET) {
+            const count = found(await Bun.file(file).text(), file).length;
+
+            if (count !== allowed) {
+                stale.push(`${file}: listed ${allowed}, found ${count}`);
+            }
+        }
+
+        expect(stale).toEqual([]);
+    });
+
+    test("a count above the file's calls is a finding, a file outside the scan is judged only when it is gone", () => {
+        const finding = (file: string): Finding => ({
+            file,
+            line: 1,
+            column: 1,
+            rule,
+            severity: "error",
+            message: "",
+            text: "",
+        });
+        const counts = new Map([
+            [
+                rule,
+                new Map([
+                    ["src/a.ts", 2],
+                    ["scripts/ci/lint-rules.ts", 1],
+                    ["src/gone.ts", 1],
+                ]),
+            ],
+        ]);
+
+        const shortfalls = countRatchetShortfalls([finding("src/a.ts")], new Set(["src/a.ts"]), counts);
+
+        expect(shortfalls.map((item) => [item.file, item.message])).toEqual([
+            ["src/a.ts", `The ratchet allows 2 findings of ${rule} here and the file has 1: lower its count to 1.`],
+            ["src/gone.ts", `The ratchet allows 1 findings of ${rule} here and the file has 0: lower its count to 0.`],
+        ]);
+        expect(
+            countRatchetShortfalls([finding("src/a.ts"), finding("src/a.ts")], new Set(["src/a.ts"]), counts)
+        ).toHaveLength(1);
     });
 });

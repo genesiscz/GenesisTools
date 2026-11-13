@@ -14,6 +14,8 @@ export interface UsageEvent {
     /** The one-hour share of `cacheCreationTokens` (Anthropic bills it at 2x input, not 1.25x). */
     cacheCreation1hTokens?: number;
     cacheReadTokens: number;
+    /** The tier the call was billed at when it is not the standard one (Claude fast mode: `fast`). */
+    serviceTier?: string;
     /**
      * Cost the loader's source already resolved for this event: a recorded charge, or its own price
      * ladder. `aggregate` prices from the table only when this is absent.
@@ -33,7 +35,7 @@ export interface ModelPrice {
 
 /**
  * Catalog rules the flat rates above cannot express: dated promotions and
- * long-context bands. Kept on the entry so `resolvePrice()` can apply them per
+ * long-context bands. Kept on the entry so `resolvePrice` can apply them per
  * EVENT — flattening them away billed every event at the list rate and silently
  * ignored e.g. the dated Sonnet 5 promotion.
  */

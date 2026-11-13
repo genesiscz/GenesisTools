@@ -145,6 +145,8 @@ final class UsageTests: XCTestCase {
         let series = try decode(Self.seriesJSON, as: UsageSeriesData.self, door: .series(.day, step: "raw", agg: "raw")).data
         let table = UsageTableBuilder.build(limits: limits, series: series, now: UsageTime.date("2026-11-03T10:00:00.000Z")!)
         XCTAssertEqual(table.columns.map(\.title), ["5h", "Week", "Fable"])
+        // A column whose every cell is "no limit" carries no reading, so the Limits table leaves it out by default.
+        XCTAssertEqual(UsageTableBuilder.columnsWithReadings(table.columns, rows: table.rows).map(\.title), ["Week", "Fable"])
         let row = try XCTUnwrap(table.rows.first)
         XCTAssertEqual(row.cells["session"]?.absent, true)
         XCTAssertEqual(row.cells["weekly"]?.percent, 62)

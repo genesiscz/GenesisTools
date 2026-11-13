@@ -154,6 +154,16 @@ struct HubSessionDetailHost: View {
         // The review process has no hub menu, so the session there keeps those keys.
         .environment(\.sessionHostOwnsCommandKeys, AppMainMenu.installedWithHub)
         .background(HostWindowReader(host: host))
+        // While this header is on screen its reload is the session view's only one (`ReviewModel.headerReloads`).
+        .task(id: agentChild ? "" : session.sessionId) {
+            guard !agentChild else { return }
+            let id = session.sessionId
+            ReviewModel.sessionHeader(id, onScreen: true)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3600))
+            }
+            ReviewModel.sessionHeader(id, onScreen: false)
+        }
         // The follow process lives exactly as long as the detail is on screen.
         .onAppear {
             onScreen = true
@@ -351,6 +361,11 @@ struct HubSessionDetailHost: View {
     private var actions: SessionDetailActions {
         var actions = SessionDetailActions()
         actions.refresh = {
+            // The one reload of the session view: the Changes pane beside it reloads too, and shows no reload of its
+            // own while this header is on screen (`ReviewModel.headerReloads`).
+            if !agentChild {
+                NotificationCenter.default.post(name: ReviewModel.sessionReload, object: session.sessionId)
+            }
             // An established window keeps its start, 0 included: a nil offset asks for the latest turns, which
             // drops the earlier ones on screen once more turns arrived than the limit leaves room for.
             Task {
@@ -360,6 +375,9 @@ struct HubSessionDetailHost: View {
                 let fresh = await Task.detached(priority: .utility) { HubSpend.fetch(row, force: true) }.value
                 if !Task.isCancelled, row.id == session.id { spend = fresh }
             }
+        }
+        if !agentChild {
+            actions.refreshTooltip = "Reload the session, its transcript and its changes"
         }
         actions.copy = { text in PathOpener.copy(text) }
         actions.openSubagent = agentChild ? nil : onOpenSubagent

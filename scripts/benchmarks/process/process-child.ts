@@ -27,8 +27,9 @@ import {
     readVmPageCounts,
     sampleCpuBusyPercent,
 } from "@genesiscz/utils/macos/host-stats";
+import { batchCwd, batchCwdViaLsof } from "@genesiscz/utils/process/cwd";
 import { ancestry } from "@genesiscz/utils/process/processes";
-import { batchCwd, batchCwdViaLsof, listPsTable } from "@genesiscz/utils/process/ps";
+import { listPsTable } from "@genesiscz/utils/process/ps";
 import { listListeningTcpAsLsof } from "@genesiscz/utils/process/socket-owner";
 import { processStartMs, readProcessCommand } from "@genesiscz/utils/process-identity";
 import { cpuNowMs } from "./cpu";

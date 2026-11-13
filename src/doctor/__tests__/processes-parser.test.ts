@@ -2,8 +2,8 @@ import { describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildTree, parsePsOutput, readProcessRecords } from "@app/doctor/analyzers/processes";
+import * as captureModule from "@genesiscz/utils/process/capture";
 import * as processOs from "@genesiscz/utils/process/os";
-import * as ps from "@genesiscz/utils/process/ps";
 
 const FIXTURES = join(import.meta.dir, "fixtures");
 
@@ -37,7 +37,7 @@ describe("buildTree", () => {
 });
 it("readProcessRecords uses one Windows snapshot per CPU sample", async () => {
     const platform = spyOn(processOs, "processPlatform").mockReturnValue("win32");
-    const capture = spyOn(ps, "captureSync").mockReturnValue({
+    const capture = spyOn(captureModule, "captureSync").mockReturnValue({
         stderr: "",
         status: 0,
         stdout: '[{"ProcessId":81001,"Name":"worker.exe","CommandLine":"worker.exe --job fixture","WorkingSetSize":1024},{"ProcessId":81002,"Name":"helper.exe","WorkingSetSize":2048}]',

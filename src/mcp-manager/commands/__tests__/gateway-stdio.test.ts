@@ -1,15 +1,12 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as configUtils from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { GATEWAY_HEADER } from "../../lib/auth/constants.ts";
 import * as secrets from "../../lib/auth/secrets.ts";
 import * as ensure from "../../lib/gateway/ensure.ts";
 import { parseStdioMessages } from "../../lib/gateway/stdio-relay.ts";
 import { stdioRelayRoute } from "../../lib/gateway/stdio-route.ts";
 import { gatewayStdio } from "../gateway.ts";
-
-setupStorageSandbox();
 
 const INIT =
     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}';

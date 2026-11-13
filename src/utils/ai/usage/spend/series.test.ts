@@ -6,18 +6,17 @@ import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { spendAccountRowId } from "./drivers";
 import { claudeDriver } from "./drivers/claude";
 import { codexDriver } from "./drivers/codex";
 import { isolateAgentHomeEnv } from "./drivers/test-env";
 import type { DriverRoot, MonitorDriver } from "./drivers/types";
 import { collectSeriesEvents } from "./events-cache";
+import { readTail } from "./monitor";
 import { DEFAULT_PRICING } from "./pricing";
 import { loadEvents } from "./reports/load";
 import { buildSpendSeries, type SpendSeriesOptions, UnsupportedGrainError } from "./series";
 
-setupStorageSandbox();
 // CODEX_HOME / CLAUDE_CONFIG_DIR would drag the real transcript trees in.
 isolateAgentHomeEnv();
 
@@ -232,6 +231,33 @@ describe("buildSpendSeries", () => {
         expect(cold.points.map((point) => point.tokens)).toEqual([600_000]);
         // Negative control: in-window events still arrive on both runs.
         expect(warm.points[0].byAccount[WORK].tokens).toBe(100_000);
+    });
+
+    test("a cache from before Claude's fast-tier rates (version 7) is re-read, and the one it writes is reused", async () => {
+        await buildSpendSeries({ ...window(), grain: "day" }, options);
+
+        const cacheFile = join(storage.getCacheDir(), "events-cache.json");
+        const written = SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) as { version: number };
+        expect(written.version).toBe(8);
+        writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version: 7 }, { strict: true }));
+
+        const opened: string[] = [];
+        const reading = {
+            ...options,
+            readTailFn: (path: string, offset: number, size: number) => {
+                opened.push(path);
+
+                return readTail(path, offset, size);
+            },
+        };
+        const rebuilt = await buildSpendSeries({ ...window(), grain: "day" }, reading);
+
+        expect(opened.length).toBeGreaterThan(0);
+        expect(rebuilt.points[0].tokens).toBe(600_000);
+        // Negative control: the version 8 cache it just wrote is reused, so nothing is opened again.
+        opened.length = 0;
+        await buildSpendSeries({ ...window(), grain: "day" }, reading);
+        expect(opened).toEqual([]);
     });
 
     test("events older than the retention window are dropped from the cache", async () => {

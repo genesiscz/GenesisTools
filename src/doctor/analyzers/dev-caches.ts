@@ -1,6 +1,5 @@
 import type { Dirent } from "node:fs";
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
@@ -12,6 +11,7 @@ import {
     writeSnapshot,
 } from "@app/doctor/lib/global-packages";
 import { guardPaths } from "@app/doctor/lib/path-guard";
+import { removeForDoctor } from "@app/doctor/lib/remove";
 import { run, runInherit } from "@app/doctor/lib/run";
 import { readScanGate, type ScanGateReader } from "@app/doctor/lib/scan-gate";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
@@ -381,7 +381,11 @@ function deleteDirectoryAction(id: string, label: string, path: string, bytes: n
         method: "delete",
         execute: async (_ctx: ExecutorContext, finding) => {
             try {
-                await rm(path, { recursive: true, force: true });
+                const removal = await removeForDoctor(path, { analyzerId: "dev-caches" });
+
+                if (removal.refusal) {
+                    throw new Error(`Refusing removal: ${removal.refusal}`);
+                }
 
                 return {
                     findingId: finding.id,
@@ -747,7 +751,16 @@ export function cleanPackageCacheAction(args: {
                     error: guarded.error,
                 };
             }
-            await rm(args.path, { recursive: true, force: true });
+            const removal = await removeForDoctor(args.path, { analyzerId: "dev-caches" });
+
+            if (removal.refusal) {
+                return {
+                    findingId: finding.id,
+                    actionId: `clean-${args.manager}-cache`,
+                    status: "failed",
+                    error: removal.refusal,
+                };
+            }
 
             return {
                 findingId: finding.id,

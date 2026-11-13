@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 import { runTool } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { createBoxTable, formatDotStatus } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import { registerAreaCommands } from "./commands/area";
@@ -9,8 +8,6 @@ import { registerHistoryCommands } from "./commands/history";
 import { globalOptions, parseIntArg } from "./commands/run";
 import { registerTripCommands } from "./commands/trip";
 import { type CheckStatus, runDoctor } from "./lib/doctor";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command()
     .name("waze")

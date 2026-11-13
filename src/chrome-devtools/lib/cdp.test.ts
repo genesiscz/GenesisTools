@@ -1,20 +1,24 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { runInNewContext } from "node:vm";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { Command } from "commander";
+import { registerNetPanel } from "../commands/net-panel.ts";
+import { attachTab } from "../commands/shared.ts";
 import {
     AmbiguousTabError,
+    attach,
     Browser,
     browser,
     type CdpCookie,
-    Conn,
+    type Conn,
     cdpPortOf,
     choosePortByMatch,
     classifyEvalError,
     closeTabCandidates,
+    connect,
     consoleLevelSummary,
     cookiesSummaryLine,
     evaluationExpression,
-    localDebuggerUrl,
     makeMatcher,
     NoMatchingTabError,
     newTab,
@@ -23,6 +27,7 @@ import {
 import { findTargets } from "./dom/find.ts";
 import { type DomAction, type DomSnapshot, installPageAgent } from "./dom/in-page.ts";
 import { DomPage } from "./dom/page.ts";
+import { dumpThroughBlankDocument } from "./profile-idb.ts";
 import { createTabDriver } from "./tab-driver.ts";
 
 test("a payload file's doc comment and trailing semicolon do not stop its function from running", () => {
@@ -45,6 +50,8 @@ test("a source that opens with a parenthesis is called only when its value is a 
     expect(run("(a = (1)) => a + 1")).toBe(2);
     expect(run("() => 7")).toBe(7);
     expect(await run("async () => 6")).toBe(6);
+    expect(runInNewContext(evaluationExpression("(function () { return value; })"), { value: "page" })).toBe("page");
+    expect(run("(1, 2)")).toBe(2);
 });
 
 describe("a page-agent target named by its label", () => {
@@ -106,12 +113,144 @@ test("a CDP endpoint names its port, and one on another host is refused", () => 
     expect(() => cdpPortOf("not a url")).toThrow();
 });
 
-test("the DOM driver accepts only a debugger socket on this machine and the requested port", () => {
-    expect(localDebuggerUrl({ webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/A" }, 9222)).toContain(
-        "127.0.0.1:9222"
-    );
-    expect(() => localDebuggerUrl({ webSocketDebuggerUrl: "ws://127.0.0.1:9333/devtools/page/A" }, 9222)).toThrow();
-    expect(() => localDebuggerUrl({ webSocketDebuggerUrl: "ws://evil.example:9222/devtools/page/A" }, 9222)).toThrow();
+describe("the connect door checks the debugger URL before a socket exists", () => {
+    const opened: string[] = [];
+    let websocket: PropertyDescriptor | undefined;
+    let undoFetch: (() => void) | undefined;
+    let argvLength: number | undefined;
+
+    /** Every socket the code under test opens is recorded; `refuse` makes the constructor throw. */
+    function spySockets(mode: "refuse" | "record") {
+        websocket = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
+        Object.defineProperty(globalThis, "WebSocket", {
+            configurable: true,
+            value: class extends EventTarget {
+                onopen: (() => void) | null = null;
+                onerror: (() => void) | null = null;
+                onmessage: ((event: { data: string }) => void) | null = null;
+                constructor(url: string) {
+                    super();
+                    opened.push(url);
+                    if (mode === "refuse") {
+                        throw new Error(`a socket was opened to ${url}`);
+                    }
+                }
+                close() {}
+            },
+        });
+    }
+
+    /** `/json/list` on any port answers with these targets. */
+    function serveTargets(list: unknown[]) {
+        const fetch = spyOn(globalThis, "fetch").mockImplementation(
+            Object.assign(async () => new Response(SafeJSON.stringify(list, { strict: true })), {
+                preconnect: globalThis.fetch.preconnect,
+            })
+        );
+        undoFetch = () => fetch.mockRestore();
+    }
+
+    /** resolvePort honours --port only when it is on the command line. */
+    function portOnArgv(port: number) {
+        argvLength = process.argv.length;
+        process.argv.push(`--port=${port}`);
+    }
+
+    const foreign = "ws://evil.example:9222/devtools/page/A";
+
+    afterEach(() => {
+        opened.length = 0;
+        if (websocket) {
+            Object.defineProperty(globalThis, "WebSocket", websocket);
+            websocket = undefined;
+        }
+
+        undoFetch?.();
+        undoFetch = undefined;
+        if (argvLength !== undefined) {
+            process.argv.length = argvLength;
+            argvLength = undefined;
+        }
+    });
+
+    test("it refuses a socket on another host", () => {
+        spySockets("refuse");
+        expect(() => connect({ webSocketDebuggerUrl: foreign }, 9222)).toThrow("Refusing a debugger URL");
+        expect(() => connect({ webSocketDebuggerUrl: "http://127.0.0.1:9222/devtools/page/A" }, 9222)).toThrow(
+            "Refusing a debugger URL"
+        );
+        expect(opened).toEqual([]);
+    });
+
+    test("it refuses a socket on another port of this machine", () => {
+        spySockets("refuse");
+        expect(() => connect({ webSocketDebuggerUrl: "ws://127.0.0.1:9333/devtools/page/A" }, 9222)).toThrow(
+            "port 9222"
+        );
+        expect(opened).toEqual([]);
+    });
+
+    test("it opens the socket on the asked port", () => {
+        spySockets("record");
+        const conn = connect({ webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/A" }, 9222);
+        conn.close();
+        expect(opened).toEqual(["ws://127.0.0.1:9222/devtools/page/A"]);
+    });
+
+    const page = {
+        id: "A",
+        type: "page",
+        title: "Example",
+        url: "https://app.example.com/",
+        webSocketDebuggerUrl: foreign,
+    };
+
+    test("attach refuses a foreign debugger URL before a socket opens", async () => {
+        spySockets("refuse");
+        serveTargets([page]);
+        await expect(attach({ port: 9222 })).rejects.toThrow("Refusing a debugger URL");
+        expect(opened).toEqual([]);
+    });
+
+    test("attachTab refuses a foreign debugger URL before a socket opens", async () => {
+        spySockets("refuse");
+        serveTargets([page]);
+        portOnArgv(9222);
+        await expect(attachTab({ port: "9222" })).rejects.toThrow("Refusing a debugger URL");
+        expect(opened).toEqual([]);
+    });
+
+    test("net-panel refuses a foreign debugger URL before a socket opens", async () => {
+        spySockets("refuse");
+        serveTargets([
+            page,
+            {
+                id: "D",
+                type: "page",
+                title: "DevTools - app.example.com/",
+                url: "devtools://devtools/bundled/devtools_app.html",
+                webSocketDebuggerUrl: foreign,
+            },
+        ]);
+        portOnArgv(9222);
+        const program = new Command();
+        registerNetPanel(program);
+        await expect(
+            program.parseAsync(["net-panel", "--port", "9222", "--match", "DevTools - app.example.com/"], {
+                from: "user",
+            })
+        ).rejects.toThrow("Refusing a debugger URL");
+        expect(opened).toEqual([]);
+    });
+
+    test("the profile IndexedDB reader refuses a foreign debugger URL before a socket opens", async () => {
+        spySockets("refuse");
+        serveTargets([page]);
+        await expect(
+            dumpThroughBlankDocument({ port: 9222, origin: "https://app.example.com", args: {} })
+        ).rejects.toThrow("Refusing a debugger URL");
+        expect(opened).toEqual([]);
+    });
 });
 
 describe("browser debugger address validation", () => {
@@ -575,10 +714,14 @@ describe("DOM input dispatch and settle evidence", () => {
                 addEventListener() {}
             },
         });
-        const on = spyOn(Conn.prototype, "on").mockImplementation((fn) => {
+        // Conn is exported as a type only, so its prototype is reached through a connection.
+        const probe = connect({ webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/probe" }, 9222);
+        const connPrototype: Conn = Object.getPrototypeOf(probe);
+        probe.close();
+        const on = spyOn(connPrototype, "on").mockImplementation((fn) => {
             listener = fn;
         });
-        const send = spyOn(Conn.prototype, "send").mockImplementation(async (method, params = {}) => {
+        const send = spyOn(connPrototype, "send").mockImplementation(async (method, params = {}) => {
             if (method === "Input.dispatchMouseEvent") {
                 inputs.push(String(params.type));
                 if (params.type === "mousePressed" && options.press === "closed") {
@@ -820,14 +963,14 @@ describe("CDP transport deadlines", () => {
     test("an unopened socket expires and closes", async () => {
         fixture();
         opening = false;
-        const conn = new Conn(socketUrl, { handshakeTimeoutMs: 5 });
+        const conn = connect({ webSocketDebuggerUrl: socketUrl }, 9222, { handshakeTimeoutMs: 5 });
         await expect(conn.send("Page.enable")).rejects.toThrow("socket did not open within");
         expect(sockets[0].closes).toBe(1);
     });
 
     test("command expiry forgets the request; a late reply cannot affect the next command", async () => {
         fixture();
-        const conn = new Conn(socketUrl);
+        const conn = connect({ webSocketDebuggerUrl: socketUrl }, 9222);
         await expect(conn.send("First", {}, undefined, { timeoutMs: 5 })).rejects.toThrow("First did not answer");
         sockets[0].reply(sockets[0].packets[0].id, "late");
         respond = (socket, packet) => socket.reply(packet.id, 42);
@@ -838,7 +981,7 @@ describe("CDP transport deadlines", () => {
 
     test("abort and socket close reject pending commands and remove them", async () => {
         fixture();
-        const conn = new Conn(socketUrl);
+        const conn = connect({ webSocketDebuggerUrl: socketUrl }, 9222);
         const controller = new AbortController();
         const aborted = conn.send("Aborted", {}, undefined, { signal: controller.signal });
         controller.abort(new Error("cancelled"));
@@ -853,7 +996,7 @@ describe("CDP transport deadlines", () => {
     test("a send deadline includes a pending handshake and never dispatches after it expires", async () => {
         fixture();
         opening = false;
-        const conn = new Conn(socketUrl);
+        const conn = connect({ webSocketDebuggerUrl: socketUrl }, 9222);
         await expect(conn.send("First", {}, undefined, { timeoutMs: 5 })).rejects.toThrow("First did not answer");
         sockets[0].readyState = 1;
         sockets[0].onopen?.();

@@ -5,6 +5,7 @@ import { createCodeSearchCommand } from "@app/github/commands/code-search";
 import { commentsCommand, createCommentsCommand } from "@app/github/commands/comments";
 import { createGetCommand, getCommand } from "@app/github/commands/get";
 import { createIssueCommand, issueCommand } from "@app/github/commands/issue";
+import { createMediaCommand } from "@app/github/commands/media";
 import { createMergeCommand } from "@app/github/commands/merge";
 import { createNotificationsCommand, notificationsCommand } from "@app/github/commands/notifications";
 import { createPRCommand, prCommand } from "@app/github/commands/pr";
@@ -15,7 +16,7 @@ import { closeDatabase, getCacheStats } from "@app/github/lib/cache";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
 import { checkAuth, getRateLimit } from "@genesiscz/utils/github/octokit";
 import { detectRepoFromGit, parseGitHubUrl } from "@genesiscz/utils/github/url-parser";
-import { logger, out } from "@genesiscz/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend as _inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
 
@@ -37,6 +38,7 @@ program
 program.addCommand(createIssueCommand());
 program.addCommand(createPRCommand());
 program.addCommand(createMergeCommand());
+program.addCommand(createMediaCommand());
 program.addCommand(createCommentsCommand());
 program.addCommand(createSearchCommand());
 program.addCommand(createCodeSearchCommand());
@@ -418,10 +420,6 @@ async function main(): Promise<void> {
     // Otherwise, parse command line
     try {
         await runTool(program, { tool: "github" });
-    } catch (error) {
-        logger.error({ error }, "Command failed");
-        out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
-        process.exit(1);
     } finally {
         closeDatabase();
     }

@@ -4,7 +4,7 @@
  * pure, so they are tested on captured output from any OS.
  */
 import { SafeJSON } from "@genesiscz/utils/json";
-import { captureSync } from "./ps";
+import { captureSync } from "./capture";
 
 export interface CimProcess {
     pid: number;

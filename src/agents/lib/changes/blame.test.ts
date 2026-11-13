@@ -3,11 +3,11 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerBlameCommand } from "@app/agents/commands/blame";
+import type { ChangeLogRow } from "@genesiscz/utils/agents/change-log";
 import { Command } from "commander";
 import { addedLines, type BlameDeps, blameFiles, blameText, promptOf, toRanges, turnPrompts } from "./blame";
-import type { ChangeEvent } from "./log";
 
-function event(over: Partial<ChangeEvent> & Pick<ChangeEvent, "ts" | "afterOid">): ChangeEvent {
+function event(over: Partial<ChangeLogRow> & Pick<ChangeLogRow, "ts" | "afterOid">): ChangeLogRow {
     return {
         provider: "claude",
         session: "s-one",

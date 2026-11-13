@@ -53,6 +53,16 @@ export interface RequestOptions {
 }
 export type ApifyFetch = (url: string, init: RequestInit) => Promise<Response>;
 
+/**
+ * runTool's formatError for apify. Only an ApifyError's message is shown: the raw text of any other error can carry
+ * the token or a request URL, so it is replaced with a fixed hint.
+ */
+export function formatApifyError(error: unknown): { message: string; exitCode: number } {
+    const message =
+        error instanceof ApifyError ? error.message : "Apify command failed. Check the vault and network connection.";
+    return { message: `apify: ${message}`, exitCode: 1 };
+}
+
 export class ApifyError extends Error {
     constructor(
         message: string,

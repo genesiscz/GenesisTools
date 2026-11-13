@@ -1,9 +1,12 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { audioStreamCount, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
+import { audioStreamCount, type MediaFacts, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
+import { z } from "zod";
 import type { CaptureSpec } from "./capture-plan";
 import { CaptureRunError, runCapturePlanWithSignal } from "./capture-runner";
 import { captureFromFlags, validateCaptureOptions } from "./native-record";
@@ -12,12 +15,16 @@ import {
     concatCopyArgv,
     concatListLine,
     cursorTrackPath,
+    type FinishedSegment,
     joinCursorTracks,
     joinSegmentsArgv,
     type MovieRates,
     type SegmentJoiner,
+    type SegmentPlacement,
     type SegmentRecorder,
     type SegmentResult,
+    type SegmentStart,
+    segmentPlacements,
 } from "./recording-session";
 import { describeRecordingTarget, type RecordingTarget } from "./recording-targets";
 
@@ -25,6 +32,9 @@ const { log } = logger.scoped("control-recording-native");
 
 /** The `[screen-recording-denied]` code GenesisKit's `WidgetCaptureError` already recognizes. */
 export const SCREEN_RECORDING_DENIED = "screen-recording-denied";
+
+/** ax-tool's `endedEarly` when a restart could not leave the excluded windows out; also the segment's `code`. */
+export const EXCLUSION_UNRESOLVED = "exclusion-unresolved";
 
 /**
  * Motion threshold for the recorder's frame-rate policy. A session keeps one PNG (`maxFrames: 1`), so the threshold
@@ -175,6 +185,33 @@ function withRates(options: NativeRecorderOptions, rates: MovieRates | undefined
     };
 }
 
+/** ax-tool writes this into its session folder at a movie's first frame: when it captured that frame. */
+export const MOVIE_START_FILE = "movie-start.json";
+
+const movieStartSchema = z.object({ firstFrameEpochMs: z.number().positive() });
+
+/** The first frame's capture time from the recorder's folder; undefined when the ax-tool wrote none (an older one). */
+function movieStartOf(sessionDir: string): SegmentStart | undefined {
+    const path = join(sessionDir, MOVIE_START_FILE);
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    try {
+        const { firstFrameEpochMs } = movieStartSchema.parse(
+            SafeJSON.parse(readFileSync(path, "utf8"), { strict: true })
+        );
+        return { firstFrameAt: firstFrameEpochMs };
+    } catch (error) {
+        log.warn(
+            { error, path },
+            "the recorder's first-frame time is unreadable; the movie starts when the session saw it"
+        );
+        return undefined;
+    }
+}
+
 /** One `tools control capture record` run per segment, on the ScreenCaptureKit recorder. */
 export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): SegmentRecorder {
     return {
@@ -185,32 +222,50 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 const result = await runCapturePlanWithSignal({
                     plan: { capture, actions: [] },
                     signal,
-                    onRecording,
+                    onRecording: (started) => onRecording(started ? movieStartOf(started.sessionDir) : undefined),
                     onPreparing,
                 });
                 sessionDir = result.sessionDir;
                 const envelope = result.capture as {
                     error?: unknown;
-                    data?: { stats?: { durationMs?: unknown; capturedFrames?: unknown } };
+                    data?: {
+                        stats?: { durationMs?: unknown; capturedFrames?: unknown; movieMs?: unknown };
+                        endedEarly?: unknown;
+                        endedEarlyReason?: unknown;
+                    };
                 } | null;
                 const reported = envelope?.data?.stats?.durationMs;
                 const durationMs = typeof reported === "number" && reported > 0 ? reported : undefined;
+                // The movie's own length (first frame to its end); stats.durationMs is the run's wall time.
+                const movie = envelope?.data?.stats?.movieMs;
+                const movieMs = typeof movie === "number" && movie > 0 ? { movieMs: movie } : {};
                 // A movie holds every frame ax-tool captured (capturedFrames: 152 frames in a 5 s movie, checked with
                 // ffprobe); its keptFrames and droppedFrames are the stills of a frames recording, not the movie's.
                 const captured = envelope?.data?.stats?.capturedFrames;
                 const frameStats = typeof captured === "number" ? { frames: captured } : {};
-                const endedBy = signal.aborted ? "stop" : result.captureFailed ? "failure" : "deadline";
+                // A following run whose restart on another display could not leave the excluded windows out ended
+                // itself (ax-tool's `exclusion-unresolved`): a failure, so the session pauses and says why instead of
+                // starting the next segment as after a deadline.
+                const excluded = envelope?.data?.endedEarly === EXCLUSION_UNRESOLVED;
+                const endedBy = signal.aborted ? "stop" : result.captureFailed || excluded ? "failure" : "deadline";
                 const error =
                     typeof envelope?.error === "string" ? envelope.error : result.warnings.at(-1) || undefined;
                 // A stop can land on a recorder that already failed, or kill one that did not finish its movie in
                 // time, so a failed run's movie is probed whatever ended it: an unfinished one would break every save.
                 const ok = existsSync(output) && (!result.captureFailed || (await playable(output)));
+                if (excluded && !result.captureFailed) {
+                    const reason = envelope?.data?.endedEarlyReason;
+                    const error =
+                        typeof reason === "string" ? reason : "the recording could not leave the excluded windows out";
+                    return { ok, endedBy, durationMs, ...movieMs, ...frameStats, error, code: EXCLUSION_UNRESOLVED };
+                }
+
                 if (!result.captureFailed) {
-                    return { ok, endedBy, durationMs, ...frameStats };
+                    return { ok, endedBy, durationMs, ...movieMs, ...frameStats };
                 }
 
                 const code = error ? refusalCode(error) : undefined;
-                return { ok, endedBy, durationMs, error: code ? `[${code}] ${error}` : error, code };
+                return { ok, endedBy, durationMs, ...movieMs, error: code ? `[${code}] ${error}` : error, code };
             } catch (error) {
                 const message =
                     error instanceof CaptureRunError || error instanceof Error ? error.message : String(error);
@@ -257,7 +312,10 @@ async function playable(path: string): Promise<boolean> {
  */
 const AUDIO_TRACK_TITLES: Record<"system" | "mic", string> = { system: "System audio", mic: "Microphone" };
 
-/** The title of each audio track: ax-tool writes one track per `--audio` source, in the order given. */
+/**
+ * The title of each audio track: ax-tool writes one track per `--audio` source, in the order given; the recorder
+ * always passes the system sound first, then the mic.
+ */
 export function audioTrackTitles(sources: ("system" | "mic")[] = []): string[] {
     return sources.map((source) => AUDIO_TRACK_TITLES[source]);
 }
@@ -301,12 +359,18 @@ export async function titleAudioTracks(movie: string, titles: string[]): Promise
         return;
     }
 
+    // A copy that failed half way (an ffmpeg error, the timeout) must not stay beside the private movie.
     const temporary = `${movie}.titled.mp4`;
-    await runVideoCommand({
-        command: audioTitlesArgv({ input: movie, output: temporary, titles }),
-        timeoutMs: 120_000,
-    });
-    await rename(temporary, movie);
+
+    try {
+        await runVideoCommand({
+            command: audioTitlesArgv({ input: movie, output: temporary, titles }),
+            timeoutMs: 120_000,
+        });
+        await rename(temporary, movie);
+    } finally {
+        await rm(temporary, { force: true });
+    }
 }
 
 /** The joiner of a recording whose tracks are `audioTitles` (`audioTrackTitles(options.audio)`). */
@@ -320,7 +384,7 @@ const joinSegments = async ({
     segments,
     output,
     audioTitles,
-}: Parameters<SegmentJoiner>[0] & { audioTitles: string[] }): Promise<{ durationMs: number }> => {
+}: Parameters<SegmentJoiner>[0] & { audioTitles: string[] }): ReturnType<SegmentJoiner> => {
     const facts = await Promise.all(segments.map((segment) => readMediaFacts({ input: segment.path })));
     const videos = facts.map(primaryVideo);
     const first = videos[0];
@@ -337,6 +401,8 @@ const joinSegments = async ({
         audioCounts.every((count) => count === audioCounts[0]);
     const totalMs = segments.reduce((sum, segment) => sum + segment.durationMs, 0);
     const timeoutMs = Math.max(120_000, totalMs * 2);
+    // A stream copy keeps every picture as it is; a re-encode letterboxes each one, and its cursor rows move with it.
+    let placements: SegmentPlacement[] | undefined;
 
     if (sameShape) {
         const list = `${output}.concat.txt`;
@@ -348,11 +414,17 @@ const joinSegments = async ({
             await rm(list, { force: true });
         }
     } else {
-        const probe = await probeVideo({ input: segments[0].path });
+        const probes = await Promise.all(segments.map((segment) => probeVideo({ input: segment.path })));
+        const inputs = segments.map((segment, index) => ({
+            path: segment.path,
+            width: probes[index].displayWidth,
+            height: probes[index].displayHeight,
+        }));
+        const frame = { width: probes[0].displayWidth, height: probes[0].displayHeight };
+        placements = segmentPlacements({ sizes: inputs, ...frame });
         const argv = joinSegmentsArgv({
-            inputs: segments.map((segment) => segment.path),
-            width: probe.displayWidth,
-            height: probe.displayHeight,
+            inputs,
+            ...frame,
             output,
             audioTracks: audioCounts[0] ?? 0,
             audioTitles: audioTitles.length === audioCounts[0] ? audioTitles : [],
@@ -361,29 +433,73 @@ const joinSegments = async ({
     }
 
     log.debug(
-        { segments: segments.length, output, copied: sameShape, audioTracks: audioCounts[0] ?? 0 },
+        { segments: segments.length, output, copied: sameShape, audioTracks: audioCounts[0] ?? 0, placements },
         sameShape ? "segments joined by stream copy" : "segments joined by re-encoding"
     );
-    await joinSegmentCursorTracks(segments, output);
-    const joined = await probeVideo({ input: output });
-    return { durationMs: Math.round(joined.durationUs / 1000) };
+    // The same lengths shift the cursor track and, through the session's spans, cut the camera movie.
+    const lengthsMs = segments.map((segment, index) => joinedLengthMs(segment, facts[index]));
+    await joinSegmentCursorTracks({ segments, lengthsMs, placements, output });
+    return { durationMs: await movieLengthMs(output), lengthsMs };
 };
 
-async function joinSegmentCursorTracks(
-    segments: Array<{ path: string; durationMs: number }>,
-    output: string
-): Promise<void> {
-    const parts: Array<{ text: string; offsetMs: number }> = [];
-    let offsetMs = 0;
+/**
+ * A saved movie's length as ffprobe reads it (ms), the length the editor opens it with. A one-segment recording and a
+ * joined one are both measured this way, because ax-tool's wall `durationMs` also counts the wait for the first frame
+ * and the stop and differed from the file by up to 100 ms.
+ */
+export async function movieLengthMs(path: string): Promise<number> {
+    const probe = await probeVideo({ input: path });
+    return Math.round(probe.durationUs / 1000);
+}
 
-    for (const segment of segments) {
+/**
+ * How long a segment lasts in the joined movie: its file's duration as ffprobe reads it, which is where both the concat
+ * demuxer and the concat filter start the next file. ax-tool's wall `durationMs` and its `movieMs` differed from it by
+ * 13 to 48 ms per segment, so a cursor track shifted by them drifted further from the picture after every segment.
+ */
+function joinedLengthMs(segment: FinishedSegment, facts: MediaFacts): number {
+    if (facts.durationSec !== null && facts.durationSec > 0) {
+        return facts.durationSec * 1000;
+    }
+
+    return segment.movieMs ?? segment.durationMs;
+}
+
+/** Where each segment starts in the joined movie (ms): the sum of the lengths of the segments before it. */
+export function cursorTrackOffsets(lengthsMs: number[]): number[] {
+    let offsetMs = 0;
+    return lengthsMs.map((lengthMs) => {
+        const start = offsetMs;
+        offsetMs += lengthMs;
+        return start;
+    });
+}
+
+async function joinSegmentCursorTracks({
+    segments,
+    lengthsMs,
+    placements,
+    output,
+}: {
+    segments: FinishedSegment[];
+    lengthsMs: number[];
+    /** Each segment's picture in a re-encoded join; none for a stream copy. */
+    placements?: SegmentPlacement[];
+    output: string;
+}): Promise<void> {
+    const offsets = cursorTrackOffsets(lengthsMs);
+    const parts: Parameters<typeof joinCursorTracks>[0] = [];
+
+    for (const [index, segment] of segments.entries()) {
         const path = cursorTrackPath(segment.path);
 
         if (existsSync(path)) {
-            parts.push({ text: await readFile(path, "utf8"), offsetMs });
+            parts.push({
+                text: await readFile(path, "utf8"),
+                offsetMs: offsets[index] ?? 0,
+                placement: placements?.[index],
+            });
         }
-
-        offsetMs += segment.durationMs;
     }
 
     if (parts.length > 0) {

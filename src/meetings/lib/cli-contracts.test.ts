@@ -5,6 +5,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
@@ -111,7 +112,9 @@ describe("startup imports", () => {
             'const has = () => Object.keys(require.cache).some((key) => key.includes("@napi-rs/canvas"));',
             'await import("./src/meetings/commands/record.ts");',
             "const before = has();",
-            'await import("@genesiscz/utils/image/render-plan");',
+            // The positive control: since src/utils/image/canvas.ts became the one loader, the addon loads when a
+            // drawing call asks for it, not when a drawing module is imported.
+            'await (await import("@genesiscz/utils/image/canvas")).loadCanvas();',
             "console.log(JSON.stringify({ before, after: has() }));",
         ].join("\n");
         const child = Bun.spawn(["bun", "-e", probe], {
@@ -289,16 +292,30 @@ describe("list --json prints one summary row per meeting, and --limit keeps the 
         });
     });
 
-    test("--project filters before --limit, so the limit counts that project's meetings", () => {
-        const records = [
-            meeting("c", "2026-11-05T12:00:00.000Z"),
-            meeting("b", "2026-11-05T11:00:00.000Z", "work"),
-            meeting("a", "2026-11-05T10:00:00.000Z", "work"),
-        ];
+    test("--project filters before --limit, so the limit counts that project's meetings, and reads stop there", async () => {
+        const store = new MeetingStore(new Storage(`meetings-list-limit-${process.pid}`));
+        const create = async (title: string, start: string, project?: string) =>
+            (
+                await store.create(
+                    { title, start, createdBy: "new", ...(project ? { project } : {}) },
+                    { command: "test", change: "fixture" }
+                )
+            ).id;
+        const a = await create("A", "2026-11-03T10:00:00.000Z", "work");
+        const b = await create("B", "2026-11-04T11:00:00.000Z", "work");
+        const c = await create("C", "2026-11-05T12:00:00.000Z");
+        const read = spyOn(store, "read");
 
-        expect(selectMeetings(records, { limit: 2 }).map((one) => one.id)).toEqual(["c", "b"]);
-        expect(selectMeetings(records, { project: "work", limit: 1 }).map((one) => one.id)).toEqual(["b"]);
-        expect(selectMeetings(records, {}).map((one) => one.id)).toEqual(["c", "b", "a"]);
+        try {
+            expect(selectMeetings(store, { limit: 2 }).map((one) => one.id)).toEqual([c, b]);
+            expect(read).toHaveBeenCalledTimes(2);
+            read.mockClear();
+            expect(selectMeetings(store, { project: "work", limit: 1 }).map((one) => one.id)).toEqual([b]);
+            expect(read).toHaveBeenCalledTimes(2);
+            expect(selectMeetings(store, {}).map((one) => one.id)).toEqual([c, b, a]);
+        } finally {
+            read.mockRestore();
+        }
     });
 });
 

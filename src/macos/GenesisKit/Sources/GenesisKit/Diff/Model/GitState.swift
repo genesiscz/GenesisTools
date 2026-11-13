@@ -153,12 +153,16 @@ public struct GitRepoStatus: Equatable, Sendable {
         didSet { byPath = Self.index(entries) }
     }
     public var commits: [GitCommit] = []
+    /// The commit HEAD names (`# branch.oid`); nil before the first commit or from a reader that did not say. A commit
+    /// that leaves the porcelain list as it was (an empty one, one made elsewhere on this branch) still changes it.
+    public var head: String?
     /// Path → place in `entries`: the status bar's and the toolbar's marks ask on every render, and a search through a
     /// vault's 5,650 entries showed up in the repository panel's sort sample (2026-10-25).
     private var byPath: [String: Int] = [:]
 
-    public init(root: URL, branch: String, upstream: String? = nil, ahead: Int = 0, behind: Int = 0, entries: [GitStatusEntry] = [], commits: [GitCommit] = []) {
+    public init(root: URL, branch: String, upstream: String? = nil, ahead: Int = 0, behind: Int = 0, entries: [GitStatusEntry] = [], commits: [GitCommit] = [], head: String? = nil) {
         self.root = root
+        self.head = head
         self.branch = branch
         self.upstream = upstream
         self.ahead = ahead
@@ -174,7 +178,7 @@ public struct GitRepoStatus: Equatable, Sendable {
 
     public static func == (lhs: GitRepoStatus, rhs: GitRepoStatus) -> Bool {
         lhs.root == rhs.root && lhs.branch == rhs.branch && lhs.upstream == rhs.upstream && lhs.ahead == rhs.ahead
-            && lhs.behind == rhs.behind && lhs.entries == rhs.entries && lhs.commits == rhs.commits
+            && lhs.behind == rhs.behind && lhs.entries == rhs.entries && lhs.commits == rhs.commits && lhs.head == rhs.head
     }
 
     /// The entry of a file in this repository, nil when the file is clean or outside it.

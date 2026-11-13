@@ -7,6 +7,7 @@ import {
     readdirSync,
     readFileSync,
     statSync,
+    utimesSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,7 +27,13 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
-import { buildPidRecord, clearPidFile, serializePidRecord, writePidFile } from "@genesiscz/utils/process/pidfile";
+import {
+    buildPidRecord,
+    clearPidFile,
+    EMPTY_HOLDER_GRACE_MS,
+    serializePidRecord,
+    writePidFile,
+} from "@genesiscz/utils/process/pidfile";
 import type { RecordingMarker } from "@genesiscz/utils/screen-recorder/control";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import {
@@ -96,7 +103,7 @@ import {
     speakerScoresOf,
 } from "./lib/speaker-scores";
 import { printSpeakerStats } from "./lib/speakers-view";
-import { settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
+import { knownRoot, settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { transcriptDocument } from "./lib/transcript-document";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
@@ -913,6 +920,9 @@ describe("itemWhat", () => {
 
         expect(itemWhat(range(279, 279))).toBe("Speaker 1 04:39 → Alice Example");
         expect(itemWhat(range(279, 301))).toBe("Speaker 1 04:39–05:01 → Alice Example");
+        // The decision follows the printed clocks, which floor: never "04:39–04:39", never a hidden end.
+        expect(itemWhat(range(279.4, 279.6))).toBe("Speaker 1 04:39 → Alice Example");
+        expect(itemWhat(range(278.6, 279.2))).toBe("Speaker 1 04:38–04:39 → Alice Example");
     });
 
     test("a term shows its spelling, else its quote with the source, else its meaning; only none of them is a ?", () => {
@@ -935,6 +945,27 @@ describe("itemWhat", () => {
             'category data → "categoryData: string" (quote from dto.ts:12)'
         );
         expect(itemWhat(term({}))).toBe("category data → ?");
+    });
+
+    test("in a column, a long quote is shortened inside its quotes and keeps its source", () => {
+        const long = meetingItemSchema.parse({
+            id: "i1",
+            kind: "term",
+            status: "suggested",
+            suggestedAt: "2026-11-02T15:00:00.000Z",
+            atSec: 1623,
+            heard: "category data",
+            confidence: 0.9,
+            rules: [],
+            quote: { text: `categoryData: ${"string | number | ".repeat(8)}null`, source: "dto.ts:12" },
+        });
+        const what = itemWhat(long, { width: 90 });
+
+        expect(what).toHaveLength(90);
+        expect(what.startsWith('category data → "categoryData: string | number')).toBe(true);
+        expect(what.endsWith('…" (quote from dto.ts:12)')).toBe(true);
+        // Without a width, nothing is cut.
+        expect(itemWhat(long)).toContain("null");
     });
 });
 
@@ -4361,6 +4392,9 @@ test("a recycled pid's claim and an unreadable pid file are both taken over, as 
     expect(existsSync(files.pid)).toBe(false);
 
     writeFileSync(files.pid, "not a pid");
+    // An unreadable claim is an orphan only past the shared grace (EMPTY_HOLDER_GRACE_MS in pidfile.ts).
+    const created = new Date(Date.now() - EMPTY_HOLDER_GRACE_MS - 1_000);
+    utimesSync(files.pid, created, created);
 
     // Taken over, then released when the blocked frames directory ends the start.
     await expect(runRecorder({ store, meetingId: record.id, capture })).rejects.toThrow();
@@ -5367,6 +5401,9 @@ describe("suggest: words said on purpose", () => {
         expect(wordFamily("mobilce")).toBe(wordFamily("mobilkou"));
         expect([...spokenOnPurpose(["mokovat"], (root) => root === "mock")]).toEqual(["mokovat"]);
         expect([...spokenOnPurpose(["kvapímu"], () => false)]).toEqual([]);
+        // Without a word check only English roots are known; a missing check never makes every root known.
+        expect(knownRoot()("kvapimu")).toBe(false);
+        expect(knownRoot()("mock")).toBe(true);
         expect([...spokenOnPurpose(["mobilce", "mobilkou", "kvapímu"], () => false)].sort()).toEqual([
             "mobilce",
             "mobilkou",

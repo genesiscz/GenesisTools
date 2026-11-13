@@ -132,6 +132,31 @@ export function foldText(text: string): string {
         .trim();
 }
 
+/**
+ * `text` without diacritics (case kept), and where each of its UTF-16 units came from: `index[i]` is the offset in
+ * `text` of the character folded unit `i` belongs to, and `index[folded.length]` is `text.length`. A match on
+ * `folded` from `a` to `b` covers `text.slice(index[a], index[b])`, the stripped accents included.
+ */
+export function foldWithIndex(text: string): { folded: string; index: number[] } {
+    let folded = "";
+    const index: number[] = [];
+    let at = 0;
+
+    for (const char of text) {
+        const bare = char.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+
+        for (let unit = 0; unit < bare.length; unit++) {
+            index.push(at + Math.min(unit, char.length - 1));
+        }
+
+        folded += bare;
+        at += char.length;
+    }
+
+    index.push(text.length);
+    return { folded, index };
+}
+
 /** The boxes whose text holds `query`, compared without case and diacritics. */
 export function matchingBoxes(boxes: OcrBox[], query: string): OcrBox[] {
     const wanted = foldText(query);

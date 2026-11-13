@@ -1,6 +1,7 @@
-import type { ToolEntry } from "@app/genesis-tools-mcp/lib/server";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import type { ToolEntry } from "@genesiscz/utils/mcp/tool-entry";
+import type { LoadedToolGroup } from "@genesiscz/utils/mcp/tool-group";
 import { z } from "zod";
 import { JevMcpRegistry, JevMcpTextOutput } from "./registry";
 import { registerJevMcpTools } from "./server";
@@ -14,7 +15,7 @@ const { log } = logger.scoped("jev-route");
  * point at that door; this adapter is what makes the tools appear beside `question_answer` on
  * `tools genesis-tools-mcp` without a second copy of any schema or handler.
  */
-export function jevToolEntries(): Record<string, ToolEntry> {
+export function toolGroup(): LoadedToolGroup {
     const registry = registerJevMcpTools(new JevMcpRegistry());
     const entries: Record<string, ToolEntry> = {};
     for (const tool of registry.list()) {
@@ -29,5 +30,5 @@ export function jevToolEntries(): Record<string, ToolEntry> {
     }
 
     log.debug({ tools: Object.keys(entries) }, "Jev tools adapted for the genesis-tools MCP");
-    return entries;
+    return { entries };
 }

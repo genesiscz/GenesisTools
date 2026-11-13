@@ -1,6 +1,7 @@
+import { DashboardHttpError } from "@app/dev-dashboard/contract/client";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { suggestObsidianFilename } from "@app/dev-dashboard/lib/qa-clipboard";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { buildObsidianNoteRelativePath } from "@genesiscz/utils/obsidian/filename";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
@@ -20,6 +21,7 @@ import { Input } from "@ui/components/input";
 import { Label } from "@ui/components/label";
 import { SegmentedControl } from "@ui/components/segmented-control";
 import { useState } from "react";
+import { dashboard } from "@/lib/dashboard-client";
 import { ObsidianTree, splitObsidianNotePath } from "./ObsidianTree";
 
 function questionPreview(question: string, maxLen = 120): string {
@@ -44,17 +46,7 @@ export function QaSaveToObsidianDialog({
     const queryClient = useQueryClient();
     const treeQuery = useQuery({
         queryKey: ["obsidian-tree"],
-        queryFn: async () => {
-            const r = await fetch("/api/obsidian/tree");
-
-            if (!r.ok) {
-                throw new Error(`tree: ${r.status}`);
-            }
-
-            return SafeJSON.parse(await r.text()) as {
-                entries: import("@app/dev-dashboard/lib/obsidian/types").VaultEntry[];
-            };
-        },
+        queryFn: () => dashboard.call(ENDPOINTS.obsidianTree, {}),
         enabled: open,
     });
     const [dir, setDir] = useState<string>("Inbox/qa-test");
@@ -66,10 +58,8 @@ export function QaSaveToObsidianDialog({
 
     const save = useMutation({
         mutationFn: async () => {
-            const r = await fetch("/api/qa/save-to-obsidian", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: SafeJSON.stringify({
+            try {
+                return await dashboard.call(ENDPOINTS.qaSaveToObsidian, {
                     entryId: entry.id,
                     relativeDir: dir,
                     baseName: name,
@@ -77,14 +67,11 @@ export function QaSaveToObsidianDialog({
                     createDir,
                     includeFrontmatter,
                     includeQuestion,
-                }),
-            });
-
-            if (!r.ok) {
-                throw new Error(await r.text());
+                });
+            } catch (err) {
+                // The dialog shows the server's body as it is.
+                throw err instanceof DashboardHttpError ? new Error(err.body) : err;
             }
-
-            return SafeJSON.parse(await r.text()) as { path: string };
         },
         onSuccess: () => {
             setTimeout(() => onOpenChange(false), 1500);

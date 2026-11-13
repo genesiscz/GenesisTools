@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, it } from "bun:test";
-import { Writable } from "node:stream";
+import { afterAll, afterEach, beforeAll, describe, expect, it, mock } from "bun:test";
+import { PassThrough, Writable } from "node:stream";
 import * as clack from "@clack/prompts";
 import { env } from "@genesiscz/utils/env";
+import { PromptCancelledError, promptCancelSymbol } from "@genesiscz/utils/prompts/cancel";
+import { setBackend } from "../backend";
 import { clackBackend } from "../clack-backend";
+import * as p from "../index";
 
 describe("clack backend", () => {
     it("exposes all required methods", () => {
@@ -121,5 +124,50 @@ describe("patched clack spinner on a stream that is not a terminal", () => {
         expect(text).toContain("done");
         expect(text).not.toMatch(CURSOR_CONTROL);
         expect(listeners()).toEqual(before);
+    });
+});
+
+// A real clack prompt with an aborted signal answers with clack's own cancel symbol, as Escape does. The mock only adds
+// that signal and silent streams to the backend's calls; the cancel symbol and the backend's mapping of it are real.
+describe("cancel outcome on the clack backend", () => {
+    const real = { ...clack };
+    const silent = () => new Writable({ write: (_chunk, _encoding, done) => done() });
+    const aborted = { signal: AbortSignal.abort(), input: new PassThrough(), output: silent() };
+
+    beforeAll(() => {
+        mock.module("@clack/prompts", () => ({
+            ...real,
+            text: (opts: clack.TextOptions) => real.text({ ...opts, ...aborted }),
+            confirm: (opts: clack.ConfirmOptions) => real.confirm({ ...opts, ...aborted }),
+            select: (opts: clack.SelectOptions<unknown>) => real.select({ ...opts, ...aborted }),
+            multiselect: (opts: clack.MultiSelectOptions<unknown>) => real.multiselect({ ...opts, ...aborted }),
+        }));
+        setBackend(clackBackend);
+    });
+
+    afterAll(() => {
+        mock.module("@clack/prompts", () => real);
+    });
+
+    it("the backend answers a cancelled prompt with the facade's cancel symbol", async () => {
+        expect(await clackBackend.text({ message: "t" })).toBe(promptCancelSymbol);
+        expect(await clackBackend.select({ message: "s", options: [{ value: "a", label: "A" }] })).toBe(
+            promptCancelSymbol
+        );
+    });
+
+    it('cancel: "back" hands the symbol to the caller', async () => {
+        expect(p.isCancel(await p.text({ message: "t", cancel: "back" }))).toBe(true);
+        expect(p.isCancel(await p.confirm({ message: "c", cancel: "back" }))).toBe(true);
+        expect(
+            p.isCancel(await p.multiselect({ message: "m", options: [{ value: 1, label: "one" }], cancel: "back" }))
+        ).toBe(true);
+    });
+
+    it("the default exit throws PromptCancelledError inside a test", async () => {
+        await expect(p.text({ message: "t" })).rejects.toBeInstanceOf(PromptCancelledError);
+        await expect(p.select({ message: "s", options: [{ value: "a", label: "A" }] })).rejects.toBeInstanceOf(
+            PromptCancelledError
+        );
     });
 });

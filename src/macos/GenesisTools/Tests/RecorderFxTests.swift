@@ -1,4 +1,6 @@
+import AppKit
 import CoreImage
+import CoreText
 import XCTest
 @testable import GenesisToolsRecorder
 
@@ -53,52 +55,12 @@ final class RecorderFxTests: XCTestCase {
         XCTAssertTrue(TransitionLook.joins(in: cutProject(own)).isEmpty)
     }
 
-    /// The Style tab changes a copy of the edit; each transition, tilt and lens change must become ops, or the service
-    /// answers the old edit and the control flips back.
-    func testTheStyleTabsTransitionTiltAndLensChangesBecomeOps() throws {
-        let plain = cutProject(nil)
-        var fade = plain
-        fade.transitions = EditProject.Transitions(default: .init(kind: .crossfade, ms: 300))
-        XCTAssertEqual(EditOpDiff.ops(from: plain, to: fade), [.transition(EditOp.Transition(kind: .crossfade, ms: 300))])
-        var longer = fade
-        longer.transitions?.default.ms = 600
-        XCTAssertEqual(EditOpDiff.ops(from: fade, to: longer), [.transition(EditOp.Transition(kind: .crossfade, ms: 600))])
-        XCTAssertEqual(EditOpDiff.ops(from: fade, to: plain), [.transition(EditOp.Transition(kind: EditOp.TransitionChoice.none, ms: 300))])
-        var own = fade
-        own.transitions?.joins = ["c2": .init(kind: .blur, ms: 500)]
-        XCTAssertEqual(EditOpDiff.ops(from: fade, to: own), [.transition(EditOp.Transition(kind: .blur, ms: 500, clip: "c2"))])
-        XCTAssertEqual(EditOpDiff.ops(from: own, to: fade), [.transition(EditOp.Transition(kind: .default, clip: "c2"))])
-
-        var tilted = plain
-        tilted.tilt = EditProject.Tilt()
-        XCTAssertEqual(EditOpDiff.ops(from: plain, to: tilted),
-                       [.tilt(EditOp.Tilt(enabled: true, strength: 0.5, drift: true, tiltIn: true, tiltOut: true, inMs: 1200, outMs: 1200))])
-        var stronger = tilted
-        stronger.tilt?.strength = 0.8
-        XCTAssertEqual(EditOpDiff.ops(from: tilted, to: stronger),
-                       [.tilt(EditOp.Tilt(enabled: true, strength: 0.8, drift: true, tiltIn: true, tiltOut: true, inMs: 1200, outMs: 1200))])
-        XCTAssertEqual(EditOpDiff.ops(from: tilted, to: plain), [.tilt(EditOp.Tilt(enabled: false))])
-
-        let item = EditProject.LensItem(id: "l1", startUs: 1_000_000, endUs: 3_000_000, follow: false)
-        var lensed = plain
-        lensed.lens = EditProject.Lens(items: [item])
-        XCTAssertEqual(EditOpDiff.ops(from: plain, to: lensed),
-                       [.lens(EditOp.Lens(id: "l1", from: 1, to: 3, radius: 0.12, magnification: 2, follow: false,
-                                          at: EditOp.Point(x: 0.5, y: 0.5), ring: "#FFFFFF"))])
-        // The window's id goes with the new lens, so a setLens sent before the service answers names a lens it has.
-        let added = try XCTUnwrap(EditOpDiff.ops(from: plain, to: lensed)?.first)
-        let wire = try XCTUnwrap(String(data: JSONEncoder().encode(added), encoding: .utf8))
-        XCTAssertTrue(wire.contains("\"id\":\"l1\""), wire)
-        XCTAssertFalse(try XCTUnwrap(String(data: JSONEncoder().encode(EditOp.lens(EditOp.Lens(from: 1, to: 2))), encoding: .utf8))
-            .contains("\"id\""), "no id: the service makes one, as for an old client")
-        var bigger = lensed
-        bigger.lens?.items[0].magnification = 3
-        bigger.lens?.items[0].radius = 0.2
-        XCTAssertEqual(EditOpDiff.ops(from: lensed, to: bigger), [.setLens(EditOp.SetLens(id: "l1", radius: 0.2, magnification: 3))])
-        var following = lensed
-        following.lens?.items[0].follow = true
-        XCTAssertEqual(EditOpDiff.ops(from: lensed, to: following), [.setLens(EditOp.SetLens(id: "l1", follow: true))])
-        XCTAssertEqual(EditOpDiff.ops(from: lensed, to: plain), [.unlens(EditOp.Unlens(id: "l1"))])
+    /// A lens op may name the window's id for the new lens; without one the service makes the id, as for an old client.
+    func testALensOpCarriesItsIdOnlyWhenItNamesOne() throws {
+        let named = try XCTUnwrap(String(data: JSONEncoder().encode(EditOp.lens(EditOp.Lens(id: "l1", from: 1, to: 3))), encoding: .utf8))
+        XCTAssertTrue(named.contains("\"id\":\"l1\""), named)
+        let plain = try XCTUnwrap(String(data: JSONEncoder().encode(EditOp.lens(EditOp.Lens(from: 1, to: 2))), encoding: .utf8))
+        XCTAssertFalse(plain.contains("\"id\""), "no id: the service makes one, as for an old client")
     }
 
     /// R7 5: a blended frame hides what the other side's still shows, by the parts as they are drawn there. A part that
@@ -220,6 +182,71 @@ final class RecorderFxTests: XCTestCase {
         }
         XCTAssertEqual(layers.picture.extent, layers.rect)
     }
+
+    /// The Style tab's controls reach the recorder service: a transition, the tilt and a lens's fields as the ops
+    /// EditOpDiff names, adding and deleting a lens as their own ops. Before, they changed only the window's copy, the
+    /// service's answer put the old edit back, and nothing was saved.
+    @MainActor
+    func testTheStyleControlsSendTransitionsTiltAndLensesToTheService() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("render-fx-ops-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let project = EditProject.whole(video: folder.appendingPathComponent("none.mp4").path, durationUs: 10_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        let service = FakeServiceLink(project: project, rules: FakeRules.basic)
+        let model = EditorModel.on(service, store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
+
+        model.setTransitionKind(.crossfade)
+        model.setTransitionLength(600)
+        model.finishGesture()
+        XCTAssertEqual(service.project.transitions?.default, EditProject.Transition(kind: .crossfade, ms: 600))
+        model.setTilt(true)
+        model.finishGesture()
+        model.changeTilt { $0.strength = 0.8 }
+        model.finishGesture()
+        XCTAssertEqual(service.project.tilt?.strength, 0.8)
+        model.addLensAtPlayhead()
+        let lens = try XCTUnwrap(service.project.lens?.items.first, "the service makes the lens and names it")
+        XCTAssertEqual(model.project.lens?.items.map(\.id), [lens.id], "the window draws the service's lens")
+        XCTAssertEqual(lens.startUs, 0)
+        XCTAssertEqual(lens.endUs, 2_000_000)
+        XCTAssertFalse(lens.follow, "no cursor track: the lens stays put")
+        model.changeLens(lens.id) { $0.magnification = 3 }
+        model.finishGesture()
+        XCTAssertEqual(service.project.lens?.items.first?.magnification, 3)
+        model.removeLens(lens.id)
+        XCTAssertNil(service.project.lens)
+        XCTAssertEqual(service.sentTags, ["transition", "tilt", "tilt", "lens", "setLens", "unlens"])
+        XCTAssertEqual(model.project.transitions, service.project.transitions, "the window keeps what the service saved")
+        XCTAssertEqual(model.project.tilt, service.project.tilt)
+        XCTAssertNil(model.project.lens)
+    }
+
+    func testTheDiffNamesAJoinsTransitionTheTiltAndAMovedLens() throws {
+        var before = cutProject(EditProject.Transitions(default: .init(kind: .crossfade, ms: 400), joins: ["c2": .init(kind: .blur, ms: 600)]))
+        before.lens = EditProject.Lens(items: [EditProject.LensItem(id: "l1", startUs: 1_000_000, endUs: 3_000_000)])
+        var after = before
+        after.transitions?.joins = nil
+        after.transitions?.default.kind = .zoom
+        after.lens?.items[0].x = 0.2
+        after.lens?.items[0].y = 0.8
+        after.lens?.items[0].endUs = 3_500_000
+        XCTAssertEqual(EditOpDiff.ops(from: before, to: after), [
+            .transition(EditOp.Transition(kind: .zoom, ms: 400)),
+            .transition(EditOp.Transition(kind: .default, clip: "c2")),
+            // `at` alone would stop the lens following the cursor on the service, so `follow` goes with it.
+            .setLens(EditOp.SetLens(id: "l1", to: 3.5, follow: true, at: EditOp.Point(x: 0.2, y: 0.8))),
+        ])
+        var tilted = before
+        tilted.tilt = EditProject.Tilt(strength: 0.7)
+        XCTAssertEqual(EditOpDiff.ops(from: before, to: tilted), [
+            .tilt(EditOp.Tilt(enabled: true, strength: 0.7, drift: true, tiltIn: true, tiltOut: true, inMs: 1200, outMs: 1200)),
+        ])
+        XCTAssertEqual(EditOpDiff.ops(from: tilted, to: before), [.tilt(EditOp.Tilt(enabled: false))])
+        var added = before
+        added.lens?.items.append(EditProject.LensItem(id: "l2", startUs: 0, endUs: 1_000_000))
+        XCTAssertNil(EditOpDiff.ops(from: before, to: added), "a new lens is its own op: the service names it")
+    }
 }
 
 // R5 4 frame layouts and canvas zoom
@@ -269,11 +296,16 @@ final class RecorderFrameLayoutTests: XCTestCase {
         let canvasZoom = EditProject.Zoom(id: "c", startUs: 1_000_000, endUs: 3_000_000, scale: 2, focusX: 0.25, focusY: 0.5,
                                           easeInMs: 0, easeOutMs: 0, target: .canvas)
         let pictureZoom = EditProject.Zoom(id: "p", startUs: 1_000_000, endUs: 3_000_000, scale: 1.5, easeInMs: 0, easeOutMs: 0)
-        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, zooms: [canvasZoom], cursor: nil), .whole)
-        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, zooms: [canvasZoom, pictureZoom]).scale, 2)
-        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, zooms: [canvasZoom]).centerX, 0.25, accuracy: 0.001)
-        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, zooms: [canvasZoom, pictureZoom], cursor: nil).scale, 1.5)
-        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, zooms: [pictureZoom]), .whole)
+        let zoomed = { (zooms: [EditProject.Zoom]) -> EditProject in
+            var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 5_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
+            project.zooms = zooms
+            return project
+        }
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, project: zoomed([canvasZoom]), cursor: nil), .whole)
+        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, project: zoomed([canvasZoom, pictureZoom])).scale, 2)
+        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, project: zoomed([canvasZoom])).centerX, 0.25, accuracy: 0.001)
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, project: zoomed([canvasZoom, pictureZoom]), cursor: nil).scale, 1.5)
+        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, project: zoomed([pictureZoom])), .whole)
     }
 
     /// The zoomed canvas shows the left half (white) over the whole output.
@@ -295,19 +327,6 @@ final class RecorderFrameLayoutTests: XCTestCase {
 
 // R5 10 multi-line texts
 final class RecorderTextBlockTests: XCTestCase {
-    /// Karaoke makes one plate per word said and a typewriter one per letter: a long talk kept every one of them until
-    /// the export ended. Only the plates used last stay, and a plate in use is drawn again from the cache.
-    func testTextPlatesKeepOnlyThePlatesUsedLast() throws {
-        let plates = TextPlates()
-        let line = "one two three four five six seven eight nine ten eleven twelve"
-        for characters in 0...200 {
-            _ = plates.plate(line, fontSize: 40, maxWidth: 1500, highlight: (characters, .yellow))
-        }
-        XCTAssertLessThanOrEqual(plates.count, 64)
-        let first = try XCTUnwrap(plates.plate("Stays", fontSize: 40, maxWidth: 1500))
-        XCTAssertTrue(plates.plate("Stays", fontSize: 40, maxWidth: 1500) === first, "a plate used again comes from the cache")
-    }
-
     /// "\n" makes a second line, a long text wraps inside the block's width and is drawn whole, never cut.
     func testATextBreaksAtNewlinesAndWrapsInsideItsBlock() throws {
         let plates = TextPlates()
@@ -328,5 +347,120 @@ final class RecorderTextBlockTests: XCTestCase {
         let plate = try XCTUnwrap(plates.plate(callout, fontSize: 32, maxWidth: 576, alignment: .left))
         XCTAssertLessThanOrEqual(plate.extent.width, 576)
         XCTAssertLessThan(plate.extent.height, size.height, "the callout fits the canvas's height")
+    }
+
+    /// x is the block's centre. A left-aligned plate starts at the block's left edge and a right-aligned one ends at its
+    /// right edge, whatever its own width; a centred one (and one without a block) is centred on x. All stay inside.
+    func testAnAlignedPlateSitsAgainstItsBlocksEdge() {
+        let size = CGSize(width: 1920, height: 1080)
+        func note(_ align: EditProject.TextAlign?, x: Double = 0.62) -> EditProject.TextNote {
+            EditProject.TextNote(id: "t", startUs: 0, endUs: 1_000_000, text: "t", x: x, y: 0.5,
+                                 block: align.map { EditProject.TextBlock(width: 0.4, align: $0) })
+        }
+        for width: CGFloat in [200, 500] {
+            let plate = CGSize(width: width, height: 80)
+            XCTAssertEqual(Looks.textOrigin(note(.left), plate: plate, size: size).x, (0.62 - 0.2) * 1920, accuracy: 0.001)
+            XCTAssertEqual(Looks.textOrigin(note(.right), plate: plate, size: size).x + width, (0.62 + 0.2) * 1920, accuracy: 0.001)
+            XCTAssertEqual(Looks.textOrigin(note(.center), plate: plate, size: size).x + width / 2, 0.62 * 1920, accuracy: 0.001)
+            XCTAssertEqual(Looks.textOrigin(note(nil), plate: plate, size: size).x + width / 2, 0.62 * 1920, accuracy: 0.001)
+            XCTAssertEqual(Looks.textOrigin(note(.left), plate: plate, size: size).y, 540 - 40, accuracy: 0.001)
+        }
+        let plate = CGSize(width: 300, height: 80)
+        XCTAssertEqual(Looks.textOrigin(note(.left, x: 0.1), plate: plate, size: size).x, 0, "kept inside on the left")
+        XCTAssertEqual(Looks.textOrigin(note(.right, x: 0.95), plate: plate, size: size).x, 1920 - 300, "kept inside on the right")
+    }
+
+    /// A title (0.06) and a subtitle (0.035) as the demos place them: one x, one block of 0.4.
+    private func pair(_ align: EditProject.TextAlign, style: EditProject.TextStyle, x: Double = 0.62) -> [EditProject.TextNote] {
+        [("Invoices", 0.06, 0.3), ("Send, track and get paid on time", 0.035, 0.42)].map { text, size, y in
+            EditProject.TextNote(id: "t", startUs: 0, endUs: 1_000_000, text: text, x: x, y: y, size: size, style: style,
+                                 block: .init(width: 0.4, align: align))
+        }
+    }
+
+    /// The first and the last column of `size`'s picture with a pixel that passes `lit`, over every row.
+    private func columns(_ image: CIImage, size: CGSize, lit: (UInt8) -> Bool) throws -> (first: Int, last: Int) {
+        let width = Int(size.width), height = Int(size.height)
+        var pixels = [UInt8](repeating: 0, count: 4 * width * height)
+        CIContext().render(image, toBitmap: &pixels, rowBytes: 4 * width, bounds: CGRect(origin: .zero, size: size),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        var first = width, last = -1
+        for row in 0..<height {
+            for column in 0..<width where lit(pixels[4 * (row * width + column)]) {
+                first = min(first, column)
+                last = max(last, column)
+            }
+        }
+        XCTAssertGreaterThanOrEqual(last, 0, "something was drawn")
+        return (first, last)
+    }
+
+    /// How far the ink of a one-line text starts right of its pen (the first glyph's side bearing) and ends left of its
+    /// advance (the last glyph's), in pixels of the font TextPlates sets it in.
+    private func bearings(_ text: String, fontSize: CGFloat) -> (left: CGFloat, right: CGFloat) {
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        return (ink.minX, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)) - ink.maxX)
+    }
+
+    /// Drawn, a title and a subtitle on plates with one x and one block start at the block's left edge (left) or end at
+    /// its right edge (right): the plates line up, whatever the text's size. Before 2026-11-08 each was centred on x.
+    func testAlignedPlatesWithOneBlockLineUpAtTheBlocksEdge() throws {
+        let size = CGSize(width: 1920, height: 1080)
+        let plates = TextPlates()
+        let white = CIImage(color: .white).cropped(to: CGRect(origin: .zero, size: size))
+        for align: EditProject.TextAlign in [.left, .right] {
+            for note in pair(align, style: .plate) {
+                let drawn = Looks.drawText(note, opacity: 1, plates: plates, on: white, size: size)
+                // The plate darkens the white canvas (to about 145: Core Image blends in linear light); its letters stay
+                // light inside it.
+                let plate = try columns(drawn, size: size) { $0 < 200 }
+                if align == .left {
+                    XCTAssertEqual(Double(plate.first), (0.62 - 0.2) * 1920, accuracy: 1, "\(note.text): the plate starts at the block's left edge")
+                } else {
+                    XCTAssertEqual(Double(plate.last + 1), (0.62 + 0.2) * 1920, accuracy: 1, "\(note.text): the plate ends at the block's right edge")
+                }
+            }
+        }
+    }
+
+    /// A plain text draws no plate, only its letters, so it lines up its letters: a left-aligned one starts its letters
+    /// at the block's left edge and a right-aligned one ends them at its right edge. Seen 2026-11-09: a plain title
+    /// (0.06) and subtitle (0.035) in one left-aligned block started 20 px apart at 1080p, because their invisible
+    /// plates stood at the block's edge and the plate's inset (0.7 x the font size) grows with the size. The letters
+    /// are white over a black canvas; the first and last glyphs' own side bearings (CoreText's, 1 to 4 px here) are
+    /// taken off, so what is compared is where the line's pen starts and its advance ends.
+    func testPlainTextsWithOneBlockLineUpTheirLettersAtTheBlocksEdge() throws {
+        let size = CGSize(width: 1920, height: 1080)
+        let plates = TextPlates()
+        let black = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: size))
+        func letters(_ note: EditProject.TextNote) throws -> (first: CGFloat, last: CGFloat) {
+            let drawn = Looks.drawText(note, opacity: 1, plates: plates, on: black, size: size)
+            // Half covered: Core Image blends in linear light, so a pixel half covered by white over black reads about
+            // 188, and the first and last such columns sit at the ink's edges to half a pixel.
+            let lit = try columns(drawn, size: size) { $0 >= 188 }
+            let ink = bearings(note.text, fontSize: Looks.textPlateStyle(note, size: size).fontSize)
+            // Where the pen starts and where the advance ends: the edges the alignment puts at the block's edge.
+            return (CGFloat(lit.first) - ink.left, CGFloat(lit.last + 1) + ink.right)
+        }
+        let blockLeft: CGFloat = (0.62 - 0.2) * 1920, blockRight: CGFloat = (0.62 + 0.2) * 1920
+        let left = try pair(.left, style: .plain).map(letters)
+        for (note, edges) in zip(pair(.left, style: .plain), left) {
+            XCTAssertEqual(edges.first, blockLeft, accuracy: 2, "\(note.text): its letters start at the block's left edge")
+        }
+        XCTAssertEqual(left[0].first, left[1].first, accuracy: 2, "the title's and the subtitle's letters start at one column")
+        let right = try pair(.right, style: .plain).map(letters)
+        for (note, edges) in zip(pair(.right, style: .plain), right) {
+            XCTAssertEqual(edges.last, blockRight, accuracy: 2, "\(note.text): its letters end at the block's right edge")
+        }
+        XCTAssertEqual(right[0].last, right[1].last, accuracy: 2, "the title's and the subtitle's letters end at one column")
+
+        // A block past the canvas's edge keeps the letters inside the canvas, not the inset nobody sees: the letters
+        // touch the edge.
+        let nearLeft = try letters(pair(.left, style: .plain, x: 0.1)[0])
+        XCTAssertEqual(nearLeft.first, 0, accuracy: 2, "kept inside on the left by its letters")
+        let nearRight = try letters(pair(.right, style: .plain, x: 0.95)[0])
+        XCTAssertEqual(nearRight.last, 1920, accuracy: 2, "kept inside on the right by its letters")
     }
 }

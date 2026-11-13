@@ -1,0 +1,167 @@
+{
+  "about": "The export size rule: a source, the export settings, the frame aspect and the movie rate give the canvas and the rate the export writes. recording-editor.test.ts holds exportPlanOf (project.ts) to it and RecorderHuntR2CheckExportCanvasTests.swift holds EditRenderer.plannedOutput to it, so the two cannot drift apart. A new row: compute it with exportPlanOf, then run both tests.",
+  "cases": [
+    {
+      "name": "retina h264 60 fps keeps the pixel budget",
+      "source": {
+        "width": 4112,
+        "height": 2570
+      },
+      "export": {
+        "codec": "h264",
+        "maxHeight": 0
+      },
+      "nominalFps": 45,
+      "fps": 60,
+      "canvas": {
+        "width": 2560,
+        "height": 1600
+      }
+    },
+    {
+      "name": "retina hevc has no budget",
+      "source": {
+        "width": 4112,
+        "height": 2570
+      },
+      "export": {
+        "codec": "hevc",
+        "maxHeight": 0
+      },
+      "nominalFps": 45,
+      "fps": 60,
+      "canvas": {
+        "width": 4112,
+        "height": 2570
+      }
+    },
+    {
+      "name": "retina capped at 720 (the Chat preset)",
+      "source": {
+        "width": 4112,
+        "height": 2570
+      },
+      "export": {
+        "codec": "h264",
+        "maxHeight": 720
+      },
+      "nominalFps": 45,
+      "fps": 60,
+      "canvas": {
+        "width": 1152,
+        "height": 720
+      }
+    },
+    {
+      "name": "retina at 30 fps fits a larger budget",
+      "source": {
+        "width": 4112,
+        "height": 2570
+      },
+      "export": {
+        "codec": "h264",
+        "maxHeight": 0
+      },
+      "nominalFps": 30,
+      "fps": 30,
+      "canvas": {
+        "width": 3620,
+        "height": 2262
+      }
+    },
+    {
+      "name": "a fixed height wins over the budget",
+      "source": {
+        "width": 4112,
+        "height": 2570
+      },
+      "export": {
+        "codec": "h264",
+        "maxHeight": 720,
+        "size": {
+          "height": 1080
+        }
+      },
+      "nominalFps": 45,
+      "fps": 60,
+      "canvas": {
+        "width": 1728,
+        "height": 1080
+      }
+    },
+    {
+      "name": "a fixed width",
+      "source": {
+        "width": 1920,
+        "height": 1080
+      },
+      "export": {
+        "codec": "h264",
+        "maxHeight": 0,
+        "size": {
+          "width": 1281
+        }
+      },
+      "nominalFps": 60,
+      "fps": 60,
+      "canvas": {
+        "width": 1282,
+        "height": 720
+      }
+    },
+    {
+      "name": "a portrait canvas from a wide movie",
+      "source": {
+        "width": 1920,
+        "height": 1080
+      },
+      "export": {
+        "codec": "h264",
+        "maxHeight": 0
+      },
+      "aspect": "9:16",
+      "nominalFps": 28.9,
+      "fps": 29,
+      "canvas": {
+        "width": 1080,
+        "height": 1920
+      }
+    },
+    {
+      "name": "a square canvas capped at 1080",
+      "source": {
+        "width": 2880,
+        "height": 1800
+      },
+      "export": {
+        "codec": "h264",
+        "maxHeight": 1080
+      },
+      "aspect": "1:1",
+      "nominalFps": 8,
+      "fps": 30,
+      "canvas": {
+        "width": 1080,
+        "height": 1080
+      }
+    },
+    {
+      "name": "a 4:3 canvas over budget",
+      "source": {
+        "width": 3456,
+        "height": 2234
+      },
+      "export": {
+        "codec": "h264",
+        "maxHeight": 0
+      },
+      "aspect": "4:3",
+      "nominalFps": 60,
+      "fps": 60,
+      "canvas": {
+        "width": 2336,
+        "height": 1752
+      }
+    }
+  ]
+}

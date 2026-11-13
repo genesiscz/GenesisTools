@@ -131,35 +131,57 @@ struct PRSessionRow: View, Equatable {
 
     var body: some View {
         let _ = RenderProbe.hit("prs.sessionRow.body")
+        // One line: provider, title, time, then why it matched as quiet text, and Open and Resume as small borderless
+        // buttons that never wrap. Chips for "branch", "commits 1" and "files 33" beside two text buttons read as
+        // clutter, and a narrow column broke Resume onto two lines (hub UX annotation 2392, 2026-11-10).
         HStack(spacing: 8) {
-            ProviderBadge(provider: session.provider, size: 16, tooltip: session.provider.capitalized)
-            FindText(session.displayTitle, field: "title").font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
+            ProviderBadge(provider: session.provider, size: 14, tooltip: session.provider.capitalized)
+            FindText(session.displayTitle, field: "title")
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .layoutPriority(1)
+                .instantTooltip(session.displayTitle)
             LiveAgo(date: session.lastActivity, style: .brief)
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .fixedSize()
                 .instantTooltip(session.lastActivity.map { Self.exact.string(from: $0) } ?? "")
-            ForEach(reasons, id: \.self) { reason in
-                reasonChip(reason)
+            let why = matchSummary
+            if !why.text.isEmpty {
+                // Whole, or the counts alone, or nothing: cut to fit, it read as a stray "b" or "…".
+                ViewThatFits(in: .horizontal) {
+                    quiet(why.text)
+                    if why.counts != why.text, !why.counts.isEmpty { quiet(why.counts) }
+                    Color.clear.frame(width: 0, height: 0)
+                }
+                .instantTooltip(why.tooltip)
+                .accessibilityLabel(Text(verbatim: "Matched by \(why.text)"))
             }
-            Spacer(minLength: 4)
-            LiveButton(tooltip: "Show this session in the hub", pressable: true) {
-                open()
-            } label: {
-                Text("Open")
-            }
-            .accessibilityAction(named: Text("Resume")) { resuming = true }
-            LiveButton(tooltip: "Resume it in a terminal pane you pick") {
-                resuming = true
-            } label: {
-                Text("Resume")
-            }
-            .popover(isPresented: $resuming, arrowEdge: .bottom) {
-                LaunchPicker(mode: .resume(session)) { outcome in
-                    resuming = false
-                    resumed(outcome)
+            Spacer(minLength: 6)
+            HStack(spacing: 10) {
+                LiveButton(tooltip: "Show this session in the hub", pressable: true) {
+                    open()
+                } label: {
+                    Text("Open")
+                }
+                .accessibilityAction(named: Text("Resume")) { resuming = true }
+                LiveButton(tooltip: "Resume it in a terminal pane you pick") {
+                    resuming = true
+                } label: {
+                    Text("Resume")
+                }
+                .popover(isPresented: $resuming, arrowEdge: .bottom) {
+                    LaunchPicker(mode: .resume(session)) { outcome in
+                        resuming = false
+                        resumed(outcome)
+                    }
                 }
             }
+            .font(.system(size: 11.5))
+            .foregroundColor(Color(red: 0.62, green: 0.78, blue: 1))
+            .lineLimit(1)
+            .fixedSize()
         }
         // The popover's anchor stays a button while it is up, with the pointer inside the popover.
         .liveRow(selected: resuming)
@@ -176,16 +198,41 @@ struct PRSessionRow: View, Equatable {
         return formatter
     }()
 
-    private func reasonChip(_ reason: String) -> some View {
-        let (text, tip): (String, String) = {
+    private func quiet(_ text: String) -> some View {
+        Text(verbatim: text)
+            .font(.system(size: 11))
+            .foregroundColor(ReviewPalette.dim.opacity(0.75))
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    /// Why the session is listed, as one quiet line ("branch · 1 commit · 33 files"), the counts alone for a narrow
+    /// row ("1 commit · 33 files"), and the evidence behind it.
+    var matchSummary: (text: String, counts: String, tooltip: String) {
+        var words: [String] = []
+        var counts: [String] = []
+        var tips: [String] = []
+        for reason in reasons {
             switch reason {
-            case "worktree": return ("worktree", "Ran in a worktree of the head branch")
-            case "branch": return ("branch", "Its transcript recorded the head branch")
-            case "commits": return ("commits \(commits.count)", "Committed or pushed these PR commits:\n" + commits.map { String($0.prefix(9)) }.joined(separator: "\n"))
-            case "files": return ("files \(fileCount)", "Edited these PR files:\n" + files.joined(separator: "\n") + (fileCount > files.count ? "\n…and \(fileCount - files.count) more" : ""))
-            default: return (reason, reason)
+            case "worktree":
+                words.append("worktree")
+                tips.append("Ran in a worktree of the head branch")
+            case "branch":
+                words.append("branch")
+                tips.append("Its transcript recorded the head branch")
+            case "commits":
+                words.append(Plural.count(commits.count, "commit"))
+                counts.append(words[words.count - 1])
+                tips.append("Committed or pushed these PR commits:\n" + commits.map { String($0.prefix(9)) }.joined(separator: "\n"))
+            case "files":
+                words.append(Plural.count(fileCount, "file"))
+                counts.append(words[words.count - 1])
+                tips.append("Edited these PR files:\n" + files.joined(separator: "\n") + (fileCount > files.count ? "\n…and \(fileCount - files.count) more" : ""))
+            default:
+                words.append(reason)
+                tips.append(reason)
             }
-        }()
-        return Badge(text, tooltip: tip)
+        }
+        return (words.joined(separator: " · "), counts.joined(separator: " · "), tips.joined(separator: "\n\n"))
     }
 }

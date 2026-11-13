@@ -1,18 +1,15 @@
 #!/usr/bin/env bun
 
-import * as p from "@clack/prompts";
-import { parseVariadic, runTool } from "@genesiscz/utils/cli";
+import { parseVariadic, runTool, type ToolErrorReport } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Command } from "commander";
 import pc from "picocolors";
 import { type CommandDef, commands, GROUP_LABELS, GROUP_ORDER, getCommandsByGroup } from "./lib/commands";
 import { defaultFormat, formatOutput, type OutputFormat } from "./lib/format";
 import { runCommandInteractive, runInteractiveMenu } from "./lib/interactive";
-
-handleReadmeFlag(import.meta.url);
 
 // ─── Logo ───────────────────────────────────────────────────────────────────────
 
@@ -178,6 +175,12 @@ async function handleCommandAction(cmd: CommandDef, sub: Command, actionArgs: un
 
 // ─── Main ───────────────────────────────────────────────────────────────────────
 
+/** A terminal gets clack's red error mark; piped output gets the bare message. */
+function formatDarwinKitError(error: unknown): ToolErrorReport {
+    const message = error instanceof Error ? error.message : String(error);
+    return { message: process.stdout.isTTY ? `${pc.red("■")}  ${message}` : message, exitCode: 1 };
+}
+
 async function main(): Promise<void> {
     if (process.argv.length <= 2) {
         if (process.stdout.isTTY) {
@@ -192,17 +195,7 @@ async function main(): Promise<void> {
 
     const program = buildProgram();
 
-    try {
-        await runTool(program, { tool: "darwinkit" });
-    } catch (error) {
-        if (process.stdout.isTTY) {
-            p.log.error(error instanceof Error ? error.message : String(error));
-        } else {
-            out.error(error instanceof Error ? error.message : String(error));
-        }
-
-        process.exit(1);
-    }
+    await runTool(program, { tool: "darwinkit", formatError: formatDarwinKitError });
 }
 
 try {

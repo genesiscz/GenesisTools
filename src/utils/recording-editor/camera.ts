@@ -1,8 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { rename, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import type { RecordingSpan } from "@genesiscz/utils/screen-recorder/library";
+import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
+import { sampleFpsFilter } from "./ffmpeg";
 import { recordingItemId } from "./item-ids";
 
 const { log } = logger.scoped("recording-editor-camera");
@@ -78,14 +83,27 @@ export const cameraBubbleSchema = z.object({
 });
 export type CameraBubble = z.infer<typeof cameraBubbleSchema>;
 
+/**
+ * What a camera movie's time counts. `wall`: every moment since its first frame, pauses and the gaps between screen
+ * segments included (the face since 2026-11-09). `screen`: the screen movie's own time, once the recording cut it to
+ * the screen's spans (`alignCameraMovie`). A sidecar without it was written by a face that left out the paused time it
+ * saw, late by its watch of the live state.
+ */
+export const CAMERA_CLOCKS = ["wall", "screen"] as const;
+
 /** What the recorder face writes into `camera.json`: the movie, when it began, and where the bubble was dragged. */
 export const cameraSidecarSchema = z.object({
     version: z.literal(1),
     file: z.string().min(1),
-    /** When the camera's first frame was written (ISO). */
+    /** The wall time (ISO) of the camera movie's time 0: its first frame, or the screen's first frame once cut. */
     startedAt: z.string(),
-    /** When the screen's recording began (ISO), as the face saw its live state turn to "recording". */
+    /**
+     * The wall time (ISO) of the screen movie's time 0, which the bubble's offset counts from: the screen's first frame
+     * once the recording lined the camera up (`alignCameraMovie`); before that, when the face saw the recording start,
+     * which is up to two seconds before the screen's first frame.
+     */
     screenStartedAt: z.string().optional(),
+    clock: z.enum(CAMERA_CLOCKS).optional(),
     device: z.string().optional(),
     placement: z
         .object({
@@ -101,8 +119,10 @@ export type CameraSidecar = z.infer<typeof cameraSidecarSchema>;
 
 /** The `camera.json` beside a movie, or undefined when there is none or it does not parse (logged). */
 export function readCameraSidecar(video: string): CameraSidecar | undefined {
-    const path = join(dirname(video), CAMERA_SIDECAR);
+    return readSidecarFile(join(dirname(video), CAMERA_SIDECAR));
+}
 
+function readSidecarFile(path: string): CameraSidecar | undefined {
     if (!existsSync(path)) {
         return undefined;
     }
@@ -132,6 +152,230 @@ export function bubbleFromSidecar(sidecar: CameraSidecar): CameraBubble {
         ...(placement.size === undefined ? {} : { size: placement.size }),
         ...(placement.shape === undefined ? {} : { shape: placement.shape }),
     });
+}
+
+/** A stretch of a camera movie in its own time: milliseconds from its first frame. */
+export interface CameraRange {
+    startMs: number;
+    endMs: number;
+}
+
+/** The parts of a wall-clock camera movie that line up with a screen movie, in the screen's order. */
+export interface CameraTrimPlan {
+    /** Screen time before the camera's first frame: the cut movie holds that first frame this long. */
+    padHeadMs: number;
+    ranges: CameraRange[];
+}
+
+/**
+ * Which parts of a camera movie that runs on the wall clock (its first frame at `cameraStartedAt`, epoch ms) show what
+ * each screen span shows. Cut out and joined, they give a camera movie on the screen movie's own time, so the gaps the
+ * screen leaves out (a pause, a rollover's re-arm, a retune, a switch) are left out of the camera too.
+ */
+export function cameraTrimPlan({
+    cameraStartedAt,
+    spans,
+}: {
+    cameraStartedAt: number;
+    spans: readonly RecordingSpan[];
+}): CameraTrimPlan {
+    let padHeadMs = 0;
+    const ranges: CameraRange[] = [];
+
+    for (const span of spans) {
+        const startMs = span.firstFrameEpochMs - cameraStartedAt;
+        const endMs = startMs + span.lengthMs;
+
+        // Spans come in wall order, so only the first ones can start before the camera did.
+        if (endMs <= 0) {
+            padHeadMs += span.lengthMs;
+            continue;
+        }
+
+        if (startMs < 0) {
+            padHeadMs -= startMs;
+        }
+
+        ranges.push({ startMs: Math.max(0, startMs), endMs });
+    }
+
+    return { padHeadMs, ranges };
+}
+
+/** The camera movie's frame rate (the face records at 30 fps, CameraBubble.swift `startCamera`). */
+const CAMERA_FPS = 30;
+
+/**
+ * ffmpeg arguments that cut a camera movie to a trim plan in one pass: each kept frame keeps its exact offset inside
+ * its range (a concat would start each range at its first frame, up to a frame late per span), and the constant-rate
+ * pass holds the first frame through the head pad. The trim at the end stops the rate pass at the last range: without
+ * it, ffmpeg holds the last frame until the input's own end.
+ */
+export function cameraAlignArgv({
+    input,
+    output,
+    plan,
+}: {
+    input: string;
+    output: string;
+    plan: CameraTrimPlan;
+}): string[] {
+    const seconds = (ms: number) => (ms / 1000).toFixed(6);
+    const select = plan.ranges
+        .map((range) => `gte(t,${seconds(range.startMs)})*lt(t,${seconds(range.endMs)})`)
+        .join("+");
+    let outputMs = plan.padHeadMs;
+    const shifts = plan.ranges.map((range) => {
+        const shift = `T-${seconds(range.startMs)}+${seconds(outputMs)}`;
+        outputMs += range.endMs - range.startMs;
+        return { range, shift };
+    });
+    const last = shifts.at(-1)?.shift ?? "T";
+    const setpts = shifts
+        .slice(0, -1)
+        .reduceRight((rest, { range, shift }) => `if(lt(T,${seconds(range.endMs)}),${shift},${rest})`, last);
+    const filter = `select='${select}',setpts='(${setpts})/TB',${sampleFpsFilter(CAMERA_FPS)},trim=end=${seconds(outputMs)}`;
+    return [
+        "ffmpeg",
+        "-nostdin",
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        input,
+        "-map",
+        "0:v:0",
+        "-an",
+        "-vf",
+        filter,
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-f",
+        "mov",
+        output,
+    ];
+}
+
+/** What `alignCameraMovie` did: nothing, the offset only, or a camera movie cut to the screen's spans. */
+export interface CameraAlignment {
+    result: "skipped" | "offset" | "trimmed";
+    /**
+     * With `offset`: why the movie could not be cut; the offset still counts from the screen's first frame. With
+     * `trimmed`: the uncut original that could not be removed, which still holds the footage the cut took out.
+     */
+    warning?: string;
+}
+
+/** Writes `camera.json` whole: a `.partial` file renamed over it, as the face writes it. */
+async function writeSidecarFile(path: string, sidecar: CameraSidecar): Promise<void> {
+    const partial = `${path}.partial`;
+    await writeFile(partial, `${SafeJSON.stringify(sidecar, null, 2)}\n`);
+    await rename(partial, path);
+}
+
+/**
+ * Lines a recording's camera movie up with its screen movie, once both are finished. The screen movie leaves out every
+ * gap between its segments (`spans`, from the recording session); a camera movie on the wall clock (`clock: "wall"`)
+ * kept them, so it is cut to the spans and its `camera.json` then counts from the screen's first frame (offset 0,
+ * `clock: "screen"`). One span is cut too: the camera kept filming through a pause before the stop, and through a
+ * segment a restart discarded, and that footage must not stay in the folder's camera movie. A face that left out its
+ * own pauses, or a cut that fails, keeps the movie and only moves `screenStartedAt` to the screen's first frame, which
+ * removes the constant error. A cut whose `camera.json` cannot be written counts as failed: the uncut movie comes back.
+ */
+export async function alignCameraMovie({
+    folder,
+    spans,
+    runCommand,
+}: {
+    folder: string;
+    spans: readonly RecordingSpan[];
+    /** Runs the cut; default ffmpeg through `runVideoCommand`. */
+    runCommand?: (command: string[]) => Promise<unknown>;
+}): Promise<CameraAlignment> {
+    const path = join(folder, CAMERA_SIDECAR);
+    const sidecar = readSidecarFile(path);
+    const cameraStartedAt = sidecar ? Date.parse(sidecar.startedAt) : Number.NaN;
+    const first = spans[0];
+
+    if (!sidecar || !first || !Number.isFinite(cameraStartedAt) || sidecar.clock === "screen") {
+        log.debug(
+            { folder, sidecar: Boolean(sidecar), spans: spans.length, clock: sidecar?.clock },
+            "the camera movie needs no alignment"
+        );
+        return { result: "skipped" };
+    }
+
+    const screenStartedAt = new Date(first.firstFrameEpochMs).toISOString();
+    const offsetOnly = async (warning?: string): Promise<CameraAlignment> => {
+        await writeSidecarFile(path, { ...sidecar, screenStartedAt });
+        log.info(
+            { folder, spans: spans.length, clock: sidecar.clock, was: sidecar.screenStartedAt, screenStartedAt },
+            "the camera's offset now counts from the screen's first frame"
+        );
+        return warning ? { result: "offset", warning } : { result: "offset" };
+    };
+
+    if (sidecar.clock !== "wall") {
+        return offsetOnly();
+    }
+
+    const plan = cameraTrimPlan({ cameraStartedAt, spans });
+    const input = isAbsolute(sidecar.file) ? sidecar.file : join(folder, sidecar.file);
+    const output = join(dirname(input), `.camera-aligned-${randomUUID()}.mov`);
+    const lastMs = plan.ranges.at(-1)?.endMs ?? 0;
+    // The pass decodes the whole camera movie: allow it real time on a long one, never less than two minutes.
+    const run =
+        runCommand ??
+        ((command: string[]) => runVideoCommand({ command, timeoutMs: Math.max(120_000, Math.round(lastMs)) }));
+
+    // The original stays until camera.json describes the cut: a cut movie beside a sidecar that still says "wall" would
+    // be cut again by the next alignment, and more footage would be lost.
+    const original = join(dirname(input), `.camera-original-${randomUUID()}.mov`);
+
+    try {
+        await run(cameraAlignArgv({ input, output, plan }));
+        await rename(input, original);
+        await rename(output, input);
+        await writeSidecarFile(path, { ...sidecar, startedAt: screenStartedAt, screenStartedAt, clock: "screen" });
+    } catch (error) {
+        if (existsSync(original)) {
+            await rename(original, input);
+        }
+
+        await unlink(output).catch((cleanupError: unknown) => {
+            log.debug({ error: cleanupError, output }, "no cut camera movie to clean up");
+        });
+        log.warn({ error, folder, spans: spans.length }, "the camera movie could not be cut to the screen's spans");
+        const reason = error instanceof Error ? error.message : String(error);
+        const kept =
+            spans.length > 1
+                ? `lined up with the screen's ${spans.length} pieces, so the bubble drifts after each pause and ${basename(input)} still holds the footage filmed during the pauses`
+                : `cut to the screen's recording, so ${basename(input)} still holds footage the screen movie left out (a pause before the stop, a discarded segment)`;
+        return offsetOnly(
+            `The camera movie could not be ${kept}; check it before you share it: ${reason.slice(0, 300)}`
+        );
+    }
+
+    // The original holds every second the cut took out (pauses, discarded segments): one left behind is said, by name.
+    const leftover = await unlink(original).then(
+        () => undefined,
+        (cleanupError: unknown) => {
+            log.warn({ error: cleanupError, original }, "the uncut camera movie could not be removed");
+            const reason = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+            return `The camera movie is cut, but its uncut original ${original} could not be removed (${reason.slice(0, 200)}); it still holds the footage the cut took out, so delete it before you share the folder.`;
+        }
+    );
+    log.info(
+        { folder, spans: spans.length, padHeadMs: plan.padHeadMs, ranges: plan.ranges },
+        "the camera movie is cut to the screen's spans"
+    );
+    return leftover ? { result: "trimmed", warning: leftover } : { result: "trimmed" };
 }
 
 /** The camera movie's path for a bubble of the edit whose source movie is `video`. */

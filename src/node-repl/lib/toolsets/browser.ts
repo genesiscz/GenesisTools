@@ -87,13 +87,14 @@ export class BrowserToolset extends ReplToolset {
         summary: `Open, read, navigate, screenshot and close browser tabs through Chrome DevTools; ${toolCommand("chrome-devtools")} has click, fill and snapshot.`,
         methods: [tabs, open, evaluate, navigate, close, screenshot],
     });
-    private readonly drivers = new Map<number, TabDriver>();
+    /** One driver per CDP port, made on first use; protected so a test hands in its own. */
+    protected readonly drivers = new Map<number, TabDriver>();
     private shots = 0;
 
     async bootstrap(ctx: ToolsetContext): Promise<Record<string, unknown>> {
         // lazy: saves 14.8 ms cold import (tools ts imports lazy, 2026-11-05) — listing the toolsets loads no CDP driver
         const { createTabDriver } = await import("@app/chrome-devtools/lib/tab-driver");
-        const { Conn, localDebuggerUrl, Page, targets } = await import("@app/chrome-devtools/lib/cdp");
+        const { connect, Page, targets } = await import("@app/chrome-devtools/lib/cdp");
         const { closeTab } = await import("@app/chrome-devtools/lib/tabs");
         const driver = (port: number): TabDriver => {
             let current = this.drivers.get(port);
@@ -132,7 +133,15 @@ export class BrowserToolset extends ReplToolset {
                                 });
                                 throw error;
                             });
-                        const tab = (await driver(options.port).tabs()).find((one) => one.id === blank.id);
+                        // The tab is open and loaded: a failed lookup of its details must not lose its id, or the
+                        // caller cannot close it. The url falls back to the one asked for.
+                        const tab = await driver(options.port)
+                            .tabs()
+                            .then((all) => all.find((one) => one.id === blank.id))
+                            .catch((error: unknown) => {
+                                log.debug({ error, tabId: blank.id }, "the opened tab's details were not read");
+                                return undefined;
+                            });
                         return {
                             id: blank.id,
                             url: tab?.url ?? options.url,
@@ -167,7 +176,7 @@ export class BrowserToolset extends ReplToolset {
                             );
                         }
 
-                        const page = new Page(new Conn(localDebuggerUrl(target, options.port)), target);
+                        const page = new Page(connect(target, options.port), target);
 
                         try {
                             const path = join(ctx.scratchDir, `browser-${++this.shots}.png`);

@@ -1,30 +1,20 @@
 import { agentNote } from "@app/question/lib/agent-note";
-import {
-    checkDecisionItems,
-    isDecisionId,
-    postDecisionItems,
-    type QuestionItemInput,
-    splitItems,
-    validateQuestionItems,
-} from "@app/question/lib/decisions/items";
-import { currentHarnessSession, decisionFiles, sessionAnswers } from "@app/question/lib/decisions/read";
+import { type QuestionItemInput, validateQuestionItems } from "@app/question/lib/decisions/items";
 import { DECISION_RECORD_RULE } from "@app/question/lib/decisions/schema";
-import { type DecisionRecord, type PostDecisionDeps, readDecisions } from "@app/question/lib/decisions/store";
+import type { DecisionRecord } from "@app/question/lib/decisions/store";
 import { decisionNudge } from "@app/question/lib/inbox-guidance";
 import {
     type AskDeps,
     answerAskForm,
     cancelAskForm,
     explainCancelRefusal,
-    listPendingForms,
-    pollAskForms,
-    postAskForm,
     waitForAskForm,
 } from "@app/question/lib/pending/ask";
 import { summarizeForm } from "@app/question/lib/pending/render";
 import type { AskAnswer, AskChoice, AskForm } from "@app/question/lib/pending/types";
 import { DEFAULT_WAIT_BUDGET_MS, MAX_MEDIA_CONTEXT_CHARS } from "@app/question/lib/pending/types";
-import { prepareQuestionItems, questionTokenRegistry, transclusionReport } from "@app/question/lib/transclude";
+import { questionTokenRegistry } from "@app/question/lib/transclude";
+import { pollQuestions, postQuestion, type QuestionVerbDeps } from "@app/question/lib/verbs";
 import { callerCwd } from "@genesiscz/utils/agent/runtime";
 import { SOURCE_MESSAGE_INPUT_SCHEMA, type SourceMessage } from "@genesiscz/utils/agent/source-anchor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -34,7 +24,6 @@ import type { NativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 import {
     describeTransclusions,
     formatTransclusionHelp,
-    type TranscludeOptions,
     transclude,
     transclusionGrammar,
 } from "@genesiscz/utils/transclude";
@@ -59,19 +48,13 @@ export interface QuestionPostArgs {
     transclude?: boolean;
 }
 
-/** The decision log a post or poll reads and writes. Tests point it at a scratch directory. */
-export interface DecisionLogDeps {
-    decisionLog?: { file: string; events: string; deps?: PostDecisionDeps; session?: string | null };
-}
+export type { DecisionLogDeps } from "@app/question/lib/verbs";
 
 /** `askViaQuestionTool` and `inboxState` override the opt-in and this Mac's native inbox (tests); unset reads them. */
-export type QuestionDeps = AskDeps &
-    DecisionLogDeps & {
-        askViaQuestionTool?: boolean;
-        inboxState?: NativeInboxState;
-        /** Test seams for inline-token resolution (a fake runner, fetch or asset folder). */
-        transclude?: Partial<Omit<TranscludeOptions, "cwd" | "label">>;
-    };
+export type QuestionDeps = QuestionVerbDeps & {
+    askViaQuestionTool?: boolean;
+    inboxState?: NativeInboxState;
+};
 
 export interface QuestionWaitArgs {
     id: string;
@@ -117,24 +100,6 @@ function describe(form: AskForm): string {
     return `${form.id} [${form.status}] ${summarizeForm(form)}`;
 }
 
-function decisionLog(deps: QuestionDeps): { file: string; events: string } {
-    return deps.decisionLog ?? decisionFiles();
-}
-
-/** The decision and todo half of a post: stored, numbered by the store, and rendered for the chat. */
-async function postDecisionHalf(args: QuestionPostArgs, items: QuestionItemInput[], deps: QuestionDeps) {
-    const { file, events } = decisionLog(deps);
-
-    return postDecisionItems({
-        file,
-        events,
-        items,
-        hint: { sessionId: args.sessionHint, cwd: args.projectPath, sourceMessage: args.sourceMessage },
-        deps: deps.decisionLog?.deps,
-        notify: deps.notify,
-    });
-}
-
 function describeDecisions(decisions: DecisionRecord[], markdown: string): string {
     return (
         `Posted ${decisions.map((row) => row.id).join(", ")}. Paste this section into your reply as it is ` +
@@ -150,42 +115,32 @@ export async function handleQuestionPost(args: QuestionPostArgs, deps: QuestionD
 }
 
 async function postQuestionItems(args: QuestionPostArgs, deps: QuestionDeps): Promise<string> {
-    const transcluded = await prepareQuestionItems({
-        items: itemsFrom(args),
-        cwd: args.projectPath,
-        transclude: args.transclude !== false,
-        options: deps.transclude,
-    });
-    const report = transclusionReport(transcluded.tokens);
-    const reportText = report.length > 0 ? `\n\n${report.join("\n")}` : "";
-    const { questions, decisions } = splitItems(transcluded.items);
-
-    if (questions.length === 0) {
-        const posted = await postDecisionHalf(args, decisions, deps);
-        return `${describeDecisions(posted.decisions, posted.markdown)}${reportText}`;
-    }
-
-    // Both halves are checked before either is written; see `checkDecisionItems`.
-    checkDecisionItems(decisions, {
-        sessionId: args.sessionHint,
-        cwd: args.projectPath,
-        sourceMessage: args.sourceMessage,
-    });
-    const form = await postAskForm(
+    const result = await postQuestion(
         {
+            items: itemsFrom(args),
             projectPath: args.projectPath,
-            items: questions,
-            timeoutMs: args.timeoutMs,
             source: args.source ?? "mcp",
             sessionHint: args.sessionHint,
             sourceMessage: args.sourceMessage,
+            timeoutMs: args.timeoutMs,
+            waitTimeoutMs: args.waitTimeoutMs,
+            transclude: args.transclude,
         },
+        { wait: args.wait },
         deps
     );
-    const posted = decisions.length > 0 ? await postDecisionHalf(args, decisions, deps) : null;
-    const suffix = `${posted ? `\n\n${describeDecisions(posted.decisions, posted.markdown)}` : ""}${reportText}`;
+    const reportText = result.report.length > 0 ? `\n\n${result.report.join("\n")}` : "";
+    const { form, posted } = result;
 
-    if (args.wait !== true) {
+    if (!form) {
+        return `${describeDecisions(posted.decisions, posted.markdown)}${reportText}`;
+    }
+
+    const decisionText =
+        posted.decisions.length > 0 ? `\n\n${describeDecisions(posted.decisions, posted.markdown)}` : "";
+    const suffix = `${decisionText}${reportText}`;
+
+    if (!result.wait) {
         return (
             `Posted ${describe(form)}\n` +
             "It is waiting on the dashboard /qa Pending section. Collect the answer later with " +
@@ -193,14 +148,7 @@ async function postQuestionItems(args: QuestionPostArgs, deps: QuestionDeps): Pr
         );
     }
 
-    const result = await waitForAskForm(form.id, args.waitTimeoutMs ?? DEFAULT_WAIT_BUDGET_MS, deps);
-
-    return `waiter: ${result.waiter}\n${SafeJSON.stringify(result.form, null, 2)}${suffix}`;
-}
-
-/** Answered decisions of this session the agent has not acknowledged yet. Read-only. */
-function unacknowledged(rows: DecisionRecord[], session: string): DecisionRecord[] {
-    return sessionAnswers(rows, session).filter((row) => row.state === "answered" || row.state === "sent");
+    return `waiter: ${result.wait.waiter}\n${SafeJSON.stringify(result.wait.form, null, 2)}${suffix}`;
 }
 
 export async function handleQuestionWait(args: QuestionWaitArgs, deps: AskDeps = {}): Promise<string> {
@@ -225,39 +173,31 @@ export function handleQuestionPoll(args: QuestionPollArgs, deps: QuestionDeps = 
         throw new Error("question_poll: `ids` must be an array of form ids");
     }
 
-    if (!args.ids?.length) {
-        const forms = listPendingForms(deps);
-        const session = deps.decisionLog?.session ?? currentHarnessSession();
-        const answered = session ? unacknowledged(readDecisions(decisionLog(deps).file), session) : [];
-        const formText = forms.length === 0 ? "No pending ask forms." : forms.map(describe).join("\n");
+    const polled = pollQuestions({ ids: args.ids }, deps);
 
-        if (answered.length === 0) {
+    if (polled.kind === "pending") {
+        const formText = polled.forms.length === 0 ? "No pending ask forms." : polled.forms.map(describe).join("\n");
+
+        if (polled.answered.length === 0) {
             return formText;
         }
 
         return (
             `${formText}\n\nAnswered decisions not yet acknowledged (mark them with question_update):\n` +
-            SafeJSON.stringify(answered, null, 2)
+            SafeJSON.stringify(polled.answered, null, 2)
         );
     }
-
-    const decisionIds = args.ids.filter(isDecisionId);
-    const formIds = args.ids.filter((id) => !isDecisionId(id));
-    const rows = decisionIds.length > 0 ? readDecisions(decisionLog(deps).file) : [];
-    const decisionParts = decisionIds.map((id) => {
-        const row = rows.find((item) => item.id === id);
-        return row ? `${id} [${row.state}]\n${SafeJSON.stringify(row, null, 2)}` : `${id} [unknown]`;
-    });
-    const map = formIds.length > 0 ? pollAskForms(formIds, deps) : {};
 
     // Named ids mean "I am collecting an answer", and `describe` carries only the status line.
     // Serialize the whole form so `answers` and `entryId` are actually reachable through poll,
     // which is what the tool description tells an agent to do.
     return [
-        ...Object.entries(map).map(([id, form]) =>
+        ...Object.entries(polled.forms).map(([id, form]) =>
             form ? `${describe(form)}\n${SafeJSON.stringify(form, null, 2)}` : `${id} [unknown]`
         ),
-        ...decisionParts,
+        ...polled.decisions.map(({ id, row }) =>
+            row ? `${id} [${row.state}]\n${SafeJSON.stringify(row, null, 2)}` : `${id} [unknown]`
+        ),
     ].join("\n\n");
 }
 
@@ -303,8 +243,8 @@ const ITEM_SCHEMA = {
         allowMultiple: {
             type: "boolean",
             description:
-                "question: more than one choice may be picked. decision: the user may pick any set of the options " +
-                '(letters like "ac"); every inbox shows check boxes and one Send (default false)',
+                "question: more than one choice may be picked (default false). A decision does not read it: the " +
+                "decision log stores no selection mode, and a Telegram button answers one letter",
         },
         allowFreeText: { type: "boolean", description: "offer a free-text box (default true)" },
         allowFileTags: { type: "boolean", description: "allow @file tags relative to the form cwd (default false)" },
@@ -330,7 +270,8 @@ const ITEM_SCHEMA = {
         proposal: { type: "string", description: "decision: what you would do" },
         recommended: {
             type: "string",
-            description: 'decision: the recommended option letter, e.g. "b", or a set ("ac") with allowMultiple',
+            description:
+                'decision: the recommended option letter, e.g. "b"; several letters ("ac") mark each of them recommended',
         },
         reasoning: { type: "string", description: "decision: markdown reasoning" },
         confidence: { type: "string", enum: ["high", "medium", "low"] },
@@ -511,7 +452,6 @@ export function questionPostDescription({
         "(numbers are session-wide and never reused) and the result is the markdown ❓ DECISION / TODO section to " +
         `paste into your reply. ${nudge}${answeredIn} reach you in a later prompt or through ` +
         `question_poll, and you record progress with question_update. ${DECISION_RECORD_RULE} ` +
-        'A decision where the user may pick several options takes allowMultiple: true; its answer is a set ("ac"). ' +
         "To correct an item nobody answered yet, " +
         "post it again with supersedes: <its id>; it keeps its number and the old text is kept as a version.\n" +
         'SCREENSHOTS: any item may carry attachments: [{type: "image", path: "/abs/shot.png", label?}]; they are ' +

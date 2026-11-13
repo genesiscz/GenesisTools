@@ -1,8 +1,8 @@
-import * as p from "@clack/prompts";
 import { ACCOUNT_PROVIDER_ALIASES, providerAliasOf, resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { pluginsWithAccounts, providerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import * as p from "@genesiscz/utils/prompts/p";
 
 /**
  * `--provider` is an ENUMERATED flag, so it is declared `--provider [value]` and
@@ -49,6 +49,7 @@ export async function resolveAccountsProvider(input: ResolveProviderInput): Prom
                 label: plugin.accounts?.presentation.displayName ?? plugin.id,
                 hint: providerAliasOf(plugin.id),
             })),
+            cancel: "back",
         });
 
         if (p.isCancel(picked)) {

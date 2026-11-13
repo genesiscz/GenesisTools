@@ -331,6 +331,24 @@ final class VaultUnlockTests: XCTestCase {
         }
     }
 
+    /// The CLI loader (`src/utils/ai/gate/auto-allow.ts`) refuses the same files, so both sides agree on what is off.
+    func testAnAutoAllowKeyOfTheWrongTypeTurnsTheFeatureOffAndNullIsTheDefault() throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("vault-auto-allow-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let path = (directory as NSString).appendingPathComponent("vault-auto-allow.json")
+        let load = { (json: String) -> VaultAutoAllowSettings in
+            FileManager.default.createFile(atPath: path, contents: Data(json.utf8))
+            return VaultAutoAllowSettings.load(from: path)
+        }
+
+        for json in [#"{"enabled": "false"}"#, #"{"notify": 1}"#, #"{"commands": "ai usage"}"#, #"{"agentApps": [1]}"#] {
+            XCTAssertEqual(load(json), .disabled, "a wrong type never widens the list: \(json)")
+        }
+        XCTAssertEqual(load(#"{"enabled": null, "commands": null}"#), VaultAutoAllowSettings())
+        XCTAssertEqual(load(#"{"notify": false}"#), VaultAutoAllowSettings(notify: false))
+    }
+
     func testGrantTransactionsWaitForTheSharedPidLockAndReloadAfterRevocation() async throws {
         let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("vault-store-\(UUID().uuidString)")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -618,6 +636,124 @@ final class VaultUnlockTests: XCTestCase {
         close(first)
         XCTAssertNotNil(VaultWindowLock.acquire(path), "a closed window frees it")
         XCTAssertNotEqual(VaultWindowLock.path(for: "vault|/a|x.ts"), VaultWindowLock.path(for: "vault|/a|y.ts"))
+    }
+
+    // MARK: - Auto-allow (DECISION 57 c)
+
+    private let grokBot: [(pid_t, String)] = [(30, "zsh null; }; COMMAND_EXIT_CODE=$?"), (20, "Grok Bot Helper"), (10, "Grok Bot")]
+
+    private func warmupCaller(script: String = "/repo/src/claude/index.ts", subcommand: String = "warmup",
+                              environment: [String] = ["NODE_PATH=/Applications/Grok Bot.app/Contents/Resources/app.asar/dist/deps"],
+                              ancestors: [(pid_t, String)]? = nil,
+                              executable: String = "/Users/alice/.genesis-tools/bin/gt-claude",
+                              arguments: [String]? = nil) -> VaultCaller {
+        caller(executable, arguments: ["gt-claude", script] + (arguments ?? [subcommand, "--all", "--json"]),
+               environment: environment, ancestors: ancestors ?? grokBot)
+    }
+
+    /// The fixture home: `/Users/alice/.genesis-tools/bin/gt-claude` is a launcher there, so the runtime is Bun.
+    private func match(_ caller: VaultCaller, settings: VaultAutoAllowSettings = VaultAutoAllowSettings(),
+                       trustedRoot: String? = "/repo") -> VaultAutoAllowMatch? {
+        VaultAutoAllow.match(caller: caller, settings: settings, trustedRoot: trustedRoot, home: "/Users/alice")
+    }
+
+    func testAListedCommandThatGrokBotStartsPassesDespiteItsNodePath() {
+        XCTAssertEqual(match(warmupCaller()), VaultAutoAllowMatch(command: "claude warmup", agent: "Grok Bot"))
+        XCTAssertEqual(match(warmupCaller(executable: "/Users/alice/.bun/bin/bun")),
+                       VaultAutoAllowMatch(command: "claude warmup", agent: "Grok Bot"))
+    }
+
+    func testAClaudeCodeProcessAmongTheAncestorsCountsAsAnAgent() {
+        XCTAssertEqual(match(warmupCaller(subcommand: "usage", environment: ["CLAUDE_CODE_SESSION_ID=1b4001ba-x"],
+                                          ancestors: [(9, "zsh -c"), (8, "claude")])),
+                       VaultAutoAllowMatch(command: "claude usage", agent: "claude (pid 8)"))
+    }
+
+    func testACodexOrGrokCliProcessCountsAsAnAgentWithNoSession() {
+        XCTAssertEqual(match(warmupCaller(environment: [], ancestors: [(81, "zsh -lc"), (80, "codex exec"), (70, "zsh")])),
+                       VaultAutoAllowMatch(command: "claude warmup", agent: "codex (pid 80)"))
+        XCTAssertEqual(match(warmupCaller(environment: [], ancestors: [(61, "bash"), (60, "grok")])),
+                       VaultAutoAllowMatch(command: "claude warmup", agent: "grok (pid 60)"))
+    }
+
+    func testEverythingElseStillGetsTheWindow() {
+        // not on the list
+        XCTAssertNil(match(warmupCaller(subcommand: "login")))
+        // a script outside the checkout the app was built from, even with a tool's path shape
+        XCTAssertNil(match(warmupCaller(script: "/tmp/x/src/claude/index.ts")))
+        XCTAssertNil(match(warmupCaller(script: "/repo/src/claude/lib/x.ts")))
+        // started by a person in a terminal, not by an agent
+        XCTAssertNil(match(warmupCaller(ancestors: [(5, "zsh"), (4, "Terminal")])))
+        // a session id in the environment alone: any process can set CLAUDE_CODE_SESSION_ID
+        XCTAssertNil(match(warmupCaller(environment: ["CLAUDE_CODE_SESSION_ID=1b4001ba-x"], ancestors: [(5, "zsh"), (4, "Terminal")])))
+        // another code-loading variable besides NODE_PATH
+        XCTAssertNil(match(warmupCaller(environment: ["NODE_PATH=/x", "DYLD_INSERT_LIBRARIES=/x.dylib"])))
+        // switched off, or no known checkout
+        XCTAssertNil(match(warmupCaller(), settings: .disabled))
+        XCTAssertNil(match(warmupCaller(), trustedRoot: nil))
+    }
+
+    /// A process label is its name and first argument, and a CLI's first argument can be the prompt. The notification
+    /// and the audit detail carry the executable's name and pid only.
+    func testAnAncestorsArgumentNeverReachesTheNotificationOrTheAuditLine() throws {
+        let secret = "sk-ant-api03-SECRETPROMPT"
+        for (name, pid) in [("claude", 8), ("codex", 80), ("grok", 60)] {
+            let found = try XCTUnwrap(match(warmupCaller(environment: [], ancestors: [(9, "zsh -c"), (pid_t(pid), "\(name) \(secret)")])))
+            XCTAssertEqual(found.agent, "\(name) (pid \(pid))")
+            let text = VaultAutoAllow.notificationText(found)
+            for shown in [text.title, text.body, found.auditDetail] {
+                XCTAssertFalse(shown.contains("SECRETPROMPT"), shown)
+            }
+        }
+    }
+
+    /// The script path is only an argument: another program can pass it, with a listed subcommand, and run nothing of it.
+    func testAProgramThatIsNotBunOrALauncherGetsTheWindowWhateverItsArguments() {
+        XCTAssertNil(match(warmupCaller(executable: "/tmp/evil/gt-claude")))
+        XCTAssertNil(match(warmupCaller(executable: "/Users/alice/.genesis-tools/bin/sub/gt-claude")))
+        XCTAssertNil(match(warmupCaller(executable: "/Users/alice/Downloads/bun")))
+        var noExecutable = warmupCaller()
+        noExecutable.executable = nil
+        XCTAssertNil(match(noExecutable))
+    }
+
+    /// With an option before it, the first bare word may be that option's value: the command is unknown, so the window.
+    func testTheSubcommandMustBeTheFirstArgumentAfterTheScript() {
+        XCTAssertNil(match(warmupCaller(arguments: ["--verbose", "warmup"])))
+        let say = VaultAutoAllowSettings(commands: ["say voices"])
+        XCTAssertNil(match(warmupCaller(script: "/repo/src/say/index.ts", arguments: ["--model", "voices", "--account", "work", "hello"]),
+                           settings: say))
+        XCTAssertEqual(match(warmupCaller(script: "/repo/src/say/index.ts", arguments: ["voices", "--json"]), settings: say),
+                       VaultAutoAllowMatch(command: "say voices", agent: "Grok Bot"))
+    }
+
+    func testTheSettingsFileKeepsDefaultsForMissingKeysAndTurnsOffWhenItDoesNotDecode() throws {
+        let folder = NSTemporaryDirectory() + "vault-auto-allow-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let path = folder + "/vault-auto-allow.json"
+
+        XCTAssertEqual(VaultAutoAllowSettings.load(from: path), VaultAutoAllowSettings())
+        try #"{"version":1,"notify":false,"commands":["ai usage"]}"#.write(toFile: path, atomically: true, encoding: .utf8)
+        XCTAssertEqual(VaultAutoAllowSettings.load(from: path),
+                       VaultAutoAllowSettings(enabled: true, notify: false, commands: ["ai usage"], agentApps: ["Grok Bot"]))
+        try #"{"commands":"claude warmup"}"#.write(toFile: path, atomically: true, encoding: .utf8)
+        XCTAssertEqual(VaultAutoAllowSettings.load(from: path), .disabled)
+    }
+
+    func testAWorktreeBuildTrustsItsMainCheckout() throws {
+        let main = NSTemporaryDirectory() + "vault-main-\(UUID().uuidString)"
+        let worktree = NSTemporaryDirectory() + "vault-wt-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: main + "/.git/worktrees/wt", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: worktree, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(atPath: main)
+            try? FileManager.default.removeItem(atPath: worktree)
+        }
+        try "gitdir: \(main)/.git/worktrees/wt\n".write(toFile: worktree + "/.git", atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(VaultAutoAllow.mainCheckout(of: worktree), (main as NSString).standardizingPath)
+        XCTAssertEqual(VaultAutoAllow.mainCheckout(of: main), (main as NSString).standardizingPath)
     }
 }
 

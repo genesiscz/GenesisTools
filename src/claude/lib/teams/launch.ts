@@ -1,15 +1,16 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { capture } from "@genesiscz/utils/process/ps";
+import { capture } from "@genesiscz/utils/process/capture";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { insideTmux } from "@genesiscz/utils/tmux/inside";
+import { tmuxSendKeys } from "@genesiscz/utils/tmux/send-keys";
 import type { TeamMemberView, TeamView } from "./types";
 
 export type LaunchMode = "focus" | "attach" | "split";
@@ -17,7 +18,7 @@ export type LaunchMode = "focus" | "attach" | "split";
 export interface LaunchTeammateOptions {
     team: TeamView;
     teammate: TeamMemberView;
-    /** AIConfig account name for OAuth (tools cc run). */
+    /** AI config account name for OAuth (tools cc run). */
     account: string;
     mode: LaunchMode;
     /**
@@ -108,8 +109,10 @@ async function resolveAccount(preferred?: string): Promise<string> {
         return preferred;
     }
 
-    const ai = await AIConfig.load();
-    const withToken = ai.getAccountsByProvider("anthropic-sub").filter((a) => Boolean(a.tokens.longLivedToken));
+    const store = await AiConfigStore.load();
+    const withToken = store
+        .accounts({ provider: "anthropic-sub" })
+        .filter((a) => Boolean(a.credentials.longLivedToken));
     if (withToken.length === 0) {
         throw new Error(`No accounts with a long-lived token. Run: ${toolCommand("claude login-long")}`);
     }
@@ -119,23 +122,33 @@ async function resolveAccount(preferred?: string): Promise<string> {
     return withToken[0]!.name;
 }
 
-function tmuxSendCommand(target: string, command: string): void {
-    const tmux = resolveTmuxBin();
-    // Clear any half-typed input, paste command, Enter
-    Bun.spawnSync([tmux, "send-keys", "-t", target, "C-c"], { stdout: "ignore", stderr: "ignore" });
-    // Small delay not needed for send-keys -l
-    const r = Bun.spawnSync([tmux, "send-keys", "-t", target, "-l", "--", command], {
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    if (r.exitCode !== 0) {
-        throw new Error(`tmux send-keys failed: ${r.stderr.toString() || r.stdout.toString()}`);
+/** Clear any half-typed input, type the command literally, press Enter; each call is bounded. */
+async function tmuxSendCommand(target: string, command: string): Promise<void> {
+    const cleared = await tmuxSendKeys(target, ["C-c"]);
+
+    if (!cleared.ok) {
+        logger.debug({ target, detail: cleared.detail }, "[teams] could not clear the pane before the launch command");
     }
 
-    Bun.spawnSync([tmux, "send-keys", "-t", target, "Enter"], { stdout: "ignore", stderr: "ignore" });
+    const typed = await tmuxSendKeys(target, ["-l", "--", command]);
+
+    if (!typed.ok) {
+        throw new Error(typed.detail);
+    }
+
+    const entered = await tmuxSendKeys(target, ["Enter"]);
+
+    if (!entered.ok) {
+        throw new Error(entered.detail);
+    }
 }
 
-function tmuxSplitAndRun(session: string, leadPaneId: string | undefined, cwd: string, command: string): string {
+async function tmuxSplitAndRun(
+    session: string,
+    leadPaneId: string | undefined,
+    cwd: string,
+    command: string
+): Promise<string> {
     const tmux = resolveTmuxBin();
     // Prefer -h split of the lead pane when we know it; else split the session's active window.
     // leadPaneId is tmux's `#{pane_id}` (`%3`), already an absolute target — prefixing it
@@ -181,7 +194,7 @@ function tmuxSplitAndRun(session: string, leadPaneId: string | undefined, cwd: s
         }
     }
 
-    tmuxSendCommand(newTarget, command);
+    await tmuxSendCommand(newTarget, command);
     return newTarget;
 }
 
@@ -270,7 +283,12 @@ export async function injectLeadAssignment(opts: {
             throw new Error(`tmux paste-buffer failed: ${paste.stderr.toString().trim()}`);
         }
 
-        Bun.spawnSync([tmux, "send-keys", "-t", opts.tmuxTarget, "Enter"], { stdout: "ignore", stderr: "ignore" });
+        const entered = await tmuxSendKeys(opts.tmuxTarget, ["Enter"]);
+
+        if (!entered.ok) {
+            throw new Error(entered.detail);
+        }
+
         logger.debug({ target: opts.tmuxTarget, chars: body.length }, "[teams] injected lead assignment");
     } finally {
         try {
@@ -408,7 +426,7 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
         }
 
         const leadPane = opts.team.leadPaneId || opts.team.lead?.live?.tmuxPaneId;
-        const newTarget = tmuxSplitAndRun(session, leadPane || undefined, cwd, command);
+        const newTarget = await tmuxSplitAndRun(session, leadPane || undefined, cwd, command);
 
         if (needsInject && opts.teammate.member.prompt) {
             try {
@@ -458,7 +476,7 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
             throw new Error(`tmux new-window failed: ${created.stderr.toString() || "no target"}`);
         }
 
-        tmuxSendCommand(target, command);
+        await tmuxSendCommand(target, command);
 
         if (needsInject && opts.teammate.member.prompt) {
             try {

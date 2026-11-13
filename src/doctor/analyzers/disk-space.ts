@@ -1,10 +1,9 @@
 import { existsSync, lstatSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import { allocatedOf, isSparseOrCompressed } from "@app/doctor/lib/fs-measure";
-import { vmDataReason } from "@app/doctor/lib/path-guard";
+import { removeForDoctor } from "@app/doctor/lib/remove";
 import { isCommandAvailable, run, runInherit } from "@app/doctor/lib/run";
 import { readScanGate, type ScanGateReader } from "@app/doctor/lib/scan-gate";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
@@ -17,6 +16,7 @@ import type {
     Finding,
 } from "@app/doctor/lib/types";
 import { openFiles, pidsByPath } from "@genesiscz/utils/process/open-files";
+import { vmDataReason } from "@genesiscz/utils/rm/rules";
 
 interface SizedPath {
     path: string;
@@ -166,7 +166,11 @@ function directDeleteAction(path: string): Action {
         method: "delete",
         execute: async (_ctx, finding): Promise<ActionResult> => {
             try {
-                await rm(path, { recursive: true, force: true });
+                const removal = await removeForDoctor(path, { analyzerId: "disk-space" });
+
+                if (removal.refusal) {
+                    throw new Error(`Refusing removal: ${removal.refusal}`);
+                }
 
                 return {
                     findingId: finding.id,

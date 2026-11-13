@@ -1,11 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
 import { env } from "@genesiscz/utils/env";
 import { removeDbFile } from "@genesiscz/utils/fs";
+import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    _resetMasterKeyProviders,
+    _resetSecretsForTest,
+    _setMasterKeyProvidersForTest,
+    resolveSecret,
+} from "@genesiscz/utils/security";
 import type { WarmupConfig } from "./config";
 import {
     partialRenameAdvice,
@@ -87,7 +95,12 @@ describe("renameClaudeAccount", () => {
     beforeEach(() => {
         home = mkdtempSync(join(tmpdir(), "gt-rename-"));
         env.testing.set("GENESIS_TOOLS_HOME", home);
-        AIConfig.invalidate();
+        const key = Buffer.alloc(32, 5);
+        _setMasterKeyProvidersForTest([
+            { id: "env", available: async () => true, get: async () => key, getSync: () => key, set: async () => {} },
+        ]);
+        _resetSecretsForTest();
+        AiConfigStore.invalidate();
         ClaudeDatabase.closeInstance();
         dbPath = join(home, "history.sqlite");
         db = new UsageHistoryDb(dbPath);
@@ -97,19 +110,32 @@ describe("renameClaudeAccount", () => {
         db.close();
         removeDbFile(dbPath);
         env.testing.unset("GENESIS_TOOLS_HOME");
-        AIConfig.invalidate();
+        _resetMasterKeyProviders();
+        _resetSecretsForTest();
+        AiConfigStore.invalidate();
         ClaudeDatabase.closeInstance();
         rmSync(home, { recursive: true, force: true });
     });
 
     test("moves the account, its default, its history, and its warmup slot", async () => {
-        const config = await AIConfig.load();
-        await config.addAccount({
-            name: "work",
-            provider: "anthropic-sub",
-            tokens: { accessToken: "atok" },
-        });
-        await config.setDefaultAccount("claude", "work");
+        const seeded: AiConfigData = {
+            version: CONFIG_VERSION,
+            accounts: [
+                {
+                    id: "acc_work",
+                    name: "work",
+                    provider: "anthropic-sub",
+                    enabled: true,
+                    billing: { mode: "subscription" },
+                    credentials: { accessToken: "atok" },
+                    useEnvApiKey: false,
+                },
+            ],
+            defaults: { app: { claude: { chat: { model: "@account/acc_work" } } } },
+        };
+        mkdirSync(join(home, ".genesis-tools", "ai"), { recursive: true });
+        writeFileSync(join(home, ".genesis-tools", "ai", "config.json"), SafeJSON.stringify(seeded, null, 2));
+        AiConfigStore.invalidate();
         db.recordSnapshot("work", "five_hour", 42, new Date().toISOString());
 
         let warmup: WarmupConfig = {
@@ -138,9 +164,10 @@ describe("renameClaudeAccount", () => {
         });
 
         expect(moved.historyRows).toBe(1);
-        expect(config.getAccount("work")).toBeUndefined();
-        expect(config.getAccount("work@shop")?.tokens.accessToken).toBe("atok");
-        expect(config.getDefaultAccount("claude")?.name).toBe("work@shop");
+        const store = await AiConfigStore.load();
+        expect(store.account("work")).toBeUndefined();
+        expect(await resolveSecret(store.account("work@shop")?.credentials.accessToken)).toBe("atok");
+        expect(store.defaultAccount("claude")?.name).toBe("work@shop");
         expect(db.getSnapshots("work@shop", "five_hour", 60)).toHaveLength(1);
         expect(db.getSnapshots("work", "five_hour", 60)).toHaveLength(0);
         expect(warmup.weekly.accounts).toEqual(["work-max", "work@shop"]);
@@ -168,13 +195,13 @@ describe("partialRenameAdvice", () => {
         const advice = partialRenameAdvice("work", "work@shop");
 
         expect(advice.join("\n")).toContain("tools claude config rename work@shop --to work");
-        expect(advice[0]).toContain('AIConfig no longer knows "work"');
+        expect(advice[0]).toContain('the AI config no longer knows "work"');
     });
 });
 
 describe("renameClaudeAccount partial failure", () => {
     test("a failing secondary step is reported, not swallowed or fatal", async () => {
-        // Before this, one throw left the account renamed in AIConfig while the
+        // Before this, one throw left the account renamed in the AI config while the
         // other stores still held oldName — a state no retry can repair.
         const moved = await renameClaudeAccount("work", "work@shop", {
             renameAiAccount: async () => {},
@@ -193,7 +220,7 @@ describe("renameClaudeAccount partial failure", () => {
 
     test("a failing history migration is reported like every other secondary store", async () => {
         // renameHistory ran outside the guarded loop, so a locked SQLite file threw
-        // after AIConfig was already renamed and skipped every remaining step.
+        // after the AI config was already renamed and skipped every remaining step.
         const ran: string[] = [];
         const moved = await renameClaudeAccount("work", "work@shop", {
             renameAiAccount: async () => {},

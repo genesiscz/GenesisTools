@@ -11,6 +11,7 @@ struct SpeakersTab: View {
     /// field and the Play button left the numbers about 20 pt, one letter per line.
     static let stackWidth: CGFloat = 560
     @State private var reviewing: String?
+    @AppStorage(MeetingsPreferences.speakerOrderKey) private var order = MeetingsPreferences.SpeakerOrder.spoken.rawValue
     @AppStorage(MeetingsPreferences.Speakers.showQuestions.key) private var showQuestions =
         MeetingsPreferences.Speakers.showQuestions.defaultValue
     @AppStorage(MeetingsPreferences.Speakers.hintChips.key) private var hintChips = MeetingsPreferences.Speakers.hintChips.defaultValue
@@ -22,8 +23,8 @@ struct SpeakersTab: View {
                 EmptyState(symbol: "person.2", text: "No speaker yet", detail: "The speakers come from the transcript.")
             } else {
                 let renames = detail.record.value?.speakers.labels ?? [:]
-                // The most spoken first: in the CLI's order a label with 7 turns stood above one with 427.
-                let speakers = stats.speakers.sorted { $0.spokenSec > $1.spokenSec }
+                let ordering = MeetingsPreferences.SpeakerOrder(rawValue: order) ?? .spoken
+                let speakers = ordering == .spoken ? stats.speakers.sorted { $0.spokenSec > $1.spokenSec } : stats.speakers
                 // The width straight from a GeometryReader, not a state an onGeometryChange sets: the window opened at
                 // its smallest size reported no change, so the rows stayed side by side and wrapped one letter per line.
                 GeometryReader { proxy in

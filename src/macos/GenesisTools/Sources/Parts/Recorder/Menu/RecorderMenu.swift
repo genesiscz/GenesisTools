@@ -106,6 +106,29 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         HubPerf.log("recorder: menu bar item installed (saved choice \(saved), visible \(item.isVisible))")
         // The bar lays the item out after this turn; look once it had time to.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.checkOnScreen() }
+        listenForSampleFailures()
+    }
+
+    /// A test door to the failure window without recording anything: while the defaults key `recorder.debug.notices`
+    /// is on, the distributed notification `<namespace>.recorder.sampleFailure` shows a start failure built from the
+    /// log file named in its `log` key (else a short made-up output). Off by default; nothing records.
+    static let sampleFailureNotification = Notification.Name(NativePreview.namespace + ".recorder.sampleFailure")
+
+    private func listenForSampleFailures() {
+        DistributedNotificationCenter.default().addObserver(forName: Self.sampleFailureNotification, object: nil, queue: .main) { note in
+            let log = note.userInfo?["log"] as? String
+            MainActor.assumeIsolated {
+                guard UserDefaults.standard.bool(forKey: "recorder.debug.notices") else { return }
+                let output = log.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+                    ?? "error: The sample failure printed one line."
+                let failure = ToolsRunner.EarlyFailure(argv: ["recorder", "start", "--window", "1", "--camera"], status: 1,
+                                                       output: output, logFile: log ?? "", logLine: log == nil ? nil : 1)
+                HubPerf.log("recorder: sample failure from \(log ?? "the built-in text")")
+                RecorderNotice.startFailed(failure) {
+                    HubPerf.log("recorder: sample failure Try again pressed")
+                }
+            }
+        }
     }
 
     enum Placement: String, Equatable {
@@ -263,11 +286,13 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             let failure = !hasMovie && settings?["outcome"] as? String == "failed"
                 ? (root["warnings"] as? [String])?.first ?? "The recording failed before it recorded anything"
                 : nil
+            // A frames or meeting recording writes no settings.video.durationMs: its movie (the proxy) names the length.
+            let durationMs = (video?["durationMs"] as? NSNumber)?.doubleValue ?? movie.flatMap(RecordingMovie.lengthMs)
             let open = ReviewComments.read(dir.appendingPathComponent("comments.jsonl")).filter { !$0.isResolved }
             list.append(Recent(folder: dir, title: (root["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name,
                                started: started, thumbnail: movie ?? firstFrame, hasMovie: hasMovie,
                                edited: manager.fileExists(atPath: dir.appendingPathComponent("edit.json").path),
-                               durationMs: (video?["durationMs"] as? NSNumber)?.doubleValue, isMeeting: isMeeting,
+                               durationMs: durationMs, isMeeting: isMeeting,
                                openComments: open.count, firstOpenCommentUs: open.first?.atUs, failure: failure,
                                recording: liveFolders.contains(dir.standardizedFileURL.path)))
         }
@@ -371,25 +396,35 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     @objc private func recordScreenWithAudio() { startRecording(audio: true) }
     @objc private func openPicker() { CapturePicker.shared.show() }
 
-    /// The display in use, with the capture picker's saved options; the menu's two rows set the audio themselves.
+    /// The display in use, through the picker's one start path (the Screen Recording grant, the countdown, the camera
+    /// preview left out) with the saved options, as the Start shortcut does.
     func startRecording(audio: Bool) {
-        var options = CaptureOptions.load()
-        options.systemAudio = audio
-        options.microphone = audio
-        options.camera = false
-        startRecording(arguments: options.startArguments(.followPointer))
+        CapturePicker.shared.choose(.followPointer, options: Self.menuOptions(audio: audio, saved: .load()))
+    }
+
+    /// The saved options; "Record Screen with Audio" turns both audio sources on, "Record Screen" keeps the saved ones.
+    nonisolated static func menuOptions(audio: Bool, saved: CaptureOptions) -> CaptureOptions {
+        var options = saved
+        if audio {
+            options.systemAudio = true
+            options.microphone = true
+        }
+        return options
     }
 
     /// The one start path: `tools recorder start` in its own process (it owns the recording and its socket); the live
-    /// recordings' item and the floating controls (on by default) appear when its live entry does.
-    func startRecording(arguments args: [String]) {
+    /// recordings' item and the floating controls (on by default) appear when its live entry does. `onFailure` runs
+    /// when it does not start or stops at once (the capture picker's countdown, held until the first frame, ends then).
+    func startRecording(arguments args: [String], onFailure: (() -> Void)? = nil) {
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
         do {
-            try ToolsRunner.detached(args) { status, output in
-                RecorderNotice.failure("The recording stopped at once (exit \(status))", output: output,
-                                       fallback: "See ~/.genesis-tools/logs/recorder-start.log")
+            try ToolsRunner.detachedRun(args) { failure in
+                onFailure?()
+                // Try again runs the same start; the picker's countdown is over by then, so it has no `onFailure`.
+                RecorderNotice.startFailed(failure) { [weak self] in self?.startRecording(arguments: args) }
             }
         } catch {
+            onFailure?()
             RecorderNotice.failure("The recording did not start.", more: error.localizedDescription)
         }
     }

@@ -31,10 +31,8 @@ import type { PricingTable } from "@genesiscz/utils/ai/usage/spend/types";
 import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { monitorEnvelope } from "./register";
 
-setupStorageSandbox();
 // CLAUDE_CONFIG_DIR / CODEX_HOME / GROK_HOME would drag real transcript trees
 // into every fixture-home assertion below.
 isolateAgentHomeEnv();
@@ -240,12 +238,15 @@ describe("monitor report", () => {
         // file is dropped rather than reported under a guessed account.
         buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
         const written = SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) as { version: number };
-        expect(written.version).toBe(10);
+        expect(written.version).toBe(11);
 
-        writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version: 5 }, { strict: true }));
-        const afterDowngrade = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
-        expect(afterDowngrade.parsedFiles).toBe(3);
-        expect(afterDowngrade.today.cost).toBeCloseTo(3.48, 5);
+        // 10 is the last version before Claude's fast-tier rates: its rows hold standard-rate costs.
+        for (const version of [5, 10]) {
+            writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version }, { strict: true }));
+            const afterDowngrade = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+            expect(afterDowngrade.parsedFiles).toBe(3);
+            expect(afterDowngrade.today.cost).toBeCloseTo(3.48, 5);
+        }
 
         // Negative control: the v4 cache it just wrote IS reused.
         const afterV4 = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });

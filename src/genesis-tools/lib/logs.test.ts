@@ -88,6 +88,28 @@ describe("failure filters and groups", () => {
         expect(rows.filter((row) => matchesFailure(row, { grep: "--repo" })).map((row) => row.id)).toEqual(["a", "b"]);
     });
 
+    it("lists a command deadline by default, by its kind, and by its child command under --grep", () => {
+        const deadline = failure({
+            id: "e",
+            kind: "deadline",
+            fatal: false,
+            exitCode: null,
+            message: "Command timed out after 60000ms (the default deadline of an Executor call): git fetch origin.",
+            child: {
+                command: ["git", "fetch", "origin"],
+                cwd: "/repo",
+                timeoutMs: 60_000,
+                defaulted: true,
+                reason: null,
+            },
+        });
+
+        expect(matchesFailure(deadline, {})).toBe(true);
+        expect(matchesFailure(deadline, { kinds: ["deadline"] })).toBe(true);
+        expect(matchesFailure(rows[0], { kinds: ["deadline"] })).toBe(false);
+        expect(matchesFailure({ ...deadline, message: null }, { grep: "fetch origin" })).toBe(true);
+    });
+
     it("keeps only the newest N matches while reading when a limit is passed, and all of them without one", () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-logs-failures-"));
         const at = (minute: number) => new Date(2026, 9, 22, 15, minute).toISOString();

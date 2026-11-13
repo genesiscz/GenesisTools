@@ -208,22 +208,29 @@ final class ReviewSessionStateTests: XCTestCase {
 
     // MARK: Diff style
 
-    func testTheDiffStylePickedLastIsTheNextReviewsStyle() {
-        XCTAssertEqual(DiffViewOptions.remembered(in: defaults).diffStyle, .split, "nothing picked yet: side by side")
-        DiffViewOptions.remember(.unified, in: defaults)
+    func testTheDiffLayoutSettingIsTheNextReviewsStyle() {
+        XCTAssertEqual(DiffViewOptions.remembered(in: defaults).diffStyle, .split, "Auto opens side by side")
+        defaults.set(HubDiffLayout.unified.rawValue, forKey: HubDiffLayout.key)
         XCTAssertEqual(DiffViewOptions.remembered(in: defaults).diffStyle, .unified)
-        defaults.set("diagonal", forKey: DiffViewOptions.styleKey)
-        XCTAssertEqual(DiffViewOptions.remembered(in: defaults).diffStyle, .split, "an unknown value falls back")
+        defaults.set("diagonal", forKey: HubDiffLayout.key)
+        XCTAssertEqual(HubDiffLayout.stored(in: defaults), .auto, "an unknown value reads as Auto")
     }
 
-    func testAReviewsStylePickReachesTheStore() {
-        HubDefaults.isolate()
-        defer { HubDefaults.store.removeObject(forKey: DiffViewOptions.styleKey) }
-        let model = ReviewModel(repo: URL(fileURLWithPath: "/w"), options: DiffViewOptions.remembered(), renderer: NullRenderer())
+    func testAutoFollowsThePaneWidthUntilTheReaderPicks() {
+        let model = ReviewModel(repo: URL(fileURLWithPath: "/w"), options: DiffViewOptions.remembered(in: defaults), renderer: NullRenderer())
+        model.fitStyle(narrow: true, store: defaults)
+        XCTAssertEqual(model.options.diffStyle, .unified, "a pane too narrow for two sides shows one column")
+        model.fitStyle(narrow: false, store: defaults)
+        XCTAssertEqual(model.options.diffStyle, .split)
         model.setStyle(.unified)
-        XCTAssertEqual(DiffViewOptions.remembered().diffStyle, .unified)
-        model.setStyle(.split)
-        XCTAssertEqual(DiffViewOptions.remembered().diffStyle, .split)
+        model.fitStyle(narrow: false, store: defaults)
+        XCTAssertEqual(model.options.diffStyle, .unified, "the reader's pick in this review wins over the width")
+        defaults.set(HubDiffLayout.split.rawValue, forKey: HubDiffLayout.key)
+        model.fitStyle(layout: .split, store: defaults)
+        XCTAssertEqual(model.options.diffStyle, .split, "a new setting undoes the pick")
+        model.fitStyle(narrow: true, store: defaults)
+        XCTAssertEqual(model.options.diffStyle, .split, "Side by side ignores the width")
+        XCTAssertNil(defaults.string(forKey: "review.diffStyle"), "a pick in one review is not stored")
     }
 
     // MARK: Hub place

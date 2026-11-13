@@ -17,13 +17,15 @@ import { WorkerPoolManager } from "@pierre/diffs/worker";
 import { fenceCloses, fencedParts, fenceLanguage, fenceMarker } from "./code-lang";
 import { keepOnlyFiles, parseFileDiff } from "./file-diff";
 import { createGlide } from "./glide";
+import { createLargeAsks } from "./large-asks";
+import { installOverlayScrollbar, type ScrollBarStyle } from "./overlay-scrollbar";
 import { installReviewState } from "./review-state";
 
 /**
  * The web half of GenesisTools.app's diff renderer (PierreWebDiffRenderer.swift). Swift owns the
  * data, the comment store and the chrome; this page draws file diffs with @pierre/diffs, hosts the
  * comment composer and the comment cards, and reports every user action back.
- * Swift -> page: window.genesisDiff.addFiles / setComments / setOptions / reveal / find.
+ * Swift -> page: window.genesisDiff.addFiles / setComments / setOptions / reveal / find / setScrollBars.
  * Page -> Swift: webkit.messageHandlers.genesisDiff.postMessage({ type, ... }).
  *
  * Every file of the diff is on the page, however large the diff: CodeView lays out only the files
@@ -182,7 +184,7 @@ interface ItemContext {
 function openOnCommandClick(click: OnLineClickProps | OnDiffLineClickProps, context: ItemContext): void {
     // A file skipped for its size shows one note line; a click on it asks for the whole file (Martin, 2026-10-26).
     if (!click.event.metaKey && largeFiles.has(context.item.id)) {
-        post({ type: "showLarge", fileId: context.item.id });
+        askLarge(context.item.id, "note line");
         return;
     }
 
@@ -202,6 +204,8 @@ interface BridgeApi {
     setComments(comments: BridgeComment[]): void;
     /** Swift ran (or refused) a thread action: `ok` closes the card's box, else it stays for another try. */
     threadDone(result: { id: string; ok: boolean }): void;
+    /** Swift could not bring a large file the page asked for (`showLarge`): its button offers the file again. */
+    largeFailed(result: { fileId: string; reason: string }): void;
     setOptions(next: Partial<BridgeOptions>): void;
     reveal(id: string): void;
     /** ⌘F from Swift (the header button, or ⌘F while the diff has the keyboard): open the find bar. */
@@ -216,6 +220,8 @@ interface BridgeApi {
     setBlame(next: BlameData): void;
     /** A snapshot's `--blame <path>:<line>`: the tip of that line without a pointer. */
     showBlameAt(target: { fileId: string; line: number }): void;
+    /** GenesisKit's overlay bar (the default) or WebKit's own (Settings → Hub → Appearance → Scroll bars). */
+    setScrollBars(style: ScrollBarStyle): void;
 }
 
 interface WebkitBridge {
@@ -245,6 +251,7 @@ function requireHost(): HTMLElement {
 }
 
 const host = requireHost();
+const scrollBars = installOverlayScrollbar(host);
 
 let options: BridgeOptions = { diffStyle: "split", themeType: "system", wrap: false, fontSize: 13 };
 
@@ -348,6 +355,72 @@ const folded = new Set<string>();
 
 /** Files skipped for their size, by id: a click on their note line asks for them (`openOnCommandClick`). */
 const largeFiles = new Set<string>();
+
+/** The same files by path, for their header's button (pierre names a header by its file's path). */
+const largeByPath = new Map<string, string>();
+
+/**
+ * Large files asked for and not here yet: their button reads "Loading…" and a second click asks nothing. Every ask
+ * ends: the file arrives, Swift answers `largeFailed`, or the deadline passes, and the button offers the file again.
+ */
+const largeAsks = createLargeAsks({
+    log: (message) => post({ type: "log", message }),
+    setTimeout: (callback, ms) => window.setTimeout(callback, ms),
+    clearTimeout: (id) => window.clearTimeout(id),
+    onEnd: redrawLargeButton,
+});
+
+/** Draws a file's header again, so its large-file button shows the ask's state. */
+function redrawLargeButton(fileId: string): void {
+    const item = viewer.getItem(fileId);
+
+    if (item) {
+        viewer.updateItem({ ...item, version: nextVersion(fileId) });
+    }
+}
+
+/**
+ * Asks Swift for a large file whole, once, from its header button, its note line or that line's "+". The button turns
+ * into "Loading…" at once, so the click shows even before the file arrives (2026-11-09: a click on the note looked
+ * like nothing happened). Every ask is logged, so a click that did reach the page can be told from one that did not.
+ */
+function askLarge(fileId: string, from: string): void {
+    if (!largeAsks.ask(fileId)) {
+        return;
+    }
+
+    post({ type: "log", message: `diff.large asked for ${fileId} from its ${from}` });
+    post({ type: "showLarge", fileId });
+    redrawLargeButton(fileId);
+}
+
+/** A large file's "Show whole file" button after its name; "Loading…" once asked. Nothing for other files. */
+function largeFileButton(path: string): HTMLElement | undefined {
+    const fileId = largeByPath.get(path);
+
+    if (fileId === undefined) {
+        return undefined;
+    }
+
+    const asked = largeAsks.isAsked(fileId);
+    const failure = largeAsks.lastFailure(fileId);
+    const button = element(
+        "button",
+        "margin-left:8px;font:11px -apple-system,sans-serif;color:rgba(255,255,255,.85);background:transparent;border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:1px 8px;cursor:pointer;-webkit-user-select:none;user-select:none",
+        asked ? "Loading…" : "Show whole file"
+    );
+    button.title = asked
+        ? "Reading the whole file; it replaces the note when it arrives"
+        : failure
+          ? `The last read did not bring the file (${failure}): click to try again`
+          : "This file is over 1 MB, so the diff skipped it: read it whole (up to 20 MB)";
+    button.disabled = asked;
+    button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        askLarge(fileId, "header button");
+    });
+    return button;
+}
 
 /** The header's fold chevron: shows the state, names the header for VoiceOver and `tools control`. */
 function foldChevron(path: string): HTMLElement {
@@ -510,6 +583,13 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
         unsafeCSS:
             "[data-diffs-header] { cursor: pointer; } [data-diffs-header][data-sticky] { z-index: 10; } [data-diffs-header] [data-title], [data-diffs-header] [data-prev-name] { -webkit-user-select: all; user-select: all; cursor: text; }" +
             " [data-line-annotation] { -webkit-user-select: none; user-select: none; }" +
+            // A whole new or deleted file keeps its green or red bar in the gutter and drops the fill on every line: a
+            // new file read as one green block (the checklist's "a whole added or removed block gets a left strip",
+            // hub UX council 2026-11-09). The header and the code share the file's shadow root, so the header's
+            // change type reaches the lines through `~`.
+            ' [data-diffs-header][data-change-type="new"] ~ pre :is([data-line], [data-no-newline], [data-gutter-buffer]),' +
+            ' [data-diffs-header][data-change-type="deleted"] ~ pre :is([data-line], [data-no-newline], [data-gutter-buffer])' +
+            " { --diffs-diff-line-mix-target: var(--diffs-bg); }" +
             ` [data-code] { padding-bottom: calc(max(0px, calc(var(--diffs-gap-block, var(--diffs-gap-fallback)) - var(--diffs-scrollbar-gutter))) + ${FILE_GAP}px); }`,
         lineDiffType: "word-alt",
         hunkSeparators: "line-info",
@@ -532,6 +612,12 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
             blameLeave();
         },
         onGutterUtilityClick(range: SelectedLineRange, context: ItemContext) {
+            // The note line of a large file is no code to comment on: its "+" asks for the file, as the line does.
+            if (largeFiles.has(context.item.id)) {
+                askLarge(context.item.id, "+ button");
+                return;
+            }
+
             openComposer(context.item.id, range);
         },
         onLineSelectionEnd(range: SelectedLineRange | null, context: ItemContext) {
@@ -546,7 +632,7 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
             return foldChevron(fileDiff.name);
         },
         renderHeaderFilenameSuffix(fileDiff) {
-            return svgModeButton(fileDiff.name);
+            return svgModeButton(fileDiff.name) ?? largeFileButton(fileDiff.name);
         },
     };
 }
@@ -3464,8 +3550,14 @@ function addFiles(batch: FilesBatch): void {
     for (const file of batch.files) {
         if (file.large) {
             largeFiles.add(file.id);
+            largeByPath.set(file.path, file.id);
         } else {
             largeFiles.delete(file.id);
+            largeAsks.arrived(file.id);
+
+            if (largeByPath.get(file.path) === file.id) {
+                largeByPath.delete(file.path);
+            }
         }
     }
 
@@ -3617,6 +3709,9 @@ window.genesisDiff = {
         reviewState.afterComments();
         applyPendingFocus();
     },
+    largeFailed({ fileId, reason }) {
+        largeAsks.failed(fileId, reason);
+    },
     threadDone({ id, ok }) {
         busyThreads.delete(id);
         const box = threadBoxes.get(id);
@@ -3722,6 +3817,9 @@ window.genesisDiff = {
         // An empty set (the files changed) asks again on the next hover; a request still running is
         // asked again too, and Swift drops the duplicate.
         blameAsked = new Set(next.loaded);
+    },
+    setScrollBars(style) {
+        scrollBars.setStyle(style === "system" ? "system" : "genesis");
     },
     showBlameAt({ fileId, line }) {
         // A `--snapshot --blame` run has no pointer: scroll to the line and show its tip there.

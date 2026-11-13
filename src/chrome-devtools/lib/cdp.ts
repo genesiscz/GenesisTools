@@ -46,7 +46,11 @@ export interface ConnOpts {
     dropRaw?: (raw: string) => boolean;
 }
 
-export class Conn {
+/**
+ * One CDP socket. The class is exported as a type only: the one way to open a socket is
+ * `connect()` below, which checks the debugger URL first.
+ */
+class Conn {
     private ws: WebSocket;
     private id = 0;
     private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
@@ -237,7 +241,8 @@ const PLAIN_ARROW = /^\([^()]*\)\s*=>/;
  *
  * A source that opens with `(` is only sometimes a function: `(1 + 2) * 3`, `(el).textContent` and an
  * immediately called `(async () => …)()` are values, and calling them threw "9 is not a function"
- * (NR3, 2026-11-06). Such a source is evaluated first and called only when its value is a function.
+ * (NR3, 2026-11-06). Such a source is evaluated first and called only when its value is a function. It is evaluated
+ * as the argument, outside the helper's own `value` binding, so a page variable named `value` stays visible to it.
  */
 export function evaluationExpression(source: string): string {
     const body = source.replace(LEADING_COMMENTS, "").replace(/;\s*$/, "");
@@ -247,7 +252,7 @@ export function evaluationExpression(source: string): string {
     }
 
     if (body.startsWith("(")) {
-        return `(() => { const value = (${body}); return typeof value === "function" ? value() : value; })()`;
+        return `((value) => (typeof value === "function" ? value() : value))((${body}))`;
     }
 
     return source;
@@ -255,17 +260,28 @@ export function evaluationExpression(source: string): string {
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
+export type { Conn };
+
 /**
  * Accepts only a debugger socket on this machine and on the port we asked for. Another process can
  * grab a freed port before the browser binds it; its "debugger URL" must never receive our input.
  */
-export function localDebuggerUrl(target: Pick<Target, "webSocketDebuggerUrl">, port: number): string {
+function localDebuggerUrl(target: Pick<Target, "webSocketDebuggerUrl">, port: number): string {
     const url = new URL(target.webSocketDebuggerUrl);
     if (!["ws:", "wss:"].includes(url.protocol) || !LOCAL_HOSTS.has(url.hostname) || Number(url.port) !== port) {
         throw new Error(`Refusing a debugger URL that is not this machine's port ${port}: ${url.host}`);
     }
 
     return url.toString();
+}
+
+/**
+ * The one way to open a CDP socket. The target's debugger URL must be a socket on this machine at
+ * `port` (the port its target list came from); anything else is refused before a socket exists.
+ * Choosing the target and enabling domains stay with the caller.
+ */
+export function connect(target: Pick<Target, "webSocketDebuggerUrl">, port: number, opts?: ConnOpts): Conn {
+    return new Conn(localDebuggerUrl(target, port), opts);
 }
 
 /**
@@ -863,7 +879,7 @@ export async function attach(opts: { port?: number; url?: string; index?: number
     const port = opts.port ?? BROWSER_DEVTOOLS_PORT;
     const list = (await targets(port)).filter((t) => t.type === "page");
     const t = pickPageTarget(list, { url: opts.url, index: opts.index, port });
-    const page = new Page(new Conn(t.webSocketDebuggerUrl), t);
+    const page = new Page(connect(t, port), t);
     await page.enable();
 
     return page;
@@ -901,5 +917,5 @@ export async function browser(port = BROWSER_DEVTOOLS_PORT): Promise<Browser> {
         webSocketDebuggerUrl: string;
     };
 
-    return new Browser(new Conn(localDebuggerUrl(v, port)), port);
+    return new Browser(connect(v, port), port);
 }

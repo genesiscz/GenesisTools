@@ -135,9 +135,9 @@ export function registerUsageCommand(program: Command): void {
             }
 
             if (accountFilter) {
-                const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-                const aiConfig = await AIConfig.load();
-                const known = new Set(aiConfig.getAccountsByProvider("anthropic-sub").map((a) => a.name));
+                const { AiConfigStore } = await import("@genesiscz/utils/ai/config/AiConfigStore");
+                const store = await AiConfigStore.load();
+                const known = new Set(store.accounts({ provider: "anthropic-sub" }).map((a) => a.name));
                 const unknown = accountFilter.filter((name) => !known.has(name));
 
                 if (unknown.length > 0) {

@@ -1,12 +1,16 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as captureRunner from "@app/control/lib/capture-runner";
 import type { ScreenInfo } from "@app/control/lib/native-record";
 import { segmentCaptureSpec } from "@app/control/lib/recording-native";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { closeStartGate, startGatePath } from "@genesiscz/utils/process/start-gate";
 import { RpcError } from "@genesiscz/utils/screen-recorder/control";
+import { listLiveRecordings, liveRecordingsDir, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
 import { framesDoneLine } from "./frames-recording";
 import { alreadyInState, liveRecordingRef, markerLabelProblem } from "./library";
@@ -15,8 +19,17 @@ import {
     parseStartFlags,
     refuseMissingWindowOrApp,
     refuseTargetOffScreen,
+    startAudioOf,
 } from "./start-options";
-import { announcedCountdown, recordedNothing, segmentRecorderOptions, videoDoneLine } from "./video-recording";
+import {
+    announcedCountdown,
+    endRecordingCamera,
+    RecordingStartCancelled,
+    recordedNothing,
+    recordVideo,
+    segmentRecorderOptions,
+    videoDoneLine,
+} from "./video-recording";
 
 const folder = "/tmp/recording";
 const repo = join(moduleDir(import.meta), "..", "..", "..");
@@ -119,6 +132,252 @@ describe("the commands GenesisTools.app runs", () => {
         expect(calls.filter((call) => !commands.has(call.command))).toEqual([]);
     });
 });
+
+describe("a countdown that ends when the movie records", () => {
+    it("the countdown's last second starts the recorder, and zero waits for the movie's first frame", async () => {
+        const scratch = await mkdtemp(join(tmpdir(), "gt-countdown-hold-"));
+        const events: string[] = [];
+        const excluded: number[][] = [];
+        const framed: Array<string | undefined> = [];
+        let liveId = "";
+        const spy = spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(
+            async ({ plan, onRecording }) => {
+                events.push("recorder starts");
+                excluded.push(plan.capture?.excludeWindowIds ?? []);
+                // ax-tool's arming: longer than what is left of the last second.
+                await Bun.sleep(400);
+                events.push("first frame");
+                const before = listLiveRecordings().find((entry) => entry.id === liveId)?.lastFrameAt;
+                onRecording?.({ sessionDir: join(scratch, "session") });
+                await Bun.sleep(50);
+                framed.push(before, listLiveRecordings().find((entry) => entry.id === liveId)?.lastFrameAt);
+                return {
+                    ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                    captureFailed: false,
+                    sessionDir: join(scratch, "session"),
+                    warnings: [],
+                    capture: null,
+                };
+            }
+        );
+
+        try {
+            await recordVideo({
+                target: { kind: "region", x: 0, y: 0, width: 320, height: 200 },
+                countdownSeconds: 2,
+                prepare: async () => {},
+                onStarted: (started) => {
+                    liveId = started.liveId;
+                },
+                countdown: async (seconds, hold) => {
+                    events.push(`countdown ${seconds}`);
+                    await Bun.sleep(20);
+                    events.push("last second");
+                    hold.lastSecond({ excludeWindowIds: [77] });
+                    await Bun.sleep(250);
+                    events.push("last tick ends");
+                    await hold.until;
+                    events.push("zero");
+                },
+            });
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(events).toEqual([
+            "countdown 2",
+            "last second",
+            "recorder starts",
+            "last tick ends",
+            "first frame",
+            "zero",
+        ]);
+        // The overlay's window is kept out of the movie.
+        expect(excluded).toEqual([[77]]);
+        // The live entry says "recording" while it arms too; lastFrameAt is what tells the picker that it records.
+        expect(framed[0]).toBeUndefined();
+        expect(framed[1]).toBeString();
+    });
+
+    it("a start gate the caller closed during the countdown ends the hold at once and cancels the start", async () => {
+        const gate = startGatePath(await mkdtemp(join(tmpdir(), "gt-countdown-gate-")));
+        expect(await closeStartGate(gate)).toEqual({ status: "cancelled" });
+        const spy = spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async () => {
+            throw new Error("a cancelled start must not reach the recorder");
+        });
+        let held = "not reached";
+        let recorderCalls = -1;
+
+        try {
+            await expect(
+                recordVideo({
+                    target: { kind: "region", x: 0, y: 0, width: 320, height: 200 },
+                    startGate: gate,
+                    countdownSeconds: 1,
+                    prepare: async () => {},
+                    countdown: async (_seconds, hold) => {
+                        hold.lastSecond({ excludeWindowIds: [] });
+                        held = await Promise.race([
+                            hold.until.then(() => "settled"),
+                            Bun.sleep(2000).then(() => "still held"),
+                        ]);
+                    },
+                })
+            ).rejects.toBeInstanceOf(RecordingStartCancelled);
+            recorderCalls = spy.mock.calls.length;
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(held).toBe("settled");
+        expect(recorderCalls).toBe(0);
+    });
+});
+
+/** A recorder that records nothing: it notes its start and the windows its movie leaves out. */
+async function fakeRecorder(steps: string[], excluded: number[][]) {
+    const scratch = await mkdtemp(join(tmpdir(), "gt-camera-preview-"));
+    return spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async ({ plan, onRecording }) => {
+        steps.push("recorder starts");
+        excluded.push(plan.capture?.excludeWindowIds ?? []);
+        onRecording?.({ sessionDir: join(scratch, "session") });
+        return {
+            ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+            captureFailed: false,
+            sessionDir: join(scratch, "session"),
+            warnings: [],
+            capture: null,
+        };
+    });
+}
+
+// Regression test: a camera recording started by the CLI, the REPL or the service asked for the camera after its
+// first segment started and never left the camera preview out, so the preview was baked into screen.mp4 and a frame,
+// a zoom or a moved bubble showed two faces (hunt 2026-11-09, ScreenCaptureKit ignores the panel's sharing type).
+describe("a camera recording leaves the camera preview out of its movie", () => {
+    it("asks for the camera before the first segment, and the preview's window joins every segment's exclusions", async () => {
+        const steps: string[] = [];
+        const excluded: number[][] = [];
+        const cameraHost: CameraHost = {
+            call: async (method, params) => {
+                steps.push(method);
+
+                if (method === "camera.stop") {
+                    // The face writes camera.json once the camera movie is finished.
+                    await writeFile(join(params.folder, "camera.json"), "{}");
+                    return { stopped: true };
+                }
+
+                return { started: true, windowIds: [4242] };
+            },
+        };
+        const spy = await fakeRecorder(steps, excluded);
+
+        try {
+            await recordVideo({
+                target: { kind: "region", x: 0, y: 0, width: 320, height: 200 },
+                camera: true,
+                recorderFace: () => "held",
+                cameraHost,
+                excludeWindowIds: [77],
+            });
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(steps.slice(0, 2)).toEqual(["camera.start", "recorder starts"]);
+        expect(excluded[0]).toEqual([77, 4242]);
+    });
+
+    it("a camera the face refuses ends the start before the recorder starts", async () => {
+        const steps: string[] = [];
+        const excluded: number[][] = [];
+        const cameraHost: CameraHost = {
+            call: async (method) => {
+                steps.push(method);
+                throw new RpcError(1014, "Camera access is off for GenesisTools");
+            },
+        };
+        const spy = await fakeRecorder(steps, excluded);
+        let result: Awaited<ReturnType<typeof recordVideo>> | undefined;
+
+        try {
+            result = await recordVideo({
+                target: { kind: "region", x: 0, y: 0, width: 320, height: 200 },
+                camera: true,
+                recorderFace: () => "held",
+                cameraHost,
+            });
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(steps).toEqual(["camera.start"]);
+        expect(result?.outcome).toBe("failed");
+        expect(result?.warnings.join(" ")).toContain("Camera access is off for GenesisTools");
+    });
+
+    it("camera.start answers the preview's windows; an answer without them (an older app) leaves none out", async () => {
+        const host = (answer: unknown): CameraHost => ({ call: async () => answer });
+        expect(await startRecordingCamera("/tmp/rec", host({ started: true, windowIds: [4242] }))).toEqual({
+            started: true,
+            windowIds: [4242],
+        });
+        expect(await startRecordingCamera("/tmp/rec", host({ started: true }))).toEqual({
+            started: true,
+            windowIds: [],
+        });
+    });
+});
+
+// Regression test: a discarded movie recording stayed in the library with no movie, a card that failed to open,
+// while a discarded frames recording goes to the trash (hunt 2026-11-09).
+describe("a discarded movie recording", () => {
+    it("goes to the trash with its folder, as a discarded frames recording does", async () => {
+        const spy = spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(
+            async ({ onRecording, signal }) => {
+                onRecording?.({ sessionDir: "/nonexistent/session" });
+                await new Promise<void>((resolve) => {
+                    signal.addEventListener("abort", () => resolve(), { once: true });
+                });
+                return {
+                    ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                    captureFailed: false,
+                    sessionDir: "/nonexistent/session",
+                    warnings: [],
+                    capture: null,
+                };
+            }
+        );
+        let discarded: Promise<unknown> | undefined;
+
+        try {
+            const result = await recordVideo({
+                target: { kind: "region", x: 0, y: 0, width: 320, height: 200 },
+                recorderFace: () => "held",
+                onStarted: ({ liveId }) => {
+                    discarded = (async () => {
+                        const client = await RecorderClient.connect(liveId, { dir: liveRecordingsDir() });
+                        try {
+                            return await client.discard();
+                        } finally {
+                            client.close();
+                        }
+                    })();
+                },
+            });
+            await discarded;
+
+            expect(result.outcome).toBe("discarded");
+            expect(result.removed).toBe(true);
+            expect(existsSync(join(result.folder, "recording.json"))).toBe(false);
+            expect(videoDoneLine(result)).toBe(`discarded: ${result.folder} went to the trash`);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+});
+
 const window: RecordingTarget = { kind: "window", windowIds: [83493] };
 const app: RecordingTarget = { kind: "app", app: "Notes" };
 const display: RecordingTarget = { kind: "display", screenIndex: 0, follow: true };
@@ -194,12 +453,79 @@ describe("a window or app movie", () => {
                 return { started: true };
             },
         });
-        expect(await startRecordingCamera("/tmp/rec", host())).toBeUndefined();
-        expect(await startRecordingCamera("/tmp/rec", host("Camera access is off for GenesisTools"))).toContain(
-            "Camera access is off for GenesisTools"
-        );
+        expect(await startRecordingCamera("/tmp/rec", host())).toEqual({ started: true, windowIds: [] });
+        expect(await startRecordingCamera("/tmp/rec", host("Camera access is off for GenesisTools"))).toMatchObject({
+            started: false,
+            reason: expect.stringContaining("Camera access is off for GenesisTools"),
+        });
         await stopRecordingCamera("/tmp/rec", host("no recorder host said hello"));
         expect(calls).toEqual(["camera.start /tmp/rec", "camera.start /tmp/rec", "camera.stop /tmp/rec"]);
+    });
+
+    it("the camera.stop step is followed by the align step, with the screen's spans; a discard or no movie skips it", async () => {
+        const folder = await mkdtemp(join(tmpdir(), "recorder-camera-end-"));
+        const spans = [{ sourceStartMs: 0, firstFrameEpochMs: 1_000_800, lengthMs: 2500 }];
+        const steps: string[] = [];
+        const host = (writes: boolean): CameraHost => ({
+            call: async (method, params) => {
+                steps.push(method);
+
+                // The face writes camera.json once the camera movie is finished.
+                if (method === "camera.stop" && writes) {
+                    await writeFile(join(params.folder, "camera.json"), "{}");
+                }
+
+                return { stopped: true };
+            },
+        });
+        const align = async (input: { folder: string; spans: typeof spans }) => {
+            steps.push(`align ${input.folder === folder} ${input.spans.length}`);
+            return { result: "trimmed" as const };
+        };
+
+        expect(await endRecordingCamera({ folder, outcome: "done", spans, host: host(true), align })).toBeUndefined();
+        expect(steps).toEqual(["camera.stop", "align true 1"]);
+
+        steps.length = 0;
+        expect(
+            await endRecordingCamera({ folder, outcome: "discarded", spans, host: host(true), align })
+        ).toBeUndefined();
+        expect(steps).toEqual(["camera.stop"]);
+
+        steps.length = 0;
+        const empty = await mkdtemp(join(tmpdir(), "recorder-camera-end-"));
+        const missing = await endRecordingCamera({
+            folder: empty,
+            outcome: "done",
+            spans,
+            host: host(false),
+            align,
+            finishWaitMs: 50,
+        });
+        expect(missing?.code).toBe("camera-missing");
+        expect(steps).toEqual(["camera.stop"]);
+
+        steps.length = 0;
+        const unaligned = await endRecordingCamera({
+            folder,
+            outcome: "done",
+            spans,
+            host: host(true),
+            align: async () => ({ result: "offset" as const, warning: "the camera movie could not be cut" }),
+        });
+        expect(unaligned).toEqual({ code: "camera-unaligned", message: "the camera movie could not be cut" });
+
+        // A cut that worked but left its uncut original behind is not an unaligned movie.
+        const leftover = await endRecordingCamera({
+            folder,
+            outcome: "done",
+            spans,
+            host: host(true),
+            align: async () => ({ result: "trimmed" as const, warning: "the uncut original stays" }),
+        });
+        expect(leftover).toEqual({ code: "camera-leftover", message: "the uncut original stays" });
+        await rm(folder, { recursive: true, force: true });
+        await rm(empty, { recursive: true, force: true });
     });
 
     it("two target flags are refused, naming both, instead of one silently winning", () => {
@@ -223,7 +549,11 @@ describe("a window or app movie", () => {
         expect(() => refuseTargetOffScreen(region(1, 1300), screens)).toThrow(
             /meets no display.*0 "Built-in" 1512x982 at 0,0/
         );
-        expect(() => refuseTargetOffScreen(region(1400, 900), screens)).not.toThrow();
+        expect(() => refuseTargetOffScreen(region(1000, 700), screens)).not.toThrow();
+        // Across the display's edge: one display records, so the part on it is the fix.
+        expect(() => refuseTargetOffScreen(region(1400, 900), screens)).toThrow(
+            /not inside one display.*0 "Built-in".*--region 1400,900,112,82/
+        );
         expect(() => refuseTargetOffScreen({ kind: "display", screenIndex: 2 }, screens)).toThrow(
             /--display 2.*0 "Built-in"/
         );
@@ -233,14 +563,15 @@ describe("a window or app movie", () => {
 
     it("a countdown is announced before it runs, so a --json reader knows why nothing records yet", async () => {
         const calls: string[] = [];
+        const hold = { lastSecond: () => {}, until: Promise.resolve() };
         const countdown = announcedCountdown(
             (seconds) => calls.push(`announce ${seconds}`),
-            async (seconds) => {
-                calls.push(`show ${seconds}`);
+            async (seconds, given) => {
+                calls.push(`show ${seconds}${given === hold ? " with the hold" : ""}`);
             }
         );
-        await countdown(2);
-        expect(calls).toEqual(["announce 2", "show 2"]);
+        await countdown(2, hold);
+        expect(calls).toEqual(["announce 2", "show 2 with the hold"]);
     });
 
     it("the done lines count one frame as one frame", () => {
@@ -291,5 +622,55 @@ describe("a window or app movie", () => {
         expect(() => parseStartFlags({ window: "83493", audio: "mic" })).toThrow(/--audio needs a display or an area/);
         expect(() => parseStartFlags({ app: "Notes", audio: "system" })).toThrow(/--audio needs a display or an area/);
         expect(parseStartFlags({ window: "83493" }).target).toEqual(window);
+    });
+
+    it("--audio records the system sound first, then the mic, as recording.json lists the tracks", () => {
+        expect(startAudioOf({ audio: "mic,system" })).toEqual(["system", "mic"]);
+        expect(startAudioOf({ audio: "mic,mic" })).toEqual(["mic"]);
+        expect(startAudioOf({ audio: "system" })).toEqual(["system"]);
+    });
+});
+
+describe("an area lies inside one display", () => {
+    const screens: ScreenInfo[] = [
+        {
+            index: 0,
+            name: "Built-in",
+            isPrimary: true,
+            points: { width: 1440, height: 900 },
+            scaleFactor: 2,
+            framePixels: { width: 2880, height: 1800 },
+            originCG: { x: 0, y: 0 },
+        },
+        {
+            index: 1,
+            name: "Studio",
+            isPrimary: false,
+            points: { width: 1920, height: 1080 },
+            scaleFactor: 1,
+            framePixels: { width: 1920, height: 1080 },
+            originCG: { x: 1440, y: 0 },
+        },
+    ];
+
+    it("refuses an area across two displays, naming the one with the larger share and the area cut to it", () => {
+        expect(() =>
+            refuseTargetOffScreen({ kind: "region", x: 1300, y: 100, width: 400, height: 300 }, screens)
+        ).toThrow(/--region 1300,100,400,300 is not inside one display.*1 "Studio".*--region 1440,100,260,300/);
+    });
+
+    it("takes an area inside one display, with a point of slack for rounding", () => {
+        expect(() =>
+            refuseTargetOffScreen({ kind: "region", x: 100, y: 100, width: 400, height: 300 }, screens)
+        ).not.toThrow();
+        expect(() =>
+            refuseTargetOffScreen({ kind: "region", x: 1440.5, y: 0, width: 1920, height: 1080 }, screens)
+        ).not.toThrow();
+    });
+
+    it("keeps the message of an area that meets no display", () => {
+        expect(() =>
+            refuseTargetOffScreen({ kind: "region", x: 100, y: 2000, width: 400, height: 300 }, screens)
+        ).toThrow(/meets no display/);
     });
 });

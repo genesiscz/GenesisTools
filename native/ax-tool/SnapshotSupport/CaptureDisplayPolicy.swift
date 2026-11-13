@@ -24,13 +24,22 @@ public func displayChangeAction(changed: CGDirectDisplayID, flags: CGDisplayChan
 
 /// Why a recording ended before its duration, as `endedEarly` names it.
 public enum CaptureEarlyEnd: String {
+    /// A restart on another display could not leave out the windows the movie must leave out, so the run ended.
+    case exclusionUnresolved = "exclusion-unresolved"
     case displayRemoved = "display-removed"
     case streamError = "stream-error"
     case stopped
 }
 
 /// A missing display explains a stream error, so it wins; a stream error wins over a stop request that came after it.
-public func captureEarlyEnd(cancelled: Bool, displayRemoved: Bool, streamFailed: Bool) -> CaptureEarlyEnd? {
+/// An exclusion that ended a restart wins over all of them: it says why the display could not be replaced.
+public func captureEarlyEnd(
+    cancelled: Bool, displayRemoved: Bool, streamFailed: Bool, exclusionUnresolved: Bool = false
+) -> CaptureEarlyEnd? {
+    if exclusionUnresolved {
+        return .exclusionUnresolved
+    }
+
     if displayRemoved {
         return .displayRemoved
     }
@@ -107,6 +116,23 @@ public struct FollowState: Equatable {
 public func displayUnder(_ point: CGPoint?, displays: [DisplayFrame]) -> CGDirectDisplayID? {
     guard let point else { return nil }
     return displays.first(where: { $0.bounds.contains(point) })?.id
+}
+
+/// The rectangle a screen recording's cursor track is relative to, in global points: the recorded display widened to
+/// the movie's shape and centred on it. A movie keeps one size from start to end, and the stream letterboxes a display
+/// of another shape into it (`preservesAspectRatio`), so the bars belong to the rectangle too and a row's 0...1 lands
+/// on the movie pixel that shows the pointer. Without a fixed movie size (`movie` nil: frames take each display's own
+/// size) it is the display itself.
+public func cursorTrackRect(display: CGRect, movie: CGSize?) -> CGRect {
+    guard let movie, movie.width > 0, movie.height > 0, display.width > 0, display.height > 0 else { return display }
+    let aspect = movie.width / movie.height
+    if display.width / display.height > aspect {
+        let height = display.width / aspect
+        return CGRect(x: display.minX, y: display.midY - height / 2, width: display.width, height: height)
+    }
+
+    let width = display.height * aspect
+    return CGRect(x: display.midX - width / 2, y: display.minY, width: width, height: display.height)
 }
 
 /// Scales `size` down so its longer side is at most `maxLongSide` pixels, keeping the aspect ratio; `even` rounds both
@@ -320,4 +346,10 @@ public func updateCaptureConfiguration<Value>(from previous: Value, to next: Val
         set(previous)
         throw error
     }
+}
+
+/// The display that holds a recorded area: the one whose bounds contain all of it, with `slack` points for the capture
+/// picker's rounding. Nil when the area crosses a display edge or meets none, since a recording records one display.
+public func regionDisplay(_ region: CGRect, displays: [DisplayFrame], slack: CGFloat = 1) -> CGDirectDisplayID? {
+    displays.first { $0.bounds.insetBy(dx: -slack, dy: -slack).contains(region) }?.id
 }

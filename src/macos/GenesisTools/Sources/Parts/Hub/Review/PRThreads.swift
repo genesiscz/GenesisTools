@@ -218,6 +218,30 @@ struct PRThread: Decodable, Identifiable, Equatable {
     var isMyDraft: Bool { comments.first?.isDraft ?? false }
 }
 
+/// The PR's thread counts, one definition each. "Open" is what the PR list row's readiness badge counts
+/// (`judgeReadiness` in src/hub/lib/pr-readiness.ts): unresolved and not outdated on the host. The bar said
+/// "333 threads · 144 open" beside a row that said "26 open" for the same PR, because the bar also counted the
+/// 118 unresolved threads a later push had made outdated (hub UX council, 2026-11-09).
+struct PRThreadCounts: Equatable {
+    let total: Int
+    /// Unresolved, and the host does not call them outdated: they still ask for something on the current code.
+    let open: Int
+    /// Unresolved, but a later push moved their lines. They no longer block the PR.
+    let outdated: Int
+
+    init(total: Int, open: Int, outdated: Int) {
+        self.total = total
+        self.open = open
+        self.outdated = outdated
+    }
+
+    init(_ threads: [PRThread]) {
+        total = threads.count
+        open = threads.filter { !$0.resolved && !$0.outdated }.count
+        outdated = threads.filter { !$0.resolved && $0.outdated }.count
+    }
+}
+
 struct PRThreadsPayload: Decodable, Equatable {
     let pr: PRInfo
     let threads: [PRThread]
@@ -276,7 +300,7 @@ enum PRCLI {
 enum PRThreadRendering {
     /// The diff card of a live PR thread.
     static func cardID(thread id: String) -> String {
-        "live:\(id)"
+        ReviewCardID.liveThread(id).rawValue
     }
 
     /// Whether a thread's line numbers belong to the diff on screen. Without `shownHead` (the
@@ -367,8 +391,7 @@ enum PRThreadRendering {
         }, uniquingKeysWith: { first, _ in first })
         let byID = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return proposalComments.compactMap { comment in
-            guard comment.id.hasPrefix("thread:") else { return comment }
-            let id = String(comment.id.dropFirst(7))
+            guard case .threadReply(let id) = ReviewCardID(comment.id) else { return comment }
             guard let anchor = anchors[id] else {
                 guard proposalOnShownHead, let thread = byID[id], files.contains(where: { $0.id == comment.fileId }) else { return nil }
                 var copy = comment
@@ -613,19 +636,19 @@ final class PRThreadsStore: ObservableObject {
     }
 
     func reply(thread: String, body: String, draft: Bool, finished: ((Bool) -> Void)? = nil) {
-        perform(ThreadActionInput(id: "live:\(thread)", action: .reply, draft: draft, body: body), finished: finished)
+        perform(ThreadActionInput(id: ReviewCardID.liveThread(thread).rawValue, action: .reply, draft: draft, body: body), finished: finished)
     }
 
     func resolve(thread: String, resolved: Bool) {
-        perform(ThreadActionInput(id: "live:\(thread)", action: resolved ? .resolve : .unresolve))
+        perform(ThreadActionInput(id: ReviewCardID.liveThread(thread).rawValue, action: resolved ? .resolve : .unresolve))
     }
 
     func updateDraft(thread: String, note: String, body: String, finished: ((Bool) -> Void)? = nil) {
-        perform(ThreadActionInput(id: "live:\(thread)", action: .noteUpdate, noteID: note, body: body), finished: finished)
+        perform(ThreadActionInput(id: ReviewCardID.liveThread(thread).rawValue, action: .noteUpdate, noteID: note, body: body), finished: finished)
     }
 
     func deleteDraft(thread: String, note: String) {
-        perform(ThreadActionInput(id: "live:\(thread)", action: .noteDelete, noteID: note))
+        perform(ThreadActionInput(id: ReviewCardID.liveThread(thread).rawValue, action: .noteDelete, noteID: note))
     }
 
     /// 🛑 Publishes every pending draft as one review. Only the Submit review button calls this,

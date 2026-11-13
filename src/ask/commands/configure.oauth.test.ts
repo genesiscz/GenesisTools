@@ -6,7 +6,7 @@ import { addViaOAuthFlow, linkAskConfigToAccount } from "./configure";
 
 /**
  * PR #368 review t3. The wizard used to run its own authorization round trip and
- * write through the deprecated `AIConfig` facade, so none of the login guards
+ * write through the deprecated v3 config facade, so none of the login guards
  * reached it: a name guessed from the token's email could replace another
  * provider's account, and a contradicted identity overwrote the stored one.
  *

@@ -14,8 +14,11 @@
 
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { chunk } from "@genesiscz/utils/array";
 import { logger } from "@genesiscz/utils/logger";
+import { captureSync } from "./capture";
 import { readProcessRow } from "./libproc-table";
+import { PS_BATCH_SIZE } from "./ps";
 
 const log = logger.child({ component: "process:cwd" });
 
@@ -217,4 +220,65 @@ export function resolveAncestorCwd(options: AncestorCwdOptions = {}): string | n
     }
 
     return null;
+}
+
+/**
+ * The working directory of each pid, read from the kernel by {@link readProcessCwd} (libproc on macOS, `/proc` on
+ * Linux) at about 8 µs a pid, where one `lsof` call cost about 223 ms of CPU. A pid that is gone, a zombie, or
+ * another user's process is absent.
+ *
+ * `lsof` ({@link batchCwdViaLsof}) runs only where that kernel reader does not exist. It is not asked about the pids
+ * libproc refused: `lsof` is not setuid on macOS and makes the same libproc call with the same permissions. Measured
+ * on 2026-10-12 over all 1,487 processes: both answered for the same 1,142 pids with the same paths, and `lsof`
+ * answered for no pid more, so asking it again would cost 223 ms for nothing.
+ */
+export function batchCwd(pids: number[]): Map<number, string> {
+    if (!canReadProcessCwd()) {
+        return batchCwdViaLsof(pids);
+    }
+
+    const values = new Map<number, string>();
+
+    for (const pid of pids) {
+        const cwd = readProcessCwd(pid);
+
+        if (cwd !== null) {
+            values.set(pid, cwd);
+        }
+    }
+
+    return values;
+}
+
+/** One `lsof -a -d cwd -p <batch>` per {@link PS_BATCH_SIZE} pids: {@link batchCwd} where no kernel reader exists. */
+export function batchCwdViaLsof(pids: number[]): Map<number, string> {
+    const values = new Map<number, string>();
+
+    for (const batch of chunk(pids, PS_BATCH_SIZE)) {
+        const result = captureSync("lsof", ["-a", "-d", "cwd", "-p", batch.join(",")]);
+        const lines = result.stdout.split("\n").slice(1);
+
+        for (const line of lines) {
+            if (line.trim() === "") {
+                continue;
+            }
+
+            const parts = line.trim().split(/\s+/);
+
+            if (parts.length < 9) {
+                continue;
+            }
+
+            const pid = Number.parseInt(parts[1], 10);
+            const cwd = parts.slice(8).join(" ");
+
+            if (Number.isNaN(pid) || !cwd.startsWith("/")) {
+                continue;
+            }
+
+            values.set(pid, cwd);
+        }
+    }
+
+    return values;
 }

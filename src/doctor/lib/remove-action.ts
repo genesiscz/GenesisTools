@@ -1,5 +1,6 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { guardPaths } from "./path-guard";
+import { removeForDoctor } from "./remove";
 import type { Action, ActionResult, ConfirmMode, Finding } from "./types";
 
 /** Every action `doctor act` may run. Anything else (kill, install,
@@ -44,7 +45,7 @@ export interface RemovePathsActionOpts {
 }
 
 /**
- * A `remove-path` action: deletes `finding.metadata.paths`. The interactive UIs call `execute`; `doctor act` runs its
+ * A `remove-path` action: deletes `finding.metadata.paths` through `removeForDoctor` (the `tools rm` verdict and trash). The interactive UIs call `execute`; `doctor act` runs its
  * own remover over the same paths (it also offers the Trash). Both go through the same path guard, and a finding with
  * blockers (a running owner, an open writer) is refused here too.
  */
@@ -77,7 +78,11 @@ export function removePathsAction(opts: RemovePathsActionOpts): Action {
 
             try {
                 for (const path of paths) {
-                    await rm(path, { recursive: true, force: true });
+                    const removal = await removeForDoctor(path, { analyzerId: opts.analyzerId });
+
+                    if (removal.refusal) {
+                        throw new Error(`Refusing removal: ${removal.refusal}`);
+                    }
 
                     if (opts.recreateEmpty) {
                         await mkdir(path, { recursive: true });

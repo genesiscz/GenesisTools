@@ -1,4 +1,4 @@
-import { AI_ACCOUNTS_API } from "@app/dev-dashboard/contract/ai-accounts";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import {
     type AiAggregator,
     defaultAiAggregator,
@@ -7,6 +7,7 @@ import {
     type UsageSeriesQuery,
 } from "@app/dev-dashboard/lib/ai-accounts/aggregator";
 import type { SnapshotFilter } from "@app/dev-dashboard/lib/ai-accounts/snapshots";
+import { bindHandler } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
 import { z } from "zod";
@@ -160,97 +161,77 @@ export function aiRoutes(agg: AiAggregator = defaultAiAggregator()): RouteDef[] 
     const h = aiHandlers(agg);
 
     return [
-        { method: "GET", pattern: AI_ACCOUNTS_API.accounts, handler: () => h.accounts() },
-        {
-            method: "GET",
-            pattern: AI_ACCOUNTS_API.usage,
-            handler: (ctx) => {
-                const parsed = filterSchema.safeParse(pick(ctx.query, "providers", "accounts"));
+        bindHandler(ENDPOINTS.aiAccounts, () => h.accounts()),
+        bindHandler(ENDPOINTS.aiUsage, (ctx) => {
+            const parsed = filterSchema.safeParse(pick(ctx.query, "providers", "accounts"));
 
-                if (!parsed.success) {
-                    return errorResult(new Error(zodMessage(parsed.error)), 400);
-                }
+            if (!parsed.success) {
+                return errorResult(new Error(zodMessage(parsed.error)), 400);
+            }
 
-                return h.usage(parsed.data);
-            },
-        },
-        {
-            method: "POST",
-            pattern: AI_ACCOUNTS_API.usageRefresh,
-            handler: (ctx) => {
-                const parsed = filterSchema.safeParse(pick(ctx.query, "providers", "accounts"));
+            return h.usage(parsed.data);
+        }),
+        bindHandler(ENDPOINTS.aiUsageRefresh, (ctx) => {
+            const parsed = filterSchema.safeParse(pick(ctx.query, "providers", "accounts"));
 
-                if (!parsed.success) {
-                    return errorResult(new Error(zodMessage(parsed.error)), 400);
-                }
+            if (!parsed.success) {
+                return errorResult(new Error(zodMessage(parsed.error)), 400);
+            }
 
-                return h.usageRefresh(parsed.data);
-            },
-        },
-        {
-            method: "GET",
-            pattern: AI_ACCOUNTS_API.usageSeries,
-            handler: (ctx) => {
-                const parsed = usageSeriesSchema.safeParse(
-                    pick(ctx.query, "providers", "accounts", "keys", "from", "to", "step")
-                );
+            return h.usageRefresh(parsed.data);
+        }),
+        bindHandler(ENDPOINTS.aiUsageSeries, (ctx) => {
+            const parsed = usageSeriesSchema.safeParse(
+                pick(ctx.query, "providers", "accounts", "keys", "from", "to", "step")
+            );
 
-                if (!parsed.success) {
-                    return errorResult(new Error(zodMessage(parsed.error)), 400);
-                }
+            if (!parsed.success) {
+                return errorResult(new Error(zodMessage(parsed.error)), 400);
+            }
 
-                const window = resolveWindow(parsed.data.from, parsed.data.to);
+            const window = resolveWindow(parsed.data.from, parsed.data.to);
 
-                if (!window.ok) {
-                    return errorResult(new Error(window.message), 400);
-                }
+            if (!window.ok) {
+                return errorResult(new Error(window.message), 400);
+            }
 
-                return h.usageSeries({ ...parsed.data, from: window.from, to: window.to });
-            },
-        },
-        {
-            method: "GET",
-            pattern: AI_ACCOUNTS_API.spendTotals,
-            handler: (ctx) => {
-                const parsed = spendTotalsSchema.safeParse(
-                    pick(ctx.query, "from", "to", "accounts", "providers", "source")
-                );
+            return h.usageSeries({ ...parsed.data, from: window.from, to: window.to });
+        }),
+        bindHandler(ENDPOINTS.aiSpendTotals, (ctx) => {
+            const parsed = spendTotalsSchema.safeParse(
+                pick(ctx.query, "from", "to", "accounts", "providers", "source")
+            );
 
-                if (!parsed.success) {
-                    return errorResult(new Error(zodMessage(parsed.error)), 400);
-                }
+            if (!parsed.success) {
+                return errorResult(new Error(zodMessage(parsed.error)), 400);
+            }
 
-                const window = resolveWindow(parsed.data.from, parsed.data.to);
+            const window = resolveWindow(parsed.data.from, parsed.data.to);
 
-                if (!window.ok) {
-                    return errorResult(new Error(window.message), 400);
-                }
+            if (!window.ok) {
+                return errorResult(new Error(window.message), 400);
+            }
 
-                return h.spendTotals({ ...parsed.data, from: window.from, to: window.to });
-            },
-        },
-        {
-            method: "GET",
-            pattern: AI_ACCOUNTS_API.spendSeries,
-            handler: (ctx) => {
-                const parsed = spendSeriesSchema.safeParse(
-                    pick(ctx.query, "from", "to", "accounts", "providers", "source", "grain")
-                );
+            return h.spendTotals({ ...parsed.data, from: window.from, to: window.to });
+        }),
+        bindHandler(ENDPOINTS.aiSpendSeries, (ctx) => {
+            const parsed = spendSeriesSchema.safeParse(
+                pick(ctx.query, "from", "to", "accounts", "providers", "source", "grain")
+            );
 
-                if (!parsed.success) {
-                    return errorResult(new Error(zodMessage(parsed.error)), 400);
-                }
+            if (!parsed.success) {
+                return errorResult(new Error(zodMessage(parsed.error)), 400);
+            }
 
-                const window = resolveWindow(parsed.data.from, parsed.data.to);
+            const window = resolveWindow(parsed.data.from, parsed.data.to);
 
-                if (!window.ok) {
-                    return errorResult(new Error(window.message), 400);
-                }
+            if (!window.ok) {
+                return errorResult(new Error(window.message), 400);
+            }
 
-                return h.spendSeries({ ...parsed.data, from: window.from, to: window.to });
-            },
-        },
-        { method: "GET", pattern: AI_ACCOUNTS_API.daemon, handler: () => h.daemon() },
-        { method: "POST", pattern: AI_ACCOUNTS_API.daemonRegister, handler: () => h.daemonRegister() },
+            return h.spendSeries({ ...parsed.data, from: window.from, to: window.to });
+        }),
+        bindHandler(ENDPOINTS.aiDaemon, () => h.daemon()),
+        bindHandler(ENDPOINTS.aiDaemonRegister, () => h.daemonRegister()),
     ];
 }

@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import { DEFAULT_HTTP_PORT, mergeRole, readWakeupConfig, updateWakeupConfig } from "../config";
@@ -38,6 +38,7 @@ async function chooseCredentials(storage: Storage): Promise<{ name: string; pass
                 { value: "login", label: "Login with different credentials" },
             ],
             initialValue: "saved",
+            cancel: "back",
         });
 
         const selected = String(ensure(choice));
@@ -90,6 +91,7 @@ async function promptDelay(): Promise<number> {
             { value: "60s", label: "In 1 minute" },
             { value: "custom", label: "Custom delay (seconds)" },
         ],
+        cancel: "back",
     });
 
     if (String(choice) === "custom") {
@@ -101,6 +103,7 @@ async function promptDelay(): Promise<number> {
                     return "Enter a valid number";
                 }
             },
+            cancel: "back",
         });
 
         const seconds = Number.parseInt(String(ensure(custom)), 10);

@@ -12,7 +12,12 @@ import Foundation
 @MainActor
 enum HubSnapshotLoads {
     /// How long a capture waits for its overlays; the whole run still ends at the hub's 60 s settle limit.
-    static let deadline: TimeInterval = 20
+    /// `GENESIS_HUB_SNAPSHOT_WAIT=<seconds>` (5 to 50) changes it for one run: on a Mac under load the Usage limits took
+    /// longer than 20 s, and six shots in a row showed "No account has a polled limit yet" (hub UX wave 2, 2026-11-10).
+    static let deadline: TimeInterval = {
+        guard let raw = ProcessInfo.processInfo.environment["GENESIS_HUB_SNAPSHOT_WAIT"], let seconds = TimeInterval(raw) else { return 20 }
+        return min(max(seconds, 5), 50)
+    }()
     private static var running: [String: Int] = [:]
     private static var finished: Set<String> = []
     private static var waiters: [() -> Void] = []

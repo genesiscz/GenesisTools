@@ -107,9 +107,9 @@ export const optIn = {
      */
     agentsE2E: flag("RUN_AGENTS_E2E"),
     /**
-     * Tests that call AIAccount.listClaude() / AIAccount.list(), which read local AI
+     * Tests that list the local AI accounts through AiConfigStore, which read the local AI
      * account config (Claude subscriptions, OpenAI keys, etc.). On CI there are no
-     * credentials, so list() returns 0 accounts and the length assertions fail.
+     * credentials, so the list has 0 accounts and the length assertions fail.
      * Set RUN_AI_ACCOUNTS=1 to include them.
      */
     aiAccounts: flag("RUN_AI_ACCOUNTS"),

@@ -1,8 +1,10 @@
 import { logger } from "@genesiscz/utils/logger";
 import { RpcError } from "@genesiscz/utils/rpc/errors";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
+import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { HeadlessHost, type HostCallContext, hostAnswer, type RecorderHost } from "./host";
 import type { EditorPlace, ExportAnswer, SheetAnswer, SheetRequest, StillAnswer, StillRequest } from "./library";
+import { launchRecorderService, type ServiceLaunch } from "./service-launch";
 import {
     HOST_TIMEOUT_MS,
     type HostMethod,
@@ -128,14 +130,52 @@ export function setRecorderHostResolver(next: (() => RecorderHost) | undefined):
     resolver = next;
 }
 
-/** Where this process's host calls go: the service it runs, the service another process runs, or the headless face. */
-export function recorderHost(options: { dir?: string } = {}): RecorderHost {
+/**
+ * With no service running: the headless face for what it answers, and for a method only GenesisTools.app answers
+ * (the camera) a started service, which launches the recorder face and waits for its hello. The headless face never
+ * answers the camera, so a recording that asked for it failed at once whenever no service ran (2026-11-09 12:50).
+ */
+export class NoServiceHost implements RecorderHost {
+    readonly kind = "headless";
+    private readonly headless = new HeadlessHost();
+
+    constructor(private readonly launch: () => Promise<ServiceLaunch> = launchRecorderService) {}
+
+    answers(): boolean {
+        return true;
+    }
+
+    async call<M extends HostMethod>(
+        method: M,
+        params: HostParams<M>,
+        context: HostCallContext = {}
+    ): Promise<HostResult<M>> {
+        if (this.headless.answers(method)) {
+            return this.headless.call(method, params, context);
+        }
+
+        log.info({ method }, "no recorder service runs; starting one for a call only the app answers");
+        const launch = await this.launch();
+
+        if (launch.status === "failed") {
+            throw new RpcError(
+                RPC_ERRORS.hostUnavailable,
+                `${method} needs GenesisTools.app's recorder face, reached through the recorder service, and ${launch.reason}`
+            );
+        }
+
+        return new ServiceHost(launch.entry).call(method, params, context);
+    }
+}
+
+/** Where this process's host calls go: the service it runs, the service another process runs, or none yet. */
+export function recorderHost(options: { dir?: string; launch?: () => Promise<ServiceLaunch> } = {}): RecorderHost {
     if (resolver) {
         return resolver();
     }
 
     const entry = readLiveService(options.dir);
-    return entry ? new ServiceHost(entry) : new HeadlessHost();
+    return entry ? new ServiceHost(entry) : new NoServiceHost(options.launch);
 }
 
 function message(error: unknown): string {

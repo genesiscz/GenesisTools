@@ -91,11 +91,21 @@ function checkScript(name: string, script: string): void {
     }
 }
 
-/** Moves a preset's folder to `.trash/<name>-<time>` and returns where, so it can be moved back. */
+/**
+ * Moves a preset's folder to `.trash/<name>-<time>` and returns where, so it can be moved back. A second move of the
+ * same name in the same millisecond (or with the same injected `now`) gets `-1`, `-2` and so on: the rename onto the
+ * first trashed folder failed, and with it the save that replaced the preset.
+ */
 function moveToTrash(folder: string, name: string, root: string, now: Date): string {
     const trash = join(root, ".trash");
     mkdirSync(trash, { recursive: true });
-    const target = join(trash, `${name}-${now.toISOString().replace(/[:.]/g, "-")}`);
+    const stamp = `${name}-${now.toISOString().replace(/[:.]/g, "-")}`;
+    let target = join(trash, stamp);
+
+    for (let n = 1; existsSync(target); n++) {
+        target = join(trash, `${stamp}-${n}`);
+    }
+
     renameSync(folder, target);
     return target;
 }
@@ -129,6 +139,14 @@ export function savePreset(options: {
     const name = parseOneLine(presetNameSchema, options.name);
     const input = parseOneLine(savePresetSchema, options.input);
     checkScript(name, input.script);
+
+    // A default of another type saved, and a run without that value used it unchecked (round 2 of #745).
+    for (const [key, param] of Object.entries(input.params ?? {})) {
+        if (param.default !== undefined) {
+            checkParamType(key, param, param.default, "default");
+        }
+    }
+
     const root = options.root ?? presetsRoot();
     const folder = join(root, name);
     const at = options.now ?? new Date();
@@ -235,8 +253,11 @@ export function coerceParam(name: string, param: PresetParam, raw: string): unkn
     }
 }
 
-/** Refuses a value of another type than the param's, as `coerceParam` refuses text from a command line (NR19). */
-function checkParamType(name: string, param: PresetParam, value: unknown): void {
+/**
+ * Refuses a value of another type than the param's, as `coerceParam` refuses text from a command line (NR19). `source`
+ * says whether the value was passed or is the param's declared default.
+ */
+function checkParamType(name: string, param: PresetParam, value: unknown, source: "value" | "default" = "value"): void {
     const fits =
         param.type === "json" ||
         (param.type === "string" && typeof value === "string") ||
@@ -247,11 +268,19 @@ function checkParamType(name: string, param: PresetParam, value: unknown): void 
         const wanted = { string: "a string", number: "a number", boolean: "true or false", json: "any value" }[
             param.type
         ];
-        throw new Error(`param ${name} takes ${wanted} (got ${SafeJSON.stringify(value)})`);
+        const got = SafeJSON.stringify(value);
+        throw new Error(
+            source === "default"
+                ? `param ${name} takes ${wanted}, but its default is ${got}`
+                : `param ${name} takes ${wanted} (got ${got})`
+        );
     }
 }
 
-/** The values a run gets: the defaults, then `values`. Refuses an unknown name and a missing required one. */
+/**
+ * The values a run gets: the defaults, then `values`. Refuses an unknown name, a missing required one, and a value of
+ * another type, a default included: a preset.json written before the save checked its defaults may still hold one.
+ */
 export function resolveParams(meta: PresetMeta, values: Record<string, unknown> = {}): Record<string, unknown> {
     const declared = Object.keys(meta.params);
     const unknown = Object.keys(values).filter((key) => !declared.includes(key));
@@ -265,16 +294,14 @@ export function resolveParams(meta: PresetMeta, values: Record<string, unknown> 
     const resolved: Record<string, unknown> = {};
 
     for (const [key, param] of Object.entries(meta.params)) {
-        const value = Object.hasOwn(values, key) ? values[key] : param.default;
+        const passed = Object.hasOwn(values, key);
+        const value = passed ? values[key] : param.default;
 
         if (value === undefined) {
             throw new Error(`preset ${meta.name} needs ${key}${param.description ? ` (${param.description})` : ""}`);
         }
 
-        if (Object.hasOwn(values, key)) {
-            checkParamType(key, param, value);
-        }
-
+        checkParamType(key, param, value, passed ? "value" : "default");
         resolved[key] = value;
     }
 

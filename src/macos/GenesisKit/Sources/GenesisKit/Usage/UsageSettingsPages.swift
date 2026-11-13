@@ -27,6 +27,10 @@ private struct UsageChartSettings: View {
 
     var body: some View {
         VStack(spacing: 18) {
+            NativeSettingsCard("Limits table", subtitle: "One row per account, one column per window.") {
+                NativeSettingsToggle("Hide empty columns", detail: "Leave out a window column that no account has a reading for.",
+                                     identifier: "usage.hideEmptyColumns", isOn: preferences.binding(\.hideEmptyColumns))
+            }
             NativeSettingsCard("Burn lanes", subtitle: "One lane per window of each account, on one time axis.") {
                 picker("Range", detail: "How far back the lanes reach when the Usage mode opens.",
                        selection: preferences.binding(\.range), options: UsageRange.allCases, title: \.title,

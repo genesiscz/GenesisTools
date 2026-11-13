@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import { DEFAULT_WOL_PORT, readWakeupConfig } from "../config";
@@ -46,11 +46,13 @@ export async function runSendFlow(storage: Storage): Promise<void> {
                     message: "Target MAC",
                     initialValue: config.client?.mac ?? iface?.mac ?? "",
                     placeholder: "01:23:45:67:89:ab",
+                    cancel: "back",
                 }),
             broadcast: () =>
                 p.text({
                     message: "Broadcast",
                     initialValue: config.client?.broadcast ?? iface?.broadcast ?? "255.255.255.255",
+                    cancel: "back",
                 }),
             port: () =>
                 p.text({
@@ -67,12 +69,14 @@ export async function runSendFlow(storage: Storage): Promise<void> {
                             return "Enter a valid port (1-65535)";
                         }
                     },
+                    cancel: "back",
                 }),
             password: () =>
                 p.text({
                     message: "SecureOn password (optional)",
                     placeholder: "hex",
                     initialValue: "",
+                    cancel: "back",
                 }),
         },
         {

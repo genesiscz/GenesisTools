@@ -173,6 +173,48 @@ function stretchId(fromUs: number, toUs: number): string {
         .slice(0, 8)}`;
 }
 
+/** A cursor track row as `pointerBusyRanges` reads it (`CursorSample` from project.ts). */
+interface PointerSample {
+    ms: number;
+    x: number;
+    y: number;
+    click?: string;
+    key?: string;
+}
+
+/**
+ * The moments the drawn pointer is busy, in microseconds and sorted: each click and each shortcut press ±0.5 s (the
+ * renderer draws a ring and the keys plate for them), and each 250 ms bucket where it travels more than a fiftieth of
+ * the picture. waits() and removeIdle both keep these, so a cut never makes the pointer jump or drops a click.
+ */
+export function pointerBusyRanges(samples: readonly PointerSample[]): Array<[number, number]> {
+    const busy: Array<[number, number]> = [];
+    const bucketMs = 250;
+    const travel = new Map<number, number>();
+
+    for (const [index, sample] of samples.entries()) {
+        if (sample.click || sample.key) {
+            busy.push([Math.max(0, (sample.ms - 500) * 1000), (sample.ms + 500) * 1000]);
+        }
+
+        const previous = samples[index - 1];
+
+        if (previous) {
+            const bucket = Math.floor(sample.ms / bucketMs);
+            travel.set(bucket, (travel.get(bucket) ?? 0) + Math.hypot(sample.x - previous.x, sample.y - previous.y));
+        }
+    }
+
+    for (const [bucket, distance] of travel) {
+        // A fiftieth of the picture in a quarter second: a real move, not a hand resting on the mouse.
+        if (distance > 0.02) {
+            busy.push([bucket * bucketMs * 1000, (bucket + 1) * bucketMs * 1000]);
+        }
+    }
+
+    return busy.sort((a, b) => a[0] - b[0]);
+}
+
 /** Removes `holes` from `ranges`; both are [from, to) in microseconds. */
 export function subtractRanges(
     ranges: ReadonlyArray<readonly [number, number]>,

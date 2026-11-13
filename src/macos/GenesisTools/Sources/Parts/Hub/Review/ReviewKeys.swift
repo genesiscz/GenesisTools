@@ -106,7 +106,7 @@ enum ReviewKeyNav {
     static func threadCards(_ comments: [RenderedComment], files: [DiffFile]) -> [RenderedComment] {
         let order = Dictionary(files.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         return comments
-            .filter { $0.kind == "thread" && $0.live != nil }
+            .filter { ReviewCardID.isThreadKind($0.kind) && $0.live != nil }
             .sorted { (order[$0.fileId] ?? .max, $0.endLine, $0.id) < (order[$1.fileId] ?? .max, $1.endLine, $1.id) }
     }
 
@@ -114,7 +114,7 @@ enum ReviewKeyNav {
     static func draftCards(_ comments: [RenderedComment], files: [DiffFile]) -> [RenderedComment] {
         let order = Dictionary(files.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         return comments
-            .filter { $0.kind == "draft" }
+            .filter { ReviewCardID.isDraftKind($0.kind) }
             .sorted { (order[$0.fileId] ?? .max, $0.endLine, $0.id) < (order[$1.fileId] ?? .max, $1.endLine, $1.id) }
     }
 
@@ -144,10 +144,7 @@ enum ReviewKeyNav {
 
     /// `live:<id>` and a proposal's `thread:<id>` name the same PR thread.
     static func threadID(ofCard id: String) -> String {
-        for prefix in ["live:", "thread:"] where id.hasPrefix(prefix) {
-            return String(id.dropFirst(prefix.count))
-        }
-        return id
+        ReviewCardID(id).threadID ?? id
     }
 }
 

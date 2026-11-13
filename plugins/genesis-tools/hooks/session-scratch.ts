@@ -1,15 +1,13 @@
 /**
  * The session's scratch folder as `tools rm` sees it, for the SessionStart hook to name. A hook script cannot import
  * `@genesiscz/utils`, so this repeats `asideRootFor` in src/utils/rm/aside.ts; a test in src/utils/rm/rm.test.ts
- * checks that both name the same folder.
+ * checks that both name the same folder. The folder per harness is generated (`lib/Generated/scratch-dirs.ts`).
  */
 
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { Harness } from "../lib/Generated/harness-facts";
-
-/** The folder under the temp root each harness keeps its scratch in: `AGENT_SCRATCH_DIRS` in src/utils/rm/aside.ts. */
-const SCRATCH_DIRS: Record<Harness, string> = { claude: "cc", codex: "codex", grok: "grok" };
+import { SCRATCH_DIRS } from "../lib/Generated/scratch-dirs";
 
 /** The same cleaning as `segment()` in src/utils/rm/aside.ts. */
 function segment(value: string | null | undefined, fallback: string): string {

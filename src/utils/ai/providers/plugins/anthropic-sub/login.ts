@@ -1,4 +1,3 @@
-import * as p from "@clack/prompts";
 import { determineAccountLabel } from "@genesiscz/utils/claude/account-label";
 import {
     claudeOAuth,
@@ -7,6 +6,7 @@ import {
     type OAuthTokens,
 } from "@genesiscz/utils/claude/auth";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import { presentAuthorizationUrl, readAuthorizationCode } from "../../../oauth/login-ui";
 import type { AccountFlowContext, AccountIdentity, LoginOutcome } from "../../account-features";

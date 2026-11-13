@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, statSync, truncateSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
@@ -13,6 +13,7 @@ import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
 import {
     type DecisionActor,
+    MEETING_UNCHANGED,
     type MeetingChange,
     type MeetingItem,
     type MeetingRecord,
@@ -1261,7 +1262,9 @@ export class DecisionJournal {
         const prepared = handler.prepare ? await handler.prepare(saved, action, this.options.split) : {};
         const at = (this.options.now?.() ?? new Date()).toISOString();
         const token = randomUUID();
-        const known = new Map<string, JournalEntry | undefined>();
+        // The journal is read once, at the first lookup inside the locked change, and every later token comes from that
+        // read: a bulk reopen of N items decided apart read and parsed the whole journal N times under the lock.
+        let byToken: Map<string, JournalEntry> | undefined;
         const context: ActionContext = {
             now: at,
             listenBelow: this.options.listenBelow ?? DEFAULT_LISTEN_BELOW,
@@ -1271,14 +1274,18 @@ export class DecisionJournal {
                     return undefined;
                 }
 
-                if (!known.has(wanted)) {
-                    known.set(
-                        wanted,
-                        this.entries(meeting).find((entry) => entry.token === wanted)
-                    );
+                if (!byToken) {
+                    byToken = new Map();
+
+                    for (const entry of this.entries(meeting)) {
+                        // The first entry with a token wins, as the old `find` did.
+                        if (!byToken.has(entry.token)) {
+                            byToken.set(entry.token, entry);
+                        }
+                    }
                 }
 
-                return known.get(wanted);
+                return byToken.get(wanted);
             },
         };
         let result: Decided = { skipped: [] };
@@ -1286,7 +1293,7 @@ export class DecisionJournal {
         let openAfter = 0;
         // Filled in by the handler: the store reads it after the change, for the record's history line.
         const history: MeetingChange = { command: action.kind, change: "" };
-        const decide = (record: MeetingRecord): boolean => {
+        const decide = (record: MeetingRecord): typeof MEETING_UNCHANGED | undefined => {
             const items = structuredClone(record.items);
             const labels = { ...record.speakers.labels };
             const fieldsBefore = fieldValues(record);
@@ -1301,7 +1308,7 @@ export class DecisionJournal {
 
             if (changes.length === 0 && labelled.length === 0 && fielded.length === 0 && assigned.length === 0) {
                 result = { skipped: outcome.skipped ?? [], ...warnings };
-                return false;
+                return MEETING_UNCHANGED;
             }
 
             openAfter = openQuestions(record).length;
@@ -1342,7 +1349,7 @@ export class DecisionJournal {
                 skipped: outcome.skipped ?? [],
                 ...warnings,
             };
-            return true;
+            return undefined;
         };
 
         if (!save) {
@@ -1350,19 +1357,23 @@ export class DecisionJournal {
             return result;
         }
 
-        await store.update(
-            meeting,
-            history,
-            (record) => decide(record),
-            () => {
+        let takeBack: () => void = () => {};
+        await store.update(meeting, history, (record) => decide(record), {
+            write: () => {
                 if (result.entry) {
-                    this.write(result.entry, {
+                    takeBack = this.writeLines(result.entry, {
                         reverted: action.kind === "revert" ? context.entryOf(action.token) : undefined,
                         openAfter,
                     });
                 }
-            }
-        );
+            },
+            undo: () => takeBack(),
+            saved: () => {
+                if (result.entry) {
+                    this.writeLedger(result.entry);
+                }
+            },
+        });
         return result;
     }
 
@@ -1406,37 +1417,94 @@ export class DecisionJournal {
         }
     }
 
-    /** The entry's line, its answer log line and its ledger lines, in that order, under the record's lock. */
-    private write(entry: JournalEntry, after: { reverted: JournalEntry | undefined; openAfter: number }): void {
+    /**
+     * The entry's line and its answer log line, under the record's lock before the record is saved. Answers what takes
+     * both back: the store runs it when the record is not saved, so neither file holds a decision the record lacks. A
+     * failed append takes back what it already wrote before it throws.
+     */
+    private writeLines(
+        entry: JournalEntry,
+        after: { reverted: JournalEntry | undefined; openAfter: number }
+    ): () => void {
         const { store } = this.options;
-        appendLines(this.path(entry.meeting), [SafeJSON.stringify(entry, { jsonl: true })], { mode: 0o600 });
+        const journalPath = this.path(entry.meeting);
+        const undo = [
+            undoableAppend(journalPath, () =>
+                appendLines(journalPath, [SafeJSON.stringify(entry, { jsonl: true })], { mode: 0o600 })
+            ),
+        ];
         const event = answerEventOf(entry, after.reverted);
 
         if (event) {
             const logPath = join(store.folder(entry.meeting), ANSWER_LOG_FILE);
 
-            // One append for the three lines, so a subscriber reads the round's start and end together.
-            if (this.options.ownRound && event.event !== "reopened" && !roundRunning(logPath)) {
-                appendAnswerEvents(logPath, [
-                    { event: "round-start", at: entry.at, pid: process.pid, open: 1 },
-                    event,
-                    {
-                        event: "round-end",
-                        at: entry.at,
-                        reason: "done",
-                        asked: event.event === "split" ? 0 : 1,
-                        open: after.openAfter,
-                    },
-                ]);
-            } else {
-                appendAnswerEvent(logPath, event);
+            try {
+                undo.push(
+                    undoableAppend(logPath, () => {
+                        // One append for the three lines, so a subscriber reads the round's start and end together.
+                        if (this.options.ownRound && event.event !== "reopened" && !roundRunning(logPath)) {
+                            appendAnswerEvents(logPath, [
+                                { event: "round-start", at: entry.at, pid: process.pid, open: 1 },
+                                event,
+                                {
+                                    event: "round-end",
+                                    at: entry.at,
+                                    reason: "done",
+                                    asked: event.event === "split" ? 0 : 1,
+                                    open: after.openAfter,
+                                },
+                            ]);
+                        } else {
+                            appendAnswerEvent(logPath, event);
+                        }
+                    })
+                );
+            } catch (error) {
+                undo[0]!();
+                throw error;
             }
         }
 
-        (this.options.ledger ?? appendCorrections)(entry.corrections);
         log.debug(
             { meeting: entry.meeting, action: entry.action.kind, token: entry.token, changed: entry.changes.length },
             "decision journaled"
         );
+        return () => {
+            for (const each of undo.reverse()) {
+                each();
+            }
+        };
     }
+
+    /**
+     * The entry's ledger lines, once the record is saved, still under its lock (an Undo's retraction never lands before
+     * the line it retracts). The ledger is shared by every meeting, so it cannot be cut back: a failure here fails the
+     * command, and the decision stays saved and journaled, so its token still reverts it.
+     */
+    private writeLedger(entry: JournalEntry): void {
+        (this.options.ledger ?? appendCorrections)(entry.corrections);
+    }
+}
+
+/**
+ * Runs `append` on `path` and answers how to take it back: the file cut to the length it had (empty when the append
+ * made it). An append that throws is taken back before the error goes on. Cutting a file needs no free disk space,
+ * so a full disk that failed a write cannot also fail its undo.
+ */
+function undoableAppend(path: string, append: () => void): () => void {
+    const size = existsSync(path) ? statSync(path).size : 0;
+    const undo = (): void => {
+        if (existsSync(path) && statSync(path).size > size) {
+            truncateSync(path, size);
+        }
+    };
+
+    try {
+        append();
+    } catch (error) {
+        undo();
+        throw error;
+    }
+
+    return undo;
 }

@@ -28,18 +28,6 @@ export async function refreshHistoryStatistics(options: {
 }): Promise<HistoryStatisticsRefresh> {
     const { reader, repository, statistics, providerId, signal } = options;
 
-    if (!reader.readStatistics) {
-        const coverage = statistics.coverage(providerId);
-        return {
-            parsed: 0,
-            unchanged: 0,
-            sources: coverage.sources,
-            completeSources: coverage.complete,
-            coverage: "unsupported",
-            issues: [],
-        };
-    }
-
     signal?.throwIfAborted();
     const discovery = await reader.discover(options.roots, { signal });
     const refreshed = await synchronizeHistory({
@@ -64,6 +52,7 @@ export async function refreshHistoryStatistics(options: {
     let unchanged = 0;
 
     let processed = 0;
+    let unsupported = false;
 
     for (const source of refreshed.sources) {
         signal?.throwIfAborted();
@@ -115,6 +104,12 @@ export async function refreshHistoryStatistics(options: {
                 statisticsSnapshot: true,
             });
             const result = await reader.readStatistics(source, { signal });
+            if (!result.supported) {
+                // The provider keeps no statistics at all, so no other source can answer either.
+                unsupported = true;
+                break;
+            }
+
             issues.push(...result.issues);
             signal?.throwIfAborted();
 
@@ -165,6 +160,18 @@ export async function refreshHistoryStatistics(options: {
     }
 
     signal?.throwIfAborted();
+    if (unsupported) {
+        const coverage = statistics.coverage(providerId);
+        return {
+            parsed: 0,
+            unchanged: 0,
+            sources: coverage.sources,
+            completeSources: coverage.complete,
+            coverage: "unsupported",
+            issues: [],
+        };
+    }
+
     // This precondition answers only one question: did the walk see every ROOT? A missed root
     // means sources we never observed at all, and rolling up without them could silently drop a
     // whole project — worse than a visible zero. Everything narrower belongs to `publish`, which

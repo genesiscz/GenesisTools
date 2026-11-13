@@ -18,6 +18,7 @@ import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { pixelBox } from "@genesiscz/utils/macos/ocr-boxes";
 import * as bounded from "@genesiscz/utils/process/bounded-command";
+import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import * as rm from "@genesiscz/utils/rm";
 import { z } from "zod";
 import {
@@ -36,9 +37,11 @@ import { FrameOutput, type OcrRow, ocrSinkFor, SidecarOcrSink, sipsJpegWithin } 
 import { readRecordingManifest, renameRecording } from "./library";
 import {
     callTimeoutFor,
+    isLiveEntryAlive,
     type LiveNotification,
     LiveRecordingServer,
     listLiveRecordings,
+    liveEntrySchema,
     liveSocketPath,
     RecorderClient,
     RPC_ERRORS,
@@ -335,6 +338,25 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
     });
 });
 
+describe("a native capture's start time (a fake ax-tool)", () => {
+    const fake = join(moduleDir(import.meta), "__fixtures__", "fake-ax-tool.ts");
+    const capturedAt = 1_794_000_000_000;
+    const captureWith = (fixture: string) =>
+        new NativeFrameRecorder({
+            axTool: async () => [process.execPath, fake, `${fixture}=${capturedAt}`],
+            launch: (argv) => argv,
+        }).capture(request({ outDir: mkdtempSync(join(tmpdir(), "first-frame-time-")), durationSec: 1 }));
+
+    test("startedAtMs is the first frame's capture time from ax-tool, not its PNG's file time", async () => {
+        // The PNG lands 800 ms later; the markers use the wall clock, so that file time would put them early.
+        expect((await captureWith("--fixture-late-png")).startedAtMs).toBe(capturedAt);
+    });
+
+    test("an older ax-tool without that time still counts from the first PNG's file time", async () => {
+        expect(Math.round((await captureWith("--fixture-late-png-old")).startedAtMs)).toBe(capturedAt + 800);
+    });
+});
+
 describe("a failed peekaboo capture", () => {
     test("malformed output preserves the diagnostic fallback", () => {
         expect(peekabooCaptureError(1, '{"broken":', "capture crashed").message).toContain("capture crashed");
@@ -627,7 +649,8 @@ describe("live recordings", () => {
                 kind: "meeting",
                 title: "",
                 pid,
-                startedAt: "2026-11-03T12:00:00.000Z",
+                // Now: an entry older than its process reads as a recycled pid.
+                startedAt: new Date().toISOString(),
                 state: "recording",
                 socket: join(dir, `${id}.sock`),
             });
@@ -643,6 +666,31 @@ describe("live recordings", () => {
 
         expect(Buffer.byteLength(path)).toBeLessThanOrEqual(103);
         expect(path).toMatch(/[0-9a-f]{16}\.sock$/);
+    });
+});
+
+describe("a live entry whose pid a later process took", () => {
+    const entry = (startedAt: Date, pidCommand?: string) =>
+        liveEntrySchema.parse({
+            version: 1,
+            id: "recycled",
+            kind: "video",
+            title: "t",
+            pid: process.pid,
+            ...(pidCommand ? { pidCommand } : {}),
+            startedAt: startedAt.toISOString(),
+            state: "recording",
+            socket: "/tmp/none.sock",
+        });
+
+    test("reads as gone when its process started after the entry, with or without a command", () => {
+        const hourAgo = new Date(Date.now() - 3_600_000);
+        expect(isLiveEntryAlive(entry(hourAgo))).toBe(false);
+        expect(isLiveEntryAlive(entry(hourAgo, readProcessCommand(process.pid) ?? undefined))).toBe(false);
+    });
+
+    test("reads as alive when its process started before the entry", () => {
+        expect(isLiveEntryAlive(entry(new Date()))).toBe(true);
     });
 });
 
@@ -719,6 +767,27 @@ describe("library recording frames", () => {
         expect(existsSync(join(recording.folder, ".pieces"))).toBe(false);
         expect(files.some((name) => name.endsWith(".ocr.json"))).toBe(false);
     });
+    test("a rename while it records keeps its title through the recorder's final manifest", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-lib-rename-"));
+        const recorder = new PieceRecorder();
+        recorder.folder = join(root, "rec");
+        const recording = await startRecording({
+            recorder,
+            folder: recorder.folder,
+            liveDir: join(root, "live"),
+            maxDurationSec: 30,
+            pieceSec: 0.2,
+            title: "Start",
+        });
+        // A marker writes recording.json while it records; a rename needs one.
+        await recording.addMarker("first");
+        expect(await waitForPath(join(recording.folder, "recording.json"), { timeoutMs: 3_000 })).toBe(true);
+        renameRecording(recording.folder, "Renamed");
+        await recording.addMarker("second");
+        await recording.stop();
+        expect(readRecordingManifest(recording.folder)?.title).toBe("Renamed");
+    });
+
     test("flush per piece: JPEG frames and their ocr.jsonl rows exist while it records, under wall-clock names", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-lib-piece-"));
         const recorder = new PieceRecorder();

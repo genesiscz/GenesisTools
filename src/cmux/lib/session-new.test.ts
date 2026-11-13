@@ -26,8 +26,6 @@ import {
     startDevSession,
     suggestProjectNames,
     tmuxAttachCommand,
-    tmuxEnterArgv,
-    tmuxLiteralSendArgv,
 } from "./session-new";
 import { fileSessionStore, openSessions, type SessionRecordLine, type SessionStore } from "./session-store";
 
@@ -248,22 +246,6 @@ test("tmux attach quotes the session, and a command line is not a shell path", (
     expect(assertShellExecutable("/bin/zsh")).toBe("/bin/zsh");
     expect(() => assertShellExecutable("echo hi; sleep 300")).toThrow("not a command line");
     expect(() => assertShellExecutable("FOO=1")).toThrow("not a command line");
-    expect(tmuxLiteralSendArgv("/usr/bin/tmux", "cmux-demo-ab12cd", CLAUDE)).toEqual([
-        "/usr/bin/tmux",
-        "send-keys",
-        "-t",
-        "cmux-demo-ab12cd",
-        "-l",
-        "--",
-        CLAUDE,
-    ]);
-    expect(tmuxEnterArgv("/usr/bin/tmux", "cmux-demo-ab12cd")).toEqual([
-        "/usr/bin/tmux",
-        "send-keys",
-        "-t",
-        "cmux-demo-ab12cd",
-        "Enter",
-    ]);
 });
 
 test("the focused window is passed even when the caller is outside cmux, and focus stays off", async () => {

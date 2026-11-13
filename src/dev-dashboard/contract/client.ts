@@ -2,7 +2,6 @@ import type {
     AttachTmuxResult,
     ClassifiedLogEntry,
     DashboardSendTarget,
-    EnrichedQaEntry,
     KillPortResult,
     PortsResult,
     ProcessSort,
@@ -37,9 +36,21 @@ import type {
     TtydListRes,
     WeatherRes,
 } from "@app/dev-dashboard/contract/endpoints";
-import { paths, QA_STREAM_PATH } from "@app/dev-dashboard/contract/endpoints";
+import { paths } from "@app/dev-dashboard/contract/endpoints";
 import type { LiveChannel, LiveDataFrame, LiveFrame, LiveSubscribeBody } from "@app/dev-dashboard/contract/live";
 import { SafeJSON } from "@genesiscz/utils/json";
+
+/** A refused request: the message is `<path> -> <status>: <body>`, and the status and the body stay readable. */
+export class DashboardHttpError extends Error {
+    constructor(
+        readonly path: string,
+        readonly status: number,
+        readonly body: string
+    ) {
+        super(`${path} -> ${status}: ${body}`);
+        this.name = "DashboardHttpError";
+    }
+}
 
 /** Per-call headers of the generic `call`. */
 export interface CallOptions {
@@ -49,6 +60,11 @@ export interface CallOptions {
     actToken?: string;
     /** Bytes sent as they are, with their own content type, in place of the JSON body (the upload row). */
     rawBody?: { data: string | ArrayBuffer | Blob; contentType: string };
+    /**
+     * A refusal whose body is the row's own answer shape (the focus miss is a 409, an incomplete form a 400) is
+     * returned instead of thrown. A body that is not JSON still throws.
+     */
+    answerOnRefusal?: boolean;
 }
 
 /** A query string from the input left over after the path params: arrays as comma lists, undefined dropped. */
@@ -86,12 +102,8 @@ export interface DashboardClientOptions {
     fetch: FetchLike;
     /** Returns the Authorization header value (e.g. "Basic …"), or undefined. */
     authHeader?: () => string | undefined;
-    /** Injected EventSource factory for the QA SSE stream (transport pick lives in the consumer). */
+    /** Injected EventSource factory for the live and build-log streams (transport pick lives in the consumer). */
     eventSourceFactory?: (url: string) => EventSourceLike;
-}
-
-export interface QaSubscription {
-    close(): void;
 }
 
 export interface BuildLogSubscription {
@@ -123,7 +135,7 @@ function sameChannels(a: readonly LiveChannel[], b: readonly LiveChannel[]): boo
 export function createDashboardClient(opts: DashboardClientOptions) {
     const { baseUrl, fetch: fetchImpl } = opts;
 
-    async function get<T>(path: string, init?: RequestInit): Promise<T> {
+    async function get<T>(path: string, init?: RequestInit, answerOnRefusal = false): Promise<T> {
         const auth = opts.authHeader?.();
         const res = await fetchImpl(`${baseUrl}${path}`, {
             ...init,
@@ -136,7 +148,16 @@ export function createDashboardClient(opts: DashboardClientOptions) {
 
         if (!res.ok) {
             const text = await res.text().catch(() => "");
-            throw new Error(`${path} -> ${res.status}: ${text}`);
+
+            if (answerOnRefusal) {
+                try {
+                    return SafeJSON.parse(text, { strict: true }) as T;
+                } catch {
+                    // Not an answer: fall through to the plain refusal.
+                }
+            }
+
+            throw new DashboardHttpError(path, res.status, text);
         }
 
         return SafeJSON.parse(await res.text(), { strict: true }) as T;
@@ -148,8 +169,9 @@ export function createDashboardClient(opts: DashboardClientOptions) {
 
     /**
      * The one generic method: calls any row of the endpoint table (`ENDPOINTS`) with its typed input and answer.
-     * Path params come out of the input; the rest is the query of a GET or DELETE, else the JSON body. `async`, so a
-     * missing path param is a rejection like every other failure, not a synchronous throw.
+     * Path params come out of the input; the rest is the query of a GET, else the JSON body (a DELETE too: the
+     * dashboard's DELETE routes read their body). `async`, so a missing path param is a rejection like every other
+     * failure, not a synchronous throw.
      */
     async function call<E extends Endpoint>(
         endpoint: E,
@@ -162,24 +184,45 @@ export function createDashboardClient(opts: DashboardClientOptions) {
             ...(options.actToken ? { "X-GT-Act-Token": options.actToken } : {}),
         };
 
-        if (endpoint.method === "GET" || endpoint.method === "DELETE") {
-            return get<EndpointOutput<E>>(`${path}${queryOf(rest)}`, { method: endpoint.method, headers });
+        const refusal = options.answerOnRefusal ?? false;
+
+        if (endpoint.method === "GET") {
+            return get<EndpointOutput<E>>(`${path}${queryOf(rest)}`, { method: endpoint.method, headers }, refusal);
         }
 
         if (options.rawBody) {
-            // The headers spread after get's JSON default, so this content type wins.
-            return get<EndpointOutput<E>>(path, {
-                method: endpoint.method,
-                headers: { ...headers, "Content-Type": options.rawBody.contentType },
-                body: options.rawBody.data,
-            });
+            // The input left over is the query of an upload; the headers spread after get's JSON default, so this
+            // content type wins.
+            return get<EndpointOutput<E>>(
+                `${path}${queryOf(rest)}`,
+                {
+                    method: endpoint.method,
+                    headers: { ...headers, "Content-Type": options.rawBody.contentType },
+                    body: options.rawBody.data,
+                },
+                refusal
+            );
         }
 
-        return get<EndpointOutput<E>>(path, { method: endpoint.method, headers, body: SafeJSON.stringify(rest) });
+        return get<EndpointOutput<E>>(
+            path,
+            { method: endpoint.method, headers, body: SafeJSON.stringify(rest) },
+            refusal
+        );
+    }
+
+    /**
+     * The URL of a row whose answer is not JSON (a sound, an attachment file), for an `<audio>` or a link. Path params
+     * come out of the input and the rest is the query, as `call` builds a GET.
+     */
+    function url<E extends Endpoint>(endpoint: E, input: EndpointInput<E>): string {
+        const { path, rest } = fillPath(endpoint.path, (input ?? {}) as Record<string, unknown>);
+        return `${baseUrl}${path}${queryOf(rest)}`;
     }
 
     return {
         call,
+        url,
         // Escape hatch — any route is callable with a caller-specified type. Deferred
         // features (claude/daemon/containers/todos) use these until precisely typed.
         get,
@@ -254,40 +297,6 @@ export function createDashboardClient(opts: DashboardClientOptions) {
             log: (q?: Parameters<typeof paths.qaLog>[0]) => get<QaLogRes>(paths.qaLog(q)),
             read: (ids: string[], unread = false) =>
                 post<{ ok: boolean; updated: number }>(paths.qaRead(), { ids, unread }),
-            subscribe: (
-                onEntry: (entry: EnrichedQaEntry) => void,
-                callbacks: { onOpen?: () => void; onError?: (error: unknown) => void } = {}
-            ): QaSubscription => {
-                if (!opts.eventSourceFactory) {
-                    throw new Error("eventSourceFactory required to subscribe to the QA stream");
-                }
-
-                const source = opts.eventSourceFactory(`${baseUrl}${QA_STREAM_PATH}`);
-                source.onopen = callbacks.onOpen ?? null;
-                source.onerror = callbacks.onError ?? null;
-                source.onmessage = (ev) => {
-                    try {
-                        const frame = SafeJSON.parse(ev.data, { strict: true }) as {
-                            type?: string;
-                        } & EnrichedQaEntry;
-
-                        // The stream also carries pending forms, handoffs, and may gain more frame
-                        // kinds. Only a tagged QA frame belongs in this callback. Untagged rows stay
-                        // supported for older agents that emitted the QA entry directly.
-                        if (frame.type !== undefined && frame.type !== "qa") {
-                            return;
-                        }
-
-                        const { type: _type, ...entry } = frame;
-                        onEntry(entry as EnrichedQaEntry);
-                    } catch {
-                        // A malformed data frame is non-actionable client-side and must not kill the
-                        // stream; keep-alive comment frames never reach onmessage. Skip and continue.
-                    }
-                };
-
-                return { close: () => source.close() };
-            },
         },
         live: {
             /**

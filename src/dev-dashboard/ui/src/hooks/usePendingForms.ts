@@ -1,9 +1,19 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
+import type { LiveAskForm } from "@app/dev-dashboard/contract/live";
 import { applyPendingFrame, mergePendingSnapshot, nextPendingSequence } from "@app/dev-dashboard/lib/qa-pending-merge";
 import type { AskForm } from "@app/question/lib/pending/types";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQaStream } from "@/hooks/useQaStream";
-import { qaPendingApi } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLive } from "@/hooks/useLive";
+import { dashboard } from "@/lib/dashboard-client";
+
+/**
+ * The live contract keeps `poster` and `transcriptAnchor` opaque for the phone's type check. The web reads its own
+ * server, which sends the whole form.
+ */
+function asAskForm(form: LiveAskForm): AskForm {
+    return form as AskForm;
+}
 
 /** A snapshot travels with the sequence marker its REQUEST went out under, not a wall clock. */
 export interface PendingSnapshot {
@@ -25,7 +35,8 @@ export interface PendingSnapshot {
  * The fetcher is a parameter so the ordering can be tested without a browser or a server.
  */
 export async function fetchPendingSnapshot(
-    list: () => Promise<{ forms: AskForm[] }> = qaPendingApi.list
+    list: () => Promise<{ forms: AskForm[] }> = () =>
+        dashboard.call(ENDPOINTS.qaPending, {}).then((answer) => ({ forms: answer.forms.map(asAskForm) }))
 ): Promise<PendingSnapshot> {
     const requestedAt = nextPendingSequence();
 
@@ -33,8 +44,9 @@ export async function fetchPendingSnapshot(
 }
 
 /**
- * Merge a REST snapshot with the live SSE lifecycle so the section is right both on first
- * paint and afterwards.
+ * Merge a REST snapshot with the live `pending` channel so the section is right both on first
+ * paint and afterwards. The channel's own snapshot frame (sent on connect) folds like a REST
+ * snapshot taken the moment it arrives.
  *
  * The map is keyed by form id and the SSE frame always wins, because it carries the newest
  * status. A form that leaves `pending` is dropped here — the answered copy reappears in the
@@ -73,16 +85,33 @@ export function usePendingForms(): { forms: AskForm[]; isLoading: boolean; refet
         );
     }, [query.data]);
 
-    useQaStream(
-        useCallback((frame) => {
-            if (frame.type !== "pending") {
+    useLive(["pending"], {
+        onFrame: (frame) => {
+            if (frame.channel !== "pending") {
                 return;
             }
 
-            lastSseAt.current.set(frame.id, nextPendingSequence());
-            setById((prev) => applyPendingFrame(prev, frame, resolved.current));
-        }, [])
-    );
+            if (frame.type === "snapshot") {
+                const snapshot = frame.payload.forms.map(asAskForm);
+                const fetchedAt = nextPendingSequence();
+
+                setById((prev) =>
+                    mergePendingSnapshot({
+                        snapshot,
+                        previous: prev,
+                        resolved: resolved.current,
+                        lastSseAt: lastSseAt.current,
+                        fetchedAt,
+                    })
+                );
+                return;
+            }
+
+            const { id, form } = frame.payload;
+            lastSseAt.current.set(id, nextPendingSequence());
+            setById((prev) => applyPendingFrame(prev, { id, form: asAskForm(form) }, resolved.current));
+        },
+    });
 
     // Memoized because consumers put this array in effect dependencies: a fresh identity on
     // every render re-ran the /qa deep-link effect, and that effect issues an HTTP GET.

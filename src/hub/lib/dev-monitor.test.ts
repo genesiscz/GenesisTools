@@ -1,8 +1,12 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { appendFailure, failureLogPath, type ToolFailure } from "@genesiscz/utils/cli/failures/record";
+import { formatLocalDate } from "@genesiscz/utils/date";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
+    classifyFailureLine,
     classifyPerfLine,
     classifyProfileLine,
     classifyProfileLines,
@@ -13,10 +17,13 @@ import {
     describeCrash,
     EventBatcher,
     formatEvent,
+    readMonitorState,
     runDevMonitor,
     shortCommand,
     TextTail,
+    writeMonitorState,
 } from "./dev-monitor";
+import { monitorPreamble, summarizeWindow } from "./dev-monitor-summary";
 
 describe("EventBatcher", () => {
     test("the first event goes out at once, later ones wait for the delay and go out together", () => {
@@ -407,9 +414,180 @@ function monitorFixtureSources(dir: string) {
         relayLog: join(dir, "relay.log"),
         hangs: join(dir, "hangs"),
         crashes: join(dir, "crashes"),
+        failuresLog: () => failureLogPath(formatLocalDate(new Date()), join(dir, "logs")),
+        failuresDir: join(dir, "logs"),
+        state: join(dir, "hub", "dev-monitor-state.json"),
     };
     for (const folder of [sources.hangs, sources.genesisHangs, sources.crashes]) {
         mkdirSync(folder);
     }
     return sources;
 }
+
+function failureRecord(overrides: Partial<ToolFailure>): ToolFailure {
+    return {
+        v: 1,
+        id: "lx1-42-d1",
+        at: new Date().toISOString(),
+        kind: "deadline",
+        tool: "git",
+        command: "git commits",
+        argv: ["commits"],
+        exitCode: null,
+        message: "Command timed out after 60000ms (the default deadline of an Executor call): git fetch origin.",
+        errorName: "Error",
+        stack: null,
+        stderrTail: null,
+        fatal: false,
+        durationMs: 60_010,
+        pid: 42,
+        ppid: 1,
+        cwd: "/repo",
+        traceId: null,
+        toolsRoot: "/repo",
+        caller: null,
+        child: { command: ["git", "fetch", "origin"], cwd: "/repo", timeoutMs: 60_000, defaulted: true, reason: null },
+        ...overrides,
+    };
+}
+
+describe("command deadlines", () => {
+    test("a deadline record is one event naming the child, the bound and the command that shows it", () => {
+        const event = classifyFailureLine(SafeJSON.stringify(failureRecord({})));
+
+        expect(event).toMatchObject({
+            kind: "deadline",
+            key: "deadline:git fetch origin",
+            text: "git fetch origin killed after 60000ms (default), run by tools git commits: tools genesis-tools logs show lx1-42-d1",
+        });
+        const forge = failureRecord({
+            child: {
+                command: ["gh", "api", "x"],
+                cwd: "/r",
+                timeoutMs: 600_000,
+                defaulted: false,
+                reason: "a paged call",
+            },
+        });
+        expect(classifyFailureLine(SafeJSON.stringify(forge))?.text).toStartWith(
+            "gh api x killed after 600000ms (a paged call)"
+        );
+    });
+
+    test("no other failure kind is an event, nor a line that is not a record", () => {
+        expect(classifyFailureLine(SafeJSON.stringify(failureRecord({ kind: "usage", child: undefined })))).toBeNull();
+        expect(classifyFailureLine(SafeJSON.stringify(failureRecord({ kind: "error" })))).toBeNull();
+        expect(classifyFailureLine("{not json")).toBeNull();
+    });
+
+    test("two deadlines of one command collapse into one line with a count", () => {
+        const one = classifyFailureLine(SafeJSON.stringify(failureRecord({ id: "a" })));
+        const two = classifyFailureLine(SafeJSON.stringify(failureRecord({ id: "b" })));
+        const collapsed = collapse([one, two].filter((event): event is DevEvent => event !== null));
+
+        expect(collapsed).toHaveLength(1);
+        expect(collapsed[0].text).toEndWith("logs show a (×2)");
+    });
+
+    test("the running monitor emits a deadline from the failures log of today, and saves its state when it stops", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "monitor-deadline-"));
+        const sources = monitorFixtureSources(dir);
+        const batches: DevEvent[][] = [];
+        const controller = new AbortController();
+        const before = Date.now();
+        appendFailure(failureRecord({ kind: "usage", child: undefined }), sources.failuresDir);
+        appendFailure(failureRecord({}), sources.failuresDir);
+
+        try {
+            await runDevMonitor({
+                ...DEFAULT_CLASSIFY,
+                sources,
+                fromStart: true,
+                intervalMs: 100,
+                minDelayMs: 0,
+                signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
+                emit: (events) => {
+                    batches.push(events);
+                    controller.abort();
+                },
+            });
+            expect(batches).toHaveLength(1);
+            expect(batches[0].map((event) => event.kind)).toEqual(["deadline"]);
+            expect(Date.parse(readMonitorState(sources.state)?.lastRunAt ?? "")).toBeGreaterThanOrEqual(before - 1000);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("the summary of what happened while no monitor ran", () => {
+    test("counts a fixture window and names the command that lists each count", () => {
+        const dir = mkdtempSync(join(tmpdir(), "monitor-summary-"));
+        const sources = monitorFixtureSources(dir);
+        const until = new Date();
+        const since = new Date(until.getTime() - 3_600_000);
+        const inside = new Date(until.getTime() - 60_000).toISOString();
+        const outside = new Date(until.getTime() - 7_200_000).toISOString();
+
+        try {
+            appendFailure(failureRecord({ at: inside }), sources.failuresDir);
+            appendFailure(failureRecord({ at: outside }), sources.failuresDir);
+            appendFailure(failureRecord({ at: inside, kind: "error", child: undefined }), sources.failuresDir);
+            appendFailure(failureRecord({ at: inside, kind: "usage", child: undefined }), sources.failuresDir);
+            const day = formatLocalDate(until);
+            writeFileSync(join(sources.hangs, `hang-${day}-100000.txt`), "sample");
+            writeFileSync(join(sources.crashes, `GenesisTools-${day}-100000.ips`), "{}");
+            writeFileSync(join(sources.crashes, `Other-${day}-100000.ips`), "{}");
+            writeFileSync(join(sources.genesisHangs, `hang-${day}-090000.txt`), "an older sample");
+            const written = new Date(inside);
+            for (const file of [`hang-${day}-100000.txt`]) {
+                utimesSync(join(sources.hangs, file), written, written);
+            }
+            for (const file of [`GenesisTools-${day}-100000.ips`, `Other-${day}-100000.ips`]) {
+                utimesSync(join(sources.crashes, file), written, written);
+            }
+            const older = new Date(outside);
+            utimesSync(join(sources.genesisHangs, `hang-${day}-090000.txt`), older, older);
+
+            const summary = summarizeWindow({ since, until, sources });
+            const from = `${formatLocalDate(since)}T${since.toTimeString().slice(0, 5)}`;
+
+            expect(summary.counts).toEqual({ deadlines: 1, failedRuns: 1, hangs: 1, crashes: 1 });
+            expect(summary.commands).toEqual({
+                deadlines: `tools genesis-tools logs failures --kind deadline --since ${from}`,
+                failedRuns: `tools genesis-tools logs failures --kind error crash exit --since ${from}`,
+                hangs: sources.hangs,
+                crashes: `tools genesis-tools logs crashes --since ${from}`,
+            });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test("the preamble prints the summary from the saved state, one line when nothing happened, none with --no-summary", () => {
+        const dir = mkdtempSync(join(tmpdir(), "monitor-preamble-"));
+        const sources = monitorFixtureSources(dir);
+        const now = new Date();
+
+        try {
+            writeMonitorState(sources.state, new Date(now.getTime() - 60_000));
+            const quiet = monitorPreamble({ sources, json: false, summary: true, now }).trimEnd().split("\n");
+            expect(quiet).toHaveLength(2);
+            expect(quiet[1]).toEndWith("while no monitor ran: no command deadlines, failed runs, hangs or crashes");
+
+            appendFailure(failureRecord({ at: new Date(now.getTime() - 30_000).toISOString() }), sources.failuresDir);
+            const json = monitorPreamble({ sources, json: true, summary: true, now }).trimEnd().split("\n");
+            expect(SafeJSON.parse(json[1], { strict: true })).toMatchObject({
+                kind: "summary",
+                since: new Date(now.getTime() - 60_000).toISOString(),
+                counts: { deadlines: 1, failedRuns: 0, hangs: 0, crashes: 0 },
+            });
+
+            expect(monitorPreamble({ sources, json: false, summary: false, now }).trimEnd().split("\n")).toHaveLength(
+                1
+            );
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});

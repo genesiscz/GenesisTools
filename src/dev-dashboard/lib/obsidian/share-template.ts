@@ -588,12 +588,17 @@ section.footnotes li:target { background: var(--dd-accent-soft); border-radius: 
 .footnote-backref { text-decoration: none; }
 .dd-block-id { display: inline; }
 :target { scroll-margin-top: 72px; }
-/* A heading a link jumped to, in the page or in the panel, is marked for a moment. */
+/* A heading a link jumped to, in the page or in the panel, is marked for a moment; page settings set how long. */
 @keyframes dd-heading-flash { from { background: var(--dd-accent-soft); } to { background: transparent; } }
 h1:target, h2:target, h3:target, h4:target, h5:target, h6:target, .dd-heading-hit {
-    animation: dd-heading-flash 1.8s ease-out;
+    animation: dd-heading-flash var(--dd-heading-flash, ${HEADING_FLASH_DEFAULT_MS}ms) ease-out;
     border-radius: 4px;
 }
+html.dd-heading-flash-off :is(h1, h2, h3, h4, h5, h6):target, html.dd-heading-flash-off .dd-heading-hit {
+    animation: none;
+}
+/* A picture alone opens the viewer from the keyboard too (Enter or Space), so its tab stop shows. */
+img[data-dd-viewer]:focus-visible { outline: 2px solid var(--dd-accent); outline-offset: 2px; }
 /* The image viewer: a click on an image or a link to one opens it over the page. */
 article img, .dd-share-panel-body img, a[data-asset-image] { cursor: zoom-in; }
 body.dd-lightbox-open { overflow: hidden; }
@@ -667,6 +672,9 @@ body.dd-lightbox-open { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
     h1:target, h2:target, h3:target, h4:target, h5:target, h6:target, .dd-heading-hit {
         animation: none;
+    }
+    html:not(.dd-heading-flash-off) :is(h1, h2, h3, h4, h5, h6):target,
+    html:not(.dd-heading-flash-off) .dd-heading-hit {
         background: var(--dd-accent-soft);
     }
 }
@@ -828,8 +836,49 @@ footer.dd-share-footer .dd-share-source {
     height: 18px;
 }
 
-.dd-share-download {
+.dd-share-download,
+.dd-share-settings {
     position: relative;
+}
+
+.dd-share-settings-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 240px;
+    padding: 10px;
+    border: 1px solid var(--dd-border-strong);
+    border-radius: 8px;
+    background: var(--dd-bg-elevated);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    color: var(--dd-text);
+    font-size: 13px;
+}
+
+.dd-share-settings-menu[hidden] {
+    display: none;
+}
+
+.dd-share-settings-menu label {
+    display: block;
+    margin-bottom: 6px;
+}
+
+.dd-share-settings-menu small {
+    display: block;
+    margin-top: 2px;
+    color: var(--dd-text-faint);
+    font-size: 11px;
+}
+
+.dd-share-settings-menu select {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--dd-border-strong);
+    border-radius: 6px;
+    background: var(--dd-bg-panel);
+    color: var(--dd-text);
+    font: inherit;
 }
 
 .dd-share-download-menu {
@@ -964,6 +1013,19 @@ const BOOK_OPEN_ICON =
 
 const DOWNLOAD_ICON =
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>';
+
+const SETTINGS_ICON =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>';
+
+/** How long a heading a link jumps to stays marked: the page settings' choices, kept per browser. 0 turns it off. */
+export const HEADING_FLASH_OPTIONS: ReadonlyArray<{ ms: number; label: string }> = [
+    { ms: 0, label: "Off" },
+    { ms: 900, label: "Short" },
+    { ms: 1800, label: "Normal" },
+    { ms: 3600, label: "Long" },
+];
+export const HEADING_FLASH_DEFAULT_MS = 1800;
+export const HEADING_FLASH_STORAGE_KEY = "dd-share:heading-flash-ms";
 
 function embedJson(value: unknown): string {
     return SafeJSON.stringify(value).replace(/</g, "\\u003c");
@@ -1312,6 +1374,44 @@ function buildLightboxScript(): string {
         }
     }
 
+    // A picture alone is no link, so the keyboard reaches it as a button: a tab stop, a name, and Enter or Space
+    // open it as a click does. A picture inside a link keeps the link. The panel's pictures arrive later.
+    function markImages(root) {
+        var imgs = root.querySelectorAll("img:not([data-dd-viewer])");
+        for (var i = 0; i < imgs.length; i++) {
+            var img = imgs[i];
+            if (img.closest("a[href]") || !scopeOf(img)) {
+                continue;
+            }
+            var alt = img.getAttribute("alt") || "";
+            img.setAttribute("data-dd-viewer", "");
+            img.setAttribute("tabindex", "0");
+            img.setAttribute("role", "button");
+            img.setAttribute("aria-label", alt ? "Open image: " + alt : "Open image");
+        }
+    }
+    var article = document.querySelector("article");
+    if (article) {
+        markImages(article);
+    }
+    var panelBody = document.getElementById("dd-share-panel-body");
+    if (panelBody && window.MutationObserver) {
+        new MutationObserver(function () {
+            markImages(panelBody);
+        }).observe(panelBody, { childList: true, subtree: true });
+    }
+    document.addEventListener("keydown", function (event) {
+        var target = event.target;
+        if (!box.hidden || event.metaKey || event.ctrlKey || event.altKey || (event.key !== "Enter" && event.key !== " ")) {
+            return;
+        }
+        if (!target || target.tagName !== "IMG" || !target.hasAttribute("data-dd-viewer")) {
+            return;
+        }
+        event.preventDefault();
+        open(target);
+    });
+
     document.addEventListener("click", function (event) {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
             return;
@@ -1475,6 +1575,84 @@ function buildLightboxScript(): string {
     document.getElementById("dd-lightbox-fit").addEventListener("click", function () { toFit(); });
     document.getElementById("dd-lightbox-actual").addEventListener("click", function () { zoomTo(1); });
     closeBtn.addEventListener("click", close);
+})();
+</script>`;
+}
+
+/**
+ * The page settings menu: how long a heading a link jumps to stays marked (`HEADING_FLASH_OPTIONS`), kept in this
+ * browser's storage like the reading width.
+ */
+function buildSettingsScript(): string {
+    return `<script>
+(function () {
+    var KEY = ${SafeJSON.stringify(HEADING_FLASH_STORAGE_KEY)};
+    var DEFAULT_MS = ${HEADING_FLASH_DEFAULT_MS};
+    var CHOICES = ${SafeJSON.stringify(HEADING_FLASH_OPTIONS.map((option) => option.ms))};
+    var root = document.documentElement;
+    var btn = document.getElementById("dd-share-settings-btn");
+    var menu = document.getElementById("dd-share-settings-menu");
+    var select = document.getElementById("dd-share-heading-flash");
+
+    function apply(ms) {
+        root.classList.toggle("dd-heading-flash-off", ms === 0);
+        if (ms > 0) {
+            root.style.setProperty("--dd-heading-flash", ms + "ms");
+        } else {
+            root.style.removeProperty("--dd-heading-flash");
+        }
+    }
+
+    var ms = DEFAULT_MS;
+    try {
+        var stored = Number(localStorage.getItem(KEY));
+        if (localStorage.getItem(KEY) !== null && CHOICES.indexOf(stored) !== -1) {
+            ms = stored;
+        }
+    } catch (e) {
+        // No storage: the default.
+    }
+    apply(ms);
+
+    if (!btn || !menu || !select) {
+        return;
+    }
+    select.value = String(ms);
+    select.addEventListener("change", function () {
+        var next = Number(select.value);
+        apply(next);
+        try {
+            if (next === DEFAULT_MS) {
+                localStorage.removeItem(KEY);
+            } else {
+                localStorage.setItem(KEY, String(next));
+            }
+        } catch (e) {
+            // Storage can be off (private mode); the choice then lasts for this page only.
+        }
+    });
+
+    function setMenu(open) {
+        menu.hidden = !open;
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) {
+            select.focus();
+        }
+    }
+    btn.addEventListener("click", function () {
+        setMenu(menu.hidden);
+    });
+    document.addEventListener("click", function (event) {
+        if (!menu.hidden && !menu.parentElement.contains(event.target)) {
+            setMenu(false);
+        }
+    });
+    document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && !menu.hidden) {
+            setMenu(false);
+            btn.focus();
+        }
+    });
 })();
 </script>`;
 }
@@ -1881,6 +2059,7 @@ export function renderSharePage(options: ShareTemplateOptions): string {
     bodyExtras.push(buildAssetPanelScript());
     bodyExtras.push(buildLightboxScript());
     bodyExtras.push(buildWidthScript());
+    bodyExtras.push(buildSettingsScript());
 
     const attachmentsLabel = `${attachmentCount} ${attachmentCount === 1 ? "attachment" : "attachments"}`;
     const zipItem =
@@ -1898,6 +2077,18 @@ ${zipItem}
 </div>`
         : `<button type="button" class="dd-share-view-btn" id="dd-share-download-btn" aria-label="${escapeHtml(labels.download)}" title="${escapeHtml(labels.download)}">${DOWNLOAD_ICON}</button>`;
 
+    const flashOptions = HEADING_FLASH_OPTIONS.map(
+        (option) =>
+            `<option value="${option.ms}"${option.ms === HEADING_FLASH_DEFAULT_MS ? " selected" : ""}>${escapeHtml(option.label)}</option>`
+    ).join("");
+    const settingsControl = `<div class="dd-share-settings">
+<button type="button" class="dd-share-view-btn" id="dd-share-settings-btn" aria-label="Page settings" title="Page settings" aria-expanded="false" aria-controls="dd-share-settings-menu">${SETTINGS_ICON}</button>
+<div class="dd-share-settings-menu" id="dd-share-settings-menu" hidden>
+<label for="dd-share-heading-flash">Heading highlight<small>How long a heading a link jumps to stays marked</small></label>
+<select id="dd-share-heading-flash">${flashOptions}</select>
+</div>
+</div>`;
+
     const sourceLine = sourcePath ? `<span class="dd-share-source">${escapeHtml(sourcePath)}</span>` : "";
 
     return `<!doctype html>
@@ -1914,6 +2105,7 @@ ${headExtras.join("\n")}
 <div class="dd-share-toolbar">
 <button type="button" class="dd-share-view-btn" id="dd-share-view-btn" aria-label="${escapeHtml(labels.showRaw)}" title="${escapeHtml(labels.showRaw)}">${FILE_CODE_ICON}</button>
 ${downloadControl}
+${settingsControl}
 </div>
 <main>
 <article>${rendered.html}</article>

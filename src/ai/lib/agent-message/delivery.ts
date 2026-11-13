@@ -1,6 +1,13 @@
 import { NoSessionMatchError, resolveSessionTranscript } from "@app/ai/lib/sessions/resolve-transcript";
 import { type LiveAgentSurface, matchLiveAgentSurfaces } from "@app/cmux/lib/session-adopt";
-import { agentsOnTtyNow, liveAgentSurfacesNow, tmuxPaneStillShownNow } from "@app/cmux/lib/session-close-live";
+import { liveAgentSurfacesNow } from "@app/cmux/lib/session-close-live";
+import { titleMatchKeys } from "@app/cmux/lib/title-match";
+import {
+    type SessionInput,
+    type SessionInputDeps,
+    type SessionInputOutcome,
+    sendToSession,
+} from "@genesiscz/utils/ai/live-sessions/input";
 import type { TurnProvider } from "@genesiscz/utils/ai/transcripts/turn-state";
 import {
     attestingSender,
@@ -13,7 +20,8 @@ import {
 } from "@genesiscz/utils/claude/peer-message";
 import { currentClaudeSender } from "@genesiscz/utils/claude/peer-sender";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { type CmuxRunResult, runCmux } from "@genesiscz/utils/cmux/lib/cli";
+import type { CmuxRunResult } from "@genesiscz/utils/cmux/lib/cli";
+import { SurfaceInputError } from "@genesiscz/utils/cmux/surface-input";
 import { formatDuration } from "@genesiscz/utils/format";
 import { isFunctionPart, toolParts } from "@genesiscz/utils/harness/tool-parts";
 import { logger } from "@genesiscz/utils/logger";
@@ -418,125 +426,100 @@ export interface SurfaceGuardDeps {
     /** Right before the input: does a --via-tmux session's surface still show the agent's pane? */
     stillShown?: (target: LiveAgentSurface) => Promise<{ ok: true } | { ok: false; reason: string }>;
     /** The agents running on a tty now. */
-    agentsOnTty?: (tty: string) => Set<string>;
+    agentsOnTty?: (tty: string) => ReadonlySet<string>;
+    /** Is a dialog open in the session? Default: the shared dialog guard's state signals. */
+    openDialog?: SessionInputDeps["openDialog"];
 }
 
-/**
- * The one cmux surface that demonstrably runs this session's agent and no other, checked last against the tmux pane it
- * shows. Every input into a session's pane (a paste, a key) goes through it; `doing` names the input in a refusal.
- */
-async function guardedSurface(
-    input: {
-        alias: TurnProvider;
-        sessionId: string;
-        /** The input, as the refusals name it: `paste into`, `press escape in`. */
-        doing: string;
-        /** How a refusal opens: `nothing was pasted into`. */
-        nothing: string;
-    } & SurfaceGuardDeps
-): Promise<LiveAgentSurface & { surface: { id: string } }> {
-    const surfaces = await (input.live ?? liveAgentSurfacesNow)();
-    const target = surfaces.find((entry) => entry.sessionId === input.sessionId && entry.agent === input.alias);
-
-    if (!target) {
-        throw new MessageError(`session ${input.sessionId} has no live cmux surface to ${input.doing}`);
-    }
-
-    // The input names the surface UUID the inventory verified against the journal: after a cmux restart the ref can
-    // name another terminal, and the input would land there.
-    const surfaceId = target.surface.id;
-
-    if (!surfaceId) {
-        throw new MessageError(`${target.surface.ref} has no surface UUID, so the ${input.doing} has no safe target`);
-    }
-
-    // The tab must run this agent and no other: a worker started inside another agent's tab inherits that tab and
-    // can own its newest journal line, and the input would then reach the tab's real agent (Sonnet F13).
-    const tty = target.tmux?.paneTty ?? target.surface.tty;
-    const running = tty ? (input.agentsOnTty ?? agentsOnTtyNow)(tty) : new Set<string>();
-
-    if (!running.has(input.alias) || running.size > 1) {
-        const others = [...running].filter((agent) => agent !== input.alias);
-        throw new MessageError(
-            `${input.nothing} ${target.surface.ref}: ${
-                running.has(input.alias)
-                    ? `it also runs ${others.join(", ")}, so the ${input.doing} could reach that agent`
-                    : `it runs ${others.length > 0 ? others.join(", ") : "no agent"}, not ${input.alias}`
-            }`
-        );
-    }
-
-    // A --via-tmux surface types into whichever tmux pane it shows now; the user may have switched since the
-    // inventory was read. Checked last, right before the input.
-    const shown = await (input.stillShown ?? tmuxPaneStillShownNow)(target);
-
-    if (!shown.ok) {
-        throw new MessageError(`${input.nothing} ${target.surface.ref}: ${shown.reason}`);
-    }
-
-    return { ...target, surface: { ...target.surface, id: surfaceId } };
-}
-
-/**
- * Paste into the session's cmux surface and submit; cmux refuses over a draft or an open dialog.
- * The paste runs through the shared bounded runner, so a wedged cmux ends in a MessageError, not a hang.
- */
-export async function pasteIntoSurface(
-    input: { alias: TurnProvider; sessionId: string; text: string } & SurfaceGuardDeps
-): Promise<MessageDelivery> {
-    const target = await guardedSurface({ ...input, doing: "paste into", nothing: "nothing was pasted into" });
-    const run = input.run ?? ((args: string[]) => runCmux(args));
-    const result = await run(["paste", "--surface", target.surface.id, "--submit", "--", input.text]);
-
-    if (result.timedOut) {
-        throw new MessageError(`cmux paste into ${target.surface.ref} timed out: ${result.stderr.trim()}`);
-    }
-
-    if (result.code !== 0) {
-        throw new MessageError(
-            `cmux paste refused (${result.code}): ${result.stderr.trim() || "no detail"}. It refuses while the prompt holds a draft or a question/permission dialog is open.`
-        );
-    }
-
+/** The guarded input's edges from a caller's surface deps: the live listing, or the locator with the cmux title keys. */
+function inputDeps(deps: SurfaceGuardDeps): SessionInputDeps {
+    const live = deps.live;
     return {
-        agent: input.alias,
-        sessionId: input.sessionId,
-        name: target.surface.title,
-        via: "cmux-paste",
-        note: `pasted and submitted in ${target.surface.ref} (keystrokes, no structured channel)`,
+        surfaces: live ? async () => ({ ok: true, surfaces: await live() }) : undefined,
+        titleKeys: titleMatchKeys,
+        agentsOnTty: deps.agentsOnTty,
+        stillShown: deps.stillShown,
+        openDialog: deps.openDialog,
+        run: deps.run,
     };
 }
 
 /**
- * Press one named key (`cmux send-key`: `escape`, `enter`) in the session's cmux surface, after the same surface, tty
- * and tmux guards as a paste. Returns the surface ref it pressed in. A timed-out press may have landed, so it throws
- * `KeyPressUnknownError` rather than a refusal.
+ * Every input into a session's pane goes through the one guarded input (`sendToSession` in
+ * `@genesiscz/utils/ai/live-sessions/input`): the surface runs this agent and no other, a --via-tmux pane is still
+ * shown, no dialog is open, and cmux sees no draft. A refusal is a `MessageError`; a timed-out key press, which may
+ * have landed, is a `KeyPressUnknownError`.
+ */
+async function inputIntoSession(
+    input: SessionInput & { alias: TurnProvider; unknownOnTimeout: boolean },
+    deps: SurfaceGuardDeps
+): Promise<Extract<SessionInputOutcome, { delivered: true }>> {
+    let outcome: SessionInputOutcome;
+
+    try {
+        outcome = await sendToSession({ ...input, provider: input.alias }, inputDeps(deps));
+    } catch (error) {
+        if (error instanceof SurfaceInputError) {
+            throw new MessageError(error.message);
+        }
+
+        throw error;
+    }
+
+    if (outcome.delivered) {
+        return outcome;
+    }
+
+    if (outcome.reason === "timeout" && outcome.mayHaveLanded && input.unknownOnTimeout) {
+        throw new KeyPressUnknownError(outcome.detail);
+    }
+
+    throw new MessageError(outcome.detail);
+}
+
+/**
+ * Paste into the session's cmux surface and submit, after the guarded input's checks; cmux refuses over a draft.
+ * The paste runs through the bounded cmux runner, so a wedged cmux ends in a MessageError, not a hang.
+ */
+export async function pasteIntoSurface(
+    input: { alias: TurnProvider; sessionId: string; text: string } & SurfaceGuardDeps
+): Promise<MessageDelivery> {
+    const delivered = await inputIntoSession(
+        { alias: input.alias, sessionId: input.sessionId, text: input.text, submit: true, unknownOnTimeout: false },
+        input
+    );
+
+    return {
+        agent: input.alias,
+        sessionId: input.sessionId,
+        name: delivered.target.surface.title,
+        via: "cmux-paste",
+        note: `pasted and submitted in ${delivered.surface} (keystrokes, no structured channel)`,
+    };
+}
+
+/**
+ * Press one named key (`cmux send-key`: `escape`, `enter`) in the session's cmux surface, after the same guards as a
+ * paste. Returns the surface ref it pressed in. A timed-out press may have landed, so it throws `KeyPressUnknownError`
+ * rather than a refusal.
  */
 export async function pressKeyInSurface(
     input: { alias: TurnProvider; sessionId: string; key: string } & SurfaceGuardDeps
 ): Promise<{ ref: string; title: string | null }> {
-    const target = await guardedSurface({ ...input, doing: `press ${input.key} in`, nothing: "no key was pressed in" });
-    const run = input.run ?? ((args: string[]) => runCmux(args));
-    const result = await run(["send-key", "--surface", target.surface.id, input.key]);
-
-    if (result.timedOut) {
-        throw new KeyPressUnknownError(`cmux send-key ${input.key} into ${target.surface.ref} timed out`);
-    }
-
-    if (result.code !== 0) {
-        throw new MessageError(`cmux send-key refused (${result.code}): ${result.stderr.trim() || "no detail"}`);
-    }
-
-    return { ref: target.surface.ref, title: target.surface.title };
+    const delivered = await inputIntoSession(
+        { alias: input.alias, sessionId: input.sessionId, keys: [input.key], unknownOnTimeout: true },
+        input
+    );
+    return { ref: delivered.surface, title: delivered.target.surface.title };
 }
 
 /** A key press ran past its deadline: it may have reached the pane. */
 export class KeyPressUnknownError extends MessageError {}
 
 /**
- * Press a dialog's answer keys in the session's cmux surface, in order, after the same guards as `pressKeyInSurface`:
- * a named key through `cmux send-key`, a character or a line of text through `cmux send`. `--force` on each, because
- * the open dialog is the target here, so cmux's own dialog check must not stop the press. A press that times out may
+ * Press a dialog's answer keys in the session's cmux surface, in order, after the tty and tmux guards: a named key
+ * through `cmux send-key`, a character or a line of text through `cmux send`. Forced, because the open dialog is the
+ * target here, so neither the dialog guard nor cmux's own dialog check may stop the press. A press that times out may
  * have landed, so it throws `KeyPressUnknownError` and the rest are not pressed.
  */
 export async function pressDialogKeysInSurface(
@@ -546,29 +529,17 @@ export async function pressDialogKeysInSurface(
         presses: readonly ({ key: string } | { text: string })[];
     } & SurfaceGuardDeps
 ): Promise<{ ref: string; title: string | null }> {
-    const target = await guardedSurface({ ...input, doing: "answer the dialog in", nothing: "no key was pressed in" });
-    const run = input.run ?? ((args: string[]) => runCmux(args));
-
-    for (const press of input.presses) {
-        const args =
-            "key" in press
-                ? ["send-key", "--surface", target.surface.id, "--force", press.key]
-                : ["send", "--surface", target.surface.id, "--force", "--", press.text];
-        const result = await run(args);
-        const label = "key" in press ? press.key : `text (${press.text.length} characters)`;
-
-        if (result.timedOut) {
-            throw new KeyPressUnknownError(`cmux ${args[0]} ${label} into ${target.surface.ref} timed out`);
-        }
-
-        if (result.code !== 0) {
-            throw new MessageError(
-                `cmux ${args[0]} ${label} refused (${result.code}): ${result.stderr.trim() || "no detail"}`
-            );
-        }
-    }
-
-    return { ref: target.surface.ref, title: target.surface.title };
+    const delivered = await inputIntoSession(
+        {
+            alias: input.alias,
+            sessionId: input.sessionId,
+            keys: input.presses.map((press) => ("key" in press ? press.key : { text: press.text })),
+            force: true,
+            unknownOnTimeout: true,
+        },
+        input
+    );
+    return { ref: delivered.surface, title: delivered.target.surface.title };
 }
 
 /**

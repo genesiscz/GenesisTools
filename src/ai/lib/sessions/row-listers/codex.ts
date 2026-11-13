@@ -1,5 +1,7 @@
-import { CODEX_CACHE_TTL_MS } from "@app/claude/lib/usage/session-rows";
 import { nativeRows } from "../agent-session-rows";
+
+/** The Codex prompt-cache clock: the documented minimum for GPT-5.6+ on a Codex subscription. */
+export const CODEX_CACHE_TTL_MS = 30 * 60 * 1000;
 
 /**
  * Codex's rows, off the shared history index. Codex cannot name the account on its own, so it falls back to the

@@ -747,6 +747,118 @@ final class HubLogicTests: XCTestCase {
         }
     }
 
+    /// A push lands while the checkout looks up a link's commits (`pickLocalCommits`). The review stays (`moveHead`), so
+    /// the answer for the old head must set no scope or notice, and the link is pending again, to be asked against the
+    /// new head. A parent lookup of a link's range does not depend on the head, so it still answers.
+    @MainActor
+    func testAHeadMoveDropsALinkLookupAskedAgainstTheOldHeadAndAsksAgain() throws {
+        let (pr, model, _, pick) = try rewrittenFixture()
+        var applied: [String] = []
+
+        let old = model.beginLocalLookup(pick)
+        XCTAssertNil(model.pendingCommit, "pickLocalCommits clears the pick while git runs")
+        model.dropLocalLookup(movingTo: pr)
+        model.finishRangeLookup(old) { applied.append("old head") }
+        XCTAssertTrue(applied.isEmpty, "an answer for the old head sets no scope or notice")
+        XCTAssertEqual(model.pendingCommit, pick, "the link is asked again against the new head")
+
+        let parent = model.beginRangeLookup()
+        model.dropLocalLookup(movingTo: pr)
+        model.finishRangeLookup(parent) { applied.append("parent") }
+        XCTAssertEqual(applied, ["parent"], "a head move keeps a parent lookup")
+
+        model.showWholePR()
+        let other = PRCommitPick(ref: HubPRRef(project: "acme/other", number: 9), sha: "c3e3ad830", asked: Date())
+        let current = model.beginLocalLookup(other)
+        model.dropLocalLookup(movingTo: pr)
+        model.finishRangeLookup(current) { applied.append("other PR") }
+        XCTAssertEqual(applied, ["parent", "other PR"], "a head move of one PR drops no lookup of another")
+        XCTAssertNil(model.pendingCommit, "nor makes another PR's link pending")
+
+        let answered = model.beginLocalLookup(pick)
+        model.finishRangeLookup(answered) { applied.append("answered") }
+        model.dropLocalLookup(movingTo: pr)
+        XCTAssertEqual(applied.last, "answered")
+        XCTAssertNil(model.pendingCommit, "a lookup that answered is not asked again")
+    }
+
+    /// The checkout's answer about a link's commits: a pick that went while a new review waited (a failed detail) still
+    /// builds that review, and nothing acts for a PR the link does not name.
+    func testALinkLookupBuildsADeferredReviewEvenAfterThePickWent() {
+        let follow = { (pending: Bool, names: Bool, deferred: Bool, onScreen: Bool) in
+            PRsModel.linkLookupFollowUp(pickStillPending: pending, linkNamesSelected: names, reviewDeferred: deferred, reviewOnScreen: onScreen)
+        }
+        XCTAssertEqual(follow(false, true, true, false), .buildReview, "detailFailed cleared the pick while the review was deferred")
+        XCTAssertEqual(follow(false, true, false, true), .nothing, "the pick went and the review is already on screen")
+        XCTAssertEqual(follow(true, true, false, true), .pickCommit)
+        XCTAssertEqual(follow(true, true, true, false), .buildReview)
+        XCTAssertEqual(follow(false, false, true, false), .nothing, "another PR is on screen")
+        XCTAssertEqual(follow(true, false, false, false), .nothing)
+    }
+
+    /// A link's one commit, read from the checkout before the forge lists it, opens on that commit.
+    @MainActor
+    func testALinkCommitFromTheCheckoutOpensOnTheCommit() throws {
+        let (pr, _, _, _) = try rewrittenFixture()
+        let full = "c3e3ad8307c9a875bc8a93d90d3232184bb67f6a"
+        let local = HubLocalCommits(first: full, last: nil, count: 1, unpushed: 1, title: "feat: vouchers")
+
+        let (scope, range) = PRsModel.localScope(local, parent: nil, commits: [], pr: pr, whole: PRsModel.scope(pr, detail: nil))
+
+        XCTAssertEqual(scope, .commit(sha: full, title: "feat: vouchers"))
+        XCTAssertNil(range)
+    }
+
+    /// A range starts at the first parent the checkout named, else at `<first>^`; the listed commits it covers are marked.
+    @MainActor
+    func testALinkRangeFromTheCheckoutStartsAtTheParentOfItsFirstCommit() throws {
+        let (pr, _, _, _) = try rewrittenFixture()
+        let commits = ["1111111aaa", "2222222bbb", "3333333ccc"].map {
+            HubPRDetail.Commit(sha: $0, title: $0, author: nil, authorLogin: nil, date: nil, body: nil)
+        }
+        let local = HubLocalCommits(first: "2222222bbb", last: "4444444ddd", count: 3, unpushed: 1, title: "last")
+        let whole = PRsModel.scope(pr, detail: nil)
+
+        let (scope, range) = PRsModel.localScope(local, parent: "1111111aaa", commits: commits, pr: pr, whole: whole)
+        let (guessed, _) = PRsModel.localScope(local, parent: nil, commits: commits, pr: pr, whole: whole)
+
+        guard case .range(let base, let head, let label, nil) = scope else { return XCTFail("\(scope)") }
+        XCTAssertEqual(base, "1111111aaa")
+        XCTAssertEqual(head, "4444444ddd")
+        XCTAssertTrue(label.hasSuffix("2222222..4444444 (3 commits)"), label)
+        XCTAssertEqual(range?.shas, ["2222222bbb", "3333333ccc"])
+        guard case .range(let guessedBase, _, _, _) = guessed else { return XCTFail("\(guessed)") }
+        XCTAssertEqual(guessedBase, "2222222bbb^")
+    }
+
+    /// A range that starts at the PR's first listed commit starts at the PR's own base, as the forge's list would.
+    @MainActor
+    func testALinkRangeFromThePRsFirstCommitStartsAtThePRBase() throws {
+        let (pr, _, _, _) = try rewrittenFixture()
+        let first = HubPRDetail.Commit(sha: "1111111aaa", title: "one", author: nil, authorLogin: nil, date: nil, body: nil)
+        let local = HubLocalCommits(first: "1111111aaa", last: "2222222bbb", count: 2, unpushed: 0, title: "two")
+        let whole = DiffScope.range(base: "basesha", head: "abcdef0123", label: "whole", fallbackBase: "origin/develop")
+
+        let (scope, _) = PRsModel.localScope(local, parent: "parentsha", commits: [first], pr: pr, whole: whole)
+
+        guard case .range(let base, "2222222bbb", _, let fallback) = scope else { return XCTFail("\(scope)") }
+        XCTAssertEqual(base, "basesha")
+        XCTAssertEqual(fallback, "origin/develop")
+    }
+
+    /// A new head moves only the whole PR on screen: a commit, a link's range at the same head and an older whole PR stay.
+    @MainActor
+    func testOnlyTheWholePRAtTheShownHeadFollowsANewHead() throws {
+        let (pr, _, _, _) = try rewrittenFixture()
+        let whole = PRsModel.scope(pr, detail: nil)
+        let linked = DiffScope.range(base: "1111111aaa", head: "abcdef0123", label: "\(pr.label) 2222222..abcdef0 (2 commits)")
+
+        XCTAssertTrue(PRsModel.showsWholePR(whole, pr: pr, head: "abcdef0123"))
+        XCTAssertFalse(PRsModel.showsWholePR(whole, pr: pr, head: "9999999999"), "the reader moved to a newer push already")
+        XCTAssertFalse(PRsModel.showsWholePR(linked, pr: pr, head: "abcdef0123"))
+        XCTAssertFalse(PRsModel.showsWholePR(.commit(sha: "abcdef0123", title: "t"), pr: pr, head: "abcdef0123"))
+    }
+
     @MainActor
     private func rewrittenFixture() throws -> (HubPR, PRsModel, ReviewModel, PRCommitPick) {
         let json = """
@@ -1580,5 +1692,25 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(AgentNode(id: "a1", harness: "claude", kind: "subagent", status: "done", lastAt: "").transcriptQuery)
         XCTAssertEqual(AgentNode(id: "w1", harness: "codex", kind: "worker", status: "done", lastAt: "").transcriptQuery, "w1")
         XCTAssertEqual(AgentNode(id: "w2", harness: "grok", kind: "worker", status: "done", lastAt: "").transcriptQuery, "w2")
+    }
+
+    /// Only an agent that ended folds into the "finished agent" row: an idle teammate waits for work, so it stays in
+    /// sight under the Idle and All filters (eve on #764, 2026-11-10).
+    func testOnlyEndedAgentsFoldIntoTheFinishedRow() {
+        func node(_ id: String, _ status: String, kind: String = "subagent", children: [AgentNode]? = nil) -> AgentNode {
+            AgentNode(id: id, harness: "claude", kind: kind, status: status, lastAt: "", children: children)
+        }
+        let children = [
+            node("done", "completed"),
+            node("broke", "failed"),
+            node("stopped", "killed"),
+            node("waiting", "idle", kind: "teammate"),
+            node("parent", "completed", children: [node("helper", "idle", kind: "teammate")]),
+            node("open", "completed"),
+        ]
+        let split = AgentTree.foldFinished(children) { $0.id == "open" }
+        XCTAssertEqual(split.live.map(\.id), ["waiting", "parent", "open"])
+        XCTAssertEqual(split.finished.map(\.id), ["done", "broke", "stopped"])
+        XCTAssertTrue(AgentTree.foldFinished(children) { _ in true }.finished.isEmpty, "the fold off keeps every row")
     }
 }

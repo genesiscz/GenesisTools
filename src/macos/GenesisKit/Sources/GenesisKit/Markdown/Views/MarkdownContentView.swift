@@ -75,6 +75,8 @@ public struct MarkdownStyle: Equatable, Sendable {
     public var codeShowsLanguage = true
     /// A Copy button above the block (beside the language).
     public var codeCopyButton = false
+    /// A fenced block longer than this shows its first lines and "Show all N lines". nil shows every line.
+    public var codeFoldLines: Int?
     public var codePadding: CGFloat = 10
     public var codeCornerRadius: CGFloat = GenRadius.sm
     /// A fill behind `inline code`. nil keeps only the monospace.
@@ -139,6 +141,8 @@ public struct MarkdownStyle: Equatable, Sendable {
         $0.bodySize = 12
         $0.textColor = .white.opacity(0.82)
         $0.blockSpacing = 6
+        // A root cause's code is evidence, not the point: five lines, and the block opens on its own.
+        $0.codeFoldLines = 5
     }
 
     public static let chat = MarkdownStyle().with {
@@ -550,6 +554,8 @@ struct MarkdownCodeBlock: View {
     var style: MarkdownStyle
     /// The text carries its own font and colours (the Native+ renderer's hljs output).
     var preStyled = false
+    /// The reader opened a block folded by `style.codeFoldLines`.
+    @State private var allLines = false
 
     private var languageLabel: String? {
         guard style.codeShowsLanguage, let word = language?.split(separator: " ").first, !word.isEmpty else { return nil }
@@ -577,6 +583,19 @@ struct MarkdownCodeBlock: View {
                 codeView
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(style.codePadding)
+                if let fold = style.codeFoldLines, lineCount > fold {
+                    Button {
+                        allLines.toggle()
+                    } label: {
+                        Text(allLines ? "Show \(fold) lines" : "Show all \(lineCount) lines")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(style.mutedColor)
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .padding(.horizontal, style.codePadding)
+                    .padding(.bottom, 6)
+                    .accessibilityValue(allLines ? "Expanded" : "Collapsed")
+                }
             } else {
                 // The indicator is the cue that a long line goes on past the edge.
                 ScrollView(.horizontal, showsIndicators: true) {
@@ -589,14 +608,31 @@ struct MarkdownCodeBlock: View {
         .clipShape(RoundedRectangle(cornerRadius: style.codeCornerRadius))
     }
 
+    private var lineCount: Int { code.split(separator: "\n", omittingEmptySubsequences: false).count }
+
+    /// The code as shown: its first `style.codeFoldLines` lines while folded.
+    private var shownText: AttributedString {
+        guard let fold = style.codeFoldLines, !allLines, lineCount > fold else { return text }
+        var breaks = 0
+        var index = text.characters.startIndex
+        while index < text.characters.endIndex {
+            if text.characters[index] == "\n" {
+                breaks += 1
+                if breaks == fold { return AttributedString(text[text.startIndex..<index]) }
+            }
+            index = text.characters.index(after: index)
+        }
+        return text
+    }
+
     @ViewBuilder
     private var codeView: some View {
         if preStyled {
-            Text(text)
+            Text(shownText)
                 .markdownSelectable(style.selection != .none)
                 .fixedSize(horizontal: !style.codeWraps, vertical: true)
         } else {
-            Text(text)
+            Text(shownText)
                 .font(GenTypography.mono(style.codeFontSize ?? style.bodySize - 1.5))
                 .foregroundColor(style.codeColor)
                 .markdownSelectable(style.selection != .none)

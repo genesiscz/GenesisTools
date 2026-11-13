@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { foldText } from "@genesiscz/utils/macos/ocr-boxes";
 import { recognizeTextBoxesQueued } from "@genesiscz/utils/macos/ocr-queue";
 import {
     type AnalysisCacheRequest,
@@ -12,15 +13,13 @@ import {
     readAnalysis,
 } from "@genesiscz/utils/recording-editor/analysis-cache";
 import {
-    anchorTimeUs,
-    type EventAnchor,
     type MovieEvent,
-    type MovieEventKind,
     movieEvents,
-    nearestEvent,
+    type SnapRequest,
+    snapTimeUs,
     type Tap,
 } from "@genesiscz/utils/recording-editor/events";
-import { gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
+import { gridRead, readGridPictures } from "@genesiscz/utils/recording-editor/frame-grid";
 import {
     MOTION_FPS,
     MOVING_SHARE,
@@ -46,23 +45,29 @@ import {
 } from "@genesiscz/utils/recording-editor/private-data";
 import {
     boundaryWindows,
+    clipOutputUs,
     type EditOp,
     type EditProject,
     exportToOutputUs,
+    type LeakOverlay,
     leakFixOps,
+    leakOverlay,
     leakSourceBox,
     leakSourceKeys,
     outputDurationUs,
+    outputSpansOf,
     outputTimeOf,
     readCursorTrack,
     sourceTimeOf,
     transcriptCachePath,
+    transcriptLines,
 } from "@genesiscz/utils/recording-editor/project";
 import { refineSceneTimes } from "@genesiscz/utils/recording-editor/scene-times";
 import {
     type ChangeStep,
     fixedAreas,
     measureChangeSteps,
+    pointerBusyRanges,
     WAIT_SAMPLE_FPS,
     type WaitStretch,
     waitStretches,
@@ -71,11 +76,10 @@ import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library"
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { probeVideo } from "@genesiscz/utils/video/probe";
-import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { exportAs, exportProgressPrinter, openProject, readTranscriptSegments } from "./edit";
 import { boxInProxy, proxyCanvas, readDisplayPlan } from "./proxy";
-import { displaySizes, frameTexts, visibleSpans } from "./screen-search";
+import { displaySizes, extendBoxRuns, findOnScreen, frameShows, frameTexts, type ScreenHit } from "./screen-search";
 
 const { log } = logger.scoped("recorder-fx-analysis");
 
@@ -136,17 +140,15 @@ function framesScreenText(folder: string): ScreenTextFrame[] {
         "",
         Number.POSITIVE_INFINITY
     );
-    const plan = readDisplayPlan(folder);
+    const shows = frameShows({
+        frames,
+        plan: readDisplayPlan(folder),
+        startedAt: manifest.startedAt,
+        endedAt: manifest.endedAt,
+    });
     const sizes = displaySizes(folder, frames);
-    const shownDisplays = plan ? new Set(plan.ranges.map((range) => range.displayId)) : undefined;
-    const canvas = proxyCanvas(
-        [...sizes]
-            .filter(([id]) => !shownDisplays || (id !== undefined && shownDisplays.has(id)))
-            .map(([, size]) => size)
-    );
-    const lastMs = frames.at(-1)?.atMs ?? 0;
-    const endUs = (lastMs + 2000) * 1000;
-    const visible = plan ? visibleSpans(frames, plan.ranges, endUs) : undefined;
+    // The proxy's picture holds every display that has frames, whichever the plan shows (makeProxy).
+    const canvas = proxyCanvas([...sizes.values()]);
     const out: ScreenTextFrame[] = [];
 
     for (const [index, frame] of frames.entries()) {
@@ -170,13 +172,8 @@ function framesScreenText(folder: string): ScreenTextFrame[] {
                 canvas
             ),
         }));
-        const next = frames.slice(index + 1).find((later) => later.displayId === frame.displayId);
-        const spans =
-            visible && frame.displayId !== undefined
-                ? (visible.get(frame.file) ?? [])
-                : [{ fromUs: frame.atMs * 1000, toUs: (next?.atMs ?? lastMs + 2000) * 1000 }];
 
-        for (const span of spans) {
+        for (const span of shows[index].spans) {
             out.push({ atUs: span.fromUs, untilUs: span.toUs, lines });
         }
     }
@@ -217,13 +214,13 @@ export function exportFrameCache(movie: string): FrameCache & { flush(): void } 
     const path = toolDataDir("recorder", "verify-ocr", `${movieContentKey(movie)}.json`);
     let lines: Record<string, ScreenTextFrame["lines"]> = {};
 
+    // A file that does not parse (cut short by a crash before writes were atomic) is a miss: its frames are read again.
     if (existsSync(path)) {
-        // CLI-F5: a file torn by a killed run or a full disk starts the cache empty, as a cache that is not there.
         try {
             const parsed = frameLinesSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
             lines = parsed.success ? parsed.data : {};
         } catch (error) {
-            log.debug({ error, path }, "verifyHidden: the kept frame reads could not be read; they are read again");
+            log.debug({ error, path }, "verifyHidden: its kept frame reads do not parse; they are read again");
         }
     }
 
@@ -235,7 +232,6 @@ export function exportFrameCache(movie: string): FrameCache & { flush(): void } 
 
         try {
             mkdirSync(dirname(path), { recursive: true });
-            // A whole file or the one before: two editors that verify one export at once never tear it.
             atomicWriteFileSync(path, SafeJSON.stringify(lines));
             unsaved = 0;
         } catch (error) {
@@ -267,14 +263,8 @@ export async function ocrVideo(options: {
     /** R8 5: lines read before, by frame time (a frame found there is not read again), and where each new read goes. */
     cache?: FrameCache;
 }): Promise<ScreenTextFrame[]> {
-    // A rate of 0, below 0 or not a number made the frame step 0 or NaN: the grid loop never ended, or read one frame.
-    if (!(Number.isFinite(options.fps) && options.fps > 0)) {
-        throw new RangeError(`ocrVideo: fps is a positive number of frames a second, not ${options.fps}`);
-    }
-
     const fromUs = options.fromUs ?? 0;
     const stepUs = 1_000_000 / options.fps;
-    const folder = mkdtempSync(join(tmpdir(), "gt-screen-text-"));
     // R8 2: the frame the editor shows at each time, picked by its own presentation time; an input seek or ffmpeg's
     // own clock put a simulator recording's frames up to 2 s off.
     const plan = gridRead({
@@ -283,69 +273,47 @@ export async function ocrVideo(options: {
         toUs: Math.max(fromUs + 50_000, options.toUs),
         fps: options.fps,
     });
+    const folder = mkdtempSync(join(tmpdir(), "gt-screen-text-"));
 
     try {
         const frames: ScreenTextFrame[] = [];
         let previousDigest = "";
         let previousLines: ScreenTextFrame["lines"] = [];
-        let written = 0;
         let index = 0;
-        let missing = false;
 
-        // CLI-F9: one read's frame pictures at a time are on disk: they are read and removed before the next read
-        // writes its own, so a long export never needs GBs of temp space at once. The slots take the frames in order.
-        for (const read of plan.reads) {
-            if (missing) {
-                break;
-            }
-
-            await runVideoCommand({
-                command: [
-                    "ffmpeg",
-                    "-nostdin",
-                    "-v",
-                    "error",
-                    ...read.args,
-                    "-start_number",
-                    String(written),
-                    join(folder, "%06d.png"),
-                ],
-                timeoutMs: 20 * 60_000,
-            });
-            written += read.frames;
-            const files = new Set(readdirSync(folder).filter((file) => file.endsWith(".png")));
-
-            for (; index < plan.slots.length && plan.slots[index].frame < written; index++) {
-                const slot = plan.slots[index];
-                const file = `${String(slot.frame).padStart(6, "0")}.png`;
-
-                if (!files.has(file)) {
-                    missing = true;
-                    break;
-                }
-
-                const path = join(folder, file);
-                const digest = createHash("sha1").update(readFileSync(path)).digest("hex");
-                const atUs = slot.atUs;
-
+        // CLI-F9: the frames come one at a time from one decoder per read (readGridPictures), and only the picture Vision
+        // reads is on disk, removed after the read: a long export never needs GBs of temp space, and a dense stretch is
+        // decoded once. The slots take the frames in order.
+        for await (const picture of readGridPictures(plan, { video: options.video, timeoutMs: 20 * 60_000 })) {
+            for (; index < plan.slots.length && plan.slots[index].frame === picture.frame; index++) {
+                const atUs = plan.slots[index].atUs;
+                const digest = createHash("sha1").update(picture.png).digest("hex");
                 const known = options.cache?.get(atUs);
 
                 if (known) {
                     previousLines = known;
                     previousDigest = digest;
                 } else if (digest !== previousDigest) {
-                    // R6 4: one Vision read at a time on this Mac, retried once with a longer deadline.
-                    const ocr = await recognizeTextBoxesQueued(path, {
-                        fastFallback: false,
-                        what: `the frame at ${(atUs / 1_000_000).toFixed(2)} s of ${basename(options.video)}`,
-                    });
-                    previousLines = ocr.lines.map((line) => ({
-                        text: line.text,
-                        x: line.x / ocr.width,
-                        y: line.y / ocr.height,
-                        width: line.width / ocr.width,
-                        height: line.height / ocr.height,
-                    }));
+                    const path = join(folder, `${String(picture.frame).padStart(6, "0")}.png`);
+                    writeFileSync(path, picture.png);
+
+                    try {
+                        // R6 4: one Vision read at a time on this Mac, retried once with a longer deadline.
+                        const ocr = await recognizeTextBoxesQueued(path, {
+                            fastFallback: false,
+                            what: `the frame at ${(atUs / 1_000_000).toFixed(2)} s of ${basename(options.video)}`,
+                        });
+                        previousLines = ocr.lines.map((line) => ({
+                            text: line.text,
+                            x: line.x / ocr.width,
+                            y: line.y / ocr.height,
+                            width: line.width / ocr.width,
+                            height: line.height / ocr.height,
+                        }));
+                    } finally {
+                        rmSync(path, { force: true });
+                    }
+
                     previousDigest = digest;
                     options.cache?.set(atUs, previousLines);
                 } else {
@@ -354,10 +322,6 @@ export async function ocrVideo(options: {
 
                 frames.push({ atUs, untilUs: Math.min(options.toUs, Math.round(atUs + stepUs)), lines: previousLines });
                 options.onFrame?.(index + 1, plan.slots.length);
-            }
-
-            for (const file of files) {
-                rmSync(join(folder, file), { force: true });
             }
         }
 
@@ -440,6 +404,55 @@ export async function screenTextOf(
         },
     });
     return { frames, source: "movie", cached: !read };
+}
+
+/**
+ * find-screen, the REPL's findOnScreen and the editor's Find tab: where a text was on the screen, oldest first. A frames
+ * recording or a meeting answers from its frames' OCR (screen-search.ts); a movie recording and a plain movie (no
+ * `folder`) answer from screenTextOf, the read findText and the Hide tab make, so the first search of a movie reads
+ * its screen once with Vision and later ones read the cache. A folder without recording.json is screen-search's to refuse.
+ */
+export async function findOnScreenOf(
+    folder: string | undefined,
+    movie: () => Promise<EditProject>,
+    query: string,
+    options: { limit?: number } = {}
+): Promise<ScreenHit[]> {
+    const manifest = folder ? readRecordingManifest(folder) : undefined;
+
+    if (folder && (!manifest || manifest.frames.length > 0)) {
+        return findOnScreen(folder, query, options);
+    }
+
+    const wanted = foldText(query);
+
+    if (!wanted) {
+        return [];
+    }
+
+    const project = await movie();
+    const { frames } = await screenTextOf(project);
+    const hits: ScreenHit[] = [];
+
+    for (const frame of [...frames].sort((a, b) => a.atUs - b.atUs)) {
+        const lines = frame.lines.filter((line) => foldText(line.text).includes(wanted));
+
+        if (lines.length === 0) {
+            continue;
+        }
+
+        // The read's lines are already placed over the movie picture, which shows every moment.
+        hits.push({
+            sec: frame.atUs / 1_000_000,
+            untilSec: frame.untilUs / 1_000_000,
+            lines: lines.map((line) => line.text),
+            shown: true,
+            boxes: lines.map(({ text, x, y, width, height }) => ({ text, x, y, width, height })),
+        });
+    }
+
+    log.debug({ video: project.source.video, query, hits: hits.length }, "find-screen read the movie's screen text");
+    return extendBoxRuns(hits, options.limit ?? 50);
 }
 
 /** Frames a second around a hit's edges and while it moves: a scrolling line is placed every 0.2 s. */
@@ -697,10 +710,28 @@ export async function trackedHits(
 ): Promise<PrivateHit[]> {
     const { frames: coarse, source } = await screenTextIn(project, options.scan);
     const exclude = options.exclude ?? [];
+    // The screen text is placed over the source movie (a frames recording's proxy canvas), so its pads take its shape.
+    const aspect = project.source.width / project.source.height;
 
+    // The proxy shows each frame as a still until the next one, so a hit jumps with its frames instead of gliding.
     if (source === "frames") {
         options.onRead?.(coarse);
-        return textHits(coarse, matcher, { exclude });
+        const hits = textHits(coarse, matcher, { aspect, exclude, stills: true });
+
+        if (!options.excludeFixed) {
+            return hits;
+        }
+
+        // The OCR boxes are placed on the proxy's canvas, so the still areas come from the proxy's change steps.
+        if (!existsSync(project.source.video)) {
+            log.warn(
+                { video: project.source.video },
+                "excludeFixed needs the proxy movie, which is not there; nothing was left visible"
+            );
+            return hits;
+        }
+
+        return leaveFixedVisible(hits, await changeStepsOf(project));
     }
 
     const { steps, fps, grid } = await changeStepsOf(project);
@@ -757,7 +788,7 @@ export async function trackedHits(
             grid,
         });
         options.onRead?.([...outside, ...dense]);
-        return textHits([...outside, ...dense], matcher, { exclude, motion });
+        return textHits([...outside, ...dense], matcher, { aspect, exclude, motion });
     };
     const merged = mergeWindows(windows);
     let hits = await follow(merged);
@@ -775,10 +806,17 @@ export async function trackedHits(
         hits = await follow(mergeWindows([...merged, ...more]), moving);
     }
 
-    if (!options.excludeFixed) {
-        return hits;
-    }
+    return options.excludeFixed ? leaveFixedVisible(hits, { steps, fps, grid }) : hits;
+}
 
+/**
+ * excludeFixed: adds, to each hit that moved, the areas that stayed still meanwhile (a toast over the scroll), which
+ * its hidden part leaves visible. `steps` are the change steps of the movie the hits are placed on.
+ */
+export function leaveFixedVisible(
+    hits: readonly PrivateHit[],
+    { steps, fps, grid }: { steps: readonly ChangeStep[]; fps: number; grid: { columns: number; rows: number } }
+): PrivateHit[] {
     return hits.map((hit) => {
         if (hit.keys.length < 2) {
             return hit;
@@ -826,7 +864,7 @@ export interface PrivateHitOut {
     masked: string;
     from: number;
     to: number;
-    /** Output seconds where it first shows in the edit now; null when that moment is cut. */
+    /** Output seconds of its first kept moment in the edit now; null when no part of it plays. */
     plays: number | null;
     box: PrivateHit["box"];
     /** It moves (a scroll): its hidden part follows these keyframes. */
@@ -841,10 +879,15 @@ export interface PrivateHitOut {
 
 const seconds = (us: number): number => Math.round(us / 1000) / 1000;
 
+/** Output microseconds of the first kept moment of a source range; undefined when all of it is cut. */
+function firstShownOutputUs(project: EditProject, fromUs: number, toUs: number): number | undefined {
+    return outputSpansOf(project, fromUs, toUs)[0]?.fromUs;
+}
+
 function hitsOut(project: EditProject, hits: readonly PrivateHit[]): PrivateHitOut[] {
     const applied = new Set(project.privacy?.applied ?? []);
     return hits.map((hit) => {
-        const plays = outputTimeOf(project, hit.fromUs);
+        const plays = firstShownOutputUs(project, hit.fromUs, hit.toUs);
         return {
             id: hit.id,
             kind: hit.kind,
@@ -879,14 +922,18 @@ export interface HitsAnswer {
 }
 
 /** R8 7: the warning of each text, pattern or name of a request that no line read matched. */
-function unmatchedWarnings(
-    read: readonly ScreenTextFrame[],
-    query: Omit<TextQuery, "unit">,
-    scan: TrackOptions["scan"]
-): string[] {
+function unmatchedWarnings({
+    read,
+    query,
+    scan,
+}: {
+    read: readonly ScreenTextFrame[];
+    query: Omit<TextQuery, "unit">;
+    scan: TrackOptions["scan"];
+}): string[] {
     return unmatchedQueries(read, query).map(
         (said) =>
-            `no screen text ${scan ? "of the range read" : "of the whole movie"} matches ${said}: each OCR line is matched on its own, without case; \\w and \\b take letters of any language, \\p{L} is any letter`
+            `no screen text ${scan ? "of the range read" : "of the whole movie"} matches ${said}: each OCR line is matched on its own, without case, and a text without accents; \\w and \\b take letters of any language, \\p{L} is any letter`
     );
 }
 
@@ -904,7 +951,7 @@ export async function privateHitsOf(
         },
     });
     const names = (options.names ?? []).map((name) => name.trim()).filter(Boolean);
-    const warnings = names.length > 0 ? unmatchedWarnings(read, { texts: names }, options.scan) : [];
+    const warnings = names.length > 0 ? unmatchedWarnings({ read, query: { texts: names }, scan: options.scan }) : [];
     log.debug({ hits: hits.length, warnings }, "private hits");
     return { hits, warnings };
 }
@@ -922,7 +969,10 @@ export async function privateData(
  */
 export type TextQuery = TextMatcherOptions;
 
-/** Every place of a text (or a pattern) on the screen, the input of the `hideText` op; a request never read is a warning. */
+/**
+ * Every place of a text (or a pattern) on the screen, the input of the `hideText` op, and one warning per text or
+ * pattern that no screen text matched: a caller returns them, because a log line never reaches a REPL script.
+ */
 export async function textHitsOf(project: EditProject, options: TrackOptions & TextQuery): Promise<HitsAnswer> {
     let read: readonly ScreenTextFrame[] = [];
     const hits = await trackedHits(project, textMatcher(options), {
@@ -933,15 +983,22 @@ export async function textHitsOf(project: EditProject, options: TrackOptions & T
         },
     });
     // R8 7: a pattern that never matched is said, not silently dropped (a \w that did not take Czech letters did).
-    const warnings = unmatchedWarnings(read, options, options.scan);
-    log.debug({ hits: hits.length, warnings }, "text hits");
+    const warnings = unmatchedWarnings({ read, query: options, scan: options.scan });
+
+    for (const warning of warnings) {
+        log.out.warn(warning);
+    }
+
     return { hits, warnings };
 }
+
+/** findText's answer: the hits, and `warnings` naming each text or pattern no screen text matched (absent: none). */
+export type FoundText = PrivateHitOut[] & { warnings?: string[] };
 
 export async function findText(
     project: EditProject,
     options: TrackOptions & TextQuery & { from?: TimeValue; to?: TimeValue }
-): Promise<{ hits: PrivateHitOut[]; warnings?: string[] }> {
+): Promise<FoundText> {
     // R7 6: from/to (source seconds) as hideText takes them; a place that shows at any moment between them counts.
     const fromUs = options.from === undefined ? 0 : timeToUs(options.from);
     const toUs = options.to === undefined ? Number.POSITIVE_INFINITY : timeToUs(options.to);
@@ -949,13 +1006,17 @@ export async function findText(
         ...options,
         scan: options.scan ?? scanOf(options.from, options.to),
     });
-    return {
-        hits: hitsOut(
-            project,
-            hits.filter((hit) => hit.toUs > fromUs && hit.fromUs < toUs)
-        ),
-        ...(warnings.length > 0 ? { warnings } : {}),
-    };
+    const found: FoundText = hitsOut(
+        project,
+        hits.filter((hit) => hit.toUs > fromUs && hit.fromUs < toUs)
+    );
+
+    // The answer stays the array of hits it always was; a miss rides on it, so a script reads it as found.warnings.
+    if (warnings.length > 0) {
+        found.warnings = warnings;
+    }
+
+    return found;
 }
 
 /**
@@ -1015,9 +1076,11 @@ export function exportRangeOf(
 
 /**
  * The part of the SOURCE a verifyHidden from/to covers, for its source reads (scanOf, with its margin each side):
- * source seconds as they are; output seconds through the clips. Undefined without from and to: the whole movie.
+ * source seconds as they are; output seconds through every clip that plays in that range, so clips that jump back or
+ * forward in the source (0–10, then 80–90, then 20–30) are all read, not only the source at the two ends. Undefined
+ * without from and to: the whole movie.
  */
-function sourceScanOf(
+export function sourceScanOf(
     project: EditProject,
     options: { from?: TimeValue; to?: TimeValue; timeBase?: "source" | "output" }
 ): { fromUs: number; toUs: number } | undefined {
@@ -1034,7 +1097,28 @@ function sourceScanOf(
         time === undefined ? fallback : Math.min(endUs, Math.max(0, timeToUs(time)));
     const fromUs = outputUs(options.from, 0);
     const toUs = Math.max(fromUs, outputUs(options.to, endUs) - 1);
-    const sourceUs = [sourceTimeOf(project, fromUs), sourceTimeOf(project, toUs)];
+    const sourceUs: number[] = [];
+    let startUs = 0;
+
+    for (const clip of project.clips) {
+        const clipEndUs = startUs + clipOutputUs(clip);
+        const overlapFromUs = Math.max(fromUs, startUs);
+        const overlapToUs = Math.min(toUs, clipEndUs);
+
+        if (overlapToUs >= overlapFromUs && clipEndUs > startUs) {
+            sourceUs.push(
+                clip.fromUs + Math.round((overlapFromUs - startUs) * clip.speed),
+                Math.min(clip.toUs, clip.fromUs + Math.round((overlapToUs - startUs) * clip.speed))
+            );
+        }
+
+        startUs = clipEndUs;
+    }
+
+    if (sourceUs.length === 0) {
+        sourceUs.push(sourceTimeOf(project, fromUs), sourceTimeOf(project, toUs));
+    }
+
     return scanOf(Math.min(...sourceUs) / 1_000_000, Math.max(...sourceUs) / 1_000_000);
 }
 
@@ -1058,6 +1142,11 @@ export interface Leak {
     sourceBox: FractionBox | null;
     /** R8 4: its place in the SOURCE picture at each frame it was read (source seconds and fractions); fixOps follow it. */
     sourceKeys: Array<{ at: number; x: number; y: number; width: number; height: number }>;
+    /**
+     * The edit's own text (its id) or caption line (its start, source seconds) that draws it; absent when the picture
+     * shows it. The export draws texts and captions over every redact op, so such a leak gets a note, not a fix op.
+     */
+    overlay?: LeakOverlay;
 }
 
 /**
@@ -1071,17 +1160,17 @@ export async function verifyHidden(
     value: string,
     options: VerifyHiddenOptions
 ): Promise<VerifyHiddenAnswer & { exportRemoved?: true }> {
+    // The REPL's bounds: 0 or NaN would never advance the frame grid, and a minute between reads checks nothing.
     const everySeconds = options.everySeconds ?? 0.25;
 
-    // CLI-F1: checked before the export, as the REPL schema bounds it; 0 hung the read and "0,5" (NaN) read one frame.
-    if (!(everySeconds >= 0.1 && everySeconds <= 5)) {
-        throw new RangeError(
-            `verifyHidden: everySeconds takes 0.1 to 5 seconds between the frames read, not ${everySeconds}`
-        );
+    if (!Number.isFinite(everySeconds) || everySeconds < 0.1 || everySeconds > 5) {
+        throw new Error(`verifyHidden reads a frame every 0.1 to 5 seconds, not every ${options.everySeconds}`);
     }
 
+    verifyMatcherOf(options);
+
     if (options.movie) {
-        return verifyExport(value, options, options.movie);
+        return verifyExport(value, { ...options, movie: options.movie });
     }
 
     // CLI-F8: the export made for the check is removed after it (a 5-minute demo is hundreds of MB, and macOS clears
@@ -1100,7 +1189,7 @@ export async function verifyHidden(
             throw new Error(`the export to check failed: ${answer.error ?? "no file"}`);
         }
 
-        const checked = await verifyExport(value, options, answer.path);
+        const checked = await verifyExport(value, { ...options, movie: answer.path });
         return options.keepExport ? checked : { ...checked, exportRemoved: true };
     } finally {
         if (!options.keepExport) {
@@ -1136,16 +1225,34 @@ export interface VerifyHiddenAnswer {
     notes?: string[];
 }
 
-/** verifyHidden over `movie`, an export of the edit `value`. */
-async function verifyExport(value: string, options: VerifyHiddenOptions, movie: string): Promise<VerifyHiddenAnswer> {
-    const everySeconds = options.everySeconds ?? 0.25;
+/**
+ * What verifyHidden reads the export for: every text and pattern asked, and the private data when `private` asks for
+ * it, when nothing else is asked, or when `names` are given (names are private data, as hidePrivate and privateData
+ * treat them). R6 3: all of them in one read.
+ */
+export function verifyMatcherOf(options: VerifyHiddenOptions): LineMatcher {
     const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
-    // R6 3: every text and pattern (and the private data, when asked or when nothing else is) in one read.
+    const named = (options.names ?? []).some((name) => name.trim());
+
+    if (named && options.private === false) {
+        throw new Error("verifyHidden: names are private data; drop private: false or names");
+    }
+
     const matchers = [
         ...(asked ? [textMatcher(options)] : []),
-        ...(options.private || !asked ? [privateMatcher(options.names)] : []),
+        ...(options.private || !asked || named ? [privateMatcher(options.names)] : []),
     ];
-    const matcher: LineMatcher = (text) => matchers.flatMap((one) => one(text));
+    return (text) => matchers.flatMap((one) => one(text));
+}
+
+/** verifyHidden over `movie`, an export of the edit `value`. */
+async function verifyExport(
+    value: string,
+    options: VerifyHiddenOptions & { movie: string }
+): Promise<VerifyHiddenAnswer> {
+    const { movie } = options;
+    const everySeconds = options.everySeconds ?? 0.25;
+    const matcher = verifyMatcherOf(options);
     const { project } = await openProject(value);
     const progress = options.onProgress ?? (() => undefined);
     const info = await probeVideo({ input: movie });
@@ -1201,7 +1308,10 @@ async function verifyExport(value: string, options: VerifyHiddenOptions, movie: 
     const values = sourceFrames.flatMap((frame) =>
         frame.lines.flatMap((line) => matcher(line.text).map((match) => match.value))
     );
-    const leaks = textHits(frames, edgeFragments(matcher, values), { gapUs: 0 }).map((hit) => {
+    // The export's own picture: a frame or a zoom can give it another shape than the source.
+    const aspect = (info.displayWidth || info.width) / (info.displayHeight || info.height);
+    const hitMatcher = edgeFragments(matcher, values);
+    const leaks = textHits(frames, hitMatcher, { aspect, gapUs: 0 }).map((hit) => {
         const atUs = hit.keys[0]?.atUs ?? hit.fromUs;
         const from = exportToOutputUs(project, atUs);
         const to = exportToOutputUs(project, Math.min(hit.toUs, endUs));
@@ -1224,29 +1334,67 @@ async function verifyExport(value: string, options: VerifyHiddenOptions, movie: 
     });
     // R7 3: each leak's place in the source picture, from the source's own reads, and the redact ops that cover it.
     const sourceHits = leaks.some((leak) => leak.source) ? await trackedHits(project, matcher, { scan }) : [];
-    const placed: Leak[] = leaks.map(({ keys, ...leak }) => ({
-        ...leak,
-        // R8 4: its place in the source at every frame it was read, the track of its fix.
-        sourceKeys: leak.source
-            ? leakSourceKeys(project, { keys, label: leak.label, masked: leak.masked, sourceHits })
-            : [],
-        sourceBox: leak.source
-            ? leakSourceBox(project, {
+    // The caption lines the export draws (each with its fix), so a leak in one gets a note instead of a source op.
+    const captionLines =
+        project.captions?.show &&
+        leaks.some((leak) => leak.source) &&
+        existsSync(transcriptCachePath(project.source.video))
+            ? transcriptLines({ segments: readTranscriptSegments(project) }, project)
+            : [];
+    const placed: Leak[] = leaks.map(({ keys, ...leak }) => {
+        const overlay = leak.source
+            ? leakOverlay(project, {
                   fromUs: Math.round(leak.source.at * 1_000_000),
                   toUs: Math.round(leak.source.until * 1_000_000),
-                  label: leak.label,
                   masked: leak.masked,
+                  matcher: hitMatcher,
+                  captionLines,
                   canvasBox: leak.box,
                   sourceHits,
               })
-            : null,
-    }));
+            : undefined;
+
+        if (overlay) {
+            return { ...leak, overlay, sourceKeys: [], sourceBox: null };
+        }
+
+        return {
+            ...leak,
+            // R8 4: its place in the source at every frame it was read, the track of its fix.
+            sourceKeys: leak.source
+                ? leakSourceKeys(project, { keys, label: leak.label, masked: leak.masked, sourceHits })
+                : [],
+            sourceBox: leak.source
+                ? leakSourceBox(project, {
+                      fromUs: Math.round(leak.source.at * 1_000_000),
+                      toUs: Math.round(leak.source.until * 1_000_000),
+                      label: leak.label,
+                      masked: leak.masked,
+                      canvasBox: leak.box,
+                      sourceHits,
+                  })
+                : null,
+        };
+    });
     // R8 4: a leak with no place in the source gets no fix op (never a box over the whole frame), but a note; so does
-    // a leak inside an intro or end card (CLI-F4), so fixOps plus notes name every leak.
+    // a leak inside an intro or end card (CLI-F4) and one the edit's own text or caption draws, so fixOps plus notes
+    // name every leak.
     const notes = placed.flatMap((leak) => {
         if (!leak.source) {
             return [
                 `the leak at ${leak.at} to ${leak.until} s of the export is inside an intro or end card, which no redact op reaches: change the card's text (introCard() or endCard())`,
+            ];
+        }
+
+        if (leak.overlay?.kind === "text") {
+            return [
+                `the leak at ${leak.source.at} to ${leak.source.until} s (source) is in the edit's own text ${leak.overlay.id}, which the export draws over every redact op: change its words with a setText op or remove it with untext`,
+            ];
+        }
+
+        if (leak.overlay?.kind === "caption") {
+            return [
+                `the leak at ${leak.source.at} to ${leak.source.until} s (source) is in the caption line at ${leak.overlay.at} s, which the export draws over every redact op: change its words with replaceWords() or a fixLine op at ${leak.overlay.at} ("" hides the line), or turn captions off`,
             ];
         }
 
@@ -1274,15 +1422,15 @@ function mergeFrames(even: readonly ScreenTextFrame[], dense: readonly ScreenTex
     return all.map((frame, index) => ({ ...frame, untilUs: all[index + 1]?.atUs ?? frame.untilUs }));
 }
 
-/** R7 4: the source times where the screen changes at once (a new screen, a tab): over a third of the picture in a step. */
+/**
+ * R7 4: the source times where the screen changes at once (a new screen, a tab): the scene events of `eventsOf`, each at
+ * the frame where the new screen starts, so the window around it holds the new screen too.
+ */
 async function sceneChangesOf(project: EditProject): Promise<number[]> {
     try {
-        const { steps, fps } = await changeStepsOf(project);
-        return steps.flatMap((step, index) =>
-            step.changed / Math.max(1, step.cells) > 1 / 3 ? [Math.round((index * 1_000_000) / fps)] : []
-        );
+        return (await eventsOf(project)).filter((event) => event.kind === "scene").map((event) => event.fromUs);
     } catch (error) {
-        logger.debug({ error }, "verifyHidden: no change steps, so no scene changes to read around");
+        log.debug({ error }, "verifyHidden: no change steps, so no scene changes to read around");
         return [];
     }
 }
@@ -1320,32 +1468,12 @@ export async function changeStepsOf(
     });
 }
 
-/** The moments the viewer must see at normal speed: clicks (±0.5 s), cursor moves, and speech (±0.2 s). */
+/**
+ * The moments the viewer must see at normal speed: what the pointer does (`pointerBusyRanges`, which removeIdle keeps
+ * too) and speech (±0.2 s).
+ */
 function busyRanges(project: EditProject): Array<[number, number]> {
-    const busy: Array<[number, number]> = [];
-    const samples = readCursorTrack(project.source.cursor);
-    const bucketMs = 250;
-    const travel = new Map<number, number>();
-
-    for (const [index, sample] of samples.entries()) {
-        if (sample.click) {
-            busy.push([Math.max(0, (sample.ms - 500) * 1000), (sample.ms + 500) * 1000]);
-        }
-
-        const previous = samples[index - 1];
-
-        if (previous) {
-            const bucket = Math.floor(sample.ms / bucketMs);
-            travel.set(bucket, (travel.get(bucket) ?? 0) + Math.hypot(sample.x - previous.x, sample.y - previous.y));
-        }
-    }
-
-    for (const [bucket, distance] of travel) {
-        // A fiftieth of the picture in a quarter second: a real move, not a hand resting on the mouse.
-        if (distance > 0.02) {
-            busy.push([bucket * bucketMs * 1000, (bucket + 1) * bucketMs * 1000]);
-        }
-    }
+    const busy = pointerBusyRanges(readCursorTrack(project.source.cursor));
 
     if (existsSync(transcriptCachePath(project.source.video))) {
         for (const segment of readTranscriptSegments(project)) {
@@ -1394,7 +1522,7 @@ export async function waits(
     options: { minSeconds?: number; maxArea?: number } = {}
 ): Promise<WaitOut[]> {
     return (await waitsOf(project, options)).map((wait) => {
-        const plays = outputTimeOf(project, wait.fromUs);
+        const plays = firstShownOutputUs(project, wait.fromUs, wait.toUs);
         const length = wait.toUs - wait.fromUs;
         return {
             id: wait.id,
@@ -1466,7 +1594,11 @@ export async function eventsOf(project: EditProject, options: { taps?: readonly 
 
 export function eventsOut(project: EditProject, events: readonly MovieEvent[]): MovieEventOut[] {
     return events.map((event) => {
-        const plays = outputTimeOf(project, event.fromUs);
+        // A range plays from its first kept moment; a point event plays only where its one moment is kept.
+        const plays =
+            event.toUs === undefined
+                ? outputTimeOf(project, event.fromUs)
+                : firstShownOutputUs(project, event.fromUs, event.toUs);
         return {
             kind: event.kind,
             index: event.index,
@@ -1481,38 +1613,18 @@ export function eventsOut(project: EditProject, events: readonly MovieEvent[]): 
 
 /**
  * A source time on screen: `at` (seconds) moved to the nearest event of `kinds`, or an anchor's time
- * (`{ event: "scene", index: 3, lead: -0.2 }`). Answers the seconds and the event it used.
+ * (`{ event: "scene", index: 3, lead: -0.2 }`); `lead` and `end` work in both forms (snapTimeUs). Answers the seconds
+ * and the event it used.
  */
 export async function snapOf(
     project: EditProject,
-    options: { at?: number; anchor?: EventAnchor; kinds?: MovieEventKind[]; taps?: readonly Tap[] }
+    options: SnapRequest & { taps?: readonly Tap[] }
 ): Promise<{ at: number; event: MovieEventOut; edge?: "start" | "end" }> {
     const events = await eventsOf(project, { taps: options.taps });
-
-    if (options.anchor) {
-        const anchor = options.anchor;
-        const atUs = anchorTimeUs(events, anchor);
-        const ofKind = events.filter((item) => item.kind === anchor.event);
-        const event = ofKind.at(anchor.index > 0 ? anchor.index - 1 : anchor.index);
-
-        if (!event) {
-            throw new RangeError(`there is no ${anchor.event} event ${anchor.index}`);
-        }
-
-        return { at: seconds(atUs), event: eventsOut(project, [event])[0] };
-    }
-
-    if (options.at === undefined) {
-        throw new Error("snap needs at (seconds) or an event anchor ({ event, index, lead? })");
-    }
-
-    const nearest = nearestEvent(events, Math.round(options.at * 1_000_000), options.kinds);
-
-    if (!nearest) {
-        throw new RangeError(
-            `the movie has no ${options.kinds ? `${options.kinds.join(" or ")} ` : ""}event to snap to`
-        );
-    }
-
-    return { at: seconds(nearest.atUs), event: eventsOut(project, [nearest.event])[0], edge: nearest.edge };
+    const snap = snapTimeUs(events, options);
+    return {
+        at: seconds(snap.atUs),
+        event: eventsOut(project, [snap.event])[0],
+        ...(snap.edge ? { edge: snap.edge } : {}),
+    };
 }

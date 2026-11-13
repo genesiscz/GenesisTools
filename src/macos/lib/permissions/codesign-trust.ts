@@ -72,21 +72,30 @@ export interface CodesignKeyProbe {
 /**
  * Signs a small file with `sign` (a certificate's SHA-1 or name) once, to show whether codesign reaches the key
  * without the keychain dialog. The file is plain text, never run: codesign keeps its signature in extended attributes.
+ * A file that cannot be written is a failed probe with the reason in `detail`, never a throw: the caller still says
+ * the test failed and waits for Enter.
  */
 export async function probeCodesignKey({
     sign,
     timeoutMs = 30_000,
     dialogOpen = keychainDialogOpen,
     runCommand = boundedCommand,
+    file = join(genesisAppDir(), "codesign-trust-probe.txt"),
 }: {
     sign: string;
     timeoutMs?: number;
     dialogOpen?: () => boolean;
     runCommand?: typeof boundedCommand;
+    file?: string;
 }): Promise<CodesignKeyProbe> {
-    const file = join(genesisAppDir(), "codesign-trust-probe.txt");
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, "GenesisTools codesign trust probe\n");
+    try {
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, "GenesisTools codesign trust probe\n");
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return { ok: false, ms: 0, dialog: false, detail: `could not write the test file ${file}: ${reason}` };
+    }
+
     let dialog = false;
     const watch = setInterval(() => {
         dialog ||= dialogOpen();

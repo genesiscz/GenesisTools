@@ -34,8 +34,8 @@ export function createPlainTransport(opts: PlainTransportOptions): Transport {
             baseUrl: opts.baseUrl,
             fetch: ((url: string, init?: RequestInit) => expoFetch(url, init as never)) as unknown as typeof fetch,
             authHeader: opts.authHeader,
-            // The contract's `qa.subscribe` wants an EventSource-like; we supply an expo/fetch
-            // SSE adapter so `c.qa.subscribe(...)` works on RN too (web/mobile call-site parity,
+            // The contract's stream subscriptions (`live`, `buildLog`) want an EventSource-like; we supply an
+            // expo/fetch SSE adapter so they work on RN too (web/mobile call-site parity,
             // ADR §3). The contract passes the FULL URL here, so we stream it directly (no path
             // re-append). The clean path for the QA screen is `transport.streamQa()` (plan 07).
             eventSourceFactory: (url) => {

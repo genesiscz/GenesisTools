@@ -3,7 +3,6 @@ import { createProgressCallbacks } from "@app/indexer/lib/progress";
 import { MailSource } from "@app/indexer/lib/sources/mail-source";
 import type { IndexConfig } from "@app/indexer/lib/types";
 import { formatLocalDay, parseMailDate } from "@app/macos/lib/mail/command-helpers";
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import {
     getDefaultModel,
@@ -15,6 +14,7 @@ import { embeddingProviderTypes, findDescriptor } from "@genesiscz/utils/ai/loca
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -146,6 +146,7 @@ export function registerIndexCommand(program: Command): void {
                             if (isInteractive()) {
                                 const confirmed = await p.confirm({
                                     message: `Switch from ${pc.bold(currentModel)} to ${pc.bold(requestedModel)}? This will rebuild the index and re-embed ${chunkCount.toLocaleString()} chunks.`,
+                                    cancel: "back",
                                 });
 
                                 if (p.isCancel(confirmed) || !confirmed) {
@@ -197,6 +198,7 @@ export function registerIndexCommand(program: Command): void {
 
                                 const confirmed = await p.confirm({
                                     message: `This will delete the entire mail index (${chunkCount.toLocaleString()} chunks, ${embCount.toLocaleString()} embeddings) and rebuild from scratch. Continue?`,
+                                    cancel: "back",
                                 });
 
                                 if (p.isCancel(confirmed) || !confirmed) {
@@ -462,6 +464,7 @@ async function rebuildEmbeddings(
 
         const confirmed = await p.confirm({
             message: `This will drop embeddings ${scopeMsg} and re-generate them. Continue?`,
+            cancel: "back",
         });
 
         if (p.isCancel(confirmed) || !confirmed) {

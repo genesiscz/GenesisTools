@@ -4,8 +4,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { appendFeed, readFeed } from "../lib/feed";
-import { filterForAgent, isVisibleToAgent } from "../lib/filter";
-import { announceLeave, leaveReasonOf, logInAndAnnounceJoin, presentAgents, remainingAgentNames } from "../lib/leave";
+import { filterForAgent, isVisibleToAgent, presenceModeFor } from "../lib/filter";
+import {
+    announceDueLapses,
+    announceLapses,
+    announceLeave,
+    leaveReasonOf,
+    logInAndAnnounceJoin,
+    notListening,
+    pendingRearms,
+    presentAgents,
+    REARM_GRACE_MS,
+    rearmTrackerFrom,
+    remainingAgentNames,
+    trackRearm,
+} from "../lib/leave";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import type { AgentRecord, FeedEvent } from "../lib/types";
 
@@ -110,7 +123,7 @@ describe("filter.isVisibleToAgent", () => {
         expect(isVisibleToAgent(reply, agentAlpha)).toBe(false);
     });
 
-    test("main agent sees stream-mode peer logged_in (no debug needed)", () => {
+    test("main gets no peer logged_in: agent_joined reports a real arrival, and a re-arm is not news", () => {
         const main: AgentRecord = { ...agentAlpha, agent_id: "main_x", agent_name: "lead", is_main: true };
         const loggedInStream: FeedEvent = {
             seq: 12,
@@ -128,11 +141,12 @@ describe("filter.isVisibleToAgent", () => {
             agent_name: "beta",
             mode: "once",
         };
-        expect(isVisibleToAgent(loggedInStream, main)).toBe(true);
+        expect(isVisibleToAgent(loggedInStream, main)).toBe(false);
         expect(isVisibleToAgent(loggedInOnce, main)).toBe(false);
+        expect(isVisibleToAgent(loggedInStream, main, { meta: { debug: true } })).toBe(true);
     });
 
-    test("main agent sees real-failure peer logged_out (no debug needed)", () => {
+    test("main agent sees real-failure peer logged_out, not a re-arm (no debug needed)", () => {
         const main: AgentRecord = { ...agentAlpha, agent_id: "main_x", agent_name: "lead", is_main: true };
         const dead: FeedEvent = {
             seq: 12,
@@ -148,8 +162,11 @@ describe("filter.isVisibleToAgent", () => {
             agent_id: "agt_beta",
             reason: "clean_exit",
         };
+        const rearm: FeedEvent = { ...dead, seq: 14, reason: "signal", rearm_until: "t" } as FeedEvent;
         expect(isVisibleToAgent(dead, main)).toBe(true);
         expect(isVisibleToAgent(clean, main)).toBe(false);
+        // A lapse after the grace reports a failed re-arm; the logout itself is not news.
+        expect(isVisibleToAgent(rearm, main)).toBe(false);
     });
 
     test("hides all peer lifecycle events by default for non-main agents (debug off)", () => {
@@ -196,8 +213,8 @@ describe("filter.isVisibleToAgent", () => {
             agent_id: "agt_beta",
             reason: "dead_pid",
         };
-        expect(isVisibleToAgent(loggedIn, agentAlpha, { debug: true })).toBe(true);
-        expect(isVisibleToAgent(loggedOutDead, agentAlpha, { debug: true })).toBe(true);
+        expect(isVisibleToAgent(loggedIn, agentAlpha, { meta: { debug: true } })).toBe(true);
+        expect(isVisibleToAgent(loggedOutDead, agentAlpha, { meta: { debug: true } })).toBe(true);
     });
 
     test("never shows own lifecycle events even with debug on", () => {
@@ -209,7 +226,7 @@ describe("filter.isVisibleToAgent", () => {
             agent_name: "alpha",
             mode: "stream",
         };
-        expect(isVisibleToAgent(loggedIn, agentAlpha, { debug: true })).toBe(false);
+        expect(isVisibleToAgent(loggedIn, agentAlpha, { meta: { debug: true } })).toBe(false);
     });
 
     test("hides peer --once login/logout churn even when session debug is on", () => {
@@ -229,12 +246,12 @@ describe("filter.isVisibleToAgent", () => {
             reason: "clean_exit",
             mode: "once",
         };
-        expect(isVisibleToAgent(onceLoggedIn, agentAlpha, { debug: true })).toBe(false);
-        expect(isVisibleToAgent(onceLoggedOut, agentAlpha, { debug: true })).toBe(false);
+        expect(isVisibleToAgent(onceLoggedIn, agentAlpha, { meta: { debug: true } })).toBe(false);
+        expect(isVisibleToAgent(onceLoggedOut, agentAlpha, { meta: { debug: true } })).toBe(false);
 
         const main: AgentRecord = { ...agentAlpha, agent_id: "main_x", agent_name: "lead", is_main: true };
-        expect(isVisibleToAgent(onceLoggedIn, main, { debug: true })).toBe(false);
-        expect(isVisibleToAgent(onceLoggedOut, main, { debug: true })).toBe(false);
+        expect(isVisibleToAgent(onceLoggedIn, main, { meta: { debug: true } })).toBe(false);
+        expect(isVisibleToAgent(onceLoggedOut, main, { meta: { debug: true } })).toBe(false);
     });
 });
 
@@ -283,14 +300,44 @@ describe("agent_left", () => {
         ...(loginId ? { login_id: loginId } : {}),
     });
 
-    test("reaches every agent but the leaver, a --once receiver included", () => {
-        expect(isVisibleToAgent(left(5, "agt_beta", "beta"), agentAlpha)).toBe(true);
-        expect(isVisibleToAgent(left(5, "agt_alpha", "alpha"), agentAlpha)).toBe(false);
+    test("reaches main by default, another agent only with --presence, and never the leaver", () => {
+        const main: AgentRecord = { ...agentAlpha, agent_id: "main_lead", agent_name: "lead", is_main: true };
+
+        expect(isVisibleToAgent(left(5, "agt_beta", "beta"), main)).toBe(true);
+        // A child gets no presence by default: 28% of the child turns in the 2026-11-08 swarm woke only on it.
+        expect(isVisibleToAgent(left(5, "agt_beta", "beta"), agentAlpha)).toBe(false);
+        expect(isVisibleToAgent(left(5, "agt_beta", "beta"), agentAlpha, { presence: "changes" })).toBe(true);
+        expect(isVisibleToAgent(left(5, "agt_alpha", "alpha"), agentAlpha, { presence: "all" })).toBe(false);
+        expect(isVisibleToAgent(left(5, "agt_beta", "beta"), main, { presence: "none" })).toBe(false);
+    });
+
+    test("presence defaults: debug session all, main changes, others none; an explicit mode wins", () => {
+        const main: AgentRecord = { ...agentAlpha, is_main: true };
+
+        expect(presenceModeFor({ agent: agentAlpha })).toBe("none");
+        expect(presenceModeFor({ agent: main })).toBe("changes");
+        expect(presenceModeFor({ agent: agentAlpha, meta: { debug: true } })).toBe("all");
+        expect(presenceModeFor({ agent: main, meta: { debug: true }, explicit: "none" })).toBe("none");
+    });
+
+    test("changes hides the re-arm leaves an older writer posted; all shows them", () => {
+        const rearmLeave: FeedEvent = { ...left(5, "agt_beta", "beta"), reason: "signal" } as FeedEvent;
+        const lapsed: FeedEvent = { ...left(6, "agt_beta", "beta"), reason: "lapsed" } as FeedEvent;
+        const changes = { presence: "changes" as const };
+
+        expect(isVisibleToAgent(rearmLeave, agentAlpha, changes)).toBe(false);
+        expect(isVisibleToAgent(lapsed, agentAlpha, changes)).toBe(true);
+        expect(isVisibleToAgent(rearmLeave, agentAlpha, { presence: "all" })).toBe(true);
     });
 
     test("presence is ordered by feed seq: a peer event in the registration's millisecond but after it is news", () => {
         // Registered at seq 7; the peer events share its timestamp to the millisecond.
-        const registered: AgentRecord = { ...agentAlpha, registered_at: "2026-01-01T00:00:02Z", registered_seq: 7 };
+        const registered: AgentRecord = {
+            ...agentAlpha,
+            is_main: true,
+            registered_at: "2026-01-01T00:00:02Z",
+            registered_seq: 7,
+        };
         const at = (seq: number, event: FeedEvent): FeedEvent => ({ ...event, seq, ts: registered.registered_at });
 
         expect(isVisibleToAgent(at(8, left(0, "agt_beta", "beta")), registered)).toBe(true);
@@ -320,7 +367,9 @@ describe("agent_left", () => {
         expect(presentAgents(events).has("agt_beta")).toBe(true);
         expect(presentAgents(events).has("agt_gamma")).toBe(false);
         expect(leaveReasonOf("once", "clean_exit")).toBeNull();
-        expect(leaveReasonOf("once", "signal")).toBe("signal");
+        // A killed login is a re-arm: its logged_out carries a grace, and only a lapse after it is a leave.
+        expect(leaveReasonOf("once", "signal")).toBeNull();
+        expect(leaveReasonOf("stream", "signal")).toBeNull();
         expect(leaveReasonOf("stream", "cap")).toBe("cap");
         // A stream login that stopped on its own (its watch failed) leaves nobody listening either.
         expect(leaveReasonOf("stream", "clean_exit")).toBe("ended");
@@ -443,6 +492,220 @@ describe("agent_left", () => {
                 // Peers that were told alpha left are told it is back.
                 expect({ order, joinedAfter }).toEqual({ order, joinedAfter: leftBefore });
             }
+        });
+    });
+    test("a re-arm inside the grace is silent; without a new login one lapsed leave follows, written once", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-rearm-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("rearm");
+            ensureSessionDir(paths);
+            const login = (agentId: string, name: string, loginId: string) =>
+                logInAndAnnounceJoin(paths, { agent_id: agentId, agent_name: name, mode: "stream", login_id: loginId });
+            const killed = (agentId: string, loginId: string, until: number) =>
+                appendFeed(paths, {
+                    type: "logged_out",
+                    agent_id: agentId,
+                    reason: "signal",
+                    mode: "stream",
+                    login_id: loginId,
+                    rearm_until: new Date(until).toISOString(),
+                });
+            const now = Date.now();
+
+            await login("main_lead", "lead", "lead-1");
+            await login("agt_beta", "beta", "beta-1");
+            await login("agt_gamma", "gamma", "gamma-1");
+
+            // beta's Monitor expires and is re-armed inside the grace: no presence event at all.
+            await killed("agt_beta", "beta-1", now + REARM_GRACE_MS);
+            expect(notListening(await readFeed(paths), ["agt_beta"])).toMatchObject([{ state: "rearming" }]);
+            expect(await login("agt_beta", "beta", "beta-2")).toEqual({ joined: false });
+            expect(pendingRearms(await readFeed(paths)).size).toBe(0);
+
+            // gamma's is not re-armed: nothing before the grace ends, one lapsed leave after it.
+            await killed("agt_gamma", "gamma-1", now + REARM_GRACE_MS);
+            expect(await announceLapses(paths, now + REARM_GRACE_MS - 1)).toEqual([]);
+            const lapsed = await announceLapses(paths, now + REARM_GRACE_MS);
+            expect(lapsed).toMatchObject([
+                { type: "agent_left", agent_id: "agt_gamma", reason: "lapsed", login_id: "gamma-1" },
+            ]);
+            expect(lapsed[0]?.type === "agent_left" && lapsed[0].remaining.sort()).toEqual(["beta", "lead"]);
+            expect(await announceLapses(paths, now + REARM_GRACE_MS * 2)).toEqual([]);
+            expect(notListening(await readFeed(paths), ["agt_gamma", "agt_ghost"])).toMatchObject([
+                { agent_id: "agt_gamma", state: "left", reason: "lapsed" },
+                { agent_id: "agt_ghost", state: "never_logged_in" },
+            ]);
+
+            // Its late re-arm is a join again.
+            expect(await login("agt_gamma", "gamma", "gamma-2")).toEqual({ joined: true });
+
+            const presenceEvents = (await readFeed(paths)).filter(
+                (event) => event.type === "agent_left" || event.type === "agent_joined"
+            );
+            expect(presenceEvents.map((event) => `${event.type}:${event.agent_id}`)).toEqual([
+                "agent_joined:main_lead",
+                "agent_joined:agt_beta",
+                "agent_joined:agt_gamma",
+                "agent_left:agt_gamma",
+                "agent_joined:agt_gamma",
+            ]);
+        });
+    });
+
+    test("an agent that leaves on purpose during its grace does not lapse later", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-rearm-leave-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("rearm-leave");
+            ensureSessionDir(paths);
+            const now = Date.now();
+            await logInAndAnnounceJoin(paths, {
+                agent_id: "agt_beta",
+                agent_name: "beta",
+                mode: "stream",
+                login_id: "beta-1",
+            });
+            await announceLeave(paths, { agent_id: "agt_beta", agent_name: "beta", reason: "leave", note: "done" });
+            // The Monitor it stops afterwards still writes its logged_out with a grace.
+            await appendFeed(paths, {
+                type: "logged_out",
+                agent_id: "agt_beta",
+                reason: "signal",
+                mode: "stream",
+                login_id: "beta-1",
+                rearm_until: new Date(now).toISOString(),
+            });
+
+            expect(await announceLapses(paths, now + REARM_GRACE_MS)).toEqual([]);
+            expect((await readFeed(paths)).filter((event) => event.type === "agent_left")).toHaveLength(1);
+        });
+    });
+
+    test("a replaced login's late logged_out does not overwrite its replacement's grace", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-rearm-fence-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("rearm-fence");
+            ensureSessionDir(paths);
+            const now = Date.now();
+            const login = (loginId: string) =>
+                logInAndAnnounceJoin(paths, {
+                    agent_id: "agt_beta",
+                    agent_name: "beta",
+                    mode: "stream",
+                    login_id: loginId,
+                });
+            const killed = (loginId: string, until: number) =>
+                appendFeed(paths, {
+                    type: "logged_out",
+                    agent_id: "agt_beta",
+                    reason: "signal",
+                    mode: "stream",
+                    login_id: loginId,
+                    rearm_until: new Date(until).toISOString(),
+                });
+
+            // beta-1 released its slot, beta-2 logged in and was killed, and only then beta-1's logout landed.
+            await login("beta-1");
+            await login("beta-2");
+            const replacementEnd = await killed("beta-2", now + REARM_GRACE_MS);
+            await killed("beta-1", now + REARM_GRACE_MS * 2);
+
+            const feed = await readFeed(paths);
+            expect(pendingRearms(feed).get("agt_beta")).toMatchObject({ loginId: "beta-2", since: replacementEnd.ts });
+
+            // A watching login folds the same events one by one, after seeding from the feed before them.
+            const tracker = rearmTrackerFrom(feed.slice(0, 2));
+            for (const event of feed.slice(2)) {
+                trackRearm(tracker, event);
+            }
+            expect(tracker.pending.get("agt_beta")?.loginId).toBe("beta-2");
+            // Folding the tail again, as a login whose cursor starts before the end of its seed does, changes nothing.
+            for (const event of feed.slice(2)) {
+                trackRearm(tracker, event);
+            }
+            expect(tracker.pending.get("agt_beta")?.loginId).toBe("beta-2");
+
+            expect(await announceLapses(paths, now + REARM_GRACE_MS)).toMatchObject([
+                { type: "agent_left", agent_id: "agt_beta", reason: "lapsed", login_id: "beta-2" },
+            ]);
+        });
+    });
+
+    test("a login that ended after its replacement logged in starts no grace", () => {
+        const tracker = rearmTrackerFrom([
+            {
+                seq: 1,
+                ts: "2026-01-01T00:00:01Z",
+                type: "logged_in",
+                agent_id: "agt_beta",
+                agent_name: "beta",
+                mode: "stream",
+                login_id: "beta-1",
+            },
+            {
+                seq: 2,
+                ts: "2026-01-01T00:00:02Z",
+                type: "logged_in",
+                agent_id: "agt_beta",
+                agent_name: "beta",
+                mode: "stream",
+                login_id: "beta-2",
+            },
+        ] as FeedEvent[]);
+        trackRearm(tracker, {
+            seq: 3,
+            ts: "2026-01-01T00:00:03Z",
+            type: "logged_out",
+            agent_id: "agt_beta",
+            reason: "signal",
+            mode: "stream",
+            login_id: "beta-1",
+            rearm_until: "2026-01-01T00:01:33Z",
+        } as FeedEvent);
+
+        expect(tracker.pending.size).toBe(0);
+    });
+
+    test("a lapse check drops only the re-arms due at its own cutoff", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-lapse-cutoff-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("lapse-cutoff");
+            ensureSessionDir(paths);
+            // The cutoff lies in the past, as when the check waited for the feed lock: gamma fell due during the wait.
+            const cutoff = Date.now() - 60_000;
+
+            for (const [agentId, name, until] of [
+                ["agt_beta", "beta", cutoff],
+                ["agt_gamma", "gamma", cutoff + 1],
+            ] as const) {
+                await logInAndAnnounceJoin(paths, {
+                    agent_id: agentId,
+                    agent_name: name,
+                    mode: "stream",
+                    login_id: `${name}-1`,
+                });
+                await appendFeed(paths, {
+                    type: "logged_out",
+                    agent_id: agentId,
+                    reason: "signal",
+                    mode: "stream",
+                    login_id: `${name}-1`,
+                    rearm_until: new Date(until).toISOString(),
+                });
+            }
+
+            const pending = rearmTrackerFrom(await readFeed(paths)).pending;
+            const lapsed = await announceDueLapses(paths, pending, cutoff);
+
+            expect(lapsed).toMatchObject([{ type: "agent_left", agent_id: "agt_beta", reason: "lapsed" }]);
+            expect([...pending.keys()]).toEqual(["agt_gamma"]);
+            expect(await announceDueLapses(paths, pending)).toMatchObject([
+                { type: "agent_left", agent_id: "agt_gamma", reason: "lapsed" },
+            ]);
+            expect(pending.size).toBe(0);
         });
     });
 });

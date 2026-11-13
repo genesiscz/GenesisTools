@@ -6,6 +6,7 @@ import { extractJsonLd, parsePrice } from "./lib/jsonld";
 import { fetchUrl } from "./lib/read";
 import { FetchTooLargeError, MAX_RESPONSE_BYTES, TRANSPORTS } from "./lib/transports";
 import type { HttpTransport, TransportName, TransportRequest, TransportResponse } from "./lib/types";
+import { FETCH_TOOLS, toolAnswer } from "./mcp/tools";
 
 const PROSE = "Readable prose sits in this paragraph, long enough to count as content, with commas and detail.";
 
@@ -267,6 +268,30 @@ describe("Fetcher transports", () => {
         expect(result.text).toStartWith("# Item");
         expect(plain.seen).toHaveLength(1);
         expect(chrome.seen).toHaveLength(1);
+    });
+
+    test("a fetch_raw answer carries the fetch facts as structuredContent beside its text", async () => {
+        const plain = fakeTransport("plain", { [url]: PAGE });
+        const fetchRaw = FETCH_TOOLS.find((tool) => tool.name === "fetch_raw");
+        if (!fetchRaw) {
+            throw new Error("fetch_raw is missing");
+        }
+
+        const answer = toolAnswer(
+            await fetchRaw.run({ fetcher: new Fetcher({ transports: { plain } }), args: { url } })
+        );
+        if (typeof answer === "string") {
+            throw new Error("expected the object answer");
+        }
+
+        expect(answer.text).toStartWith(`<!-- fetched ${url} (HTTP 200) via plain -->`);
+        expect(answer.structuredContent).toEqual({
+            source: url,
+            status: 200,
+            transport: "plain",
+            tokens: expect.any(Number),
+            truncated: false,
+        });
     });
 
     test("auto stays on plain for a normal page", async () => {
