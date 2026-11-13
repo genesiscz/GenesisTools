@@ -768,6 +768,37 @@ final class RecorderTimelineTests: XCTestCase {
                       "a service too old to name the holder: every window's change looks like its own, as before")
     }
 
+    // Regression test: PR #507 review — an agent's undo after a display switch took the switch off the list instead of
+    // the agent's step: the switch could not be undone, and a later ⌘Z undid an earlier change.
+    func testAnOutsideUndoAfterADisplaySwitchTakesTheEditStepAndKeepsTheSwitch() throws {
+        let (model, held) = try displayModel()
+        model.addZoom(atOutput: 4_000_000)
+        model.switchDisplay(fromUs: 2_000_000, toUs: 10_000_000, displayId: 2)
+        for answer in held() { answer() }
+        XCTAssertEqual(model.undoName, "Display Switch")
+
+        try service.outside("edit.undo", path: model.store.url.path, action: "undo")
+
+        XCTAssertTrue(model.project.zooms.isEmpty, "the agent's undo took the zoom back")
+        XCTAssertEqual(model.undoName, "Display Switch", "the switch is still the next undo")
+        XCTAssertFalse(model.undoStack.contains(where: \.isEdit), "the zoom's step left the list")
+        XCTAssertTrue(model.canRedo, "⇧⌘Z makes the agent's step again")
+    }
+
+    // Regression test: PR #507 review — an outside undo during a drag was kept as a bare flag: after the drag it came
+    // back as a fresh edit, or not at all, and the window's list still held the step the agent had taken.
+    func testAnOutsideUndoDuringADragMovesTheStepItTook() throws {
+        let model = cameraModel()
+        model.addZoom(atOutput: 4_000_000)
+        model.changeCamera(.init(size: 0.3))
+        try service.outside("edit.undo", path: model.store.url.path, action: "undo")
+        model.finishGesture()
+
+        XCTAssertTrue(model.project.zooms.isEmpty, "the agent's undo stays drawn")
+        XCTAssertEqual(model.undoStack.count, 1, "only the drag's step: the agent took the zoom's")
+        XCTAssertFalse(model.canRedo, "the drag came after the undo, so nothing is left to redo")
+    }
+
     // Regression test: 2026-11-05 review of the editor gaps, R1.1, on the edit path. The undo's answer took the last
     // step off the list, and a drag that ended before the answer was that step: the drag could not be undone and the
     // zoom came back as a redo.

@@ -17,6 +17,12 @@ final class PlayheadClock {
 enum UndoStep: Equatable {
     case edit(EditProject)
     case display(DisplaySwitchStep)
+
+    /// A step of the edit the service keeps; a display switch is the window's own.
+    var isEdit: Bool {
+        if case .edit = self { return true }
+        return false
+    }
 }
 
 /// A display switch as an undo step: the frames recording's display plan before and after it.
@@ -96,8 +102,9 @@ final class EditorModel {
     @ObservationIgnored var gestureSaveFailed = false
     @ObservationIgnored var gestureWaiters: [(Bool) -> Void] = []
     @ObservationIgnored var exportWaiting = false
-    /// Another writer changed the edit during a drag: it is fetched once the drag ends.
-    @ObservationIgnored var refetchPending = false
+    /// What other writers did to the edit during a drag, in order: each change's action ("undo", "redo", or nil for
+    /// an edit). Their history moves are played when the drag ends, before its own step, and the edit is fetched then.
+    @ObservationIgnored var outsideDuringGesture: [String?] = []
     let clock = PlayheadClock()
     let filmstrip = Filmstrip()
     let waveform = Waveform()
