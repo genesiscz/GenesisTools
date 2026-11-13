@@ -2823,6 +2823,19 @@ describe("the unpushed reminder", () => {
         expect(unpushedState(work)).toBeNull();
     });
 
+    it("a new upstream set without moving a ref drops the cache, so the next turn recovers", () => {
+        const { work, run } = pushedClone();
+        commit(run, 2);
+        expect(unpushedState(work)?.count).toBe(2);
+
+        run(["push", "-q", "origin", "HEAD:refs/heads/other"]);
+        run(["branch", "--set-upstream-to=origin/other"]);
+
+        // The turn that sees the new upstream refuses to guess from the old ancestry; the next one walks it again.
+        expect(unpushedState(work)).toBeNull();
+        expect(unpushedState(work)?.count).toBe(0);
+    });
+
     it("recomputes old cache records and persists the new count on disk", async () => {
         const { work, run } = pushedClone();
         mergeRemote(run);
