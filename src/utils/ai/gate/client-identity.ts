@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { batchCwd } from "@genesiscz/utils/process/cwd";
 import {
     batchCommandWithEnvironment,
-    batchCwd,
     batchExecutables,
-    batchPsInfo,
     type PsRow,
-} from "@genesiscz/utils/process/ps";
+    readProcessRows,
+} from "@genesiscz/utils/process/processes";
 import type { ClientIdentity, GateClient } from "./types";
 
 const { log } = logger.scoped("ai-gate");
@@ -207,7 +207,7 @@ export function fileStamps(paths: string[]): Map<string, string> {
 }
 
 const systemLookup: ProcessLookup = {
-    psInfo: batchPsInfo,
+    psInfo: readProcessRows,
     cwd: batchCwd,
     executable: batchExecutables,
     environment: batchCommandWithEnvironment,

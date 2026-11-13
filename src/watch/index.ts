@@ -6,15 +6,11 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { expandTilde } from "@genesiscz/utils/paths";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import chalk from "chalk";
 import chokidar from "chokidar";
 import { Command } from "commander";
 import { glob } from "glob";
 import { closeAllFileWatchers, closeFileWatcher, hasFileWatcher, setFileWatcher } from "./file-watchers";
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
 
 const program = new Command()
     .name("watch")

@@ -293,3 +293,16 @@ export interface AdoResponse<T> {
 export interface AdoTransport {
     call<T>(request: AdoRequest): Promise<AdoResponse<T>>;
 }
+
+/** The HTTP call under `Api.send`, shaped like the global `fetch`. */
+export type AdoFetch = (url: string, init: RequestInit) => Promise<Response>;
+
+/** What `new Api(config, options)` may replace. Tests pass a fake `fetch` and a fixed token, so no request leaves. */
+export interface ApiOptions {
+    /** Default: the global `fetch`. */
+    fetch?: AdoFetch;
+    /** Default: `az account get-access-token`, cached for five minutes. */
+    accessToken?: () => Promise<string>;
+    /** How long one request may take, the body included. Default: 30 000 ms. */
+    timeoutMs?: number;
+}

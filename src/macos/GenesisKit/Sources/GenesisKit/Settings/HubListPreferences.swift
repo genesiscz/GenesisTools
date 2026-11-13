@@ -35,6 +35,31 @@ public enum HubPRRowCI: String, CaseIterable, Identifiable, Sendable {
     public static func stored(_ raw: String) -> HubPRRowCI { HubPRRowCI(rawValue: raw) ?? .unusual }
 }
 
+/// Whether resting the pointer on a PR row whose CI failed loads that PR's checks, so the row's tooltip names the
+/// failed ones before its detail was ever opened (hub UX C9). One load per PR head: a push asks again.
+public enum HubPRRowHoverChecks: String, CaseIterable, Identifiable, Sendable {
+    case onRest, never
+    public static let key = "hub.prs.hoverChecks"
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .onRest: return "On hover"
+        case .never: return "Never"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .onRest: return "Resting the pointer on a row whose CI failed loads its checks once per push, so the tooltip names the failed ones."
+        case .never: return "The tooltip names the failed checks only after the PR was opened."
+        }
+    }
+
+    /// Unset or unknown reads as `onRest`.
+    public static func stored(_ raw: String) -> HubPRRowHoverChecks { HubPRRowHoverChecks(rawValue: raw) ?? .onRest }
+}
+
 /// The Files tree of a review (the hub's Changed list and the review window's file list).
 public enum HubFileTreeFold {
     /// A folder with more changed files than this starts folded, unless it holds half of the list or more (the one

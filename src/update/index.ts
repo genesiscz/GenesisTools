@@ -4,7 +4,6 @@ import { genesisToolsMcpRegistration, installGenesisToolsMcp } from "@app/genesi
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { createBuildProgressDisplay } from "@app/macos/lib/permissions/swift-progress";
 import { discoverTools } from "@app/tools/lib/discovery";
-import * as p from "@clack/prompts";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { findClaudeExecutable } from "@genesiscz/utils/claude";
 import { execTool, execToolInteractive, isInteractive, isVerbose, runTool, suggestCommand } from "@genesiscz/utils/cli";
@@ -13,6 +12,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { genesisAppBuildHint, resolveAppBuildSdk } from "@genesiscz/utils/macos/xcode";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import type { UpdateMode, UpdateOptions } from "./channel";
 import { createUpdateProgram, postPullInvocation, switchChannel } from "./channel";
@@ -399,7 +399,11 @@ async function offerServiceRestarts(): Promise<void> {
     out.println(pc.dim(`\n  ${stale} service(s) run code from before this update.`));
     // A restart interrupts whoever uses the server, so it is asked for, default no. `restart --stale`
     // itself picks the stale rows without a prompt, so this confirm is the only one.
-    const restart = await p.confirm({ message: `Restart the ${stale} stale service(s) now?`, initialValue: false });
+    const restart = await p.confirm({
+        message: `Restart the ${stale} stale service(s) now?`,
+        initialValue: false,
+        cancel: "back",
+    });
 
     if (p.isCancel(restart) || !restart) {
         out.println(pc.dim(`  Later: ${command}`));
@@ -474,6 +478,7 @@ async function offerGenesisToolsMcpRegistration(): Promise<void> {
             const answer = await p.confirm({
                 message: "Register the genesis-tools MCP server with Claude Code now?",
                 initialValue: false,
+                cancel: "back",
             });
             return answer === true;
         },

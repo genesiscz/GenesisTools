@@ -11,13 +11,13 @@ import { initializeCompactHistorySchema } from "./migrations";
 import { createClaudeHistoryOperations } from "./readers/claude";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
 import { claudeMidWork } from "./readers/claude-mid-work";
-import { claudeClassifyPath } from "./readers/claude-paths";
+import { claudeClassifyPath, claudeReadSpawnLink } from "./readers/claude-paths";
 import { fallbackTitle, HistoryService } from "./service";
 import { HistorySyncRepository } from "./sync-repository";
 import { type BaselineOracle, createBaselineOracle } from "./testing/baseline-oracle";
 import { generateHistoryCorpus } from "./testing/corpus";
 import { createFixtureWorld } from "./testing/fixture-world";
-import { noAnalysis } from "./testing/no-backward-read";
+import { noAnalysis, noStatistics, noWorkflows } from "./testing/no-backward-read";
 import { withBaseline } from "./testing/with-baseline";
 import type { AgentSearchFilters, NativeSessionReader, NativeSessionSource } from "./types";
 
@@ -52,8 +52,11 @@ function createReader(options: { kind: string; roots: string[] }): NativeSession
         },
         scanInsights: () => ({ native: null, defaultModel: null }),
         analysis: noAnalysis,
+        readStatistics: noStatistics,
+        workflows: noWorkflows,
         classifyPath: claudeClassifyPath,
         midWork: claudeMidWork,
+        readSpawnLink: claudeReadSpawnLink,
         readChanges: () => null,
         roots: () => options.roots,
         read: async () => {
@@ -216,6 +219,191 @@ test("service initializes a cached listing, reports unchanged refreshes, and wor
     } finally {
         database.close();
         await world.dispose();
+    }
+});
+
+test("a fourth provider's catalog applies each agent flag and the limit to the rows it returns", async () => {
+    const world = await createFixtureWorld();
+    const reader = createReader({ kind: "fixture-fourth", roots: [world.sources.claude] });
+    const { database, service } = createService({
+        providerId: "fixture-fourth-provider",
+        reader,
+        roots: [world.sources.claude],
+        now: () => world.now,
+    });
+    try {
+        await generateHistoryCorpus({
+            root: world.root,
+            seed: 59,
+            sessionCount: 3,
+            recordCount: 3,
+            distribution: { main: 2, subagent: 1 },
+        });
+        const all = (await service.catalog({})).metadata;
+        const main = (await service.catalog({ excludeAgents: true }, { refresh: false })).metadata;
+        const agents = (await service.catalog({ agentsOnly: true }, { refresh: false })).metadata;
+        const limited = (await service.catalog({ limit: 2 }, { refresh: false })).metadata;
+
+        expect(all.map((row) => row.isSubagent).sort()).toEqual([false, false, true]);
+        expect(main.map((row) => row.isSubagent)).toEqual([false, false]);
+        expect(agents.map((row) => row.isSubagent)).toEqual([true]);
+        expect(limited.map((row) => row.sourceKey)).toEqual(all.slice(0, 2).map((row) => row.sourceKey));
+        expect(await service.catalogCounts({ agentsOnly: true, limit: 1 }, { refresh: false })).toEqual({
+            total: 3,
+            subagents: 1,
+        });
+    } finally {
+        database.close();
+        await world.dispose();
+    }
+});
+
+test("catalogCounts counts the rows catalog returns for every scope term and the top-up, and reads no row out", async () => {
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const repository = new HistorySyncRepository(database);
+    const root = "/history/projects";
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        reader: createReader({ kind: "claude", roots: [root] }),
+        roots: [root],
+        repository,
+    });
+    const row = (
+        key: string,
+        values: {
+            filePath: string;
+            root?: string;
+            provider?: string;
+            subagent?: boolean;
+            project?: string;
+            projectDirectory?: string;
+            cwd?: string;
+            mtime: number;
+            first?: string;
+            last?: string;
+            sessionId?: string | null;
+        }
+    ) => {
+        const provider = values.provider ?? "anthropic-sub";
+        database
+            .query(
+                `INSERT INTO session_metadata (source_key, provider, file_path, session_id, native_id, project, cwd, mtime,
+                    first_timestamp, last_timestamp, project_directory, is_subagent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            )
+            .run(
+                key,
+                provider,
+                values.filePath,
+                values.sessionId === undefined ? `s-${key}` : values.sessionId,
+                `n-${key}`,
+                values.project ?? null,
+                values.cwd ?? null,
+                values.mtime,
+                values.first ?? null,
+                values.last ?? null,
+                values.projectDirectory ?? null,
+                values.subagent ? 1 : 0
+            );
+
+        if (values.root !== undefined) {
+            database
+                .query(
+                    "INSERT INTO file_index (source_key, provider, file_path, mtime, root, last_indexed) VALUES (?, ?, ?, ?, ?, 0)"
+                )
+                .run(key, provider, values.filePath, values.mtime, values.root);
+        }
+    };
+    const gt = { project: "GenesisTools", projectDirectory: "-Users-alice-GenesisTools", cwd: "/w/gt" };
+    const shop = { project: "Shop", projectDirectory: "-Users-alice-Shop", cwd: "/w/shop" };
+    row("a", {
+        ...gt,
+        filePath: `${root}/a.jsonl`,
+        root,
+        mtime: 9000,
+        first: "2026-11-01T10:00:00.000Z",
+        last: "2026-11-01T11:00:00.000Z",
+    });
+    row("b", {
+        ...gt,
+        projectDirectory: "-Users-alice-GenesisTools--claude-worktrees-x",
+        filePath: `${root}/b.jsonl`,
+        root,
+        subagent: true,
+        mtime: 8000,
+        first: "2026-11-02T10:00:00.000Z",
+    });
+    // No recorded root: in scope by its path.
+    row("c", { ...shop, filePath: `${root}/sub/c.jsonl`, mtime: 7000 });
+    row("d", { ...gt, filePath: "/elsewhere/d.jsonl", root: "/elsewhere", mtime: 6000 });
+    // Recorded under another root, but its path is under the scope root.
+    row("e", {
+        ...shop,
+        filePath: `${root}/e.jsonl`,
+        root: "/elsewhere",
+        subagent: true,
+        mtime: 5000,
+        first: "2026-10-01T10:00:00.000Z",
+        last: "2026-10-01T12:00:00.000Z",
+    });
+    row("f", { filePath: `${root}/f.jsonl`, root, mtime: 4000, first: "not a date", sessionId: "skip-me" });
+    row("g", {
+        ...gt,
+        projectDirectory: "-Users-alice-GenesisToolsExtra",
+        filePath: `${root}/g.jsonl`,
+        root,
+        subagent: true,
+        mtime: 100,
+        first: "2026-09-01T10:00:00.000Z",
+        sessionId: null,
+    });
+    row("h", { ...gt, provider: "openai-sub", filePath: `${root}/h.jsonl`, root, mtime: 9500 });
+
+    const listMetadata = repository.metadata.listMetadata.bind(repository.metadata);
+    let listed = 0;
+    repository.metadata.listMetadata = (options) => {
+        listed++;
+        return listMetadata(options);
+    };
+    const scopes: AgentSearchFilters[] = [
+        {},
+        { project: "GenesisTools" },
+        { project: "-Users-alice-GenesisTools" },
+        { project: "alice-Gen" },
+        { project: "Shop", all: true },
+        { cwd: "/w/gt" },
+        { excludeSessions: ["skip-me", "n-a", "b"] },
+        { since: new Date("2026-10-15T00:00:00.000Z") },
+        { until: new Date("2026-10-15T00:00:00.000Z"), project: "Shop" },
+        { mtimeFrom: 6500, newest: 2 },
+        { mtimeFrom: 6500, newest: 5, cwd: "/w/shop" },
+        { filePaths: [`${root}/a.jsonl`, `${root}/e.jsonl`, "/elsewhere/d.jsonl"] },
+        { filePaths: [`${root}/e.jsonl`] },
+        { sourceRoots: ["/elsewhere"] },
+        { agentsOnly: true, limit: 1 },
+    ];
+
+    try {
+        for (const filters of scopes) {
+            listed = 0;
+            const counts = await service.catalogCounts(filters, { refresh: false });
+            expect({ filters, listed }).toEqual({ filters, listed: 0 });
+
+            const all = { ...filters, excludeAgents: undefined, agentsOnly: undefined, limit: undefined };
+            const rows = (await service.catalog(all, { refresh: false })).metadata;
+            expect({ filters, counts }).toEqual({
+                filters,
+                counts: { total: rows.length, subagents: rows.filter((entry) => entry.isSubagent).length },
+            });
+        }
+
+        expect(await service.catalogCounts({}, { refresh: false })).toEqual({ total: 6, subagents: 3 });
+        expect(await service.catalogCounts({ mtimeFrom: 6500, newest: 2 }, { refresh: false })).toEqual({
+            total: 5,
+            subagents: 2,
+        });
+    } finally {
+        database.close();
     }
 });
 

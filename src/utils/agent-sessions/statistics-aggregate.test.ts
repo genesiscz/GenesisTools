@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { HistoryFileStatistics, TokenUsage } from "./cache-types";
 import { aggregateHistoryStatistics } from "./statistics-aggregate";
-import type { HistoryStatisticsRead } from "./types";
+import type { SupportedHistoryStatistics } from "./types";
 
 const ZERO_TOKENS: TokenUsage = {
     inputTokens: 0,
@@ -10,8 +10,8 @@ const ZERO_TOKENS: TokenUsage = {
     cacheReadTokens: 0,
 };
 
-function read(summary: HistoryFileStatistics, dailyTokens?: Record<string, TokenUsage>): HistoryStatisticsRead {
-    return { summary, dailyTokens, days: [], issues: [], complete: true };
+function read(summary: HistoryFileStatistics, dailyTokens?: Record<string, TokenUsage>): SupportedHistoryStatistics {
+    return { supported: true, summary, dailyTokens, days: [], issues: [], complete: true };
 }
 
 test("aggregateHistoryStatistics preserves complete source totals and exact dated token buckets", () => {

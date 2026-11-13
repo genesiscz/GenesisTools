@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { batchPsInfo } from "@genesiscz/utils/process/ps";
+import { readProcessRows } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 
@@ -64,7 +64,7 @@ const CLAUDE_COMMAND = /claude/i;
 /**
  * Which registry pids still run Claude. A registry entry outlives its process, and a recycled pid that runs
  * something other than Claude is gone too. Liveness is a signal-0 probe per pid; the commands come from ONE
- * batched `ps` for the whole inventory, never one `ps` per entry. A live pid whose command cannot be read
+ * read of the process rows for the whole inventory, never one `ps` per entry. A live pid whose command cannot be read
  * stays (unverified), as `classifyPid` treats it.
  */
 export function liveClaudePids(
@@ -72,7 +72,7 @@ export function liveClaudePids(
     matches: (command: string) => boolean = (command) => CLAUDE_COMMAND.test(command)
 ): Set<number> {
     const running = new Set(pids.filter((pid) => isProcessAlive(pid)));
-    const rows = running.size > 0 ? batchPsInfo([...running]) : new Map<number, { command: string }>();
+    const rows = running.size > 0 ? readProcessRows([...running]) : new Map<number, { command: string }>();
     const live = new Set<number>();
 
     for (const pid of pids) {

@@ -48,6 +48,25 @@ export default function DataPage() {
                     rowTone={(_, index) => (index === 2 ? "err" : undefined)}
                 />
             </Demo>
+            <Demo
+                title="Toned markdown cells"
+                note="cell objects combine text, tone and md independently of the table's markdown prop"
+            >
+                <DataTable
+                    columns={[
+                        { key: "check", label: "Check" },
+                        { key: "result", label: "Result" },
+                    ]}
+                    rows={[
+                        { check: "Schema", result: { text: "**Valid** `v2`", tone: "ok", md: true } },
+                        { check: "Coverage", result: { text: "**Review** the `draft` field", tone: "warn", md: true } },
+                        {
+                            check: "Migration",
+                            result: { text: "**Blocked** by a missing `id`", tone: "err", md: true },
+                        },
+                    ]}
+                />
+            </Demo>
             <Demo title="SeriesTable" note="a chart fallback with a marker column">
                 <SeriesTable
                     caption="Requests per day (thousands)"

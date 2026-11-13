@@ -64,7 +64,7 @@ describe("out facade discipline", () => {
 
     it("recognises clack's real cancel sentinel, although clack now loads lazily", async () => {
         const { out } = await import("./out");
-        const clack = await import("@clack/prompts");
+        const { p: clack } = await import("@genesiscz/utils/prompts/clack/helpers");
         const { PassThrough, Writable } = await import("node:stream");
         const cancelled = await clack.text({
             message: "x",

@@ -1,5 +1,6 @@
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
-import { createWorkspaceWithName, pickAnchorSurface } from "@genesiscz/utils/cmux/workspace";
+import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
+import { createWorkspaceWithName, pasteCommandLine, pickAnchorSurface } from "@genesiscz/utils/cmux/workspace";
 import { logger } from "@genesiscz/utils/logger";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import type { TerminalDriver, TerminalTarget } from "./types";
@@ -31,7 +32,8 @@ export const liveCmuxOps: CmuxOps = {
         return { surfaceRef: anchor.surfaceId };
     },
     async send({ workspaceRef, surfaceRef, text }) {
-        await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, text]);
+        // Pasted: the line is shellQuote'd, and plain `cmux send` reads a backslash in it as a key.
+        await pasteCommandLine(surfaceTargetArgs(surfaceRef, workspaceRef), text);
     },
     settle: (ms) => Bun.sleep(ms),
 };

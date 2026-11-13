@@ -4,9 +4,10 @@ import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-li
 import { UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import { logger } from "@genesiscz/utils/logger";
 import { type AgentId, type ByAgent, spendAccountRowId } from "../drivers";
+import { priceLadder } from "../priced-usage";
 import { prof } from "../prof";
 import type { PricingTable } from "../types";
-import { priceCandidates as defaultCandidates, eventCost } from "./cost";
+import { eventCost } from "./cost";
 import { inDayWindow, zonedDay } from "./dates";
 import {
     isNativeSource,
@@ -16,7 +17,6 @@ import {
     loadGrokEvents,
     loadNativeSessionEvents,
     type NativeSourceId,
-    nativePriceCandidates,
 } from "./native";
 import { loadExtraSource } from "./sources";
 import type { CostMode, SourceId, SpendEvent } from "./types";
@@ -190,11 +190,7 @@ export function dedupEvents(events: SpendEvent[]): SpendEvent[] {
 }
 
 export function candidatesFor(event: SpendEvent): string[] {
-    if (isNativeSource(event.source)) {
-        return nativePriceCandidates(event.source, event.model);
-    }
-
-    return defaultCandidates(event.model);
+    return priceLadder(event.source, event.model);
 }
 
 export function pricedEventCost(event: SpendEvent, pricing: PricingTable, mode: CostMode): number {

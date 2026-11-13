@@ -1,12 +1,12 @@
 import { logger } from "@genesiscz/utils/logger";
+import { captureSync } from "@genesiscz/utils/process/capture";
 import { classifyCommand } from "@genesiscz/utils/process/classify";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
-import { listProcessesWithUsage, userName } from "@genesiscz/utils/process/processes";
-import { captureSync, type PsRow } from "@genesiscz/utils/process/ps";
+import { listProcessesWithUsage, type PsRow, userName } from "@genesiscz/utils/process/processes";
 import { listListeningTcp } from "@genesiscz/utils/process/sockets";
 import { listPortRegistry, type RegistryEntry } from "@genesiscz/utils/ui/dashboards";
 
-/** Every GenesisTools launchd job carries this prefix (`src/utils/DashboardApp/launchd.ts`, `src/daemon`). */
+/** Every GenesisTools launchd job carries this prefix (`src/utils/process/launchd-agent.ts`). */
 export const LAUNCHD_PREFIX = "com.genesis-tools.";
 
 export interface LaunchdJob {

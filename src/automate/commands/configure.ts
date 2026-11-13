@@ -1,6 +1,6 @@
 import { loadTelegramConfig } from "@app/telegram-bot/lib/config";
-import * as p from "@clack/prompts";
 import { execToolInteractive } from "@genesiscz/utils/cli/tools";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 
 export function registerConfigureCommand(program: Command): Command {
@@ -27,6 +27,7 @@ export function registerConfigureCommand(program: Command): Command {
                 },
                 { value: "done", label: "Done", hint: "Exit configuration" },
             ],
+            cancel: "back",
         });
         if (p.isCancel(section) || section === "done") {
             p.outro("Configuration complete");

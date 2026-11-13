@@ -10,13 +10,13 @@ import {
     toSnapshotEntries,
 } from "@app/claude/lib/cmux/snapshot";
 import type { RestoreCandidate } from "@app/claude/lib/cmux/types";
-import * as p from "@clack/prompts";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { cancelSymbol, searchMultiselect } from "@genesiscz/utils/prompts/clack/search-multiselect";
+import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
 

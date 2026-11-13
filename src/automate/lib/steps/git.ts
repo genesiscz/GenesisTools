@@ -39,7 +39,9 @@ async function gitHandler(step: PresetStep, ctx: StepContext): Promise<StepResul
                     await git.executor.execOrThrow(["add", "-A"]);
                 }
 
-                const result = await git.executor.exec(["commit", "-m", message]);
+                const result = await git.executor.exec(["commit", "-m", message], {
+                    timeout: { ms: 600_000, reason: "a commit runs the repository's pre-commit and commit-msg hooks" },
+                });
                 if (!result.success) {
                     if (result.stdout.includes("nothing to commit")) {
                         return makeResult("success", { committed: false, message: "Nothing to commit" }, start);

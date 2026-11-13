@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { missingManifestFiles } from "@genesiscz/utils/browser-extension/build-info";
 import { logger } from "@genesiscz/utils/logger";
 import { BROWSER_DEVTOOLS_PORT } from "@genesiscz/utils/net/ports";
-import { browserVersion, Conn, localDebuggerUrl } from "./cdp";
+import { browserVersion, type Conn, connect } from "./cdp";
 import { type HeadlessChrome, launchHeadlessChrome } from "./headless";
 import { launchCdpBrowser } from "./launch";
 
@@ -40,7 +40,7 @@ async function browserConn(port: number): Promise<Conn | null> {
         }
 
         // Only this machine's socket on this port: whatever answers the port must not redirect the commands.
-        return new Conn(localDebuggerUrl({ webSocketDebuggerUrl: version.webSocketDebuggerUrl }, port));
+        return connect({ webSocketDebuggerUrl: version.webSocketDebuggerUrl }, port);
     } catch (error) {
         // The browser quit between the two reads, the read timed out, or the URL was refused.
         log.debug({ error, port }, "no usable DevTools socket on the port");

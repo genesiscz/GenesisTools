@@ -363,7 +363,13 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
             prettyOptions.customPrettifiers = { level: formatMinimalLevelLabel };
         }
 
-        const pretty = (requireLazy("pino-pretty") as PinoPrettyFn)(prettyOptions);
+        // pino-pretty loads at the first record that passes the console gate, so a run
+        // that logs nothing to the console never pays its parse cost.
+        let pretty: ReturnType<PinoPrettyFn> | undefined;
+        const prettyStream = (): ReturnType<PinoPrettyFn> => {
+            pretty ??= (requireLazy("pino-pretty") as PinoPrettyFn)(prettyOptions);
+            return pretty;
+        };
         const gated = new Writable({
             write(chunk, _enc, cb) {
                 try {
@@ -373,12 +379,12 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
                     // matching pino.levels.values[consoleLevel] semantics.
                     const threshold = PINO_LEVEL_VALUES[consoleLevel];
                     if (threshold !== undefined && lvl >= threshold) {
-                        pretty.write(chunk);
+                        prettyStream().write(chunk);
                     }
                 } catch {
                     // Fail-open: an unparseable record still reaches the user.
                     // We cannot logger.* here — that recurses into this sink.
-                    pretty.write(chunk);
+                    prettyStream().write(chunk);
                 }
 
                 cb();

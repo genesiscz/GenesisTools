@@ -6,12 +6,12 @@ import type { AiProxyConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { runClaudeBinaryDirect, steerModeFromEnv } from "@app/claude/lib/direct-run";
 import { ensureOnboardingSkippedForOAuthToken } from "@app/claude/lib/launch-env";
 import { resolveClaudeBinaryForTeammates } from "@app/claude/lib/teammate-wrapper";
-import * as p from "@clack/prompts";
 import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { matchesSpec } from "@genesiscz/utils/string";
 import type { Command } from "commander";
@@ -164,6 +164,7 @@ async function pickModel(candidates: ProxyModelMeta[], hint: string): Promise<Pr
             label: entry.proxyId,
             hint: describe(entry),
         })),
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {

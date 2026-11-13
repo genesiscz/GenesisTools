@@ -1,8 +1,11 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { deliveryLabel } from "@app/dev-dashboard/lib/qa-decision-delivery";
 import { renderQaQuestionHtml } from "@app/dev-dashboard/lib/qa-render";
 import type { DeliveryChannel } from "@app/question/lib/decisions/deliver";
+import type { SendResult } from "@app/question/lib/decisions/send";
 import type { InboxAnswerResult } from "@app/question/lib/inbox/answer";
 import type { InboxDecision, InboxDialog, InboxSession } from "@app/question/lib/inbox/build";
+import type { InboxResult } from "@app/question/lib/inbox/load";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
@@ -13,7 +16,7 @@ import { QaClockProvider } from "@/components/QaClockProvider";
 import { QaDialogItem } from "@/components/QaDialogItem";
 import { QaRecencyTime } from "@/components/QaRecencyTime";
 import { QaSessionActions } from "@/components/QaSessionActions";
-import { qaDecisionsApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 const INBOX_QUERY_KEY = ["qa", "decisions", "inbox"] as const;
 /** The inbox reads transcripts (cached by size and mtime); a slow refresh is enough to notice a new question. */
@@ -349,7 +352,7 @@ function DecisionSessionCard({ session, onSent }: { session: InboxSession; onSen
     const [result, setResult] = useState<InboxAnswerResult | null>(null);
     const history = useQuery({
         queryKey: ["qa", "decisions", "session", sessionId],
-        queryFn: () => qaDecisionsApi.session(sessionId),
+        queryFn: () => dashboard.call(ENDPOINTS.qaDecisionsSession, { id: sessionId }).then(inboxWire.session),
         enabled: showAll && sessionId !== "",
     });
     const refresh = (): void => {
@@ -358,13 +361,16 @@ function DecisionSessionCard({ session, onSent }: { session: InboxSession; onSen
     const answers = draftedAnswers(drafts);
     const send = useMutation({
         mutationFn: (dryRun: boolean) =>
-            qaDecisionsApi.answer({
-                session: sessionId,
-                provider: session.provider,
-                cwd: session.cwd,
-                answers,
-                dryRun,
-            }),
+            dashboard
+                .call(ENDPOINTS.qaDecisionsAnswer, {
+                    session: sessionId,
+                    // An absent provider or cwd is read from the session, as a null one was.
+                    provider: session.provider ?? undefined,
+                    cwd: session.cwd ?? undefined,
+                    answers,
+                    dryRun,
+                })
+                .then(inboxWire.answer),
         onSuccess: (res) => {
             setResult(res);
 
@@ -376,7 +382,13 @@ function DecisionSessionCard({ session, onSent }: { session: InboxSession; onSen
         },
     });
     const resend = useMutation({
-        mutationFn: () => qaDecisionsApi.resend(sessionId, session.provider),
+        mutationFn: () =>
+            dashboard
+                .call(ENDPOINTS.qaDecisionsSend, {
+                    session: sessionId,
+                    ...(session.provider ? { provider: session.provider } : {}),
+                })
+                .then(inboxWire.send),
         onSuccess: (res) => {
             const next: InboxAnswerResult = {
                 session: res.session,
@@ -487,11 +499,24 @@ function DecisionSessionCard({ session, onSent }: { session: InboxSession; onSen
     );
 }
 
+/**
+ * The decision rows type their answers by the fields the phone reads (`unknown` for the inbox lists): the endpoint
+ * table must not import the question lib's types, or the phone's tsc walks the whole server tree. The web reads the
+ * full shapes the server sends, named here once.
+ */
+const inboxWire = {
+    inbox: (answer: unknown) => answer as InboxResult,
+    session: (answer: { sessionId: string; decisions: unknown[] }) =>
+        answer as { sessionId: string; decisions: InboxDecision[] },
+    answer: (answer: unknown) => answer as InboxAnswerResult,
+    send: (answer: unknown) => answer as SendResult,
+};
+
 /** The hub inbox, decisions only: the same list as `tools question inbox`. */
 export function useDecisionInbox() {
     return useQuery({
         queryKey: INBOX_QUERY_KEY,
-        queryFn: qaDecisionsApi.inbox,
+        queryFn: () => dashboard.call(ENDPOINTS.qaDecisions, {}).then(inboxWire.inbox),
         refetchInterval: INBOX_REFRESH_MS,
         select: (data) =>
             data.sessions.filter((session) => decisionsOf(session).length > 0 || dialogsOf(session).length > 0),

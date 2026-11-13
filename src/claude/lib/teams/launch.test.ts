@@ -1,10 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { resetTmuxBinCache, setTmuxBinForTests } from "@genesiscz/utils/tmux/bin";
+import { setTmuxSpawnSyncForTests } from "@genesiscz/utils/tmux/sessions";
 import {
     buildTeammateClaudeArgs,
     buildToolsCcTeammateCommand,
     isLiveSidechain,
     LIVE_SIDECHAIN_MS,
     launchTeammate,
+    tmuxSendCommand,
 } from "./launch";
 import type { TeamMemberView, TeamView } from "./types";
 
@@ -208,5 +211,43 @@ describe("launchTeammate with a live in-process teammate", () => {
         // produces a focus command that cannot resolve anything.
         expect((result as { detail: string }).detail).toContain(`tools claude cmux focus ${transcript?.sessionId}`);
         expect(calls).toHaveLength(0);
+    });
+});
+
+describe("tmuxSendCommand", () => {
+    afterEach(() => {
+        setTmuxSpawnSyncForTests(null);
+        setTmuxBinForTests(null);
+        resetTmuxBinCache();
+    });
+
+    /** Records the keys of each send-keys call; the first call exits with `firstExit` (null is a timeout), later ones 0. */
+    function recordSendKeys(firstExit: number | null): string[][] {
+        setTmuxBinForTests("/mock/tmux");
+        const sent: string[][] = [];
+        setTmuxSpawnSyncForTests((cmd) => {
+            sent.push(cmd.slice(4));
+            return { exitCode: sent.length === 1 ? firstExit : 0, stdout: "", stderr: "" };
+        });
+        return sent;
+    }
+
+    test("clears, types the command literally and presses Enter", async () => {
+        const sent = recordSendKeys(0);
+
+        await tmuxSendCommand("work:1.0", "tools cc run work -- claude");
+
+        expect(sent).toEqual([["C-c"], ["-l", "--", "tools cc run work -- claude"], ["Enter"]]);
+    });
+
+    test("a clear that timed out or failed stops before the command is typed", async () => {
+        for (const exitCode of [null, 124, 1]) {
+            const sent = recordSendKeys(exitCode);
+
+            await expect(tmuxSendCommand("work:1.0", "tools cc run work -- claude")).rejects.toThrow(
+                "could not clear the pane before the launch command"
+            );
+            expect(sent).toEqual([["C-c"]]);
+        }
     });
 });

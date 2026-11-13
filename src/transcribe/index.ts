@@ -7,7 +7,6 @@ import { type ClassifiedSource, classifySource, type RemoteSource } from "@app/t
 import { formatUsd } from "@app/transcribe/lib/price";
 import { type PriceQuote, priceQuote, unsupportedYoutubeFlags } from "@app/transcribe/lib/quote";
 import { transcribeYoutubeSource } from "@app/transcribe/lib/youtube-source";
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { getAllProviders } from "@genesiscz/utils/ai/providers/index.ts";
 import { Transcriber } from "@genesiscz/utils/ai/tasks/Transcriber";
@@ -29,6 +28,7 @@ import { copyToClipboard } from "@genesiscz/utils/clipboard.ts";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format.ts";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Storage } from "@genesiscz/utils/storage";
 import { createBoxTable, formatDotStatus } from "@genesiscz/utils/table";
 import { Command } from "commander";
@@ -232,6 +232,7 @@ async function interactiveMode(): Promise<void> {
                 return `Unsupported format: ${ext}`;
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(filePath)) {
@@ -249,6 +250,7 @@ async function interactiveMode(): Promise<void> {
             ...(env.ai.openrouter.getKey() ? [{ value: "openrouter", label: "OpenRouter" }] : []),
             ...(env.x.getApiKey() ? [{ value: "xai", label: "xAI (Grok)", hint: "grok-voice STT" }] : []),
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(providerChoice)) {
@@ -259,6 +261,7 @@ async function interactiveMode(): Promise<void> {
     const diarize = await p.confirm({
         message: "Identify speakers (diarization)?",
         initialValue: false,
+        cancel: "back",
     });
 
     if (p.isCancel(diarize)) {
@@ -277,6 +280,7 @@ async function interactiveMode(): Promise<void> {
                     return "Enter a whole number or leave blank";
                 }
             },
+            cancel: "back",
         });
 
         if (p.isCancel(spk)) {
@@ -296,6 +300,7 @@ async function interactiveMode(): Promise<void> {
             { value: "srt" as const, label: "SRT", hint: "SubRip subtitle format" },
             { value: "vtt" as const, label: "VTT", hint: "WebVTT subtitle format" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(format)) {
@@ -310,6 +315,7 @@ async function interactiveMode(): Promise<void> {
             { value: "clipboard", label: "Clipboard" },
             { value: "file", label: "File" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(destination)) {
@@ -327,6 +333,7 @@ async function interactiveMode(): Promise<void> {
             message: "Output file path:",
             placeholder: defaultOutput,
             defaultValue: defaultOutput,
+            cancel: "back",
         });
 
         if (p.isCancel(out)) {
@@ -573,6 +580,7 @@ async function ensureProviderResolved(opts: TranscribeFlags): Promise<string | u
         const picked = await p.select({
             message: "Pick a transcription provider:",
             options: available.map((id) => ({ value: id, label: id })),
+            cancel: "back",
         });
 
         if (p.isCancel(picked)) {
@@ -616,13 +624,7 @@ async function listAvailableTranscribeProviders(): Promise<string[]> {
 }
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "transcribe" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        out.error(message);
-        process.exit(1);
-    }
+    await runTool(program, { tool: "transcribe" });
 }
 
 // Guarded: this file is imported by transcribe.test.ts for its pure formatters.

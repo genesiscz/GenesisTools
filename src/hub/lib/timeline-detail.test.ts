@@ -54,18 +54,14 @@ async function scratchRepo(): Promise<Scratch> {
     return { root, first, second };
 }
 
+/**
+ * A fresh home for the rest of the test. `Storage` resolves GENESIS_TOOLS_HOME when it builds a path, so the
+ * variable stays set while the storage is used; the per-file preload home comes back with the next file.
+ */
 async function scratchStorage(): Promise<Storage> {
-    const home = mkdtempSync(`${tmpdir()}/gt-timeline-detail-home-`);
-    let storage: Storage | undefined;
-    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
-        storage = new Storage("hub");
-    });
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(`${tmpdir()}/gt-timeline-detail-home-`));
 
-    if (!storage) {
-        throw new Error("no scratch storage");
-    }
-
-    return storage;
+    return new Storage("hub");
 }
 
 function pr(root: string): HubPr {
@@ -272,6 +268,7 @@ const SUBAGENT_META = {
     teamName: null,
     taskKind: null,
     spawnPrompt: null,
+    workflow: null,
 } satisfies Partial<SessionSubagent>;
 
 const SUBAGENTS: SessionSubagent[] = [
@@ -288,6 +285,7 @@ const SUBAGENTS: SessionSubagent[] = [
         state: "done",
         bytes: 10,
         filePath: "/tmp/agent-1.jsonl",
+        files: ["/tmp/agent-1.jsonl"],
     },
     {
         ...SUBAGENT_META,
@@ -302,6 +300,7 @@ const SUBAGENTS: SessionSubagent[] = [
         state: "done",
         bytes: 10,
         filePath: "/tmp/agent-old.jsonl",
+        files: ["/tmp/agent-old.jsonl"],
     },
 ];
 

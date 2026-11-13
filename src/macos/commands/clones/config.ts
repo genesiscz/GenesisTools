@@ -8,11 +8,11 @@ import {
     setMinReal,
     setNodeModules,
 } from "@app/macos/lib/clones/store";
-import * as p from "@clack/prompts";
 import { isInteractive, parseVariadic } from "@genesiscz/utils/cli";
 import { printLn } from "@genesiscz/utils/cli/stdout";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -128,6 +128,7 @@ export function createConfigCommand(): Command {
                     { value: "min-real", label: "Set min-real threshold" },
                     { value: "quit", label: "Quit (no changes)" },
                 ],
+                cancel: "back",
             });
 
             if (p.isCancel(action) || action === "quit") {
@@ -136,7 +137,11 @@ export function createConfigCommand(): Command {
             }
 
             if (action === "add") {
-                const dir = await p.text({ message: "Directory to add", placeholder: "/path/to/projects" });
+                const dir = await p.text({
+                    message: "Directory to add",
+                    placeholder: "/path/to/projects",
+                    cancel: "back",
+                });
                 if (p.isCancel(dir)) {
                     p.cancel("No changes.");
                     return;
@@ -154,6 +159,7 @@ export function createConfigCommand(): Command {
                     const sel = await p.select({
                         message: "Remove which?",
                         options: cfg.watchedDirs.map((d) => ({ value: d, label: d })),
+                        cancel: "back",
                     });
 
                     if (p.isCancel(sel)) {
@@ -169,7 +175,11 @@ export function createConfigCommand(): Command {
                 await setNodeModules(next);
                 p.log.success(`node_modules focus → ${next ? "on" : "off"}`);
             } else if (action === "min-real") {
-                const v = await p.text({ message: `min-real (${BYTE_SIZE_FORMS})`, placeholder: "10MB" });
+                const v = await p.text({
+                    message: `min-real (${BYTE_SIZE_FORMS})`,
+                    placeholder: "10MB",
+                    cancel: "back",
+                });
                 if (p.isCancel(v)) {
                     p.cancel("No changes.");
                     return;

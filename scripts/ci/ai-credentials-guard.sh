@@ -164,7 +164,7 @@ fi
 aiwriter=$(scan 'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' \
         ':(exclude)**/*.md' ':(exclude)src/utils/ai/config/**' \
         ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' \
-        ':(exclude)src/utils/config/migrations/2026-04-07-migrateAI.ts' ':(exclude)src/utils/ai/AIConfig.ts' \
+        ':(exclude)src/utils/config/migrations/2026-04-07-migrateAI.ts' \
         | grep -Ev '^[^:]*:[0-9]+:[[:space:]]*(//|\*|#([[:space:]]|$))' || true)
 if [ -n "$aiwriter" ]; then
     echo "$aiwriter"

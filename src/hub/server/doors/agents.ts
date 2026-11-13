@@ -159,8 +159,8 @@ export const subagentsDoor: CallDoor<string> = {
             // A cancel that arrived before the work started stops it here.
             signal.throwIfAborted();
             const { resolveTranscript } = await import("@genesiscz/utils/ai/transcripts/resolve");
-            const { listSubagents } = await import("@genesiscz/utils/ai/transcripts/subagents");
-            return ok(asResult(listSubagents(await resolveTranscript(sessionId, {}))));
+            const { listSessionAgents } = await import("@genesiscz/utils/ai/transcripts/workflows");
+            return ok(asResult(await listSessionAgents(await resolveTranscript(sessionId, {}))));
         } catch (error) {
             return failed(error);
         }

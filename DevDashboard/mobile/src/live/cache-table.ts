@@ -1,4 +1,4 @@
-import type { AgentsBoardDto, LiveChannel, LiveFrameOf, PortInfo, PortsRes } from "@dd/contract";
+import type { AgentsBoardDto, LiveChannel, LiveFrameOf, PortInfo, PortsRes, QaRow } from "@dd/contract";
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { agentsKeys, BOARD_INTERVAL_MS, withPhase, withPhases } from "@/features/agents/queries";
 import { answerQueueKeys, QUEUE_INTERVAL_MS } from "@/features/answer-queue/queries";
@@ -6,7 +6,8 @@ import { claudeUsageKeys, USAGE_INTERVAL_MS } from "@/features/claude-usage/quer
 import { attentionKeys } from "@/features/needs-input-inbox/queries";
 import { PORTS_INTERVAL_MS, portKillerKeys } from "@/features/port-killer/queries";
 import { pulseKeys, SNAP_INTERVAL_MS } from "@/features/pulse/queries";
-import { QA_LOG_INTERVAL_MS } from "@/features/qa/queries";
+import { EMPTY_QA_LIVE_WINDOW, pushLiveRow, type QaLiveWindow } from "@/features/qa/live-feed";
+import { QA_LOG_INTERVAL_MS, qaKeys } from "@/features/qa/queries";
 
 /**
  * What one live channel does to the phone's query cache (M4). `apply` writes a value frame into its query, or
@@ -83,8 +84,12 @@ export const LIVE_CACHE_TABLE: LiveCacheTable = {
         resync: [],
         fallbackMs: USAGE_INTERVAL_MS,
     },
+    // An entry joins the QA screen's live window, and the queries that read the log refetch.
     qa: {
-        apply(_frame, queryClient) {
+        apply(frame, queryClient) {
+            // The producer sends the whole log line; the contract types only the three HTML fields (see queries.ts).
+            const row = frame.payload as unknown as QaRow;
+            queryClient.setQueryData<QaLiveWindow>(qaKeys.live, (prev) => pushLiveRow(prev ?? EMPTY_QA_LIVE_WINDOW, row));
             invalidate(queryClient, QA_KEYS);
         },
         resync: QA_KEYS,

@@ -13,10 +13,14 @@ import {
 } from "@genesiscz/utils/recording-editor/project";
 import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
 import {
+    ARBITER_BUSY_WAIT_MS,
     computeEdit,
+    EDIT_REPLAYS,
     editPathOf,
     inItsFolder,
+    type OwnedEdit,
     openProject,
+    ownedEdit,
     readUndoJournal,
     throwIfEditCancelled,
     type UndoStep,
@@ -100,7 +104,8 @@ function readDiskFile(path: string): { text: string; project: EditProject } | un
 }
 
 /**
- * The one owner of a recording's edit.json while the recorder service runs. It reads the file once, applies ops in
+ * The one owner of a recording's edit.json: the recorder service's resident one while a window holds the edit, or a
+ * short-lived one that `withEditSession` opens for one undo, redo or collapse. It reads the file once, applies ops in
  * memory with the same `applyOp` and measurements as `editProject`, keeps one undo stack with redo, previews drags
  * without saving, and saves 250 ms after the last change. Before each change and each save it reads the file: when
  * its text is not the text this session last read or wrote, another writer (the window, a CLI without the service)
@@ -120,6 +125,8 @@ export class EditSession {
     private retrySaveUntil?: number;
     private turn: Promise<unknown> = Promise.resolve();
     private closed = false;
+    /** Why there is nothing to undo when the file's history ended at another writer's save, which has its own undo. */
+    private undoRefusal?: string;
 
     private constructor(
         readonly path: string,
@@ -129,10 +136,18 @@ export class EditSession {
         this.project = opened.project;
         this.fresh = opened.fresh;
         this.diskText = opened.text;
-        // The file's history continues here when it ends at this revision; otherwise undo refuses, as undoEdit does.
+        // The file's history continues here when it ends at this revision; otherwise undo refuses and says where the
+        // undo of the newer change lives.
         const { steps, redo } = readUndoJournal(path);
-        this.undoSteps = steps.at(-1)?.afterRevision === opened.project.revision ? steps : [];
-        // The file's redo too, while the undo it keeps was the edit's last change (what `redoEdit` checks).
+        const last = steps.at(-1);
+        this.undoSteps = last?.afterRevision === opened.project.revision ? steps : [];
+
+        if (last && this.undoSteps.length === 0) {
+            const { revision, updatedBy } = opened.project;
+            this.undoRefusal = `the edit changed since the last change made here (revision ${revision}${updatedBy ? ` by ${updatedBy}` : ""}, not ${last.afterRevision}); undo it where it was made, for example ⌘Z in the editor window`;
+        }
+
+        // The file's redo too, while the undo it keeps was the edit's last change.
         if (redo.at(-1)?.undoneRevision === opened.project.revision) {
             this.redoSteps = redo.map((step) => ({ after: step.after, ops: step.ops ?? [] }));
         }
@@ -223,7 +238,7 @@ export class EditSession {
             const step = this.undoSteps.at(-1);
 
             if (!step) {
-                throw new RpcError(RPC_ERRORS.nothingToUndo, "nothing to undo in this edit");
+                throw new RpcError(RPC_ERRORS.nothingToUndo, this.undoRefusal ?? "nothing to undo in this edit");
             }
 
             const undone = this.project;
@@ -342,7 +357,7 @@ export class EditSession {
 
     /**
      * The undo file gets the session's steps and its redo list, so a redo outlives the session as an undo does. Each
-     * redo step may run while the edit is at this revision; `redoEdit` moves the next one's revision on as it redoes.
+     * redo step may run while the edit is at this revision; the next session's redo moves that on as it redoes.
      */
     private writeJournal(): void {
         const undoneRevision = this.project.revision;
@@ -396,6 +411,31 @@ export class EditSession {
                 }
             }
             throw error;
+        }
+    }
+
+    /**
+     * Saves now as `flush` does, but waits while another process saves the edit and tries again, as `editProject` does,
+     * then refuses with `staleRevision`. A short-lived session saves this way: nothing would run `flush`'s retry later.
+     */
+    async save(): Promise<void> {
+        for (let attempt = 0; ; attempt++) {
+            try {
+                this.flush();
+                return;
+            } catch (error) {
+                if (!isArbitrationBusy(error)) {
+                    throw error;
+                }
+
+                if (attempt >= EDIT_REPLAYS) {
+                    clearTimeout(this.timer);
+                    this.timer = undefined;
+                    throw stale(`another process kept saving the edit (${EDIT_REPLAYS + 1} tries); nothing was saved`);
+                }
+
+                await Bun.sleep(ARBITER_BUSY_WAIT_MS);
+            }
         }
     }
 
@@ -497,7 +537,7 @@ export class EditSession {
 
     /**
      * Another writer saved since this session last read or wrote: take its file, and apply the unsaved ops on it
-     * once (with the measurements they had). The history before its change ends there, as undoEdit refuses then.
+     * once (with the measurements they had). The history before its change ends there.
      */
     private syncWithDisk(): void {
         const file = readDiskFile(this.path);
@@ -516,6 +556,7 @@ export class EditSession {
         const latest = this.project;
         this.undoSteps = [];
         this.redoSteps = [];
+        this.undoRefusal = undefined;
         this.diskText = file.text;
         this.fresh = false;
         this.unsaved = [];
@@ -559,6 +600,41 @@ export class EditSession {
             throw stale(
                 `${by} saved the edit (revision ${disk.revision}) and the changes not saved yet do not apply to it, so they were dropped: ${message}`
             );
+        }
+    }
+}
+
+/**
+ * Runs `work` on the edit session of `editPath`, so every undo, redo and collapse keeps one set of rules: the resident
+ * session when this process holds the edit (the recorder service's, for a window), saved at once afterwards; otherwise
+ * a short-lived one that loads the file, runs `work`, saves (waiting while another process saves) and closes, also
+ * when `work` failed after a change. `onChange` hears the short-lived session's changes once they are saved; a
+ * resident session tells its own subscribers.
+ */
+export async function withEditSession<T>(
+    editPath: string,
+    work: (session: OwnedEdit) => Promise<T> | T,
+    options: { onChange?: (change: ProjectChanged) => void } = {}
+): Promise<T> {
+    const resident = ownedEdit(editPath);
+
+    if (resident) {
+        const answer = await work(resident);
+        resident.flush();
+        return answer;
+    }
+
+    const changes: ProjectChanged[] = [];
+    const session = await EditSession.open(editPath, { onChange: (change) => changes.push(change) });
+
+    try {
+        return await work(session);
+    } finally {
+        await session.save();
+        session.close();
+
+        for (const change of changes) {
+            options.onChange?.(change);
         }
     }
 }

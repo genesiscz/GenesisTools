@@ -1,7 +1,9 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { selfPingMs } from "@app/dev-dashboard/lib/net/ping";
 import { deriveNetStatus } from "@app/dev-dashboard/lib/net/status";
 import type { NetStatus, NetTransport } from "@app/dev-dashboard/lib/net/types";
 import { getCachedPulse } from "@app/dev-dashboard/lib/system/poller";
+import { bindHandler } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 
@@ -48,18 +50,14 @@ export async function checkNetStatusForPort(port: number): Promise<NetStatus> {
  */
 export function netRoutes(): RouteDef[] {
     return [
-        {
-            method: "GET",
-            pattern: "/api/net/status",
-            handler: async () => {
-                try {
-                    const body = await checkNetStatusForPort(getDashboardBoundPort());
+        bindHandler(ENDPOINTS.netStatus, async () => {
+            try {
+                const body = await checkNetStatusForPort(getDashboardBoundPort());
 
-                    return { kind: "json", status: 200, body };
-                } catch (err) {
-                    return errorResult(err);
-                }
-            },
-        },
+                return { kind: "json", status: 200, body };
+            } catch (err) {
+                return errorResult(err);
+            }
+        }),
     ];
 }

@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { _overrideRealHomeWriteForTest } from "@genesiscz/utils/config/real-home-write";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { AiConfigStore, adaptOlderConfig } from "./AiConfigStore";
+import { AiConfigStore, adaptOlderConfig, defaultAccountName } from "./AiConfigStore";
 import { _clearExternalRefScanners, registerExternalRefScanner } from "./refs";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "./schema";
 
@@ -188,6 +189,45 @@ describe("AiConfigStore singleton", () => {
     });
 });
 
+describe("AiConfigStore follows a moved home", () => {
+    /**
+     * `SecretStore` rebinds when its resolved vault path changes; the config store does the same. A store
+     * cached under one GENESIS_TOOLS_HOME kept reading, migrating and writing that home after the variable
+     * moved, which is how a test's sandbox config and the real one got mixed up.
+     */
+    test("load() after GENESIS_TOOLS_HOME moves reads, migrates and writes the new home's config", async () => {
+        expect((await AiConfigStore.load()).account("acc_max")?.name).toBe("martin-max");
+
+        const second = mkdtempSync(join(tmpdir(), "gt-store-second-"));
+        mkdirSync(join(second, ".genesis-tools", "ai"), { recursive: true });
+        writeFileSync(
+            configPath(second),
+            SafeJSON.stringify(
+                { _schemaVersion: 3, accounts: [{ name: "legacy", provider: "openai", tokens: { apiKey: "sk-old" } }] },
+                null,
+                2
+            )
+        );
+        env.testing.set("GENESIS_TOOLS_HOME", second);
+
+        const moved = await AiConfigStore.load();
+
+        expect(moved.account("acc_max")).toBeUndefined();
+        expect(moved.account("legacy")?.id).toBe("acc_legacy");
+        const migrated = SafeJSON.parse(readFileSync(configPath(second), "utf8"), { strict: true }) as AiConfigData;
+        expect(migrated.version).toBe(CONFIG_VERSION);
+
+        await moved.mutate((data) => {
+            data.accounts.push(account("acc_second", "second-home"));
+        });
+
+        const written = SafeJSON.parse(readFileSync(configPath(second), "utf8"), { strict: true }) as AiConfigData;
+        expect(written.accounts.map((entry) => entry.id)).toContain("acc_second");
+        const first = SafeJSON.parse(readFileSync(configPath(home), "utf8"), { strict: true }) as AiConfigData;
+        expect(first.accounts.map((entry) => entry.id)).toEqual(SEED.accounts.map((entry) => entry.id));
+    });
+});
+
 describe("AiConfigStore freshness", () => {
     test("load() re-reads when another process wrote the file", async () => {
         const store = await AiConfigStore.load();
@@ -197,7 +237,7 @@ describe("AiConfigStore freshness", () => {
 
         const same = await AiConfigStore.load();
         expect(same).toBe(store);
-        // v3's AIConfig returned the stale snapshot here; that is the daemon bug.
+        // The retired v3 facade returned the stale snapshot here; that is the daemon bug.
         expect(same.account("acc_late")?.name).toBe("late-arrival");
     });
 
@@ -377,6 +417,27 @@ describe("AiConfigStore mutation", () => {
         expect(reloaded.accounts().length).toBe(SEED.accounts.length);
     });
 
+    // The last line of defence: a worktree build or a test aimed at the real home must not write the v4 shape.
+    test("a write the real-home check refuses throws before the callback and leaves the file byte-identical", async () => {
+        const store = await AiConfigStore.load();
+        const before = readFileSync(configPath(home), "utf8");
+        let ran = false;
+        _overrideRealHomeWriteForTest({ sandbox: false });
+
+        try {
+            await expect(
+                store.mutate(() => {
+                    ran = true;
+                })
+            ).rejects.toThrow(/Refusing to write the AI config into the real ~\/\.genesis-tools: a test process/);
+        } finally {
+            _overrideRealHomeWriteForTest(undefined);
+        }
+
+        expect(ran).toBe(false);
+        expect(readFileSync(configPath(home), "utf8")).toBe(before);
+    });
+
     test("withLock returns the callback's value", async () => {
         const store = await AiConfigStore.load();
 
@@ -462,5 +523,42 @@ describe("AiConfigStore validation", () => {
         const store = await AiConfigStore.load();
         expect(store.accounts()).toEqual([]);
         expect(store.data().version).toBe(CONFIG_VERSION);
+    });
+});
+
+describe("defaultAccountName reads the default without the vault", () => {
+    function namedAccount(provider: string): AccountEntry {
+        return {
+            id: `acc_${provider}`,
+            name: "work",
+            provider,
+            enabled: true,
+            billing: { mode: "subscription" },
+            credentials: {},
+            useEnvApiKey: false,
+        };
+    }
+
+    function configOf(providers: string[]): AiConfigData {
+        return { version: CONFIG_VERSION, accounts: providers.map(namedAccount), defaults: {} };
+    }
+
+    test("it names the default account by task, by app, then the first account", () => {
+        const config = configOf(["anthropic-sub", "openai-sub"]);
+        config.accounts[1].name = "personal";
+        config.defaults.account = { claude: "@account/acc_openai-sub" };
+        config.defaults.app = { fixture: { chat: { model: "@account/acc_openai-sub:fixture-model" } } };
+
+        expect(defaultAccountName(config, "claude")).toBe("personal");
+        expect(defaultAccountName(config, "fixture")).toBe("personal");
+        expect(defaultAccountName(config, "ask")).toBe("work");
+    });
+
+    test("a default naming a removed account falls back to the first account, and no accounts is none", () => {
+        const config = configOf(["anthropic-sub"]);
+        config.defaults.account = { claude: "@account/acc_gone" };
+
+        expect(defaultAccountName(config, "claude")).toBe("work");
+        expect(defaultAccountName(configOf([]), "claude")).toBeUndefined();
     });
 });

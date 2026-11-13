@@ -216,7 +216,7 @@ export async function reportPair(pair: ReportPair, index: number, options: Repor
         }
 
         b = await decodeImageRgbaScaled(pair.after, a.width, a.height);
-        afterInput = encodeRgbaToPng(b.data, b.width, b.height);
+        afterInput = await encodeRgbaToPng(b.data, b.width, b.height);
         note = note ?? `B resampled from its pixels to A's ${a.width}x${a.height}`;
     }
 

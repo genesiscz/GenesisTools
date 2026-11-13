@@ -6,7 +6,8 @@ import { canonicalDir } from "@genesiscz/utils/fs/canonical";
 import { measureTree } from "@genesiscz/utils/fs/disk-usage";
 import { parseWorktreeListZ, WORKTREE_LIST_ARGS, type WorktreeEntry } from "@genesiscz/utils/git/porcelain";
 import { logger } from "@genesiscz/utils/logger";
-import { batchCwd, listPsRows } from "@genesiscz/utils/process/ps";
+import { batchCwd } from "@genesiscz/utils/process/cwd";
+import { listProcessRows } from "@genesiscz/utils/process/processes";
 import { profiler } from "@genesiscz/utils/profile";
 import { LockTimeoutError, withFileLock } from "@genesiscz/utils/storage";
 import type { Subprocess } from "bun";
@@ -452,7 +453,7 @@ async function removeUnusedWorktree(worktree: string): Promise<WorktreeRemoval> 
         return kept("locked", `locked with git worktree lock: ${listed.locked}`);
     }
 
-    const rows = await listPsRows();
+    const rows = await listProcessRows();
     if (rows.length === 0) {
         return kept("in-use", "the process list is unreadable, so a process may work in it");
     }

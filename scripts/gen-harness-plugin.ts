@@ -1,37 +1,56 @@
 #!/usr/bin/env bun
 /**
- * Writes the plugin's copy of the harness drivers: `plugins/genesis-tools/lib/Generated/harness-facts.ts`, the harness
- * ids, each harness's resume argv and the facts the hooks branch on (`HARNESS_FACTS`), read from the drivers in `src/utils/ai/providers/plugins/<plugin>/harness.ts`.
- * A plugin file runs outside this checkout and cannot import `@genesiscz/utils` (`check-plugin-standalone.ts`), so this
- * generated sibling is how its hooks name the harnesses without a list or a branch of their own. Committed, like
- * `gen-harness-swift.ts`'s `Harness.swift`.
+ * Writes every file the plugins carry from `src/`. A plugin file runs outside this checkout and cannot import
+ * `@genesiscz/utils` (`check-plugin-standalone.ts`), so each such file is either a whole copy of a module with no repo
+ * imports, or data rendered from the src values the plugin must agree with. Committed, like `gen-harness-swift.ts`'s
+ * `Harness.swift`; one table (`PLUGIN_OUTPUTS`) names them all.
  *
- *   bun scripts/gen-harness-plugin.ts           # write the file
- *   bun scripts/gen-harness-plugin.ts --check   # exit 1 when the committed file differs from the drivers
+ * - `plugins/genesis-tools/lib/Generated/harness-facts.ts`: the harness ids, each harness's resume argv and the facts
+ *   the hooks branch on (`HARNESS_FACTS`), read from the drivers in `src/utils/ai/providers/plugins/<plugin>/harness.ts`.
+ * - `plugins/genesis-tools/lib/Generated/scratch-dirs.ts`: each harness's scratch folder (`agentScratchDir`).
+ * - `plugins/genesis-tools/lib/Generated/host-markers.ts`: the variables a host app sets (`T3_HOST_MARKERS`).
+ * - `plugins/genesis-tools-mods/hooks/mods-defaults.ts`: the mods section's defaults (`DEFAULT_HOOKS_CONFIG.mods`).
+ * - Whole copies: `process-basics.ts`, `process-alive.ts` (genesis-tools `lib/`) and `option-labels.ts` (mods `hooks/`).
  *
- * `src/utils/harness/conformance.test.ts` fails on a stale file too.
+ *   bun scripts/gen-harness-plugin.ts           # write the files
+ *   bun scripts/gen-harness-plugin.ts --check   # exit 1, naming each file, when a committed file differs
+ *
+ * CI and the pre-push hook run `--check`, and `scripts/ci/check-plugin-standalone.test.ts` fails on a stale file too. A
+ * changed file is a plugin change: bump the plugin's version (`.claude/rules/plugins.md`).
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { DEFAULT_HOOKS_CONFIG } from "@app/agents/lib/hooks/config";
 import { harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { agentScratchDir } from "@genesiscz/utils/rm/scratch-dirs";
+import { T3_HOST_MARKERS } from "@genesiscz/utils/t3code/host-markers";
 
-export const HARNESS_PLUGIN_PATH = join(
-    import.meta.dirname,
-    "..",
-    "plugins/genesis-tools/lib/Generated/harness-facts.ts"
-);
+const REPO = join(import.meta.dirname, "..");
+
+export const HARNESS_PLUGIN_PATH = join(REPO, "plugins/genesis-tools/lib/Generated/harness-facts.ts");
 
 /** Placeholders the plugin replaces with the session id and the account (`resumeArgv` in lib/resume-argv.ts). */
 export const SESSION_PLACEHOLDER = "{session}";
 export const ACCOUNT_PLACEHOLDER = "{account}";
 
+/** The rows of every host app the pin hook recognises; a new host's rows join this list. */
+const HOST_MARKERS = [...T3_HOST_MARKERS];
+
+/** One file a plugin carries: its path from the repository root and the text it must hold. */
+export interface PluginOutput {
+    path: string;
+    render(): string;
+}
+
+// Written as biome formats it, so the pre-commit format leaves each file as `--check` expects.
+const quoted = (value: string | null) => (value === null ? "null" : SafeJSON.stringify(value));
+const list = (values: readonly string[]) => `[${values.map((value) => quoted(value)).join(", ")}]`;
+
 export function renderHarnessPlugin(): string {
     const drivers = harnessDrivers();
-    // Written as biome formats it, so the pre-commit format leaves the file as `--check` expects.
-    const list = (values: readonly string[]) => `[${values.map((value) => SafeJSON.stringify(value)).join(", ")}]`;
     const resume = drivers.flatMap((driver) => {
         const launch = driver.parts.launch;
         return [
@@ -44,19 +63,18 @@ export function renderHarnessPlugin(): string {
 
     const facts = drivers.flatMap((driver) => {
         const { hooks, host, process: signature, transcript } = driver.parts;
-        const text = (value: string | null) => (value === null ? "null" : SafeJSON.stringify(value));
         return [
             `    ${driver.id}: {`,
-            `        binary: ${text(driver.identity.binary)},`,
+            `        binary: ${quoted(driver.identity.binary)},`,
             `        headlessFlags: ${list(signature.headless.flags)},`,
             `        headlessSubcommands: ${list(signature.headless.subcommands)},`,
-            `        pidEnvKey: ${text(host.pidEnvKey)},`,
+            `        pidEnvKey: ${quoted(host.pidEnvKey)},`,
             "        agentsTalkHint:",
-            `            ${text(hooks.agentsTalkHint(toolCommand))},`,
+            `            ${quoted(hooks.agentsTalkHint(toolCommand))},`,
             `        promisesFileTracking: ${hooks.promisesFileTracking},`,
             `        compactBoundaryRows: ${hooks.compactBoundaryRows},`,
             `        subagentsOnDisk: ${transcript.subagentsOnDisk},`,
-            `        accountHomeProvider: ${text(hooks.homeBindsAccount ? driver.identity.plugin : null)},`,
+            `        accountHomeProvider: ${quoted(hooks.homeBindsAccount ? driver.identity.plugin : null)},`,
             `        launchAuthFromAncestor: ${hooks.launchAuthFromAncestor},`,
             "    },",
         ];
@@ -108,24 +126,135 @@ export function renderHarnessPlugin(): string {
         ...facts,
         "};",
         "",
+        "/** A value for every harness, so a plugin file that needs a table per harness names none. */",
+        "export function byHarness<T>(pick: (harness: Harness) => T): Readonly<Record<Harness, T>> {",
+        `    return { ${drivers.map((driver) => `${driver.id}: pick(${SafeJSON.stringify(driver.id)})`).join(", ")} };`,
+        "}",
+        "",
         "/** The harness whose journal lines (pins, cmux records) omit `provider`: a line without one is its. */",
         `export const JOURNAL_DEFAULT_HARNESS: Harness = ${SafeJSON.stringify(journalDefault[0]?.id)};`,
         "",
     ].join("\n");
 }
 
-if (import.meta.main) {
-    const rendered = renderHarnessPlugin();
-    const current = existsSync(HARNESS_PLUGIN_PATH) ? readFileSync(HARNESS_PLUGIN_PATH, "utf8") : null;
+/** A value as biome prints it at `indent` spaces: an object on one line when it fits in 120 columns, else one key a line. */
+function literal(value: unknown, indent: number, prefix: string, suffix: string): string[] {
+    if (value === null || typeof value !== "object") {
+        const text = typeof value === "string" ? quoted(value) : String(value);
+        return [`${" ".repeat(indent)}${prefix}${text}${suffix}`];
+    }
 
+    const entries = Object.entries(value);
+    const flat = entries.every(([, field]) => field === null || typeof field !== "object");
+    const inline = `${" ".repeat(indent)}${prefix}{ ${entries
+        .map(([key, field]) => `${key}: ${typeof field === "string" ? quoted(field) : String(field)}`)
+        .join(", ")} }${suffix}`;
+
+    if (flat && inline.length <= 120) {
+        return [inline];
+    }
+
+    return [
+        `${" ".repeat(indent)}${prefix}{`,
+        ...entries.flatMap(([key, field]) => literal(field, indent + 4, `${key}: `, ",")),
+        `${" ".repeat(indent)}}${suffix}`,
+    ];
+}
+
+export function renderScratchDirs(): string {
+    return [
+        "// Generated by scripts/gen-harness-plugin.ts from src/utils/rm/scratch-dirs.ts and the harness drivers. Do not edit; run the script.",
+        "",
+        'import type { Harness } from "./harness-facts";',
+        "",
+        "/** The folder under the temp root each harness keeps its session scratch in: `agentScratchDir` of its agent. */",
+        "export const SCRATCH_DIRS: Readonly<Record<Harness, string>> = {",
+        ...harnessDrivers().map((driver) => `    ${driver.id}: ${quoted(agentScratchDir(driver.parts.host.agent))},`),
+        "};",
+        "",
+    ].join("\n");
+}
+
+export function renderHostMarkers(): string {
+    return [
+        "// Generated by scripts/gen-harness-plugin.ts from src/utils/t3code/host-markers.ts. Do not edit; run the script.",
+        "",
+        "/** One variable a host app sets on the agents it starts. `carriesId`: the value is the host's id for the session. */",
+        "export interface HostMarker {",
+        "    kind: string;",
+        "    envKey: string;",
+        "    carriesId: boolean;",
+        "}",
+        "",
+        "/** The apps that host agent sessions, each recognised by a variable it sets; the first row whose variable is set wins. */",
+        "export const AGENT_HOST_MARKERS: readonly HostMarker[] = [",
+        ...HOST_MARKERS.map(
+            (marker) =>
+                `    { kind: ${quoted(marker.kind)}, envKey: ${quoted(marker.envKey)}, carriesId: ${marker.carriesId} },`
+        ),
+        "];",
+        "",
+    ].join("\n");
+}
+
+export function renderModsDefaults(): string {
+    return [
+        "// Generated by scripts/gen-harness-plugin.ts from src/agents/lib/hooks/sections/mods.ts. Do not edit; run the script.",
+        "",
+        'import type { ModsSettings } from "./settings";',
+        "",
+        "/** Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`. */",
+        ...literal(DEFAULT_HOOKS_CONFIG.mods, 0, "export const MODS_DEFAULTS: ModsSettings = ", ";"),
+        "",
+    ].join("\n");
+}
+
+/** A module with no repo imports, copied byte for byte. */
+function copied(source: string, path: string): PluginOutput {
+    return { path, render: () => readFileSync(join(REPO, source), "utf8") };
+}
+
+/** Every file the plugins carry from src, and how each is made. */
+export const PLUGIN_OUTPUTS: readonly PluginOutput[] = [
+    { path: relative(REPO, HARNESS_PLUGIN_PATH), render: renderHarnessPlugin },
+    { path: "plugins/genesis-tools/lib/Generated/scratch-dirs.ts", render: renderScratchDirs },
+    { path: "plugins/genesis-tools/lib/Generated/host-markers.ts", render: renderHostMarkers },
+    { path: "plugins/genesis-tools-mods/hooks/mods-defaults.ts", render: renderModsDefaults },
+    copied("src/utils/process/process-basics.ts", "plugins/genesis-tools/lib/process-basics.ts"),
+    // pid-safety-guard.sh allows the signal-0 probe only in files named process-alive.ts, so the copy keeps the name.
+    copied("src/utils/process-alive.ts", "plugins/genesis-tools/lib/process-alive.ts"),
+    copied("src/question/lib/decisions/option-labels.ts", "plugins/genesis-tools-mods/hooks/option-labels.ts"),
+];
+
+/** The outputs whose committed file is missing or differs from what the script writes now. */
+export function staleOutputs(): string[] {
+    return PLUGIN_OUTPUTS.filter((output) => {
+        const path = join(REPO, output.path);
+        return !existsSync(path) || readFileSync(path, "utf8") !== output.render();
+    }).map((output) => output.path);
+}
+
+if (import.meta.main) {
     if (process.argv.includes("--check")) {
-        if (current !== rendered) {
-            console.error(`${HARNESS_PLUGIN_PATH} is stale: run bun scripts/gen-harness-plugin.ts`);
-            process.exit(1);
+        const stale = staleOutputs();
+
+        for (const path of stale) {
+            console.error(`${path} is stale: run bun scripts/gen-harness-plugin.ts`);
         }
-    } else {
-        mkdirSync(dirname(HARNESS_PLUGIN_PATH), { recursive: true });
-        writeFileSync(HARNESS_PLUGIN_PATH, rendered);
-        console.log(`wrote ${HARNESS_PLUGIN_PATH}`);
+
+        process.exit(stale.length > 0 ? 1 : 0);
+    }
+
+    for (const output of PLUGIN_OUTPUTS) {
+        const path = join(REPO, output.path);
+        const rendered = output.render();
+
+        if (existsSync(path) && readFileSync(path, "utf8") === rendered) {
+            continue;
+        }
+
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, rendered);
+        console.log(`wrote ${output.path}`);
     }
 }

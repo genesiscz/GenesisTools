@@ -13,6 +13,7 @@ import { Command, Option } from "commander";
 import pc from "picocolors";
 import { scanWithBun } from "./lib/bun-scan";
 import { registerCloudCommands } from "./lib/cloud-commands";
+import { compressedListing, registerCompressionCommands } from "./lib/compression";
 import { readVolumeInfo, scanPartners, scanWithC, scanWithCFfi } from "./lib/engine";
 import { diffScans, humanBytes, renderDiff, renderHuman, renderPartners, renderTree, renderVolume } from "./lib/format";
 import { registerIndexCommands } from "./lib/index/commands";
@@ -23,6 +24,7 @@ import { detectWorktreeExcludes } from "./lib/worktrees";
 
 const program = new Command();
 const storage = new Storage("du");
+registerCompressionCommands(program);
 p.setBackend(clackBackend);
 
 /** `PROFILE=du` turns on every phase this CLI times: the scan itself and the
@@ -120,6 +122,8 @@ program
     )
     .option("--threads <n>", "Worker threads (default: number of CPUs)", intOpt("--threads", { min: 1, max: 1024 }))
     .option("--freeable", "Also sum per-file ATTR_CMNEXT_PRIVATESIZE (C engine only)")
+    .option("--compressed", "List compressed files instead of scanning extents")
+    .option("--json", "Print JSON (alias for --format json)")
     .option("--min-bytes <n>", "Skip files whose allocated size < N bytes", intOpt("--min-bytes", { min: 0 }))
     .option("--depth <n>", "Per-directory tree down to depth N (du -d N style)", intOpt("--depth", { min: 0 }))
     .option("--freeable-tree", "Per-node ATTR_CMNEXT_PRIVATESIZE in the --depth tree (implies --depth 1)")
@@ -168,6 +172,8 @@ program
                 engine: Engine;
                 threads?: number;
                 freeable?: boolean;
+                compressed?: boolean;
+                json?: boolean;
                 minBytes?: number;
                 depth?: number;
                 freeableTree?: boolean;
@@ -180,6 +186,20 @@ program
             }
         ) => {
             const root = assertDir(dir);
+            if (o.json) {
+                o.format = "json";
+            }
+
+            if (o.compressed) {
+                const listing = await compressedListing(root);
+
+                if (o.format === "json") {
+                    out.result(listing);
+                } else {
+                    out.println(listing.files.map((file) => `${humanBytes(file.allocated)}  ${file.path}`).join("\n"));
+                }
+                return;
+            }
 
             if (o.freeable && o.engine === "bun") {
                 out.error("--freeable is only supported by the C engines (--engine c-ffi or c), not the Bun engine.");

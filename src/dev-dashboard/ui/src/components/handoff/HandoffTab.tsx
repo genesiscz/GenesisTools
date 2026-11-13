@@ -3,8 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { useMemo, useState } from "react";
 import { useActivityPanel } from "@/hooks/useActivityPanel";
+import { useLive } from "@/hooks/useLive";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { useQaStream } from "@/hooks/useQaStream";
 import { ActivityPanel } from "./ActivityPanel";
 import { HandoffDetail } from "./HandoffDetail";
 import { HandoffCreateDialog } from "./HandoffDialogs";
@@ -98,15 +98,18 @@ export function HandoffTab() {
     const [editIdToast, setEditIdToast] = useState<HandoffPostResponse | null>(null);
     const rows = useMemo(() => list.data?.handoffs ?? [], [list.data]);
 
-    // Unified /api/qa/stream — handoff frames invalidate list + detail (+ events when selected).
-    useQaStream((frame) => {
-        if (frame.type !== "handoff") {
-            return;
-        }
+    // The live `handoffs` channel names a changed handoff; refetch the list, its detail and its events.
+    useLive(["handoffs"], {
+        onFrame: (frame) => {
+            if (frame.channel !== "handoffs") {
+                return;
+            }
 
-        void queryClient.invalidateQueries({ queryKey: ["handoff-log"] });
-        void queryClient.invalidateQueries({ queryKey: ["handoff", frame.id] });
-        void queryClient.invalidateQueries({ queryKey: ["handoff-events", frame.id] });
+            const { id } = frame.payload;
+            void queryClient.invalidateQueries({ queryKey: ["handoff-log"] });
+            void queryClient.invalidateQueries({ queryKey: ["handoff", id] });
+            void queryClient.invalidateQueries({ queryKey: ["handoff-events", id] });
+        },
     });
 
     const projects = useMemo(

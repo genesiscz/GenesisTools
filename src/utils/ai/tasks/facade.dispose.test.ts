@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -94,6 +94,45 @@ afterEach(() => {
     AiConfigStore.invalidate();
     _resetPluginsForTest();
     _resetBuiltInPluginsForTest();
+});
+
+/**
+ * `tools ai translate --provider` used to save the flag as the translate default
+ * on every call (the deleted Translator.create). A flag is a per-call choice: the
+ * call goes to the named provider, and the config file stays byte-equal.
+ */
+describe("a per-call provider is never saved", () => {
+    function configBytes(): string {
+        return readFileSync(join(home, ".genesis-tools", "ai", "config.json"), "utf8");
+    }
+
+    test("ai.translate with a provider option binds that provider and writes no config", async () => {
+        registerPlugin(fakePlugin("openai", ["translate", "chat"], {}));
+        registerPlugin(fakePlugin("anthropic", ["translate", "chat"], {}));
+        writeConfig([account("acc_oa", "openai"), account("acc_an", "anthropic")], {
+            task: { translate: { provider: "openai", model: "gpt-4o-mini" } },
+        });
+        const before = configBytes();
+
+        await expect(ai.translate("ahoj", { to: "en", provider: "anthropic" })).rejects.toThrow(/no chat/);
+
+        expect(disposed).toEqual(["anthropic"]);
+        expect(configBytes()).toBe(before);
+    });
+
+    test("ai.summarize honours a provider option and writes no config", async () => {
+        registerPlugin(fakePlugin("openai", ["summarize", "chat"], {}));
+        registerPlugin(fakePlugin("anthropic", ["summarize", "chat"], {}));
+        writeConfig([account("acc_oa", "openai"), account("acc_an", "anthropic")], {
+            task: { summarize: { provider: "openai", model: "gpt-4o-mini" } },
+        });
+        const before = configBytes();
+
+        await expect(ai.summarize("nejaky text", { provider: "anthropic" })).rejects.toThrow(/no chat/);
+
+        expect(disposed).toEqual(["anthropic"]);
+        expect(configBytes()).toBe(before);
+    });
 });
 
 describe("ai.* dispose the binding they resolve", () => {

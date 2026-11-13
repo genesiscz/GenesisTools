@@ -1,4 +1,6 @@
-import { buildProviderMap, providerDefinition, providerKey } from "@app/ai-proxy/lib/providers/registry";
+import { buildProviderMap } from "@app/ai-proxy/lib/providers/pool";
+import { providerKey } from "@app/ai-proxy/lib/providers/provider-key";
+import { providerDefinition } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { AiProxyAccountConfig, AiProxyConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import { billingSnapshotIsStale, readBillingStore, saveBillingSnapshot } from "@app/ai-proxy/lib/usage/store";

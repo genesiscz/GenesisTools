@@ -70,8 +70,9 @@ export function protocolJsonSchemas(): ProtocolSchemas {
 }
 
 /**
- * One example of every edit op, as the zod schema reads it (defaults filled in). A new op tag without an example
- * fails service.test.ts, so the Swift side always gets a case to decode.
+ * One example of every edit op, as the zod schema reads it (defaults filled in). A plain setting op (one the bare tag
+ * already is, `{ op: "motion" }`) needs no entry here: `exampleOps()` adds its bare form. Any other new op tag without
+ * an example fails service.test.ts, so the Swift side always gets a case to decode.
  */
 const EXAMPLE_OPS: readonly unknown[] = [
     { op: "split", at: 2 },
@@ -334,6 +335,16 @@ export function helloMethods(): string[] {
 /** The tag of every edit op the zod schema reads. */
 export function editOpTags(): string[] {
     return editOpSchema.options.map((option) => option.shape.op.value);
+}
+
+/** EXAMPLE_OPS, then the bare form of every op tag it lacks that is a whole op by itself (a plain setting op). */
+function exampleOps(): unknown[] {
+    const listed = new Set(EXAMPLE_OPS.map((op) => Object(op).op));
+    const bare = editOpTags()
+        .filter((tag) => !listed.has(tag))
+        .map((tag) => ({ op: tag }))
+        .filter((op) => editOpSchema.safeParse(op).success);
+    return [...EXAMPLE_OPS, ...bare].map((op) => editOpSchema.parse(op));
 }
 
 /** Ids by kind and order of appearance (`z1`, `r2`), so a golden edit is the same file on every run. */
@@ -666,7 +677,7 @@ export function editorGolden(): EditorGolden {
         about: "Made from the TypeScript source by scripts/recorder/write-protocol-fixtures.ts. The Swift tests decode every op with EditOp and every project with EditProject, write them back, and compare; the op tags must match EditOp's cases, and every method the editor window calls must be in methods (the service's hello).",
         methods: helloMethods(),
         opTags: editOpTags(),
-        ops: EXAMPLE_OPS.map((op) => editOpSchema.parse(op)),
+        ops: exampleOps(),
         projects: goldenProjects(),
     };
 }

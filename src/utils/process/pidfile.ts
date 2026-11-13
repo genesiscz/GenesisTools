@@ -1,13 +1,19 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+    closeSync,
+    existsSync,
+    fstatSync,
+    mkdirSync,
+    openSync,
+    readFileSync,
+    renameSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import {
-    isArbitrationBusy,
-    tryWithPathArbitration,
-    withPathArbitrationSync,
-} from "@genesiscz/utils/process/path-arbitration";
+import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import {
     classifyPid,
     type PidIdentity,
@@ -339,31 +345,37 @@ function errnoCode(err: unknown): string | undefined {
 }
 
 /**
- * Atomically steal a pidfile whose content the caller pre-validated as STALE.
- *
- * Rename into a unique temp name, verify the stolen bytes are exactly the
- * validated artifact (a mismatch means a fresh owner claimed between check and
- * rename — restore it best-effort and lose), then either `wx`-create our own
- * record (`claim: true`, the default) or leave the slot empty (`claim: false`,
- * a race-safe DELETE for cleanup paths). Returns true only for the single
- * racer that stole the validated artifact.
- *
- * Async on purpose: Bun's synchronous fs calls reenter under concurrent
- * async-driven load (many concurrent `renameSync` callers can each observe a
- * "successful" rename of one source — verified empirically in the daemon),
- * which breaks the single-winner guarantee this function exists to provide.
- * The sync `writePidFile({ exclusive })` above is therefore NOT a race
- * primitive; racing callers belong here.
+ * How long a holder file that names no process (empty, or bytes that are not a record) counts as an owner between
+ * its `wx` create and its write. A `wx` write is an open and then a separate write, so a live owner is empty for a
+ * moment; a SIGKILL between the two leaves the file empty for good. Inside the grace the file is held, after it the
+ * file is an orphan and taken over. The age is the file's own mtime, so a sync caller decides without sleeping.
  */
-async function attemptStaleTakeoverUnlocked(
-    path: string,
-    expectedContent: string,
-    opts: { claim?: boolean } = {}
-): Promise<boolean> {
+export const EMPTY_HOLDER_GRACE_MS = 1_000;
+
+/** What a takeover did: the stale claim is gone (`taken`), its holder keeps it (`held`), or another racer moved first. */
+export type ClaimTakeover = "taken" | "held" | "lost-race";
+
+export interface TakeOverStaleClaimInput {
+    /**
+     * Whether a holder that names a process has lost its claim (dead, recycled pid, or whatever the caller's rule
+     * says). Never asked about a holder that names no process: the empty-holder rule above decides that one for
+     * every caller. `raw` is the exact content the verdict is about, for a caller that reports more of it.
+     */
+    holderIsStale: (holder: PidRecord, raw: string) => boolean;
+    /** The path whose claim arbiter serializes this decision; the claim path itself unless files share one. */
+    arbiter: string;
+}
+
+/**
+ * Remove a claim file only when it still holds `expectedContent`: rename it to a unique temp name, compare the bytes
+ * it held, and on a mismatch (a fresh owner wrote between the caller's check and the rename) put it back with `wx` and
+ * lose. True only for the racer that removed the validated content. Call it inside the path's arbiter.
+ */
+function removeValidatedClaim(path: string, expectedContent: string): boolean {
     const tempPath = `${path}.stale-${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
 
     try {
-        await rename(path, tempPath);
+        renameSync(path, tempPath);
     } catch (err) {
         if (errnoCode(err) === "ENOENT") {
             return false;
@@ -374,71 +386,171 @@ async function attemptStaleTakeoverUnlocked(
 
     let stolen: string | null = null;
     try {
-        stolen = await readFile(tempPath, "utf-8");
+        stolen = readFileSync(tempPath, "utf-8");
     } catch (err) {
         logger.debug({ err, tempPath }, "[pidfile] stolen file unreadable");
     }
 
-    if (stolen === null || stolen.trim() !== expectedContent.trim()) {
-        // We grabbed something other than the validated-stale file — a fresh
-        // owner wrote between the caller's check and our rename. Put it back
-        // and lose; if the slot was re-claimed meanwhile, the robbed owner's
-        // own liveness checks are the backstop.
-        if (stolen !== null) {
-            try {
-                await writeFile(path, stolen, { flag: "wx" });
-            } catch (err) {
-                logger.debug({ err, path }, "[pidfile] stale-takeover restore skipped (slot re-claimed)");
-            }
-        }
+    const matches = stolen !== null && stolen.trim() === expectedContent.trim();
 
+    if (!matches && stolen !== null) {
+        // If the slot was re-claimed meanwhile, the robbed owner's own liveness checks are the backstop.
         try {
-            unlinkSync(tempPath);
+            writeFileSync(path, stolen, { flag: "wx" });
         } catch (err) {
-            logger.debug({ err, tempPath }, "[pidfile] takeover temp cleanup failed");
+            logger.debug({ err, path }, "[pidfile] stale-takeover restore skipped (slot re-claimed)");
         }
-
-        return false;
-    }
-
-    if (opts.claim !== false) {
-        try {
-            await writeFile(path, serializePidRecord(buildPidRecord()), { flag: "wx" });
-        } catch (err) {
-            if (errnoCode(err) === "EEXIST") {
-                return false;
-            }
-
-            throw err;
-        } finally {
-            try {
-                unlinkSync(tempPath);
-            } catch (err) {
-                logger.debug({ err, tempPath }, "[pidfile] takeover temp cleanup failed");
-            }
-        }
-
-        return true;
     }
 
     try {
         unlinkSync(tempPath);
     } catch (err) {
+        // Nothing sweeps this random-suffixed name, so a leak must be on record.
         logger.debug({ err, tempPath }, "[pidfile] takeover temp cleanup failed");
     }
 
-    return true;
+    return matches;
 }
 
+/** The holder's bytes and the mtime of the same file, read through one descriptor. Null when the file is gone. */
+function readHolder(path: string): { raw: string; mtimeMs: number } | null {
+    let fd: number;
+    try {
+        fd = openSync(path, "r");
+    } catch (err) {
+        if (errnoCode(err) === "ENOENT") {
+            return null;
+        }
+
+        throw err;
+    }
+
+    try {
+        return { raw: readFileSync(fd, "utf-8"), mtimeMs: fstatSync(fd).mtimeMs };
+    } finally {
+        closeSync(fd);
+    }
+}
+
+function takeOverStaleClaimUnlocked(path: string, input: TakeOverStaleClaimInput): ClaimTakeover {
+    let holder: { raw: string; mtimeMs: number } | null;
+    try {
+        holder = readHolder(path);
+    } catch (err) {
+        // A holder this process cannot read cannot be judged, and judging it stale could delete a live claim.
+        logger.debug({ err, path }, "[pidfile] claim unreadable; leaving it held");
+        return "held";
+    }
+
+    if (holder === null) {
+        return "lost-race";
+    }
+
+    const record = parseRecord(holder.raw, path);
+
+    if (record === null) {
+        const ageMs = Date.now() - holder.mtimeMs;
+
+        if (Math.abs(ageMs) < EMPTY_HOLDER_GRACE_MS) {
+            logger.debug({ path, ageMs }, "[pidfile] claim names no process yet; its owner may be writing");
+            return "held";
+        }
+
+        logger.debug({ path, ageMs }, "[pidfile] claim names no process past the grace; taking the orphan over");
+    } else if (!input.holderIsStale(record, holder.raw)) {
+        return "held";
+    }
+
+    return removeValidatedClaim(path, holder.raw) ? "taken" : "lost-race";
+}
+
+/**
+ * The one takeover of a stale claim file. Under the path's arbiter it reads the holder, decides (the empty-holder rule
+ * here, `holderIsStale` for a record), and removes the claim only when the removed bytes are the ones it judged. It
+ * leaves the slot empty: the caller makes its own `wx` create, so exactly one creator wins after a `taken`.
+ *
+ * Synchronous on purpose: the read, the verdict and the rename run as one section that no other code of this process
+ * can enter, and the arbiter keeps other processes out of it. A busy arbiter is a `lost-race`.
+ */
+export function takeOverStaleClaim(path: string, input: TakeOverStaleClaimInput): ClaimTakeover {
+    const step = takeOverUnderArbiter(path, input);
+    return step === "busy" ? "lost-race" : step;
+}
+
+function takeOverUnderArbiter(path: string, input: TakeOverStaleClaimInput): ClaimTakeover | "busy" {
+    try {
+        return withPathArbitrationSync(input.arbiter, () => takeOverStaleClaimUnlocked(path, input));
+    } catch (err) {
+        if (isArbitrationBusy(err)) {
+            return "busy";
+        }
+
+        throw err;
+    }
+}
+
+/**
+ * {@link takeOverStaleClaim} for a caller that awaits: a busy arbiter (another racer inside its takeover, which takes
+ * well under a millisecond) is tried again every 25 ms until `waitMs` (default 250 ms) runs out, then `lost-race`.
+ */
+export async function takeOverStaleClaimAsync(
+    path: string,
+    input: TakeOverStaleClaimInput & { waitMs?: number }
+): Promise<ClaimTakeover> {
+    const deadline = Date.now() + (input.waitMs ?? 250);
+
+    for (;;) {
+        const step = takeOverUnderArbiter(path, input);
+        const remaining = deadline - Date.now();
+
+        if (step !== "busy") {
+            return step;
+        }
+
+        if (remaining <= 0) {
+            return "lost-race";
+        }
+
+        await Bun.sleep(Math.min(25, remaining));
+    }
+}
+
+/**
+ * Remove (or, with `claim: true`, the default, replace with this process's record) a claim whose content the caller
+ * already validated as stale. True only for the single racer that removed exactly that content. For a caller that
+ * judges the holder itself (chrome-devtools cleanup); a claim that needs a verdict goes through
+ * {@link takeOverStaleClaim}.
+ */
 export async function attemptStaleTakeover(
     path: string,
     expectedContent: string,
     opts: { claim?: boolean } = {}
 ): Promise<boolean> {
-    const arbitration = await tryWithPathArbitration(path, () =>
-        attemptStaleTakeoverUnlocked(path, expectedContent, opts)
-    );
-    return arbitration.acquired ? arbitration.value : false;
+    let removed: boolean;
+    try {
+        removed = withPathArbitrationSync(path, () => removeValidatedClaim(path, expectedContent));
+    } catch (err) {
+        if (isArbitrationBusy(err)) {
+            return false;
+        }
+
+        throw err;
+    }
+
+    if (!removed || opts.claim === false) {
+        return removed;
+    }
+
+    try {
+        await createPidFile(path);
+        return true;
+    } catch (err) {
+        if (errnoCode(err) === "EEXIST") {
+            return false;
+        }
+
+        throw err;
+    }
 }
 
 /** How a claim went: ours (`tookOver` when it replaced a stale claim), kept by its owner, or lost to a racer. */
@@ -447,14 +559,18 @@ export type PidClaim =
     | { status: "held"; state: PidFileState }
     | { status: "lost" };
 
+/** A holder that names a process. A holder that names none is never a caller's call (see EMPTY_HOLDER_GRACE_MS). */
+export type PidHolderState = Exclude<PidFileState, { status: "none" }>;
+
 export interface ClaimPidFileOptions {
     /** The owner's command for a record that names none (a legacy bare-number file). */
     expected?: PidExpectation;
     /**
-     * Which existing claims may be taken over. Default: all but a live (or unverified) other process, so a dead
-     * owner, a recycled pid, an unreadable file and a record of this process (a spawner's pre-write) are taken over.
+     * Which holders may be taken over. Default: all but a live (or unverified) other process, so a dead owner, a
+     * recycled pid and a record of this process (a spawner's pre-write) are taken over. An empty or unreadable file
+     * is not asked about: it is held inside {@link EMPTY_HOLDER_GRACE_MS} and taken over after it, for every caller.
      */
-    reclaimable?: (state: PidFileState) => boolean;
+    reclaimable?: (state: PidHolderState) => boolean;
     /** Takeover rounds before the claim is lost (default 3). */
     attempts?: number;
     /** The pause after a lost round (default none). */
@@ -477,14 +593,21 @@ async function createPidFile(path: string): Promise<void> {
     }
 }
 
-function reclaimableByDefault(state: PidFileState): boolean {
+function reclaimableByDefault(state: PidHolderState): boolean {
     return !((state.status === "live" || state.status === "unverified") && state.pid !== process.pid);
 }
 
+function holderState(record: PidRecord, expected: PidExpectation | undefined): PidHolderState {
+    const identity = classifyPidRecord(record, expected);
+    return identity.status === "foreign"
+        ? { status: "foreign", pid: record.pid, record, command: identity.command ?? "(unknown)" }
+        : { status: identity.status, pid: record.pid, record };
+}
+
 /**
- * Claim a pidfile as this process's: an atomic `wx` create, and when the file exists and the caller may take it
- * over, the content-verified {@link attemptStaleTakeover}. Async on purpose, like the takeover (Bun's sync fs calls
- * reenter under concurrent load). Only EEXIST enters the takeover; any other write error is thrown.
+ * Claim a pidfile as this process's: an atomic `wx` create, and when the file exists, {@link takeOverStaleClaimAsync}
+ * with the caller's `reclaimable` rule, then the `wx` create again. Only EEXIST enters the takeover; any other write
+ * error is thrown.
  */
 export async function claimPidFile(path: string, opts: ClaimPidFileOptions = {}): Promise<PidClaim> {
     const reclaimable = opts.reclaimable ?? reclaimableByDefault;
@@ -499,30 +622,29 @@ export async function claimPidFile(path: string, opts: ClaimPidFileOptions = {})
             }
         }
 
-        let staleContent: string;
+        let seen: PidFileState = { status: "none" };
+        const outcome = await takeOverStaleClaimAsync(path, {
+            arbiter: path,
+            holderIsStale: (record) => {
+                const state = holderState(record, opts.expected);
+                seen = state;
+                return reclaimable(state);
+            },
+        });
 
-        try {
-            staleContent = await readFile(path, "utf-8");
-        } catch (err) {
-            logger.debug({ err, path }, "[pidfile] claimed file vanished; creating it again");
-            continue;
+        if (outcome === "held") {
+            return { status: "held", state: seen };
         }
 
-        const record = parsePidRecord(staleContent);
-        const identity = record ? classifyPidRecord(record, opts.expected) : undefined;
-        const state: PidFileState =
-            record && identity
-                ? identity.status === "foreign"
-                    ? { status: "foreign", pid: record.pid, record, command: identity.command ?? "(unknown)" }
-                    : { status: identity.status, pid: record.pid, record }
-                : { status: "none" };
-
-        if (!reclaimable(state)) {
-            return { status: "held", state };
-        }
-
-        if (await attemptStaleTakeover(path, staleContent)) {
-            return { status: "claimed", tookOver: true };
+        if (outcome === "taken") {
+            try {
+                await createPidFile(path);
+                return { status: "claimed", tookOver: true };
+            } catch (err) {
+                if (errnoCode(err) !== "EEXIST") {
+                    throw err;
+                }
+            }
         }
 
         logger.debug({ attempt, path }, "[pidfile] lost a takeover round; checking again");

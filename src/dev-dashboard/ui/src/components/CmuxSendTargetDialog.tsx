@@ -1,3 +1,4 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import type { CmuxLayoutTree, DashboardSendTarget } from "@app/dev-dashboard/lib/cmux/types";
 import { DEV_DASHBOARD_WORKSPACE } from "@app/dev-dashboard/lib/tmux/constants";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -19,7 +20,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CmuxLayoutTreePicker, type CmuxPickKind } from "@/components/CmuxLayoutTree";
 import { TmuxSessionName, TmuxSessionNameLabel } from "@/components/TmuxSessionName";
 import { useTmuxHubSessions } from "@/hooks/useTmuxHubSessions";
-import { cmuxApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 import { invalidateTmuxAndTtyd } from "@/lib/query-keys";
 import { canRemoveFromCmux } from "@/lib/view-state";
 
@@ -54,7 +55,7 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
 
     const { data, isLoading, isError } = useQuery({
         queryKey: ["cmux", "layout"],
-        queryFn: () => cmuxApi.layout().then((r) => r.layout),
+        queryFn: () => dashboard.call(ENDPOINTS.cmuxLayout, {}).then((r) => r.layout),
         enabled: open,
         staleTime: 2000,
     });
@@ -68,7 +69,7 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
 
     const send = useMutation({
         mutationFn: (target: DashboardSendTarget) =>
-            cmuxApi.sendSession({ tmuxSessionName: sessionName, target }).then((r) => r.result),
+            dashboard.call(ENDPOINTS.cmuxSendSession, { tmuxSessionName: sessionName, target }).then((r) => r.result),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["cmux"] });
             queryClient.invalidateQueries({ queryKey: ["tmux"] });
@@ -78,7 +79,8 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
     });
 
     const removeFromCmux = useMutation({
-        mutationFn: () => cmuxApi.removeSession({ tmuxSessionName: sessionName }).then((r) => r.removed),
+        mutationFn: () =>
+            dashboard.call(ENDPOINTS.cmuxRemoveSession, { tmuxSessionName: sessionName }).then((r) => r.removed),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["cmux"] });
             queryClient.invalidateQueries({ queryKey: ["tmux"] });
@@ -86,7 +88,8 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
     });
 
     const createWorkspace = useMutation({
-        mutationFn: (body: { windowId: string; name?: string }) => cmuxApi.createWorkspace(body).then((r) => r.result),
+        mutationFn: (body: { windowId: string; name?: string }) =>
+            dashboard.call(ENDPOINTS.cmuxCreateWorkspace, body).then((r) => r.result),
         onSuccess: (result) => {
             queryClient.invalidateQueries({ queryKey: ["cmux", "layout"] });
             setWindowId(result.windowId);

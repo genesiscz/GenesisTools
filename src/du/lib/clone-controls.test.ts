@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { execFileSync } from "node:child_process";
 import {
     closeSync,
     mkdirSync,
@@ -7,11 +8,13 @@ import {
     realpathSync,
     renameSync,
     rmSync,
+    statSync,
     writeFileSync,
     writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { cloneOrCopy } from "@genesiscz/utils/fs/clone";
 import { scanWithBun } from "./bun-scan";
 import { BLK, type CloneFixture, makeCloneFixture } from "./clone-fixture";
@@ -195,4 +198,117 @@ describeOnDarwin("clonesize excludes: every one is honored, past the 256th", () 
             expect({ files: r.files_scanned, naive: r.naive_bytes }).toEqual({ files: 1, naive: KEEP });
         });
     }
+});
+
+describeOnDarwin("transparent compression allocation", () => {
+    it("maps the resource fork once for two compressed clones and does not call them sparse", async () => {
+        const root = mkdtempSync(join(tmpdir(), "compressed-clones-"));
+        const plain = join(root, "plain.txt");
+        const pair = join(root, "pair");
+        mkdirSync(pair);
+        writeFileSync(plain, "record 123456789 abcdefghijklmnopqrstuvwx\n".repeat(300000));
+        execFileSync("ditto", ["--noclone", "--hfsCompression", plain, join(pair, "a.txt")], {
+            env: env.getProcessEnv(),
+        });
+        execFileSync("cp", ["-c", "-p", join(pair, "a.txt"), join(pair, "b.txt")], { env: env.getProcessEnv() });
+        const allocated = statSync(join(pair, "a.txt")).blocks * 512;
+        expect(allocated).toBeGreaterThan(0);
+
+        for (const scan of [scanWithCFfi, scanWithC]) {
+            const result = scan({ path: pair, threads: 2, depth: 1 });
+            expect(result.unique_allocated_bytes).toBe(allocated);
+            expect(result.naive_bytes).toBe(allocated * 2);
+            expect(result.unique_bytes).toBeGreaterThan(0);
+            expect(result.sparse_files).toBe(0);
+            expect(result.nodes?.[0]?.apparent_bytes).toBe(statSync(plain).size * 2);
+            expect(result.nodes?.[0]?.sparse_files).toBe(0);
+            expect(result.compressed).toEqual({
+                files: 2,
+                logical_bytes: statSync(plain).size * 2,
+                allocated_bytes: allocated * 2,
+            });
+        }
+
+        const { listCompressionFiles } = await import("./engine");
+        const bunResult = await scanWithBun({ path: pair, threads: 2 });
+        expect(bunResult.unique_allocated_bytes).toBe(allocated);
+        expect(bunResult.compressed?.files).toBe(2);
+        const files = await listCompressionFiles(pair);
+        expect(files).toHaveLength(2);
+        expect(files.every((file) => (file.flags & 0x20) !== 0 && file.nlink === 1)).toBe(true);
+        expect(files[0].cloneId).not.toBe("");
+        expect(files[0].cloneId).toBe(files[1].cloneId);
+    });
+});
+
+it("compression estimates skip open, sparse, media, compressed, and unverified clone allocation", async () => {
+    const { rankCompressible } = await import("./compression");
+    const entry = {
+        path: "/fixture/eligible/a.txt",
+        size: 2 ** 20,
+        allocated: 2 ** 20,
+        flags: 0,
+        ino: 1,
+        mtimeMs: 0,
+        nlink: 1,
+        cloneId: "",
+    };
+    const entries = [
+        entry,
+        { ...entry, path: "/fixture/open.txt" },
+        { ...entry, path: "/fixture/sparse.txt", allocated: 800000 },
+        { ...entry, path: "/fixture/video.mp4" },
+        { ...entry, path: "/fixture/compressed.txt", flags: 0x20 },
+        { ...entry, path: "/fixture/shared.txt" },
+        { ...entry, path: "/fixture/unknown.txt" },
+    ];
+    const sampled: string[] = [];
+    const result = rankCompressible({
+        entries,
+        open: new Set(["/fixture/open.txt"]),
+        olderThanMs: 1,
+        minBytes: 1,
+        exts: new Set(["txt"]),
+        now: 100,
+        privateSize: (path) => (path.includes("shared") ? 0 : path.includes("unknown") ? null : 2 ** 20),
+        ratio: (path) => {
+            sampled.push(path);
+            return 0.25;
+        },
+    });
+    expect(sampled).toEqual([entry.path]);
+    expect(result.skippedShared).toBe(2);
+    expect(result.folders).toEqual([
+        {
+            path: "/fixture/eligible",
+            files: 1,
+            allocated_bytes: 2 ** 20,
+            estimated_bytes_after: 2 ** 18,
+            estimated_saving_bytes: 3 * 2 ** 18,
+            command: "tools compress transparent apply '/fixture/eligible'",
+        },
+    ]);
+});
+
+describeOnDarwin("inline transparent compression", () => {
+    it("counts inline compressed files even when APFS reports zero allocated blocks", async () => {
+        const root = mkdtempSync(join(tmpdir(), "inline-compression-"));
+        const target = join(root, "target");
+        mkdirSync(target);
+        const plain = join(root, "plain.txt");
+        writeFileSync(plain, "a".repeat(128 * 1024));
+        const file = join(target, "inline.txt");
+        execFileSync("ditto", ["--noclone", "--hfsCompression", plain, file], { env: env.getProcessEnv() });
+        const { listCompressionFiles } = await import("./engine");
+        const entries = await listCompressionFiles(target);
+        expect(entries[0].flags & 0x20).toBe(0x20);
+        const result = scanWithCFfi({ path: target });
+        expect(result.compressed).toEqual({
+            files: 1,
+            logical_bytes: 128 * 1024,
+            allocated_bytes: statSync(file).blocks * 512,
+        });
+        expect(result.sparse_files).toBe(0);
+        expect(result.unique_allocated_bytes).toBe(statSync(file).blocks * 512);
+    });
 });

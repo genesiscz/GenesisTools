@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 
 import { noteUsageError, watchToolRun } from "@genesiscz/utils/cli/failures/watch";
+import { answerReadmeFlag } from "@genesiscz/utils/cli/readme-flag";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import pc from "picocolors";
 import { parseCursorArgs } from "./lib/args";
 import { streamCursorAgent } from "./lib/stream-agent";
 
-handleReadmeFlag(import.meta.url);
+await answerReadmeFlag(import.meta.dir);
 // The parser below is stricter than commander on purpose (lib/args.ts), so this entry records its failures itself.
 watchToolRun({ tool: "cursor" });
 

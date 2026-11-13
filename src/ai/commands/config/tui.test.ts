@@ -116,7 +116,7 @@ describe("runConfigTui", () => {
             ...scriptedBackend(),
             select: async (opts) => {
                 mainMenu = opts.options.map((option) => String(option.value));
-                return "quit";
+                return "quit" as never;
             },
         });
 

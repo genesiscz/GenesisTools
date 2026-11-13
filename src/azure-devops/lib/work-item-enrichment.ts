@@ -9,7 +9,7 @@
  */
 
 import { loadWorkItemCache, saveWorkItemCache, storage, WORKITEM_FRESHNESS_MINUTES } from "@app/azure-devops/cache";
-import { AzAuthError, isAuthError } from "@app/azure-devops/cli.utils";
+import { AdoHttpError, AzAuthError, isAuthError } from "@app/azure-devops/cli.utils";
 
 async function createApi(config: import("@app/azure-devops/types").AzureConfig) {
     const { Api } = await import("@app/azure-devops/api");
@@ -159,7 +159,7 @@ export async function enrichWorkItems(
                         throw singleErr;
                     }
                     const msg = singleErr instanceof Error ? singleErr.message : String(singleErr);
-                    if (msg.includes("404") || msg.includes("does not exist")) {
+                    if (singleErr instanceof AdoHttpError && singleErr.status === 404) {
                         logger.warn(`[enrichment] Skipping work item #${id} (404 not found)`);
                     } else {
                         logger.warn(`[enrichment] Failed to fetch #${id}: ${msg}`);

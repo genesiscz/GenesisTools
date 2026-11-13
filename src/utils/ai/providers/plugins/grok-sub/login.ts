@@ -1,6 +1,6 @@
 import { unlink } from "node:fs/promises";
-import * as p from "@clack/prompts";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import { writeGrokAuthEntry } from "../../../grok/auth-write";
 import { GROK_REDIRECT_URI, type GrokTokens, grokOAuth, identityFromGrokTokens } from "../../../grok/oauth";

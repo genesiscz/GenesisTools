@@ -8,6 +8,7 @@ import { takeDetachedMarker } from "@genesiscz/utils/cli/detached";
 import { RUN_ID_ENV, RUN_ROOT_ENV, RUN_TOOL_ENV } from "@genesiscz/utils/cli/failures/run-id";
 import { signalExitStatus } from "@genesiscz/utils/cli/failures/signal-status";
 import { planToolExec, terminateOrphanedChild } from "@genesiscz/utils/cli/tool-exec";
+import { NON_TOOL_FOLDERS, TOOL_ALIASES } from "@genesiscz/utils/cli/tool-names";
 import { skipWorktreeInstall } from "@genesiscz/utils/cli/worktree-install";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
@@ -81,6 +82,10 @@ async function getAvailableTools(srcDir) {
             try {
                 const stats = statSync(entryPath);
                 if (stats.isDirectory()) {
+                    if (NON_TOOL_FOLDERS.has(entry)) {
+                        continue;
+                    }
+
                     // Check for index.ts or index.tsx inside the directory
                     const hasIndexFile = INDEX_FILE_NAMES.some((indexFile) => {
                         const indexFilePath = join(entryPath, indexFile);
@@ -111,29 +116,8 @@ async function getAvailableTools(srcDir) {
 }
 
 /**
- * Names that read like tools but are subcommands of one.
- *
- * `tools calendar --help` answered "Tool not found: calendar" while the
- * CHANGELOG advertised that exact command, so an agent looking for the calendar
- * had nothing to follow (observed 2026-09-09). The short form is made real here
- * rather than corrected in every document that already uses it.
- */
-const TOOL_ALIASES = new Map([
-    ["calendar", ["macos", "calendar"]],
-    ["reminders", ["macos", "reminders"]],
-    // src/voice-memos/ is a stray README from before this tool moved under src/macos (#446.9);
-    // `tools voice-memos` reported "Tool not found" instead of pointing at the real command.
-    ["voice-memos", ["macos", "voice-memos"]],
-    // `tools usage` moved under the tool whose database it reads.
-    ["usage", ["ask", "usage"]],
-]);
-
-/**
- * An alias only applies while no REAL tool answers to that name.
- *
- * A Map, not an object literal: a plain-object lookup resolves inherited keys, so
- * `tools constructor` returned `Object` and died on `alias.slice` before it could
- * reach the "Tool not found" path.
+ * An alias (`TOOL_ALIASES` in @genesiscz/utils/cli/tool-names) only applies while no REAL tool
+ * answers to that name.
  */
 function resolveToolAlias(scriptId, srcDir) {
     const alias = TOOL_ALIASES.get(scriptId);

@@ -254,7 +254,7 @@ async function clearCorruptedCache(model: string): Promise<void> {
 }
 
 /**
- * Ensure env.hf.getKey() is set from AIConfig.
+ * Ensure env.hf.getKey() is set from the AI config.
  * @huggingface/transformers reads env.hf.getKey() in its fetch wrapper (hub.js).
  */
 async function ensureHfToken(): Promise<void> {
@@ -262,9 +262,8 @@ async function ensureHfToken(): Promise<void> {
         return;
     }
 
-    const { AIConfig } = await import("../../../AIConfig");
-    const config = await AIConfig.load();
-    const token = config.getHfToken() ?? env.hf.getKey();
+    const { providerApiKey } = await import("../../../providers/resolve");
+    const token = await providerApiKey("huggingface").catch(() => undefined);
 
     if (token) {
         env.testing.set("HUGGINGFACE_TOKEN", token);
@@ -274,7 +273,7 @@ async function ensureHfToken(): Promise<void> {
 
 /**
  * Prompt the user for a HuggingFace token when a gated model returns Unauthorized.
- * Opens the token page in the browser, saves the token to AIConfig, and sets env.hf.getKey().
+ * Opens the token page in the browser, saves the token to the AI config, and sets env.hf.getKey().
  */
 async function promptForHfToken(model: string): Promise<string | null> {
     const { isInteractive } = await import("@genesiscz/utils/cli");
@@ -283,7 +282,7 @@ async function promptForHfToken(model: string): Promise<string | null> {
         return null;
     }
 
-    const p = await import("@clack/prompts");
+    const p = await import("@genesiscz/utils/prompts/p");
     const pc = (await import("picocolors")).default;
     const HF_TOKEN_URL = "https://huggingface.co/settings/tokens/new?tokenType=fineGrained";
 
@@ -299,6 +298,7 @@ async function promptForHfToken(model: string): Promise<string | null> {
     const openBrowser = await p.confirm({
         message: "Open HuggingFace token page in browser?",
         initialValue: true,
+        cancel: "back",
     });
 
     if (!p.isCancel(openBrowser) && openBrowser) {
@@ -318,6 +318,7 @@ async function promptForHfToken(model: string): Promise<string | null> {
                 return "HuggingFace tokens start with hf_";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(token)) {
@@ -326,10 +327,9 @@ async function promptForHfToken(model: string): Promise<string | null> {
 
     const tokenStr = (token as string).trim();
 
-    // Save to AIConfig as a huggingface account
-    const { AIConfig } = await import("../../../AIConfig");
-    const config = await AIConfig.load();
-    await config.setHfToken(tokenStr);
+    // Save to the AI config as a huggingface account
+    const { setProviderApiKey } = await import("../../../config/account-ops");
+    await setProviderApiKey({ provider: "huggingface", name: "hf-cloud", apiKey: tokenStr });
 
     // Set for current session — @huggingface/transformers reads HF_TOKEN in hub.js
     env.testing.set("HUGGINGFACE_TOKEN", tokenStr);

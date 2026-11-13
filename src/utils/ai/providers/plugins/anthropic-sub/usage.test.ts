@@ -12,7 +12,7 @@ import type { AbsentLimit, AccountUsageSnapshot } from "../../account-features";
  */
 
 interface ResolveCall {
-    name?: string;
+    accountId?: string;
     forceRefresh?: boolean;
     noRefresh?: boolean;
 }
@@ -23,9 +23,9 @@ let tokenCounter = 0;
 let forceRefreshError: Error | undefined;
 
 mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
-    resolveAccountToken: async (name: string, options?: { forceRefresh?: boolean; noRefresh?: boolean }) => {
+    resolveAccountToken: async (accountId: string, options?: { forceRefresh?: boolean; noRefresh?: boolean }) => {
         resolveCalls.push({
-            name,
+            accountId,
             ...(options?.forceRefresh === undefined ? {} : { forceRefresh: options.forceRefresh }),
             ...(options?.noRefresh === undefined ? {} : { noRefresh: options.noRefresh }),
         });
@@ -36,7 +36,11 @@ mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
 
         tokenCounter += 1;
 
-        return { token: `token-${tokenCounter}`, account: { name }, refreshed: options?.forceRefresh === true };
+        return {
+            token: `token-${tokenCounter}`,
+            account: { name: accountId },
+            refreshed: options?.forceRefresh === true,
+        };
     },
     // The plugin's `afterLogin` imports it; no test here logs in, so it is never called.
     clearInvalidGrant: async () => {
@@ -56,21 +60,8 @@ mock.module("@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription", 
     SUBSCRIPTION_RECHECK_MS: 6 * 60 * 60 * 1000,
 }));
 
-let legacyAccounts: Array<{
-    name: string;
-    provider: string;
-    tokens: Record<string, unknown>;
-    subscriptionAnchorOverride?: string;
-}> = [];
-
-mock.module("@genesiscz/utils/ai/AIConfig", () => ({
-    AIConfig: {
-        load: async () => ({
-            getAccountsByProvider: () => legacyAccounts,
-            updateAccount: async () => {},
-        }),
-    },
-}));
+/** The stored accounts `entry()` hands the poll, as the poll core reads them from the store. */
+let storedAccounts: AccountEntry[] = [];
 
 const { anthropicUsage, classifyAnthropicFailure, pollAnthropicAccount, snapshotToAccountUsage, toLimitWindows } =
     await import("./usage");
@@ -87,13 +78,29 @@ const USAGE_BODY = {
     seven_day_sonnet: { utilization: 7, resets_at: "2026-09-10T20:00:00.000Z" },
 };
 
-function entry(name: string): AccountEntry {
-    return { id: `acc_${name}`, name, provider: "anthropic-sub", credentials: {} } as AccountEntry;
+function baseEntry(name: string): AccountEntry {
+    return {
+        id: `acc_${name}`,
+        name,
+        provider: "anthropic-sub",
+        enabled: true,
+        billing: { mode: "subscription" },
+        credentials: {},
+        useEnvApiKey: false,
+    };
 }
 
-function useAccount(name: string, tokens: Record<string, unknown> = {}): void {
-    legacyAccounts = [
-        { name, provider: "anthropic-sub", tokens: { accessToken: "at", refreshToken: "rt", ...tokens } },
+function entry(name: string): AccountEntry {
+    return storedAccounts.find((account) => account.name === name) ?? baseEntry(name);
+}
+
+function useAccount(
+    name: string,
+    credentials: AccountEntry["credentials"] = {},
+    fields: Partial<AccountEntry> = {}
+): void {
+    storedAccounts = [
+        { ...baseEntry(name), credentials: { accessToken: "at", refreshToken: "rt", ...credentials }, ...fields },
     ];
 }
 
@@ -137,7 +144,7 @@ function stubFetch(failures: number): { calls: () => number } {
 afterEach(() => {
     globalThis.fetch = originalFetch;
     resolveCalls.length = 0;
-    legacyAccounts = [];
+    storedAccounts = [];
     tokenCounter = 0;
     forceRefreshError = undefined;
 });
@@ -162,14 +169,7 @@ describe("anthropic-sub usage.poll", () => {
     });
 
     it("the snapshot carries the billing anchor and a calendar-day renewal, and converts back to the anchor", async () => {
-        legacyAccounts = [
-            {
-                name: "work",
-                provider: "anthropic-sub",
-                tokens: { accessToken: "at", refreshToken: "rt" },
-                subscriptionAnchorOverride: "2026-07-07",
-            },
-        ];
+        useAccount("work", {}, { subscriptionAnchorOverride: "2026-07-07" });
         stubFetch(0);
 
         const snapshot = await pollAnthropicAccount(entry("work"));
@@ -188,7 +188,10 @@ describe("anthropic-sub usage.poll", () => {
         const snapshot = await pollAnthropicAccount(entry("personal"), { probe: false });
 
         expect(fetches.calls()).toBe(2);
-        expect(resolveCalls).toEqual([{ name: "personal" }, { name: "personal", forceRefresh: true }]);
+        expect(resolveCalls).toEqual([
+            { accountId: "acc_personal" },
+            { accountId: "acc_personal", forceRefresh: true },
+        ]);
         expect(snapshot.limits.length).toBe(3);
     });
 
@@ -203,7 +206,10 @@ describe("anthropic-sub usage.poll", () => {
         );
 
         expect(fetches.calls()).toBe(1);
-        expect(resolveCalls).toEqual([{ name: "personal" }, { name: "personal", forceRefresh: true }]);
+        expect(resolveCalls).toEqual([
+            { accountId: "acc_personal" },
+            { accountId: "acc_personal", forceRefresh: true },
+        ]);
         expect(err).toBeInstanceOf(Error);
         expect(String(err)).toContain("Usage API 429");
         expect(String(err)).not.toContain("invalid_grant");
@@ -216,7 +222,7 @@ describe("anthropic-sub usage.poll", () => {
         await expect(pollAnthropicAccount(entry("shop"), { probe: true })).rejects.toThrow("429");
 
         expect(fetches.calls()).toBe(1);
-        expect(resolveCalls).toEqual([{ name: "shop", noRefresh: true }]);
+        expect(resolveCalls).toEqual([{ accountId: "acc_shop", noRefresh: true }]);
         expect(resolveCalls.some((call) => call.forceRefresh)).toBe(false);
     });
 
@@ -278,7 +284,7 @@ describe("anthropic-sub usage.poll", () => {
         await expect(pollAnthropicAccount(entry("side"), { orgBlocked: new Set(["side"]) })).rejects.toThrow("429");
 
         expect(fetches.calls()).toBe(1);
-        expect(resolveCalls).toEqual([{ name: "side" }]);
+        expect(resolveCalls).toEqual([{ accountId: "acc_side" }]);
     });
 });
 

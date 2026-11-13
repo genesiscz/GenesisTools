@@ -1,4 +1,3 @@
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { AccountChangedError } from "@genesiscz/utils/ai/config/account-ops";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -16,6 +15,7 @@ import { clearPollGate } from "@genesiscz/utils/ai/usage-poll/poll-gate";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { expandPath } from "@genesiscz/utils/paths";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import { bindsCredentialFiles, defaultLoginAliases, ownFlags } from "./login-flags";
 import { resolveAccountsProvider } from "./select-provider";
@@ -35,7 +35,7 @@ export interface ExternalLoginRunner {
 
 const defaultExternalRunner: ExternalLoginRunner = {
     async confirm() {
-        const answer = await p.confirm({ message: "Run it now?", initialValue: true });
+        const answer = await p.confirm({ message: "Run it now?", initialValue: true, cancel: "back" });
 
         // Ctrl-C is a decline, not a crash: throwing here escaped `runLogin`'s
         // own `!outcome` path and surfaced as a top-level error. Returning false
@@ -361,6 +361,7 @@ async function promptAccountName(store: AiConfigStore, suggested: string): Promi
                 return "Name is required";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(first)) {
@@ -376,6 +377,7 @@ async function promptAccountName(store: AiConfigStore, suggested: string): Promi
     const overwrite = await p.confirm({
         message: `Account "${name}" already exists. Overwrite?`,
         initialValue: false,
+        cancel: "back",
     });
 
     if (p.isCancel(overwrite)) {
@@ -397,6 +399,7 @@ async function promptAccountName(store: AiConfigStore, suggested: string): Promi
                 return `Account "${value.trim()}" already exists`;
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(other)) {

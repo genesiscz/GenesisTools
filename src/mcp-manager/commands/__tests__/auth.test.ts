@@ -2,10 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { authClient } from "../auth.ts";
-
-setupStorageSandbox();
 
 describe("auth client redirect validation", () => {
     const stdinWasTty = process.stdin.isTTY;

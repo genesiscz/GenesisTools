@@ -16,11 +16,7 @@ import { registerShowCommand } from "@app/ms-teams/commands/show";
 import { registerSyncCommand } from "@app/ms-teams/commands/sync";
 import { registerTranscriptsCommand } from "@app/ms-teams/commands/transcripts";
 import { enhanceHelp, isInteractive, runTool } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 program
@@ -56,8 +52,4 @@ program.action(() => {
 
 enhanceHelp(program);
 
-await runTool(program, { tool: "ms-teams" }).catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
-    out.error(message);
-    process.exit(1);
-});
+await runTool(program, { tool: "ms-teams" });

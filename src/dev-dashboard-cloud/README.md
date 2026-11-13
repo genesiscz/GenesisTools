@@ -180,7 +180,8 @@ Which environment the app sees depends on how it starts:
   `tools dev-dashboard-cloud uninstall`, then start it in the background.
 - **"Skipping browser open" after you set `bindHost` to `"0.0.0.0"`.** The tool then opens your
   LAN address, but the app's dev script reads `DD_CLOUD_BIND_HOST`, not the tool's bind host, so it still listens on
-  loopback only. Remove `bindHost` and set `DD_CLOUD_BIND_HOST=0.0.0.0` instead.
+  loopback only. Remove `bindHost`, keep `DD_CLOUD_BIND_HOST=127.0.0.1`, and use a TLS tunnel for another device.
+  Set a unique `DD_CLOUD_AUTH_SECRET` before sharing the tunnel, as described in the LAN warning above.
 - **The app fails at start with `DD_CLOUD_DATABASE_DRIVER=postgres`.** The Postgres path is not wired yet, and the
   app refuses to fall back to SQLite. Unset the variable.
 

@@ -146,6 +146,16 @@
             }
         },
         {
+            "includes": ["src/utils/eval-engine/**"],
+            "linter": {
+                "rules": {
+                    "style": {
+                        "noRestrictedGlobals": "off"
+                    }
+                }
+            }
+        },
+        {
             "includes": ["src/spotify/page/**"],
             "linter": {
                 "rules": {

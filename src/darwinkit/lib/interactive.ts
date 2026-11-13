@@ -1,8 +1,8 @@
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos";
 import { handleCancel, isCancelled, withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import { type CommandDef, commands, GROUP_LABELS, GROUP_ORDER, getCommandsByGroup, type ParamDef } from "./commands";
 import { defaultFormat, formatOutput, type OutputFormat } from "./format";
@@ -24,6 +24,7 @@ export async function runInteractiveMenu(): Promise<void> {
                 label: GROUP_LABELS[g] ?? g,
                 hint: `${grouped.get(g)!.length} commands`,
             })),
+            cancel: "back",
         })
     );
 
@@ -37,6 +38,7 @@ export async function runInteractiveMenu(): Promise<void> {
                 label: c.name,
                 hint: c.description,
             })),
+            cancel: "back",
         })
     );
 
@@ -102,6 +104,7 @@ async function promptForParam(param: ParamDef): Promise<unknown> {
                 message: `${param.name} ${pc.dim(`(${param.description})`)}`,
                 options: param.choices.map((c) => ({ value: c, label: c })),
                 initialValues: param.default as string[] | undefined,
+                cancel: "back",
             });
 
             if (isCancelled(result)) {
@@ -115,6 +118,7 @@ async function promptForParam(param: ParamDef): Promise<unknown> {
             message: `${param.name} ${pc.dim(`(${param.description})`)}`,
             options: param.choices.map((c) => ({ value: c, label: c })),
             initialValue: param.default as string | undefined,
+            cancel: "back",
         });
 
         if (isCancelled(result)) {
@@ -129,6 +133,7 @@ async function promptForParam(param: ParamDef): Promise<unknown> {
             p.confirm({
                 message: `${param.name}? ${pc.dim(`(${param.description})`)}`,
                 initialValue: (param.default as boolean) ?? false,
+                cancel: "back",
             })
         );
     }
@@ -138,6 +143,7 @@ async function promptForParam(param: ParamDef): Promise<unknown> {
             p.text({
                 message: `${param.name} ${pc.dim(`(${param.description}, comma-separated)`)}`,
                 placeholder: param.default ? String(param.default) : undefined,
+                cancel: "back",
             })
         );
         const str = (result as string).trim();
@@ -166,6 +172,7 @@ async function promptForParam(param: ParamDef): Promise<unknown> {
                         return "Must be a number";
                     }
                 },
+                cancel: "back",
             })
         );
 
@@ -188,6 +195,7 @@ async function promptForParam(param: ParamDef): Promise<unknown> {
                     return `${param.name} is required`;
                 }
             },
+            cancel: "back",
         })
     );
 

@@ -2,12 +2,15 @@ import { basename, dirname } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger, setBaseBinding, setConsoleLevel } from "@genesiscz/utils/logger";
 import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
+import { isPromptCancel } from "@genesiscz/utils/prompts/cancel";
 
 import { type Command, CommanderError } from "commander";
 import { setCurrentCommand } from "./current-command";
 import { enhanceHelp, markRequiredOptionsDeep, setSuggestCommandProgram, showHelpAfterErrorDeep } from "./executor";
 import { commandPathFromArgv, noteToolError, secretsFromArgv, watchToolRun } from "./failures/watch";
 import { observeInterrupts } from "./interrupt";
+import { type LazyRegistrar, registerRequestedTrees, requestedCommandFromArgv } from "./lazy-registrars";
+import { answerReadmeFlag } from "./readme-flag";
 import { currentRunLabel, recordRunOnExit, setRunLabel } from "./run-record";
 
 export type Verbosity = 0 | 1 | 2 | 3;
@@ -141,6 +144,13 @@ export interface RunToolOpts {
      * keep the default `ERROR: <message>` report. A formatter that throws falls back to the default report.
      */
     formatError?: (error: unknown) => ToolErrorReport | undefined;
+    /**
+     * The tool's subcommand trees, each imported only when it is the one being run. runTool reads the argv after
+     * `rewriteArgs`: a known name registers its one tree; bare `--help`, no arguments and an unknown name register
+     * every tree, because all three render every description. Registration happens before the help and option
+     * passes below, so a lazily registered tree gets them like an eager one.
+     */
+    registrars?: readonly LazyRegistrar[];
 }
 
 /** What a tool's `formatError` prints instead of the default report. */
@@ -170,24 +180,6 @@ export function isVerbose(): boolean {
 
 function callerDirOf(argv: readonly string[]): string {
     return dirname(argv[1] ?? "");
-}
-
-export function argvRequestsReadme(args: string[]): boolean {
-    // Stop at the conventional `--` separator: everything after it is meant
-    // for a wrapped child command (e.g. `tools task run -- bash --readme`),
-    // not for the wrapper itself. Scanning past it caused the wrapper to
-    // hijack any child whose own flags happened to include --readme.
-    for (const arg of args) {
-        if (arg === "--") {
-            return false;
-        }
-
-        if (arg === "--readme" || arg.startsWith("--readme=")) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 /**
@@ -226,6 +218,10 @@ export function reportUnhandledToolError(error: unknown): void {
     process.exitCode = 1;
 }
 
+/**
+ * The report for an action error: the tool's own `formatError` when it has one for this error, else the default
+ * `ERROR: <message>`. Either way the failure is recorded and the exit code is set; a cancel never reaches here.
+ */
 function reportToolError(error: unknown, formatError: RunToolOpts["formatError"]): void {
     let report: ToolErrorReport | undefined;
 
@@ -307,6 +303,16 @@ export async function runTool(
         });
     }
 
+    const userArgs = opts.rewriteArgs ? opts.rewriteArgs(argv.slice(2)) : argv.slice(2);
+
+    if (opts.registrars) {
+        await registerRequestedTrees({
+            program,
+            registrars: opts.registrars,
+            requested: requestedCommandFromArgv([...argv.slice(0, 2), ...userArgs]),
+        });
+    }
+
     if (!opts.ignoreParams?.includes("verbose")) {
         addGlobalVerboseOption(program, { trace: opts.trace === true });
     }
@@ -330,11 +336,7 @@ export async function runTool(
 
     setSuggestCommandProgram(program);
 
-    const readmeInArgv = argvRequestsReadme(argv.slice(2));
-    if (readmeInArgv) {
-        const { printReadmeAndExit } = await import("@genesiscz/utils/readme");
-        printReadmeAndExit(callerDirOf(argv));
-    }
+    await answerReadmeFlag(callerDirOf(argv), argv.slice(2));
 
     program.hook("preAction", async (_thisCommand, actionCommand) => {
         setCurrentCommand(actionCommand);
@@ -351,14 +353,19 @@ export async function runTool(
     setBaseBinding({ tool });
 
     try {
-        await program.parseAsync(opts.rewriteArgs ? [...argv.slice(0, 2), ...opts.rewriteArgs(argv.slice(2))] : argv);
+        await program.parseAsync(opts.rewriteArgs ? [...argv.slice(0, 2), ...userArgs] : argv);
     } catch (error) {
         // a test passes its own argv and gets the error back; commander's own errors keep their exit path
         if (argv !== process.argv || error instanceof CommanderError) {
             throw error;
         }
 
-        reportToolError(error, opts.formatError);
+        // A cancelled prompt is the user's choice, not a failure: exit 0, print nothing, record no failure.
+        if (isPromptCancel(error)) {
+            process.exitCode = 0;
+        } else {
+            reportToolError(error, opts.formatError);
+        }
     }
 
     return { tool, verbosity: _verbosity, isVerbose: _verbosity >= 1, command: program };

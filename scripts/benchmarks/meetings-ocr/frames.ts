@@ -7,7 +7,8 @@ import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { foldText, textSimilarity } from "@genesiscz/utils/macos/ocr-boxes";
-import { captureSync, listPsTable, parseCpuTime } from "@genesiscz/utils/process/ps";
+import { captureSync } from "@genesiscz/utils/process/capture";
+import { listPsTable, parseCpuTime } from "@genesiscz/utils/process/ps";
 import type { CapturedFrame } from "@genesiscz/utils/screen-recorder/types";
 import { changePercent, motionBoxes, signatureOf } from "./motion";
 

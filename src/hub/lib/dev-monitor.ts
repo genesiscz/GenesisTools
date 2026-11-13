@@ -1,12 +1,26 @@
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import {
+    closeSync,
+    existsSync,
+    fstatSync,
+    mkdirSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    readSync,
+    statSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { setTimeout as delay } from "node:timers/promises";
+import { failureLogPath, failuresDir, isToolFailure } from "@genesiscz/utils/cli/failures/record";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { listPsRows } from "@genesiscz/utils/process/ps";
-import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { listProcessRows } from "@genesiscz/utils/process/processes";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { genesisToolsDir, toolDataDir } from "@genesiscz/utils/storage/root";
 
 const log = logger.child({ component: "hub:dev-monitor" });
 
@@ -28,7 +42,8 @@ export interface DevEvent {
         | "relay"
         | "crash"
         | "slow"
-        | "storm";
+        | "storm"
+        | "deadline";
     /** The time the source line carries ("01:46:40.479"), or the file's time for a crash or a hang file. */
     time: string;
     text: string;
@@ -90,15 +105,21 @@ export function classifyProfileLine(
     };
 }
 
+/** A process a profile line names. */
+export interface NamedProcess {
+    pid: number;
+    command: string;
+}
+
 /** One process snapshot for a polling pass, only when a qualifying timer names a PID. */
 export async function classifyProfileLines({
     lines,
     options = DEFAULT_CLASSIFY,
-    readProcesses = listPsRows,
+    readProcesses = listProcessRows,
 }: {
     lines: string[];
     options?: ClassifyOptions;
-    readProcesses?: typeof listPsRows;
+    readProcesses?: (options?: { timeoutMs?: number }) => Promise<NamedProcess[]>;
 }): Promise<DevEvent[]> {
     const eligible = lines.filter((line) => classifyProfileLine(line, options) !== null);
 
@@ -219,6 +240,79 @@ export function classifyRelayLine(line: string): DevEvent | null {
 
     const time = line.match(/T(\d\d:\d\d:\d\d)/)?.[1] ?? "";
     return { kind: "relay", time, text: line.replace(/^\S+\s+/, "").slice(0, 300) };
+}
+
+/** `git fetch origin` for `/usr/bin/git fetch origin --prune`: the program's name and its first two words that are no flag. */
+export function shortChildCommand(command: readonly string[]): string {
+    const [program = "", ...args] = command;
+    const words = args.filter((word) => !word.startsWith("-")).slice(0, 2);
+    return [basename(program), ...words].join(" ").slice(0, 80);
+}
+
+/**
+ * A line of the failures log as an event when it is a command deadline (an `Executor` call that outlived its bound),
+ * else null. No other failure kind becomes a live event: agents' usage errors alone would flood the stream.
+ */
+export function classifyFailureLine(line: string): DevEvent | null {
+    let parsed: unknown;
+    try {
+        parsed = SafeJSON.parse(line, { strict: true });
+    } catch (error) {
+        log.debug({ error }, "dev monitor: a failures line that is not JSON");
+        return null;
+    }
+
+    if (!isToolFailure(parsed) || parsed.kind !== "deadline" || !parsed.child) {
+        return null;
+    }
+
+    const child = parsed.child;
+    const short = shortChildCommand(child.command);
+    const bound = child.defaulted
+        ? "default"
+        : (child.reason ?? (child.timeoutMs === 0 ? "no deadline" : "a bare bound"));
+    return {
+        kind: "deadline",
+        time: new Date(parsed.at).toTimeString().slice(0, 8),
+        text: `${short} killed after ${child.timeoutMs}ms (${bound}), run by tools ${parsed.command ?? parsed.tool}: ${toolCommand("genesis-tools logs show", parsed.id)}`,
+        key: `deadline:${short}`,
+    };
+}
+
+/** A hang capture the monitor counts: `hang-<stamp>.txt`; the daily pass stores an older one as `.txt.zst`. */
+export function isHangCaptureName(name: string): boolean {
+    return name.startsWith("hang-") && name.endsWith(".txt");
+}
+
+/**
+ * A hang capture of a past window in either form: `hang-<stamp>.txt`, or the `hang-<stamp>.txt.zst` the daily pass
+ * makes of one older than yesterday (`HANGS_PLAIN_DAYS`). Only for a summary: the live watcher keeps
+ * {@link isHangCaptureName}, since a new `.zst` there is a compression, not a new hang.
+ */
+export function isStoredHangCaptureName(name: string): boolean {
+    return isHangCaptureName(name) || (name.startsWith("hang-") && name.endsWith(".txt.zst"));
+}
+
+/** `hang-2026-11-10-210512.txt`: HangWatch.swift's local `yyyy-MM-dd-HHmmss` stamp, plain or `.zst`. */
+const HANG_CAPTURE_STAMP = /^hang-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})\.txt(?:\.zst)?$/;
+
+/**
+ * When a hang was captured, in ms: the local stamp in its name, or null for a name without one. The file's mtime
+ * cannot say it for a `.zst`, which the daily pass writes days after the capture.
+ */
+export function hangCaptureTime(name: string): number | null {
+    const stamp = HANG_CAPTURE_STAMP.exec(name);
+    if (!stamp) {
+        return null;
+    }
+
+    const [year, month, day, hour, minute, second] = stamp.slice(1).map(Number);
+    return new Date(year, month - 1, day, hour, minute, second).getTime();
+}
+
+/** A macOS crash report of a Genesis app. */
+export function isCrashReportName(name: string): boolean {
+    return /^Genesis/.test(name) && /\.(ips|crash)$/.test(name);
 }
 
 /** The app and the exception of a macOS crash report (`.ips`): its first line is JSON, the rest a JSON body. */
@@ -444,7 +538,49 @@ export function devMonitorSources() {
         relayLog: genesisToolsDir("app", "link-relay.log"),
         hangs: genesisToolsDir("logs", "hangs"),
         crashes: join(homedir(), "Library", "Logs", "DiagnosticReports"),
+        /** Today's failures log, resolved again on every read so the monitor follows it past midnight. */
+        failuresLog: () => failureLogPath(formatLocalDate(new Date())),
+        failuresDir: failuresDir(),
+        /** When a monitor last ran, for the summary of what happened while none did. */
+        state: toolDataDir("hub", "dev-monitor-state.json"),
     };
+}
+
+/** The monitor writes its state at most this often while it runs, and once more when it stops. */
+const STATE_EVERY_MS = 60_000;
+
+/** What the monitor keeps between runs: when one last ran. */
+export interface MonitorState {
+    lastRunAt: string;
+}
+
+/** The saved state, or null on a first run or a file that does not read. */
+export function readMonitorState(path: string): MonitorState | null {
+    if (!existsSync(path)) {
+        return null;
+    }
+
+    try {
+        const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+        if (typeof parsed !== "object" || parsed === null || !("lastRunAt" in parsed)) {
+            return null;
+        }
+
+        const at = parsed.lastRunAt;
+        return typeof at === "string" && Number.isFinite(Date.parse(at)) ? { lastRunAt: at } : null;
+    } catch (error) {
+        log.debug({ error, path }, "dev monitor: the state file does not read");
+        return null;
+    }
+}
+
+export function writeMonitorState(path: string, at: Date): void {
+    try {
+        mkdirSync(dirname(path), { recursive: true });
+        atomicWriteFileSync(path, `${SafeJSON.stringify({ lastRunAt: at.toISOString() } satisfies MonitorState)}\n`);
+    } catch (error) {
+        log.warn({ error, path }, "dev monitor: the state file was not written");
+    }
 }
 
 /** Runs until `signal` aborts. Reads by interval: app-perf.log is written by several processes at once. */
@@ -454,15 +590,18 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
     const genesisPerf = new TextTail(sources.genesisPerfLog, options.fromStart);
     const relay = new TextTail(sources.relayLog, options.fromStart);
     const profile = new TextTail(sources.profileLog, options.fromStart);
-    const crashes = new FolderWatch(sources.crashes, (name) => /^Genesis/.test(name) && /\.(ips|crash)$/.test(name));
+    const crashes = new FolderWatch(sources.crashes, isCrashReportName);
     // Hang files are announced by their app-perf.log line already; a file with no line means the
     // process could not log any more, which is the case worth a separate event.
     // `.txt` only: the daily pass stores captures older than yesterday as `hang-….txt.zst`, which is not a new hang.
-    const hangs = new FolderWatch(sources.hangs, (name) => name.startsWith("hang-") && name.endsWith(".txt"));
-    const genesisHangs = new FolderWatch(
-        sources.genesisHangs,
-        (name) => name.startsWith("hang-") && name.endsWith(".txt")
-    );
+    const hangs = new FolderWatch(sources.hangs, isHangCaptureName);
+    const genesisHangs = new FolderWatch(sources.genesisHangs, isHangCaptureName);
+    const failures = new TextTail(sources.failuresLog, options.fromStart);
+    let stateAt = Number.NEGATIVE_INFINITY;
+    const saveState = () => {
+        stateAt = Date.now();
+        writeMonitorState(sources.state, new Date(stateAt));
+    };
     const announced = new Set<string>();
     const batcher = new EventBatcher(options.minDelayMs, options.emit);
 
@@ -494,6 +633,13 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
             }
         }
 
+        for (const line of failures.read()) {
+            const event = classifyFailureLine(line);
+            if (event) {
+                batcher.add(event);
+            }
+        }
+
         for (const path of [...hangs.fresh(), ...genesisHangs.fresh()]) {
             if (!announced.has(path)) {
                 batcher.add({
@@ -515,6 +661,11 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
         }
 
         batcher.flush(Date.now());
+
+        if (Date.now() - stateAt >= STATE_EVERY_MS) {
+            saveState();
+        }
+
         try {
             await delay(options.intervalMs, undefined, { signal: options.signal });
         } catch (error) {
@@ -526,4 +677,5 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
 
     // Events still waiting out the batch delay go out before the monitor stops.
     batcher.flush(Number.POSITIVE_INFINITY);
+    saveState();
 }

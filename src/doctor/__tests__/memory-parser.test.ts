@@ -12,8 +12,8 @@ import {
 } from "@app/doctor/analyzers/memory";
 import { analysisDirFor } from "@app/doctor/lib/paths";
 import type { EngineEvent } from "@app/doctor/lib/types";
+import * as captureModule from "@genesiscz/utils/process/capture";
 import * as processOs from "@genesiscz/utils/process/os";
-import * as ps from "@genesiscz/utils/process/ps";
 
 const FIXTURES = join(import.meta.dir, "fixtures");
 const RUN_IDS: string[] = [];
@@ -125,7 +125,7 @@ describe("MemoryAnalyzer smoke", () => {
 });
 it("top RSS processes use one Windows snapshot even when the limit excludes rows", async () => {
     const platform = spyOn(processOs, "processPlatform").mockReturnValue("win32");
-    const capture = spyOn(ps, "captureSync").mockReturnValue({
+    const capture = spyOn(captureModule, "captureSync").mockReturnValue({
         stderr: "",
         status: 0,
         stdout: '[{"ProcessId":81001,"Name":"worker.exe","CommandLine":"worker.exe --job fixture","WorkingSetSize":1024},{"ProcessId":81002,"Name":"helper.exe","WorkingSetSize":2048}]',

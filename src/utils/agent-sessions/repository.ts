@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type { SessionMetadataRecord } from "./cache-types";
 import { unresolvedHistorySourceKey } from "./identity";
 import { boundHistoryMetadata } from "./metadata";
+import { historyProjectSql } from "./project-scope";
 import type { BoundedMetadataField, HistoryMetadataRecord } from "./types";
 
 export interface CachedHistoryMetadata extends SessionMetadataRecord {
@@ -33,6 +34,54 @@ export interface HistorySourceSnapshot {
     statsInputsRevision?: string | null;
     statisticsStatus: string;
     generation: number;
+}
+
+/** The fields the catalog's scope test reads, and nothing else: no titles, prompts or bounded-field lists. */
+export type HistoryScopeFacts = Pick<
+    CachedHistoryMetadata,
+    | "providerId"
+    | "sourceKey"
+    | "filePath"
+    | "root"
+    | "sessionId"
+    | "nativeId"
+    | "isSubagent"
+    | "cwd"
+    | "project"
+    | "projectDirectory"
+    | "mtime"
+    | "firstTimestamp"
+    | "lastTimestamp"
+>;
+
+/** The catalog scope terms SQL applies exactly, each as the catalog's scope test applies it to a row. */
+export interface HistoryScopeQuery {
+    providerId: string;
+    /** Rows whose file mtime is at or after this epoch ms. */
+    mtimeFrom?: number;
+    filePaths?: string[];
+    /** Rows with exactly this cwd. */
+    cwd?: string;
+    /** Rows of this project, matched as `historyProjectMatches` matches it. */
+    project?: string;
+    /** Rows whose session id, native id or source key is none of these. */
+    excludeSessions?: string[];
+}
+
+interface ScopeFactsRow {
+    provider: string;
+    source_key: string;
+    file_path: string;
+    root: string | null;
+    session_id: string | null;
+    native_id: string | null;
+    is_subagent: number;
+    cwd: string | null;
+    project: string | null;
+    project_directory: string | null;
+    mtime: number;
+    first_timestamp: string | null;
+    last_timestamp: string | null;
 }
 
 interface MetadataRow {
@@ -335,6 +384,109 @@ export class HistoryRepository {
         }
 
         return metadata;
+    }
+
+    /** The WHERE terms of a scope query, over `session_metadata m` joined to `file_index f`. */
+    private scopeWhere(query: HistoryScopeQuery): { clauses: string[]; params: Array<string | number> } {
+        // The unary `+` for one path: see `listMetadata`.
+        const clauses = [query.filePaths?.length === 1 ? "+m.provider = ?" : "m.provider = ?"];
+        const params: Array<string | number> = [query.providerId];
+
+        if (query.filePaths?.length === 1) {
+            clauses.push("m.file_path = ?");
+            params.push(query.filePaths[0]);
+        } else if (query.filePaths) {
+            clauses.push("m.file_path IN (SELECT value FROM json_each(?))");
+            params.push(SafeJSON.stringify(query.filePaths));
+        }
+
+        if (query.mtimeFrom !== undefined) {
+            clauses.push("m.mtime >= ?");
+            params.push(query.mtimeFrom);
+        }
+
+        if (query.cwd !== undefined) {
+            clauses.push("m.cwd = ?");
+            params.push(query.cwd);
+        }
+
+        if (query.project !== undefined) {
+            const project = historyProjectSql({ providerId: query.providerId, requested: query.project });
+            clauses.push(project.sql);
+            params.push(...project.params);
+        }
+
+        if (query.excludeSessions?.length) {
+            // `IS NOT 1`: a NULL id matches no excluded id, as `===` against null is false.
+            const ids = SafeJSON.stringify(query.excludeSessions);
+            for (const column of ["m.session_id", "m.native_id", "m.source_key"]) {
+                clauses.push(`(${column} IN (SELECT value FROM json_each(?))) IS NOT 1`);
+                params.push(ids);
+            }
+        }
+
+        return { clauses, params };
+    }
+
+    /**
+     * How many rows of the scope query have a recorded root among `roots`, and how many of those are sub-agents,
+     * counted by SQLite: no row is read out.
+     */
+    countMetadata(query: HistoryScopeQuery & { roots: string[] }): { total: number; subagents: number } {
+        const { clauses, params } = this.scopeWhere(query);
+        const counted = this.db
+            .query<{ total: number; subagents: number }, Array<string | number>>(`
+                SELECT count(*) AS total, coalesce(sum(m.is_subagent = 1), 0) AS subagents FROM session_metadata m
+                LEFT JOIN file_index f ON f.source_key = m.source_key
+                WHERE ${clauses.join(" AND ")} AND f.root IN (SELECT value FROM json_each(?))
+            `)
+            .get(...params, SafeJSON.stringify(query.roots));
+
+        return { total: counted?.total ?? 0, subagents: counted?.subagents ?? 0 };
+    }
+
+    /**
+     * The scope facts of the scope query's rows. `outsideRoots` keeps the rows whose recorded root is none of them or
+     * unknown, the ones `countMetadata` leaves out; `limit` reads that many rows, newest mtime first.
+     */
+    listScopeFacts(query: HistoryScopeQuery & { outsideRoots?: string[]; limit?: number }): HistoryScopeFacts[] {
+        const { clauses, params } = this.scopeWhere(query);
+
+        if (query.outsideRoots) {
+            clauses.push("(f.root IS NULL OR f.root NOT IN (SELECT value FROM json_each(?)))");
+            params.push(SafeJSON.stringify(query.outsideRoots));
+        }
+
+        const limit = query.limit === undefined ? "" : " ORDER BY m.mtime DESC LIMIT ?";
+        if (query.limit !== undefined) {
+            params.push(query.limit);
+        }
+
+        const rows = this.db
+            .query<ScopeFactsRow, Array<string | number>>(`
+                SELECT m.provider, m.source_key, m.file_path, f.root, m.session_id, m.native_id, m.is_subagent, m.cwd,
+                    m.project, m.project_directory, m.mtime, m.first_timestamp, m.last_timestamp
+                FROM session_metadata m
+                LEFT JOIN file_index f ON f.source_key = m.source_key
+                WHERE ${clauses.join(" AND ")}${limit}
+            `)
+            .all(...params);
+
+        return rows.map((row) => ({
+            providerId: row.provider,
+            sourceKey: row.source_key,
+            filePath: row.file_path,
+            root: row.root,
+            sessionId: row.session_id,
+            nativeId: row.native_id,
+            isSubagent: row.is_subagent === 1,
+            cwd: row.cwd,
+            project: row.project,
+            projectDirectory: row.project_directory,
+            mtime: row.mtime,
+            firstTimestamp: row.first_timestamp,
+            lastTimestamp: row.last_timestamp,
+        }));
     }
 
     getMetadataBySourceKey(options: { providerId: string; sourceKey: string }): CachedHistoryMetadata | null {

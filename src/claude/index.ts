@@ -1,13 +1,12 @@
 #!/usr/bin/env bun
 import { runTool } from "@genesiscz/utils/cli";
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
-import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
-import { logger, out } from "@genesiscz/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
-import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
+import { clackBackend } from "@genesiscz/utils/prompts/p/clack-backend";
 
 // Use inquirer backend for this tool
-p.setBackend(inquirerBackend);
+p.setBackend(clackBackend);
 
 import { Command } from "commander";
 import { CLAUDE_REGISTRARS } from "./registrars";
@@ -20,31 +19,10 @@ program
     .version("1.0.0")
     .showHelpAfterError(true);
 
-await registerRequestedTrees({
-    program,
-    registrars: CLAUDE_REGISTRARS,
-    requested: requestedCommandFromArgv(process.argv),
-});
-
 addGlobalVerboseOption(program);
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "claude" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes("ExitPromptError") || message === "Cancelled") {
-            await out.flush();
-            process.exit(0);
-        }
-        // No "Error: " prefix here: the logger's own "ERROR:" level label already carries the
-        // severity, and prefixing the message too printed "ERROR: Error: <message>" (#453.1).
-        logger.error(message);
-        // Drain before exiting: `out.*` writes are fire-and-forget, so exiting in
-        // the same tick can lose the diagnostic entirely (PR #360 review t12).
-        await out.flush();
-        process.exit(1);
-    }
+    await runTool(program, { tool: "claude", registrars: CLAUDE_REGISTRARS });
 }
 
 main().catch((err) => {

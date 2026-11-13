@@ -1,4 +1,6 @@
 import { appendFileSync, chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import type { StoredOAuthTokens } from "@genesiscz/utils/ai/config/account-ops";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { retry } from "@genesiscz/utils/async";
 import { claudeLoginCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
@@ -337,19 +339,23 @@ export function readJournalRecovery(
 }
 
 /**
- * List all Anthropic subscription accounts from unified AI config.
- * Returns empty array if no accounts configured.
+ * List all Anthropic subscription accounts from unified AI config: names and labels only.
+ * Metadata, so it never unlocks the vault. Returns an empty array if none is configured.
  */
-export async function listAvailableAccounts(): Promise<SubscriptionAccount[]> {
-    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-    const config = await AIConfig.load();
-    return config.getAccountsByProvider("anthropic-sub").map((acc) => ({
-        name: acc.name,
-        label: acc.label,
-        accessToken: acc.tokens.accessToken ?? "",
-        refreshToken: acc.tokens.refreshToken,
-        expiresAt: acc.tokens.expiresAt,
-    }));
+export async function listAvailableAccounts(): Promise<Array<Pick<SubscriptionAccount, "name" | "label">>> {
+    const { AiConfigStore } = await import("@genesiscz/utils/ai/config/AiConfigStore");
+    const store = await AiConfigStore.load();
+    return store.accounts({ provider: "anthropic-sub" }).map((acc) => ({ name: acc.name, label: acc.label }));
+}
+
+/**
+ * The account a name or id selects, else the `ask` default (else the first account).
+ * Found once by name or id, then addressed by its immutable id from here on.
+ */
+async function selectAccount(accountName: string | undefined): Promise<AccountEntry | undefined> {
+    const { AiConfigStore } = await import("@genesiscz/utils/ai/config/AiConfigStore");
+    const store = await AiConfigStore.load();
+    return accountName ? store.account(accountName) : store.defaultAccount("ask");
 }
 
 /**
@@ -357,9 +363,9 @@ export async function listAvailableAccounts(): Promise<SubscriptionAccount[]> {
  * Refreshes expired tokens automatically with retry on transient errors.
  *
  * Guarantees:
- * - Acquires config file lock before any mutation
- * - Re-reads config from disk inside lock (prevents TOCTOU)
- * - Detects if another process already refreshed (prevents double-refresh of single-use tokens)
+ * - The refresh runs inside `storeRefreshedTokens`, under the config file lock
+ * - The stored refresh token is re-read inside the lock and compared with the one read
+ *   here: when another process already refreshed, its pair is used and nothing is spent
  * - Retries only errors where the single-use refresh token provably wasn't
  *   consumed (5xx, ECONNREFUSED) up to 2 times with 1s fixed delay
  * - Detects invalid_grant, applies a per-account cooldown, and provides an
@@ -370,13 +376,9 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
     const forceRefresh = options?.forceRefresh ?? false;
     const lockTimeout = options?.lockTimeout ?? NETWORKED_LOCK_WAIT_MS;
 
-    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-    const aiConfig = await AIConfig.load();
-    const name = accountName ?? aiConfig.getDefaultAccount("ask")?.name;
+    const entry = await selectAccount(accountName);
 
-    const acc = name ? aiConfig.getAccount(name) : undefined;
-
-    if (!name || !acc) {
+    if (!entry) {
         throw new Error(
             accountName
                 ? `Account "${accountName}" not found in AI config`
@@ -384,28 +386,38 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
         );
     }
 
-    const staleAccessToken = options?.staleAccessToken ?? acc.tokens.accessToken;
+    const name = entry.name;
+    const { resolveSecret } = await import("@genesiscz/utils/security");
+    // The token path: the secrets are resolved here, where they are spent.
+    const tokens: StoredOAuthTokens = {
+        accessToken: await resolveSecret(entry.credentials.accessToken),
+        refreshToken: await resolveSecret(entry.credentials.refreshToken),
+        expiresAt: entry.credentials.expiresAt,
+        refreshExpiresAt: entry.credentials.refreshExpiresAt,
+    };
+    const staleAccessToken = options?.staleAccessToken ?? tokens.accessToken;
+    const asResolved = (pair: StoredOAuthTokens, refreshed: boolean): ResolvedToken => ({
+        token: pair.accessToken ?? "",
+        account: {
+            name,
+            label: entry.label,
+            accessToken: pair.accessToken ?? "",
+            refreshToken: pair.refreshToken,
+            expiresAt: pair.expiresAt,
+        },
+        refreshed,
+    });
 
     // Fast path: token is valid and no force-refresh requested
-    if (!forceRefresh && acc.tokens.expiresAt && !claudeOAuth.needsRefresh(acc.tokens.expiresAt)) {
-        return {
-            token: acc.tokens.accessToken ?? "",
-            account: {
-                name,
-                label: acc.label,
-                accessToken: acc.tokens.accessToken ?? "",
-                refreshToken: acc.tokens.refreshToken,
-                expiresAt: acc.tokens.expiresAt,
-            },
-            refreshed: false,
-        };
+    if (!forceRefresh && tokens.expiresAt && !claudeOAuth.needsRefresh(tokens.expiresAt)) {
+        return asResolved(tokens, false);
     }
 
     // Diagnosis stops here, BEFORE the lock and before anything is logged as an
     // initiated refresh: past this line the single-use grant is spent.
     if (options?.noRefresh) {
-        const reason = acc.tokens.expiresAt
-            ? `expired ${new Date(acc.tokens.expiresAt).toISOString()}`
+        const reason = tokens.expiresAt
+            ? `expired ${new Date(tokens.expiresAt).toISOString()}`
             : "has no recorded expiry";
         throw new Error(
             `Access token for "${name}" ${reason} and refresh is disabled for diagnosis ` +
@@ -416,146 +428,125 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
     const caller = forceRefresh ? "force-refresh" : "token-expired";
     logger.info(`[token-refresh] ${name}: initiating refresh (reason: ${caller})`);
 
-    // Slow path: acquire lock, re-read from disk, refresh
-    const refreshed = await aiConfig.withLock(async (data) => {
-        const diskAccount = data.accounts.find((a) => a.name === name);
-
-        if (!diskAccount) {
-            throw new Error(`Account "${name}" not found in config`);
-        }
-
-        // Check if another process already refreshed
-        if (diskAccount.tokens.expiresAt && !claudeOAuth.needsRefresh(diskAccount.tokens.expiresAt)) {
-            if (!forceRefresh || diskAccount.tokens.accessToken !== staleAccessToken) {
-                logger.info(
-                    `[token-refresh] ${name}: skipped — another process already refreshed ` +
-                        `(expires ${new Date(diskAccount.tokens.expiresAt).toISOString()})`
-                );
-                return diskAccount;
-            }
-        }
-
-        if (!diskAccount.tokens.refreshToken) {
-            logger.warn(`[token-refresh] ${name}: no refresh token available`);
-            return null;
-        }
-
-        // Cooldown is checked here — after the disk re-read — not before the lock: if another
-        // process re-logged in, the fresh-token detection above already returned the new token.
-        // Only a refresh token that is still dead on disk hits the cooldown, so a re-login is
-        // picked up immediately instead of being blocked for the full window.
-        const lastInvalidGrant = invalidGrantSince(name);
-
-        if (lastInvalidGrant && Date.now() - lastInvalidGrant < INVALID_GRANT_COOLDOWN_MS) {
-            throw new Error(`Token expired (invalid_grant). Run: ${claudeLoginCommand(name)}`);
-        }
-
-        // Refresh with retry on transient errors (5xx, network)
-        let newTokens: OAuthTokens;
-        try {
-            newTokens = await retry(() => claudeOAuth.refresh(diskAccount.tokens.refreshToken!), {
-                maxAttempts: 3,
-                delay: 1000,
-                backoff: "fixed",
-                shouldRetry: isTransientRefreshError,
-                onRetry: (attempt, retryDelay) => {
-                    logger.warn(`[token-refresh] ${name}: retry ${attempt}/2 after ${retryDelay}ms`);
-                },
-            });
-        } catch (err) {
-            if (String(err).includes("invalid_grant")) {
-                // The consumed token may be a stale revert of a journaled rotation —
-                // try the journal's newest pair once before declaring the grant dead.
-                const recovery = readJournalRecovery(name, diskAccount.tokens.refreshToken);
-
-                if (recovery) {
-                    logger.warn(
-                        `[token-refresh] ${name}: invalid_grant on stored token, ` +
-                            `attempting recovery with newer journaled refresh token`
+    const { storeRefreshedTokens } = await import("@genesiscz/utils/ai/config/account-ops");
+    const outcome = await storeRefreshedTokens(
+        entry.id,
+        tokens.refreshToken,
+        async (stored) => {
+            // The same pair, but already fresh on disk (an expiry-only rewrite): nothing to spend.
+            if (stored.expiresAt && !claudeOAuth.needsRefresh(stored.expiresAt)) {
+                if (!forceRefresh || stored.accessToken !== staleAccessToken) {
+                    logger.info(
+                        `[token-refresh] ${name}: skipped — the stored token is fresh ` +
+                            `(expires ${new Date(stored.expiresAt).toISOString()})`
                     );
-                    try {
-                        newTokens = await claudeOAuth.refresh(recovery.refreshToken);
-                        logger.info(`[token-refresh] ${name}: journal recovery succeeded`);
-                    } catch (recoveryErr) {
-                        await markInvalidGrant(name);
-                        logger.warn(
-                            `[token-refresh] ${name}: journal recovery failed: ` +
-                                `${recoveryErr instanceof Error ? recoveryErr.message : recoveryErr}`
-                        );
-                        throw new Error(`Token expired (invalid_grant). Run: ${claudeLoginCommand(name)}`);
-                    }
-                } else {
-                    await markInvalidGrant(name);
-                    throw new Error(`Token expired (invalid_grant). Run: ${claudeLoginCommand(name)}`);
+                    return null;
                 }
-            } else {
-                // `cause` keeps the transport code (ENOTFOUND, ConnectionRefused) so the
-                // poll gate can tell a dead network from a dead account.
-                throw new Error(
-                    `Failed to refresh token for "${name}": ${err instanceof Error ? err.message : err}. ` +
-                        `Run \`${claudeLoginCommand(name)}\` if this persists.`,
-                    { cause: err }
-                );
             }
-        }
 
-        journalTokenRotation(name, diskAccount.tokens, newTokens);
+            const refreshToken = stored.refreshToken;
+            if (!refreshToken) {
+                logger.warn(`[token-refresh] ${name}: no refresh token available`);
+                return null;
+            }
 
-        // Persist by mutating data in place — withLock handles save automatically
-        const idx = data.accounts.findIndex((a) => a.name === name);
-        data.accounts[idx] = {
-            ...diskAccount,
-            tokens: {
-                ...diskAccount.tokens,
-                accessToken: newTokens.accessToken,
-                refreshToken: newTokens.refreshToken,
-                expiresAt: newTokens.expiresAt,
-                refreshExpiresAt: newTokens.refreshExpiresAt ?? diskAccount.tokens.refreshExpiresAt,
-            },
-        };
+            // Cooldown is checked here — after the disk re-read — not before the lock: if another
+            // process re-logged in, the compare inside `storeRefreshedTokens` already returned the
+            // new pair. Only a refresh token that is still dead on disk hits the cooldown, so a
+            // re-login is picked up immediately instead of being blocked for the full window.
+            const lastInvalidGrant = invalidGrantSince(name);
 
+            if (lastInvalidGrant && Date.now() - lastInvalidGrant < INVALID_GRANT_COOLDOWN_MS) {
+                throw new Error(`Token expired (invalid_grant). Run: ${claudeLoginCommand(name)}`);
+            }
+
+            const newTokens = await refreshWithRecovery(name, refreshToken);
+            journalTokenRotation(name, stored, newTokens);
+            return newTokens;
+        },
+        { lockTimeout }
+    );
+
+    if (outcome.status === "already-refreshed") {
+        logger.info(`[token-refresh] ${name}: skipped — another process already refreshed`);
+        return asResolved(outcome.tokens, true);
+    }
+
+    if (outcome.status === "stored") {
         await clearInvalidGrant(name);
         logger.info(
             `[token-refresh] ${name}: refreshed successfully ` +
-                `(new expires ${new Date(newTokens.expiresAt).toISOString()})`
+                `(new expires ${new Date(outcome.tokens.expiresAt ?? 0).toISOString()})`
         );
+        return asResolved(outcome.tokens, true);
+    }
 
-        return data.accounts[idx];
-    }, lockTimeout);
+    // Kept: the stored pair is fresh, or there is no refresh token to spend.
+    if (outcome.tokens.expiresAt && !claudeOAuth.needsRefresh(outcome.tokens.expiresAt)) {
+        return asResolved(outcome.tokens, true);
+    }
 
-    // No refresh token available — if the token is expired, fail clearly
-    if (!refreshed) {
-        if (acc.tokens.expiresAt && claudeOAuth.needsRefresh(acc.tokens.expiresAt)) {
+    if (tokens.expiresAt && claudeOAuth.needsRefresh(tokens.expiresAt)) {
+        throw new Error(
+            `Token for "${name}" is expired and no refresh token is available. Run: ${claudeLoginCommand(name)}`
+        );
+    }
+
+    return asResolved(tokens, false);
+}
+
+/**
+ * Spend `refreshToken` once, retrying only errors that provably did not consume it. On
+ * `invalid_grant` the consumed token may be a stale revert of a journaled rotation, so the
+ * journal's newest pair is tried once before the grant is declared dead.
+ */
+async function refreshWithRecovery(name: string, refreshToken: string): Promise<OAuthTokens> {
+    try {
+        return await retry(() => claudeOAuth.refresh(refreshToken), {
+            maxAttempts: 3,
+            delay: 1000,
+            backoff: "fixed",
+            shouldRetry: isTransientRefreshError,
+            onRetry: (attempt, retryDelay) => {
+                logger.warn(`[token-refresh] ${name}: retry ${attempt}/2 after ${retryDelay}ms`);
+            },
+        });
+    } catch (err) {
+        if (!String(err).includes("invalid_grant")) {
+            // `cause` keeps the transport code (ENOTFOUND, ConnectionRefused) so the
+            // poll gate can tell a dead network from a dead account.
             throw new Error(
-                `Token for "${name}" is expired and no refresh token is available. ` +
-                    `Run: ${claudeLoginCommand(name)}`
+                `Failed to refresh token for "${name}": ${err instanceof Error ? err.message : err}. ` +
+                    `Run \`${claudeLoginCommand(name)}\` if this persists.`,
+                { cause: err }
             );
         }
 
-        return {
-            token: acc.tokens.accessToken ?? "",
-            account: {
-                name,
-                label: acc.label,
-                accessToken: acc.tokens.accessToken ?? "",
-                refreshToken: acc.tokens.refreshToken,
-                expiresAt: acc.tokens.expiresAt,
-            },
-            refreshed: false,
-        };
-    }
+        const recovery = readJournalRecovery(name, refreshToken);
 
-    return {
-        token: refreshed.tokens.accessToken ?? "",
-        account: {
-            name,
-            label: refreshed.label ?? acc.label,
-            accessToken: refreshed.tokens.accessToken ?? "",
-            refreshToken: refreshed.tokens.refreshToken,
-            expiresAt: refreshed.tokens.expiresAt,
-        },
-        refreshed: true,
-    };
+        if (!recovery) {
+            await markInvalidGrant(name);
+            throw new Error(`Token expired (invalid_grant). Run: ${claudeLoginCommand(name)}`);
+        }
+
+        logger.warn(
+            `[token-refresh] ${name}: invalid_grant on stored token, ` +
+                `attempting recovery with newer journaled refresh token`
+        );
+
+        try {
+            const recovered = await claudeOAuth.refresh(recovery.refreshToken);
+            logger.info(`[token-refresh] ${name}: journal recovery succeeded`);
+            return recovered;
+        } catch (recoveryErr) {
+            await markInvalidGrant(name);
+            logger.warn(
+                `[token-refresh] ${name}: journal recovery failed: ` +
+                    `${recoveryErr instanceof Error ? recoveryErr.message : recoveryErr}`
+            );
+            throw new Error(`Token expired (invalid_grant). Run: ${claudeLoginCommand(name)}`);
+        }
+    }
 }
 
 export interface InferenceToken {
@@ -579,14 +570,13 @@ export async function resolveInferenceToken(
     accountName?: string,
     options?: Pick<ResolveOptions, "noRefresh">
 ): Promise<InferenceToken> {
-    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-    const aiConfig = await AIConfig.load();
-    const name = accountName ?? aiConfig.getDefaultAccount("ask")?.name;
-    const acc = name ? aiConfig.getAccount(name) : undefined;
-    const longLived = acc?.tokens.longLivedToken;
+    const acc = await selectAccount(accountName);
+    const { resolveSecret } = await import("@genesiscz/utils/security");
+    const longLived = acc ? await resolveSecret(acc.credentials.longLivedToken) : undefined;
+    const usable = { longLivedToken: longLived, longLivedTokenExpiresAt: acc?.credentials.longLivedTokenExpiresAt };
 
-    if (name && acc && longLived && longLivedTokenUsable(acc.tokens) && !rejectedLongLivedTokens.has(longLived)) {
-        return { token: longLived, kind: "long-lived", accountName: name, label: acc.label };
+    if (acc && longLived && longLivedTokenUsable(usable) && !rejectedLongLivedTokens.has(longLived)) {
+        return { token: longLived, kind: "long-lived", accountName: acc.name, label: acc.label };
     }
 
     const resolved = await resolveAccountToken(accountName, options);

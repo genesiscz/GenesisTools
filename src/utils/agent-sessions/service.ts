@@ -9,7 +9,7 @@ import type { ListingFreshness } from "./listing-freshness";
 import { haystackMatch } from "./match";
 import { validateHistoryFilters } from "./native-match";
 import { historyPathUnderRoot, historyProjectMatches } from "./project-scope";
-import type { CachedHistoryMetadata } from "./repository";
+import type { CachedHistoryMetadata, HistoryScopeFacts } from "./repository";
 import { historyCandidates, matchSnippets } from "./search-candidates";
 import {
     listingIndexSlice,
@@ -79,7 +79,7 @@ function topUpReadLimit(newest: number): number {
  * from 2026. A session overlaps the window when it ended at or after `since` and started at or
  * before `until`; `mtime` stands in for a missing end, and for a missing start.
  */
-function sessionOverlapsDateRange(metadata: CachedHistoryMetadata, filters: AgentSearchFilters): boolean {
+function sessionOverlapsDateRange(metadata: HistoryScopeFacts, filters: AgentSearchFilters): boolean {
     if (!filters.since && !filters.until) {
         return true;
     }
@@ -105,7 +105,7 @@ function isDatabaseBusy(error: unknown): boolean {
     return code.includes("SQLITE_BUSY") || /database is locked|database table is locked/i.test(error.message);
 }
 
-function metadataInScope(metadata: CachedHistoryMetadata, filters: AgentSearchFilters): boolean {
+function metadataInScope(metadata: HistoryScopeFacts, filters: AgentSearchFilters): boolean {
     if ((filters.agentsOnly && !metadata.isSubagent) || (filters.excludeAgents && metadata.isSubagent)) {
         return false;
     }
@@ -202,6 +202,23 @@ function resultFromMetadata(metadata: CachedHistoryMetadata, kind: string): Hist
     };
 }
 
+/** When a catalog read refreshes the index first (see `HistoryService.catalog`). */
+export interface CatalogRefreshOptions {
+    maxDiscoveryAgeMs?: number;
+    refresh?: boolean;
+}
+
+/** SQL's `COALESCE(first_timestamp, '') DESC`, as the repository sorts an unlimited listing. */
+function byFirstTimestampDesc(a: CachedHistoryMetadata, b: CachedHistoryMetadata): number {
+    const left = a.firstTimestamp ?? "";
+    const right = b.firstTimestamp ?? "";
+    if (left === right) {
+        return 0;
+    }
+
+    return left < right ? 1 : -1;
+}
+
 /** One provider-independent query path. The owner supplies an initialized canonical repository. */
 /**
  * The listing refreshes of the default index (the services with a `freshness` marker) running in this process, by
@@ -239,7 +256,7 @@ export class HistoryService {
         const issues = [...synchronized.report.issues];
         const metadata = repository.metadata.getMetadataBySessionId({ providerId, sessionId });
 
-        if (!metadata || !reader.scan) {
+        if (!metadata) {
             return { results: [], issues };
         }
 
@@ -309,10 +326,6 @@ export class HistoryService {
         filters.signal?.throwIfAborted();
 
         try {
-            if (!reader.readRecords) {
-                throw new Error(`${reader.kind} does not implement original record hydration`);
-            }
-
             const locators = [...new Set([...candidate.match.matchedLocators, ...candidate.match.contextLocators])];
             const selected = new Map(candidate.match.selectedRecords.map((record) => [record.locator, record]));
             const canReuse = locators.every((locator) => selected.has(locator));
@@ -418,7 +431,81 @@ export class HistoryService {
      * long; a brand-new session appears once the next refresh runs. `refresh: false` never refreshes,
      * for a diagnostic, which must not write the index.
      */
-    async catalog(filters: AgentSearchFilters = {}, options: { maxDiscoveryAgeMs?: number; refresh?: boolean } = {}) {
+    async catalog(filters: AgentSearchFilters = {}, options: CatalogRefreshOptions = {}) {
+        const { scope, synchronized } = await this.refreshCatalog(filters, options);
+        return { metadata: this.readCatalog(scope), report: synchronized.report, reindexed: synchronized.reindexed };
+    }
+
+    /**
+     * How many sessions the catalog scope holds, sub-agents included, so a caller that prints counts does not read
+     * every row to count them. The same scope as `catalog`, without the agent flags and without the limit; the
+     * options are `catalog`'s too, so a caller that has just listed passes `refresh: false` and reads the index the
+     * listing refreshed.
+     */
+    async catalogCounts(
+        filters: AgentSearchFilters = {},
+        options: CatalogRefreshOptions = {}
+    ): Promise<{ total: number; subagents: number }> {
+        const unbounded = { ...filters, excludeAgents: undefined, agentsOnly: undefined, limit: undefined };
+        const { scope } = await this.refreshCatalog(unbounded, options);
+        return this.countCatalog(scope);
+    }
+
+    /**
+     * The rows `readCatalog` returns for a scope without agent flags or a limit, counted without hydrating them.
+     * SQLite counts the rows whose recorded root is a scope root; only the rest (a root recorded elsewhere or not at
+     * all) and the bounded top-up are read, as their scope facts alone, and tested by the same `metadataInScope`. A
+     * scope with `since` or `until` tests every row that way: its dates are parsed as `Date` parses them, which
+     * SQLite's date functions do not match for every text a row may hold.
+     */
+    private countCatalog(filters: AgentSearchFilters): { total: number; subagents: number } {
+        const roots = (filters.sourceRoots ?? this.options.roots).map(canonicalRoot);
+        const scoped = { ...filters, excludeAgents: undefined, agentsOnly: undefined, sourceRoots: roots };
+        const { repository, providerId } = this.options;
+        const query = {
+            providerId,
+            mtimeFrom: filters.mtimeFrom,
+            filePaths: filters.filePaths,
+            cwd: !filters.all && filters.cwd ? filters.cwd : undefined,
+            project: !filters.all && filters.project ? filters.project : undefined,
+            excludeSessions: filters.excludeSessions,
+        };
+        const counts = { total: 0, subagents: 0 };
+        const add = (rows: HistoryScopeFacts[]) => {
+            for (const row of rows) {
+                counts.total++;
+                counts.subagents += row.isSubagent ? 1 : 0;
+            }
+        };
+        const inScope = (row: HistoryScopeFacts) => metadataInScope(row, scoped);
+
+        if (filters.since || filters.until) {
+            add(repository.metadata.listScopeFacts(query).filter(inScope));
+        } else {
+            const counted = repository.metadata.countMetadata({ ...query, roots });
+            counts.total += counted.total;
+            counts.subagents += counted.subagents;
+            add(repository.metadata.listScopeFacts({ ...query, outsideRoots: roots }).filter(inScope));
+        }
+
+        if (filters.mtimeFrom !== undefined && filters.newest) {
+            // `readCatalog`'s top-up: the same newest rows by mtime, the in-scope ones the window above did not hold.
+            const from = filters.mtimeFrom;
+            const newest = repository.metadata.listScopeFacts({
+                providerId,
+                filePaths: filters.filePaths,
+                limit: topUpReadLimit(filters.newest),
+            });
+            add(newest.filter((row) => row.mtime < from && inScope(row)).slice(0, filters.newest));
+        }
+
+        return counts;
+    }
+
+    private async refreshCatalog(
+        filters: AgentSearchFilters,
+        options: CatalogRefreshOptions
+    ): Promise<{ scope: AgentSearchFilters; synchronized: { report: NativeIndexChanges; reindexed: boolean } }> {
         const logicalPaths = filters.filePaths;
         if (filters.filePaths !== undefined) {
             filters = { ...filters, filePaths: filters.filePaths.map(canonicalRoot) };
@@ -488,12 +575,15 @@ export class HistoryService {
             }
         }
 
-        const scoped = {
-            ...filters,
-            sourceRoots: (filters.sourceRoots ?? this.options.roots).map(canonicalRoot),
-            excludeAgents: false,
-            agentsOnly: false,
-        };
+        return { scope: filters, synchronized };
+    }
+
+    /**
+     * The indexed rows of a catalog scope, newest first by `firstTimestamp`: the agent flags and the project, date
+     * and root filters apply to each row, and `limit` cuts after the sort.
+     */
+    private readCatalog(filters: AgentSearchFilters): CachedHistoryMetadata[] {
+        const scoped = { ...filters, sourceRoots: (filters.sourceRoots ?? this.options.roots).map(canonicalRoot) };
         const { repository, providerId } = this.options;
         const inScope = (entry: CachedHistoryMetadata) => metadataInScope(entry, scoped);
         const metadata = repository.metadata
@@ -521,9 +611,10 @@ export class HistoryService {
                 .filter((entry) => inScope(entry) && !seen.has(entry.sourceKey))
                 .slice(0, filters.newest);
             metadata.push(...newest);
+            metadata.sort(byFirstTimestampDesc);
         }
 
-        return { metadata, report: synchronized.report, reindexed: synchronized.reindexed };
+        return filters.limit == null ? metadata : metadata.slice(0, Math.max(0, filters.limit));
     }
 
     /** How many indexed sessions still carry the pre-index identity the migration synthesized. */
@@ -738,7 +829,7 @@ export class HistoryService {
                     ? sources[0]
                     : sources.find((candidate) => candidate.metadata?.sessionId === cached.nativeId);
 
-            if (!source || !reader.readMetadata) {
+            if (!source) {
                 continue;
             }
 

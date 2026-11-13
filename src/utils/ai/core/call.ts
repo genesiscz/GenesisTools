@@ -412,10 +412,13 @@ export async function resolveCallTarget(options: {
             providerType,
             systemPromptPrefix: providerChoice.provider.systemPromptPrefix,
             label: `${providerChoice.provider.name}/${providerChoice.model.id}`,
-            // This path predates account ids: `DetectedProvider` carries a human
-            // account NAME. Usage rows treat the field as an opaque key, so a
-            // mixed corpus groups into two buckets instead of losing rows.
-            accountId: providerChoice.provider.account?.name ?? providerChoice.provider.name,
+            // Usage rows key on the immutable account id. The name is only the
+            // fallback for a `DetectedProvider` built without one (no account at
+            // all falls back to the provider name), so such a row still lands.
+            accountId:
+                providerChoice.provider.account?.id ??
+                providerChoice.provider.account?.name ??
+                providerChoice.provider.name,
             provider: providerType,
             modelId: providerChoice.model.id,
             app: options.app,
