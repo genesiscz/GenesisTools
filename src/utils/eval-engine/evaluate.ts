@@ -31,6 +31,8 @@ export interface TranscriptLine {
     role: "user" | "assistant";
     text: string;
     toolCalls: ToolCall[];
+    /** On an assistant line whose tool calls the system could not observe: its `toolCalls` may be incomplete. */
+    toolEvidence?: "unavailable";
 }
 
 /** What a check is evaluated against. Built by the conversation, never by a project. */

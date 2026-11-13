@@ -143,7 +143,12 @@ export interface ConversationInput<TResolved> {
 function evaluationTranscript(turns: readonly TurnRecord[]): TranscriptLine[] {
     return turns.flatMap((turn): TranscriptLine[] => [
         { role: "user", text: turn.user.text, toolCalls: [] },
-        { role: "assistant", text: turn.reply, toolCalls: turn.toolCalls },
+        {
+            role: "assistant",
+            text: turn.reply,
+            toolCalls: turn.toolCalls,
+            ...(turn.toolEvidence === "unavailable" ? { toolEvidence: "unavailable" as const } : {}),
+        },
     ]);
 }
 
