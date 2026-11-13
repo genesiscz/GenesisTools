@@ -149,7 +149,7 @@ async function evidence(
                         deviceCandidates: lineDeviceCandidates({
                             record: current,
                             atSec: line.fromSec,
-                            micShare: line.energyMicShare ?? line.channel.micShare ?? undefined,
+                            micShare: Math.max(line.energyMicShare ?? 0, line.channel.micShare ?? 0),
                             liveName: line.liveName,
                         }),
                     })),
@@ -217,14 +217,14 @@ async function evidence(
                             deviceCandidates: lineDeviceCandidates({
                                 record,
                                 atSec: line.startSec,
-                                micShare: line.energyMic ?? line.micShare,
+                                micShare: Math.max(line.energyMic ?? 0, line.micShare ?? 0),
                                 liveName: line.liveName,
                             }),
                             winner:
                                 lineDeviceCandidates({
                                     record,
                                     atSec: line.startSec,
-                                    micShare: line.energyMic ?? line.micShare,
+                                    micShare: Math.max(line.energyMic ?? 0, line.micShare ?? 0),
                                     liveName: line.liveName,
                                 }).length > 1
                                     ? undefined
