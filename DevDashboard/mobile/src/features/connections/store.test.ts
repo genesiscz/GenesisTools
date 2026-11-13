@@ -33,10 +33,20 @@ function transport(tier: string, host = `${tier}.example.test`) {
     };
 }
 
+/** When set, the next key-value write waits for it (an attempt stalled while it saves). */
+let stallNextWrite: Promise<void> | null = null;
+
 mock.module("expo-sqlite/kv-store", () => ({
     default: {
         getItem: async (k: string) => kv.get(k) ?? null,
         setItem: async (k: string, v: string) => {
+            const stall = stallNextWrite;
+            stallNextWrite = null;
+
+            if (stall) {
+                await stall;
+            }
+
             kv.set(k, v);
         },
         removeItem: async (k: string) => {
@@ -148,6 +158,47 @@ describe("connection session — probe before commit", () => {
         expect(late).toEqual({ ok: false, failure: "error", error: "A newer connection attempt replaced this one." });
         expect(useConnectionStore.getState().transport?.baseUrl()).toBe("http://machine-fast.test");
         expect((await loadConnections()).map((c) => c.host)).toEqual(["machine-fast.test"]);
+    });
+
+    it("an attempt stalled while it saves cannot publish over a newer one that connected meanwhile", async () => {
+        let release = () => {};
+        stallNextWrite = new Promise<void>((resolve) => (release = resolve));
+
+        const slow = useConnectionStore.getState().connect(lanInput("machine-slow.test"));
+        await Bun.sleep(5);
+        const fast = useConnectionStore.getState().connect(lanInput("machine-fast.test"));
+        await Bun.sleep(5);
+        release();
+        const [, won] = await Promise.all([slow, fast]);
+        if (!won.ok) {
+            throw new Error("the newer connect failed");
+        }
+
+        expect(useConnectionStore.getState().transport?.baseUrl()).toBe("http://machine-fast.test");
+        expect(useConnectionStore.getState().activeId).toBe(won.id);
+        expect(await getActiveConnectionId()).toBe(won.id);
+    });
+
+    it("a removal while an activation saves waits for it, so the removed Mac is not left live", async () => {
+        const kept = await useConnectionStore.getState().connect(lanInput("machine-kept.test"));
+        const doomed = await useConnectionStore.getState().connect(lanInput("machine-doomed.test"));
+        if (!kept.ok || !doomed.ok) {
+            throw new Error("setup connects failed");
+        }
+
+        await useConnectionStore.getState().activate(kept.id);
+        let release = () => {};
+        stallNextWrite = new Promise<void>((resolve) => (release = resolve));
+        const pending = useConnectionStore.getState().activate(doomed.id);
+        await Bun.sleep(5);
+        const removing = useConnectionStore.getState().remove(doomed.id);
+        await Bun.sleep(5);
+        release();
+        await Promise.all([pending, removing]);
+
+        expect(useConnectionStore.getState().activeId).not.toBe(doomed.id);
+        expect(useConnectionStore.getState().transport?.baseUrl()).not.toBe("http://machine-doomed.test");
+        expect((await loadConnections()).map((c) => c.host)).toEqual(["machine-kept.test"]);
     });
 
     it("an activate whose row is removed during its probe commits nothing", async () => {

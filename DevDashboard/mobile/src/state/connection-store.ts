@@ -75,6 +75,20 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
         error: "A newer connection attempt replaced this one.",
     };
 
+    /**
+     * The save-and-publish phase of every connect, activate, edit and removal, run one at a time. An attempt checks
+     * that it is still the latest INSIDE this phase, so nothing can save or publish between its check and its commit:
+     * the saved active id and the live transport always belong to the same attempt. An attempt that passed its check
+     * finishes; a newer one that started meanwhile runs after it and wins.
+     */
+    let committing: Promise<unknown> = Promise.resolve();
+
+    function exclusive<T>(run: () => Promise<T>): Promise<T> {
+        const next = committing.then(run);
+        committing = next.catch(() => undefined);
+        return next;
+    }
+
     /** The commit step: the transport is live from here on. */
     function commit(id: string, transport: Transport, connections: SavedConnection[]): void {
         set((state) => ({
@@ -114,18 +128,20 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
                 const transport = await row.build(target);
                 const failed = await probed(input.tier, transport);
 
-                if (attempt !== latestAttempt) {
-                    return SUPERSEDED;
-                }
+                return await exclusive(async (): Promise<ConnectResult> => {
+                    if (attempt !== latestAttempt) {
+                        return SUPERSEDED;
+                    }
 
-                if (failed) {
-                    return failed;
-                }
+                    if (failed) {
+                        return failed;
+                    }
 
-                const id = await upsertConnection(input);
-                await markActivated(id);
-                commit(id, transport, await loadConnections());
-                return { ok: true, id };
+                    const id = await upsertConnection(input);
+                    await markActivated(id);
+                    commit(id, transport, await loadConnections());
+                    return { ok: true, id };
+                });
             } catch (err) {
                 return { ok: false, failure: "error", error: err instanceof Error ? err.message : String(err) };
             }
@@ -143,22 +159,25 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
                 const transport = await buildTransportFor(conn);
                 const failed = await probed(conn.tier, transport);
 
-                if (attempt !== latestAttempt) {
-                    return SUPERSEDED;
-                }
+                return await exclusive(async (): Promise<ConnectResult> => {
+                    if (attempt !== latestAttempt) {
+                        return SUPERSEDED;
+                    }
 
-                // remove() may have deleted the row while the probe ran: a removed Mac never becomes the live one.
-                if (!(await getConnection(id))) {
-                    return { ok: false, failure: "error", error: `Connection ${id} was removed while it connected.` };
-                }
+                    // remove() may have deleted the row while the probe ran: a removed Mac never becomes the live
+                    // one. A removal after this check waits for this commit, then drops the connection again.
+                    if (!(await getConnection(id))) {
+                        return { ok: false, failure: "error", error: `Connection ${id} was removed while it connected.` };
+                    }
 
-                if (failed) {
-                    return failed;
-                }
+                    if (failed) {
+                        return failed;
+                    }
 
-                await markActivated(id);
-                commit(id, transport, await loadConnections());
-                return { ok: true, id };
+                    await markActivated(id);
+                    commit(id, transport, await loadConnections());
+                    return { ok: true, id };
+                });
             } catch (err) {
                 return { ok: false, failure: "error", error: err instanceof Error ? err.message : String(err) };
             }
@@ -211,35 +230,39 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => {
         },
 
         async updateConnection(id, patch) {
-            await updateSavedConnection(id, patch);
-            const connections = await loadConnections();
-            set({ connections });
+            await exclusive(async () => {
+                await updateSavedConnection(id, patch);
+                const connections = await loadConnections();
+                set({ connections });
 
-            // If we edited the live connection, rebuild its transport so the change takes effect now.
-            if (get().activeId === id) {
-                const conn = connections.find((c) => c.id === id);
+                // If we edited the live connection, rebuild its transport so the change takes effect now.
+                if (get().activeId === id) {
+                    const conn = connections.find((c) => c.id === id);
 
-                if (conn) {
-                    commit(id, await buildTransportFor(conn), connections);
+                    if (conn) {
+                        commit(id, await buildTransportFor(conn), connections);
+                    }
                 }
-            }
+            });
         },
 
         async remove(id) {
-            await deleteSavedConnection(id);
-            const connections = await loadConnections();
-            const activeId = await getActiveConnectionId();
-            set({ connections, activeId });
+            await exclusive(async () => {
+                await deleteSavedConnection(id);
+                const connections = await loadConnections();
+                const activeId = await getActiveConnectionId();
+                set({ connections, activeId });
 
-            // Removing the active connection drops the app back to the connect gate.
-            if (get().transport && activeId === null) {
-                set((state) => ({
-                    tier: null,
-                    transport: null,
-                    status: "disconnected",
-                    sessionGeneration: state.sessionGeneration + 1,
-                }));
-            }
+                // Removing the active connection drops the app back to the connect gate.
+                if (get().transport && activeId === null) {
+                    set((state) => ({
+                        tier: null,
+                        transport: null,
+                        status: "disconnected",
+                        sessionGeneration: state.sessionGeneration + 1,
+                    }));
+                }
+            });
         },
     };
 });
