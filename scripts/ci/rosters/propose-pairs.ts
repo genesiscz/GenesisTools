@@ -6,7 +6,7 @@
  * X is the pattern to keep out, and the module that declares Y owns it. A vanished shape alone proves nothing; a
  * shape that was swapped for the same replacement again and again is a pattern that moved.
  */
-import { isTestPath, type Shape, shapeKey, shapesOf, type TreeUsage } from "./propose-shapes";
+import { isTestPath, proposerSpawn, type Shape, shapeKey, shapesOf, type TreeUsage } from "./propose-shapes";
 
 export interface PairStats {
     from: Shape;
@@ -265,7 +265,7 @@ export function rankPairs(
 
 /** A `git grep -P` of the declaration of a name; the files that hold it, exported ones first. */
 function declaringFiles(pattern: string): string[] {
-    const grep = Bun.spawnSync(["git", "grep", "-l", "-P", "-e", pattern, "--", "src/*.ts", "src/*.tsx"]);
+    const grep = proposerSpawn(["git", "grep", "-l", "-P", "-e", pattern, "--", "src/*.ts", "src/*.tsx"]);
 
     if (grep.exitCode !== 0 && grep.exitCode !== 1) {
         throw new Error(`git grep failed: ${grep.stderr.toString()}`);

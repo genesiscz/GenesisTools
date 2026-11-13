@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { collectShapes, rankCandidates, scaffold, shadowedCandidates, shapesOf } from "./propose";
+import { collectShapes, grepPattern, rankCandidates, scaffold, shadowedCandidates, shapesOf } from "./propose";
 import { census } from "./propose-census";
 import { collectPairs, rankPairs } from "./propose-pairs";
 
@@ -221,5 +221,19 @@ describe("scaffold of a literal", () => {
         expect(text).toContain('import { defineRoster, literal } from "./define";');
         expect(text).toContain("matcher: literal(/^radio-queue\\.jsonl$/),");
         expect(text).toContain("allowedIn: /^src\\/radio\\//,");
+    });
+});
+
+describe("grepPattern: the tree count does not depend on the quote style", () => {
+    test("an import or argv head matches with either quote, and a call keeps its parenthesis", () => {
+        const imported = new RegExp(grepPattern({ kind: "import", value: "@genesiscz/utils/json" }));
+        expect(imported.test('import { SafeJSON } from "@genesiscz/utils/json";')).toBe(true);
+        expect(imported.test("import { SafeJSON } from '@genesiscz/utils/json';")).toBe(true);
+        expect(imported.test('import { x } from "@genesiscz/utils/json5";')).toBe(false);
+        const argv = new RegExp(grepPattern({ kind: "argv", value: "launchctl" }));
+        expect(argv.test("spawn(['launchctl', 'list'])")).toBe(true);
+        const call = new RegExp(grepPattern({ kind: "call", value: "fs.unlinkSync" }));
+        expect(call.test("fs.unlinkSync(path)")).toBe(true);
+        expect(call.test("fsXunlinkSync(path)")).toBe(false);
     });
 });

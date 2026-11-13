@@ -25,6 +25,7 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { census } from "./propose-census";
 import { collectPairs, ownerOfShape, rankPairs } from "./propose-pairs";
@@ -33,6 +34,7 @@ import {
     countInTree,
     isTestPath,
     parseShape,
+    proposerSpawn,
     type Shape,
     type ShapeKind,
     shapeKey,
@@ -64,7 +66,7 @@ export interface Candidate {
     remaining: number;
     score: number;
 }
-export { grepNeedle, shapeKey, shapesOf } from "./propose-shapes";
+export { grepPattern, shapeKey, shapesOf } from "./propose-shapes";
 
 /** Reads a unified diff with zero context and counts every shape on its removed and added lines. Pure. */
 export function collectShapes(diff: string, skip: (file: string) => boolean): Map<string, ShapeStats> {
@@ -195,8 +197,16 @@ export function shadowedCandidates(report: ShadowedReport): Candidate[] {
     return candidates;
 }
 
+/** A whole-tree refactor scan took about a minute on 2026-11-12; five is its deadline. */
+const SHADOWED_TIMEOUT_MS = 5 * 60_000;
+
 function readShadowed(): ShadowedReport {
-    const run = Bun.spawnSync(["tools", "ts", "refactors", "src", "--include", "shadowed", "--format", "json"]);
+    // This checkout's own `tools`: a bare `tools` resolves off PATH to the main checkout, so a worktree would scan
+    // with the main branch's code.
+    const run = proposerSpawn(
+        [toolsEntrypoint(), "ts", "refactors", "src", "--include", "shadowed", "--format", "json"],
+        SHADOWED_TIMEOUT_MS
+    );
 
     if (run.exitCode !== 0) {
         throw new Error(`tools ts refactors failed: ${run.stderr.toString().slice(-400)}`);
@@ -271,7 +281,7 @@ function fail(message: string): never {
 }
 
 function readDiff(range: string): string {
-    const diff = Bun.spawnSync(["git", "diff", "-U0", "--no-color", "--no-ext-diff", range, "--", "*.ts", "*.tsx"]);
+    const diff = proposerSpawn(["git", "diff", "-U0", "--no-color", "--no-ext-diff", range, "--", "*.ts", "*.tsx"]);
 
     if (diff.exitCode !== 0) {
         fail(`git diff ${range} failed: ${diff.stderr.toString()}`);
@@ -282,7 +292,7 @@ function readDiff(range: string): string {
 
 /** Tracked non-test TypeScript under src/, each file read once. */
 function readSourceTree(): Map<string, string> {
-    const list = Bun.spawnSync(["git", "ls-files", "-z", "--", "src/*.ts", "src/*.tsx"]);
+    const list = proposerSpawn(["git", "ls-files", "-z", "--", "src/*.ts", "src/*.tsx"]);
 
     if (list.exitCode !== 0) {
         fail(`git ls-files failed: ${list.stderr.toString()}`);
