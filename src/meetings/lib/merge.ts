@@ -32,14 +32,14 @@ import { sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-merge");
 
-/** The one field a merge sorts rows by: `ocr.jsonl` and `audio.jsonl` rows both carry their wall time. */
+/** The one field a merge sorts rows by: `frames.jsonl`, `ocr.jsonl` and `audio.jsonl` rows all carry their wall time. */
 const rowTime = z.looseObject({ at: z.string().optional() });
 
 /** The title `record start` gives a meeting without a calendar entry (`commands/record.ts`). */
 const GENERATED_TITLE = /^Meeting \d{1,2}:\d{2}$/;
 
 /** Files a merge moves from one meeting folder into the other, each with its rows. */
-const ROW_FILES = ["ocr.jsonl", "audio.jsonl"] as const;
+const ROW_FILES = ["frames.jsonl", "ocr.jsonl", "audio.jsonl"] as const;
 const MOVED_FOLDERS = ["frames", "audio"] as const;
 /**
  * Files made from the frames (the editor project, the recorder's last state). They describe one record's frames only,
@@ -131,7 +131,18 @@ function refusal(from: MeetingRecord, into: MeetingRecord, store: MeetingStore):
  * A clone of every file under `source` at `destination` (a copy where the volume cannot clone). Meeting folders hold
  * screen captures and transcripts, so every folder is owner-only (0700) and every file keeps its owner bits only.
  */
-function cloneTree(source: string, destination: string): void {
+export function cloneTree(source: string, destination: string): void {
+    const sourceStat = lstatSync(source);
+    if (sourceStat.isFile()) {
+        cloneOrCopy({ source, destination, mode: sourceStat.mode & 0o700, mayCopy: true });
+        return;
+    }
+
+    if (!sourceStat.isDirectory()) {
+        log.warn({ path: source }, "not a file or folder; left out of the merge backup");
+        return;
+    }
+
     mkdirSync(destination, { recursive: true, mode: 0o700 });
 
     for (const name of readdirSync(source)) {

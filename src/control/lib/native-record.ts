@@ -3,7 +3,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
-import type { CaptureSpec } from "./capture-plan";
+import { type CaptureSpec, NATIVE_FRAMES_MAX_SECONDS, NATIVE_MOVIE_MAX_SECONDS } from "./capture-plan";
 
 export const CAPTURE_CANVAS_VALUES = ["crop", "display"] as const;
 export const CAPTURE_CODEC_VALUES = ["h264", "prores4444"] as const;
@@ -175,7 +175,7 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
     }
 
     const numbers: [string, number | undefined, number, number][] = [
-        ["duration", cap.duration, 0.1, 180],
+        ["duration", cap.duration, 0.1, cap.videoOut ? NATIVE_MOVIE_MAX_SECONDS : NATIVE_FRAMES_MAX_SECONDS],
         ["activeFps", cap.activeFps, 0.5, 120],
         ["idleFps", cap.idleFps, 0.1, 5],
         ["threshold", cap.threshold, 0, 100],
@@ -241,11 +241,8 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         throw new Error("audioSidecar must be a boolean");
     }
 
-    if (
-        cap.cursorTrack !== undefined &&
-        (typeof cap.cursorTrack !== "string" || !cap.cursorTrack || cap.mode === "isolated")
-    ) {
-        throw new Error("cursorTrack needs a file path and the screen, window or region mode");
+    if (cap.cursorTrack !== undefined && (typeof cap.cursorTrack !== "string" || !cap.cursorTrack)) {
+        throw new Error("cursorTrack needs a file path");
     }
 
     if (

@@ -148,7 +148,14 @@ final class HubDigestModel: ObservableObject {
     @Published private(set) var digest: HubDigest?
     @Published private(set) var loading = false
     @Published private(set) var error: String?
-    @Published var notice: String?
+    let notices = NoticeStackModel()
+    @Published var notice: String? {
+        didSet {
+            guard let notice else { return }
+            let failed = notice.hasPrefix("Export failed") || notice.hasPrefix("Could not")
+            notices.push(HubNotice(notice, failed ? .error : .success).stacked)
+        }
+    }
     @Published private(set) var exporting = false
     private var generation = 0
 
@@ -237,16 +244,13 @@ struct HubDigestPanel: View {
         HubDailyCard(width: 860, close: close) {
             header
                 .padding(12)
-            if let notice = model.notice {
-                NoticePill(text: notice, isError: notice.hasPrefix("Export failed") || notice.hasPrefix("Could not")) { model.notice = nil }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-            }
+
             Divider().background(Color.jarvisBorder)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if let error = model.error {
-                        Text(verbatim: error).foregroundColor(ReviewPalette.removed)
+                        FailureInline(message: error, outcome: "The digest did not load", action: "Open the digest",
+                                      area: "hub", identifier: "digest.failure")
                     }
                     if let digest = model.digest {
                         sections(digest)
@@ -277,6 +281,7 @@ struct HubDigestPanel: View {
             HubForecastStore.shared.loadIfStale(maxAge: 30)
             HubUsageDigestStore.shared.loadIfStale(day: model.day)
         }
+        .noticeStack(model.notices)
         .onChange(of: model.day) { _, day in HubUsageDigestStore.shared.loadIfStale(day: day) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Today digest"))

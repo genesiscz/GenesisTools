@@ -17,7 +17,7 @@ import type { AxResult } from "./runner";
  */
 
 /** Mirrors the `--prepare` allowlist in WorkflowArguments.validateAction; native-protocol.test.ts compares the two. */
-export const PREPARABLE_ACTIONS = ["press", "click", "key", "type", "paste", "select", "set"] as const;
+export const PREPARABLE_ACTIONS = ["press", "click", "key", "type", "paste", "select", "set", "drag"] as const;
 
 /** Mirrors the `--target-key` allowlist in WorkflowArguments.validateAction; native-protocol.test.ts compares the two. */
 export const TARGET_KEY_ACTIONS = [

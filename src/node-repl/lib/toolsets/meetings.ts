@@ -10,10 +10,13 @@ import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { reviewRow } from "@app/meetings/lib/review-rows";
+import { withMeetingsClient } from "@app/meetings/lib/service/client";
 import {
     add,
     assignApply,
     assignAsk,
+    commentRead,
+    commentWithdraw,
     configGet,
     configSet,
     confirm,
@@ -36,6 +39,7 @@ import {
     reject,
     rename,
     reopen,
+    saveClip,
     screen,
     screenTimelineMethod,
     set,
@@ -265,6 +269,16 @@ export class MeetingsToolset extends ReplToolset {
 
         return {
             id,
+            comments: () =>
+                withMeetingsClient(async (client) => (await client.call("comment.list", { meeting: id })).comments),
+            readComment: (comment: string) => {
+                const params = commentRead.params.parse({ id: comment });
+                return withMeetingsClient((client) => client.call("comment.read", { meeting: id, ...params }));
+            },
+            withdrawComment: (comment: string) => {
+                const params = commentWithdraw.params.parse({ id: comment });
+                return withMeetingsClient((client) => client.call("comment.withdraw", { meeting: id, ...params }));
+            },
             get title() {
                 return current().title;
             },
@@ -366,13 +380,7 @@ export class MeetingsToolset extends ReplToolset {
                 reject: decideWith("rejected"),
                 reopen: async (input: z.input<typeof reopen.params>) => {
                     const options = reopen.params.parse(input);
-                    // A token alone undoes its whole decision: a speaker rename has no items, only labels.
-                    const result = await reopenItems({
-                        store,
-                        record: current(),
-                        ids: options.ids ?? [],
-                        ...(options.token ? { token: options.token } : {}),
-                    });
+                    const result = await reopenItems({ store, record: current(), ...options, ids: options.ids ?? [] });
                     log.info({ meeting: id, reopened: result.reopened.length }, "items reopened");
                     return result;
                 },
@@ -407,7 +415,7 @@ export class MeetingsToolset extends ReplToolset {
                         );
                     }
 
-                    // A rename is a decision: journaled with who made it, so its token undoes it (items.reopen).
+                    // A rename is a decision: journaled with who made it, so its token undoes it (`reopen --token`).
                     const { entry } = await new DecisionJournal({ store }).apply({
                         meeting: id,
                         action: { kind: "rename", label: parsed.label, name: parsed.name },
@@ -508,6 +516,10 @@ export class MeetingsToolset extends ReplToolset {
                 // lazy, like meetingScreen: the timeline reads frame sizes and OCR boxes only on use
                 const { screenTimeline } = await import("@app/meetings/lib/screen-timeline");
                 return screenTimeline({ store, record: current(), all: all === true });
+            },
+            saveClip: async (input: z.input<typeof saveClip.params>) => {
+                const parsed = saveClip.params.parse(input);
+                return withMeetingsClient((client) => client.call("moment.save", { ...parsed, meeting: id }));
             },
             export: async (input: z.input<typeof exportMethod.params> = {}) => {
                 const parsed = exportMethod.params.parse(input);

@@ -29,9 +29,10 @@ export const MEETING_UNCHANGED: unique symbol = Symbol("meetings.unchanged");
 /**
  * Files a record keeps beside it that must agree with it (the decision journal, the answer log), written by
  * `MeetingStore.update` under the record's lock. `write` runs once the changed record validates and before it is
- * saved; it throws only after it took back what it wrote. `undo` takes that write back when the record is not saved,
- * so no file holds a change the record lacks. Both only shorten files, which needs no free disk space. `saved` runs
- * once the record is saved; its failure leaves the record and the files as written.
+ * saved; it takes back any partial write before throwing. `undo` takes that write back when the record is not saved.
+ * Journal companions undo by truncation, which needs no free disk space. Creation companions own their new files
+ * and retain a recovery claim if cleanup fails. `saved` runs once the record is saved; its failure leaves the record
+ * and the files as written.
  */
 export interface CompanionWrite {
     write(record: MeetingRecord): void;
@@ -110,6 +111,7 @@ export const DECISION_ACTIONS = [
     "confirm",
     "reject",
     "respell",
+    "rephrase",
     "answer",
     "skip",
     "split",
@@ -130,6 +132,16 @@ export const savedDecisionActorSchema = decisionActorSchema.catch({ kind: "unkno
 
 /** A decision's action as a saved record reads it: an action a newer build added reads as `unknown`. */
 export const savedDecisionActionSchema = z.enum([...DECISION_ACTIONS, "unknown"]).catch("unknown");
+
+/** A spelling's selected source lines and independent contribution to dictionary suggestions. */
+export const spellingReachSchema = z.object({
+    lines: z
+        .array(z.object({ atSec: z.number().nonnegative(), line: z.number().int().nonnegative().optional() }))
+        .min(1)
+        .optional(),
+    dictionary: z.boolean().optional(),
+});
+export type SpellingReach = z.infer<typeof spellingReachSchema>;
 
 const itemBase = {
     id: itemIdSchema,
@@ -155,6 +167,7 @@ const itemBase = {
                 decidedAt: isoTime.optional(),
                 speaker: z.string().optional(),
                 proposed: z.string().optional(),
+                reach: spellingReachSchema.optional(),
             }),
             actor: savedDecisionActorSchema.optional(),
             entry: z
@@ -229,6 +242,7 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         proposed: z.string().optional(),
         /** `line`: the spelling fixes only the line at `atSec`. Absent, it fixes the words wherever they are heard. */
         scope: z.enum(["everywhere", "line"]).optional(),
+        reach: spellingReachSchema.optional(),
         /** Shown after the heard words, which stay as said: `lomeno type` means `/{type}`. */
         meaning: z.string().min(1).optional(),
         /** The heard words read a document line aloud: its exact text replaces them, with the source. */
@@ -262,18 +276,27 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
 ]);
 export type MeetingItem = z.infer<typeof meetingItemSchema>;
 
-/** Why a recorded span ended: asked for (`record stop`, a stop command, a signal), a pause, failed captures, an error. */
-export const RECORDING_STOP_REASONS = ["requested", "paused", "failed", "error"] as const;
+/**
+ * Why a recorded span ended: asked for (`record stop`, a stop command, a signal), a pause, failed captures, an error,
+ * or `interrupted`: the recorder process died without a stop (a reinstall, a crash, a kill), and the next start closed
+ * its span.
+ */
+export const RECORDING_STOP_REASONS = ["requested", "paused", "failed", "error", "interrupted"] as const;
 export type RecordingStopReason = (typeof RECORDING_STOP_REASONS)[number];
 
-const recordingSpanSchema = z.object({
-    from: isoTime,
-    to: isoTime.optional(),
-    stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
-});
+const recordingSpanSchema = z
+    .object({
+        from: isoTime,
+        to: isoTime.optional(),
+        /** Unknown future reasons must not hide the meeting. */
+        stopReason: z.string().min(1).optional(),
+        /** Interrupted runs keep the legacy error reason and this detail for current readers. */
+        interrupted: z.literal(true).optional(),
+    })
+    .loose();
 export type RecordingSpan = z.infer<typeof recordingSpanSchema>;
 /** One stretch a display was captured: a live switch or a follow-focus frame on another display starts the next. */
-export const recordingDisplaySpanSchema = recordingSpanSchema.extend({ displayId: z.number() });
+export const recordingDisplaySpanSchema = recordingSpanSchema.extend({ displayId: z.number() }).strip();
 export type RecordingDisplaySpan = z.infer<typeof recordingDisplaySpanSchema>;
 
 /**
@@ -285,7 +308,7 @@ export const recordingBlockSchema = z
         startedAt: isoTime.optional(),
         stoppedAt: isoTime.optional(),
         status: z.enum(["recording", "paused", "stopped"]).optional(),
-        stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
+        stopReason: z.string().min(1).optional(),
         backend: z.string().optional(),
         /** The display policy of the last start: `all`, `follow-focus`, `main` or an index. */
         displayPolicy: z.union([z.string(), z.number()]).optional(),
@@ -301,6 +324,11 @@ export const recordingBlockSchema = z
         /** Capture intervals for each display; absent in older recordings. */
         displaySpans: z.array(recordingDisplaySpanSchema).optional(),
         warning: z.string().optional(),
+        /**
+         * What the OCR worker found wrong with this run's frames (a first frame with almost no text). Its own key: the
+         * recorder rewrites `warning` from its notes at the stop.
+         */
+        ocrWarning: z.string().optional(),
         clock: z.object({ source: z.string(), startedAt: isoTime }).optional(),
         /** When the failure notice of the current failure episode was posted; cleared by a piece that recorded. */
         failureNotifiedAt: isoTime.optional(),
@@ -441,6 +469,7 @@ export type MeetingRecord = z.infer<typeof meetingRecordSchema>;
 export type MeetingCalendar = z.infer<typeof calendarSchema>;
 export type MeetingParticipant = z.infer<typeof participantSchema>;
 export type MeetingContext = z.infer<typeof contextSchema>;
+export { contextSchema as meetingContextSchema };
 
 const SLUG_MAX = 40;
 
@@ -514,9 +543,7 @@ export class MeetingStore {
 
     /** Folder dates bound discovery before JSON hydration. A record whose start is edited after creation keeps
      * its folder date for this bound. One day of margin covers local/UTC time-zone differences. Undated folders
-     * are treated as today and read. `olderMeetings` counts excluded record folders without parsing their JSON.
-     * `where` keeps only the records it accepts, and only those count toward `limit`, so a filtered list stops
-     * reading once it has `limit` matches. */
+     * are treated as today and read. `olderMeetings` counts excluded record folders without parsing their JSON. */
     listBounded({
         since,
         limit,
@@ -671,6 +698,21 @@ export class MeetingStore {
         fields: Pick<MeetingRecord, "title" | "start" | "createdBy"> & Partial<MeetingRecord>,
         change: MeetingChange
     ): Promise<MeetingRecord> {
+        return this.createWithFiles({ fields, change });
+    }
+
+    /** Reserves a private folder, writes its companion files, then publishes the record. A failed companion write
+     * takes back its own files; a failed record write calls undo, as update does. Until publication list/read cannot
+     * see the new record. Existing create callers use the same path with no companion work. */
+    async createWithFiles({
+        fields,
+        change,
+        beside,
+    }: {
+        fields: Pick<MeetingRecord, "title" | "start" | "createdBy"> & Partial<MeetingRecord>;
+        change: MeetingChange;
+        beside?: CompanionWrite;
+    }): Promise<MeetingRecord> {
         const base = meetingId(fields.start, fields.title);
         let id = base;
         const now = new Date().toISOString();
@@ -700,7 +742,7 @@ export class MeetingStore {
         }
 
         record.id = id;
-        await this.storage.withFileLock({ file: this.path(id), fn: async () => this.write(record) });
+        await this.storage.withFileLock({ file: this.path(id), fn: async () => this.save(record, beside) });
         log.debug({ id, createdBy: record.createdBy }, "meeting created");
         return record;
     }
@@ -813,6 +855,12 @@ export class MeetingStore {
     private commit(current: MeetingRecord, change: MeetingChange, beside?: CompanionWrite): MeetingRecord {
         current.history.push({ at: new Date().toISOString(), command: change.command, change: change.change });
         const record = meetingRecordSchema.parse(current);
+        this.save(record, beside);
+        log.debug({ id: record.id, command: change.command }, "meeting updated");
+        return record;
+    }
+
+    private save(record: MeetingRecord, beside?: CompanionWrite): void {
         beside?.write(record);
 
         try {
@@ -827,9 +875,7 @@ export class MeetingStore {
             throw error;
         }
 
-        log.debug({ id: record.id, command: change.command }, "meeting updated");
         beside?.saved?.(record);
-        return record;
     }
 
     /**
@@ -853,6 +899,16 @@ export class MeetingStore {
     }
 
     private write(record: MeetingRecord): void {
+        const recording = record.recording;
+        if (recording) {
+            for (const span of [recording, ...(recording.spans ?? []), ...(recording.displaySpans ?? [])]) {
+                if (span.stopReason === "interrupted") {
+                    span.stopReason = "error";
+                    span.interrupted = true;
+                }
+            }
+        }
+
         // A store made before the owner-only rule is tightened at its next write.
         chmodSync(this.root, 0o700);
         chmodSync(this.folder(record.id), 0o700);

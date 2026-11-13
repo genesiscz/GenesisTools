@@ -416,7 +416,6 @@ export class ListenSession {
                 throw error;
             }
 
-            this.steps.pop();
             this.options.adapter.note({
                 kind: "not-undone",
                 label: questionLabel(this.current(), last.question.id),

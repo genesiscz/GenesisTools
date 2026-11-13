@@ -78,6 +78,8 @@ export interface CapturedFrame {
     /** Milliseconds after `startedAtMs`. */
     atMs: number;
     displayId?: number;
+    /** The display holding the focused window at capture time, including in all-display mode. */
+    focusedDisplayId?: number;
     changePercent: number;
     reason: string;
     motionBoxes?: MotionBox[];

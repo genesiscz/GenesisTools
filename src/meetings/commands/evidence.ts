@@ -11,7 +11,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { rawMeeting } from "../lib/raw";
-import { errorText, fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
+import { fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
 import { rawTerms } from "../lib/suggest";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
@@ -216,7 +216,7 @@ async function evidence(
             }
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

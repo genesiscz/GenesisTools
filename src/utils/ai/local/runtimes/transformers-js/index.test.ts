@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { env } from "@genesiscz/utils/env";
+import * as packageStore from "@genesiscz/utils/package-store";
 import { _fp16IncompatibleForTest, getWhisperDtype, isFp16Incompatible } from "./dtype";
 import { type PipelineInstance, TransformersJsRuntime } from "./index";
 
@@ -92,6 +94,18 @@ describe("fp16 ONNX self-healing", () => {
 });
 
 describe("pipeline caching", () => {
+    test("omitting the local policy retains installation and declined-install errors", async () => {
+        const ensureInstalled = mock(async () => false);
+        const loader = mock(async () => fakePipeline());
+        const runtime = new TransformersJsRuntime({ ensureInstalled, loader });
+
+        await expect(runtime.getPipeline("feature-extraction", "test-org/model")).rejects.toThrow(
+            "HuggingFace Transformers not available — install was declined or failed"
+        );
+        expect(ensureInstalled).toHaveBeenCalledTimes(1);
+        expect(loader).not.toHaveBeenCalled();
+    });
+
     test("a loaded pipeline is reused and concurrent callers share one load", async () => {
         const { runtime, calls } = makeRuntime(() => {});
 
@@ -102,6 +116,7 @@ describe("pipeline caching", () => {
         const c = await runtime.getPipeline("feature-extraction", "some/model");
 
         expect(calls.length).toBe(1);
+        expect(calls[0]?.options).not.toHaveProperty("local_files_only");
         expect(a).toBe(b);
         expect(b).toBe(c);
     });
@@ -123,6 +138,124 @@ describe("pipeline caching", () => {
         await runtime.getPipeline("feature-extraction", "some/model");
 
         expect(calls.length).toBe(2);
+    });
+});
+
+describe("local-files-only loading", () => {
+    beforeEach(() => {
+        spyOn(packageStore, "isStorePackageInstalled").mockReturnValue(true);
+    });
+
+    afterEach(() => {
+        mock.restore();
+    });
+
+    test("requires an installed package without invoking the installer", async () => {
+        spyOn(packageStore, "isStorePackageInstalled").mockReturnValue(false);
+        const ensureInstalled = mock(async () => true);
+        const loader = mock(async () => fakePipeline());
+        const runtime = new TransformersJsRuntime({ localFilesOnly: true, ensureInstalled, loader });
+
+        await expect(runtime.getPipeline("feature-extraction", "test-org/cached-model")).rejects.toThrow(
+            /not installed.*local-files-only/i
+        );
+        expect(ensureInstalled).not.toHaveBeenCalled();
+        expect(loader).not.toHaveBeenCalled();
+    });
+
+    test("skips credentials and installation while coalescing and caching local loads", async () => {
+        const credentialLookup = spyOn(env.hf, "getKey").mockImplementation(() => {
+            throw new Error("must not resolve credentials");
+        });
+        const ensureInstalled = mock(async () => true);
+        const promptForToken = mock(async () => null);
+        const loader = mock(async (_task: string, _model: string, options: Record<string, unknown>) => {
+            expect(options.local_files_only).toBe(true);
+            return fakePipeline();
+        });
+        const runtime = new TransformersJsRuntime({
+            localFilesOnly: true,
+            ensureInstalled,
+            promptForToken,
+            resolveDeviceFn: async () => "cpu",
+            loader,
+        });
+
+        const [first, concurrent] = await Promise.all([
+            runtime.getPipeline("feature-extraction", "test-org/cached-model"),
+            runtime.getPipeline("feature-extraction", "test-org/cached-model"),
+        ]);
+        expect(await runtime.getPipeline("feature-extraction", "test-org/cached-model")).toBe(first);
+        expect(concurrent).toBe(first);
+        expect(loader).toHaveBeenCalledTimes(1);
+        expect(ensureInstalled).not.toHaveBeenCalled();
+        expect(credentialLookup).not.toHaveBeenCalled();
+        expect(promptForToken).not.toHaveBeenCalled();
+    });
+
+    test("preserves missing-file errors and allows a later retry without prompting", async () => {
+        const error = new Error("Unauthorized: file absent from local cache");
+        const promptForToken = mock(async () => "must-not-be-used");
+        const loader = mock(async () => {
+            if (loader.mock.calls.length === 1) {
+                throw error;
+            }
+            return fakePipeline();
+        });
+        const runtime = new TransformersJsRuntime({
+            localFilesOnly: true,
+            ensureInstalled: async () => true,
+            resolveDeviceFn: async () => "cpu",
+            promptForToken,
+            loader,
+        });
+
+        await expect(runtime.getPipeline("feature-extraction", "test-org/missing-model")).rejects.toBe(error);
+        await runtime.getPipeline("feature-extraction", "test-org/missing-model");
+        expect(loader).toHaveBeenCalledTimes(2);
+        expect(promptForToken).not.toHaveBeenCalled();
+    });
+
+    test.each(["Protobuf parsing failed", "Load model failed"])(
+        "preserves cached files and original error for %s",
+        async (message) => {
+            const cleanupImport = spyOn(packageStore, "importStorePackage").mockImplementation(async () => {
+                throw new Error("cache cleanup must not be entered");
+            });
+            const error = new Error(message);
+            const runtime = new TransformersJsRuntime({
+                localFilesOnly: true,
+                ensureInstalled: async () => true,
+                resolveDeviceFn: async () => "cpu",
+                loader: async () => {
+                    throw error;
+                },
+            });
+
+            await expect(runtime.getPipeline("feature-extraction", "test-org/corrupt-model")).rejects.toBe(error);
+            expect(cleanupImport).not.toHaveBeenCalled();
+        }
+    );
+
+    test("keeps the fp16 workaround local on both attempts", async () => {
+        const calls: Record<string, unknown>[] = [];
+        const runtime = new TransformersJsRuntime({
+            localFilesOnly: true,
+            ensureInstalled: async () => true,
+            resolveDeviceFn: async () => "cpu",
+            loader: async (_task, _model, options) => {
+                calls.push(options);
+                if (calls.length === 1) {
+                    throw new Error("InsertedPrecisionFreeCast");
+                }
+                return fakePipeline();
+            },
+        });
+
+        await runtime.getPipeline("feature-extraction", `test-org/local-fp16-${Math.random().toString(36).slice(2)}`);
+        expect(calls).toHaveLength(2);
+        expect(calls.every((options) => options.local_files_only === true)).toBe(true);
+        expect(calls[1]?.session_options).toEqual({ graphOptimizationLevel: "extended" });
     });
 });
 

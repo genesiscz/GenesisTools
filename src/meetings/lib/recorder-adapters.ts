@@ -53,6 +53,28 @@ export class RecorderStateFile<T> {
     }
 }
 
+/** A dead recorder or a detached copy cannot keep extending its capture intervals. Closed history stays exact. */
+export function interruptedRecording(recording: RecordingBlock, at: string): RecordingBlock {
+    const close = <T extends RecordingSpan>(span: T) =>
+        span.to
+            ? span
+            : {
+                  ...span,
+                  to: Date.parse(at) < Date.parse(span.from) ? span.from : at,
+                  stopReason: "error" as const,
+                  interrupted: true as const,
+              };
+    return {
+        ...recording,
+        status: "stopped",
+        stopReason: "error",
+        interrupted: true,
+        stoppedAt: at,
+        spans: recording.spans?.map(close),
+        displaySpans: recording.displaySpans?.map(close),
+    };
+}
+
 /** The meeting record's recording block as the recorder keeps it: the spans, and the start, pause and resume. */
 export class RecordingRecord {
     readonly spans: RecordingSpan[];
@@ -83,8 +105,11 @@ export class RecordingRecord {
         const open = this.spans.at(-1);
 
         if (open && !open.to) {
-            open.to = at;
-            open.stopReason = stopReason;
+            open.to = Date.parse(at) < Date.parse(open.from) ? open.from : at;
+            open.stopReason = stopReason === "interrupted" ? "error" : stopReason;
+            if (stopReason === "interrupted") {
+                open.interrupted = true;
+            }
         }
     }
 
@@ -115,6 +140,7 @@ export class RecordingRecord {
                 delete current.recording.stopReason;
                 // The last run's warning ("No frame was recorded") is not this run's; this run sets its own.
                 delete current.recording.warning;
+                delete current.recording.ocrWarning;
             }
         );
     }

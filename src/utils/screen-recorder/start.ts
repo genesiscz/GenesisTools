@@ -438,6 +438,7 @@ export class LibraryRecording extends FrameRecording<number> {
                 file: join("frames", basename(item.frame.path)),
                 atMs: Math.max(0, Math.round(item.atMs)),
                 displayId: item.displayId,
+                ...(item.frame.focusedDisplayId !== undefined ? { focusedDisplayId: item.frame.focusedDisplayId } : {}),
                 changePercent: item.frame.changePercent,
                 reason: item.frame.reason,
             })),

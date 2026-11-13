@@ -86,6 +86,7 @@ struct ToneSound: Codable, Equatable, Hashable {
     var hz: Double
     var sec: Double
     var volume: Double
+    var fallback: String? = nil
 }
 
 /// One frame of a Moment's spot, with the OCR hit that named it first (Vision's normalized box).
@@ -176,18 +177,21 @@ extension MeetingsAPI {
         var padAfterSec: Double?
         /// This tone for the call instead of the saved one; it sounds even while the saved tone is off.
         var toneSound: MeetingsAPI.ToneSoundSetting?
+        /// False suppresses the tone for this call, even when an explicit sound is supplied.
+        var tone: Bool?
         /// False skips the screen frames at the spot.
         var screen: Bool?
         /// At most this long from the span's start ("Clip 5s": 5); the pad stays.
         var lengthSec: Double?
 
         init(meeting: String, target: MomentTarget, padSec: Double? = nil, padAfterSec: Double? = nil,
-             toneSound: MeetingsAPI.ToneSoundSetting? = nil, screen: Bool? = nil, lengthSec: Double? = nil) {
+             toneSound: MeetingsAPI.ToneSoundSetting? = nil, tone: Bool? = nil, screen: Bool? = nil, lengthSec: Double? = nil) {
             self.meeting = meeting
             self.target = target
             self.padSec = padSec
             self.padAfterSec = padAfterSec
             self.toneSound = toneSound
+            self.tone = tone
             self.screen = screen
             self.lengthSec = lengthSec
         }
@@ -210,6 +214,23 @@ extension MeetingsAPI {
         static let name = "moment.clip"
         typealias Params = MomentParams
         typealias Result = MomentClip
+    }
+
+    /// `moment.save`: a durable clip listed in the meeting's Context, with no playback.
+    enum MomentSave: MeetingsServiceMethod {
+        static let name = "moment.save"
+        struct Params: Codable, Equatable {
+            let meeting: String
+            let target: MomentTarget
+            var lengthSec: Double?
+            var title: String?
+            var quote: String?
+        }
+        struct Result: Decodable, Equatable {
+            let entry: MeetingContextRef
+            let clip: MomentClip
+            let created: Bool
+        }
     }
 
     /// `tone.preview`: the tone alone as a WAV, for a sound picker's Play button.
@@ -299,6 +320,7 @@ extension MeetingsAPI {
             let width: Double
             let height: Double
             let lineCount: Int
+            var focusedDisplayId: Int? = nil
         }
 
         struct Result: Decodable, Equatable {
@@ -306,7 +328,19 @@ extension MeetingsAPI {
             let recorded: Bool
             let displays: [ScreenTimeline.Display]
             let frames: [Frame]
+            var recordingSpans: [ScreenTimeline.CaptureSpan]? = nil
+            var displaySpans: [ScreenTimeline.DisplayCaptureSpan]? = nil
         }
+    }
+
+    enum MeetingTimeline: MeetingsServiceMethod {
+        static let name = "meeting.timeline"
+        struct Params: Codable, Equatable {
+            var meeting: String
+            var all: Bool? = nil
+            var frame: String? = nil
+        }
+        typealias Result = ScreenTimeline
     }
 
     /// `meeting.waveform`: peaks for the whole-conversation strip and the zoomed timeline.

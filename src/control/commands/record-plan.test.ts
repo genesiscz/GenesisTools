@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { finishRecordedPlan } from "./record-plan";
+import { activityToSteps, finishRecordedPlan } from "./record-plan";
 
 const SESSION = '{"mode":"commands","startedAt":1760000000000}';
 const PLAN = '{\n  "steps": []\n}';
@@ -33,5 +33,26 @@ describe("finishRecordedPlan", () => {
 
         expect(readFileSync(outPath, "utf8")).toBe(`${PLAN}\n`);
         expect(existsSync(sessionPath)).toBe(false);
+    });
+});
+
+describe("recorded shortcuts", () => {
+    test("physical positions and Shift survive recording on QWERTZ and AZERTY layouts", () => {
+        const steps = activityToSteps(
+            [
+                { type: "key", ts: 10, keycode: 16, char: "z", mods: ["cmd"], app: "Editor" },
+                { type: "key", ts: 20, keycode: 12, char: "a", mods: ["cmd"], app: "Editor" },
+                { type: "key", ts: 30, keycode: 16, char: "Z", mods: ["cmd", "shift"], app: "Editor" },
+                { type: "key", ts: 40, keycode: 43, char: ";", mods: ["ctrl", "alt"], app: "Editor" },
+            ],
+            1000
+        );
+        expect(steps.map((entry) => entry.step)).toEqual([
+            { do: "hotkey", keys: "cmd,code:16", app: "Editor" },
+            { do: "hotkey", keys: "cmd,code:12", app: "Editor" },
+            { do: "hotkey", keys: "cmd,shift,code:16", app: "Editor" },
+            { do: "hotkey", keys: "ctrl,alt,code:43", app: "Editor" },
+        ]);
+        expect(steps.map((entry) => entry.ts)).toEqual([1010, 1020, 1030, 1040]);
     });
 });

@@ -7,6 +7,33 @@ import XCTest
 /// times it shows, and which meetings each sidebar place lists.
 @MainActor
 final class MeetingsWindowTests: XCTestCase {
+    func testNoServiceShowsStaleDataAndFailedReadsKeepLastSuccessfulAge() throws {
+        let model = MeetingsWindowModel(loadDetail: { _ in })
+        model.startLiveUpdates()
+        XCTAssertTrue(model.liveUpdatesOff, "CLI fallback still needs an explicit stale-data notice")
+        XCTAssertFalse(model.liveUpdates)
+        let detail = MeetingDetailModel(id: "m", window: model)
+        XCTAssertNil(detail.lastSuccessfulRead)
+        let rows = ReviewRows(meeting: "m", rows: [], hidden: .init(lowPriority: 0, minPriority: 0.5))
+        detail.settle(\.rows, .loaded(rows))
+        let lastRead = try XCTUnwrap(detail.lastSuccessfulRead)
+        detail.settle(\.rows, .failed(.init(sentence: "Offline", detail: "Offline"), previous: rows))
+        XCTAssertEqual(detail.lastSuccessfulRead, lastRead, "an unsuccessful read cannot make stale data look fresh")
+    }
+
+    func testRoutedMomentRequestKeepsPlaybackOptions() throws {
+        let json = #"{"meeting":"m1","target":{"kind":"time","atSec":12},"tone":false,"padSec":1,"padAfterSec":3,"lengthSec":5,"screen":false}"#
+        let request = MeetingsRequest.parse(["--meeting", "m1", "--play-request", json])
+        let play = try XCTUnwrap(request.playRequest)
+        XCTAssertEqual(play.meeting, "m1")
+        XCTAssertEqual(play.target, .time(12))
+        XCTAssertEqual(play.tone, false)
+        XCTAssertEqual(play.padSec, 1)
+        XCTAssertEqual(play.padAfterSec, 3)
+        XCTAssertEqual(play.lengthSec, 5)
+        XCTAssertEqual(play.screen, false)
+    }
+
     func testSnapshotReadinessReportsExpiry() async {
         let expired = await waitUntil(0) { false }
         let ready = await waitUntil(0) { true }
@@ -106,15 +133,16 @@ final class MeetingsWindowTests: XCTestCase {
     func testTheCaptureCostDecodesFrameRatesAndDisplayPolicies() throws {
         // The shape of `tools meetings record cost --json` with no recording yet: no `observed`, no kept shares.
         let json = Data("""
-        {"keptFrameCpuMs":268.6,"source":"bench","displays":[{"value":"all","maxCpuSecPerMin":16.1},{"value":2,"maxCpuSecPerMin":8}],
-         "activeFps":[{"value":0.5,"maxCpuSecPerMin":8.1},{"value":1,"maxCpuSecPerMin":16.1}],
-         "idleFps":[{"value":0.05,"maxCpuSecPerMin":0.8}],"threshold":[{"value":0.01}],"thresholdNote":"no shares stored"}
+        {"keptFrameCpuMs":368.6,"source":"bench","displays":[{"value":"all","maxCpuSecPerMin":22.1},{"value":2,"maxCpuSecPerMin":44.2}],
+         "activeFps":[{"value":0.5,"maxCpuSecPerMin":11.1},{"value":1,"maxCpuSecPerMin":22.1}],
+         "idleFps":[{"value":0.05,"maxCpuSecPerMin":1.1}],"threshold":[{"value":0.01}],"thresholdNote":"no shares stored"}
         """.utf8)
         let cost = try JSONDecoder().decode(CaptureCost.self, from: json)
         XCTAssertNil(cost.observed)
         XCTAssertEqual(cost.activeFps.first?.value, 0.5, "a frame rate below one decodes")
-        XCTAssertEqual(cost.displayCost("all"), 16.1)
-        XCTAssertEqual(cost.displayCost("2"), 8, "a screen index reads as its number")
+        XCTAssertEqual(cost.keptFrameCpuMs, 368.6)
+        XCTAssertEqual(cost.displayCost("all"), 22.1)
+        XCTAssertEqual(cost.displayCost("2"), 44.2, "a screen index reads as its number")
     }
 
     func testTheCLIsErrorLineBecomesTheSentence() {
@@ -122,6 +150,31 @@ final class MeetingsWindowTests: XCTestCase {
                        "Project work has no export folder.")
         XCTAssertEqual(MeetingsCLI.sentence(fromStderr: "first\nlast line."), "Last line.")
         XCTAssertNil(MeetingsCLI.sentence(fromStderr: "  \n"))
+    }
+
+    func testCLIFallbackKeepsTheOriginalStackAndIssueInTheFailureReport() throws {
+        let stderr = #"{"error":{"message":"[config-stale] global.capture changed","stack":"Error: refused\n    at originalThrow (/fixture/source.ts:12:3)","issue":{"tool":"meetings","title":"Original refusal"}}}"# + "\n✗ [config-stale] global.capture changed\n"
+        let failure = MeetingsCLI.failure(ToolsRunResult(stdout: "", stderr: stderr, exitCode: 1, wallMs: 0), args: ["config", "set"])
+        XCTAssertEqual(failure.sentence, "Global.capture changed.")
+        XCTAssertEqual(failure.code, "config-stale")
+        XCTAssertEqual(failure.command, "tools meetings config set")
+        XCTAssertEqual(failure.stack, "Error: refused\n    at originalThrow (/fixture/source.ts:12:3)")
+        XCTAssertEqual(failure.issue, FailureIssue(tool: "meetings", title: "Original refusal"))
+        let report = failure.report()
+        XCTAssertEqual(report.stack, failure.stack)
+        XCTAssertEqual(report.issue, failure.issue)
+        XCTAssertTrue(report.rawText().contains("at originalThrow"))
+
+        let legacy = MeetingsCLI.failure(ToolsRunResult(stdout: "", stderr: "✗ [config-stale] global.capture changed\n", exitCode: 1, wallMs: 0), args: ["config", "set"])
+        XCTAssertEqual(legacy.sentence, failure.sentence)
+        XCTAssertEqual(legacy.code, failure.code)
+        XCTAssertNil(legacy.stack)
+        let invalid = MeetingsCLI.failure(ToolsRunResult(stdout: "", stderr: "{broken JSON}\n✗ refused\n", exitCode: 1, wallMs: 0), args: [])
+        XCTAssertEqual(invalid.sentence, "Refused.")
+        let multilineJSON = #"{"error":{"message":"[config-stale] global.capture changed\nTry tools meetings config show"}}"#
+        let multiline = MeetingsCLI.failure(ToolsRunResult(stdout: "", stderr: multilineJSON, exitCode: 1, wallMs: 0), args: [])
+        XCTAssertEqual(multiline.sentence, "Global.capture changed.")
+        XCTAssertEqual(multiline.code, "config-stale")
     }
 
     func testAConfigPathKeepsAProjectNameWithADotWhole() {
@@ -293,6 +346,90 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(preview.words, "3 pairings in 2 projects; 2 people leave a project")
     }
 
+    func testAFoldedProjectCardSaysWhatTheProjectHolds() throws {
+        let projects = try JSONDecoder().decode([String: ProjectSettings].self, from: Data("""
+        {"shop":{"labels":["Checkout","Billing","Ops"],"export":{"folder":"/Users/alice/Notes/acme"},
+                 "match":{"calendar":{"calendars":["Work"]},"title":{"words":[]},"people":[
+                   {"name":"Alice","email":"alice@example.com","pairedBy":[{"kind":"manual"}]}]}},
+         "empty":{"labels":[],"match":{"people":[]}}}
+        """.utf8))
+        XCTAssertEqual(ProjectCardSummary.line(projects["shop"], folders: 1),
+                       "2 rules · 3 labels · 1 paired person · exports to Notes/acme")
+        XCTAssertEqual(ProjectCardSummary.line(projects["empty"], folders: 0), "no rules yet")
+    }
+
+    func testAWouldMatchRowOffersWhatItsRulesAndItsProjectCallFor() {
+        func row(_ project: String?, _ draft: [String]) -> MatchPreviewRow {
+            MatchPreviewRow(id: "m", title: "Sync", start: "2026-11-10T08:00:00.000Z", project: project, now: draft, draft: draft, changed: false)
+        }
+        XCTAssertEqual(WouldMatchAction.of(row(nil, ["shop"])), .confirm("shop"))
+        XCTAssertEqual(WouldMatchAction.of(row("side", ["shop"])), .update(from: "side", to: "shop"))
+        XCTAssertEqual(WouldMatchAction.of(row("shop", ["shop"])), .matches("shop"))
+        XCTAssertEqual(WouldMatchAction.of(row("shop", ["side", "shop"])), .matches("shop"), "its project is among the matches")
+        XCTAssertEqual(WouldMatchAction.of(row(nil, ["side", "shop"])), .choose(["side", "shop"]))
+        XCTAssertEqual(WouldMatchAction.of(row("shop", [])), .none, "matches none: only the project menu")
+        XCTAssertEqual(row(nil, ["shop"]).with(project: "shop").project, "shop")
+        XCTAssertEqual(MeetingsSettingsModel.projectNote("Sync", to: "shop"), "“Sync” is in shop now")
+        XCTAssertEqual(MeetingsSettingsModel.projectNote("", to: nil), "“Untitled meeting” has no project now")
+    }
+
+    func testManualProjectPairingPolicyAsksByDefaultAndCanBeDisabled() throws {
+        let suite = "meetings.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let setting = MeetingsPreferences.Projects.pairOnAssignment
+        XCTAssertEqual(setting.value(defaults), .ask)
+        let notices = NoticeStackModel(announces: false)
+        MeetingProjectPairing.offer(meeting: "m", project: "work", service: nil, notices: notices, defaults: defaults)
+        let question = try XCTUnwrap(notices.notices.first)
+        XCTAssertEqual(question.actions.map(\.label), ["Pair people", "Not now"])
+        notices.press(try XCTUnwrap(question.actions.last), of: question.id)
+        XCTAssertTrue(notices.notices.isEmpty)
+        defaults.set("never", forKey: setting.key)
+        MeetingProjectPairing.offer(meeting: "m", project: "work", service: nil, notices: notices, defaults: defaults)
+        XCTAssertTrue(notices.notices.isEmpty)
+        defaults.set("always", forKey: setting.key)
+        MeetingProjectPairing.offer(meeting: "m", project: "work", service: nil, notices: notices, defaults: defaults)
+        XCTAssertEqual(notices.notices.first?.tone, .error, "Always attempts pairing and reports an unavailable service")
+        defaults.set("unknown", forKey: setting.key)
+        XCTAssertEqual(setting.value(defaults), .ask)
+    }
+
+    func testPairingUndoKeepsItsCompleteSourceOnTheWire() throws {
+        let source = try JSONDecoder().decode(PairedBy.self, from: Data(#"{"kind":"calendar","from":"calendar","entryId":"event-1","at":"2026-11-04T10:00:00.000Z","meetingId":"m"}"#.utf8))
+        let request = MeetingsAPI.ProjectsUnpair.Params(project: "work", person: .init(name: "Alice Example"), by: source)
+        let encoded = try JSONEncoder().encode(request)
+        let restored = try JSONDecoder().decode(MeetingsAPI.ProjectsUnpair.Params.self, from: encoded)
+        XCTAssertEqual(restored.by, source)
+        XCTAssertEqual(restored.by?.from, "calendar")
+        XCTAssertEqual(restored.by?.at, "2026-11-04T10:00:00.000Z")
+        let scoped = MeetingsAPI.ProjectsPairFromMeetings.Params(project: "work", people: nil, meeting: "m")
+        XCTAssertEqual(try JSONDecoder().decode(MeetingsAPI.ProjectsPairFromMeetings.Params.self, from: JSONEncoder().encode(scoped)).meeting, "m")
+    }
+
+    func testAPairingFromTheMeetingsNamesWhoItPaired() throws {
+        let paired = try JSONDecoder().decode([MeetingsAPI.ProjectsPairFromMeetings.Paired].self, from: Data("""
+        [{"name":"Alice Example","email":"alice@example.com","by":{"kind":"calendar","entryId":"e1","title":"Sync","at":"2026-11-10T08:00:00.000Z"}},
+         {"name":"Carol Example","by":{"kind":"manual","at":"2026-11-10T08:00:00.000Z","note":"from the meeting “Sync” on 2026-11-03"}}]
+        """.utf8))
+        XCTAssertEqual(MeetingsSettingsModel.pairedNote(Array(paired.prefix(1)), project: "shop"), "Paired Alice Example with shop")
+        XCTAssertEqual(MeetingsSettingsModel.pairedNote(paired, project: "shop"), "Paired 2 people with shop")
+        XCTAssertEqual(MeetingsWords.pairedBy(paired[1].by), "by hand: from the meeting “Sync” on 2026-11-03")
+    }
+
+    func testAProjectCardKeepsItsOpenStateAcrossARename() throws {
+        let suite = "meetings.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(MeetingsPreferences.openProjects(defaults), [], "every card starts folded")
+        MeetingsPreferences.setProject("shop", open: true, defaults)
+        MeetingsPreferences.setProject("side", open: true, defaults)
+        MeetingsPreferences.setProject("side", open: false, defaults)
+        XCTAssertEqual(MeetingsPreferences.openProjects(defaults), ["shop"])
+        MeetingsPreferences.renameOpenProject("shop", to: "store", defaults)
+        XCTAssertEqual(MeetingsPreferences.openProjects(defaults), ["store"])
+    }
+
     // MARK: Layout
 
     /// A failed overview shows the CLI's whole sentence in the list's error pill. The window must still show the sidebar's
@@ -436,5 +573,73 @@ final class MeetingsWindowTests: XCTestCase {
             if let match = firstView(type, in: child) { return match }
         }
         return nil
+    }
+}
+
+/// One overview read per burst of events that can change it, shared by every window model while it is in flight.
+@MainActor
+final class MeetingsOverviewRefreshTests: XCTestCase {
+    func testOnlyAChangedRecordOrADecisionCanChangeTheOverview() {
+        let timeline = MeetingsEvent.meetingChanged(.init(meeting: "m", parts: ["timeline"]))
+        let record = MeetingsEvent.meetingChanged(.init(meeting: "m", parts: ["show", "transcript", "speakers", "timeline"]))
+        XCTAssertFalse(MeetingsWindowModel.changesOverview(timeline), "a frame of a live recording reads nothing")
+        XCTAssertTrue(MeetingsWindowModel.changesOverview(record))
+    }
+
+    func testABurstOfTheWindowsOwnDecisionsReadsNoOverview() {
+        var burst = MeetingsWindowModel.OverviewBurst()
+        burst.tokens = ["t1", "t2"]
+        XCTAssertFalse(MeetingsWindowModel.burstNeedsOverview(burst, own: ["t1", "t2", "t0"]), "the decision's own path read it")
+        XCTAssertTrue(MeetingsWindowModel.burstNeedsOverview(burst, own: ["t1"]), "another actor's decision")
+        burst.tokens = []
+        burst.other = true
+        XCTAssertTrue(MeetingsWindowModel.burstNeedsOverview(burst, own: []), "a changed record")
+    }
+
+    /// Callers during a read join it when it started after their change, else wait and share the one read after it:
+    /// four callers, two reads.
+    func testCallersShareTheReadThatStartedAfterTheirChange() async throws {
+        final class Gate {
+            var runs = 0
+            var waiting: [CheckedContinuation<Int, Never>] = []
+        }
+        let gate = Gate()
+        let reads = MeetingsSharedRead<String, Int>()
+        let run: @MainActor () async throws -> Int = {
+            gate.runs += 1
+            let run = gate.runs
+            return await withCheckedContinuation { gate.waiting.append($0) } * 10 + run
+        }
+        func settle(within seconds: TimeInterval = 2, until done: () -> Bool) async {
+            let deadline = Date().addingTimeInterval(seconds)
+            while !done(), Date() < deadline { await Task.yield(); try? await Task.sleep(for: .milliseconds(5)) }
+        }
+
+        let beforeFirst = ContinuousClock.now
+        let first = Task { try await reads.value(for: "k", changedAt: beforeFirst, run: run) }
+        await settle { gate.waiting.count == 1 }
+        let joins = Task { try await reads.value(for: "k", changedAt: beforeFirst, run: run) }
+        let afterFirst = ContinuousClock.now
+        let later = Task { try await reads.value(for: "k", changedAt: afterFirst, run: run) }
+        let alsoLater = Task { try await reads.value(for: "k", changedAt: afterFirst, run: run) }
+        await settle(within: 0.1) { false }
+        XCTAssertEqual(gate.runs, 1, "a read is in flight: nobody starts another")
+
+        gate.waiting.removeFirst().resume(returning: 1)
+        let firstValue = try await first.value
+        await settle { gate.waiting.count == 1 }
+        await settle(within: 0.1) { false }
+        XCTAssertEqual(gate.runs, 2, "the change before the read joined it, and the two later ones share one more read")
+
+        // Every read still waiting is released, so a regression fails here instead of hanging.
+        var round = 2
+        while !gate.waiting.isEmpty, round < 8 {
+            gate.waiting.removeFirst().resume(returning: round)
+            round += 1
+            await settle(within: 0.1) { false }
+        }
+        let values = [firstValue, try await joins.value, try await later.value, try await alsoLater.value]
+        XCTAssertEqual(values, [11, 11, 22, 22])
+        XCTAssertEqual(gate.runs, 2)
     }
 }

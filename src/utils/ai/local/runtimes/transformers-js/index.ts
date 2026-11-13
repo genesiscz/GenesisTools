@@ -2,7 +2,7 @@ import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { aiConfigCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
-import { importStorePackage } from "@genesiscz/utils/package-store";
+import { importStorePackage, isStorePackageInstalled } from "@genesiscz/utils/package-store";
 import { ensureHuggingFaceTransformers } from "../../../ensure-hf";
 import { suppressConsoleWarnings } from "../../../suppress-warnings";
 import type { HfDownloadProgress, OnProgress } from "../../../types";
@@ -25,6 +25,8 @@ export type PipelineLoader = (
 ) => Promise<PipelineInstance>;
 
 export interface TransformersJsRuntimeOptions {
+    /** Require the installed package and cached model files; never install, resolve credentials or delete cache files. */
+    localFilesOnly?: boolean;
     loader?: PipelineLoader;
     /** Skips the `ensurePackage` prompt; tests supply their own loader. */
     ensureInstalled?: () => Promise<boolean>;
@@ -65,12 +67,14 @@ export class TransformersJsRuntime {
 
     private pipelines = new Map<string, PipelineInstance>();
     private pendingPipelines = new Map<string, Promise<PipelineInstance>>();
+    private readonly localFilesOnly: boolean;
     private readonly loader: PipelineLoader;
     private readonly ensureInstalled: () => Promise<boolean>;
     private readonly resolveDeviceFn: () => Promise<string>;
     private readonly promptForToken: (model: string) => Promise<string | null>;
 
     constructor(options: TransformersJsRuntimeOptions = {}) {
+        this.localFilesOnly = options.localFilesOnly ?? false;
         this.loader = options.loader ?? defaultLoader;
         this.ensureInstalled = options.ensureInstalled ?? ensureHuggingFaceTransformers;
         this.resolveDeviceFn = options.resolveDeviceFn ?? resolvePipelineDevice;
@@ -107,19 +111,28 @@ export class TransformersJsRuntime {
         model: string,
         onProgress?: OnProgress
     ): Promise<PipelineInstance> {
-        const installed = await this.ensureInstalled();
+        const installed = this.localFilesOnly
+            ? isStorePackageInstalled("@huggingface/transformers")
+            : await this.ensureInstalled();
 
         if (!installed) {
-            throw new Error("HuggingFace Transformers not available — install was declined or failed");
+            throw new Error(
+                this.localFilesOnly
+                    ? "HuggingFace Transformers is not installed; local-files-only mode cannot install it"
+                    : "HuggingFace Transformers not available — install was declined or failed"
+            );
         }
 
-        await ensureHfToken();
+        if (!this.localFilesOnly) {
+            await ensureHfToken();
+        }
 
         const device = await this.resolveDeviceFn();
 
         // Build pipeline options once — reused by retry paths
         const pipelineOpts = (extraSessionOpts?: Record<string, unknown>) => ({
             device,
+            ...(this.localFilesOnly ? { local_files_only: true } : {}),
             dtype: task === "automatic-speech-recognition" ? getWhisperDtype(model) : ("q4" as const),
             ...(isFp16Incompatible(model) || extraSessionOpts
                 ? {
@@ -163,7 +176,10 @@ export class TransformersJsRuntime {
             const msg = err instanceof Error ? err.message : String(err);
 
             // Gated model — prompt for HF token if not configured
-            if (msg.includes("Unauthorized") || msg.includes("Access denied") || msg.includes("401")) {
+            if (
+                !this.localFilesOnly &&
+                (msg.includes("Unauthorized") || msg.includes("Access denied") || msg.includes("401"))
+            ) {
                 const token = await this.promptForToken(model);
 
                 if (token) {
@@ -190,7 +206,7 @@ export class TransformersJsRuntime {
                 return retryPipe;
             }
 
-            if (msg.includes("Protobuf parsing failed") || msg.includes("Load model")) {
+            if (!this.localFilesOnly && (msg.includes("Protobuf parsing failed") || msg.includes("Load model"))) {
                 await clearCorruptedCache(model);
 
                 throw new Error(

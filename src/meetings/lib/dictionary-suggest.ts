@@ -1,4 +1,4 @@
-import type { Correction } from "@genesiscz/utils/meetings/corrections";
+import { type Correction, teachesDictionary } from "@genesiscz/utils/meetings/corrections";
 import type { DictionaryCandidate } from "@genesiscz/utils/meetings/sources";
 import type { DictionaryEntry, ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import { isEnglishWord } from "@genesiscz/utils/transcribe/terms";
@@ -52,12 +52,8 @@ export function suggestDictionary(options: {
     const evidence = new Map<string, Correction>();
 
     for (const correction of options.corrections) {
-        // Only a fix confirmed for every line teaches the dictionary; a line-only fix or an older unscoped one does not.
-        if (
-            correction.kind !== "term" ||
-            correction.scope !== "everywhere" ||
-            (options.project && correction.project !== options.project)
-        ) {
+        // Explicit teaching is independent of line selection; older fixes retain their saved scope rule.
+        if (!teachesDictionary(correction) || (options.project && correction.project !== options.project)) {
             continue;
         }
 

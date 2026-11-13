@@ -114,8 +114,29 @@ extension IdentifierTargetTests {
                                                          windows: windows,
                                                          skipped: ["0: window is minimized"])) { error in
             let message = (error as? SnapshotError)?.errorDescription ?? ""
+            XCTAssertTrue(message.contains("cannot prove"), message)
             XCTAssertTrue(message.contains("searched 1 of 2 window(s)"), message)
             XCTAssertTrue(message.contains("0: window is minimized"), message)
         }
+    }
+}
+
+extension IdentifierTargetTests {
+    func testUnreadableBranchesCannotHideDuplicateIdentifiers() throws {
+        let known = window(0, "Main", [row(0, nil, role: "AXWindow"), row(1, "save")])
+        let incomplete = window(1, "Other", [["index": 0, "role": "AXWindow"],
+            ["index": 1, "role": "AXGroup", "childrenUnreadable": "AX failure"]])
+        let sameWindow = window(0, "Main", known.rows + [
+            ["index": 2, "role": "AXGroup", "childrenUnreadable": "AX failure"]
+        ])
+        for windows in [[known, incomplete], [sameWindow]] {
+            XCTAssertThrowsError(try resolveIdentifierTarget("save", app: "Fixture", depth: 20, windows: windows)) {
+                XCTAssertTrue($0.localizedDescription.contains("cannot prove"))
+            }
+        }
+        XCTAssertEqual(try resolveIdentifierTarget("save", app: "Fixture", depth: 20, windows: [known]),
+                       IdentifierTarget(window: 0, element: 1))
+        XCTAssertThrowsError(try resolveIdentifierTarget("save", app: "Fixture", depth: 20, windows: [known],
+                                                        skipped: ["1: unavailable"]))
     }
 }

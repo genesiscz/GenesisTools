@@ -42,18 +42,52 @@ extension MeetingDetailModel {
 
     // MARK: Comments for the listening agent (R43, G60)
 
+    /// Save selected audio into the meeting, independently of the playback stack and its temporary cache.
+    func saveSelectionClip(_ selection: TranscriptSelection, length: Double, saved: @escaping () -> Void) {
+        guard !busy.contains("clip.save") else { return }
+        busy.insert("clip.save")
+        Task {
+            defer { busy.remove("clip.save") }
+            do {
+                let params = MeetingsAPI.MomentSave.Params(meeting: id, target: selection.target, lengthSec: length,
+                                                          quote: selection.quote)
+                let result = try await MeetingsService.write(MeetingsAPI.MomentSave.self, params, service: service,
+                    orRun: ["play", id, "--save", "--target", MomentPlayer.Engine.targetJSON(selection.target),
+                            "--length", String(length), "--quote", selection.quote, "--json"])
+                reloadRecord()
+                window?.loadOverview(quiet: true)
+                var actions: [StackedNotice.Action] = [.init("Show Context", symbol: "doc.on.doc") { [weak self] _ in self?.show(.context) }]
+                if result.created {
+                    actions.append(.init("Undo", symbol: "arrow.uturn.backward") { [weak self] _ in self?.removeContext(result.entry) })
+                }
+                notices.push(StackedNotice(text: result.created ? "Saved clip in Context" : "This clip is already in Context",
+                                           detail: result.entry.title, actions: actions))
+                saved()
+            } catch {
+                notices.push(.meetingsFailure(error) { [weak self] in self?.saveSelectionClip(selection, length: length, saved: saved) })
+            }
+        }
+    }
+
     /// The staged comments and the listeners, through the service (no command keeps them); listens for `comment.sent`
     /// so a send from another window shows here too.
     func loadComments() {
-        guard let service else {
-            comments = .failed(MeetingsCLI.Failure(sentence: "Comments for the listening agent need the Meetings service.",
-                                                   detail: "The service starts with the window; Reload tries again."), previous: nil)
-            return
-        }
-        if commentsListening == nil {
+        if let service, commentsListening == nil {
             commentsListening = service.listen { [weak self] signal in
-                guard let self, case .event(.commentSent(let sent)) = signal, sent.meeting == self.id else { return }
-                self.commentDelivery = .sent(comments: sent.comments.count, listeners: sent.listeners.count)
+                guard let self else { return }
+                if case .resumed = signal {
+                    self.readComments(service)
+                    return
+                }
+                guard case .event(let event) = signal, event.meeting == self.id else { return }
+                switch event {
+                case .commentSent(let sent):
+                    self.commentDelivery = .sent(comments: sent.comments.count, listeners: sent.listeners.count)
+                case .commentChanged:
+                    break
+                default:
+                    return
+                }
                 self.readComments(service)
             }
         }
@@ -65,11 +99,12 @@ extension MeetingDetailModel {
         if comments == .idle { loadComments() }
     }
 
-    private func readComments(_ service: MeetingsService) {
+    private func readComments(_ service: MeetingsService?) {
         let id = id
         Task { [weak self] in
             do {
-                let list = try await service.call(MeetingsAPI.CommentList.self, .init(meeting: id))
+                let list = try await MeetingsRead.service(MeetingsAPI.CommentList.self, .init(meeting: id),
+                                                         orRun: ["comments", "list", id, "--json"]).run(service: service)
                 self?.settle(\.comments, .loaded(list))
             } catch {
                 guard let self else { return }
@@ -81,13 +116,17 @@ extension MeetingDetailModel {
     /// Stages a comment on the selected lines; the list reads again.
     func stageComment(_ selection: TranscriptSelection, text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let service else { return }
+        guard !text.isEmpty else { return }
+        let service = service
         let id = id
         commentDelivery = .idle
         Task { [weak self] in
             do {
-                _ = try await service.call(MeetingsAPI.CommentStage.self,
-                                           .init(meeting: id, target: selection.target, text: text, quote: selection.quote))
+                _ = try await MeetingsService.write(MeetingsAPI.CommentStage.self,
+                                                    .init(meeting: id, target: selection.target, text: text, quote: selection.quote),
+                                                    service: service,
+                                                    orRun: ["comments", "stage", id, "--target", MomentPlayer.Engine.targetJSON(selection.target),
+                                                            "--text", text, "--quote", selection.quote, "--json"])
                 self?.readComments(service)
             } catch {
                 self?.notices.push(.meetingsFailure(error) { [weak self] in self?.stageComment(selection, text: text) })
@@ -96,11 +135,12 @@ extension MeetingDetailModel {
     }
 
     func unstageComment(_ comment: String) {
-        guard let service else { return }
+        let service = service
         let id = id
         Task { [weak self] in
             do {
-                _ = try await service.call(MeetingsAPI.CommentUnstage.self, .init(meeting: id, id: comment))
+                _ = try await MeetingsService.write(MeetingsAPI.CommentUnstage.self, .init(meeting: id, id: comment),
+                                                    service: service, orRun: ["comments", "unstage", id, comment, "--json"])
                 self?.readComments(service)
             } catch {
                 self?.notices.push(.meetingsFailure(error) { [weak self] in self?.unstageComment(comment) })
@@ -110,18 +150,33 @@ extension MeetingDetailModel {
 
     /// Sends every staged comment; the result says how many listeners got them, or that nobody listens (G60).
     func sendComments() {
-        guard let service else { return }
+        let service = service
         let staged = comments.value?.comments.filter { $0.state == "staged" }.count ?? 0
         guard staged > 0 else { return }
         let id = id
         commentDelivery = .sending(count: staged)
         Task { [weak self] in
             do {
-                let result = try await service.call(MeetingsAPI.CommentSend.self, .init(meeting: id))
-                self?.commentDelivery = .sent(comments: result.sent.count, listeners: result.listeners.count)
+                let result = try await MeetingsService.write(MeetingsAPI.CommentSend.self, .init(meeting: id, requireListener: true),
+                                                            service: service, orRun: ["comments", "send", id, "--require-listener", "--json"])
+                self?.commentDelivery = .sent(comments: result.sent.isEmpty ? staged : result.sent.count, listeners: result.listeners.count)
                 self?.readComments(service)
             } catch {
                 self?.commentDelivery = .failed(message: asFailure(error).sentence)
+            }
+        }
+    }
+
+    func withdrawComment(_ comment: String) {
+        let service = service
+        let id = id
+        Task { [weak self] in
+            do {
+                _ = try await MeetingsService.write(MeetingsAPI.CommentWithdraw.self, .init(meeting: id, id: comment),
+                                                    service: service, orRun: ["comments", "withdraw", id, comment, "--json"])
+                self?.readComments(service)
+            } catch {
+                self?.notices.push(.meetingsFailure(error) { [weak self] in self?.withdrawComment(comment) })
             }
         }
     }
@@ -130,7 +185,14 @@ extension MeetingDetailModel {
 
     /// Selects a row from a pin or a "?" banner: the Items tab, the row selected (the tab scrolls to it, instantly under
     /// Reduce Motion). A decided row that `meetings.rows.decided` hides shows again, with an Undo that hides it again.
-    func reveal(row id: String, defaults: UserDefaults = .standard) {
+    func reveal(row id: String, defaults: UserDefaults? = nil) {
+        let defaults = defaults ?? self.defaults
+        if let row = rows.value?.rows.first(where: { $0.id == id }) {
+            if itemsFilter.rows([row]).isEmpty { itemsFilter = .all }
+        } else {
+            // The requested meeting's rows may still be loading.
+            itemsFilter = .all
+        }
         if tab != .items { show(.items) }
         let setting = MeetingsPreferences.Rows.decided
         if let row = rows.value?.rows.first(where: { $0.id == id }), !row.isOpen, setting.value(defaults) == .hidden {

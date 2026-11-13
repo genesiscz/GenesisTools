@@ -6,11 +6,41 @@ extension StackedNotice {
     /// A failed meetings command as a notice on the pane that ran it: the CLI's sentence, its own text behind Details,
     /// and Retry when running it again can help. An error stays until it is closed or retried. A source that can fail
     /// again and again (a test run per keystroke) passes one `id`, so its next failure replaces the last.
+    /// "Details" opens the failure window (the error, its output, Copy context for agents, Report a bug).
+    @MainActor
     static func meetingsFailure(_ error: Error, id: StackedNotice.ID = StackedNotice.ID(),
                                 retry: (@MainActor () -> Void)? = nil) -> StackedNotice {
         let failure = error as? MeetingsCLI.Failure
-        return StackedNotice(id: id, text: failure?.sentence ?? "The meetings command failed.", more: failure?.detail ?? "\(error)",
-                             tone: .error, actions: retry.map { [.retry($0)] } ?? [])
+        let text = failure?.sentence ?? "The meetings command failed."
+        let more = failure?.detail ?? "\(error)"
+        var report = FailureReport.unexpected(more, outcome: "A Meetings action failed", action: "Use the Meetings window",
+                                              title: "Meetings action failed", area: "meetings")
+        report.headline = FailureLog.sentence(text) ?? text
+        report.command = failure?.command
+        report.stack = failure?.stack
+        report.issue = failure?.issue
+        let actions: [StackedNotice.Action] = (retry.map { [.retry($0)] } ?? []) + [.details(report, retry: retry)]
+        return StackedNotice(id: id, text: text, more: more, tone: .error, actions: actions)
+    }
+}
+
+extension MeetingsCLI.Failure {
+    /// The report retains the failure's event time. Cached app facts avoid disk reads in a view body.
+    @MainActor
+    func report(outcome: String = "A Meetings read failed", action: String = "Use the Meetings window") -> FailureReport {
+        var report = FailureReport.unexpected(detail, outcome: outcome, action: action, title: outcome, area: "meetings",
+                                              time: occurredAt, app: .launch)
+        report.headline = FailureLog.sentence(sentence) ?? sentence
+        report.command = command
+        report.stack = stack
+        report.issue = issue
+        return report
+    }
+
+    /// "Details" on a notice pill: the failure window on this failure, with Try again.
+    @MainActor
+    func detailsFix(retry: (@MainActor () -> Void)? = nil) -> NoticeFix {
+        .details(report(), retry: retry)
     }
 }
 
@@ -123,6 +153,25 @@ final class MeetingsWindowModel {
     @ObservationIgnored private var listening: MeetingsService.Listening?
     @ObservationIgnored private var liveLostTask: Task<Void, Never>?
     @ObservationIgnored private var overviewRefresh: Task<Void, Never>?
+    /// The events heard since the last overview refresh.
+    @ObservationIgnored private var overviewBurst = OverviewBurst()
+    /// One overview read in flight per service and days, shared by every window model of the process.
+    private static let overviewReads = MeetingsSharedRead<OverviewKey, MeetingsOverview>()
+
+    struct OverviewKey: Hashable {
+        let service: ObjectIdentifier?
+        let days: Int
+    }
+
+    /// The events of one burst, as far as the overview cares.
+    struct OverviewBurst: Equatable {
+        /// The last event's arrival: a read that started after it shows every change of the burst.
+        var heardAt: ContinuousClock.Instant?
+        /// The decision tokens heard.
+        var tokens: Set<String> = []
+        /// An event that is no decision (a changed record, a comment).
+        var other = false
+    }
     /// The notices of other actors' decisions, merged per actor and meeting within `burstSeconds` (G38).
     @ObservationIgnored private var bursts: [String: Burst] = [:]
 
@@ -144,8 +193,7 @@ final class MeetingsWindowModel {
         noticePlace = MeetingsPreferences.noticePlace(defaults)
         sidePanelOpen = defaults.bool(forKey: Self.sidePanelOpenKey)
         sidePanelFolded = Set(defaults.stringArray(forKey: Self.sidePanelFoldedKey) ?? [])
-        notices = NoticeStackModel(clock: noticeClock, timing: { [defaults] in MeetingsPreferences.noticeTiming(defaults) },
-                                   maxVisible: { [defaults] in MeetingsPreferences.Notices.maxVisible.value(defaults) })
+        notices = MeetingsPreferences.makeNoticeStack(clock: noticeClock, defaults: defaults)
     }
 
     /// The window's notice stack; every pane pushes into it.
@@ -172,6 +220,7 @@ final class MeetingsWindowModel {
     /// A window setting changed (the side panel wrote one, or the window came back after the Settings page): the values
     /// the window model holds read again. The views read every other window setting from the defaults themselves.
     func windowSettingsChanged() {
+        notices.refreshSettings()
         let place = MeetingsPreferences.noticePlace(defaults)
         if place != noticePlace { noticePlace = place }
     }
@@ -221,14 +270,20 @@ final class MeetingsWindowModel {
     static let settingsRead: MeetingsRead<ConfigShow> = .service(MeetingsAPI.ConfigShowRead.self, .init(), orRun: ["config", "show", "--json"])
 
     /// `quiet` (a return to the window, an event): the list keeps what it shows until the answer lands.
-    func loadOverview(quiet: Bool = false) {
+    /// `changedAt` is when the change this read must show happened (an event's arrival); a read of another window model
+    /// or caller that started after it answers this one too (`overviewReads`). Nil: now.
+    func loadOverview(quiet: Bool = false, changedAt: ContinuousClock.Instant? = nil) {
         overviewGeneration += 1
         let generation = overviewGeneration
         if !quiet { overview = .loading(previous: overview.value) }
         let days = days
+        let service = service
+        let key = OverviewKey(service: service.map(ObjectIdentifier.init), days: days)
         Task {
             do {
-                let value = try await Self.overviewRead(days: days).run(service: service)
+                let value = try await Self.overviewReads.value(for: key, changedAt: changedAt ?? .now) {
+                    try await Self.overviewRead(days: days).run(service: service)
+                }
                 guard generation == overviewGeneration else { return }
                 receive(value)
             } catch {
@@ -264,7 +319,12 @@ final class MeetingsWindowModel {
             let next: Loadable<MeetingsSettings>
             do {
                 let shown = try await Self.settingsRead.run(service: service)
-                if settingsRaw != shown.raw { settingsRaw = shown.raw }
+                if settingsRaw != shown.raw {
+                    if settingsRaw?.at(["global", "playback", "listen"]) != shown.raw.at(["global", "playback", "listen"]) {
+                        player.invalidateClipCache()
+                    }
+                    settingsRaw = shown.raw
+                }
                 next = .loaded(shown.value)
             } catch {
                 next = .failed(asFailure(error), previous: settings.value)
@@ -283,6 +343,7 @@ final class MeetingsWindowModel {
         Task {
             do {
                 try await write.run(service: service)
+                if path.starts(with: ["global", "playback", "listen"]) { player.invalidateClipCache() }
                 // The next write at this path names this value, not the one before it, even before the read lands.
                 if let value { settingsRaw = settingsRaw?.setting(path, to: value) }
                 if let done { notices.push(StackedNotice(text: done)) }
@@ -300,7 +361,9 @@ final class MeetingsWindowModel {
     func previewTone(_ sound: MeetingsAPI.ToneSoundSetting) {
         Task {
             do {
-                try await TonePreviewPlayer.play(sound, service: service)
+                if let message = try await TonePreviewPlayer.play(sound, service: service) {
+                    notices.push(StackedNotice(text: message))
+                }
             } catch is MeetingsService.Unavailable {
                 notices.push(StackedNotice(text: TonePreviewPlayer.unavailableText))
             } catch {
@@ -380,11 +443,19 @@ final class MeetingsWindowModel {
     /// terminal, a new meeting) reads now, quietly: what is on screen stays until an answer differs.
     func refreshAfterReturn() {
         windowSettingsChanged()
+        preparePlayingTimeline()
+        // Config edits outside this process do not emit meeting events.
+        loadSettings(quiet: true)
         guard !liveUpdates else { return }
         HubMainBusy.measure("meetings.refresh", window: 1.5)
         loadOverview(quiet: true)
-        loadSettings(quiet: true)
         detail?.refreshLoaded()
+    }
+
+    private func preparePlayingTimeline() {
+        guard let meeting = player.top?.meeting else { return }
+        player.timeline.prepare(meeting)
+        if detail?.id != meeting { player.timeline.prepareRows(meeting) }
     }
 
     // MARK: Live updates (R36)
@@ -393,7 +464,12 @@ final class MeetingsWindowModel {
     /// a meeting changed outside the service reads its changed parts, and the sidebar's counts follow (G50). Subscribing
     /// to all meetings, not only the open one, is what lets the counts and a notice of another meeting follow too.
     func startLiveUpdates() {
-        guard let service, listening == nil else { return }
+        guard let service else {
+            // The CLI fallback can read, but nothing will deliver changes from another window.
+            liveUpdatesOff = true
+            return
+        }
+        guard listening == nil else { return }
         listening = service.listen { [weak self] signal in self?.receive(signal) }
         Task { [weak self] in
             guard let self else { return }
@@ -403,6 +479,47 @@ final class MeetingsWindowModel {
             } catch {
                 // No service yet: the kept subscription connects by itself once one runs (`.resumed`).
                 self.setLive(false)
+            }
+        }
+    }
+
+    /// A second window closes: its own listener stops, and the shared service keeps the subscription the other windows
+    /// listen on (`stopLiveUpdates` unsubscribes the service itself).
+    func detachLiveUpdates() {
+        listening?.cancel()
+        listening = nil
+    }
+
+    // MARK: - Duplicate and rename
+
+    /// The meeting whose title the header edits now: a double click on the title, or Rename… in a menu.
+    var renamingMeetingID: String?
+    /// The meetings a duplicate runs for, so a second press waits for the first.
+    private(set) var duplicating: Set<String> = []
+
+    /// `meetings duplicate --json`'s answer.
+    struct DuplicateResult: Decodable, Equatable {
+        let from: String
+        let id: String
+        let title: String
+    }
+
+    /// Copies a meeting into a new record (`meetings duplicate`) and opens the copy, with its title ready to edit.
+    func duplicate(_ id: String) {
+        guard !duplicating.contains(id) else { return }
+        duplicating.insert(id)
+        Task {
+            defer { duplicating.remove(id) }
+            do {
+                let copy = try await MeetingsCLI.json(DuplicateResult.self, ["duplicate", id, "--json"], timeoutSeconds: 120)
+                loadOverview(quiet: true)
+                select(copy.id)
+                renamingMeetingID = copy.id
+                notices.push(StackedNotice(text: "Duplicated as \(copy.title)"))
+            } catch {
+                // A timeout can follow a completed copy; show the current list before another explicit Duplicate.
+                loadOverview(quiet: true)
+                notices.push(.meetingsFailure(error))
             }
         }
     }
@@ -423,8 +540,10 @@ final class MeetingsWindowModel {
             receive(event)
         case .resumed:
             setLive(true)
+            preparePlayingTimeline()
             // Events between the two connections were not heard: what the window shows reads again once.
             loadOverview(quiet: true)
+            loadSettings(quiet: true)
             detail?.refreshLoaded()
         case .lost:
             setLive(false)
@@ -454,18 +573,42 @@ final class MeetingsWindowModel {
 
     /// An event the window itself answers: the sidebar's counts, and a notice for a decision someone else made.
     private func receive(_ event: MeetingsEvent) {
-        scheduleOverviewRefresh()
-        guard let entry = event.entry, entry.actor.kind != DecisionActor.window.kind else { return }
-        noteDecision(entry, meeting: event.meeting)
+        if case .peopleChanged = event, place == .contacts { people.load() }
+        if Self.changesOverview(event) { scheduleOverviewRefresh(event) }
+        guard let entry = event.entry, let meeting = event.meeting, entry.actor.kind != DecisionActor.window.kind else { return }
+        noteDecision(entry, meeting: meeting)
+    }
+
+    /// Whether an event can change the overview. The overview is read from the meeting records alone (`meeting.json`,
+    /// which `show` names), so a `meeting.changed` that names only the timeline (a frame or an OCR line of a live
+    /// recording) changes nothing in it: 506 such events in one evening each cost a full overview read (2026-11-11).
+    static func changesOverview(_ event: MeetingsEvent) -> Bool {
+        switch event {
+        case .meetingChanged(let changed): changed.parts.contains("show")
+        case .decisionApplied, .decisionReverted, .commentSent: true
+        case .peopleChanged, .commentChanged, .wordTimingsChanged: false
+        }
+    }
+
+    /// Whether a burst of events still needs the overview read: not when every event in it was a decision this window
+    /// made, because the decision's own path reads the overview when it lands. Checked when the burst ends, since a
+    /// decision's event can arrive before its answer names the token.
+    static func burstNeedsOverview(_ burst: OverviewBurst, own: Set<String>) -> Bool {
+        burst.other || !burst.tokens.isSubset(of: own)
     }
 
     /// The sidebar reads the overview again once per burst of events, not once per event.
-    private func scheduleOverviewRefresh() {
+    private func scheduleOverviewRefresh(_ event: MeetingsEvent) {
+        overviewBurst.heardAt = .now
+        if let token = event.entry?.token { overviewBurst.tokens.insert(token) } else { overviewBurst.other = true }
         overviewRefresh?.cancel()
         overviewRefresh = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(400))
             guard let self, !Task.isCancelled else { return }
-            self.loadOverview(quiet: true)
+            let burst = self.overviewBurst
+            self.overviewBurst = OverviewBurst()
+            guard Self.burstNeedsOverview(burst, own: self.detail?.ownTokens ?? []) else { return }
+            self.loadOverview(quiet: true, changedAt: burst.heardAt)
         }
     }
 

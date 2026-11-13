@@ -1,3 +1,4 @@
+import { isAbsolute, win32 } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { DEFAULT_OCR_TILE_PX, OCR_READS } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS, type FillerLists } from "@genesiscz/utils/recording-editor/transcript-cuts";
@@ -20,7 +21,10 @@ import {
     type PersonRef,
     pairedPersonSchema,
     removeEntryPairings,
+    removeSourcePairing,
     samePerson,
+    type UnpairResult,
+    withoutSelf,
 } from "./people";
 import { MEETING_SOURCE_IDS, type MeetingSourceId } from "./sources";
 
@@ -36,8 +40,8 @@ export const projectNameSchema = z
 
 const strings = z.array(z.string().trim().min(1)).default([]);
 
-/** The config shape this code writes. Older files are migrated on the first read (`migrateMeetingsConfig`). */
-export const MEETINGS_CONFIG_VERSION = 5;
+/** The config shape this code writes. Reads migrate in memory; explicit edits persist the current shape. */
+export const MEETINGS_CONFIG_VERSION = 7;
 
 /**
  * How a meeting finds its project, by the facts every meeting has: its calendar entry, its title and its people. A
@@ -94,6 +98,10 @@ const recordersSchema = z.object({
 }) satisfies z.ZodType<Record<FrameRecorderId, object>>;
 
 /** The capture policy every recorder follows, the recorder that runs, and each recorder's own keys. */
+/** Which notices a recording that keeps trying after failed captures posts (`capture.failureNotices`). */
+export const CAPTURE_FAILURE_NOTICES = ["failing-and-recovered", "failing", "off"] as const;
+export type CaptureFailureNotices = (typeof CAPTURE_FAILURE_NOTICES)[number];
+
 const captureSchema = z.object({
     /** The frame recorder: GenesisTools' own ScreenCaptureKit recorder (`native`) or `peekaboo`. */
     backend: z.enum(FRAME_RECORDER_IDS).default("native"),
@@ -115,10 +123,7 @@ const captureSchema = z.object({
             region: z.enum(OCR_REGIONS).default("frame"),
             /** Whole-frame reads or overlapping region tiles without language correction. */
             read: z.enum(OCR_READS).default("tiles"),
-            /**
-             * The longest side of one grid cell in frame pixels, before each tile's 3% overlap past its inner edges:
-             * smaller cells read smaller text and cost more CPU.
-             */
+            /** The longest side of one tile in frame pixels: smaller tiles read smaller text and cost more CPU. */
             tilePx: z.number().int().min(256).max(8192).default(DEFAULT_OCR_TILE_PX),
         })
         .prefault({}),
@@ -130,6 +135,12 @@ const captureSchema = z.object({
      * trash this many days after its newest capture file; the meeting record stays.
      */
     retentionDays: z.number().int().positive().default(30),
+    /**
+     * The notices of a capture that keeps failing while the recording goes on trying (an ax-tool being rebuilt, a
+     * timeout): `failing-and-recovered` says when it starts failing and when it records again, `failing` only the first,
+     * `off` neither. A recording that stops (a refused permission) always says so.
+     */
+    failureNotices: z.enum(CAPTURE_FAILURE_NOTICES).default("failing-and-recovered"),
     recorders: recordersSchema.prefault({}),
 });
 
@@ -261,7 +272,7 @@ export const toneSoundSettingSchema = z
     )
     // Checked after the union, so a relative path reads as its own sentence instead of the union's "Invalid input".
     .superRefine((setting, context) => {
-        if ("file" in setting && !setting.file.startsWith("/")) {
+        if ("file" in setting && !isAbsolute(setting.file) && !win32.isAbsolute(setting.file)) {
             context.addIssue({
                 code: "custom",
                 path: ["file"],
@@ -280,6 +291,8 @@ const toneSchema = z.object({
     /** How long before the asked spot the tone sounds (version 3 kept it as `beepLeadSec`). */
     leadSec: z.number().min(0).max(3).default(0.4),
     sound: toneSoundSettingSchema.prefault({}),
+    /** A missing or unreadable tone file may use a beep, with a notice, or stop the clip. */
+    onMissing: z.enum(["beep", "error"]).default("beep"),
 });
 export type ToneSettings = z.infer<typeof toneSchema>;
 
@@ -302,12 +315,16 @@ const listenSchema = z.object({
     /** The tone before the asked spot (version 3 kept `beep` and `beepLeadSec` flat here). */
     tone: toneSchema.prefault({}),
     /** Plays the clip again each time it ends, until the question is answered, so it can be heard while typing. */
-    repeat: z.boolean().default(true),
-    /** The pause between two plays of a repeated clip. */
-    repeatGapSec: z.number().min(0).max(10).default(1),
+    repeat: z
+        .object({
+            enabled: z.boolean().default(true),
+            /** The pause between two plays of a repeated clip. */
+            gapSec: z.number().min(0).max(10).default(1),
+        })
+        .prefault({}),
     /**
-     * The longest stretch a Moment of an item or a speaker's turn plays (a 51-minute hint range is shown, not played):
-     * a longer one is refused with `too-long`. A range or a selection the caller bounds itself is not capped.
+     * The longest stretch a Moment of an item or a speaker's turn plays: a longer one plays its first this many seconds
+     * and its label says so. A range or a selection the caller bounds itself is not capped.
      */
     longestClipSec: z.number().min(1).max(600).default(30),
 });
@@ -645,6 +662,49 @@ function migrateToV5(raw: Record<string, unknown>): void {
     delete listen.padSec;
 }
 
+/** The current API groups repeat and its gap; old files keep the scalar switch and gap. */
+function repeatInMemory(raw: Record<string, unknown>): void {
+    const global = isObject(raw.global) ? raw.global : undefined;
+    const playback = global && isObject(global.playback) ? global.playback : undefined;
+    const listen = playback && isObject(playback.listen) ? playback.listen : undefined;
+    if (!listen || (listen.repeat === undefined && listen.repeatGapSec === undefined)) {
+        return;
+    }
+
+    const previous = listen.repeat;
+    if (previous !== undefined && typeof previous !== "boolean" && !isObject(previous)) {
+        return;
+    }
+
+    const repeat = isObject(previous) ? previous : {};
+    if (typeof previous === "boolean") {
+        repeat.enabled = previous;
+    }
+
+    if (listen.repeatGapSec !== undefined) {
+        repeat.gapSec ??= listen.repeatGapSec;
+    }
+
+    listen.repeat = repeat;
+    delete listen.repeatGapSec;
+}
+
+/** Version 7 restores the types older builds read, without changing the current API's grouped settings. */
+function repeatOnDisk(raw: Record<string, unknown>): void {
+    const global = isObject(raw.global) ? raw.global : undefined;
+    const playback = global && isObject(global.playback) ? global.playback : undefined;
+    const listen = playback && isObject(playback.listen) ? playback.listen : undefined;
+    if (!listen || !isObject(listen.repeat)) {
+        return;
+    }
+
+    const repeat = listen.repeat;
+    listen.repeat = repeat.enabled === undefined ? true : repeat.enabled;
+    if (repeat.gapSec !== undefined) {
+        listen.repeatGapSec = repeat.gapSec;
+    }
+}
+
 /**
  * Moves an older config to the current places, in place, one version step at a time. A file without a version is
  * version 1. Returns whether anything changed; a current config is left alone, so a second run changes nothing.
@@ -666,6 +726,8 @@ export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
 
     migrateToV4(raw);
     migrateToV5(raw);
+    repeatInMemory(raw);
+    repeatOnDisk(raw);
     raw.version = MEETINGS_CONFIG_VERSION;
     return true;
 }
@@ -678,6 +740,7 @@ export const meetingsConfigSchema = z.preprocess((value) => {
 
     const copy = structuredClone(value);
     migrateMeetingsConfig(copy);
+    repeatInMemory(copy);
     return copy;
 }, storedConfigSchema);
 
@@ -796,26 +859,11 @@ export class MeetingsConfigStore {
     }
 
     /**
-     * The config with every default filled in. A missing file is the defaults; an invalid one throws with each issue.
-     * An older file is rewritten in the current shape once, under the lock.
+     * The config with defaults and legacy migration applied in memory. Reads, including diagnostics, never rewrite
+     * the file. An explicit update migrates the saved shape under its existing lock.
      */
     async read(): Promise<MeetingsConfig> {
-        let raw = (await this.storage.getConfig<Record<string, unknown>>()) ?? {};
-
-        if (Object.keys(raw).length > 0 && migrateMeetingsConfig(structuredClone(raw))) {
-            raw = await this.storage.atomicConfigUpdate<Record<string, unknown>>((current) => {
-                if (migrateMeetingsConfig(current)) {
-                    const parsed = meetingsConfigSchema.safeParse(current);
-
-                    if (!parsed.success) {
-                        throw new Error(formatIssues(parsed.error, this.path));
-                    }
-
-                    log.debug({ path: this.path, version: MEETINGS_CONFIG_VERSION }, "meetings config migrated");
-                }
-            });
-        }
-
+        const raw = (await this.storage.getConfig<Record<string, unknown>>()) ?? {};
         const parsed = meetingsConfigSchema.safeParse(raw);
 
         if (!parsed.success) {
@@ -834,6 +882,7 @@ export class MeetingsConfigStore {
 
         await this.storage.atomicConfigUpdate<Record<string, unknown>>((raw) => {
             migrateMeetingsConfig(raw);
+            repeatInMemory(raw);
             mutate(raw);
             const parsed = meetingsConfigSchema.safeParse(raw);
 
@@ -842,6 +891,7 @@ export class MeetingsConfigStore {
             }
 
             validated = parsed.data;
+            repeatOnDisk(raw);
         });
 
         log.debug({ path: this.path }, "meetings config updated");
@@ -985,6 +1035,53 @@ export class MeetingsConfigStore {
             const match = objectAt(objectAt(objectAt(raw, "projects"), options.project), "match");
             match.people = addPairings(rawPeople(match.people), options.people, options.by);
         });
+    }
+
+    /** Pairs only previously unpaired people in one atomic write and returns exactly what that write added. */
+    async pairUnpairedPeople(options: {
+        project: string;
+        people: Array<{ person: PersonRef; by: PairedBy }>;
+    }): Promise<Array<{ name: string; email?: string; by: PairedBy }>> {
+        projectNameSchema.parse(options.project);
+        let added: Array<{ name: string; email?: string; by: PairedBy }> = [];
+        const allowed = withoutSelf(options.people.map((entry) => entry.person));
+        await this.update((raw) => {
+            added = [];
+            const project = objectAt(raw, "projects")[options.project];
+            if (!isObject(project)) {
+                throw new Error(`No project ${options.project}.`);
+            }
+            const match = objectAt(project, "match");
+            let people = rawPeople(match.people);
+            for (const { person, by } of options.people) {
+                if (
+                    !allowed.some((candidate) => samePerson(candidate, person)) ||
+                    people.some((existing) => samePerson(existing, person))
+                ) {
+                    continue;
+                }
+                people = addPairings(people, [person], by);
+                added.push({ name: person.name, ...(person.email ? { email: person.email } : {}), by });
+            }
+            match.people = people;
+        });
+        return added;
+    }
+
+    /** Undo one pairing source without removing another relationship of the same person. */
+    async unpairSource(project: string, person: PersonRef, source: PairedBy): Promise<UnpairResult["removed"]> {
+        let removed: UnpairResult["removed"] = [];
+        await this.update((raw) => {
+            const settings = objectAt(raw, "projects")[project];
+            const match = isObject(settings) && isObject(settings.match) ? settings.match : undefined;
+            if (!match) {
+                return;
+            }
+            const result = removeSourcePairing(rawPeople(match.people), person, source);
+            match.people = result.people;
+            removed = result.removed;
+        });
+        return removed;
     }
 
     /** Removes the pairings one calendar entry made, in every project; a person another source pairs stays. */

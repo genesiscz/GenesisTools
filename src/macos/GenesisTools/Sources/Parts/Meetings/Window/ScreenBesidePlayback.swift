@@ -94,23 +94,33 @@ struct ScreenBesidePlayback: View {
     let pickDisplay: (Int?) -> Void
     var toggleFollows: () -> Void = {}
     var openFrame: (() -> Void)? = nil
+    var showText: (() -> Void)? = nil
 
     var body: some View {
         if recorded {
             VStack(alignment: .leading, spacing: 6) {
                 header
-                frame
+                if let openFrame {
+                    Button(action: openFrame) { frame }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(spoken)
+                        .accessibilityHint("Open this frame in the recording viewer")
+                        .accessibilityIdentifier("meetings.screen.open")
+                } else {
+                    frame
+                }
             }
-            .frame(height: height + 26, alignment: .top)
+            .frame(height: height + 50, alignment: .top)
         }
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
-            Text(verbatim: caption).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                .instantTooltip(Self.sentence(atSec: atSec, apartSec: apartSec) ?? "")
-            Spacer(minLength: 4)
-            if displays.count > 1 {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(verbatim: caption).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    .instantTooltip(Self.sentence(atSec: atSec, apartSec: apartSec) ?? "")
+                Spacer(minLength: 4)
+                if displays.count > 1 {
                 MenuButton(style: .genHoverPlain(), items: menuItems) {
                     HStack(spacing: 3) {
                         Image(systemName: "display")
@@ -123,15 +133,23 @@ struct ScreenBesidePlayback: View {
                 }
                 .instantTooltip("Pick the display the frames come from")
                 .accessibilityLabel("Display: \(selectedName)")
+                }
             }
-            IconButton(systemName: follows ? "link" : "link.badge.plus",
-                       tooltip: follows ? "The frame follows the playback. Click to hold it." : "Held. Click to follow the playback again.",
-                       size: 11, tint: follows ? .accentColor : nil, action: toggleFollows)
-            if let openFrame {
-                IconButton(systemName: "arrow.up.forward.square", tooltip: "Open the frame", size: 11, action: openFrame)
+            HStack(spacing: 6) {
+                KitToggleChip("Follows", isOn: Binding(get: { follows }, set: { _ in toggleFollows() }),
+                              hue: .play, size: .small,
+                              tooltip: "Follow playback, or hold the current frame",
+                              identifier: "meetings.screen.follows")
+                if let openFrame {
+                    GhostButton("Open frame", symbol: "arrow.up.forward.square", tooltip: "Open this frame in the recording viewer", action: openFrame)
+                }
+                if let showText {
+                    GhostButton("OCR text", symbol: "text.viewfinder", tooltip: "Read and copy all recognized text in this frame", action: showText)
+                }
             }
+            .font(.system(size: 10))
         }
-        .frame(height: 20)
+        .frame(height: 44, alignment: .topLeading)
     }
 
     private var frame: some View {
@@ -174,20 +192,20 @@ struct ScreenBesidePlayback: View {
     /// What VoiceOver reads for the picture: the full sentence outside the capture, else the caption.
     private var spoken: String { Self.sentence(atSec: atSec, apartSec: apartSec) ?? caption }
 
-    /// "Screen at 54:35"; outside the capture "Last frame, 37 min earlier" or "First frame, 55 s later". Short on
+    /// "Screen at 54:35"; outside the capture "Frame, 37 min earlier" or "Frame, 55 s later". Short on
     /// purpose: the pane's header is 290 pt wide with its display menu and two buttons, and a longer caption was cut.
     static func caption(atSec: Double?, apartSec: Double?) -> String {
         guard let atSec else { return "Screen" }
         guard let apartSec else { return "Screen at \(MeetingsFormat.clock(atSec))" }
-        return apartSec > 0 ? "Last frame, \(gap(apartSec)) earlier" : "First frame, \(gap(apartSec)) later"
+        return apartSec > 0 ? "Frame, \(gap(apartSec)) earlier" : "Frame, \(gap(apartSec)) later"
     }
 
     /// The caption's full sentence, for the tooltip and VoiceOver; nil inside the capture.
     static func sentence(atSec: Double?, apartSec: Double?) -> String? {
         guard let atSec, let apartSec else { return nil }
         let at = MeetingsFormat.clock(atSec)
-        return apartSec > 0 ? "The screen capture ended at \(at), \(gap(apartSec)) before this spot. This is its last frame."
-            : "The screen capture starts at \(at), \(gap(apartSec)) after this spot. This is its first frame."
+        let relative = apartSec > 0 ? "before" : "after"
+        return "The capture does not cover this spot. This frame is from \(at), \(gap(apartSec)) \(relative) it."
     }
 
     private static func gap(_ apartSec: Double) -> String {
@@ -201,7 +219,7 @@ struct ScreenBesidePlayback: View {
 
     private func menuItems() -> [MenuButtonItem] {
         var items: [MenuButtonItem] = [
-            .action("Auto (the display with the hit)", checked: selectedDisplay == nil) { pickDisplay(nil) },
+            .action("Auto (recorded focus, then the hit)", checked: selectedDisplay == nil) { pickDisplay(nil) },
             .divider,
         ]
         items += displays.map { display in

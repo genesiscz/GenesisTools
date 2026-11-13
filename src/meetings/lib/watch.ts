@@ -8,7 +8,9 @@ import { type LiveRecording, MEETING_SOURCE_IDS, type MeetingSourceId } from "@g
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { assignSweep, hasOpenAssignSteps } from "./assign";
 import { linkSource } from "./link";
-import { readRecorderState } from "./recorder-shared";
+import { ensureOcrWorkers } from "./ocr-worker";
+import { interruptedRecording } from "./recorder-adapters";
+import { lastRecordingActivity, readRecorderState } from "./recorder-shared";
 import { pruneCapturesDaily } from "./retention";
 import { meetingSource } from "./sources";
 import {
@@ -60,6 +62,10 @@ export interface WatchDeps {
     /** Links the source's meeting again, so its final title, end and people reach the record. */
     refresh: (meetingId: string, sourceRef: string) => Promise<MeetingRecord>;
     run: (args: string[]) => Promise<{ success: boolean; exitCode: number | null; stderr: string }>;
+    /** Last frame or recorder state write; capture pieces update the state even on a static screen. */
+    lastActivityAt: (meetingId: string) => number | undefined;
+    /** Ends a recording whose recorder died and that is not started again: status stopped, its span `interrupted`. */
+    endInterrupted: (meetingId: string, at: string) => Promise<void>;
     notify: (note: WatchNote) => Promise<void>;
 }
 
@@ -95,6 +101,14 @@ function defaultDeps(store: MeetingStore): WatchDeps {
                 })
             ).record,
         run: (args) => execTool(args, { timeout: TOOL_TIMEOUT_MS }),
+        lastActivityAt: (meetingId) => lastRecordingActivity(store, meetingId),
+        endInterrupted: async (meetingId, at) => {
+            await store.update(meetingId, { command: "watch", change: "recorder died; recording ended" }, (current) => {
+                if (current.recording) {
+                    current.recording = interruptedRecording(current.recording, at);
+                }
+            });
+        },
         notify: async (note) => {
             // The group names the source in the notification ledger (`tools notify history --source meetings`).
             await sendNotification({ ...note, group: "meetings" }).catch((err: unknown) =>
@@ -104,10 +118,80 @@ function defaultDeps(store: MeetingStore): WatchDeps {
     };
 }
 
+/** A running recorder needs monitoring; an unclosed orphan needs one recovery or expiry look. */
+export function hasRecordingToWatch(store: MeetingStore): boolean {
+    const { running, state } = readRecorderState(store);
+    if (running) {
+        return true;
+    }
+
+    const recording = state ? store.read(state.meetingId)?.recording : undefined;
+    return recording?.status === "recording" && recording.stopReason === undefined;
+}
+
 export type WatchResult = "disabled" | "idle" | "started" | "stopped" | "recording" | "busy" | "failed";
 
 function isFresh(live: LiveRecording, withinSec: number, now: number): boolean {
     return now - Date.parse(live.liveChangedAt) <= withinSec * 1000;
+}
+
+/** Resume only a recently active recorder; a reboot hours later must not restart an old recording. */
+export const RESUME_WITHIN_MS = 10 * 60_000;
+/** The least time between two starts of one interrupted recording, so a start that dies at once does not loop. */
+export const RESUME_GAP_MS = 60_000;
+const resumeTries = new Map<string, number>();
+
+/**
+ * A recorder that died without a stop (a reinstall, a crash, a kill) left its state file, and its record still says
+ * recording. While its last activity is recent, the same meeting's recording starts again (the start closes the dead span
+ * as `interrupted`); an older one, or one whose autostarted meeting already ended, is ended as `interrupted`.
+ * Manual recordings resume too: nothing but the death of the process stopped them.
+ */
+async function resumeInterrupted(options: {
+    store: MeetingStore;
+    deps: WatchDeps;
+    live: LiveRecording | null;
+    autoRecordEnabled: boolean;
+    now: number;
+}): Promise<WatchResult | undefined> {
+    const { store, deps, live, autoRecordEnabled, now } = options;
+    const { running, state } = deps.recorder();
+
+    if (running || !state) {
+        return undefined;
+    }
+
+    const recording = deps.recording(state.meetingId);
+
+    if (recording?.status !== "recording" || recording.stopReason !== undefined) {
+        return undefined;
+    }
+
+    const auto = readAuto(store);
+    const ownAuto = auto?.meetingId === state.meetingId && auto.recorderStartedAt === state.startedAt;
+    const lastActivity = deps.lastActivityAt(state.meetingId) ?? Date.parse(state.startedAt);
+    const endedMeeting = ownAuto && (!autoRecordEnabled || live?.sourceMeetingId !== auto.sourceMeetingId);
+
+    if (endedMeeting || now - lastActivity > RESUME_WITHIN_MS) {
+        await deps.endInterrupted(state.meetingId, new Date(lastActivity).toISOString());
+        log.info({ meeting: state.meetingId, endedMeeting }, "a dead recorder's recording ended as interrupted");
+        return undefined;
+    }
+
+    if (now - (resumeTries.get(state.meetingId) ?? 0) < RESUME_GAP_MS) {
+        return "idle";
+    }
+
+    resumeTries.set(state.meetingId, now);
+    const result = await deps.run(["meetings", "record", "start", "--meeting", state.meetingId, "--yes"]);
+    log.info({ meeting: state.meetingId, exitCode: result.exitCode }, "interrupted recording started again");
+    const restarted = result.success ? deps.recorder().state : undefined;
+
+    if (ownAuto && restarted?.meetingId === state.meetingId) {
+        writeAuto(store, { ...auto, recorderStartedAt: restarted.startedAt });
+    }
+
+    return result.success ? "started" : "failed";
 }
 
 /**
@@ -228,7 +312,8 @@ export async function watchOnce(
             clearAuto(store);
         }
 
-        return "disabled";
+        const resumed = await resumeInterrupted({ store, deps, live: null, autoRecordEnabled: false, now });
+        return resumed ?? "disabled";
     }
 
     const source = await deps.source();
@@ -251,6 +336,14 @@ export async function watchOnce(
     const recorder = deps.recorder();
     let auto = readAuto(store);
     log.debug({ live, running: recorder.running, auto }, "watch tick");
+
+    if (!recorder.running) {
+        const resumed = await resumeInterrupted({ store, deps, live, autoRecordEnabled: true, now });
+
+        if (resumed) {
+            return resumed;
+        }
+    }
 
     if (!recorder.running && auto?.refreshUntil) {
         await refreshEnded({ store, deps, sourceId: source.id, auto, now });
@@ -387,6 +480,22 @@ export async function watchOnce(
 }
 
 /**
+ * Every look: a recent meeting with frames that have no OCR row and no live OCR worker gets one, so OCR resumes after
+ * its worker died (a reinstall, a crash) or a recorder that never started it. Never fails a look.
+ */
+async function resumeOcr(store: MeetingStore): Promise<void> {
+    try {
+        const started = await ensureOcrWorkers(store);
+
+        if (started.length > 0) {
+            log.info({ meetings: started }, "OCR workers started for meetings with unread frames");
+        }
+    } catch (err) {
+        log.warn({ err }, "the OCR worker check failed");
+    }
+}
+
+/**
  * Once a day: the frames, OCR and editor files of meetings past `capture.retentionDays` go to the trash. Never fails
  * a look.
  */
@@ -424,6 +533,7 @@ export async function watchLoop(store: MeetingStore): Promise<void> {
 
     while (!stopped) {
         await pruneOldCaptures(store);
+        await resumeOcr(store);
         const result = await watchOnce(store).catch((err: unknown) => {
             log.warn({ err }, "watch tick failed");
             return "failed" as const;
@@ -431,8 +541,8 @@ export async function watchLoop(store: MeetingStore): Promise<void> {
         // After the look, so a meeting the look just refreshed from its source is asked about at once.
         await assignSweep(store).catch((err: unknown) => log.warn({ err }, "assign sweep failed"));
 
-        if (result === "disabled" && !hasOpenAssignSteps(store)) {
-            log.info("autoRecord is off and no project question waits; the watcher ends");
+        if (result === "disabled" && !hasOpenAssignSteps(store) && !hasRecordingToWatch(store)) {
+            log.info("no automatic capture, active recording or project question needs the watcher; it ends");
             break;
         }
 

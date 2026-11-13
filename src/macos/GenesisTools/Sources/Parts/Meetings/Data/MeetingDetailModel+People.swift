@@ -42,25 +42,10 @@ enum PeopleCalls {
     @MainActor
     static func write<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, orRun args: [String],
                                                 service: MeetingsService?) async throws -> M.Result {
-        if let service {
-            do {
-                return try await service.call(method, params)
-            } catch is MeetingsService.Unavailable {
-                try Task.checkCancellation()
-            }
-        }
-        return try await MeetingsCLI.json(M.Result.self, args)
+        try await MeetingsService.write(method, params, service: service, orRun: args)
     }
 
-    /// `people assign <meeting> <person> --from --to [--label] [--email] --json`: one stretch given to a person when no
-    /// service answers (the journal entry is the command's).
-    static func assignArgs(meeting: String, person: String, email: String?, stretch: DecisionAction.Stretch) -> [String] {
-        var args = ["people", "assign", "--json", "--from", MeetingsCLI.jsonArgument(stretch.fromSec),
-                    "--to", MeetingsCLI.jsonArgument(stretch.toSec)]
-        if let label = stretch.label { args += ["--label", label] }
-        if let email { args += ["--email", email] }
-        return args + ["--", meeting, person]
-    }
+
 }
 
 // MARK: - A picker's search
@@ -189,13 +174,14 @@ extension MeetingDetailModel {
         }
     }
 
-    /// The other stretches an `assign` of `stretch` may reach (the plan's `reach.stretches`): nil without a service or
-    /// when the plan fails, so the assignment then goes on alone.
+    /// The other stretches an `assign` may reach, through the service or CLI plan. A failed plan leaves the
+    /// assignment scoped to this stretch.
     func assignReach(_ stretch: DecisionAction.Stretch, to person: String, email: String?) async -> [MeetingsAPI.AssignStretch]? {
-        guard let service else { return nil }
-        let plan = try? await service.call(MeetingsAPI.PersonDecisionPlan.self,
-                                           .init(meeting: id, action: .assign(person, email: email, stretches: [stretch])))
-        return plan?.reach?.stretches
+        let action = DecisionAction.assign(person, email: email, stretches: [stretch])
+        guard let args = Self.journalCommand(meeting: id, action: action, reason: nil) else { return nil }
+        let read: MeetingsRead<MeetingsAPI.PersonDecisionPlan.Result> = .service(
+            MeetingsAPI.PersonDecisionPlan.self, .init(meeting: id, action: action), orRun: args + ["--plan"])
+        return (try? await read.run(service: service))?.reach?.stretches
     }
 
     /// "Assign this stretch" (R21, R22): the plan first; when it reaches more stretches of the same label and the window
@@ -226,30 +212,17 @@ extension MeetingDetailModel {
         Task {
             defer { busy.remove(key) }
             do {
-                if let service {
-                    do {
-                        let result = try await service.call(MeetingsAPI.DecisionApply.self,
-                                                            .init(meeting: id, action: .assign(person, email: email, stretches: stretches),
-                                                                  onDecided: "refuse"))
-                        afterAssign()
-                        guard let entry = result.entry else {
-                            notices.push(StackedNotice(text: result.skipped.first?.reason ?? "Nothing changed"))
-                            return
-                        }
-                        ownTokens.insert(entry.token)
-                        notices.push(StackedNotice(text: done, actions: [.undo { [weak self] id in
-                            self?.revert(token: entry.token, items: nil, replacing: id) { self?.afterAssign() }
-                        }]))
-                        return
-                    } catch is MeetingsService.Unavailable {
-                        try Task.checkCancellation()
-                    }
-                }
-                for stretch in stretches {
-                    _ = try await MeetingsCLI.run(PeopleCalls.assignArgs(meeting: id, person: person, email: email, stretch: stretch))
-                }
+                let result = try await Self.applyDecision(meeting: id, action: .assign(person, email: email, stretches: stretches),
+                                                          reason: nil, service: service)
                 afterAssign()
-                notices.push(StackedNotice(text: done, detail: "Undo it in History."))
+                guard let entry = result.entry else {
+                    notices.push(StackedNotice(text: result.skipped.first?.reason ?? "Nothing changed"))
+                    return
+                }
+                ownTokens.insert(entry.token)
+                notices.push(StackedNotice(text: done, actions: [.undo { [weak self] id in
+                    self?.revert(token: entry.token, items: nil, replacing: id) { self?.afterAssign() }
+                }]))
             } catch {
                 notices.push(.meetingsFailure(error) { [weak self] in self?.assign(stretches, to: person, email: email) })
             }
@@ -260,6 +233,7 @@ extension MeetingDetailModel {
     private func afterAssign() {
         readRecord(quiet: true)
         transcriptChanged()
+        if speakers != .idle { readSpeakers(quiet: true) }
         window?.loadOverview(quiet: true)
     }
 }

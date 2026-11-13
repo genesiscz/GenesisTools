@@ -24,6 +24,94 @@ export async function toFloat32Audio(input: Buffer | string): Promise<Float32Arr
     return parseWavToFloat32(wav);
 }
 
+/** Decode a short source-clock window directly into memory, without temporary audio files. */
+export async function toFloat32AudioWindow(
+    inputPath: string,
+    options: { fromSec: number; toSec: number; tracks?: number; signal?: AbortSignal }
+): Promise<Float32Array> {
+    const duration = options.toSec - options.fromSec;
+    const tracks = options.tracks ?? 1;
+    if (
+        !Number.isFinite(options.fromSec) ||
+        options.fromSec < 0 ||
+        !Number.isFinite(duration) ||
+        duration <= 0 ||
+        duration > 60 ||
+        !Number.isInteger(tracks) ||
+        tracks < 1 ||
+        tracks > 64
+    ) {
+        throw new RangeError("Audio window needs a nonnegative start, at most 60 seconds and 1–64 tracks");
+    }
+    options.signal?.throwIfAborted();
+    const filters = Array.from({ length: tracks }, (_, index) => `[0:a:${index}]${CONTAINER_CLOCK_FILTER}[a${index}]`);
+    filters.push(
+        Array.from({ length: tracks }, (_, index) => `[a${index}]`).join("") +
+            (tracks === 1 ? "anull" : `amix=inputs=${tracks}:duration=longest:normalize=0`) +
+            "[out]"
+    );
+    const proc = Bun.spawn(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-nostdin",
+            "-ss",
+            String(options.fromSec),
+            "-i",
+            inputPath,
+            "-filter_complex",
+            filters.join(";"),
+            "-map",
+            "[out]",
+            "-t",
+            String(duration),
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_f32le",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ],
+        {
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: 30_000,
+            killSignal: "SIGKILL",
+            ...(options.signal ? { signal: options.signal } : {}),
+        }
+    );
+    // ffmpeg has an output duration cap; also cap retained output independently.
+    const maxBytes = Math.ceil(duration * 16_000) * 4;
+    const read = async () => {
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        for await (const chunk of proc.stdout) {
+            total += chunk.byteLength;
+            if (total > maxBytes) {
+                proc.kill("SIGKILL");
+                throw new Error("Audio window exceeded its PCM byte budget");
+            }
+            chunks.push(chunk);
+        }
+        return Buffer.concat(chunks);
+    };
+    const [bytes, stderr, code] = await Promise.all([read(), new Response(proc.stderr).text(), proc.exited]);
+    options.signal?.throwIfAborted();
+    if (code !== 0 || bytes.byteLength % 4 !== 0) {
+        throw new Error(`Audio window decode failed (exit ${code}): ${stderr.slice(-1500)}`);
+    }
+    const samples = new Float32Array(bytes.byteLength / 4);
+    for (let index = 0; index < samples.length; index++) {
+        samples[index] = bytes.readFloatLE(index * 4);
+    }
+    return samples;
+}
+
 /**
  * Convert any audio buffer to 16kHz mono 16-bit WAV.
  * Tries afconvert (macOS built-in, zero deps) then ffmpeg.

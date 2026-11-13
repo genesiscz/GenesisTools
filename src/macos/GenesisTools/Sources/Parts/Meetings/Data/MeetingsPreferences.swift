@@ -14,10 +14,6 @@ enum MeetingsPreferences {
         case always, noChoices
         func shows(choices: [String]) -> Bool { self == .always || choices.isEmpty }
     }
-    /// Where a transcript time plays: in this window (ffplay with no window of its own, which the window's player bar
-    /// pauses and stops), or in the player the meetings config names (VLC first, with its own window and controls).
-    /// The Speakers tab's order: the most spoken first (in the CLI's order a label with 7 turns stood above one with
-    /// 427), or the order the transcript first names them, as `tools meetings speakers stats` lists them.
     enum SpeakerOrder: String, CaseIterable {
         case spoken, transcript
 
@@ -28,15 +24,10 @@ enum MeetingsPreferences {
             }
         }
     }
-    enum Player: String, CaseIterable {
-        case window, app
-        /// The `--player` the window passes to `tools meetings play`; nil leaves the config's choice.
-        var cliPlayer: String? { self == .window ? "ffplay" : nil }
-    }
-
     static let openOnKey = "meetings.window.openOn"
     static let daysKey = "meetings.window.days"
     static let timelineKey = "meetings.timeline.lines"
+    static let speakerOrderKey = "meetings.speakers.order"
     static let afterExportKey = "meetings.export.after"
     /// When a review row offers a field for an answer its choices do not hold (`Rows`); renamed from
     /// `legacyTypedAnswerKey`, which `migrate` carries over.
@@ -44,7 +35,6 @@ enum MeetingsPreferences {
     static let legacyTypedAnswerKey = "meetings.questions.typedAnswer"
     /// Retired in Wave B: every Moment plays in the window's player (`MomentPlayer`). Readers ignore it.
     static let playerKey = "meetings.playback.player"
-    static let speakerOrderKey = "meetings.speakers.order"
     /// How long a notice with a button (Undo, Show, Replace) stays, in seconds: every notice with an action, one key.
     static let noticeSecondsKey = "meetings.notices.seconds"
     /// How long a notice without a button stays, in seconds.
@@ -55,6 +45,14 @@ enum MeetingsPreferences {
     /// `noticeSecondsKey`. Not carried over: the new key covers every notice with a button and its default is the 30 s
     /// R15 asked for, longer than any old choice. `migrate` removes it.
     static let legacyUndoSecondsKey = "meetings.items.undoSeconds"
+
+    /// The look of the window's tabs, buttons and chips: a `KitLook` by its raw value.
+    static let lookKey = "meetings.window.look"
+    static let defaultLook = KitLook.aurora
+
+    static func look(_ defaults: UserDefaults = .standard) -> KitLook {
+        defaults.string(forKey: lookKey).flatMap(KitLook.init(rawValue:)) ?? defaultLook
+    }
 
     static let dayChoices = [7, 14, 30, 90]
     static let noticeChoices = [8, 15, 30, 60]
@@ -87,10 +85,6 @@ enum MeetingsPreferences {
         defaults.string(forKey: typedAnswerKey).flatMap(TypedAnswer.init(rawValue:)) ?? .always
     }
 
-    static func player(_ defaults: UserDefaults = .standard) -> Player {
-        defaults.string(forKey: playerKey).flatMap(Player.init(rawValue:)) ?? .window
-    }
-
     static func speakerOrder(_ defaults: UserDefaults = .standard) -> SpeakerOrder {
         defaults.string(forKey: speakerOrderKey).flatMap(SpeakerOrder.init(rawValue:)) ?? .spoken
     }
@@ -112,6 +106,14 @@ enum MeetingsPreferences {
     /// The times a notice stack of this window reads at each notice. An error stays until it is closed.
     static func noticeTiming(_ defaults: UserDefaults = .standard) -> NoticeStackTiming {
         NoticeStackTiming(actionSeconds: Double(noticeSeconds(defaults)), plainSeconds: Double(plainNoticeSeconds(defaults)))
+    }
+
+    @MainActor static func makeNoticeStack(clock: NoticeClock? = nil, defaults: UserDefaults = .standard) -> NoticeStackModel {
+        NoticeStackModel(clock: clock, timing: { noticeTiming(defaults) },
+                         maxVisible: { Notices.maxVisible.value(defaults) }, interaction: {
+            NoticeStackInteractionPolicy(pauseWhenInactive: Notices.pauseWhenInactive.value(defaults),
+                                         passScrollWhenFits: Notices.passScrollWhenFits.value(defaults))
+        })
     }
 
     /// Removes the keys this version replaced, and carries a renamed key's value over. Run once when the window's model
@@ -173,6 +175,22 @@ extension MeetingsWindowSetting where Value == Bool {
 }
 
 extension MeetingsPreferences {
+    enum Projects {
+        enum PairOnAssignment: String, CaseIterable {
+            case ask, always, never
+            var title: String {
+                switch self {
+                case .ask: "Ask"
+                case .always: "Always"
+                case .never: "Never"
+                }
+            }
+        }
+        static let pairOnAssignment = MeetingsWindowSetting(
+            key: "meetings.projects.pairOnAssignment", defaultValue: PairOnAssignment.ask, choices: PairOnAssignment.allCases,
+            title: "Pair people after assigning a project", detail: "Pairs only people from the meeting you assigned. Each pairing has its own Undo.")
+    }
+
     /// The review rows (F6).
     enum Rows {
         enum ReturnKey: String, CaseIterable { case edit, confirm }
@@ -182,6 +200,10 @@ extension MeetingsPreferences {
         enum LowPriority: String, CaseIterable { case hide, show }
         enum AskReach: String, CaseIterable { case always, never }
         enum AutoplayNext: String, CaseIterable { case off, afterAnswer }
+        /// How suggested, confirmed and rejected values differ (genesiscz.md 12a). `hueAndGlyph`: a suggestion blue with
+        /// a sparkle and its confidence, a confirmed value green with a check, a rejected one red and struck through.
+        /// `shade`: the older look, where a suggestion is only a tint.
+        enum StateLook: String, CaseIterable { case hueAndGlyph, shade }
 
         static let typedAnswer = MeetingsWindowSetting(
             key: MeetingsPreferences.typedAnswerKey, defaultValue: TypedAnswer.always, choices: TypedAnswer.allCases,
@@ -213,6 +235,10 @@ extension MeetingsPreferences {
         static let openPersonPicker = MeetingsWindowSetting(
             key: "meetings.rows.openPersonPicker", defaultValue: true, choices: [true, false],
             title: "Open the people list by itself", detail: "A speaker range's editor opens the person picker with it.")
+        static let stateLook = MeetingsWindowSetting(
+            key: "meetings.rows.stateLook", defaultValue: StateLook.hueAndGlyph, choices: StateLook.allCases,
+            title: "Suggested and confirmed",
+            detail: "Hue and glyph: a suggestion is blue with a sparkle, a confirmed answer green with a check. Shade: a suggestion is only a tint.")
         static let keepPlace = MeetingsWindowSetting(
             key: "meetings.rows.keepPlace", defaultValue: true, choices: [true, false],
             title: "Keep the next row in place",
@@ -221,6 +247,14 @@ extension MeetingsPreferences {
 
     /// The notice stack (F4 keys stay in `MeetingsPreferences`; this adds the visible count).
     enum Notices {
+        static let pauseWhenInactive = MeetingsWindowSetting(
+            key: "meetings.notices.pauseWhenInactive", defaultValue: true, choices: [true, false],
+            title: "Keep notices while the window is inactive",
+            detail: "Pause their expiry clocks until this window is active again.")
+        static let passScrollWhenFits = MeetingsWindowSetting(
+            key: "meetings.notices.passScrollWhenFits", defaultValue: true, choices: [true, false],
+            title: "Scroll the page through short notices",
+            detail: "Wheel scrolling reaches the page when the notice stack fits without scrolling.")
         static let maxVisible = MeetingsWindowSetting(
             key: "meetings.notices.maxVisible", defaultValue: 3, choices: [2, 3, 5, 8],
             title: "Notices shown at once", detail: "Older notices fold into “+N more”.")
@@ -233,10 +267,15 @@ extension MeetingsPreferences {
         enum AfterClip: String, CaseIterable { case stop, offerMore, `continue` }
         enum ClickInQuestion: String, CaseIterable { case push, replace }
         enum OnTopEnd: String, CaseIterable { case `return`, stop }
+        enum ResumeAfterSeek: String, CaseIterable { case selectedTime, rewind }
 
         static let view = MeetingsWindowSetting(
             key: "meetings.playback.view", defaultValue: View.moment, choices: View.allCases,
             title: "Player view", detail: "What a click on a time plays: its Moment (a short clip), or the meeting on from there. The timeline opens on the same.")
+        static let animateActivity = MeetingsWindowSetting(
+            key: "meetings.playback.animateActivity", defaultValue: true, choices: [true, false],
+            title: "Playback motion",
+            detail: "Fade the playing row and heard line, and move the audio-level mark. Reduce Motion keeps them still.")
         static let speed = MeetingsWindowSetting(
             key: "meetings.playback.speed", defaultValue: 1.0, choices: [0.75, 1, 1.25, 1.5, 2],
             title: "Speed", detail: "How fast a Moment plays.")
@@ -255,6 +294,9 @@ extension MeetingsPreferences {
         static let rewindSec = MeetingsWindowSetting(
             key: "meetings.playback.rewindSec", defaultValue: 1.0, choices: [0.5, 1, 2, 5],
             title: "Rewind on play again", detail: "Seconds a paused Moment goes back when it plays again, without the tone.")
+        static let resumeAfterSeek = MeetingsWindowSetting(
+            key: "meetings.playback.resumeAfterSeek", defaultValue: ResumeAfterSeek.selectedTime, choices: ResumeAfterSeek.allCases,
+            title: "After seeking while paused", detail: "Resume at the selected time, or apply the usual rewind first.")
         static let clickInQuestion = MeetingsWindowSetting(
             key: "meetings.playback.stack.clickInQuestion", defaultValue: ClickInQuestion.push, choices: ClickInQuestion.allCases,
             title: "A time in a question", detail: "Push plays it over the Moment and comes back; Replace plays it instead.")
@@ -273,6 +315,9 @@ extension MeetingsPreferences {
 
     /// The transcript blocks and a selection's clip (F9).
     enum Transcript {
+        static let wordHighlights = MeetingsWindowSetting(
+            key: "meetings.transcript.wordHighlights", defaultValue: true, choices: [true, false],
+            title: "Highlight the spoken word", detail: "Use saved ASR timing evidence for exact matched words; untimed words keep the line highlight.")
         static let dimPast = MeetingsWindowSetting(
             key: "meetings.transcript.dimPast", defaultValue: true, choices: [true, false],
             title: "Dim what was heard", detail: "Blocks the playback has passed turn fainter.")
@@ -292,9 +337,6 @@ extension MeetingsPreferences {
 
     /// The Speakers tab (F9).
     enum Speakers {
-        static let order = MeetingsWindowSetting(
-            key: MeetingsPreferences.speakerOrderKey, defaultValue: SpeakerOrder.spoken, choices: SpeakerOrder.allCases,
-            title: "Speakers in order of", detail: "The longest spoken first, or the order the transcript first names them.")
         static let showQuestions = MeetingsWindowSetting(
             key: "meetings.speakers.showQuestions", defaultValue: true, choices: [true, false],
             title: "Open questions on the lanes", detail: "A “?” banner marks each open question on the talk-time lanes.")
@@ -340,5 +382,28 @@ extension MeetingsPreferences {
         static let screenHeight = MeetingsWindowSetting(
             key: "meetings.screen.height", defaultValue: 150, choices: [100, 150, 200],
             title: "Screen height in the dock", detail: "Points the frame beside the sound takes.")
+
+        static let frameBoxes = MeetingsWindowSetting(
+            key: "meetings.screen.viewer.boxes", defaultValue: true, choices: [true, false],
+            title: "Boxes in the frame viewer", detail: "Outline the text recognized in a recording frame.")
+        static let frameFocusSingle = MeetingsWindowSetting(
+            key: "meetings.screen.viewer.focusSingle", defaultValue: true, choices: [true, false],
+            title: "Zoom to a single search result", detail: "Focus the matched screen text when a search has one result. Click the box again to fit the frame.")
+        static let frameAutoDisplay = MeetingsWindowSetting(
+            key: "meetings.screen.viewer.autoDisplay", defaultValue: true, choices: [true, false],
+            title: "Follow recorded display focus", detail: "Auto shows the display that had focus at that time. Recordings without focus history keep the selected display.")
+        static let frameSeek = MeetingsWindowSetting(
+            key: "meetings.screen.viewer.seekPlayback", defaultValue: true, choices: [true, false],
+            title: "Frame time seeks playback", detail: "Moving the frame viewer's time also seeks active playback; paused audio stays paused.")
+
+        enum Waveform: String, CaseIterable { case speakers, plain }
+
+        /// Two rows: with one, two items a second apart were a count that no zoom took apart.
+        static let pinLanes = MeetingsWindowSetting(
+            key: "meetings.timeline.pinLanes", defaultValue: 2, choices: [1, 2, 3],
+            title: "Rows of marks", detail: "Rows the whole-meeting timeline has for items that are close in time, before it joins them into a count.")
+        static let waveform = MeetingsWindowSetting(
+            key: "meetings.timeline.waveform", defaultValue: Waveform.speakers, choices: Waveform.allCases,
+            title: "Waveform colours", detail: "Each speaker's colour where that speaker talks, or one colour. The classic look has one colour.")
     }
 }

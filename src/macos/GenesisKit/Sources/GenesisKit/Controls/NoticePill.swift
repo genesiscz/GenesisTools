@@ -25,7 +25,11 @@ public struct NoticeFix: Identifiable {
     public let label: String
     public let symbol: String?
     public let kind: Kind
+    // Failure actions pin their event when they appear, not every time a parent view computes its body.
+    var preparationID: String?
+    var preparation: (@MainActor () -> Void)?
     public var id: String {
+        if let preparationID { return preparationID }
         switch kind {
         case .action: return "action:" + label
         case .command(let command): return "command:" + command
@@ -41,6 +45,21 @@ public struct NoticeFix: Identifiable {
     /// `label` says what the command does ("Or quit it from a terminal").
     public static func command(_ label: String, _ command: String) -> NoticeFix {
         NoticeFix(label: label, symbol: nil, kind: .command(command))
+    }
+}
+
+/// Only a failure action owns preparation. Pinning it for its visible lifetime also pins the report its Details button opens.
+private struct PreparedNoticeFix<Content: View>: View {
+    @State private var pinned: NoticeFix
+    private let content: (NoticeFix) -> Content
+
+    init(fix: NoticeFix, @ViewBuilder content: @escaping (NoticeFix) -> Content) {
+        _pinned = State(initialValue: fix)
+        self.content = content
+    }
+
+    var body: some View {
+        content(pinned).onAppear { pinned.preparation?() }
     }
 }
 
@@ -123,7 +142,13 @@ public struct NoticePill: View {
                 }
                 if !fixes.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
-                        ForEach(fixes) { fix in fixRow(fix) }
+                        ForEach(fixes) { fix in
+                            if fix.preparation != nil {
+                                PreparedNoticeFix(fix: fix) { pinned in fixRow(pinned) }
+                            } else {
+                                fixRow(fix)
+                            }
+                        }
                     }
                     .padding(.top, 5)
                     .padding(.bottom, 2)

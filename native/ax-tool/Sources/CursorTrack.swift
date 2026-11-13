@@ -8,9 +8,10 @@ import SnapshotSupport
 /// `capture --cursor-track <file>`: the pointer while the movie records, one JSON line per sample,
 /// `{"t": <ms since the movie's first frame>, "x": 0...1, "y": 0...1}` from the top left of the recorded rectangle, and
 /// `"click": "left" | "right"` on the sample where a button went down. An editor zooms on the clicks and follows the
-/// smoothed path (GenesisTools' recorder part, CursorTrack.swift). Sampled at 60 Hz on its own queue from the
-/// window server's pointer (`CGEvent(source: nil)`) and button state, which needs no Input Monitoring grant; a
-/// sample is written only when something changed, plus one every 0.5 s so a still pointer keeps its place.
+/// smoothed path (GenesisTools' recorder part, CursorTrack.swift). Positions are sampled at 60 Hz on their own queue.
+/// Mouse-down events are kept separately so a short click cannot fall between samples; button-state polling remains
+/// the fallback when a global mouse monitor is unavailable. A sample is written only when something changed, plus
+/// one every 0.5 s so a still pointer keeps its place.
 /// `t` is on the host clock the frames carry, so it is the movie time of the frames that show the sample; nothing is
 /// written before the movie has its first frame.
 ///
@@ -27,7 +28,7 @@ import SnapshotSupport
 /// never reach the file, and macOS sends no key to a global monitor while a password field has secure input on.
 final class CursorTrackWriter {
     private let handle: FileHandle
-    private let rect: () -> CGRect
+    private let geometry: () -> CursorTrackGeometry
     private let queue = DispatchQueue(label: "ax-tool.cursor-track", qos: .userInitiated)
     private var timer: DispatchSourceTimer?
     private var movieStart: () -> CMTime? = { nil }
@@ -35,6 +36,7 @@ final class CursorTrackWriter {
     private var leftDown = false
     private var rightDown = false
     private var buffer = Data()
+    private var lastFlush = ProcessInfo.processInfo.systemUptime
     private(set) var samples = 0
     private(set) var clicks = 0
     let path: String
@@ -44,8 +46,12 @@ final class CursorTrackWriter {
     private var pendingShape: String?
     private var savedShapes = Set<String>()
     private var wrotePointWidth = false
+    private var lastPointWidth: CGFloat?
     private var pendingKeys: [String] = []
     private var paused = false
+    private var stopped = false
+    private var mouseMonitor: Any?
+    private var capturesMouseEvents = false
 
     func setPaused(_ value: Bool) {
         queue.sync {
@@ -59,15 +65,14 @@ final class CursorTrackWriter {
     private(set) var shortcuts = 0
     var shapeCount: Int { queue.sync { savedShapes.count } }
 
-    /// `rect` is the recorded rectangle in global display points (top-left origin), read per sample, so a window
-    /// that moves keeps its cursor coordinates right.
-    init?(path: String, shapes: String? = nil, rect: @escaping () -> CGRect) {
+    /// Geometry comes from the last rendered picture, including letterboxing and visible selected windows.
+    init?(path: String, shapes: String? = nil, geometry: @escaping () -> CursorTrackGeometry) {
         let descriptor = Darwin.open(path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else { return nil }
         let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         self.path = path
         self.handle = handle
-        self.rect = rect
+        self.geometry = geometry
         if let shapes, (try? FileManager.default.createDirectory(atPath: shapes, withIntermediateDirectories: true)) != nil {
             shapesDir = shapes
         } else {
@@ -80,7 +85,7 @@ final class CursorTrackWriter {
         keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard !event.isARepeat, let label = Self.shortcutLabel(event) else { return }
             self?.queue.async {
-                guard let self, !self.paused else { return }
+                guard let self, !self.paused, !self.stopped else { return }
                 self.pendingKeys.append(label)
             }
         }
@@ -118,9 +123,23 @@ final class CursorTrackWriter {
     /// `movieStart` is the movie's first frame timestamp (host clock), nil until that frame came; it is read per sample.
     func start(movieStart: @escaping () -> CMTime?) {
         self.movieStart = movieStart
+        // Polling button state misses short presses, including synthetic HID clicks. Keep their own events.
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self, let point = event.cgEvent?.location else { return }
+            let geometry = self.geometry()
+            let button = event.type == .leftMouseDown ? "left" : "right"
+            let time = event.timestamp > 0
+                ? CMTime(seconds: event.timestamp, preferredTimescale: 1_000_000_000)
+                : CMClockGetTime(CMClockGetHostTimeClock())
+            self.queue.async { [weak self] in self?.sample(click: button, point: point, time: time, eventGeometry: geometry) }
+        }
+        capturesMouseEvents = mouseMonitor != nil
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .nanoseconds(16_666_667), leeway: .milliseconds(2))
-        timer.setEventHandler { [weak self] in self?.sample() }
+        timer.setEventHandler { [weak self] in
+            self?.sample()
+            self?.flushIfDue()
+        }
         timer.resume()
         self.timer = timer
     }
@@ -128,7 +147,10 @@ final class CursorTrackWriter {
     func stop() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+        mouseMonitor = nil
         queue.sync {
+            stopped = true
             timer?.cancel()
             timer = nil
             flush()
@@ -136,20 +158,36 @@ final class CursorTrackWriter {
         try? handle.close()
     }
 
-    private func sample() {
-        guard !paused, let origin = movieStart(), let point = CGEvent(source: nil)?.location else { return }
-        let now = CMClockGetTime(CMClockGetHostTimeClock())
-        let frame = rect()
-        guard frame.width > 0, frame.height > 0 else { return }
+    private func sample(click eventClick: String? = nil, point eventPoint: CGPoint? = nil, time eventTime: CMTime? = nil,
+                        eventGeometry: CursorTrackGeometry? = nil) {
+        guard !paused, !stopped, let origin = movieStart(), let point = eventPoint ?? CGEvent(source: nil)?.location else { return }
+        let now = eventTime ?? CMClockGetTime(CMClockGetHostTimeClock())
+        let geometry = eventGeometry ?? geometry()
+        let frame = geometry.rect
+        guard let normalized = geometry.normalized(point) else { return }
         let ms = movieTimeMs(of: now, movieStart: origin)
-        let x = Double((point.x - frame.minX) / frame.width)
-        let y = Double((point.y - frame.minY) / frame.height)
-        let left = CGEventSource.buttonState(.combinedSessionState, button: .left)
-        let right = CGEventSource.buttonState(.combinedSessionState, button: .right)
-        var click: String?
-        if left && !leftDown { click = "left" } else if right && !rightDown { click = "right" }
-        leftDown = left
-        rightDown = right
+        guard ms.isFinite, ms >= 0 else { return }
+        let x = Double(normalized.x)
+        let y = Double(normalized.y)
+        // Keep a delayed event's clock and geometry without consuming later metadata or polling state.
+        if let eventClick, let last, ms < last.ms {
+            guard geometry.acceptsClick(at: point) else { return }
+            let line = String(format: "{\"t\":%.1f,\"x\":%.5f,\"y\":%.5f,\"click\":\"%@\"}\n", ms, x, y, eventClick)
+            buffer.append(Data(line.utf8))
+            samples += 1
+            clicks += 1
+            flush()
+            return
+        }
+        var click = eventClick
+        if !capturesMouseEvents {
+            let left = CGEventSource.buttonState(.combinedSessionState, button: .left)
+            let right = CGEventSource.buttonState(.combinedSessionState, button: .right)
+            if left && !leftDown { click = "left" } else if right && !rightDown { click = "right" }
+            leftDown = left
+            rightDown = right
+        }
+        if !geometry.acceptsClick(at: point) { click = nil }
         if shapesDir != nil {
             if shapeTick % 6 == 0 { readShape() }
             shapeTick += 1
@@ -174,14 +212,15 @@ final class CursorTrackWriter {
             shortcuts += pendingKeys.count
             pendingKeys.removeAll()
         }
-        if shapesDir != nil, !wrotePointWidth {
+        if shapesDir != nil, !wrotePointWidth || lastPointWidth != frame.width {
             line += String(format: ",\"pw\":%.1f", frame.width)
             wrotePointWidth = true
+            lastPointWidth = frame.width
         }
         line += "}\n"
         buffer.append(Data(line.utf8))
         samples += 1
-        if buffer.count > 16_384 { flush() }
+        if buffer.count > 16_384 || click != nil { flush() }
     }
 
     /// The cursor's image now; a new one is saved once and named on the next row.
@@ -210,23 +249,28 @@ final class CursorTrackWriter {
         try? Data(meta.utf8).write(to: URL(fileURLWithPath: base + ".json"))
     }
 
+    private func flushIfDue() {
+        if ProcessInfo.processInfo.systemUptime - lastFlush >= 1 { flush() }
+    }
+
     private func flush() {
         guard !buffer.isEmpty else { return }
         handle.write(buffer)
         buffer.removeAll(keepingCapacity: true)
+        lastFlush = ProcessInfo.processInfo.systemUptime
     }
 }
 
-/// A rectangle one thread writes and another reads.
-final class LockedRect: @unchecked Sendable {
+/// Capture geometry one thread writes and the cursor sampler reads.
+final class LockedCursorGeometry: @unchecked Sendable {
     private let lock = NSLock()
-    private var stored: CGRect
+    private var stored: CursorTrackGeometry
 
-    init(_ rect: CGRect) {
-        stored = rect
+    init(_ geometry: CursorTrackGeometry) {
+        stored = geometry
     }
 
-    var value: CGRect {
+    var value: CursorTrackGeometry {
         get { lock.lock(); defer { lock.unlock() }; return stored }
         set { lock.lock(); stored = newValue; lock.unlock() }
     }

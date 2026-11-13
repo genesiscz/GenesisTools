@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Talk time per speaker (R20, R21, R40, G-SPK-6, G-SPK-7, G-SPK-8)
 //
@@ -128,10 +129,13 @@ struct SpeakerTalkTimeLanes: View {
     var names: [String: String] = [:]
     /// A click on one stretch: play only that span (R20).
     let playSpan: (Double, Double) -> Void
+    @Environment(\.kitLook) private var look
     /// A click on a joined block: zoom the timeline to it (G-SPK-8).
     let zoom: (Double, Double) -> Void
     /// A click on a banner: the question ids under it.
     var openQuestion: ([String]) -> Void = { _ in }
+    /// A stretch dropped on another speaker's lane; the owner applies it through the assignment journal.
+    var assign: ((DecisionAction.Stretch, String) -> Void)? = nil
 
     static let nameWidth: CGFloat = 170
     /// "50 % · 1 h 02 min" in 11 pt monospaced digits on one line (92 pt wrapped it in two).
@@ -147,6 +151,9 @@ struct SpeakerTalkTimeLanes: View {
     static let rulerEndRoom: CGFloat = 80
 
     @State private var compact = false
+    @State private var dragOwner = UUID()
+    @State private var dropTarget: String?
+    private static let dragType = SpeakerLaneDrag.type
 
     var body: some View {
         if !timed {
@@ -175,10 +182,34 @@ struct SpeakerTalkTimeLanes: View {
                             .lineLimit(1).minimumScaleFactor(0.8)
                     }
                     .frame(height: Self.laneHeight)
+                    .overlay {
+                        if dropTarget == speaker.label {
+                            RoundedRectangle(cornerRadius: 5).strokeBorder(Color.accentColor, lineWidth: 2)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .onDrop(of: [Self.dragType], isTargeted: Binding(
+                        get: { dropTarget == speaker.label },
+                        set: { if $0 { dropTarget = speaker.label } else if dropTarget == speaker.label { dropTarget = nil } }
+                    )) { providers in receive(providers, on: speaker) }
                     .accessibilityElement(children: .ignore)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("meetings.lane.\(speaker.label)")
                     .accessibilityLabel(accessibilityText(speaker))
+                    .accessibilityAction {
+                        if let first = speaker.talkSpans.first { playSpan(first.fromSec, first.toSec) }
+                    }
                     .accessibilityAction(named: "Play the first stretch") {
                         if let first = speaker.talkSpans.first { playSpan(first.fromSec, first.toSec) }
+                    }
+                    .accessibilityActions {
+                        if let assign, let first = speaker.talkSpans.first {
+                            ForEach(sortedSpeakers.filter { $0.label != speaker.label }, id: \.label) { target in
+                                Button("Assign first stretch to \(displayName(target))") {
+                                    assign(.init(label: speaker.label, fromSec: first.fromSec, toSec: first.toSec), displayName(target))
+                                }
+                            }
+                        }
                     }
                 }
                 row(name: EmptyView()) { _ in ruler.frameProbe("meetings.lanes.ruler") } share: { EmptyView() }
@@ -210,7 +241,11 @@ struct SpeakerTalkTimeLanes: View {
             TranscriptAvatar(speaker: displayName(speaker), size: 22)
             Text(verbatim: displayName(speaker)).font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
         }
+        .environment(\.meetingSpeakerNames, shownNames)
     }
+
+    /// The shown names of every lane: a speaker's colour is its own among these.
+    private var shownNames: [String] { speakers.map(displayName).sorted() }
 
     private func displayName(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker) -> String {
         names[speaker.label] ?? (speaker.label.isEmpty ? "Unknown voice" : speaker.label)
@@ -222,13 +257,16 @@ struct SpeakerTalkTimeLanes: View {
         let blocks = TalkTimeLayout.blocks(speaker.talkSpans, durationSec: durationSec, width: width)
         let selected = speaker.label == selectedLabel
         let active = activeRange
+        // In a look a lane has its speaker's colour; what plays stays the accent, which no person has.
+        let own: Color? = look == .classic || speaker.label.isEmpty ? nil : KitPersonColor.color(for: displayName(speaker), among: shownNames)
         return Canvas { context, size in
             let track = Path(roundedRect: CGRect(x: 0, y: (size.height - 10) / 2, width: size.width, height: 10), cornerRadius: 5)
             context.fill(track, with: .color(Color.secondary.opacity(selected ? 0.22 : 0.12)))
             for block in blocks {
                 let rect = CGRect(x: block.x, y: (size.height - 10) / 2, width: block.width, height: 10)
                 let isActive = active.map { $0.overlaps(block.fromSec...block.toSec) } ?? false
-                let color: Color = isActive ? .accentColor : Color.secondary.opacity(selected ? 0.75 : 0.5)
+                let rest = own.map { $0.opacity(selected ? 1 : 0.8) } ?? Color.secondary.opacity(selected ? 0.75 : 0.5)
+                let color: Color = isActive ? .accentColor : rest
                 context.fill(Path(roundedRect: rect, cornerRadius: 2.5), with: .color(color))
                 for tick in TalkTimeLayout.shownTicks(block) {
                     let line = Path(CGRect(x: tick, y: rect.minY + 1.5, width: 1, height: rect.height - 3))
@@ -237,12 +275,49 @@ struct SpeakerTalkTimeLanes: View {
                 }
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture(coordinateSpace: .local) { location in
-            guard let block = TalkTimeLayout.block(at: location.x, in: blocks) else { return }
-            if block.isJoined { zoom(block.fromSec, block.toSec) } else { playSpan(block.fromSec, block.toSec) }
+        .overlay {
+            SpeakerLaneInteraction(blocks: blocks, owner: dragOwner, label: speaker.label,
+                                   name: displayName(speaker), canAssign: assign != nil,
+                                   click: { block in
+                                       if block.isJoined { zoom(block.fromSec, block.toSec) }
+                                       else { playSpan(block.fromSec, block.toSec) }
+                                   },
+                                   canDrop: { validDrop($0, on: speaker) != nil },
+                                   drop: { accept($0, on: speaker) },
+                                   targeting: { active in
+                                       if active { dropTarget = speaker.label }
+                                       else if dropTarget == speaker.label { dropTarget = nil }
+                                   })
         }
-        .instantTooltip("A click plays one stretch; a joined block (with ticks) zooms the timeline to it")
+        .instantTooltip(assign == nil ? "A click plays one stretch; a joined block (with ticks) zooms the timeline to it"
+                           : "Click to play or zoom. Drag a stretch to another speaker's lane to assign it.")
+    }
+
+    private func receive(_ providers: [NSItemProvider], on target: MeetingsAPI.MeetingSpeakers.Speaker) -> Bool {
+        guard assign != nil, let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(Self.dragType.identifier) }) else { return false }
+        Task { @MainActor in
+            defer { dropTarget = nil }
+            let data: Data? = await withCheckedContinuation { continuation in
+                provider.loadDataRepresentation(forTypeIdentifier: Self.dragType.identifier) { data, _ in
+                    continuation.resume(returning: data)
+                }
+            }
+            guard let data, let drag = try? JSONDecoder().decode(SpeakerLaneDrag.self, from: data) else { return }
+            _ = accept(drag, on: target)
+        }
+        return true
+    }
+
+    private func validDrop(_ drag: SpeakerLaneDrag, on target: MeetingsAPI.MeetingSpeakers.Speaker) -> DecisionAction.Stretch? {
+        guard assign != nil, let source = speakers.first(where: { $0.label == drag.label }),
+              displayName(source) != displayName(target) else { return nil }
+        return drag.stretch(owner: dragOwner, target: target.label, speakers: speakers)
+    }
+
+    private func accept(_ drag: SpeakerLaneDrag, on target: MeetingsAPI.MeetingSpeakers.Speaker) -> Bool {
+        guard let assign, let stretch = validDrop(drag, on: target) else { return false }
+        assign(stretch, displayName(target))
+        return true
     }
 
     private func bannerLane(width: CGFloat) -> some View {

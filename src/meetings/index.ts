@@ -1,5 +1,6 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
+import { errorJSON, errorText } from "./lib/shared";
 import { MEETINGS_REGISTRARS } from "./registrars";
 
 // The Meetings window starts this CLI through Foundation's Process, which hands every argument over decomposed (NFD):
@@ -14,4 +15,8 @@ program
     .name("meetings")
     .description("Meetings as one record each: projects, the transcript dictionary, recording and review");
 
-await runTool(program, { tool: "meetings", registrars: MEETINGS_REGISTRARS });
+await runTool(program, {
+    tool: "meetings",
+    registrars: MEETINGS_REGISTRARS,
+    formatError: (error) => ({ message: `${errorJSON(error)}\nERROR: ${errorText(error)}` }),
+});

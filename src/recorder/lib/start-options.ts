@@ -1,3 +1,4 @@
+import { NATIVE_MOVIE_MAX_SECONDS } from "@app/control/lib/capture-plan";
 import { parseScreenList, type ScreenInfo } from "@app/control/lib/native-record";
 import {
     defaultRecordingTarget,
@@ -24,8 +25,8 @@ import type { VideoRecordingOptions } from "./video-recording";
  * command line (Recorder/Capture/CaptureOptions.swift `startArguments`).
  */
 
-/** The longest video recording `tools recorder start` takes: four hours, in 180 s segments. */
-export const VIDEO_RECORDING_MAX_SECONDS = 4 * 60 * 60;
+/** The longest streamed movie: four hours, with recoverable native fragments. */
+export const VIDEO_RECORDING_MAX_SECONDS = NATIVE_MOVIE_MAX_SECONDS;
 
 export const START_AUDIO_SOURCES = ["system", "mic"] as const;
 export type StartAudioSource = (typeof START_AUDIO_SOURCES)[number];
@@ -138,7 +139,7 @@ export function withStartOptions(command: Command): Command {
         )
         .option(
             "--system-cursor",
-            "keep the system cursor in the movie (by default it stays out and the editor draws it: smoothed, any size)"
+            "keep the system cursor for a display/area movie; start a window/app movie with its editable cursor hidden"
         )
         .option("--no-controls", "do not open the floating controls")
         .option("--open", "open the editor when the recording stops")

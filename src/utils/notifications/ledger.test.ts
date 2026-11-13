@@ -49,7 +49,7 @@ describe("notification ledger", () => {
         } as Awaited<ReturnType<typeof notificationsConfig.getChannels>>;
         expect(unconfiguredChannel("telegram", channels)).toBe(true);
         expect(unconfiguredChannel("webhook", channels)).toBe(true);
-        expect(unconfiguredChannel("system", channels)).toBe(false);
+        expect(unconfiguredChannel("system", channels)).toBe(process.platform !== "darwin");
         const ready = {
             ...channels,
             telegram: { enabled: true, botToken: "token", chatId: "chat" },

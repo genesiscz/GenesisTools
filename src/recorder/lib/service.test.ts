@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
     existsSync,
     mkdirSync,
@@ -14,6 +15,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import { cameraMoviePath } from "@genesiscz/utils/recording-editor/camera";
 import {
     applyOp,
@@ -55,11 +57,13 @@ import { editorGolden, helloMethods, protocolJsonSchemas, screenHitOpsFixture } 
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
 import * as serviceClient from "./service-client";
 import { hostCloseEditor, hostStill, ServiceConnectionLost, ServiceHost, withServiceClient } from "./service-client";
+import { launchRecorderService } from "./service-launch";
 import {
     HOST_METHODS,
     HOST_SCHEMAS,
     hostApi,
     readLiveService,
+    recorderServiceDir,
     recordingEventSchema,
     recordingsChangedSchema,
     SERVICE_EVENTS,
@@ -2035,6 +2039,30 @@ describe("the protocol fixture the Swift host tests read", () => {
         "recording.event recording→service": recordingEventSchema.omit({ id: true }),
     };
 
+    test("the protocol error example carries the evidence a live service sends", async () => {
+        const { service } = await serviceFixture();
+        const client = await connect(service.entry);
+        const failure = await client
+            .call("hello", { ...hello("client"), protocol: 2 })
+            .catch((error: unknown) => error);
+        client.close();
+        expect(failure).toBeInstanceOf(RpcError);
+        if (!(failure instanceof RpcError)) {
+            throw new Error("Expected a refused protocol");
+        }
+        expect(failure.stack).toContain("at hello (");
+        const example = fixture.examples.find(
+            (entry) => "reply" in entry && entry.reply?.error?.code === RPC_ERRORS.protocolMismatch
+        );
+        const error: unknown = example && "reply" in example ? example.reply?.error : undefined;
+        expect(error).toEqual({
+            code: failure.code,
+            message: failure.message,
+            stack: "<stack>",
+            issue: failure.issue,
+        });
+    });
+
     test("the JSON Schema file is what the zod schemas make (bun scripts/recorder/write-protocol-fixtures.ts)", () => {
         expect(SafeJSON.parse(SafeJSON.stringify(protocolJsonSchemas()), { strict: true })).toEqual(schemasFixture);
     });
@@ -2395,5 +2423,162 @@ describe("an editor window is named by its recording folder or, for a plain movi
         expect(editorWindowKeyOf(join(recording, "edit.json"))).toBe(recording);
         expect(editorWindowKeyOf(join(recording, "screen.mp4"))).toBe(recording);
         expect(editorWindowKeyOf(recording)).toBe(recording);
+    });
+});
+
+// What the recorder's readers and its CLI rely on in the host part (pid claim, service.json, socket, exits), pinned
+// before the service moved onto the shared host (src/utils/rpc/service-host.ts, F0r).
+describe("the recorder service's host part", () => {
+    const entryRecord = z.record(z.string(), z.unknown());
+    const readEntryFile = (dir: string) =>
+        entryRecord.parse(SafeJSON.parse(readFileSync(join(dir, "service.json"), "utf8"), { strict: true }));
+    /** A module the service loaded, under a root of its own, whose change the service watches. */
+    async function watchedModule(prefix: string) {
+        const source = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+        const module = join(source, "loaded.ts");
+        writeFileSync(module, "export const loaded = true;\n");
+        // Written a minute ago: a write in the service's own start millisecond would read as a change.
+        const earlier = new Date(Date.now() - 60_000);
+        utimesSync(module, earlier, earlier);
+        await import(module);
+        return {
+            source,
+            change: () => {
+                const later = new Date(Date.now() + 60_000);
+                utimesSync(module, later, later);
+            },
+        };
+    }
+    /** The socket a folder gets: `service.sock`, or a hashed name when that path would pass 103 bytes. */
+    const socketOf = (dir: string) => {
+        const plain = join(dir, "service.sock");
+        return Buffer.byteLength(plain) <= 103
+            ? plain
+            : join(dir, `${createHash("sha1").update("service").digest("hex").slice(0, 16)}.sock`);
+    };
+    const outcome = (stopped: Promise<string>, ms: number) =>
+        Promise.race([stopped, Bun.sleep(ms).then(() => "still running")]);
+
+    test("service.json names the protocol, the pid and its command line, the socket, the start and its stamp, and nothing more", async () => {
+        const watched = await watchedModule("rs-entry-");
+        const { dir, service } = await serviceFixture({ sourceRoot: watched.source });
+        const written = readEntryFile(dir);
+        const pidCommand = readProcessCommand(process.pid);
+
+        expect(Object.keys(written)).toEqual([
+            "version",
+            "protocol",
+            "pid",
+            ...(pidCommand ? ["pidCommand"] : []),
+            "socket",
+            "startedAt",
+            "codeStamp",
+        ]);
+        expect(written).toEqual({
+            version: 1,
+            protocol: SERVICE_PROTOCOL,
+            pid: process.pid,
+            ...(pidCommand ? { pidCommand } : {}),
+            socket: socketOf(dir),
+            startedAt: new Date(service.entry.codeStamp).toISOString(),
+            codeStamp: service.entry.codeStamp,
+        });
+        expect(written).toEqual({ ...service.entry });
+        expect(readLiveService(dir)).toEqual(service.entry);
+        expect(existsSync(join(dir, "service.pid"))).toBe(true);
+    });
+
+    test("a folder whose socket path would pass 103 bytes listens on the hashed name, and a client reaches it there", async () => {
+        const dir = join(mkdtempSync(join(tmpdir(), "rs-long-")), "x".repeat(96));
+        const start = await startRecorderService({ dir, idleMs: 0, hostWaitMs: 60 });
+
+        if (start.status !== "started") {
+            throw new Error("the service did not start");
+        }
+
+        closing.push(() => start.service.stop("test"));
+        const hashed = join(dir, `${createHash("sha1").update("service").digest("hex").slice(0, 16)}.sock`);
+        expect(socketOf(dir)).toBe(hashed);
+        expect(start.service.entry.socket).toBe(hashed);
+        expect(readEntryFile(dir).socket).toBe(hashed);
+        const client = await connect(start.service.entry);
+        expect(await client.call<{ protocol: number }>("hello", hello("client"))).toMatchObject({
+            protocol: SERVICE_PROTOCOL,
+        });
+    });
+
+    test("a stop removes service.json, the socket and the pid file, but leaves the service.json a newer service wrote", async () => {
+        const { dir, service } = await serviceFixture();
+        service.stop("test");
+
+        expect(await service.stopped).toBe("test");
+        expect(existsSync(join(dir, "service.json"))).toBe(false);
+        expect(existsSync(service.entry.socket)).toBe(false);
+        expect(existsSync(join(dir, "service.pid"))).toBe(false);
+
+        const next = await startRecorderService({ dir, idleMs: 0, hostWaitMs: 60 });
+
+        if (next.status !== "started") {
+            throw new Error("the second service did not start");
+        }
+
+        const newer = { ...next.service.entry, pid: process.pid + 100_000 };
+        writeFileSync(join(dir, "service.json"), SafeJSON.stringify(newer, null, 2));
+        next.service.stop("test");
+
+        expect(await next.service.stopped).toBe("test");
+        expect(readEntryFile(dir)).toMatchObject({ pid: newer.pid });
+        expect(existsSync(next.service.entry.socket)).toBe(false);
+    });
+
+    test("an open edit session keeps it from the idle exit; once released, it exits for idleness", async () => {
+        const { service } = await serviceFixture({ idleMs: 30, checkEveryMs: 15 });
+        const session = await service.sessions.hold(editFixture("rs-keep-"));
+
+        expect(await outcome(service.stopped, 250)).toBe("still running");
+        service.sessions.release(session.path);
+        expect(await outcome(service.stopped, 1_000)).toBe("idle");
+    });
+
+    test("an open edit session does not keep it from the exit on a code change, and the stop saves the session's change", async () => {
+        const watched = await watchedModule("rs-session-src-");
+        const { service } = await serviceFixture({ sourceRoot: watched.source, checkEveryMs: 15, saveDelayMs: 60_000 });
+        const path = editFixture("rs-session-");
+        const session = await service.sessions.hold(path);
+        await session.apply([{ op: "text", from: 1, to: 2, text: "Unsaved" }], { by: "editor" });
+        expect(readProject(path).revision).toBe(1);
+
+        watched.change();
+        expect(await outcome(service.stopped, 1_000)).toBe("code-changed");
+        expect(readProject(path).texts?.map((text) => text.text)).toEqual(["Unsaved"]);
+        expect(service.sessions.size).toBe(0);
+    });
+
+    test("a live recording keeps it from the exit on a code change while no call runs; it exits once the recording leaves", async () => {
+        const watched = await watchedModule("rs-live-src-");
+        const { dir, service } = await serviceFixture({ sourceRoot: watched.source, checkEveryMs: 15 });
+        const { live } = liveFixture(dir);
+        await waitUntil("the join", () => live.joinedService);
+
+        watched.change();
+        expect(await outcome(service.stopped, 300)).toBe("still running");
+        live.close();
+        expect(await outcome(service.stopped, 1_000)).toBe("code-changed");
+    });
+
+    test("launchRecorderService answers the service that runs in the recordings' folder with its service.json, starting nothing", async () => {
+        const dir = recorderServiceDir();
+        expect(dir).toContain("gt-test-home-");
+        const start = await startRecorderService({ dir, idleMs: 0, hostWaitMs: 60 });
+
+        if (start.status !== "started") {
+            throw new Error("the service did not start");
+        }
+
+        closing.push(() => start.service.stop("test"));
+        const launch = await launchRecorderService();
+
+        expect(launch).toEqual({ status: "running", entry: readLiveService(dir) ?? start.service.entry });
+        expect(launch.status === "failed" ? [] : Object.keys(launch.entry)).toEqual(Object.keys(readEntryFile(dir)));
     });
 });

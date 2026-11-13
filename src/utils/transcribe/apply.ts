@@ -9,13 +9,21 @@ export interface TranscriptCorrections {
     /** Renames for the whole meeting: source label → name. */
     labels?: Record<string, string>;
     /** Lines of `label` from `fromSec` to `toSec` (inclusive) belong to `speaker`. */
-    ranges?: Array<{ label: string; fromSec: number; toSec: number; speaker: string; item?: string }>;
+    ranges?: Array<{
+        label: string;
+        fromSec: number;
+        toSec: number;
+        speaker: string;
+        item?: string;
+        /** A direct assignment wins over a join's voice, matching any source line the join absorbed. */
+        overrideJoin?: boolean;
+    }>;
     /**
      * The line starting at `atSec` (at index `line` of the source transcript, when known) lost its first word to the
      * line before; `speaker` says the voice of that line.
      */
     joins?: Array<{ atSec: number; line?: number; speaker?: string; joined?: string; item?: string }>;
-    terms?: Array<TermFix & { line?: number; item?: string }>;
+    terms?: Array<TermFix & { line?: number; lines?: Array<{ atSec: number; line?: number }>; item?: string }>;
     /** Marks on one passage of one line: a meaning after it, or the document text it reads aloud. */
     marks?: TranscriptMark[];
     dictionary?: ResolvedDictionary;
@@ -220,11 +228,15 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
 
     // Ranges name the source's labels: each line is matched by the label it came with, so a line a range moved to a
     // name that is also a label ("Alice Example") is not moved again by that label's ranges. A join that names the
-    // voice settles its line.
+    // voice settles its line unless an explicit assignment overrides it.
     const sourceLabel = new Map(lines.map((line) => [line, line.speaker]));
     // The time a range reads for a line: a line a join glued a word onto keeps the time of the line the word came
     // from, so the range that covers the following line's voice covers the joined line too.
     const attributionTime = new Map(lines.map((line) => [line, line.startSec]));
+    const joinedOrigins =
+        corrections.joins?.length && corrections.ranges?.some((range) => range.overrideJoin)
+            ? new Map(lines.map((line) => [line, [{ label: line.speaker, atSec: line.startSec }]]))
+            : undefined;
     const voiced = new Map<TranscriptEntry, string | undefined>();
     const ranged = new Set<TranscriptEntry>();
     /** The range item that set each line's voice last; a later range over the same line takes it over. */
@@ -263,6 +275,9 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         before.speaker = join.speaker ?? line.speaker;
         sourceLabel.set(before, sourceLabel.get(line) ?? line.speaker);
         attributionTime.set(before, attributionTime.get(line));
+        if (joinedOrigins) {
+            joinedOrigins.set(before, [...(joinedOrigins.get(before) ?? []), ...(joinedOrigins.get(line) ?? [])]);
+        }
 
         if (join.speaker) {
             voiced.set(before, join.item);
@@ -280,12 +295,23 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
 
     for (const range of corrections.ranges ?? []) {
         const labelled = lines.filter((line) => {
+            if (range.overrideJoin && joinedOrigins) {
+                return joinedOrigins
+                    .get(line)
+                    ?.some(
+                        (origin) =>
+                            origin.label === range.label &&
+                            origin.atSec !== undefined &&
+                            origin.atSec >= range.fromSec &&
+                            origin.atSec <= range.toSec
+                    );
+            }
             const sec = attributionTime.get(line);
             return (
                 sourceLabel.get(line) === range.label && sec !== undefined && sec >= range.fromSec && sec <= range.toSec
             );
         });
-        const moved = labelled.filter((line) => !voiced.has(line));
+        const moved = labelled.filter((line) => range.overrideJoin || !voiced.has(line));
 
         for (const line of moved) {
             line.speaker = range.speaker;
@@ -418,22 +444,31 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     for (const fix of corrections.terms ?? []) {
         let targets: TranscriptEntry[] = lines;
 
-        if (fix.atSec !== undefined) {
-            const found = heardLineAt(source, { atSec: fix.atSec, line: fix.line }, fix.heard);
-
-            if (found.kind !== "found") {
-                if (fix.item) {
-                    outcomes.push(
-                        found.kind === "ambiguous"
-                            ? ambiguous(fix.item, found, ` with "${fix.heard}"`, fix.atSec)
-                            : { item: fix.item, status: "not-found", reason: `no line at ${at(fix.atSec)}` }
-                    );
+        const addresses = fix.lines ?? (fix.atSec !== undefined ? [{ atSec: fix.atSec, line: fix.line }] : undefined);
+        if (addresses !== undefined) {
+            targets = [];
+            let failed = false;
+            for (const address of addresses) {
+                const found = heardLineAt(source, address, fix.heard);
+                if (found.kind !== "found") {
+                    if (fix.item) {
+                        outcomes.push(
+                            found.kind === "ambiguous"
+                                ? ambiguous(fix.item, found, ` with "${fix.heard}"`, address.atSec)
+                                : { item: fix.item, status: "not-found", reason: `no line at ${at(address.atSec)}` }
+                        );
+                    }
+                    failed = true;
+                    break;
                 }
-
+                const line = all[found.index]!;
+                if (!targets.includes(line)) {
+                    targets.push(line);
+                }
+            }
+            if (failed) {
                 continue;
             }
-
-            targets = [all[found.index]!];
         }
 
         const re = heardPattern(fix.heard);

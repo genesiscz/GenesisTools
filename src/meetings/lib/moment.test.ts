@@ -1,11 +1,19 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema, TONE_MAX_SEC } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
@@ -15,12 +23,10 @@ import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import type { cutClip } from "./audio";
 import { writeQuestionClips } from "./listen-clips";
-import * as moments from "./moment";
 import {
     clipMoment,
     clipPlan,
     cutMoment,
-    MomentError,
     type MomentTarget,
     momentCacheDir,
     momentCachePath,
@@ -311,6 +317,58 @@ describe("the playback settings a Moment carries", () => {
         expect(after).toMatchObject({ padSec: 2, padAfterSec: 1, endSec: 36 });
     });
 
+    test("an unavailable tone uses an explicit beep policy and retains the requested volume", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "mtg-tone-policy-"));
+        const file = join(folder, "missing.wav");
+        const sound = await resolveToneSound(
+            { file, volume: 0.23 },
+            {
+                probe: async () => {
+                    throw new Error("must not probe a missing file");
+                },
+                onMissing: "beep",
+            }
+        );
+        expect(sound).toMatchObject({ hz: 880, sec: 0.15, volume: 0.23, preset: "beep" });
+        expect(sound.fallback).toContain("Using a beep");
+        await expect(
+            resolveToneSound(
+                { file, volume: 0.23 },
+                {
+                    probe: async () => ({ durationSec: 1 }),
+                    onMissing: "error",
+                }
+            )
+        ).rejects.toThrow("is not there");
+        writeFileSync(file, "invalid sound");
+        const invalid = await resolveToneSound(
+            { file, volume: 0.4 },
+            {
+                probe: async () => ({ durationSec: Number.NaN }),
+                onMissing: "beep",
+            }
+        );
+        expect(invalid.fallback).toContain("Using a beep");
+        const failed = await resolveToneSound(
+            { file, volume: 0.4 },
+            {
+                probe: async () => {
+                    throw new Error("decoder failed");
+                },
+                onMissing: "beep",
+            }
+        );
+        expect(failed.fallback).toContain("Using a beep");
+        const repaired = await resolveToneSound(
+            { file, volume: 0.4 },
+            {
+                probe: async () => ({ durationSec: 0.7 }),
+                onMissing: "beep",
+            }
+        );
+        expect(repaired).toEqual({ hz: 0, sec: 0.7, volume: 0.4, file });
+    });
+
     test("a preset or a sound file is the tone's sound; a file's length is read once and cut to 2 s (decision 8)", async () => {
         const soft = meetingsConfigSchema.parse({
             version: 5,
@@ -400,9 +458,16 @@ describe("times named in a text (R17, R38)", () => {
         ]);
     });
 
-    // A known limit (WaveA-Handoff): a time of day reads as a transcript time, so a row offers it as one.
-    test("a wall-clock time in a question reads as a transcript time", () => {
-        expect(momentsInText("Was this decided at the 14:30 standup?").map((one) => one.target)).toEqual([
+    test("explicit wall-clock cues stay plain while recording timestamps remain playable", () => {
+        for (const text of [
+            "Was this decided at the 14:30 standup?",
+            "The 2:30 pm call",
+            "14:30 CET",
+            "14:30 schůzka",
+        ]) {
+            expect(momentsInText(text)).toEqual([]);
+        }
+        expect(momentsInText("At 14:30 in the recording, discuss the 2:30 pm call").map((one) => one.target)).toEqual([
             { kind: "time", atSec: 870 },
         ]);
     });
@@ -633,6 +698,106 @@ describe("a Moment of a saved meeting", () => {
         );
     });
 
+    test("a saved missing-tone choice controls planning without changing the sound preference", async () => {
+        const { store, saved, opened } = await savedMeeting("meetings-moment-fallback", recording("fallback"));
+        const config = meetingsConfigSchema.parse({
+            global: { playback: { listen: { tone: { sound: { file: "/missing/tone.wav", volume: 0.2 } } } } },
+        });
+        spyOn(opened, "config").mockResolvedValue(config);
+        const options = { store, record: saved, target: { kind: "item" as const, id: "Q1" }, opened, screen: false };
+        const result = await openMoment(options);
+        expect(result.tone?.sound).toMatchObject({ preset: "beep", volume: 0.2 });
+        expect(result.tone?.sound.fallback).toContain("Using a beep");
+        expect(config.global.playback.listen.tone.sound).toEqual({ file: "/missing/tone.wav", volume: 0.2 });
+        config.global.playback.listen.tone.onMissing = "error";
+        await expect(openMoment(options)).rejects.toThrow("is not there");
+    });
+
+    test("Wave E: an explicit silent Moment never resolves a tone or changes the saved setting", async () => {
+        const { store, saved, opened } = await savedMeeting("meetings-moment-silent", recording("silent"));
+        const config = meetingsConfigSchema.parse({
+            version: 5,
+            global: { playback: { listen: { tone: { enabled: true, sound: { file: "/missing/tone.wav" } } } } },
+        });
+        spyOn(opened, "config").mockResolvedValue(config);
+        const probeTone = async () => {
+            throw new Error("a silent Moment must not read its tone file");
+        };
+        const result = await openMoment({
+            store,
+            record: saved,
+            target: { kind: "item", id: "Q1" },
+            opened,
+            tone: false,
+            toneSound: { file: "/missing/explicit.wav", volume: 0.6 },
+            probeTone,
+        });
+        expect(result.tone).toBeUndefined();
+        expect(config.global.playback.listen.tone.enabled).toBe(true);
+        expect(config.global.playback.listen.tone.sound).toEqual({ file: "/missing/tone.wav", volume: 0.6 });
+    });
+
+    test("clips made before source-clock preservation are not reused", async () => {
+        const audioPath = recording("old-clock-cache");
+        const { store, saved, opened } = await savedMeeting("meetings-moment-old-clock", audioPath);
+        const target: MomentTarget = { kind: "item", id: "Q1" };
+        const planned = await openMoment({ store, record: saved, target, opened });
+        const source = statSync(audioPath);
+        const oldKey = Bun.hash(
+            SafeJSON.stringify([
+                planned.startSec,
+                planned.endSec,
+                planned.tone ?? null,
+                audioPath,
+                source.mtimeMs,
+                source.size,
+            ])
+        ).toString(36);
+        const oldPath = join(momentCacheDir(saved.id), `Q1-${oldKey}.wav`);
+        mkdirSync(dirname(oldPath), { recursive: true });
+        writeFileSync(oldPath, "old shifted clock");
+        let cuts = 0;
+        const result = await clipMoment({
+            store,
+            record: saved,
+            target,
+            opened,
+            probe: oneTrack,
+            cut: async (options) => {
+                cuts++;
+                writeFileSync(options.outPath, "new source clock");
+            },
+        });
+        expect(cuts).toBe(1);
+        expect(result.path).not.toBe(oldPath);
+        expect(readFileSync(result.path, "utf8")).toBe("new source clock");
+        expect(readFileSync(oldPath, "utf8")).toBe("old shifted clock");
+    });
+
+    test("cancel during the track probe does not fall back to a one-track cut", async () => {
+        const { store, saved, opened } = await savedMeeting("meetings-moment-probe-cancel", recording("probe-cancel"));
+        const controller = new AbortController();
+        let cuts = 0;
+        await expect(
+            clipMoment({
+                store,
+                record: saved,
+                target: { kind: "item", id: "Q2" },
+                opened,
+                control: { signal: controller.signal },
+                probe: async (_path, options) => {
+                    expect(options?.signal).toBe(controller.signal);
+                    controller.abort(new Error("cancel track probe"));
+                    throw controller.signal.reason;
+                },
+                cut: async () => {
+                    cuts++;
+                },
+            })
+        ).rejects.toThrow("cancel track probe");
+        expect(cuts).toBe(0);
+    });
+
     test("a recording with two tracks is cut with both, and another recording file is another clip", async () => {
         const { store, saved, opened } = await savedMeeting("meetings-moment-tracks", recording("tracks"));
         const cuts: Array<Parameters<typeof cutClip>[0]> = [];
@@ -716,14 +881,18 @@ describe("a Moment of a saved meeting", () => {
 });
 
 describe("a Moment that is too long, and the frame that shows its words", () => {
-    test("an item or a speaker turn longer than longestClipSec is refused as too-long; a range is the caller's", () => {
+    test("an item or a speaker turn longer than longestClipSec plays its first longestClipSec, and says so; a range is the caller's", () => {
         const short = meetingsConfigSchema.parse({ global: { playback: { listen: { longestClipSec: 5 } } } });
         const long = record([{ id: "i9", kind: "speaker-range", label: "Speaker 2", fromSec: 30, toSec: 50 }]);
         const planLong = (target: MomentTarget) =>
             planMoment({ record: long, transcript, listen: short.global.playback.listen, target });
 
-        expect(() => planLong({ kind: "item", id: "i9" })).toThrow("longer than the 5 s a Moment plays");
-        expect(() => planLong({ kind: "stretch", atSec: 30 })).toThrow(MomentError);
+        const item = planLong({ kind: "item", id: "i9" });
+        expect(item).toMatchObject({ fromSec: 30, toSec: 35 });
+        expect(item.label).toContain("(first 5 s of 00:20)");
+        expect(
+            planLong({ kind: "stretch", atSec: 30 }).toSec - planLong({ kind: "stretch", atSec: 30 }).fromSec
+        ).toBeLessThanOrEqual(5);
         expect(planLong({ kind: "range", fromSec: 30, toSec: 50 }).toSec).toBe(50);
         expect(listen.longestClipSec).toBe(30);
     });
@@ -787,51 +956,6 @@ describe("tools meetings play: what the flags name", () => {
             "--at, --item and --target each name what to play; give one of them.",
         ]);
         expect(await refusal("m1", "--item", "Q1", "--to", "1:00")).toEqual(["--to ends the range that --at starts."]);
-    });
-
-    // An agent adds --no-start to stay side-effect free: with --clip beside it the command cut a WAV into moments/.
-    test("--no-start plans the Moment and cuts nothing, even with --clip", async () => {
-        // The command reads the default store, which the test preload keeps in a sandbox.
-        const store = new MeetingStore();
-        const saved = await store.create(
-            { title: "Planning", start: now, createdBy: "new", items: meeting.items },
-            { command: "new", change: "test" }
-        );
-        const target: MomentTarget = { kind: "range", fromSec: 10, toSec: 20 };
-        const planned = { ...planMoment({ record: saved, transcript, listen, target }), meeting: saved.id };
-        const open = spyOn(moments, "openMoment").mockResolvedValue(planned);
-        const cut = spyOn(moments, "clipMoment");
-        const printed: string[] = [];
-        const errors: string[] = [];
-        const result = spyOn(out, "result").mockImplementation((text: string) => {
-            printed.push(text);
-        });
-        const err = spyOn(ui, "err").mockImplementation((line: string) => {
-            errors.push(line);
-        });
-
-        let calls = { open: 0, cut: 0 };
-
-        try {
-            const program = new Command().exitOverride();
-            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
-            await program.parseAsync(
-                ["play", saved.id, "--target", SafeJSON.stringify(target), "--clip", "--no-start", "--json"],
-                { from: "user" }
-            );
-            // Counted before the restore, which clears them.
-            calls = { open: open.mock.calls.length, cut: cut.mock.calls.length };
-        } finally {
-            open.mockRestore();
-            cut.mockRestore();
-            result.mockRestore();
-            err.mockRestore();
-        }
-
-        expect(errors).toEqual([]);
-        expect(calls).toEqual({ open: 1, cut: 0 });
-        expect(SafeJSON.parse(printed[0]!)).toEqual(planned);
-        expect(readdirSync(store.folder(saved.id))).not.toContain("moments");
     });
 
     test("--target is checked against the Moment targets before any meeting is read", async () => {

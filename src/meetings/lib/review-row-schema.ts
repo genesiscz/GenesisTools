@@ -164,3 +164,28 @@ export const reviewRowsSchema = z.object({
     hidden: z.object({ lowPriority: z.number().int(), minPriority: z.number() }),
 });
 export type ReviewRows = z.infer<typeof reviewRowsSchema>;
+
+/** Changed rows of one locked decision. Before values let a window preserve later concurrent changes. */
+export const reviewRowsPatchSchema = z.object({
+    meeting: z.string(),
+    changes: z.array(
+        z.object({ id: z.string(), before: reviewRowSchema.optional(), after: reviewRowSchema.optional() })
+    ),
+    order: z.array(z.string()),
+    hidden: z.object({ before: reviewRowsSchema.shape.hidden, after: reviewRowsSchema.shape.hidden }),
+    fields: z.object({
+        before: z.object({
+            title: z.string(),
+            project: z.string().optional(),
+            labels: z.array(z.string()),
+            speakerLabels: z.record(z.string(), z.string()),
+        }),
+        after: z.object({
+            title: z.string(),
+            project: z.string().optional(),
+            labels: z.array(z.string()),
+            speakerLabels: z.record(z.string(), z.string()),
+        }),
+    }),
+});
+export type ReviewRowsPatch = z.infer<typeof reviewRowsPatchSchema>;

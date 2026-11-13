@@ -505,7 +505,7 @@ export function registerWorkflowCommands(program: Command): void {
         )
         .option(
             "--prepare",
-            "Element click/key/text: focus, reveal and revalidate the same observed target before input"
+            "Element click/key/text or window-relative drag: focus, reveal and revalidate the observed target before input"
         )
         .option(
             "--target-key <hash>",

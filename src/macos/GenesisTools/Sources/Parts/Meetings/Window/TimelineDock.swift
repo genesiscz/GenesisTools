@@ -20,6 +20,9 @@ struct TimelineDock: View {
     @AppStorage(MeetingsPreferences.Panes.hoverDelayMs.key) private var hoverDelayMs = MeetingsPreferences.Panes.hoverDelayMs.defaultValue
     @AppStorage(MeetingsPreferences.Playback.contextSec.key) private var contextSec = MeetingsPreferences.Playback.contextSec.defaultValue
     @AppStorage(MeetingsPreferences.Rows.decided.key) private var decided = MeetingsPreferences.Rows.decided.defaultValue.rawValue
+    @AppStorage(MeetingsPreferences.Panes.pinLanes.key) private var pinLanes = MeetingsPreferences.Panes.pinLanes.defaultValue
+    @AppStorage(MeetingsPreferences.Panes.waveform.key) private var waveform = MeetingsPreferences.Panes.waveform.defaultValue.rawValue
+    @Environment(\.kitLook) private var look
     /// The last span that had a Moment: the view holds it while the next clip is cut, so the timeline does not jump to
     /// the whole meeting and back.
     @State private var lastSpan: ZoomSpan?
@@ -40,6 +43,7 @@ struct TimelineDock: View {
             let peaks = dock.zoomPeaks(meeting, view: view, durationSec: duration)
             let rows = rows(of: meeting, dock: dock)
             let screen = screenBeside ? dock.screens[meeting].flatMap { $0.recorded && !$0.frames.isEmpty ? $0 : nil } : nil
+            let talk = voices(of: meeting)
             let state = TimelineDockState(
                 meetingTitle: title ?? meeting,
                 moments: player.stack.map { StackBreadcrumb.Level(id: $0.id.uuidString, title: Self.crumbTitle(of: $0, meeting: meeting, rows: rows)) },
@@ -53,19 +57,26 @@ struct TimelineDock: View {
                 zoomPeaksRange: peaks.range,
                 pins: pins(rows, meeting: meeting, top: top),
                 offerMore: player.phase == .ended(offerMore: true),
-                moreSec: MeetingsPreferences.Playback.moreSec.value())
+                moreSec: MeetingsPreferences.Playback.moreSec.value(),
+                views: dock.trail(of: top.id),
+                voices: talk.spans,
+                legend: talk.legend,
+                pinLanes: pinLanes > 0 ? pinLanes : MeetingsPreferences.Panes.pinLanes.defaultValue,
+                toneEnabled: window?.settingsRaw?.at(["global", "playback", "listen", "tone", "enabled"]) != .bool(false))
             dockBody(state: state, screen: screen, meeting: meeting, top: top)
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
                 .modifier(PinCardPresenter(hovered: dock.hoveredPin, openDelayMs: hoverDelayMs,
                                            anchorX: { anchorX(of: $0, rows: rows, view: view, duration: duration, screen: screen != nil) },
                                            arrowEdge: .bottom,
                                            card: { id in card(id, rows: rows, meeting: meeting) }))
-                .task(id: meeting) {
+                .task(id: [meeting, window?.detail?.id ?? ""]) {
                     dock.prepare(meeting)
                     if let detail = window?.detail, detail.id == meeting {
                         // The pins are the open meeting's rows, which its Items tab reads. A meeting that opened on
                         // another tab has none yet, and its timeline showed no pin until the reader visited Items.
                         if case .idle = detail.rows { detail.loadRows() }
+                        // The waveform's colours are the speakers' turns, which the Speakers tab reads.
+                        if Self.coloursVoices(waveform, look: look), case .idle = detail.speakers { detail.loadSpeakers() }
                     } else {
                         dock.prepareRows(meeting)
                     }
@@ -74,6 +85,9 @@ struct TimelineDock: View {
                     dock.ensureZoomPeaks(meeting, view: view, durationSec: duration)
                 }
                 .onChange(of: Self.span(of: top)) { _, next in if let next { lastSpan = next } }
+                .onChange(of: top.moment?.tone?.sound.fallback, initial: true) { _, message in
+                    if let message { window?.notices.push(StackedNotice(text: message)) }
+                }
         }
     }
 
@@ -85,7 +99,7 @@ struct TimelineDock: View {
             TimelineDockBody(state: state, position: { player.position }, actions: actions, collapsed: collapsed,
                              trailingWidth: Self.screenWidth) {
                 DockScreen(screen: screen, moment: top.moment, meeting: meeting, dock: player.timeline,
-                           position: { player.position })
+                           player: player, defaults: window?.defaults ?? .standard, position: { player.position })
             }
         } else {
             TimelineDockBody(state: state, position: { player.position }, actions: actions, collapsed: collapsed)
@@ -120,6 +134,35 @@ struct TimelineDock: View {
         return named
     }
 
+    /// Whether the waveform has the speakers' colours: the setting says so, and the look is not the classic one.
+    static func coloursVoices(_ waveform: String, look: KitLook) -> Bool {
+        look != .classic && (MeetingsPreferences.Panes.Waveform(rawValue: waveform) ?? .speakers) == .speakers
+    }
+
+    /// Who talks when in `meeting`, each turn in its speaker's colour (the avatar's and the lane's: the colour of the
+    /// shown name among the meeting's shown names), and the speakers for the legend, the most spoken first. Empty for a
+    /// meeting that is not the open one, before its speakers are read, and when the setting or the look says one colour.
+    private func voices(of meeting: String) -> (spans: [VoiceSpan], legend: [VoiceLegend]) {
+        guard Self.coloursVoices(waveform, look: look), let detail = window?.detail, detail.id == meeting,
+              let stats = detail.speakers.value, stats.timed else { return ([], []) }
+        return Self.voices(stats.speakers, names: detail.record.value?.speakers.labels ?? [:])
+    }
+
+    static func voices(_ speakers: [MeetingsAPI.MeetingSpeakers.Speaker], names: [String: String]) -> (spans: [VoiceSpan], legend: [VoiceLegend]) {
+        func shown(_ speaker: MeetingsAPI.MeetingSpeakers.Speaker) -> String {
+            names[speaker.label] ?? (speaker.label.isEmpty ? "Unknown voice" : speaker.label)
+        }
+        let all = speakers.map(shown).sorted()
+        var spans: [VoiceSpan] = []
+        var legend: [VoiceLegend] = []
+        for speaker in speakers.sorted(by: { $0.spokenSec > $1.spokenSec }) where !speaker.label.isEmpty {
+            let color = KitPersonColor.color(for: shown(speaker), among: all)
+            legend.append(VoiceLegend(name: shown(speaker), color: color))
+            spans += speaker.talkSpans.map { VoiceSpan(fromSec: $0.fromSec, toSec: $0.toSec, color: color) }
+        }
+        return (spans.sorted { $0.fromSec < $1.fromSec }, legend)
+    }
+
     /// The pins' rows: the open meeting's (as its Items tab holds them), else the ones the dock read for the meeting.
     private func rows(of meeting: String, dock: TimelineDockModel) -> [ReviewRow] {
         if let detail = window?.detail, detail.id == meeting { return detail.rows.value?.rows ?? [] }
@@ -140,6 +183,10 @@ struct TimelineDock: View {
         let dock = player.timeline
         var actions = TimelineDockActions()
         actions.togglePause = { player.togglePause() }
+        actions.setToneEnabled = { enabled in
+            window?.setConfig(["global", "playback", "listen", "tone", "enabled"], .bool(enabled),
+                              done: enabled ? "Tone on for the next clip" : "Tone off for the next clip")
+        }
         actions.skip = { delta in player.skip(by: delta) }
         // A click inside the loaded clip seeks; outside it the Moment at that time takes the top's place (G-PLAY-1).
         actions.seek = { second in player.playTime(second, in: meeting, from: .outside) }
@@ -149,21 +196,20 @@ struct TimelineDock: View {
         actions.setZoom = { dock.setZoom($0) }
         actions.setView = { dock.setView($0, layer: top.id) }
         actions.popTo = { player.pop(to: $0) }
+        actions.popView = { dock.popView(to: $0) }
         actions.showMeeting = { dock.setZoom(.meeting) }
         actions.stop = { player.stop() }
         actions.pins = TimelinePinsRow.Actions(
             select: { id in window?.revealRow(id, in: meeting) },
-            expand: { range in dock.setView(Self.widened(range), layer: top.id) },
+            // One level deeper: the breadcrumb names the range and goes back to the one before it.
+            expand: { range in dock.pushView(Self.widened(range), layer: top.id) },
             hover: { id in dock.hoveredPin = id })
         return actions
     }
 
     /// A merged pin's seconds with 10 % room each side, at least 10 s wide.
     static func widened(_ range: ClosedRange<Double>) -> ClosedRange<Double> {
-        let length = max(range.upperBound - range.lowerBound, 10)
-        let middle = (range.lowerBound + range.upperBound) / 2
-        let half = length * 0.6
-        return max(0, middle - half)...(middle + half)
+        PinCluster.expanded(range)
     }
 
     // MARK: The hover card
@@ -215,6 +261,8 @@ private struct DockScreen: View {
     let moment: Moment?
     let meeting: String
     let dock: TimelineDockModel
+    let player: MomentPlayer
+    let defaults: UserDefaults
     let position: () -> Double?
 
     @AppStorage(MeetingsPreferences.Panes.screenHeight.key) private var screenHeight = MeetingsPreferences.Panes.screenHeight.defaultValue
@@ -224,8 +272,8 @@ private struct DockScreen: View {
 
     var body: some View {
         let chosen = dock.displays[meeting]
-        let display = chosen ?? TimelineDockModel.autoDisplay(screen: screen, moment: moment)
         let at = dock.screenFollows ? (position() ?? moment?.spotSec ?? 0) : (held ?? position() ?? 0)
+        let display = chosen ?? TimelineDockModel.autoDisplay(screen: screen, moment: moment, at: at)
         let frame = TimelineDockModel.frame(in: screen, at: at, display: display)
         ScreenBesidePlayback(recorded: true, image: image, atSec: frame?.meetingSec,
                              apartSec: frame.flatMap { TimelineDockModel.apart($0, in: screen, at: at, display: display) },
@@ -241,8 +289,15 @@ private struct DockScreen: View {
                                  held = position()
                                  dock.screenFollows.toggle()
                              },
-                             openFrame: frame.map { frame in { PathOpener.primary(frame.path) } })
-            .task(id: frame?.path) { await show(frame) }
+                             openFrame: frame.map { frame in {
+                                 FrameReviewWindow.show(meeting: meeting, file: frame.file, at: frame.meetingSec,
+                                                        player: player, defaults: defaults, duration: dock.durationSec(meeting, fallback: nil))
+                             } },
+                             showText: frame.map { frame in {
+                                 FrameReviewWindow.show(meeting: meeting, file: frame.file, at: frame.meetingSec,
+                                                        player: player, defaults: defaults, duration: dock.durationSec(meeting, fallback: nil), text: true)
+                             } })
+            .task(id: frame?.path) { await show(frame, display: display) }
     }
 
     /// The Moment's OCR hit, on the frame that carries it.
@@ -252,7 +307,7 @@ private struct DockScreen: View {
     }
 
     /// Reads the frame off the main thread, at most one change a second; a frame asked too soon waits its turn.
-    private func show(_ frame: MeetingsAPI.MeetingScreen.Frame?) async {
+    private func show(_ frame: MeetingsAPI.MeetingScreen.Frame?, display: Int?) async {
         guard let frame else { return }
         var file = throttle.offer(frame.path, at: Self.now())
         while file == nil, throttle.pending == frame.path {
@@ -261,14 +316,20 @@ private struct DockScreen: View {
             file = throttle.due(at: Self.now())
         }
         guard let file else { return }
-        let url = URL(fileURLWithPath: file)
-        let data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url) }.value
+        let decoded = await FrameThumbnails.shared.image(path: file, maxPixel: 720)
         guard !Task.isCancelled else {
             throttle.failed(file)
             return
         }
-        if let data, let decoded = NSImage(data: data), throttle.decoded(file, at: Self.now()) {
+        if let decoded, throttle.decoded(file, at: Self.now()) {
             image = decoded
+            let frames = screen.frames.filter { display == nil || $0.displayId == display }
+            if let index = frames.firstIndex(where: { $0.path == file }) {
+                for neighbor in [index - 1, index + 1] where frames.indices.contains(neighbor) {
+                    guard !Task.isCancelled else { return }
+                    _ = await FrameThumbnails.shared.image(path: frames[neighbor].path, maxPixel: 720)
+                }
+            }
         } else {
             throttle.failed(file)
         }

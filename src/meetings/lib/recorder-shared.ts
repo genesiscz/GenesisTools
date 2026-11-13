@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { ensureBinaryAsync } from "@app/control/lib/runner";
+import { ensurePinnedBinaryAsync } from "@app/control/lib/runner";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
@@ -19,25 +19,39 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import type { AudioSource } from "@genesiscz/utils/screen-recorder/control";
-import {
-    absoluteFrameName,
-    type JpegConverter,
-    type OcrRecognizer,
-    sipsJpeg,
-    visionOcr,
-} from "@genesiscz/utils/screen-recorder/frame-output";
+import { absoluteFrameName, type JpegConverter, sipsJpeg } from "@genesiscz/utils/screen-recorder/frame-output";
 import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
-import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
+import { CaptureError, type FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
 import { z } from "zod";
 
 export const { log } = logger.scoped("meetings-recorder");
 
 /** One capture runs at most 180 s; shorter pieces also re-read the displays sooner. */
 const CHUNK_SEC = 30;
-/** Consecutive pieces in which every capture failed, after which the recorder gives up. */
+/**
+ * Consecutive pieces in which every capture failed, after which the recorder gives up on a refused permission, or
+ * says once that the capture keeps failing and goes on trying (`captureKeepsTrying`).
+ */
 export const MAX_FAILURES = 3;
 const FAILURE_PAUSE_MS = 5_000;
+/** The waits after the 1st, 2nd, 3rd and every later failed piece in a row, in units of the base pause. */
+const FAILURE_BACKOFF_STEPS = [1, 2, 6, 12];
+
+/** The wait after the `failures`-th failed piece in a row: with the 5 s base, 5 s, 10 s, 30 s, then every minute. */
+export function failureBackoffMs(failures: number, baseMs: number): number {
+    const step = FAILURE_BACKOFF_STEPS[Math.min(Math.max(failures, 1), FAILURE_BACKOFF_STEPS.length) - 1] ?? 1;
+    return baseMs * step;
+}
+
+/**
+ * Whether a capture that failed `MAX_FAILURES` times in a row still keeps the meeting's recording: everything but a
+ * refused permission passes (an ax-tool being rebuilt exits 127 for a moment, a capture times out, a display wakes).
+ * A refused permission needs the user, so the recording ends and says so.
+ */
+export function captureKeepsTrying(error: unknown): boolean {
+    return !(error instanceof CaptureError && error.kind === "no-permission");
+}
 /** The first frame's OCR finds less text than this: probably only the desktop, so the grant is likely missing. */
 export const EMPTY_FRAME_CHARS = 20;
 /** How long the socket stays open after the stop answer, so the answer reaches the caller. */
@@ -91,6 +105,16 @@ export function readRecorderState(store: MeetingStore): { running: boolean; stat
         ? recorderStateSchema.safeParse(SafeJSON.parse(readFileSync(files.state, "utf8")))
         : undefined;
     return { running, ...(parsed?.success ? { state: parsed.data } : {}) };
+}
+
+/** Still frames can stay unchanged; only this meeting's recorder-state heartbeat extends their known activity. */
+export function lastRecordingActivity(store: MeetingStore, meetingId: string): number | undefined {
+    const files = [join(store.folder(meetingId), "frames")];
+    if (readRecorderState(store).state?.meetingId === meetingId) {
+        files.push(recorderFiles(store).state);
+    }
+    const activity = files.filter(existsSync).map((file) => statSync(file).mtimeMs);
+    return activity.length > 0 ? Math.max(...activity) : undefined;
 }
 
 /** Sends the stop only while the running recorder is the owner's run (its meeting and start), else undefined. */
@@ -158,7 +182,8 @@ export interface RecorderNote {
 export interface RecorderDeps {
     recorder: FrameRecorder;
     toJpeg: JpegConverter;
-    ocr: OcrRecognizer;
+    /** Starts the meeting's OCR worker (a process of its own); the recorder never waits on it or fails by it. */
+    startOcr: (store: MeetingStore, meetingId: string) => void;
     notify: (note: RecorderNote) => Promise<void>;
     /** Where the live recording entry goes (the genesis-tools root's `recordings/live/` by default). */
     liveDir?: string;
@@ -170,11 +195,13 @@ export function defaultOcrLanguages(): string[] {
     return languageSettings(meetingsConfigSchema.parse({})).ocr;
 }
 
-export function defaultDeps(capture: MeetingsConfig["global"]["capture"]): RecorderDeps {
+/** The recorder's own parts; `runRecorder` adds the OCR worker start (`ocr-worker.ts` reads the recorder state). */
+export function defaultDeps(capture: MeetingsConfig["global"]["capture"]): Omit<RecorderDeps, "startOcr"> {
     return {
-        recorder: FRAME_RECORDERS[capture.backend]({ axTool: async (options) => [await ensureBinaryAsync(options)] }),
+        recorder: FRAME_RECORDERS[capture.backend]({
+            axTool: async (options) => [await ensurePinnedBinaryAsync(options)],
+        }),
         toJpeg: sipsJpeg,
-        ocr: visionOcr,
         notify: async (note) => {
             await sendNotification({ ...note, group: "meetings" }).catch((err: unknown) =>
                 log.warn({ err }, "notification failed")

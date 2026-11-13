@@ -135,6 +135,27 @@ public func cursorTrackRect(display: CGRect, movie: CGSize?) -> CGRect {
     return CGRect(x: display.midX - width / 2, y: display.minY, width: width, height: display.height)
 }
 
+/// The picture's rectangle in global points, with the visible regions that can receive recorded clicks.
+/// The rectangle includes letterboxing; click regions exclude other windows and gaps between selected windows.
+public struct CursorTrackGeometry {
+    public let rect: CGRect
+    public let clickRegions: [CGRect]
+
+    public init(rect: CGRect, clickRegions: [CGRect]) {
+        self.rect = rect
+        self.clickRegions = clickRegions
+    }
+
+    public func normalized(_ point: CGPoint) -> CGPoint? {
+        guard rect.width > 0, rect.height > 0 else { return nil }
+        return CGPoint(x: (point.x - rect.minX) / rect.width, y: (point.y - rect.minY) / rect.height)
+    }
+
+    public func acceptsClick(at point: CGPoint) -> Bool {
+        clickRegions.contains { $0.contains(point) }
+    }
+}
+
 /// Scales `size` down so its longer side is at most `maxLongSide` pixels, keeping the aspect ratio; `even` rounds both
 /// sides down to even numbers, as H.264 needs.
 public func capLongSide(_ size: CGSize, maxLongSide: Int?, even: Bool) -> CGSize {

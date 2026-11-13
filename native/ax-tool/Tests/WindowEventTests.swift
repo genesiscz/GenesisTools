@@ -248,3 +248,59 @@ final class WindowEventTests: XCTestCase {
         XCTAssertEqual(posted.last?.location, CGPoint(x: 400, y: 10))
     }
 }
+
+extension WindowEventTests {
+    func testForegroundClicksUseGlobalEventsAndBackgroundClicksKeepTheirTarget() throws {
+        let factory = try WindowEventFactory(windowID: 456, bounds: CGRect(x: -200, y: -400, width: 500, height: 600))
+        let point = CGPoint(x: -100, y: -250)
+        let modifiers: CGEventFlags = [.maskCommand, .maskAlternate]
+        let buttons: [(CGMouseButton, CGEventType, CGEventType)] = [
+            (.left, .leftMouseDown, .leftMouseUp), (.right, .rightMouseDown, .rightMouseUp),
+            (.center, .otherMouseDown, .otherMouseUp),
+        ]
+        for background in [false, true] {
+            for (button, down, up) in buttons {
+                let gate = SyntheticInputGate(tookOver: { false })
+                var posted: [(CGEvent, pid_t?)] = []
+                let held = try factory.pressClick(point: point, button: button, clickCount: 2, modifiers: modifiers,
+                                                  background: background, pid: 123, gate: gate) { posted.append(($0, $1)) }
+                XCTAssertEqual(posted.count, 1, "the caller retains its existing press duration")
+                gate.release(held)
+                XCTAssertEqual(posted.map { $0.0.type }, [down, up])
+                for (event, target) in posted {
+                    XCTAssertEqual(target, background ? 123 : nil, "nil posts to the global HID stream")
+                    XCTAssertEqual(event.location, point)
+                    XCTAssertEqual(event.flags, modifiers)
+                    XCTAssertEqual(event.getIntegerValueField(.mouseEventClickState), 2)
+                    XCTAssertEqual(event.getIntegerValueField(.mouseEventButtonNumber), Int64(button.rawValue))
+                    if background {
+                        XCTAssertEqual(event.getIntegerValueField(.mouseEventWindowUnderMousePointer), 456)
+                    } else {
+                        XCTAssertEqual(event.getIntegerValueField(.mouseEventWindowUnderMousePointer), 0)
+                    }
+                }
+            }
+        }
+    }
+
+    func testClickTakeoverRefusesBeforeDownAndReleasesOnceOnTheOriginalRoute() throws {
+        let factory = try WindowEventFactory(windowID: 456, bounds: CGRect(x: 0, y: 0, width: 500, height: 500))
+        for background in [false, true] {
+            var takeover = true
+            let gate = SyntheticInputGate(tookOver: { takeover })
+            var posted: [(CGEventType, pid_t?)] = []
+            let post: (CGEvent, pid_t?) -> Void = { posted.append(($0.type, $1)) }
+            XCTAssertThrowsError(try factory.pressClick(point: CGPoint(x: 20, y: 30), button: .left, clickCount: 1,
+                modifiers: [], background: background, pid: 123, gate: gate, post: post))
+            XCTAssertTrue(posted.isEmpty)
+            takeover = false
+            let held = try factory.pressClick(point: CGPoint(x: 20, y: 30), button: .left, clickCount: 1,
+                modifiers: [], background: background, pid: 123, gate: gate, post: post)
+            takeover = true
+            XCTAssertThrowsError(try gate.check())
+            gate.release(held)
+            XCTAssertEqual(posted.map { $0.0 }, [.leftMouseDown, .leftMouseUp])
+            XCTAssertTrue(posted.allSatisfy { $0.1 == (background ? 123 : nil) })
+        }
+    }
+}

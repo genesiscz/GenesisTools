@@ -24,9 +24,11 @@ public struct QueryWalkReport: Equatable {
     /// Elements at the depth limit whose children were not read. A match below them is not seen.
     public var depthLimitedSubtrees = 0
     public var vanished = 0
+    public var unreadableSubtrees = 0
 
     public var dictionary: [String: Any] {
-        ["walked": walked, "matches": matches, "depthLimitedSubtrees": depthLimitedSubtrees, "vanished": vanished]
+        ["walked": walked, "matches": matches, "depthLimitedSubtrees": depthLimitedSubtrees,
+         "vanished": vanished, "unreadableSubtrees": unreadableSubtrees]
     }
 }
 
@@ -49,10 +51,12 @@ private func queryMatches(_ element: AXUIElement, query: TreeQuery, source: Hier
 private struct KeptHierarchySource: HierarchySource {
     let base: HierarchySource
     let kept: SnapshotObjectSet
+    let unreadable: [(element: AXUIElement, error: UnreadableChildren)]
 
     func attribute(_ element: AXUIElement, _ name: String) -> Any? { base.attribute(element, name) }
     func children(of element: AXUIElement) throws -> [AXUIElement] {
-        try base.children(of: element).filter { kept.contains($0) }
+        if let failed = unreadable.first(where: { CFEqual($0.element, element) }) { throw failed.error }
+        return try base.children(of: element).filter { kept.contains($0) }
     }
     func actionNames(of element: AXUIElement) -> [String] { base.actionNames(of: element) }
     func isValueSettable(_ element: AXUIElement) -> Bool? { base.isValueSettable(element) }
@@ -71,6 +75,7 @@ public func buildQueryTree(root: AXUIElement, source: HierarchySource, depth: In
     var kept = SnapshotObjectSet()
     _ = kept.insert(root)
     var path: [AXUIElement] = []
+    var unreadable: [(element: AXUIElement, error: UnreadableChildren)] = []
     func walk(_ element: AXUIElement, level: Int) throws {
         guard visited.insert(element) else { return }
         report.walked += 1
@@ -100,6 +105,12 @@ public func buildQueryTree(root: AXUIElement, source: HierarchySource, depth: In
         } catch is VanishedElement {
             report.vanished += 1
             return
+        } catch let error as UnreadableChildren {
+            guard level > 0 else { throw error }
+            report.unreadableSubtrees += 1
+            unreadable.append((element, error))
+            for ancestor in path { _ = kept.insert(ancestor) }
+            return
         }
         guard level < depth else {
             if !children.isEmpty { report.depthLimitedSubtrees += 1 }
@@ -110,7 +121,7 @@ public func buildQueryTree(root: AXUIElement, source: HierarchySource, depth: In
         }
     }
     try walk(root, level: 0)
-    let tree = try buildObservedTree(root: root, source: KeptHierarchySource(base: source, kept: kept), depth: depth,
+    let tree = try buildObservedTree(root: root, source: KeptHierarchySource(base: source, kept: kept, unreadable: unreadable), depth: depth,
                                      scope: "window", expired: expired)
     return (tree, report)
 }

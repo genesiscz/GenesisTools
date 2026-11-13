@@ -85,15 +85,20 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
 
     /** A notification to every connection subscribed to the event and to its meeting (or to every meeting). */
     const emit = <E extends MeetingsEvent>(event: E, params: MeetingsNotification<E>): void => {
-        // A decision wrote the record: the watch leaves that write out, since `decision.applied` tells it already.
-        if (event === "decision.applied" || event === "decision.reverted") {
-            watch?.ownWrite(params.meeting);
+        // The event already announces this record write, so the watcher must not announce it again.
+        const meeting = "meeting" in params ? params.meeting : undefined;
+        if (
+            (event === "decision.applied" || event === "decision.reverted" || event === "meeting.changed") &&
+            typeof meeting === "string"
+        ) {
+            watch?.ownWrite(meeting);
         }
 
         host?.emit(
             event,
             { ...params },
-            (connection) => !connection.state.meeting || connection.state.meeting === params.meeting
+            (connection) =>
+                event === "people.changed" || !connection.state.meeting || connection.state.meeting === meeting
         );
     };
 
@@ -144,6 +149,10 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
             }
         },
         onSubscribe: (connection, params) => {
+            if (!connection.state.hello) {
+                throw refusal("no-hello", "say hello before subscribe");
+            }
+
             const parsed = subscribeParamsSchema.safeParse(params ?? {});
 
             // An invalid meeting filter would widen the subscription to every meeting; it is refused instead.
@@ -177,6 +186,8 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
         const folderWatch = new MeetingsFolderWatch({
             root: (options.store?.() ?? new MeetingStore()).root,
             emit: (meeting, parts) => emit("meeting.changed", { meeting, parts }),
+            peopleChanged: () => emit("people.changed", {}),
+            commentsChanged: (meeting) => emit("comment.changed", { meeting }),
             ...(options.watch?.subscribe ? { subscribe: options.watch.subscribe } : {}),
             ...(options.watch?.coalesceMs !== undefined ? { coalesceMs: options.watch.coalesceMs } : {}),
         });

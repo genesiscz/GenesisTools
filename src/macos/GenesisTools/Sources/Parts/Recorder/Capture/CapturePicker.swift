@@ -399,10 +399,10 @@ struct CaptureOptionsView: View {
             row("Microphone", detail: "Your voice, as its own track; a display or an area only (a window movie has no audio)") {
                 toggle($model.options.microphone, "recorder.capture.audio.mic")
             }
-            row("Draw the cursor", detail: "The editor draws it smoothed and at any size; off keeps the system cursor. A window movie has no cursor track") {
+            row("Draw the cursor", detail: "The editor draws it smoothed and at any size. Off hides it for window movies and keeps the system cursor for displays. Clicks are always kept") {
                 toggle($model.options.drawCursor, "recorder.capture.drawCursor")
             }
-            row("Shortcuts overlay", detail: "Keeps ⌘ and ⌃ shortcuts for the editor's overlay; plain typing never. Not for a window movie") {
+            row("Shortcuts overlay", detail: "Keeps ⌘ and ⌃ shortcuts for the editor's overlay; plain typing never") {
                 toggle($model.options.shortcutsOverlay, "recorder.capture.shortcuts")
             }
             row("Camera bubble", detail: "Records the camera beside the screen; drag the bubble to place it") {

@@ -115,11 +115,13 @@ private struct NativeSettingsDisabledLook: ViewModifier {
     func body(content: Content) -> some View { content.opacity(isEnabled ? 1 : 0.4) }
 }
 
-/// How a number picker draws: `count` is a field with a stepper (hours of look-back, seconds, days), `clock` a
-/// two-digit menu for one part of a time of day ("09", "30"). The look follows what the number means, never the size
-/// of its range: a count of hours drawn as a clock read "03" with no stepper (2026-11-05).
+/// How a number picker draws: `count` is the kit's number field (`KitNumberField`: minus, the number with its unit,
+/// plus) for hours of look-back, seconds or days; `clock` a two-digit menu for one part of a time of day ("09",
+/// "30"); `system` the system's text field and stepper, which `count` drew until 2026-11-10. The look follows what
+/// the number means, never the size of its range: a count of hours drawn as a clock read "03" with no stepper
+/// (2026-11-05).
 public enum NativeSettingsNumberStyle: Sendable {
-    case count, clock
+    case count, clock, system
 }
 
 public struct NativeSettingsNumberPicker: View {
@@ -127,24 +129,44 @@ public struct NativeSettingsNumberPicker: View {
     private let range: Range<Int>
     private let identifier: String
     private let style: NativeSettingsNumberStyle
+    private let step: Int
+    private let prefix: KitNumberAdornment?
+    private let suffix: KitNumberAdornment?
+    private let minWidth: CGFloat
     @Binding private var value: Int
     @State private var entry = ""
     @FocusState private var editing: Bool
 
+    /// - Parameters:
+    ///   - step: one press of minus, plus or an arrow key (`count` only).
+    ///   - prefix: what stands before the number in the field: `.text("±")`, `.symbol("clock")` (`count` only).
+    ///   - suffix: the unit after the number: `.counted("day")` reads "1 day" and "14 days", `.text("min")` never
+    ///     changes (`count` only).
+    ///   - minWidth: the least width of a `count` field. The default holds a three-digit number with a unit of a
+    ///     word, so the fields of a card are equally wide and their buttons stand under each other.
     public init(_ title: String, range: Range<Int>, identifier: String, style: NativeSettingsNumberStyle = .count,
-                value: Binding<Int>) {
+                step: Int = 1, prefix: KitNumberAdornment? = nil, suffix: KitNumberAdornment? = nil,
+                minWidth: CGFloat = 136, value: Binding<Int>) {
         self.title = title
         self.range = range
         self.identifier = identifier
         self.style = style
+        self.step = step
+        self.prefix = prefix
+        self.suffix = suffix
+        self.minWidth = minWidth
         _value = value
     }
 
-    /// A field with a stepper; false draws the two-digit clock menu.
-    var drawsField: Bool { style == .count }
+    /// A field with step buttons; false draws the two-digit clock menu.
+    var drawsField: Bool { style != .clock }
 
     public var body: some View {
-        if drawsField {
+        if style == .count {
+            // The field dims itself when disabled.
+            KitNumberField(title, value: $value, in: range.lowerBound...(range.upperBound - 1), step: step,
+                           prefix: prefix, suffix: suffix, identifier: identifier, minWidth: minWidth)
+        } else if style == .system {
             HStack(spacing: 6) {
                 TextField(title, text: $entry)
                     .textFieldStyle(.roundedBorder)

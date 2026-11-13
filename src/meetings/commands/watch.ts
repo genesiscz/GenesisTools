@@ -7,8 +7,8 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
 import { askAtMeetingEnd, hasOpenAssignSteps } from "../lib/assign";
-import { errorText, fail, resolveEnum } from "../lib/shared";
-import { watchLoop, watchOnce } from "../lib/watch";
+import { fail, resolveEnum } from "../lib/shared";
+import { hasRecordingToWatch, watchedSourceId, watchLoop, watchOnce } from "../lib/watch";
 
 const { log } = logger.scoped("meetings-watch-cmd");
 /** How long `ensureWatcher` waits for the spawned watcher to own its pidfile. */
@@ -25,7 +25,12 @@ export function watcherPidPath(store: MeetingStore): string {
 export async function ensureWatcher(): Promise<"started" | "running" | "disabled"> {
     const config = await new MeetingsConfigStore().read();
 
-    if (!config.sources.wisprflow.autoRecord.enabled && !hasOpenAssignSteps(new MeetingStore())) {
+    const store = new MeetingStore();
+    if (
+        !config.sources[watchedSourceId(config)].autoRecord.enabled &&
+        !hasOpenAssignSteps(store) &&
+        !hasRecordingToWatch(store)
+    ) {
         return "disabled";
     }
 
@@ -100,7 +105,7 @@ async function watch(opts: { once?: boolean }): Promise<void> {
             clearPidFile(watcherPidPath(store));
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -137,7 +142,7 @@ async function autostart(mode: string | undefined): Promise<void> {
             `Recording starts with Wispr Flow: ${enabled ? "on" : "off"}. Watcher: ${enabled && (running || picked === "on") ? "running" : "not running"}.`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

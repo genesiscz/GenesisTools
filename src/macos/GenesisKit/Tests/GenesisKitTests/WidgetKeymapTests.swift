@@ -30,13 +30,13 @@ final class WidgetKeymapTests: XCTestCase {
     }
 
     func testNativeAndAccessibilityControlsOwnReturnFocus() {
-        XCTAssertTrue(WidgetCoordinator.controlHasFocus(firstResponder: NSButton(), focusedElement: nil))
+        XCTAssertTrue(StandardEditing.controlHasFocus(firstResponder: NSButton(), focusedElement: nil))
         let element = NSAccessibilityElement()
         element.setAccessibilityRole(.button)
-        XCTAssertTrue(WidgetCoordinator.controlHasFocus(firstResponder: nil, focusedElement: element))
+        XCTAssertTrue(StandardEditing.controlHasFocus(firstResponder: nil, focusedElement: element))
         element.setAccessibilityRole(.group)
-        XCTAssertFalse(WidgetCoordinator.controlHasFocus(firstResponder: nil, focusedElement: element))
-        XCTAssertFalse(WidgetCoordinator.controlHasFocus(firstResponder: nil, focusedElement: nil))
+        XCTAssertFalse(StandardEditing.controlHasFocus(firstResponder: nil, focusedElement: element))
+        XCTAssertFalse(StandardEditing.controlHasFocus(firstResponder: nil, focusedElement: nil))
     }
 
     func testTheWidgetsKeysHaveNoConflictOnACzechOrAUSKeyboard() {

@@ -63,7 +63,10 @@ struct MeetingDetailView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
-        .sheet(item: $detail.pendingReach) { pending in ReachSheet(pending: pending, detail: detail) }
+        // The "This also affects" card is drawn in the window, not as a sheet: a window-modal sheet runs its slide as a
+        // loop on the main thread, and opening or closing it froze the window for 0.5 to 1 s (stall stacks of
+        // 2026-11-11, NSSheetMoveHelper).
+        .overlay { ReachOverlay(detail: detail) }
         .sheet(item: $detail.history) { history in HistorySheetView(detail: detail, history: history) }
         .onChange(of: window.meeting(detail.id)?.id) { _, _ in detail.listLanded(window.meeting(detail.id)) }
         .navigationTitle(detail.record.value?.displayTitle ?? window.meeting(detail.id)?.displayTitle ?? "Meeting")
@@ -91,9 +94,23 @@ struct MeetingDetailView: View {
         let record = detail.record.value
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(verbatim: record?.displayTitle ?? overview?.displayTitle ?? "")
-                    .font(.system(size: 17, weight: .semibold)).lineLimit(2).textSelection(.enabled)
+                MeetingHeaderTitle(title: record?.displayTitle ?? overview?.displayTitle ?? "",
+                                   editable: record?.title ?? overview?.title ?? "",
+                                   editing: Binding(get: { window.renamingMeetingID == detail.id },
+                                                    set: { window.renamingMeetingID = $0 ? detail.id : nil }),
+                                   rename: { detail.rename(to: $0) })
                 Spacer(minLength: 8)
+                MenuButton(style: .genHoverPlain(), items: {
+                    [.action("Open in New Window") { MeetingsWindow.openExtra(meeting: detail.id) },
+                     .action("Duplicate", enabled: !window.duplicating.contains(detail.id)) { window.duplicate(detail.id) },
+                     .action("Rename…") { window.renamingMeetingID = detail.id }]
+                }) {
+                    Image(systemName: "ellipsis.circle").font(.system(size: 14)).foregroundStyle(.secondary)
+                        .frame(width: 24, height: 22).contentShape(Rectangle())
+                }
+                .instantTooltip("More: open in a new window, duplicate, rename")
+                .accessibilityLabel("More meeting actions")
+                .accessibilityIdentifier("meetings.detail.more")
                 if overview?.hasRecording == true, AppParts.isLinked("recorder") {
                     headerAction("Open in the recorder editor", symbol: "film",
                                  tooltip: "Open the screen recording as an editor project, with the transcript as captions",
@@ -109,9 +126,14 @@ struct MeetingDetailView: View {
             }
             if window.liveUpdatesOff {
                 // R36, G46: without events a row decided elsewhere would not change; say so, with the way back.
-                HStack(spacing: 8) {
+                WrapLayout(spacing: 8, lineSpacing: 4) {
                     Label("Live updates off: changes made elsewhere show after a reload", systemImage: "antenna.radiowaves.left.and.right.slash")
                         .font(.system(size: 12)).foregroundStyle(KitPalette.modified)
+                    if let lastRead = detail.lastSuccessfulRead {
+                        (Text("Last read ") + Text(lastRead, style: .relative) + Text(" ago"))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("meetings.detail.lastRead")
+                    }
                     Button("Reload") { window.reloadAll() }.buttonStyle(.link).font(.system(size: 12))
                         .accessibilityIdentifier("meetings.detail.reload")
                 }
@@ -131,7 +153,8 @@ struct MeetingDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if let failure = detail.record.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.reloadRecord() }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.reloadRecord() },
+                                   failure.detailsFix { detail.reloadRecord() }])
             }
             // The picker lists the proposals and the known projects; a failed read of either says so here, so a short
             // list is never mistaken for the whole one.
@@ -139,16 +162,19 @@ struct MeetingDetailView: View {
                 NoticePill(text: unread.text, more: unread.failure.detail, tone: .error,
                            fixes: [.button("Retry", symbol: "arrow.clockwise") {
                                if unread.source == .proposals { detail.loadProposals() } else { window.loadSettings() }
+                           }, unread.failure.detailsFix {
+                               if unread.source == .proposals { detail.loadProposals() } else { window.loadSettings() }
                            }])
             }
-            GenSegmentedTabs("Meeting tab", items: MeetingDetailModel.Tab.allCases.map { GenSegmentedTabs.Item($0, tabTitle($0, record)) },
+            GenSegmentedTabs("Meeting tab", items: MeetingDetailModel.Tab.allCases.map { tabItem($0, record) },
                              selection: Binding(get: { detail.tab }, set: { detail.show($0) }), minSegmentWidth: narrow ? 0 : 84,
-                             identifier: "meetings.detail.tabs", fillsWidth: narrow)
+                             identifier: "meetings.detail.tabs", fillsWidth: narrow, size: narrow ? .regular : .large)
                 .frameProbe("meetings.detail.tabs")
         }
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
         .frameProbe("meetings.detail.header")
     }
+
 
     /// A labelled action, or its icon with the same words as tooltip and label when the column is narrow.
     @ViewBuilder
@@ -177,15 +203,21 @@ struct MeetingDetailView: View {
         return "Write the polished transcript as a markdown note; it asks for the \(project) folder once"
     }
 
-    private func tabTitle(_ tab: MeetingDetailModel.Tab, _ record: MeetingRecordView?) -> String {
-        guard let record else { return tab.title }
-        switch tab {
-        case .items:
-            let open = detail.rows.value?.rows.filter(\.isOpen).count ?? record.items.filter { $0.status == "suggested" }.count
-            return open > 0 ? "Items \(open)" : "Items"
-        case .context: return record.context.isEmpty ? "Context" : "Context \(record.context.count)"
-        default: return tab.title
+    /// A tab with its glyph (a wide header only) and its count: the open rows of Items in the colour of a question,
+    /// the files of Context without one.
+    private func tabItem(_ tab: MeetingDetailModel.Tab, _ record: MeetingRecordView?) -> GenSegmentedTabs<MeetingDetailModel.Tab>.Item {
+        var count: Int?
+        var hue = KitHue.neutral
+        if let record {
+            switch tab {
+            case .items:
+                count = detail.rows.value?.rows.filter(\.isOpen).count ?? record.items.filter { $0.status == "suggested" }.count
+                hue = .ask
+            case .context: count = record.context.count
+            default: break
+            }
         }
+        return .init(tab, tab.title, symbol: narrow ? nil : tab.symbol, count: count == 0 ? nil : count, hue: hue)
     }
 
     private func projectPicker(_ record: MeetingRecordView?) -> some View {
@@ -312,7 +344,6 @@ private struct AddLabelButton: View {
             open = false
         }
         .onChange(of: open) { _, isOpen in
-            // A refused label or a popover closed by hand must not close a later one when that label arrives.
             if !isOpen { pending = nil }
         }
     }
@@ -322,30 +353,12 @@ private struct AddLabelButton: View {
         case .nothing:
             return
         case .present:
+            pending = nil
             text = ""
             open = false
         case .add(let label):
             pending = label
             add(label)
-        }
-    }
-}
-
-/// What Return in the "+ Label" field does: nothing for an empty field, close for a label the meeting has already (an
-/// add would change nothing, so the popover would wait forever), else add it.
-enum LabelCommit: Equatable {
-    case nothing
-    case present
-    case add(String)
-
-    init(typed: String, labels: [String]) {
-        let label = typed.trimmingCharacters(in: .whitespaces)
-        if label.isEmpty {
-            self = .nothing
-        } else if labels.contains(label) {
-            self = .present
-        } else {
-            self = .add(label)
         }
     }
 }
@@ -384,7 +397,7 @@ struct LoadablePane<Value: Equatable, Content: View>: View {
         VStack(spacing: 0) {
             if let failure = state.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise", perform: retry)])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise", perform: retry), failure.detailsFix(retry: retry)])
                     .padding(12)
             }
             if let value = state.value {
@@ -398,6 +411,97 @@ struct LoadablePane<Value: Equatable, Content: View>: View {
             } else {
                 Spacer()
             }
+        }
+    }
+}
+
+/// The meeting's title in the header. A double click edits it in place (Rename… in a menu too): Return or a click
+/// elsewhere saves it, Escape keeps the old one.
+private struct MeetingHeaderTitle: View {
+    /// What the header shows ("Untitled meeting" for an empty title), and the title the field starts from.
+    let title: String
+    let editable: String
+    @Binding var editing: Bool
+    let rename: (String) -> Void
+    @State private var draft = ""
+    @State private var cancelled = false
+    @FocusState private var focused: Bool
+    @FocusState private var titleFocused: Bool
+    @AccessibilityFocusState private var titleAccessibilityFocused: Bool
+
+    var body: some View {
+        if editing {
+            TextField("Meeting title", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 17, weight: .semibold))
+                .focused($focused)
+                .onSubmit { finish(save: true, restoreFocus: true) }
+                .onExitCommand { finish(save: false, restoreFocus: true) }
+                .onAppear {
+                    draft = editable
+                    cancelled = false
+                    // A menu action inserts this field before AppKit restores the menu's old responder.
+                    DispatchQueue.main.async {
+                        guard editing else { return }
+                        focused = true
+                    }
+                }
+                .onChange(of: focused) { _, now in
+                    if !now { finish(save: !cancelled) }
+                }
+                .accessibilityIdentifier("meetings.detail.title.field")
+        } else {
+            Text(verbatim: title)
+                .font(.system(size: 17, weight: .semibold)).lineLimit(2)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { editing = true }
+                .instantTooltip("Double-click to rename")
+                .focusable()
+                .focused($titleFocused)
+                .onKeyPress(.return) {
+                    editing = true
+                    return .handled
+                }
+                .onKeyPress(.space) {
+                    editing = true
+                    return .handled
+                }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { editing = true }
+                .accessibilityAction(named: "Rename") { editing = true }
+                .accessibilityFocused($titleAccessibilityFocused)
+                .accessibilityIdentifier("meetings.detail.title")
+        }
+    }
+
+    private func finish(save: Bool, restoreFocus: Bool = false) {
+        guard editing else { return }
+        cancelled = !save
+        if save { rename(draft) }
+        editing = false
+        if restoreFocus {
+            DispatchQueue.main.async {
+                guard !editing else { return }
+                titleFocused = true
+                titleAccessibilityFocused = true
+            }
+        }
+    }
+}
+
+enum LabelCommit: Equatable {
+    case nothing
+    case present
+    case add(String)
+
+    init(typed: String, labels: [String]) {
+        let label = typed.trimmingCharacters(in: .whitespaces)
+        if label.isEmpty {
+            self = .nothing
+        } else if labels.contains(label) {
+            self = .present
+        } else {
+            self = .add(label)
         }
     }
 }

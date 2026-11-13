@@ -503,8 +503,11 @@ struct MarkdownWebView: NSViewRepresentable {
         }
         /// The notice over the page (`MarkdownPageNotice`), and what it shows.
         var noticeHost: MarkdownPageNoticeHost?
-        var currentNotice: MarkdownPageNotice?
-        var noticeToken = 0
+        let pageNotices = NoticeStackModel()
+        var pageNoticeValues: [StackedNotice.ID: MarkdownPageNotice] = [:]
+        var currentNotice: MarkdownPageNotice? {
+            pageNotices.notices.reversed().lazy.compactMap { self.pageNoticeValues[$0.id] }.first
+        }
         var noticeFrameWatch: NSObjectProtocol?
 
         func applyDiffMarks() {
@@ -663,6 +666,7 @@ struct MarkdownWebView: NSViewRepresentable {
             }
             let mediaJSON = (try? JSONSerialization.data(withJSONObject: map)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
             let same = renderedOnce && renderedDocument == parent.documentURL
+            if renderedOnce && !same { MainActor.assumeIsolated { hideNotice() } }
             renderedOnce = true
             renderedDocument = parent.documentURL
             web?.evaluateJavaScript(
@@ -675,7 +679,7 @@ struct MarkdownWebView: NSViewRepresentable {
                     // A render that drew takes a failure notice away (Retry worked, or the text was fixed).
                     if (result as? String) == "ok" {
                         MainActor.assumeIsolated {
-                            if self?.currentNotice?.kind == .failure { self?.hideNotice() }
+                            self?.hideFailures()
                         }
                     }
                 }
@@ -870,8 +874,9 @@ struct MarkdownWebView: NSViewRepresentable {
                 }
             case "propsRemoved":
                 let name = body["key"] as? String ?? ""
-                let notice: MarkdownPageNotice = (body["item"] as? String).map { .itemRemoved($0, from: name) }
+                var notice: MarkdownPageNotice = (body["item"] as? String).map { .itemRemoved($0, from: name) }
                     ?? .propertyRemoved(name)
+                notice.undoToken = body["undoToken"] as? Int
                 MainActor.assumeIsolated { show(notice) }
             case "pageError":
                 MarkdownWebView.report("page error line \(body["line"] as? Int ?? 0): \(body["message"] as? String ?? "?")")

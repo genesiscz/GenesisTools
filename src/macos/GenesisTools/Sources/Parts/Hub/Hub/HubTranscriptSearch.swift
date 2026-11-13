@@ -217,7 +217,9 @@ struct HubTranscriptSearchPanel: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     if let error = search.error {
-                        Text(verbatim: error).foregroundColor(ReviewPalette.removed).padding(16)
+                        FailureInline(message: error, outcome: "The search failed", action: "Search every session",
+                                      area: "hub", identifier: "transcript-search.failure")
+                            .padding(16)
                     } else if let result = search.result, result.results.isEmpty {
                         Text(verbatim: "No session mentions “\(result.query)” with these filters.").foregroundColor(.settingsTextMuted).padding(16)
                     } else if search.result == nil, !search.running {

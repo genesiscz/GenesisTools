@@ -1,7 +1,9 @@
 import { formatMissingEnumHelp, isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { redactCurrentRunText } from "@genesiscz/utils/cli/failures/watch";
 import { ui } from "@genesiscz/utils/cli/ui";
-import { MeetingsConflictError, MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
+import { SafeJSON } from "@genesiscz/utils/json";
 import * as p from "@genesiscz/utils/prompts/p";
+import { rpcErrorBody } from "@genesiscz/utils/rpc/errors";
 
 export const TOOL = "tools meetings";
 
@@ -89,8 +91,31 @@ export function localStamp(at: Date): string {
     return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}`;
 }
 
-export function fail(message: string): void {
-    ui.err(message);
+/** An additive stderr record for native callers; stdout remains the command's result. */
+export function errorJSON(error: unknown): string {
+    const body = rpcErrorBody(error, "meetings");
+    const cause =
+        error instanceof Error && error.cause instanceof Error ? rpcErrorBody(error.cause, "meetings") : undefined;
+    const stack = cause?.stack ?? body.stack;
+    const title = body.issue.title ?? cause?.issue.title;
+    return SafeJSON.stringify({
+        error: {
+            code: body.code,
+            ...(errorCode(error) ? { data: { code: errorCode(error) } } : {}),
+            message: redactCurrentRunText(errorText(error)),
+            ...(stack ? { stack: redactCurrentRunText(stack) } : {}),
+            issue: {
+                tool: body.issue.tool,
+                ...(title ? { title: redactCurrentRunText(title) } : {}),
+            },
+        },
+    });
+}
+
+export function fail(error: unknown): void {
+    const failure = error instanceof Error ? error : new Error(errorText(error));
+    ui.raw(errorJSON(failure));
+    ui.err(errorText(error));
     process.exitCode = 1;
 }
 
@@ -99,9 +124,12 @@ export function fail(message: string): void {
  * `[no-transcript-source] …`), which the window reads.
  */
 export function errorText(err: unknown): string {
-    if (err instanceof MeetingsConflictError || err instanceof MeetingsStateError) {
-        return `[${err.code}] ${err.message}`;
-    }
+    const code = errorCode(err);
+    const message = err instanceof Error ? err.message : String(err);
+    return code ? `[${code}] ${message}` : message;
+}
 
-    return err instanceof Error ? err.message : String(err);
+/** Service refusals and local state errors keep the same machine-readable code. */
+function errorCode(error: unknown): string | undefined {
+    return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : undefined;
 }

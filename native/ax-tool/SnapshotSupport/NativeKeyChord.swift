@@ -1,3 +1,4 @@
+import Carbon
 import CoreGraphics
 import Foundation
 
@@ -16,7 +17,7 @@ public struct NativeKeyChord {
             case "shift": flags.insert(.maskShift)
             case "fn": flags.insert(.maskSecondaryFn)
             default:
-                guard resolved == nil, let code = Self.codes[key] else {
+                guard resolved == nil, let code = Self.codes[key] ?? Self.physicalCode(key) else {
                     throw WorkflowArgumentError.invalid("key requires exactly one supported key with optional modifiers; use named punctuation keys")
                 }
                 resolved = code
@@ -28,6 +29,125 @@ public struct NativeKeyChord {
         self.code = code
         self.flags = flags
     }
+
+    /// Resolve printable names against a layout while retaining the pure parser as the fallback.
+    /// Shift, Option and Control modify the chosen logical key; Command also selects the layout's
+    /// shortcut layer (for layouts that deliberately use different positions with Command held).
+    public init(_ raw: String, characterForKey: (CGKeyCode, CGEventFlags) -> String?) throws {
+        let parsed = try Self(raw)
+        self.flags = parsed.flags
+        guard let character = Self.parts(raw).compactMap(Self.printableCharacter).first else {
+            self.code = parsed.code
+            return
+        }
+        let layoutFlags = parsed.flags.intersection(.maskCommand)
+        let candidates = [parsed.code] + Self.printableCodes.filter { $0 != parsed.code }
+        self.code = candidates.first {
+            characterForKey($0, layoutFlags)?.lowercased() == character
+        } ?? parsed.code
+    }
+
+    public static func forCurrentKeyboardLayout(_ raw: String) throws -> Self {
+        let source = TISCopyCurrentKeyboardLayoutInputSource().takeRetainedValue()
+        guard let property = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
+            return try Self(raw)
+        }
+        let data = Unmanaged<CFData>.fromOpaque(property).takeUnretainedValue()
+        guard let bytes = CFDataGetBytePtr(data) else { return try Self(raw) }
+        let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
+        let keyboardType = UInt32(LMGetKbdType())
+        return try withExtendedLifetime(data) {
+            try Self(raw, characterForKey: { code, flags in
+                var deadKeyState: UInt32 = 0
+                var length = 0
+                var characters = [UniChar](repeating: 0, count: 8)
+                let modifiers = flags.contains(.maskCommand) ? UInt32(cmdKey) >> 8 : 0
+                let status = UCKeyTranslate(layout, code, UInt16(kUCKeyActionDown), modifiers,
+                                            keyboardType, OptionBits(kUCKeyTranslateNoDeadKeysMask),
+                                            &deadKeyState, characters.count, &length, &characters)
+                guard status == noErr, deadKeyState == 0, length > 0 else { return nil }
+                return String(utf16CodeUnits: characters, count: length)
+            })
+        }
+    }
+
+    /// A global shortcut is a stream of modifier transitions, not just flags on its final key.
+    /// Modifiers already held by the user are borrowed, never pressed or released here.
+    /// All releases pass through the gate, including cancellation and a lost foreground target.
+    public func performGlobal(source: CGEventSource?, initiallyHeld: CGEventFlags, hold: TimeInterval,
+                              gate: SyntheticInputGate, verify: () throws -> Void = {},
+                              post: @escaping (CGEvent) -> Void) throws {
+        guard hold.isFinite, hold >= 0 else {
+            throw WorkflowArgumentError.invalid("hotkey hold must be a finite, nonnegative duration")
+        }
+        let modifiers: [(CGEventFlags, CGKeyCode)] = [
+            (.maskControl, 59), (.maskAlternate, 58), (.maskShift, 56), (.maskCommand, 55), (.maskSecondaryFn, 63),
+        ]
+        var active = initiallyHeld
+        var held: [SyntheticInputGate.Held] = []
+        defer { for input in held.reversed() { gate.release(input) } }
+
+        func check() throws {
+            try Task.checkCancellation()
+            try verify()
+        }
+        for (flag, key) in modifiers where flags.contains(flag) && !initiallyHeld.contains(flag) {
+            try check()
+            guard let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false) else {
+                throw WorkflowArgumentError.invalid("failed to create modifier CGEvent")
+            }
+            down.type = .flagsChanged
+            up.type = .flagsChanged
+            held.append(try gate.press({
+                active.insert(flag)
+                down.flags = active
+                post(down)
+            }, release: {
+                active.remove(flag)
+                up.flags = active
+                post(up)
+            }))
+        }
+        try check()
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else {
+            throw WorkflowArgumentError.invalid("failed to create key CGEvent")
+        }
+        held.append(try gate.press({
+            down.flags = active
+            post(down)
+        }, release: {
+            up.flags = active
+            post(up)
+        }))
+        var remaining = hold
+        while remaining > 0 {
+            try check()
+            let slice = min(remaining, 0.1)
+            try gate.sleepWatching(slice)
+            remaining -= slice
+        }
+        try check()
+    }
+
+    /// Recorded shortcuts name a physical position so replay does not translate it a second time.
+    private static func physicalCode(_ key: String) -> CGKeyCode? {
+        guard key.hasPrefix("code:"), let code = CGKeyCode(key.dropFirst(5)), code <= 127 else { return nil }
+        return code
+    }
+
+    private static func printableCharacter(_ key: String) -> String? {
+        if key.count == 1, codes[key] != nil { return key }
+        return ["space": " ", "minus": "-", "dash": "-", "equal": "=", "equals": "=",
+                "bracketleft": "[", "leftbracket": "[", "bracketright": "]", "rightbracket": "]",
+                "backslash": "\\", "semicolon": ";", "apostrophe": "'", "quote": "'", "comma": ",",
+                "period": ".", "dot": ".", "slash": "/", "grave": "`", "backtick": "`"] [key]
+    }
+
+    private static let printableCodes = Set(codes.compactMap { name, code in
+        printableCharacter(name) == nil ? nil : code
+    }).sorted()
 
     /// Modifiers alone, for a click: `cmd,alt` or `shift+ctrl`. A key name is refused, so a typo
     /// cannot turn a click into a keystroke.
@@ -85,6 +205,7 @@ public struct NativeKeyChord {
         "minus":27, "-":27, "equal":24, "=":24, "bracketleft":33, "[":33, "bracketright":30, "]":30,
         "backslash":42, "\\":42, "semicolon":41, ";":41, "apostrophe":39, "'":39,
         "comma":43, "period":47, ".":47, "slash":44, "/":44, "grave":50, "`":50,
+        "dot":47, "quote":39, "dash":27, "equals":24, "leftbracket":33, "rightbracket":30, "backtick":50,
         "kp_0":82, "kp_1":83, "kp_2":84, "kp_3":85, "kp_4":86, "kp_5":87, "kp_6":88,
         "kp_7":89, "kp_8":91, "kp_9":92, "kp_decimal":65, "kp_multiply":67, "kp_add":69,
         "kp_clear":71, "clear":71, "kp_divide":75, "kp_enter":76, "kp_subtract":78, "kp_equal":81,

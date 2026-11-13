@@ -240,6 +240,21 @@ describe("RecordingSession", () => {
                 : []
         );
 
+    it("keeps an explicitly long movie in one native run across the old 180-second boundary", async () => {
+        const { recorder, runs } = fakeRecorder();
+        const recording = session(recorder, { maxSeconds: 195, segmentSeconds: 195 });
+        await recording.start();
+        expect(runs[0].maxSeconds).toBe(195);
+        expect(
+            segmentCaptureSpec({ target: display, output: "/movie.mp4", maxSeconds: runs[0].maxSeconds, options: {} })
+                .duration
+        ).toBe(195);
+        clock += 181_000;
+        expect(recording.elapsedMs()).toBe(181_000);
+        expect(runs).toHaveLength(1);
+        await recording.command({ cmd: "discard" });
+    });
+
     it("arming is not recording: no time counts until the first frame, and a pause then keeps nothing", async () => {
         const { recorder, runs } = fakeRecorder({ armLater: true });
         const recording = session(recorder);
@@ -408,8 +423,7 @@ describe("RecordingSession", () => {
     // runs on the wall clock, so it is cut to these spans after the recording (camera.ts alignCameraMovie).
     it("each kept segment is a span from its own first frame, after a resume and from 0 again after a restart", async () => {
         const { recorder, runs } = fakeRecorder({ armLater: true, movieMs: 2500 });
-        // The saved one-segment movie reads 2480 ms: the saved span is the file's length, not the recorder's.
-        const recording = session(recorder, { measure: async () => 2480 });
+        const recording = session(recorder);
         await recording.start();
         clock = 1_001_400;
         runs[0].arm({ firstFrameAt: 1_000_800 });
@@ -432,11 +446,28 @@ describe("RecordingSession", () => {
         clock = 1_072_000;
         await recording.command({ cmd: "stop" });
         expect(await recording.finished).toBe("done");
-        expect(recording.movieSpans()).toEqual([{ sourceStartMs: 0, firstFrameEpochMs: 1_070_200, lengthMs: 2480 }]);
+        expect(recording.movieSpans()).toEqual([{ sourceStartMs: 0, firstFrameEpochMs: 1_070_200, lengthMs: 1000 }]);
     });
 
-    // PR #752 review: the joiner shifts the cursor track by each file's probed length, which differs from the
-    // recorder's movieMs by 13 to 48 ms per segment; the camera spans used movieMs and drifted at every segment.
+    it("reports a partial writer failure even when the user stops and saves it", async () => {
+        const { recorder } = fakeRecorder();
+        const recording = session({
+            record: async (input) => ({
+                ...(await recorder.record(input)),
+                error: "the video writer refused a frame",
+            }),
+        });
+        await recording.start();
+        await recording.command({ cmd: "stop" });
+        expect(events).toContainEqual({
+            event: "error",
+            message: "the video writer refused a frame",
+            code: undefined,
+            fatal: false,
+        });
+        expect(await recording.finished).toBe("done");
+    });
+
     it("a joined movie's spans are as long as the join measured each segment, like its cursor track", async () => {
         const { recorder, runs } = fakeRecorder({ armLater: true, movieMs: 2500 });
         const recording = session(recorder, {
@@ -876,6 +907,8 @@ describe("RecordingSession", () => {
             await recording.command({ cmd: "stop" });
             expect(await recording.finished).toBe("done");
             expect(measured).toEqual([join(root, "out.mp4")]);
+            expect(recording.movieSpans()[0]?.lengthMs).toBe(970);
+            expect(await recording.movieTimeOfMark()).toBe(970);
             // 30 frames over the measured 0.97 s, not over the 1 s of wall time the recorder reported.
             expect(events.find((event) => event.event === "done")).toMatchObject({
                 durationMs: 970,
@@ -1036,8 +1069,14 @@ describe("nativeSegmentRecorder", () => {
                 capture: { error: failed ? "video writer ended without completing" : undefined },
             };
         });
-        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async () => {
-            throw new Error("no finished container");
+        const probe = spyOn(mediaFacts, "readMediaFacts").mockImplementation(async () => {
+            if (failed) {
+                throw new mediaFacts.NotMediaError(
+                    output,
+                    new videoProcess.VideoCommandExitError("no finished container", 1)
+                );
+            }
+            throw new Error("probe unavailable");
         });
         const controller = new AbortController();
         const run = nativeSegmentRecorder().record({
@@ -1119,6 +1158,134 @@ describe("nativeSegmentRecorder", () => {
         expect(starts).toEqual([{ firstFrameAt: 1_700_000_000_123.4 }, undefined]);
     });
 
+    it("publishes the measured segment length for the next marker and camera span", async () => {
+        const output = join(root, "segment.mp4");
+        await writeFile(output, "movie");
+        spyOn(mediaFacts, "readMediaFacts").mockResolvedValue({
+            path: output,
+            bytes: 1,
+            durationSec: 0.97,
+            streams: [{ type: "video", codec: "h264", attachedPicture: false }],
+        });
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockResolvedValue({
+            ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+            captureFailed: false,
+            warnings: [],
+            capture: { data: { stats: { durationMs: 1100, capturedFrames: 30, movieMs: 1000 } } },
+        });
+        const result = await nativeSegmentRecorder().record({
+            target: display,
+            output,
+            maxSeconds: 195,
+            signal: new AbortController().signal,
+            onRecording: () => undefined,
+        });
+        expect(result).toMatchObject({ ok: true, durationMs: 1100, movieMs: 970 });
+    });
+
+    it.each([true, false])("checks a movie left by a thrown recorder failure (readable=%s)", async (readable) => {
+        const output = join(root, "partial.mp4");
+        await writeFile(output, "partial movie");
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockRejectedValue(new Error("recorder terminated"));
+        spyOn(mediaFacts, "readMediaFacts").mockImplementation(async () => {
+            if (!readable) {
+                throw new mediaFacts.NotMediaError(
+                    output,
+                    new videoProcess.VideoCommandExitError("missing movie metadata", 1)
+                );
+            }
+            return {
+                path: output,
+                bytes: 1,
+                durationSec: 21,
+                streams: [{ type: "video", codec: "h264", attachedPicture: false }],
+            };
+        });
+        const result = await nativeSegmentRecorder().record({
+            target: display,
+            output,
+            maxSeconds: 195,
+            signal: new AbortController().signal,
+            onRecording: () => undefined,
+        });
+        expect(result).toMatchObject({ ok: readable, endedBy: "failure", error: "recorder terminated" });
+        expect(existsSync(output)).toBe(readable);
+        if (readable) {
+            expect(result.movieMs).toBe(21_000);
+        }
+    });
+
+    it("retains the native writer warning when a readable partial is salvaged", async () => {
+        const output = join(root, "partial-warning.mp4");
+        await writeFile(output, "movie");
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockResolvedValue({
+            ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+            captureFailed: true,
+            warnings: [],
+            capture: {
+                ok: false,
+                data: { warnings: ["video writer failed with underlying error"], stats: { movieMs: 1000 } },
+            },
+        });
+        spyOn(mediaFacts, "readMediaFacts").mockResolvedValue({
+            path: output,
+            bytes: 1,
+            durationSec: 1,
+            streams: [{ type: "video", codec: "h264", attachedPicture: false }],
+        });
+        const result = await nativeSegmentRecorder().record({
+            target: display,
+            output,
+            maxSeconds: 195,
+            signal: new AbortController().signal,
+            onRecording: () => undefined,
+        });
+        expect(result).toMatchObject({ ok: true, error: "video writer failed with underlying error" });
+    });
+
+    it("recovers a long large recording without evidence-upload limits", async () => {
+        const output = join(root, "large.mp4");
+        const file = await fs.open(output, "w");
+        await file.truncate(2 * 1024 ** 3);
+        await file.close();
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockRejectedValue(new Error("recorder terminated"));
+        spyOn(videoProcess, "runVideoCommand").mockResolvedValue(
+            SafeJSON.stringify(
+                {
+                    streams: [{ codec_type: "video", codec_name: "h264", width: 1920, height: 1080 }],
+                    format: { duration: "3600.25" },
+                },
+                { strict: true }
+            )
+        );
+        const result = await nativeSegmentRecorder().record({
+            target: display,
+            output,
+            maxSeconds: 14_400,
+            signal: new AbortController().signal,
+            onRecording: () => undefined,
+        });
+        expect(result).toMatchObject({ ok: true, movieMs: 3_600_250, endedBy: "failure" });
+        expect((await fs.stat(output)).size).toBe(2 * 1024 ** 3);
+        expect(await movieLengthMs(output)).toBe(3_600_250);
+    });
+
+    it("keeps the partial movie when the probe cannot run", async () => {
+        const output = join(root, "uninspected.mp4");
+        await writeFile(output, "partial movie");
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockRejectedValue(new Error("recorder terminated"));
+        spyOn(videoProcess, "runVideoCommand").mockRejectedValue(new Error("ffprobe timed out"));
+        const result = await nativeSegmentRecorder().record({
+            target: display,
+            output,
+            maxSeconds: 195,
+            signal: new AbortController().signal,
+            onRecording: () => undefined,
+        });
+        expect(result.ok).toBe(false);
+        expect(await readFile(output, "utf8")).toBe("partial movie");
+    });
+
     it("a run that ended because a restart could not leave the excluded windows out is a failure with the reason", async () => {
         const output = join(root, "segment.mp4");
         const reason = "could not restart the recording on display 2: windows 7 must be left out of the movie";
@@ -1128,7 +1295,7 @@ describe("nativeSegmentRecorder", () => {
                 ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
                 captureFailed: false,
                 sessionDir: join(root, "session"),
-                warnings: [reason],
+                warnings: [],
                 capture: {
                     data: { endedEarly: "exclusion-unresolved", endedEarlyReason: reason, stats: { durationMs: 900 } },
                 },
@@ -1155,9 +1322,9 @@ describe("nativeSegmentRecorder", () => {
         expect(existsSync(output)).toBe(false);
     });
 
-    it("a clean stop keeps its movie without a probe", async () => {
+    it("a clean stop keeps its movie if the length probe fails", async () => {
         const { result, output, probes } = await stoppedRun(false);
-        expect(probes).toBe(0);
+        expect(probes).toBe(1);
         expect(result).toEqual({ ok: true, endedBy: "stop", durationMs: undefined });
         expect(existsSync(output)).toBe(true);
     });
@@ -1287,9 +1454,11 @@ describe("a joined cursor track on the joined movie's clock", () => {
     });
 
     it("measures a saved movie by its probed length in whole milliseconds, as the joiner measures a join", async () => {
-        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async () => ({
-            ...({} as Awaited<ReturnType<typeof videoProbe.probeVideo>>),
-            durationUs: 2_530_400,
+        const probe = spyOn(mediaFacts, "readMediaFacts").mockImplementation(async ({ input }) => ({
+            path: input,
+            bytes: 1,
+            durationSec: 2.5304,
+            streams: [{ type: "video", codec: "h264", attachedPicture: false }],
         }));
         expect(await movieLengthMs(join(root, "out.mp4"))).toBe(2530);
         expect(probe).toHaveBeenCalledWith({ input: join(root, "out.mp4") });
@@ -1303,7 +1472,7 @@ describe("a joined cursor track on the joined movie's clock", () => {
     it("moves a segment's cursor rows by the probed lengths of the segments before it, not by their wall time", async () => {
         // A live run: ax-tool's wall durationMs was 2543 and 2545 ms, but concat stacked the files by their own
         // lengths, 2530 and 2513 ms, so segment 2's frames start at 2530 ms of the joined movie.
-        const lengthsSec: Record<string, number | null> = { "a.mp4": 2.53, "b.mp4": 2.513 };
+        const lengthsSec: Record<string, number | null> = { "a.mp4": 2.53, "b.mp4": 2.513, "joined.mp4": 5.043 };
         spyOn(mediaFacts, "readMediaFacts").mockImplementation(async ({ input }) => ({
             path: input,
             bytes: 1,
@@ -1311,10 +1480,6 @@ describe("a joined cursor track on the joined movie's clock", () => {
             streams: [{ type: "video", codec: "h264", attachedPicture: false, width: 160, height: 100 }],
         }));
         spyOn(videoProcess, "runVideoCommand").mockImplementation(async () => "");
-        spyOn(videoProbe, "probeVideo").mockImplementation(async () => ({
-            ...({} as Awaited<ReturnType<typeof videoProbe.probeVideo>>),
-            durationUs: 5_043_000,
-        }));
         const segments: FinishedSegment[] = [
             { index: 0, path: join(root, "a.mp4"), durationMs: 2543, movieMs: 2543, target: display },
             { index: 1, path: join(root, "b.mp4"), durationMs: 2545, movieMs: 2561, target: display },
@@ -1324,9 +1489,8 @@ describe("a joined cursor track on the joined movie's clock", () => {
         const output = join(root, "joined.mp4");
 
         const joined = await segmentJoiner()({ segments, output });
-
-        // The session's camera spans take the same lengths, so the camera and the cursor line up alike.
         expect(joined.lengthsMs).toEqual([2530, 2513]);
+
         expect((await readFile(cursorTrackPath(output), "utf8")).trim().split("\n")).toEqual([
             '{"t":0.0,"x":0.1,"y":0.2}',
             '{"t":2630.0,"x":0.5,"y":0.6,"click":"left"}',
@@ -1602,12 +1766,12 @@ describe("segmentCaptureSpec", () => {
         expect(spec.idleFps).toBeUndefined();
     });
 
-    it("refuses audio and the cursor track for a window or an app before the capture starts", () => {
+    it("refuses audio for a window or app but preserves the independent cursor track", () => {
         const targets: RecordingTarget[] = [
             { kind: "window", windowIds: [7] },
             { kind: "app", app: "Notes" },
         ];
-        const asks: NativeRecorderOptions[] = [{ audio: ["mic"] }, { cursorTrack: true }];
+        const asks: NativeRecorderOptions[] = [{ audio: ["mic"] }];
 
         for (const target of targets) {
             for (const options of asks) {
@@ -1615,6 +1779,18 @@ describe("segmentCaptureSpec", () => {
                     segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options })
                 ).toThrow("those need a display or an area target");
             }
+        }
+
+        for (const target of targets) {
+            const spec = segmentCaptureSpec({
+                target,
+                output: "/tmp/segment.mp4",
+                maxSeconds: 60,
+                options: { cursorTrack: true, cursorShapes: "/tmp/shapes", shortcuts: true },
+            });
+            expect(spec.mode).toBe("isolated");
+            expect(spec.cursorTrack).toBe("/tmp/segment.mp4.cursor.jsonl");
+            expect(spec.shortcuts).toBe(true);
         }
 
         const region = segmentCaptureSpec({

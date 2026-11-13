@@ -1510,7 +1510,10 @@ test('one descriptor feeds the MCP tool list and the REPL\'s help("computer")', 
         const help = await engine.run('help("computer")');
         expect(help.ok).toBe(true);
         expect(help.text).toContain("- computer.get_app_state(options: {");
-        expect(help.text).toContain(computerDescriptions.get_app_state);
+        expect(help.text).toContain("Observe one app/window through native macOS AX plus an optional screenshot.");
+        const details = await engine.run('describe("computer.get_app_state")');
+        expect(details.ok).toBe(true);
+        expect(details.text).toContain(computerDescriptions.get_app_state);
     } finally {
         await engine.shutdown();
     }
@@ -1918,4 +1921,18 @@ test("a background click into a window that is not key carries the native effect
     };
     const result = await f.computer.click({ app: "Fixture", element_ref: state.elements[1].ref });
     expect(result.effectNote).toBe("not key");
+});
+
+test("partial observations disclose an unreadable branch and keep readable siblings", async () => {
+    const f = fixture();
+    const reason = "AX children read failed (-25200); subtree was not observed";
+    Object.assign(f.snapshot, { unreadableSubtrees: 1 });
+    f.snapshot.elements.push({ index: 4, depth: 1, role: "AXGroup", childrenUnreadable: reason });
+    const state = await f.computer.get_app_state({ app: "Fixture", image: false, element_limit: 1 });
+    expect(state).toMatchObject({ unreadableSubtrees: 1 });
+    expect(state.text).toContain("1 unreadable subtree");
+    const page = await f.computer.get_elements({ app: "Fixture", offset: 4, limit: 1 });
+    expect(page.elements[0]).toMatchObject({ childrenUnreadable: reason });
+    const readable = await f.computer.find({ app: "Fixture", query: "Save" });
+    expect(readable.elements[0]).toMatchObject({ label: "Save" });
 });

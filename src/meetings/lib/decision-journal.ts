@@ -10,7 +10,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { mergeLabels } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
-import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
+import { appendCorrections, type Correction, teachesDictionary } from "@genesiscz/utils/meetings/corrections";
 import {
     type DecisionActor,
     MEETING_UNCHANGED,
@@ -19,7 +19,10 @@ import {
     type MeetingRecord,
     type MeetingStore,
     meetingItemSchema,
+    type SpellingReach,
 } from "@genesiscz/utils/meetings/record";
+import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
+import { heardIn, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { prepareFindings } from "./add-findings";
 import { ANSWER_LOG_FILE, type AnswerEvent, appendAnswerEvent, appendAnswerEvents, roundRunning } from "./answer-log";
@@ -51,6 +54,7 @@ import {
     skipQuestion,
     splitQuestion,
 } from "./questions";
+import type { ReviewRow } from "./review-row-schema";
 import { TOOL } from "./shared";
 import {
     type AssignReachStretch,
@@ -62,7 +66,7 @@ import {
     renameJoinsWarning,
     revertAssignments,
 } from "./speaker-assign";
-import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
+import { decisionLedger, ledgerEntryFor, lineOf } from "./transcript-corrections";
 
 const { log } = logger.scoped("meetings-journal");
 
@@ -113,6 +117,8 @@ export interface RevertRequest {
 
 export interface DecisionJournalOptions {
     store: MeetingStore;
+    /** Internal observer of one committed mutation, with both snapshots taken under the record lock. */
+    onApplied?: (snapshot: { before: MeetingRecord; after: MeetingRecord }) => void;
     /** An answer settles look-alikes that reach this confidence (`global.suggest.listenBelow`). */
     listenBelow?: number;
     /** Where the corrections a decision confirms or withdraws go; the corrections ledger by default. */
@@ -330,10 +336,10 @@ function openQuestion(record: MeetingRecord, ref: string): { question?: Question
 function decideItems(
     record: MeetingRecord,
     status: "confirmed" | "rejected",
-    action: { items: string[]; minConfidence?: number; speaker?: string; proposed?: string },
+    action: { items: string[]; minConfidence?: number; speaker?: string; proposed?: string; reach?: SpellingReach },
     now: string
 ): ActionOutcome {
-    const { minConfidence, speaker, proposed } = action;
+    const { minConfidence, speaker, proposed, reach } = action;
 
     if (minConfidence !== undefined && !(minConfidence >= 0 && minConfidence <= 1)) {
         throw new Error(`minConfidence ${minConfidence} must be between 0 and 1 (0.8 = 80 %)`);
@@ -349,13 +355,18 @@ function decideItems(
         minConfidence
     );
     const skipped: DecisionSkip[] = [];
+    if (reach && (picked.length !== 1 || picked[0]?.kind !== "term")) {
+        throw new Error("Spelling reach needs exactly one term item");
+    }
 
     // Deciding an item the same way again changes nothing, so it mints no token that would void the first Undo (MC16).
     for (const item of picked) {
         const changes =
             status === "confirmed" &&
             ((item.kind === "speaker-range" && speaker !== undefined && speaker !== item.speaker) ||
-                (item.kind === "term" && proposed !== undefined && proposed !== item.proposed));
+                (item.kind === "term" &&
+                    ((proposed !== undefined && proposed !== item.proposed) ||
+                        (reach !== undefined && !same(reach, item.reach)))));
 
         if (item.status === status && !changes) {
             skipped.push({ id: item.id, reason: `it is ${status} already`, needs: "nothing" });
@@ -392,8 +403,13 @@ function decideItems(
             item.speaker = speaker;
         }
 
-        if (status === "confirmed" && item.kind === "term" && proposed) {
-            item.proposed = proposed;
+        if (status === "confirmed" && item.kind === "term") {
+            if (proposed) {
+                item.proposed = proposed;
+            }
+            if (reach !== undefined) {
+                item.reach = structuredClone(reach);
+            }
         }
 
         corrections.push(...decisionLedger(prior, ledgerEntryFor(record, item, now)));
@@ -477,6 +493,11 @@ function restorePrevious(item: MeetingItem): void {
             item.proposed = previous.proposed;
         } else {
             delete item.proposed;
+        }
+        if (previous.reach) {
+            item.reach = structuredClone(previous.reach);
+        } else {
+            delete item.reach;
         }
     }
 
@@ -581,6 +602,59 @@ function revertScope(
     return { scope: whole ? entry.changes : entry.changes.filter((change) => ids.includes(change.id)), skipped };
 }
 
+function replacementScope(options: {
+    record: MeetingRecord;
+    earlier: JournalEntry;
+    question: string;
+    except: string[];
+}): { entry: JournalEntry; except: string[]; skipped: DecisionSkip[] } {
+    const { record, earlier, question } = options;
+    const except = new Set(options.except.filter((id) => id !== question));
+    const current = new Map(record.items.map((item) => [item.id, item]));
+    const changes = new Map(earlier.changes.map((change) => [change.id, change]));
+    const skipped: DecisionSkip[] = [];
+
+    for (const change of earlier.changes) {
+        if (
+            change.id !== question &&
+            !except.has(change.id) &&
+            current.get(change.id)?.decision?.token !== change.after?.decision?.token
+        ) {
+            except.add(change.id);
+            skipped.push({ id: change.id, reason: "its decision changed since the earlier answer", needs: "nothing" });
+        }
+    }
+
+    const restoredTargets = earlier.changes.flatMap((change) =>
+        change.before?.kind === "question" ? change.before.decides : []
+    );
+    for (const id of restoredTargets) {
+        const item = current.get(id);
+        if (id !== question && !changes.has(id) && item && item.status !== "suggested" && !except.has(id)) {
+            except.add(id);
+            skipped.push({ id, reason: "its decision changed since the earlier answer", needs: "nothing" });
+        }
+    }
+
+    // Keeping a look-alike question also keeps the targets its answer set.
+    for (const id of except) {
+        const item = changes.get(id)?.after;
+        if (item?.kind === "question") {
+            for (const target of item.decides) {
+                if (target !== question) {
+                    except.add(target);
+                }
+            }
+        }
+    }
+
+    return {
+        entry: { ...earlier, changes: earlier.changes.filter((change) => !except.has(change.id)) },
+        except: [...except],
+        skipped,
+    };
+}
+
 const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
     confirm: { mutate: (record, action, { now }) => decideItems(record, "confirmed", action, now) },
     reject: { mutate: (record, action, { now }) => decideItems(record, "rejected", action, now) },
@@ -594,13 +668,20 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 throw new Error(`A respelling of ${action.item} needs the new text`);
             }
 
+            if (action.reach && item.kind !== "term") {
+                throw new Error("Spelling reach needs a term item");
+            }
             const prior = ledgerEntryFor(record, item, now);
+            const reachChanged = item.kind === "term" && action.reach !== undefined && !same(action.reach, item.reach);
             const skip = respellItem(record, item, text);
 
-            if (skip) {
+            if (skip && !reachChanged) {
                 return { history: { command: "respell", change: "" }, skipped: [skip], stamps: true };
             }
 
+            if (item.kind === "term" && action.reach !== undefined) {
+                item.reach = structuredClone(action.reach);
+            }
             item.status = "confirmed";
             item.decidedAt = now;
             return {
@@ -610,27 +691,94 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             };
         },
     },
+    rephrase: {
+        mutate: (record, action) => {
+            const id = itemIdOf(record, action.question);
+            const item = pickItems(record, [id])[0]!;
+            if (item.kind !== "question") {
+                throw new Error(`${action.question} is not a question`);
+            }
+            if (action.expectedText !== undefined && item.question !== action.expectedText) {
+                throw new MeetingsConflictError(
+                    "item-changed",
+                    "The question wording changed since this draft opened; reload it before saving"
+                );
+            }
+            item.question = action.text.trim();
+            return { history: { command: "rephrase", change: `${id}: ${item.question}` }, stamps: false };
+        },
+    },
     answer: {
-        mutate: (record, action, { now, listenBelow }) => {
-            const { question, skip } = openQuestion(record, action.question);
+        mutate: (record, action, context) => {
+            const { now, listenBelow } = context;
+            let except = (action.except ?? []).map((ref) => itemIdOf(record, ref));
+            let undone: Correction[] = [];
+            const skipped: DecisionSkip[] = [];
 
-            if (!question) {
-                return { history: { command: "listen", change: "" }, skipped: skip ? [skip] : [], stamps: true };
+            if (action.replaces) {
+                const id = itemIdOf(record, action.question);
+                const earlier = context.entryOf(action.replaces);
+                if (earlier?.action.kind !== "answer" || (earlier.question !== id && !earlier.settled.includes(id))) {
+                    throw new Error("The replacement token must name an earlier answer to this question");
+                }
+
+                if (action.lookAlikes === "leave") {
+                    const otherQuestions = [earlier.question, ...earlier.settled].filter(
+                        (other): other is string => other !== undefined && other !== id
+                    );
+                    except.push(...otherQuestions);
+                }
+
+                const scope = replacementScope({ record, earlier, question: id, except });
+                except = scope.except;
+                skipped.push(...scope.skipped);
+                undone =
+                    ACTIONS.revert.mutate(
+                        record,
+                        { kind: "revert", token: earlier.token },
+                        {
+                            ...context,
+                            entryOf: (token) => (token === earlier.token ? scope.entry : context.entryOf(token)),
+                        }
+                    ).corrections ?? [];
+
+                // Undoing a replacement can restore a confirmed older answer. Only the questions in this
+                // replacement's scope reopen so the new answer can update them and their look-alikes.
+                const questions = new Set(
+                    scope.entry.changes.filter((change) => change.after?.kind === "question").map((change) => change.id)
+                );
+                for (const item of record.items) {
+                    if (item.kind === "question" && questions.has(item.id)) {
+                        item.status = "suggested";
+                    }
+                }
             }
 
+            const { question, skip } = openQuestion(record, action.question);
+            if (!question) {
+                return {
+                    history: { command: "listen", change: "" },
+                    skipped: [...skipped, ...(skip ? [skip] : [])],
+                    stamps: true,
+                };
+            }
+
+            const propagationSource = structuredClone(question);
             const corrections = answerQuestion(record, question.id, {
                 answer: action.answer,
                 ...(action.comment ? { comment: action.comment } : {}),
                 now,
+                except,
             });
             const alike =
                 action.lookAlikes === "leave"
                     ? { settled: [], corrections: [] }
-                    : settleLookAlikes(record, question, { answer: action.answer, listenBelow, now });
+                    : settleLookAlikes(record, propagationSource, { answer: action.answer, listenBelow, now, except });
             return {
                 history: { command: "listen", change: `${question.id} → ${action.answer}` },
                 settled: alike.settled,
-                corrections: [...corrections, ...alike.corrections],
+                corrections: [...undone, ...corrections, ...alike.corrections],
+                skipped,
                 question: question.id,
                 stamps: true,
             };
@@ -833,7 +981,11 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             });
             const changedSince = pending.filter((change) => {
                 const item = current.get(change.id);
-                return item !== undefined && item.decision?.token !== change.after?.decision?.token;
+                return (
+                    item !== undefined &&
+                    (item.decision?.token !== change.after?.decision?.token ||
+                        (target.action.kind === "rephrase" && !same(item, change.after)))
+                );
             });
 
             if (changedSince.length > 0) {
@@ -1011,12 +1163,49 @@ export function actorOf(item: MeetingItem): DecisionActor {
  * What a planned decision reaches beyond the items it names, for the window's "This also affects" sheet (R22, G9,
  * G26, G27): the other items it changes, the transcript lines a spelling changes, and the dictionary it teaches.
  */
+/**
+ * How a reached item stands to the decision. `sets`: a target of the decided question outside the span it asks
+ * about, which the answer also sets ("This answer also sets"); `look-alike`: another question or item the engine
+ * settles the same way; `same`: the same question again (a target inside the asked span, a look-alike over the same
+ * span), closed with it and never asked twice (genesiscz.md 9).
+ */
+export type ReachRole = "sets" | "look-alike" | "same";
+
+/** One item a decision reaches beyond the ones it names, with the evidence a person judges it by. */
+export interface ReachItem {
+    id: string;
+    match: "same";
+    role: ReachRole;
+    /** What a person sees the item as before the decision and after it: a speaker, a spelling, an answer. */
+    before?: string;
+    after?: string;
+    /** The item's own review row (`reviewRow`): its quote, its time and its play target, as the row list shows them. */
+    row?: ReviewRow;
+    /** The answer this one replaces left it out: the sheet shows it struck, and one click puts it back. */
+    struck?: boolean;
+}
+
+/**
+ * What a planned decision reaches beyond the items it names, for the window's "This also affects" sheet (R22, G9,
+ * G26, G27): the other items it changes, the transcript lines a spelling changes, and the dictionary it teaches.
+ */
 export interface DecisionReach {
     /**
-     * Items besides the named ones: the look-alike questions an answer settles and the items it decides. `same`: the
-     * engine settles only questions with the same evidence (heard words and choices, or the same voice signature).
+     * Items besides the named ones: the targets an answer also sets, the look-alikes it settles, and the same question
+     * over the same span (closed with it). A look-alike question's own targets go with it and are not listed apart.
      */
-    items: Array<{ id: string; match: "same" }>;
+    items: ReachItem[];
+    spelling?: {
+        occurrences: Array<{
+            line: number;
+            atSec: number;
+            speaker: string;
+            text: string;
+            selected: boolean;
+            primary: boolean;
+        }>;
+        dictionary: boolean;
+    };
     /** Transcript lines whose heard words a confirmed spelling fixes (a term fixed everywhere); absent without a transcript. */
     lines?: number;
     /**
@@ -1032,23 +1221,103 @@ export interface DecisionReach {
     stretches?: AssignReachStretch[];
 }
 
+/** Where an item sits in the meeting: a range, or one point for a word. */
+function spanOf(item: MeetingItem): { fromSec: number; toSec: number } | undefined {
+    if (item.kind === "term" || item.kind === "join") {
+        return item.atSec === undefined ? undefined : { fromSec: item.atSec, toSec: item.atSec };
+    }
+
+    return { fromSec: item.fromSec, toSec: item.toSec };
+}
+
+/** What a person sees an item as: a range's speaker, a word's spelling, a question's answer. */
+function shownValue(item: MeetingItem | undefined): string | undefined {
+    switch (item?.kind) {
+        case "speaker-range":
+            return item.speaker ?? item.label;
+        case "term":
+            return item.proposed ?? item.heard;
+        case "question":
+            return item.answer;
+        default:
+            return undefined;
+    }
+}
+
+/** A tolerance for "the same span": the engine's times are rounded to tenths, a hand-made range to seconds. */
+const SAME_SPAN_SEC = 0.5;
+
 /** The reach of a planned entry, from the record it was planned on, its transcript (when read) and the ledger. */
 export function decisionReach(options: {
     entry: JournalEntry;
     /** The items the action names, which are not reach. */
     named: string[];
+    /** The record the decision was planned on (before it): the decided question's targets and each item's span. */
+    record?: MeetingRecord;
+    /** The review row of a reached item, built from the record before the decision (its quote, time and target). */
+    rowOf?: (item: MeetingItem) => ReviewRow | undefined;
+    /** Items the answer this one replaces left out: shown struck. */
+    struck?: readonly string[];
     transcript?: readonly TranscriptEntry[];
     ledger: readonly Correction[];
     repeats: number;
 }): DecisionReach {
     const { entry } = options;
     const named = new Set([...options.named, ...(entry.question ? [entry.question] : [])]);
-    const items = [...new Set([...entry.settled, ...entry.decided])]
-        .filter((id) => !named.has(id))
-        .map((id) => ({ id, match: "same" as const }));
-    const taught = entry.corrections.filter(
-        (correction) => correction.kind === "term" && correction.scope === "everywhere" && !correction.retracted
-    );
+    const before = new Map((options.record?.items ?? []).map((item) => [item.id, item]));
+    const changeOf = new Map(entry.changes.map((change) => [change.id, change]));
+    const itemOf = (id: string) => before.get(id) ?? changeOf.get(id)?.before ?? changeOf.get(id)?.after;
+    const decidesOf = (id: string): string[] => {
+        const versions = [before.get(id), changeOf.get(id)?.before, changeOf.get(id)?.after];
+        return versions.flatMap((item) => (item?.kind === "question" ? item.decides : []));
+    };
+    const asked = entry.question ? itemOf(entry.question) : undefined;
+    const askedSpan = asked ? spanOf(asked) : undefined;
+    const targets = new Set(entry.question ? decidesOf(entry.question) : []);
+    const namedSpans = [...named].flatMap((id) => {
+        const item = itemOf(id);
+        const span = item ? spanOf(item) : undefined;
+        return span ? [span] : [];
+    });
+    // A look-alike question carries its own targets; they are judged with it, not one by one.
+    const carried = new Set(entry.settled.flatMap((id) => decidesOf(id)));
+    const struck = new Set(options.struck ?? []);
+    const sameSpan = (span: { fromSec: number; toSec: number }) =>
+        namedSpans.some(
+            (one) =>
+                Math.abs(one.fromSec - span.fromSec) <= SAME_SPAN_SEC &&
+                Math.abs(one.toSec - span.toSec) <= SAME_SPAN_SEC
+        );
+    const insideAsked = (span: { fromSec: number; toSec: number }) =>
+        askedSpan !== undefined &&
+        span.fromSec >= askedSpan.fromSec - SAME_SPAN_SEC &&
+        span.toSec <= askedSpan.toSec + SAME_SPAN_SEC;
+    const items = [...new Set([...entry.settled, ...entry.decided, ...[...struck].filter((id) => targets.has(id))])]
+        .filter((id) => !named.has(id) && !(carried.has(id) && !targets.has(id)))
+        .map((id): ReachItem => {
+            const item = itemOf(id);
+            const span = item ? spanOf(item) : undefined;
+            const role: ReachRole = targets.has(id)
+                ? span && insideAsked(span)
+                    ? "same"
+                    : "sets"
+                : span && sameSpan(span)
+                  ? "same"
+                  : "look-alike";
+            const was = shownValue(changeOf.get(id)?.before ?? before.get(id));
+            const will = shownValue(changeOf.get(id)?.after);
+            const row = item ? options.rowOf?.(item) : undefined;
+            return {
+                id,
+                match: "same",
+                role,
+                ...(was ? { before: was } : {}),
+                ...(will ? { after: will } : {}),
+                ...(row ? { row } : {}),
+                ...(struck.has(id) ? { struck: true } : {}),
+            };
+        });
+    const taught = entry.corrections.filter((correction) => teachesDictionary(correction) && !correction.retracted);
     const lines = options.transcript
         ? options.transcript.filter((line) => {
               const text = line.text.toLowerCase();
@@ -1061,8 +1330,7 @@ export function decisionReach(options: {
 
         for (const line of options.ledger) {
             if (
-                line.kind === "term" &&
-                line.scope === "everywhere" &&
+                teachesDictionary(line) &&
                 line.project === correction.project &&
                 line.heard === correction.heard &&
                 line.fixed === correction.fixed &&
@@ -1081,7 +1349,58 @@ export function decisionReach(options: {
             teaches: seenBefore + 1 >= options.repeats,
         };
     });
-    return { items, ...(taught.length > 0 && lines !== undefined ? { lines } : {}), dictionary };
+    const changedTerms = entry.changes.flatMap((change) => (change.after?.kind === "term" ? [change.after] : []));
+    const term =
+        (entry.action.kind === "confirm" || entry.action.kind === "respell") && changedTerms.length === 1
+            ? changedTerms[0]
+            : undefined;
+    let spelling: DecisionReach["spelling"];
+    if (term) {
+        const transcript = options.transcript ?? [];
+        const source = new TranscriptLines(transcript);
+        const at = term.atSec;
+        const anchor =
+            at === undefined ? undefined : heardLineAt(source, { atSec: at, line: lineOf(term) }, term.heard);
+        const primary = anchor?.kind === "found" ? anchor.index : undefined;
+        const selectedLines = term.reach?.lines
+            ? new Set(
+                  term.reach.lines.flatMap((point) => {
+                      const found = heardLineAt(source, point, term.heard);
+                      return found.kind === "found" ? [found.index] : [];
+                  })
+              )
+            : undefined;
+        const occurrences = transcript.flatMap((line, index) => {
+            if (line.startSec === undefined || heardIn(line.text, term.heard).length === 0) {
+                return [];
+            }
+            const selected = selectedLines
+                ? selectedLines.has(index)
+                : term.scope === "line"
+                  ? index === primary
+                  : true;
+            return [
+                {
+                    line: index,
+                    atSec: line.startSec,
+                    speaker: options.record?.speakers.labels[line.speaker] ?? line.speaker,
+                    text: line.text,
+                    selected,
+                    primary: index === primary,
+                },
+            ];
+        });
+        spelling = {
+            occurrences,
+            dictionary: term.reach?.dictionary ?? (term.reach?.lines === undefined && term.scope !== "line"),
+        };
+    }
+    return {
+        items,
+        ...(taught.length > 0 && lines !== undefined ? { lines } : {}),
+        dictionary,
+        ...(spelling ? { spelling } : {}),
+    };
 }
 
 /** An agent's harness by the name a person knows it by (its driver's label); an agent no driver claims shows its id. */
@@ -1142,6 +1461,11 @@ export class DecisionJournal {
      */
     async revert(request: RevertRequest): Promise<Decided> {
         const target = this.entries(request.meeting).find((entry) => entry.token === request.token);
+        if (target?.action.kind === "unsupported") {
+            throw new Error(
+                `This decision was made by a newer build (${target.action.name}). Open it in that build to undo it; nothing was changed.`
+            );
+        }
 
         if (target?.action.kind === "comment") {
             throw new Error(
@@ -1188,13 +1512,32 @@ export class DecisionJournal {
         const revertedBy = new Map<string, string>();
 
         // An Undo that gave back every item its entry decided (the window and `reopen --token` name them) undid it whole.
-        for (const entry of entries) {
+        for (const entry of entries.toReversed()) {
+            if (revertedBy.has(entry.token)) {
+                continue;
+            }
+
             const target = entry.action.kind === "revert" ? byToken.get(entry.action.token) : undefined;
             const undone = new Set(entry.changes.map((change) => change.id));
             const decided = target?.decided.length ? target.decided : target?.changes.map((change) => change.id);
 
             if (target && (decided ?? []).every((id) => undone.has(id))) {
                 revertedBy.set(target.token, entry.token);
+            }
+        }
+
+        for (const entry of entries) {
+            if (
+                entry.action.kind === "answer" &&
+                entry.action.replaces &&
+                byToken.has(entry.action.replaces) &&
+                !revertedBy.has(entry.token)
+            ) {
+                const target = byToken.get(entry.action.replaces)!;
+                const changed = new Set(entry.changes.map((change) => change.id));
+                if (target.changes.every((change) => changed.has(change.id))) {
+                    revertedBy.set(entry.action.replaces, entry.token);
+                }
             }
         }
 
@@ -1262,9 +1605,9 @@ export class DecisionJournal {
         const prepared = handler.prepare ? await handler.prepare(saved, action, this.options.split) : {};
         const at = (this.options.now?.() ?? new Date()).toISOString();
         const token = randomUUID();
-        // The journal is read once, at the first lookup inside the locked change, and every later token comes from that
-        // read: a bulk reopen of N items decided apart read and parsed the whole journal N times under the lock.
-        let byToken: Map<string, JournalEntry> | undefined;
+        // One lazy snapshot per decision, read under the record lock. Reopening many independently confirmed
+        // items must not read and parse the whole journal again for each distinct token.
+        let known: Map<string, JournalEntry> | undefined;
         const context: ActionContext = {
             now: at,
             listenBelow: this.options.listenBelow ?? DEFAULT_LISTEN_BELOW,
@@ -1274,18 +1617,14 @@ export class DecisionJournal {
                     return undefined;
                 }
 
-                if (!byToken) {
-                    byToken = new Map();
-
-                    for (const entry of this.entries(meeting)) {
-                        // The first entry with a token wins, as the old `find` did.
-                        if (!byToken.has(entry.token)) {
-                            byToken.set(entry.token, entry);
-                        }
-                    }
+                known ??= new Map(this.entries(meeting).map((entry) => [entry.token, entry]));
+                const entry = known.get(wanted);
+                if (entry?.action.kind === "unsupported") {
+                    throw new Error(
+                        `This decision was made by a newer build (${entry.action.name}). Open it in that build to undo it; nothing was changed.`
+                    );
                 }
-
-                return byToken.get(wanted);
+                return entry;
             },
         };
         let result: Decided = { skipped: [] };
@@ -1293,7 +1632,11 @@ export class DecisionJournal {
         let openAfter = 0;
         // Filled in by the handler: the store reads it after the change, for the record's history line.
         const history: MeetingChange = { command: action.kind, change: "" };
+        let before: MeetingRecord | undefined;
         const decide = (record: MeetingRecord): typeof MEETING_UNCHANGED | undefined => {
+            if (this.options.onApplied) {
+                before = structuredClone(record);
+            }
             const items = structuredClone(record.items);
             const labels = { ...record.speakers.labels };
             const fieldsBefore = fieldValues(record);
@@ -1318,8 +1661,15 @@ export class DecisionJournal {
                     (change) =>
                         change.before &&
                         change.after &&
+                        // An item a changed answer gave back and left open is not decided by it.
+                        change.after.status !== "suggested" &&
                         (change.before.status !== change.after.status ||
-                            change.before.decidedAt !== change.after.decidedAt)
+                            change.before.decidedAt !== change.after.decidedAt ||
+                            // A changed answer took the earlier decision off it and made this one.
+                            change.before.decision?.token !== change.after.decision?.token ||
+                            (change.before.kind === "term" &&
+                                change.after.kind === "term" &&
+                                !same(change.before.reach, change.after.reach)))
                 )
                 .map((change) => change.id);
 
@@ -1357,8 +1707,8 @@ export class DecisionJournal {
             return result;
         }
 
-        let takeBack: () => void = () => {};
-        await store.update(meeting, history, (record) => decide(record), {
+        let takeBack = (): void => {};
+        await store.update(meeting, history, decide, {
             write: () => {
                 if (result.entry) {
                     takeBack = this.writeLines(result.entry, {
@@ -1368,9 +1718,12 @@ export class DecisionJournal {
                 }
             },
             undo: () => takeBack(),
-            saved: () => {
+            saved: (record) => {
                 if (result.entry) {
                     this.writeLedger(result.entry);
+                    if (before) {
+                        this.options.onApplied?.({ before, after: structuredClone(record) });
+                    }
                 }
             },
         });
@@ -1406,6 +1759,7 @@ export class DecisionJournal {
                     ...(old.decidedAt ? { decidedAt: old.decidedAt } : {}),
                     ...(old.kind === "speaker-range" && old.speaker ? { speaker: old.speaker } : {}),
                     ...(old.kind === "term" && old.proposed ? { proposed: old.proposed } : {}),
+                    ...(old.kind === "term" && old.reach ? { reach: structuredClone(old.reach) } : {}),
                 },
                 actor: stamp.request.actor,
                 entry: {

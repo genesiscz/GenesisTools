@@ -38,12 +38,14 @@ export function stageComment(
     deps: MeetingsHandlerDeps
 ): MeetingsResult<"comment.stage"> {
     const record = recordOf(store, params.meeting);
-    return commentsOf(store, record.id, deps).stage({
+    const comment = commentsOf(store, record.id, deps).stage({
         target: params.target,
         text: params.text,
         ...(params.quote ? { quote: params.quote } : {}),
         actor: actorOfCall(context),
     });
+    context.emit?.("comment.changed", { meeting: record.id, comment });
+    return comment;
 }
 
 export function listComments(
@@ -63,7 +65,33 @@ export function unstageComment(
     deps: MeetingsHandlerDeps
 ): MeetingsResult<"comment.unstage"> {
     const record = recordOf(store, params.meeting);
-    return refusing(() => commentsOf(store, record.id, deps).unstage(params.id, actorOfCall(context)));
+    const comment = refusing(() => commentsOf(store, record.id, deps).unstage(params.id, actorOfCall(context)));
+    context.emit?.("comment.changed", { meeting: record.id, comment });
+    return comment;
+}
+
+export function acknowledgeComment(
+    params: MeetingsParsedParams<"comment.read">,
+    context: MeetingsCallContext,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): MeetingsResult<"comment.read"> {
+    const record = recordOf(store, params.meeting);
+    const comment = refusing(() => commentsOf(store, record.id, deps).acknowledge(params.id, actorOfCall(context)));
+    context.emit?.("comment.changed", { meeting: record.id, comment });
+    return comment;
+}
+
+export function withdrawComment(
+    params: MeetingsParsedParams<"comment.withdraw">,
+    context: MeetingsCallContext,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+): MeetingsResult<"comment.withdraw"> {
+    const record = recordOf(store, params.meeting);
+    const comment = refusing(() => commentsOf(store, record.id, deps).withdraw(params.id, actorOfCall(context)));
+    context.emit?.("comment.changed", { meeting: record.id, comment });
+    return comment;
 }
 
 /**
@@ -78,29 +106,31 @@ export function sendComments(
 ): MeetingsResult<"comment.send"> {
     const record = recordOf(store, params.meeting);
     const comments = commentsOf(store, record.id, deps);
-    const staged: MeetingComment[] = refusing(() => comments.staged(params.ids));
-    const listeners = comments.listeners();
+    return comments.transaction(() => {
+        const staged: MeetingComment[] = refusing(() => comments.staged(params.ids));
+        const listeners = comments.listeners();
 
-    if (staged.length === 0) {
-        return { sent: [], listeners };
-    }
+        if (staged.length === 0 || (params.requireListener && listeners.length === 0)) {
+            return { sent: [], listeners };
+        }
 
-    const actor = actorOfCall(context);
-    const entry = new DecisionJournal({ store, ...(deps.now ? { now: deps.now } : {}) }).note({
-        meeting: record.id,
-        action: {
-            kind: "comment",
-            comments: staged.map((comment) => ({
-                id: comment.id,
-                target: comment.target,
-                text: comment.text,
-                ...(comment.quote ? { quote: comment.quote } : {}),
-            })),
-        },
-        actor,
-        ...(params.reason ? { reason: params.reason } : {}),
+        const actor = actorOfCall(context);
+        const entry = new DecisionJournal({ store, ...(deps.now ? { now: deps.now } : {}) }).note({
+            meeting: record.id,
+            action: {
+                kind: "comment",
+                comments: staged.map((comment) => ({
+                    id: comment.id,
+                    target: comment.target,
+                    text: comment.text,
+                    ...(comment.quote ? { quote: comment.quote } : {}),
+                })),
+            },
+            actor,
+            ...(params.reason ? { reason: params.reason } : {}),
+        });
+        const sent = comments.markSent(staged, { token: entry.token, at: entry.at, actor });
+        context.emit?.("comment.sent", { meeting: record.id, token: entry.token, comments: sent, listeners });
+        return { sent, listeners, entry };
     });
-    const sent = comments.markSent(staged, { token: entry.token, at: entry.at, actor });
-    context.emit?.("comment.sent", { meeting: record.id, token: entry.token, comments: sent, listeners });
-    return { sent, listeners, entry };
 }

@@ -5,42 +5,71 @@ import SwiftUI
 struct MeetingsProjectsPage: View {
     @Bindable var model: MeetingsSettingsModel
     @State private var newProject = ""
+    @AppStorage(MeetingsPreferences.Projects.pairOnAssignment.key)
+    private var pairOnAssignment = MeetingsPreferences.Projects.PairOnAssignment.ask
+    /// Read here once, not in each card: a link to a card hands that card its own request count.
+    @ObservedObject private var anchors = NativeSettingsHighlightCenter.shared
 
     var body: some View {
         MeetingsSettingsFrame(model: model, reads: .preview) { settings in
             let assign = settings.global.assign
+            NativeSettingsCard("Manual project assignment", subtitle: "What happens after you choose a project for a meeting.") {
+                NativeSettingsSegmented("Pair this meeting's people", identifier: "meetings.projects.pairOnAssignment",
+                    options: MeetingsPreferences.Projects.PairOnAssignment.allCases.map { NativeSettingsOption($0, $0.title) },
+                    selection: $pairOnAssignment)
+                    .disabled(!model.writes)
+            }
             NativeSettingsCard("Ask each time", subtitle: "A meeting with no project after its sources link gets one question in the decision inbox, with ranked proposals.") {
                 NativeSettingsToggle("Ask about each meeting without a project", identifier: "meetings.assign.ask",
                                      isOn: Binding(get: { assign.ask }, set: { model.set(["global", "assign", "ask"], $0) }))
+                    .nativeSettingsIcon("questionmark.bubble", tint: KitHue.ask.ink)
                 Divider()
+                // Each number carries its unit in its field, so a row's sentence says only what the number decides.
+                let slack = assign.calendarSlackMin
+                let lookbehind = assign.calendarLookbehindHours ?? MeetingsSettings.Global.Assign.defaultCalendarLookbehindHours
                 Group {
-                    NativeSettingsRow("Look back", detail: "The watcher asks about meetings that started this many hours ago or later.") {
+                    Text("Questions").kicker()
+                    NativeSettingsRow("Look back", detail: "Only a meeting that started within this time gets a question.") {
                         NativeSettingsNumberPicker("Look back (hours)", range: 1..<337, identifier: "meetings.assign.lookback",
+                                                   suffix: .counted("hour"),
                                                    value: Binding(get: { assign.lookbackHours }, set: { model.set(["global", "assign", "lookbackHours"], $0) }))
                     }
-                    NativeSettingsPicker("Most proposals", detail: "How many ranked projects one question lists.",
-                                         identifier: "meetings.assign.maxProposals",
-                                         options: Array(Set([3, 5, 8, 10, assign.maxProposals])).sorted().map { NativeSettingsOption($0, "\($0)") },
-                                         selection: Binding(get: { assign.maxProposals }, set: { model.set(["global", "assign", "maxProposals"], $0) }))
-                    NativeSettingsRow("Calendar slack", detail: "Minutes before or after the meeting a calendar entry may start and still count as its entry.") {
-                        NativeSettingsNumberPicker("Calendar slack (minutes)", range: 0..<121, identifier: "meetings.assign.slack",
-                                                   value: Binding(get: { assign.calendarSlackMin }, set: { model.set(["global", "assign", "calendarSlackMin"], $0) }))
+                    .nativeSettingsIcon("clock.arrow.circlepath")
+                    NativeSettingsRow("Most proposals", detail: "The ranked projects one question lists.") {
+                        NativeSettingsNumberPicker("Most proposals (projects)", range: 1..<21, identifier: "meetings.assign.maxProposals",
+                                                   suffix: .counted("project"),
+                                                   value: Binding(get: { assign.maxProposals }, set: { model.set(["global", "assign", "maxProposals"], $0) }))
                     }
-                    NativeSettingsRow("Calendar look-behind", detail: "Hours before the meeting a calendar entry may start and still be looked up; never less than the slack.") {
-                        NativeSettingsNumberPicker("Calendar look-behind (hours)", range: 0..<49, identifier: "meetings.assign.calendarLookbehind",
-                                                   value: Binding(get: { assign.calendarLookbehindHours ?? MeetingsSettings.Global.Assign.defaultCalendarLookbehindHours },
-                                                                  set: { model.set(["global", "assign", "calendarLookbehindHours"], $0) }))
-                    }
-                    NativeSettingsRow("Wait for a folder", detail: "Days a meeting waits for you to move it into a Wispr folder; then the folder question ends.") {
+                    .nativeSettingsIcon("list.number")
+                    NativeSettingsRow("Wait for a folder", detail: "The folder question ends when a meeting is in no Wispr folder by then.") {
                         NativeSettingsNumberPicker("Wait for a folder (days)", range: 1..<366, identifier: "meetings.assign.folderWait",
+                                                   suffix: .counted("day"),
                                                    value: Binding(get: { assign.folderWaitDays ?? MeetingsSettings.Global.Assign.defaultFolderWaitDays },
                                                                   set: { model.set(["global", "assign", "folderWaitDays"], $0) }))
                     }
-                    NativeSettingsRow("Retry a failed question", detail: "Minutes before a question whose post failed is posted again, so a broken inbox is not hit on every look.") {
+                    .nativeSettingsIcon("folder.badge.questionmark")
+                    NativeSettingsRow("Retry a failed question", detail: "A question whose post failed is posted again after this time.") {
                         NativeSettingsNumberPicker("Retry a failed question (minutes)", range: 1..<1441, identifier: "meetings.assign.retryFailed",
+                                                   suffix: .text("min"),
                                                    value: Binding(get: { assign.retryFailedMin ?? MeetingsSettings.Global.Assign.defaultRetryFailedMin },
                                                                   set: { model.set(["global", "assign", "retryFailedMin"], $0) }))
                     }
+                    .nativeSettingsIcon("arrow.clockwise")
+                    Divider()
+                    Text("Calendar match").kicker()
+                    MeetingsCalendarMatchDiagram(slackMin: slack, lookbehindHours: lookbehind)
+                    NativeSettingsRow("Calendar slack", detail: "An entry that starts this close to the meeting's start counts as its entry.") {
+                        NativeSettingsNumberPicker("Calendar slack (minutes)", range: 0..<121, identifier: "meetings.assign.slack",
+                                                   prefix: .text("±"), suffix: .text("min"),
+                                                   value: Binding(get: { slack }, set: { model.set(["global", "assign", "calendarSlackMin"], $0) }))
+                    }
+                    .nativeSettingsIcon("arrow.left.and.right", tint: KitHue.play.ink)
+                    NativeSettingsRow("Calendar look-behind", detail: "How far before the meeting the calendar is read. Never less than the slack.") {
+                        NativeSettingsNumberPicker("Calendar look-behind (hours)", range: 0..<49, identifier: "meetings.assign.calendarLookbehind",
+                                                   suffix: .counted("hour"),
+                                                   value: Binding(get: { lookbehind }, set: { model.set(["global", "assign", "calendarLookbehindHours"], $0) }))
+                    }
+                    .nativeSettingsIcon("calendar.badge.clock", tint: KitHue.play.ink)
                 }
                 .disabled(!assign.ask)
                 if !assign.ask {
@@ -48,7 +77,7 @@ struct MeetingsProjectsPage: View {
                 }
             }
 
-            WouldMatchCard(model: model)
+            WouldMatchCard(model: model, projects: settings.projectNames)
 
             if settings.projectNames.isEmpty {
                 NativeSettingsCard {
@@ -56,7 +85,9 @@ struct MeetingsProjectsPage: View {
                 }
             }
             ForEach(settings.projectNames, id: \.self) { name in
-                ProjectCard(model: model, name: name, settings: settings)
+                ProjectCard(model: model, name: name, settings: settings,
+                            linkRequest: anchors.anchor == ProjectCard.anchor(name) ? anchors.token : 0,
+                            linked: ProjectCard.linked(name, center: anchors))
                     .nativeSettingsAnchor("project-\(name)")
             }
 
@@ -96,23 +127,97 @@ struct MeetingsProjectsPage: View {
     }
 }
 
+/// One project as a card that folds. Folded, it shows the name and what the project holds; a click anywhere on the header
+/// row opens it. The open state is kept per project across launches; a card with unsaved rules stays open, and a link
+/// to its anchor (`project-<name>`, the window's "Edit rules…") opens it.
 private struct ProjectCard: View {
     @Bindable var model: MeetingsSettingsModel
     let name: String
     let settings: MeetingsSettings
+    /// Changes only when a link names this card (the window's "Edit rules…"), which opens it.
+    let linkRequest: Int
+    @State private var open: Bool
+    @Environment(\.nativeSettingsIndexing) private var indexing
+
+    /// `linked`: a link named this card a moment ago, before the card existed (the page opens on it).
+    init(model: MeetingsSettingsModel, name: String, settings: MeetingsSettings, linkRequest: Int, linked: Bool) {
+        _model = Bindable(model)
+        self.name = name
+        self.settings = settings
+        self.linkRequest = linkRequest
+        // The first frame already has the saved state, so a card does not snap open after the page appears.
+        _open = State(initialValue: MeetingsPreferences.openProjects().contains(name) || linked)
+    }
+
+    static func anchor(_ name: String) -> String { "project-\(name)" }
+
+    /// A link to this card arrived a moment ago (the window opens the page on it before the card exists).
+    static func linked(_ name: String, center: NativeSettingsHighlightCenter) -> Bool {
+        guard center.anchor == anchor(name), let at = center.requestedAt else { return false }
+        return Date().timeIntervalSince(at) < 10
+    }
 
     var body: some View {
+        let unsaved = model.hasUnsavedRules(name)
+        // The hidden copy the settings search reads draws every card open, so a rule inside a folded card is found.
+        let shown = open || unsaved || indexing
+        let summary = ProjectCardSummary.line(name, in: settings)
+        NativeSettingsCard {
+            GenDisclosure(isExpanded: Binding(get: { shown }, set: { setOpen($0, unsaved: unsaved) }),
+                          minHeight: 40, spacing: 14, identifier: "meetings.project.\(name)",
+                          accessibilityTitle: "\(name), \(summary)\(unsaved ? ", rules not saved" : "")") {
+                rules
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: name).font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: 6) {
+                        Text(verbatim: summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        if unsaved {
+                            Text("· rules not saved, so it stays open").font(.system(size: 11)).foregroundStyle(KitPalette.modified)
+                                .lineLimit(1).layoutPriority(-1)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .nativeSettingsSearchCard(name, detail: summary)
+        .onChange(of: linkRequest) { _, request in
+            if request != 0 { setOpen(true, unsaved: unsaved) }
+        }
+    }
+
+    private func setOpen(_ value: Bool, unsaved: Bool) {
+        // Unsaved rules keep the card open: folding them away would hide the Save button.
+        guard value || !unsaved, value != open else { return }
+        open = value
+        if model.writes, !indexing { MeetingsPreferences.setProject(name, open: value) }
+    }
+
+    @ViewBuilder
+    private var rules: some View {
         let project = settings.projects[name]
         let draft = model.drafts[name] ?? model.savedRules(name, in: settings)
-        NativeSettingsCard(name, subtitle: "Its meetings get its dictionary and labels; a rule below puts a meeting in it.") {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Its meetings get its dictionary and labels; a rule below puts a meeting in it.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
             TokenList(title: "Wispr folders", detail: "A Wispr Flow note in one of these folders is this project's.",
-                      values: draft.folders, placeholder: "Add a folder") { values in model.editDraft(name) { $0.folders = values } }
+                      values: draft.folders, placeholder: "Add a folder",
+                      suggest: { try await model.wisprFolderValues() }, identifier: "meetings.project.\(name).wisprFolders") { values in
+                model.editDraft(name) { $0.folders = values }
+            }
             Divider()
             TokenList(title: "Calendar names", detail: "An overlapping entry in one of these calendars is this project's.",
-                      values: draft.calendars, placeholder: "Add a calendar") { values in model.editDraft(name) { $0.calendars = values } }
+                      values: draft.calendars, placeholder: "Add a calendar",
+                      suggest: { try await model.calendarValues() }, identifier: "meetings.project.\(name).calendars") { values in
+                model.editDraft(name) { $0.calendars = values }
+            }
             Divider()
             TokenList(title: "Title words", detail: "A meeting whose title holds one of these words is this project's.",
-                      values: draft.titleWords, placeholder: "Add a word") { values in model.editDraft(name) { $0.titleWords = values } }
+                      values: draft.titleWords, placeholder: "Add a word",
+                      suggest: { try await model.titleWordValues() }, identifier: "meetings.project.\(name).titleWords") { values in
+                model.editDraft(name) { $0.titleWords = values }
+            }
             if model.hasUnsavedRules(name) {
                 HStack {
                     Text("The preview above uses these rules; they are not saved yet.").font(.system(size: 11.5)).foregroundStyle(KitPalette.modified)
@@ -127,24 +232,15 @@ private struct ProjectCard: View {
             }
             Divider()
             TokenList(title: "Labels", detail: "Labels a meeting of this project can carry, to group meetings finer.",
-                      values: project?.labels ?? [], placeholder: "Add a label") { values in
+                      values: project?.labels ?? [], placeholder: "Add a label",
+                      suggest: { try await model.labelValues() }, identifier: "meetings.project.\(name).labels") { values in
                 let old = project?.labels ?? []
                 model.changeLabels(name, add: values.filter { !old.contains($0) }, remove: old.filter { !values.contains($0) })
             }
             Divider()
             PeopleList(model: model, project: name, people: project?.match?.people ?? [], projects: settings.projects)
             Divider()
-            NativeSettingsRow("Export folder", detail: "Where Export writes this project's meeting notes.") {
-                HStack(spacing: 8) {
-                    if let folder = project?.export?.folder {
-                        PathLabel(path: folder, font: .system(size: 11, design: .monospaced), showIcons: false)
-                        Button("Clear") { model.clearExportFolder(name) }.buttonStyle(.genHoverPlain())
-                    } else {
-                        Text("Asks on the first export").font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
-                    Button("Choose…") { model.chooseExportFolder(name) }.buttonStyle(.bordered).nativeSettingsPointer()
-                }
-            }
+            ExportFolderRow(model: model, project: name, folder: project?.export?.folder)
             Divider()
             NativeSettingsRow("The project", detail: "Rename it everywhere it is named, or remove it; its settings go into a backup first.") {
                 HStack(spacing: 8) {
@@ -153,6 +249,7 @@ private struct ProjectCard: View {
                 }
             }
         }
+        .padding(.trailing, 6)
     }
 }
 
@@ -227,7 +324,8 @@ private struct PeopleList: View {
             Text("Paired people").font(.system(size: 13))
             Text("A later meeting with these people proposes this project.").font(.system(size: 11.5)).foregroundStyle(.secondary)
             if people.isEmpty {
-                Text("Nobody yet: an answered project question pairs the calendar entry's attendees.").font(.system(size: 12)).foregroundStyle(.tertiary)
+                Text("Nobody is paired yet. An answered project question pairs the calendar entry's attendees, and Pair below pairs the people of this project's meetings.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             ForEach(people) { person in
                 HStack(alignment: .firstTextBaseline) {
@@ -243,6 +341,7 @@ private struct PeopleList: View {
                     .instantTooltip("Remove this person, or every pairing one calendar entry made")
                 }
             }
+            FromMeetingsList(model: model, project: project)
         }
     }
 
@@ -260,34 +359,93 @@ private struct PeopleList: View {
     }
 }
 
-/// The last 20 meetings: the projects the saved rules match, and the drafts' when they differ.
+/// The people of the project's meetings (calendar entry, attendance, named speakers) who are not paired with it yet:
+/// each with how many of its meetings name them and the newest one, and Pair; "Pair all N" pairs every one. Reading
+/// writes nothing; only a click pairs, and its notice has an Undo.
+private struct FromMeetingsList: View {
+    @Bindable var model: MeetingsSettingsModel
+    let project: String
+
+    var body: some View {
+        let state = model.meetingPeople[project]
+        let people = state?.value ?? []
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("In this project's meetings, not paired yet").font(.system(size: 12.5, weight: .medium))
+                Spacer()
+                if people.count > 1 {
+                    Button("Pair all \(people.count)") { model.pairFromMeetings(project, people: nil) }
+                        .buttonStyle(.bordered).nativeSettingsPointer()
+                        .disabled(model.isWriting("pair.\(project).*"))
+                        .instantTooltip("Pair every person below with \(project); Undo follows")
+                }
+            }
+            if let failure = state?.failure {
+                NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadMeetingPeople(project) },
+                                   failure.detailsFix { model.loadMeetingPeople(project) }])
+            }
+            if state?.value == nil, state?.failure == nil {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Reading the people of its meetings…").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            } else if people.isEmpty, state?.failure == nil {
+                Text("Nobody else: everyone its meetings name is paired, or no meeting has this project yet.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            ForEach(people) { person in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: person.label).font(.system(size: 12.5)).lineLimit(1)
+                        Text(verbatim: Self.seen(person)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    LiveButton(tooltip: "Pair \(person.name) with \(project); Undo follows",
+                               enabled: !model.isWriting("pair.\(project).\(person.id)")) {
+                        model.pairFromMeetings(project, people: [person])
+                    } label: {
+                        Text("Pair").font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 3)
+                    }
+                }
+                .liveRow()
+                .accessibilityElement(children: .combine)
+                .accessibilityAction(named: "Pair \(person.name)") { model.pairFromMeetings(project, people: [person]) }
+            }
+        }
+        .padding(.top, 6)
+        .onAppear { model.ensureMeetingPeople(project) }
+    }
+
+    /// "In 3 meetings · last: Shop sync, 4 Nov 2026".
+    static func seen(_ person: MeetingsAPI.ProjectsMeetingPeople.Person) -> String {
+        let when = MeetingsFormat.date(person.last.start).map { $0.formatted(date: .abbreviated, time: .omitted) }
+        let title = person.last.title.isEmpty ? "Untitled meeting" : person.last.title
+        return "In \(Plural.count(person.meetings, "meeting")) · last: \([title, when].compactMap { $0 }.joined(separator: ", "))"
+    }
+}
+
+/// The last 20 meetings: the projects the saved rules match, and the drafts' when they differ. Each row offers what
+/// to do: Confirm (no project, one match), Update (another project than the match), a menu (several matches), a check
+/// (it has the match), and on every row a project menu to set it by hand. A change has an Undo and updates its row in
+/// place while the list reads again.
 private struct WouldMatchCard: View {
     @Bindable var model: MeetingsSettingsModel
+    let projects: [String]
 
     var body: some View {
         NativeSettingsCard("Would match", subtitle: "The last 20 meetings against the rules below, while you edit them.") {
             if let failure = model.preview.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadPreview() }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadPreview() },
+                                   failure.detailsFix { model.loadPreview() }])
             }
             if let rows = model.preview.value {
                 if rows.isEmpty {
                     Text("No meeting yet.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 ForEach(rows) { row in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(verbatim: row.title.isEmpty ? "Untitled meeting" : row.title).font(.system(size: 12)).lineLimit(1)
-                        Spacer(minLength: 6)
-                        Text(verbatim: "has \(row.project ?? "none")").font(.system(size: 11)).foregroundStyle(.tertiary)
-                        Text(verbatim: row.now.isEmpty ? "matches none" : "matches \(row.now.joined(separator: ", "))")
-                            .font(.system(size: 11.5)).foregroundStyle(.secondary)
-                        if row.changed {
-                            Image(systemName: "arrow.right").font(.system(size: 9)).foregroundStyle(KitPalette.modified).accessibilityHidden(true)
-                            Text(verbatim: row.draft.isEmpty ? "none" : row.draft.joined(separator: ", "))
-                                .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(KitPalette.modified)
-                                .accessibilityLabel("with your edit: \(row.draft.isEmpty ? "none" : row.draft.joined(separator: ", "))")
-                        }
-                    }
+                    WouldMatchRow(model: model, row: row, projects: projects)
                 }
             } else if model.preview.failure == nil {
                 HStack(spacing: 8) {
@@ -299,12 +457,137 @@ private struct WouldMatchCard: View {
     }
 }
 
-/// A list of short values: each a chip with a remove button, and a field that adds on Return.
+private struct WouldMatchRow: View {
+    @Bindable var model: MeetingsSettingsModel
+    let row: MatchPreviewRow
+    let projects: [String]
+
+    private var title: String { row.title.isEmpty ? "Untitled meeting" : row.title }
+
+    var body: some View {
+        let busy = model.isSettingProject(row)
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: title).font(.system(size: 12.5)).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(verbatim: "has \(row.project ?? "no project")").foregroundStyle(.tertiary)
+                    Text(verbatim: row.now.isEmpty ? "matches none" : "matches \(row.now.joined(separator: ", "))")
+                        .foregroundStyle(.secondary)
+                    if row.changed {
+                        Image(systemName: "arrow.right").font(.system(size: 9)).foregroundStyle(KitPalette.modified).accessibilityHidden(true)
+                        Text(verbatim: row.draft.isEmpty ? "none" : row.draft.joined(separator: ", "))
+                            .fontWeight(.semibold).foregroundStyle(KitPalette.modified)
+                            .accessibilityLabel("with your edit: \(row.draft.isEmpty ? "none" : row.draft.joined(separator: ", "))")
+                    }
+                }
+                .font(.system(size: 11)).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            action(busy: busy)
+            MenuButton(items: { projectItems }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "folder").font(.system(size: 11))
+                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(.secondary).padding(.horizontal, 4).padding(.vertical, 3)
+            }
+            .instantTooltip("Set the project of “\(title)” by hand")
+            .accessibilityLabel("Project of \(title)")
+            .disabled(busy)
+        }
+        .liveRow()
+    }
+
+    @ViewBuilder
+    private func action(busy: Bool) -> some View {
+        switch WouldMatchAction.of(row) {
+        case .none:
+            EmptyView()
+        case .matches(let project):
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(KitPalette.added)
+                .instantTooltip("It is in \(project), as the rules say")
+                .accessibilityLabel("It is in \(project), as the rules say")
+        case .confirm(let project):
+            LiveButton(tooltip: "Put “\(title)” in \(project); Undo follows", enabled: !busy, pressable: true) {
+                model.setMeetingProject(row, to: project)
+            } label: {
+                Text("Confirm").font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 3)
+            }
+        case .update(let from, let to):
+            LiveButton(tooltip: "Move “\(title)” from \(from) to \(to), as the rules say; Undo follows", enabled: !busy, pressable: true) {
+                model.setMeetingProject(row, to: to)
+            } label: {
+                Text("Update").font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 3)
+            }
+        case .choose(let matched):
+            MenuButton(items: {
+                matched.map { project in .action("Put it in \(project)", checked: project == row.project) { model.setMeetingProject(row, to: project) } }
+            }) {
+                HStack(spacing: 3) {
+                    Text("Choose").font(.system(size: 12, weight: .medium))
+                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                }
+                .padding(.horizontal, 6).padding(.vertical, 3)
+            }
+            .instantTooltip("The rules match \(Plural.count(matched.count, "project")): pick one")
+            .disabled(busy)
+        }
+    }
+
+    private var projectItems: [MenuButtonItem] {
+        var items: [MenuButtonItem] = projects.map { project in
+            .action(project, checked: project == row.project) { model.setMeetingProject(row, to: project) }
+        }
+        items.append(.divider)
+        items.append(.action("No project", checked: row.project == nil) { model.setMeetingProject(row, to: nil) })
+        return items
+    }
+}
+
+/// "Export folder": the folder Export writes to, a field that completes folders from a typed path, and the system's
+/// folder panel.
+private struct ExportFolderRow: View {
+    @Bindable var model: MeetingsSettingsModel
+    let project: String
+    let folder: String?
+    @State private var typed = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Export folder").font(.system(size: 13))
+            Text("Where Export writes this project's meeting notes. Type a path (~ is your home folder) or choose one.")
+                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                if let folder {
+                    PathLabel(path: folder, font: .system(size: 11, design: .monospaced), showIcons: false)
+                    Button("Clear") { model.clearExportFolder(project) }.buttonStyle(.genHoverPlain())
+                } else {
+                    Text("Asks on the first export").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }
+            HStack(alignment: .top, spacing: 8) {
+                AutocompleteFolderField("A folder, ~/ for home", text: $typed, label: "Export folder of \(project)",
+                                        identifier: "meetings.project.\(project).exportFolder") { path in
+                    model.setExportFolder(project, path: path)
+                    typed = ""
+                }
+                .frame(maxWidth: 320)
+                Button("Choose…") { model.chooseExportFolder(project) }.buttonStyle(.bordered).nativeSettingsPointer()
+            }
+        }
+    }
+}
+
+/// A list of short values: each a chip with a remove button, and a field that adds on Return. With `suggest`, the
+/// field completes from those values (`AutocompleteField`) and still takes a typed value.
 struct TokenList: View {
     let title: String
     let detail: String?
     let values: [String]
     let placeholder: String
+    var suggest: (@Sendable () async throws -> [AutocompleteValue])?
+    /// The field's accessibility identifier (`tools control act --by-identifier`, a snapshot's `--autocomplete-open`).
+    var identifier: String?
     let commit: ([String]) -> Void
     @State private var text = ""
 
@@ -313,10 +596,7 @@ struct TokenList: View {
             Text(title).font(.system(size: 13))
             if let detail { Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary) }
             FlowChips(values: values) { value in commit(values.filter { $0 != value }) }
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.roundedBorder).frame(maxWidth: 260)
-                .onSubmit(add)
-                .onExitCommand { text = "" }
+            field
                 // Clears once the saved list holds the value; a refused write keeps it in the field.
                 .onChange(of: values) { _, now in
                     if now.contains(text.trimmingCharacters(in: .whitespaces)) { text = "" }
@@ -324,12 +604,30 @@ struct TokenList: View {
         }
     }
 
-    private func add() {
-        let value = text.trimmingCharacters(in: .whitespaces)
+    @ViewBuilder
+    private var field: some View {
+        if let suggest {
+            AutocompleteField(placeholder, text: $text, lazyItems: suggest, allowsFreeText: true,
+                              hides: { item in values.contains { $0.caseInsensitiveCompare(item.title) == .orderedSame } },
+                              label: "\(title): \(placeholder.lowercased())", identifier: identifier) { choice in
+                add(choice.text)
+            }
+            .frame(maxWidth: 320)
+        } else {
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.roundedBorder).frame(maxWidth: 260)
+                .onSubmit { add(text) }
+                .onExitCommand { text = "" }
+        }
+    }
+
+    private func add(_ typed: String) {
+        let value = typed.trimmingCharacters(in: .whitespaces)
         guard !value.isEmpty, !values.contains(value) else {
             text = ""
             return
         }
+        text = value
         commit(values + [value])
     }
 }
@@ -469,7 +767,8 @@ struct MeetingsDictionaryPage: View {
             NativeSettingsCard("Entries", subtitle: entriesSubtitle) {
                 if let failure = model.dictionary.failure {
                     NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                               fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadDictionary() }])
+                               fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadDictionary() },
+                                   failure.detailsFix { model.loadDictionary() }])
                 }
                 let entries = model.dictionary.value?.entries ?? []
                 if entries.isEmpty, model.dictionary.value != nil {

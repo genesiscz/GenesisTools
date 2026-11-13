@@ -755,7 +755,7 @@ async function closeFolderOfGoneProject(store: MeetingStore, meetingId: string, 
 
     let closed = false;
     // Checked again under the record lock: a rename can land between the read and the write.
-    await store.update(
+    await store.updateIf(
         meetingId,
         { command: "assign sweep", change: `folder not paired: no project ${project}` },
         (current) => {
@@ -763,6 +763,7 @@ async function closeFolderOfGoneProject(store: MeetingStore, meetingId: string, 
                 current.assign.folder.state = "declined";
                 closed = true;
             }
+            return closed;
         }
     );
 

@@ -494,8 +494,8 @@ export class MeetingsPeopleSource implements PeopleSource {
             let stamp: string;
 
             try {
-                const stat = statSync(path);
-                stamp = `${stat.mtimeMs}:${stat.size}`;
+                const stat = statSync(path, { bigint: true });
+                stamp = `${stat.ino}:${stat.mtimeNs}:${stat.ctimeNs}:${stat.size}`;
             } catch (error) {
                 log.debug({ path, error }, "meeting folder without a record; no people");
                 continue;
@@ -600,6 +600,15 @@ export class PeopleDirectory {
      */
     async find(ref: string): Promise<KnownPerson> {
         return (await this.resolve(ref)).person;
+    }
+
+    /** Every meeting that names this person, newest first, including their roles, labels and attendance. */
+    async meetings(ref: string): Promise<{ person: KnownPerson; meetings: MeetingAppearance[] }> {
+        const { person, identity } = await this.resolve(ref);
+        return {
+            person,
+            meetings: [...identity.appearances.values()].sort((a, b) => b.start.localeCompare(a.start)),
+        };
     }
 
     /** What merging two people would do: their meetings and renamed labels; nothing is written. */

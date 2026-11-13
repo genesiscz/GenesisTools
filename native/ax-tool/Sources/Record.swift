@@ -175,7 +175,7 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
         windowIndex: argValue("--window-index").flatMap { Int($0) },
         windowID: windowID,
         region: region,
-        duration: number("--duration", default: 3, min: 0.1, max: 180),
+        duration: number("--duration", default: 3, min: 0.1, max: videoOut == nil ? 180 : 14_400),
         activeFps: activeFps,
         idleFps: idleFps,
         threshold: number("--threshold", default: 2.5, min: 0, max: 100),
@@ -385,6 +385,7 @@ struct KeptFrame {
     let changePercent: Double
     let reason: String
     let displayID: CGDirectDisplayID?
+    let focusedDisplayID: CGDirectDisplayID?
     let motionBoxes: [MotionBox]
 
     var motionBoxesJSON: [[Int]] { motionBoxes.map(\.json) }
@@ -445,6 +446,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var lastKeptMs: Int?
     /// The display the frames come from, `nil` for isolated captures. Changed on this queue by `displayChanged`.
     private var currentDisplayID: CGDirectDisplayID?
+    private var focusedDisplayID: CGDirectDisplayID?
     private(set) var displaySwitches = 0
     private(set) var heartbeatFrames = 0
     /// `pause`: frames are counted but neither sampled, kept nor written to the movie.
@@ -461,6 +463,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         self.activeFps = options.activeFps
         self.idleFps = options.idleFps
         self.currentDisplayID = displayID
+        self.focusedDisplayID = displayID == nil ? nil : currentFocusDisplay()
         self.warnings = options.startWarnings
     }
 
@@ -485,6 +488,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             event["from"] = currentDisplayID
         }
         currentDisplayID = id
+        latestBuffer = nil
         displaySwitches += 1
         policy.restart(reason: "display-switch")
         CaptureEvents.emit(event)
@@ -523,6 +527,23 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 latestBuffer = nil
             }
             paused = value
+        }
+    }
+
+    /// Keep the focus transition even on a still desktop. The same metadata travels with every display's frames.
+    func focusChanged(to id: CGDirectDisplayID?) {
+        queue.async { [self] in
+            guard let id, id != focusedDisplayID else { return }
+            focusedDisplayID = id
+            guard firstTimestamp != nil else { return }
+            policy.restart(reason: "focus-change")
+            guard !paused, pendingDisplay == nil, let buffer = latestBuffer,
+                  let signature = signature(of: buffer) else { return }
+            var candidate = policy
+            let decision = candidate.consider(signature)
+            guard decision.keep else { return }
+            let nowMs = elapsedMs(CMClockGetTime(CMClockGetHostTimeClock()))
+            _ = keep(buffer, timestampMs: nowMs, decision: decision, candidate: candidate)
         }
     }
 
@@ -619,6 +640,12 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             throw NSError(domain: "ax-tool", code: 1, userInfo: [NSLocalizedDescriptionKey: "video already exists; choose a new output path"])
         }
         let writer = try AVAssetWriter(outputURL: url, fileType: options.selection.codec == "prores4444" ? .mov : .mp4)
+        // Retain completed fragments if the process dies before finishWriting. This keeps long recordings
+        // recoverable without stopping the stream, audio receiver or cursor monitor every three minutes.
+        writer.movieFragmentInterval = CMTime(seconds: 10, preferredTimescale: 600)
+        if #available(macOS 14.0, *) {
+            writer.initialMovieFragmentInterval = CMTime(seconds: 1, preferredTimescale: 600)
+        }
         var settings: [String: Any] = [
             AVVideoCodecKey: options.selection.codec == "prores4444" ? AVVideoCodecType.proRes4444 : AVVideoCodecType.h264,
             AVVideoWidthKey: width,
@@ -653,6 +680,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             AVVideoAverageBitRateKey: screenMovieBitRate(width: width, height: height, fps: fps),
             AVVideoExpectedSourceFrameRateKey: Int(fps.rounded()),
             AVVideoMaxKeyFrameIntervalKey: max(1, Int((fps * 2).rounded())),
+            AVVideoAllowFrameReorderingKey: false,
+            // Varying ScreenCaptureKit cadence with reordered H.264 frames made fragment closure fail (-16341).
             AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
         ]
     }
@@ -694,12 +723,11 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             // the rest of the recording would repeat it on every frame.
             if !adaptor.append(pixelBuffer, withPresentationTime: timestamp), !videoAppendFailed {
                 videoAppendFailed = true
-                warnings.append("the video writer refused a frame: \(writer?.error?.localizedDescription ?? "no writer error reported")")
+                warnings.append("the video writer refused a frame: \(writer?.error.map { String(describing: $0) } ?? "no writer error reported")")
             }
         }
-        if heartbeat.enabled {
-            latestBuffer = pixelBuffer
-        }
+        // A focus transition needs the current image even when the desktop is still and heartbeats are off.
+        latestBuffer = pixelBuffer
         guard let signature = signature(of: pixelBuffer) else { return }
         let timestampMs = elapsedMs(timestamp)
         var candidate = policy
@@ -738,7 +766,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         let file = String(format: "keep-%04d.png", index)
         let url = URL(fileURLWithPath: options.outDir).appendingPathComponent(file)
         let frame = KeptFrame(index: index, file: file, timestampMs: timestampMs, changePercent: decision.changePercent,
-                              reason: decision.reason, displayID: currentDisplayID, motionBoxes: decision.motionBoxes)
+                              reason: decision.reason, displayID: currentDisplayID, focusedDisplayID: focusedDisplayID,
+                              motionBoxes: decision.motionBoxes)
         let encode = { () -> (failure: String?, bytes: Int) in
             guard let png = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) else {
                 return ("frame at \(timestampMs) ms could not be encoded", 0)
@@ -764,6 +793,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             if let id = frame.displayID {
                 event["displayId"] = id
             }
+            if let id = frame.focusedDisplayID { event["focusedDisplayId"] = id }
             CaptureEvents.emit(event)
             if let maxMb = options.maxMb, policy.capReached, policy.keptCount < policy.maxFrames, !byteCapWarned {
                 byteCapWarned = true
@@ -808,7 +838,15 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
-    var failure: Error? { queue.sync { streamError } }
+    var failure: Error? {
+        queue.sync {
+            streamError ?? (writer?.status == .failed
+                ? writer?.error ?? NSError(domain: "ax-tool", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "the movie writer stopped accepting frames"])
+                : nil)
+        }
+    }
+    var streamHasFailed: Bool { queue.sync { streamError != nil } }
 
     /// The first frame's host time: the origin of every timestamp in the result, audio included.
     var origin: CMTime? { queue.sync { firstTimestamp } }
@@ -893,7 +931,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             warnings.append("video writer did not finish within 10s; the file may be truncated")
         }
         if writer.status != .completed {
-            warnings.append("video writer ended with status \(writer.status.rawValue): \(writer.error?.localizedDescription ?? "unknown")")
+            warnings.append("video writer ended with status \(writer.status.rawValue): \(writer.error.map { String(describing: $0) } ?? "unknown")")
         }
     }
 }
@@ -1149,12 +1187,14 @@ func cmdCaptureScreen() {
     // tick keeps it current), the region, or the recorded display, which a switch or follow-focus changes. A movie keeps
     // its first size and letterboxes a display of another shape into it, so that rectangle takes the movie's shape.
     let movieSize = options.videoOut == nil ? nil : CGSize(width: width, height: height)
-    let trackedRect = LockedRect(windowTarget?.bounds ?? options.region ?? sourceRect.map {
+    let capturedRect = windowTarget?.bounds ?? options.region ?? sourceRect.map {
         $0.offsetBy(dx: display.bounds.minX, dy: display.bounds.minY)
-    } ?? cursorTrackRect(display: display.bounds, movie: movieSize))
+    } ?? display.bounds
+    let trackedGeometry = LockedCursorGeometry(CursorTrackGeometry(
+        rect: cursorTrackRect(display: capturedRect, movie: movieSize), clickRegions: [capturedRect]))
     var cursorTrack: CursorTrackWriter?
     if let path = argValue("--cursor-track") {
-        cursorTrack = CursorTrackWriter(path: path, shapes: argValue("--cursor-shapes")) { trackedRect.value }
+        cursorTrack = CursorTrackWriter(path: path, shapes: argValue("--cursor-shapes")) { trackedGeometry.value }
         if CommandLine.arguments.contains("--shortcuts") { cursorTrack?.watchShortcuts() }
         if cursorTrack == nil { recorder.warn("the cursor track \(path) could not be created") }
     }
@@ -1165,7 +1205,8 @@ func cmdCaptureScreen() {
     if options.mode == "screen", sourceRect == nil {
         // Moved when the stream takes the new display, not on a later tick; the next row names the new point width.
         host.onDisplayChange = { geometry in
-            trackedRect.value = cursorTrackRect(display: geometry.bounds, movie: movieSize)
+            trackedGeometry.value = CursorTrackGeometry(
+                rect: cursorTrackRect(display: geometry.bounds, movie: movieSize), clickRegions: [geometry.bounds])
             cursorTrack?.pointWidthChanged()
         }
     }
@@ -1175,7 +1216,8 @@ func cmdCaptureScreen() {
            let rows = CGWindowListCopyWindowInfo([.optionIncludingWindow], target.id) as? [[CFString: Any]],
            let raw = rows.first?[kCGWindowBounds] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw) {
             indicator.update([bounds])
-            trackedRect.value = bounds
+            trackedGeometry.value = CursorTrackGeometry(
+                rect: cursorTrackRect(display: bounds, movie: movieSize), clickRegions: [bounds])
         }
         guard options.mode == "screen" else { return recorder.failure == nil && !host.stopRequested }
 
@@ -1189,7 +1231,8 @@ func cmdCaptureScreen() {
     cursorTrack?.stop()
     recorder.stopHeartbeat()
     let streamFailure = recorder.failure
-    if streamFailure == nil {
+    // A writer failure still leaves a live ScreenCaptureKit stream to stop.
+    if !recorder.streamHasFailed {
         do {
             try awaitResult(timeoutSeconds: host.displayRemoved ? 5 : 30) { try await host.stream.stopCapture() }
         } catch {
@@ -1220,6 +1263,7 @@ func cmdCaptureScreen() {
         if let id = frame.displayID {
             row["displayId"] = id
         }
+        if let id = frame.focusedDisplayID { row["focusedDisplayId"] = id }
         return row
     }
     var sheet: [String: Any] = [:]
@@ -1392,6 +1436,7 @@ private final class ScreenStreamHost {
         self.stream = stream
         self.display = display
         self.displaysUsed = [display.id]
+        recorder.focusChanged(to: currentFocusDisplay())
     }
 
     private var excludedWindowIDs: Set<CGWindowID> { indicator.windowIDs.union(options.selection.excludedWindowIDs) }
@@ -1404,8 +1449,10 @@ private final class ScreenStreamHost {
             return false
         }
 
+        let focused = currentFocusDisplay()
+        recorder.focusChanged(to: focused)
         if options.followFocus, #available(macOS 14.0, *) {
-            follow()
+            follow(focused: focused)
         }
         guard recorder.failure != nil else {
             deadTicks = 0
@@ -1563,11 +1610,11 @@ private final class ScreenStreamHost {
     }
 
     @available(macOS 14.0, *)
-    private func follow() {
+    private func follow(focused: CGDirectDisplayID?) {
         guard !switching else { return }
         let displays = activeDisplays().map { DisplayFrame(id: $0.id, bounds: $0.bounds) }
         let pointer = displayUnder(CGEvent(source: nil)?.location, displays: displays)
-        guard let target = followState.next(pointer: pointer, focus: currentFocusDisplay()) else { return }
+        guard let target = followState.next(pointer: pointer, focus: focused) else { return }
         let lost = displayLost || !displayIsActive(display.id)
         if recorder.failure != nil {
             if lost {
@@ -1614,8 +1661,7 @@ private final class ScreenStreamHost {
         let recorder = self.recorder
         Task {
             do {
-                // A listing without a window the movie leaves out throws: the recording stays on its display, whose
-                // filter still leaves the window out.
+                // Keep the current display filter if the requested exclusions cannot be resolved.
                 let content = try await listedContent(requested)
                 guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else {
                     throw NSError(domain: "ax-tool", code: 2, userInfo: [NSLocalizedDescriptionKey: "display \(target) is not shareable"])

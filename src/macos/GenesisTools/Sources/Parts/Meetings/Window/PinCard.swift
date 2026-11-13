@@ -177,11 +177,11 @@ struct PinCard: View {
 }
 
 /// Small chips that wrap onto more lines.
-private struct PinChoiceChips: View {
+struct PinChoiceChips: View {
     let items: [String]
 
     var body: some View {
-        PinChipFlow(spacing: 6) {
+        WrapLayout(spacing: 6, lineSpacing: 6) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 Text(verbatim: item)
                     .font(.system(size: 11).monospacedDigit())
@@ -189,35 +189,6 @@ private struct PinChoiceChips: View {
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.12)))
             }
-        }
-    }
-}
-
-/// A left-to-right layout that wraps.
-private struct PinChipFlow: Layout {
-    var spacing: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .infinity
-        var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0, widest: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > 0, x + size.width > width { x = 0; y += line + spacing; line = 0 }
-            x += size.width + spacing
-            widest = max(widest, x - spacing)
-            line = max(line, size.height)
-        }
-        return CGSize(width: min(widest, width), height: y + line)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, line: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > bounds.minX, x + size.width > bounds.maxX { x = bounds.minX; y += line + spacing; line = 0 }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            line = max(line, size.height)
         }
     }
 }

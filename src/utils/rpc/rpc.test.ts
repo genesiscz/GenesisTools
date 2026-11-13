@@ -5,6 +5,7 @@ import {
     mkdirSync,
     mkdtempSync,
     realpathSync,
+    rmdirSync,
     statSync,
     utimesSync,
     writeFileSync,
@@ -78,6 +79,82 @@ async function connect(socket: string, onRequest?: RpcSocketClientOptions["onReq
     opened.push(client);
     return client;
 }
+
+test("error replies retain the remote stack and issue", async () => {
+    const peer = new RpcPeer({
+        write: (bytes) => bytes.length,
+        handle: async () => null,
+        invalid: "ignore",
+        log: logger.scoped("rpc-test").log,
+        label: "fixture",
+    });
+    const pending = peer.request("fixture").catch((error: unknown) => error);
+    const stack = "Error: refused\n    at origin (/fixture/source.ts:12:3)";
+    const issue = { tool: "fixture", title: "Original refusal" };
+    peer.receive(
+        Buffer.from(
+            SafeJSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                error: { code: 1042, message: "refused", data: { reason: "fixture" }, stack, issue },
+            }) + "\n"
+        )
+    );
+    expect(await pending).toMatchObject({ code: 1042, message: "refused", data: { reason: "fixture" }, stack, issue });
+    const legacy = peer.request("legacy").catch((error: unknown) => error);
+    peer.receive(
+        Buffer.from(SafeJSON.stringify({ jsonrpc: "2.0", id: 2, error: { code: 1043, message: "legacy" } }) + "\n")
+    );
+    expect(await legacy).toMatchObject({ code: 1043, message: "legacy", issue: undefined });
+    peer.close("done");
+});
+
+test("a handler failure sends its cause stack and issue, and the peer answers the next request", async () => {
+    const sent: string[] = [];
+    const cause = new Error("capture failed");
+    cause.stack = "Error: capture failed\n    at origin (/fixture/source.ts:12:3)";
+    const peer = new RpcPeer({
+        write: (bytes) => {
+            sent.push(bytes.toString("utf8"));
+            return bytes.length;
+        },
+        handle: async ({ method }) => {
+            if (method === "fail") {
+                throw new RpcError(
+                    1042,
+                    "refused",
+                    { reason: "fixture" },
+                    { cause, issue: { title: "Original refusal" } }
+                );
+            }
+            return { ok: true };
+        },
+        invalid: "answer",
+        log: logger.scoped("rpc-test").log,
+        label: "fixture",
+        tool: "fixture",
+    });
+    try {
+        peer.receive(Buffer.from(`${SafeJSON.stringify({ jsonrpc: "2.0", id: 41, method: "fail" })}\n`));
+        await peer.queue;
+        expect(SafeJSON.parse(sent[0], { strict: true })).toEqual({
+            jsonrpc: "2.0",
+            id: 41,
+            error: {
+                code: 1042,
+                message: "refused",
+                data: { reason: "fixture" },
+                stack: cause.stack,
+                issue: { tool: "fixture", title: "Original refusal" },
+            },
+        });
+        peer.receive(Buffer.from(`${SafeJSON.stringify({ jsonrpc: "2.0", id: 42, method: "next" })}\n`));
+        await peer.queue;
+        expect(SafeJSON.parse(sent[1], { strict: true })).toEqual({ jsonrpc: "2.0", id: 42, result: { ok: true } });
+    } finally {
+        peer.close("done");
+    }
+});
 
 describe("the JSON-RPC socket server, both directions", () => {
     test("the server asks a client that said hello as host, and the reply comes back by id", async () => {
@@ -659,6 +736,21 @@ describe("the service host (service-host.ts)", () => {
             expect(statSync(dir).mode & 0o777).toBe(0o700);
             expect(statSync(serviceSocketPath(dir)).mode & 0o777).toBe(0o600);
         }
+    });
+
+    test("failed entry publication closes its socket and releases the claim for a retry", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-failed-entry-"));
+        const entry = serviceEntryPath(dir);
+        mkdirSync(entry);
+        try {
+            await expect(host(dir)).rejects.toThrow();
+            expect(existsSync(serviceSocketPath(dir))).toBe(false);
+            expect(statSync(entry).isDirectory()).toBe(true);
+        } finally {
+            rmdirSync(entry);
+        }
+
+        expect((await host(dir)).status).toBe("started");
     });
 
     test("subscribe reaches onSubscribe with its own params, and emit passes the service's filter", async () => {

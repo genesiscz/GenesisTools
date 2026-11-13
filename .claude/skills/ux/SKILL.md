@@ -5,6 +5,16 @@ description: UX polish, audits and verification for GenesisTools' native macOS s
 
 # Native UX for GenesisTools
 
+## Accessibility scope
+
+Activating or testing VoiceOver or Full Keyboard Access, changing OS accessibility settings, and extended
+accessibility-only work require the user's explicit confirmation for this task. A generic UX request, instruction
+to run this skill, or request to complete every proposal or acceptance check is not that confirmation. Apply this
+boundary to reviews, plans and delegated work too. Report the checks as unrun when confirmation is absent.
+
+Keep existing accessibility IDs, labels, semantics and completed fixes. Routine code quality and ordinary authorized
+keyboard interaction or AX-based computer control remain in scope; this boundary does not disable AX automation.
+
 The bar is "shippable to someone who is not the author". Most defects found in this codebase were not hard
 problems; they were affordances nobody exercised: an icon where a preview belonged, a row where only the
 chevron reacted, a list whose last item was cut off, a permission error printed as grey text, an animation

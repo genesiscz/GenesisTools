@@ -10,13 +10,15 @@ import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
 import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { RpcError } from "@genesiscz/utils/rpc/errors";
-import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
+
 import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
+import type { SuggestionReads } from "../project-suggestions";
 import { TOOL } from "../shared";
-import type { LinkedSource } from "../sources";
-import { correctedTranscriptRead, revisionsRead, transcriptJsonView } from "../window-reads";
+import { type LinkedSource, linkedSource } from "../sources";
+import { correctedTranscriptRead, revisionsRead, timedTranscriptView } from "../window-reads";
+import { generateWordTimings, meetingWordTimingCache, type WordTimingGenerateDeps } from "../word-timings";
 import {
     MEETINGS_REFUSED,
     type MeetingsErrorCode,
@@ -53,6 +55,8 @@ export interface MeetingsCallContext {
 }
 
 export interface MeetingsHandlerDeps {
+    /** Optional isolated cache/inference dependencies for word-timing generation tests. */
+    wordTimings?: Pick<WordTimingGenerateDeps, "cache" | "modelFiles" | "infer">;
     /** The meetings store (a test passes a scratch one). */
     store?: () => MeetingStore;
     /** The transcript source of a record; tests pass a fake one, production asks the record's linked source. */
@@ -81,14 +85,22 @@ export interface MeetingsHandlerDeps {
     listenerAlive?: (pid: number) => boolean;
     /** The people directory's Contacts source (tests pass a fake, or none); darwinkit's Contacts by default. */
     contacts?: () => PeopleSource | undefined;
+    /** What the settings page's suggestions read beyond the config and the records (tests pass fakes); the sources' own
+     * folder lists and the Calendar app by default. */
+    suggestionReads?: () => SuggestionReads;
 }
 
 /**
  * A refusal: JSON-RPC error 1100 with `data.code`, the same through the socket and in-process. `data` adds what the
  * code names (`already-decided`'s entry, `unplayable`'s reason).
  */
-export function refusal(code: MeetingsErrorCode, message: string, data: Record<string, unknown> = {}): RpcError {
-    return new RpcError(MEETINGS_REFUSED, message, { ...data, code });
+export function refusal(
+    code: MeetingsErrorCode,
+    message: string,
+    data: Record<string, unknown> = {},
+    options: RpcErrorOptions = {}
+): RpcError {
+    return new RpcError(MEETINGS_REFUSED, message, { ...data, code }, options);
 }
 
 /**
@@ -101,10 +113,10 @@ export function asRefusal(error: unknown, fallback: MeetingsErrorCode = "failed"
     }
 
     if (error instanceof MeetingsConflictError || error instanceof MeetingsStateError) {
-        return refusal(error.code, error.message);
+        return refusal(error.code, error.message, {}, { cause: error });
     }
 
-    return refusal(fallback, error instanceof Error ? error.message : String(error));
+    return refusal(fallback, error instanceof Error ? error.message : String(error), {}, { cause: error });
 }
 
 /** The code of a refusal (`data.code`); undefined for a transport error (a bad param, an unknown method). */
@@ -181,6 +193,11 @@ const comments = () => import("./comment-handlers");
 const people = () => import("./people-handlers");
 const library = () => import("./library-handlers");
 
+function changedPeople<T>(value: T, context: MeetingsCallContext): T {
+    context.emit?.("people.changed", {});
+    return value;
+}
+
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
     const storeOf = deps.store ?? (() => new MeetingStore());
@@ -207,7 +224,50 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 },
                 linked: deps.linkedSource?.(record),
             });
-            return withLineEnds(transcriptJsonView(record, applied));
+            const view = timedTranscriptView(record, applied);
+            return {
+                meeting: view.meeting,
+                ...(deps.wordTimings?.cache ?? meetingWordTimingCache(record.id)).read(view.entries),
+            };
+        },
+        "meeting.wordTimings.generate": async (params, context) => {
+            const store = storeOf();
+            const record = recordOf(store, params.ref);
+            const result = await generateWordTimings(
+                {
+                    meeting: record.id,
+                    window: { fromSec: params.fromSec, toSec: params.toSec },
+                    model: params.model,
+                    language: params.language,
+                    signal: context.signal,
+                    progress: context.progress,
+                },
+                {
+                    ...deps.wordTimings,
+                    read: async () => {
+                        const current = recordOf(store, record.id);
+                        const linked = deps.linkedSource?.(current) ?? (await linkedSource(current));
+                        const { applied } = await correctedTranscriptRead({
+                            store,
+                            record: current,
+                            format: "json",
+                            flags: { dictionary: true },
+                            linked,
+                        });
+                        const evidence = await linked.source.evidence(linked.sourceMeetingId);
+                        if (!evidence?.audioPath) {
+                            throw new Error("This meeting has no source audio for word timing generation");
+                        }
+                        return {
+                            lines: timedTranscriptView(current, applied).entries,
+                            audioPath: evidence.audioPath,
+                            live: current.recording?.status === "recording" || current.recording?.status === "paused",
+                        };
+                    },
+                }
+            );
+            context.emit?.("meeting.wordTimings.changed", { meeting: record.id, revision: result.cacheRevision });
+            return result;
         },
         "meeting.revisions": (params) => {
             const store = storeOf();
@@ -224,11 +284,13 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         // The Moments load the engine and the OCR readers only when a call plays.
         "moment.plan": async (params) => (await moments()).planMomentCall(params, storeOf(), deps),
         "moment.clip": async (params, context) => (await moments()).clipMomentCall(params, context, storeOf(), deps),
+        "moment.save": async (params, context) => (await moments()).saveMomentCall(params, context, storeOf(), deps),
         "tone.preview": async (params) => (await moments()).previewTone(params, deps),
         "tone.presets": async () => (await moments()).listTonePresets(),
         "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
         "meeting.speakers": async (params) => (await reads()).readSpeakers(params, storeOf(), deps),
         "meeting.screen": async (params) => (await reads()).readScreen(params, storeOf()),
+        "meeting.timeline": async (params) => (await reads()).readTimeline(params, storeOf()),
         "meeting.waveform": async (params) => (await reads()).readWaveform(params, storeOf(), deps),
         "meetings.overview": async (params) => (await reads()).readOverview(params, storeOf()),
         "config.read": async (params) => (await reads()).readConfig(params),
@@ -241,13 +303,22 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "comment.unstage": async (params, context) =>
             (await comments()).unstageComment(params, context, storeOf(), deps),
         "comment.send": async (params, context) => (await comments()).sendComments(params, context, storeOf(), deps),
+        "comment.read": async (params, context) =>
+            (await comments()).acknowledgeComment(params, context, storeOf(), deps),
+        "comment.withdraw": async (params, context) =>
+            (await comments()).withdrawComment(params, context, storeOf(), deps),
         // The people directory loads Contacts (darwinkit) only when a call asks for people.
         "people.known": async (params) => (await people()).knownPeople(params, storeOf(), deps),
-        "people.add": async (params) => (await people()).addPerson(params, storeOf(), deps),
-        "people.hide": async (params) => (await people()).hidePerson(params, storeOf(), deps),
+        "people.meetings": async (params) => (await people()).personMeetings(params, storeOf(), deps),
+        "people.add": async (params, context) =>
+            changedPeople(await (await people()).addPerson(params, storeOf(), deps), context),
+        "people.hide": async (params, context) =>
+            changedPeople(await (await people()).hidePerson(params, storeOf(), deps), context),
         "people.planMerge": async (params) => (await people()).planPeopleMerge(params, storeOf(), deps),
-        "people.merge": async (params) => (await people()).mergePeople(params, storeOf(), deps),
-        "people.unmerge": async (params) => (await people()).unmergePeople(params, storeOf(), deps),
+        "people.merge": async (params, context) =>
+            changedPeople(await (await people()).mergePeople(params, storeOf(), deps), context),
+        "people.unmerge": async (params, context) =>
+            changedPeople(await (await people()).unmergePeople(params, storeOf(), deps), context),
         // The library (the settings page's projects, dictionary and source rules) loads its writers only when asked.
         "projects.add": async (params) => (await library()).addProject(params, deps),
         "projects.rename": async (params) => (await library()).renameKnownProject(params, storeOf(), deps),
@@ -255,22 +326,13 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "projects.labels": async (params) => (await library()).changeProjectLabels(params, deps),
         "projects.unpair": async (params) => (await library()).unpairProjects(params, deps),
         "projects.preview": async (params) => (await library()).previewProjects(params, storeOf(), deps),
+        "projects.suggestions": async () => (await library()).suggestProjectValues(storeOf(), deps),
+        "projects.meetingPeople": async (params) => (await library()).meetingPeopleOf(params, storeOf(), deps),
+        "projects.pairFromMeetings": async (params) => (await library()).pairMeetingPeople(params, storeOf(), deps),
         "dictionary.show": async (params) => (await library()).showDictionary(params, deps),
         "dictionary.add": async (params) => (await library()).addDictionaryEntry(params, deps),
         "dictionary.remove": async (params) => (await library()).removeDictionaryEntry(params, deps),
         "dictionary.test": async (params) => (await library()).testDictionaryPhrase(params, deps),
-    };
-}
-
-/** The corrected lines, each with its end (the next timed line's start), which `transcript --format json` leaves out. */
-function withLineEnds(view: ReturnType<typeof transcriptJsonView>) {
-    const lines = new TranscriptLines(view.entries);
-    return {
-        ...view,
-        entries: view.entries.map((entry, index) => {
-            const endSec = lines.end(index);
-            return endSec === undefined ? entry : { ...entry, endSec };
-        }),
     };
 }
 

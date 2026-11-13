@@ -48,7 +48,6 @@ export async function renameProject(options: {
 }): Promise<ProjectRename> {
     const { config, store, from, to } = options;
     projectNameSchema.parse(to);
-
     // Both names are checked inside the config lock: another process may add `to` or rename `from` while this waits.
     await config.update((raw) => {
         const projects = isObject(raw.projects) ? raw.projects : {};
@@ -76,31 +75,25 @@ export async function renameProject(options: {
 
     const meetings: string[] = [];
 
-    // The list is a snapshot: a meeting moved to another project since keeps that project, and is not reported. A
-    // folder step (waiting or asked) that names the old project follows the rename, so a late answer cannot bring it back.
     for (const record of store.list().filter((one) => one.project === from || folderStepNames(one, from))) {
-        let renamed = false;
-        const changed = await store.updateIf(
-            record.id,
-            { command: "projects rename", change: `project ${from} → ${to}` },
-            (next) => {
-                let stepRenamed = false;
-
-                if (next.project === from) {
-                    next.project = to;
-                    renamed = true;
-                }
-
-                if (next.assign?.folder?.project === from) {
-                    next.assign.folder.project = to;
-                    stepRenamed = true;
-                }
-
-                return renamed || stepRenamed;
+        let projectChanged = false;
+        await store.updateIf(record.id, { command: "projects rename", change: `project ${from} → ${to}` }, (next) => {
+            if (next.project !== from && !folderStepNames(next, from)) {
+                return false;
             }
-        );
 
-        if (changed && renamed) {
+            if (next.project === from) {
+                next.project = to;
+                projectChanged = true;
+            }
+
+            if (next.assign?.folder?.project === from) {
+                next.assign.folder.project = to;
+            }
+            return true;
+        });
+
+        if (projectChanged) {
             meetings.push(record.id);
         }
     }
@@ -206,44 +199,35 @@ export async function removeProject(options: {
 
     const unassigned: string[] = [];
 
-    // `using` is a snapshot taken before the config lock: a meeting moved to another project since keeps it, and only
-    // a meeting in it loses the project. A folder step (waiting or asked) that names the project is closed too, so a
-    // late answer cannot bring the removed project back.
-    const usingIds = new Set(using.map((record) => record.id));
-
-    for (const record of store.list().filter((one) => usingIds.has(one.id) || folderStepNames(one, name))) {
-        let cleared = false;
+    for (const record of store.list().filter((one) => one.project === name || folderStepNames(one, name))) {
         let withdrawn: string | undefined;
-        const changed = await store.updateIf(
-            record.id,
-            { command: "projects remove", change: `project ${name} removed` },
-            (next) => {
-                let stepClosed = false;
-
-                if (usingIds.has(next.id) && next.project === name) {
-                    next.project = undefined;
-                    cleared = true;
-                }
-
-                if (next.assign?.folder?.project === name) {
-                    withdrawn = next.assign.folder.formId;
-                    delete next.assign.folder;
-                    stepClosed = true;
-                }
-
-                return cleared || stepClosed;
+        let projectChanged = false;
+        await store.updateIf(record.id, { command: "projects remove", change: `project ${name} removed` }, (next) => {
+            if (next.project !== name && !folderStepNames(next, name)) {
+                return false;
             }
-        );
+
+            if (next.project === name) {
+                next.project = undefined;
+                projectChanged = true;
+            }
+
+            if (next.assign?.folder?.project === name) {
+                withdrawn = next.assign.folder.formId;
+                delete next.assign.folder;
+            }
+            return true;
+        });
 
         // The posted folder question names a project that is gone, and its answer would do nothing: withdraw it.
-        if (changed && withdrawn) {
+        if (withdrawn) {
             const formId = withdrawn;
             await inbox.cancel(formId).catch((err: unknown) => {
                 log.warn({ err, meeting: record.id, formId }, "the folder question could not be withdrawn");
             });
         }
 
-        if (changed && cleared) {
+        if (projectChanged) {
             unassigned.push(record.id);
         }
     }

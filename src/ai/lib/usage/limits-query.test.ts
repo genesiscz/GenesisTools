@@ -40,6 +40,7 @@ const snapshot = (name: string): AccountUsageSnapshot => ({
     accountName: name,
     fetchedAt: "2026-11-03T08:00:00.000Z",
     limits: [{ key: "seven_day", label: "Weekly", kind: "weekly", percentUsed: 40 }],
+    absentLimits: [{ key: "five_hour", kind: "session" }],
 });
 
 mock.module("@genesiscz/utils/ai/usage-poll/legacy-cache", () => ({

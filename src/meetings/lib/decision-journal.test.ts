@@ -1,16 +1,32 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
-import * as readLines from "@genesiscz/utils/fs/read-lines";
+import * as fileLines from "@genesiscz/utils/fs/read-lines";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
-import { type MeetingItem, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import {
+    type MeetingItem,
+    type MeetingRecord,
+    MeetingStore,
+    meetingRecordSchema,
+} from "@genesiscz/utils/meetings/record";
 import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { SpeakerHint } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
-import { actorOf, actorText, callerActor, DecisionJournal, decisionReach, JOURNAL_FILE } from "./decision-journal";
+import {
+    actorOf,
+    actorText,
+    callerActor,
+    DecisionJournal,
+    decisionActionSchema,
+    decisionReach,
+    JOURNAL_FILE,
+    journalEntrySchema,
+} from "./decision-journal";
+import { reviewRow } from "./review-rows";
 import { assignmentReach } from "./speaker-assign";
 import { correctTranscript } from "./transcript-corrections";
 
@@ -75,6 +91,67 @@ async function fixture(items: Record<string, unknown>[], labels: Record<string, 
 const person = { kind: "listen" } as const;
 
 describe("decision journal", () => {
+    test("reopening different tokens reads the journal once per decision", async () => {
+        const ids = ["i1", "i2", "i3"];
+        const fx = await fixture(ids.map((id, index) => term(id, 10 + index, { proposed: "ADA" })));
+        for (const id of ids) {
+            await fx.journal.apply({ meeting: fx.meeting.id, action: { kind: "confirm", items: [id] }, actor: person });
+        }
+        const reads = spyOn(fileLines, "readLinesSync");
+        try {
+            await fx.journal.apply({ meeting: fx.meeting.id, action: { kind: "reopen", items: ids }, actor: person });
+            expect(reads.mock.calls.filter(([path]) => path === fx.journal.path(fx.meeting.id))).toHaveLength(1);
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items.map((item) => item.status)).toEqual([
+                "suggested",
+                "suggested",
+                "suggested",
+            ]);
+            reads.mockClear();
+            await fx.journal.apply({ meeting: fx.meeting.id, action: { kind: "confirm", items: ids }, actor: person });
+            await fx.journal.apply({ meeting: fx.meeting.id, action: { kind: "reopen", items: ids }, actor: person });
+            expect(reads.mock.calls.filter(([path]) => path === fx.journal.path(fx.meeting.id))).toHaveLength(1);
+            expect(
+                new MeetingStore(fx.store.storage)
+                    .read(fx.meeting.id)!
+                    .items.every((item) => item.status === "suggested")
+            ).toBe(true);
+        } finally {
+            reads.mockRestore();
+        }
+    });
+
+    test("the internal observer receives committed locked snapshots and excludes the next queued write", async () => {
+        const fx = await fixture(lookAlikes());
+        const snapshots: Array<{ before: MeetingRecord; after: MeetingRecord }> = [];
+        const queued: Array<Promise<MeetingRecord>> = [];
+        const journal = new DecisionJournal({
+            store: fx.store,
+            ledger: () => {},
+            now: () => new Date(now),
+            onApplied: (snapshot) => {
+                snapshots.push(snapshot);
+                expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)).toEqual(snapshot.after);
+                queued.push(
+                    fx.store.update(fx.meeting.id, { command: "test", change: "concurrent title" }, (record) => {
+                        record.title = "Next writer";
+                    })
+                );
+            },
+        });
+        const request = { meeting: fx.meeting.id, action: { kind: "confirm", items: ["i1"] } as const, actor: person };
+        await journal.plan({ ...request, action: { kind: "confirm", items: ["i1"] } });
+        expect(snapshots).toHaveLength(0);
+        await journal.apply({ ...request, action: { kind: "confirm", items: ["i1"] } });
+        await Promise.all(queued);
+        expect(snapshots).toHaveLength(1);
+        expect(snapshots[0]?.before.items[0]?.status).toBe("suggested");
+        expect(snapshots[0]?.after.items[0]?.status).toBe("confirmed");
+        expect(snapshots[0]?.after.title).toBe("Harbor sync");
+        expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)?.title).toBe("Next writer");
+        await journal.apply({ ...request, action: { kind: "confirm", items: ["i1"] } });
+        expect(snapshots).toHaveLength(1);
+    });
+
     test('an answer that leaves its look-alikes decides only its own question (the window\'s "Only this question")', async () => {
         const fx = await fixture(lookAlikes());
         const action = { kind: "answer", question: "Q1", answer: "ADO", lookAlikes: "leave" } as const;
@@ -195,36 +272,41 @@ describe("decision journal", () => {
         expect(actorText({ kind: "unknown" })).toBe("someone, before the history existed");
     });
 
-    // eve PR #754 r2: each token's lookup read and parsed the whole journal again, under the meeting's lock, so a
-    // tokenless reopen of N items decided apart read it N times.
-    test("a reopen of items decided apart reads the journal once and puts each one back", async () => {
-        const ids = ["i1", "i2", "i3", "i4"];
-        const fx = await fixture(ids.map((id, n) => term(id, 10 * (n + 1), { proposed: "ADA" })));
-
-        for (const id of ids) {
-            await fx.journal.apply({ meeting: fx.meeting.id, action: { kind: "confirm", items: [id] }, actor: person });
-        }
-
-        const journalPath = fx.journal.path(fx.meeting.id);
-        const reads = spyOn(readLines, "readLinesSync");
-
-        try {
-            const { entry } = await fx.journal.apply({
+    test("a future journal action remains visible, cannot be undone, and does not block known decisions", async () => {
+        const fx = await fixture([term("i1", 10, { proposed: "Wiki" })]);
+        const result = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i1"] },
+            actor: person,
+        });
+        const file = fx.journal.path(fx.meeting.id);
+        appendFileSync(
+            file,
+            `${SafeJSON.stringify({
+                token: "future-token",
+                at: now,
                 meeting: fx.meeting.id,
-                action: { kind: "reopen", items: ids },
-                actor: person,
-            });
-
-            expect(entry?.changes.map((change) => change.id)).toEqual(ids);
-            expect(reads.mock.calls.filter(([path]) => path === journalPath)).toHaveLength(1);
-        } finally {
-            reads.mockRestore();
-        }
-
-        for (const id of ids) {
-            expect(fx.item(id)).toMatchObject({ status: "suggested" });
-            expect(fx.item(id)).not.toHaveProperty("decision");
-        }
+                actor: { kind: "window" },
+                action: { kind: "future-action", extra: { version: 9 } },
+                changes: [],
+            })}\n`
+        );
+        const bytes = readFileSync(file, "utf8");
+        const record = readFileSync(fx.store.path(fx.meeting.id), "utf8");
+        const entries = fx.journal.read(fx.meeting.id);
+        expect(entries).toHaveLength(2);
+        expect(entries[0]?.action).toEqual({ kind: "unsupported", name: "future-action" });
+        expect(journalEntrySchema.parse(entries[0]).action).toEqual(entries[0]?.action);
+        expect(decisionActionSchema.safeParse({ kind: "unsupported", name: "future-action" }).success).toBe(false);
+        expect(journalEntrySchema.safeParse({ ...entries[0], action: { kind: "answer" } }).success).toBe(false);
+        await expect(
+            fx.journal.revert({ meeting: fx.meeting.id, token: "future-token", actor: person })
+        ).rejects.toThrow("newer build");
+        expect(readFileSync(file, "utf8")).toBe(bytes);
+        expect(readFileSync(fx.store.path(fx.meeting.id), "utf8")).toBe(record);
+        await fx.journal.revert({ meeting: fx.meeting.id, token: result.entry!.token, actor: person });
+        expect(fx.item("i1")?.status).toBe("suggested");
+        expect(readFileSync(file, "utf8").startsWith(bytes)).toBe(true);
     });
 
     test("an item decided before the journal reads as unknown, and its old token still reopens it", async () => {
@@ -273,6 +355,137 @@ describe("decision journal", () => {
 
         await fx.journal.revert({ meeting: fx.meeting.id, token: entry!.token, actor: { kind: "window" } });
         expect(fx.item("i1")).toMatchObject({ status: "suggested", proposed: "OMP" });
+    });
+
+    test("spelling reach survives reopen, changes only selected lines and can decline dictionary teaching", async () => {
+        const fx = await fixture([term("i1", 5, { proposed: "ADA" })]);
+        const reach = {
+            lines: [
+                { atSec: 5, line: 0 },
+                { atSec: 15, line: 2 },
+            ],
+            dictionary: false,
+        };
+        const action = decisionActionSchema.parse({ kind: "confirm", items: ["i1"], reach });
+        const decided = await fx.journal.apply({ meeting: fx.meeting.id, action, actor: person });
+        const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        const transcript = [5, 10, 15].map((startSec) => ({ startSec, speaker: "Speaker 1", text: "Ada is here" }));
+        const corrected = correctTranscript({
+            record: reopened,
+            transcript,
+            config: meetingsConfigSchema.parse({}),
+            format: "json",
+            dictionary: false,
+        });
+        expect(corrected.entries.map((line) => line.text)).toEqual(["ADA is here", "Ada is here", "ADA is here"]);
+        expect(corrected.outcomes.filter((outcome) => outcome.item === "i1")).toHaveLength(1);
+        expect(corrected.outcomes.find((outcome) => outcome.item === "i1")).toMatchObject({
+            status: "applied",
+            lines: [{ index: 0 }, { index: 2 }],
+        });
+        expect(reopened.items[0]).toMatchObject({ reach });
+        expect(fx.ledger[0]).toMatchObject({ learn: false });
+        await fx.journal.revert({ meeting: fx.meeting.id, token: decided.entry!.token, actor: person });
+        expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)?.items[0]).not.toHaveProperty("reach");
+    });
+
+    test("spelling preview resolves moved line addresses and omits untimed lines", async () => {
+        const fx = await fixture([term("i1", 5, { proposed: "ADA" })]);
+        const planned = await fx.journal.plan({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i1"], reach: { lines: [{ atSec: 10, line: 1 }] } },
+            actor: person,
+        });
+        const reach = decisionReach({
+            entry: planned.entry!,
+            named: ["i1"],
+            transcript: [
+                { speaker: "Speaker 1", text: "Ada has no timestamp" },
+                { startSec: 5, speaker: "Speaker 1", text: "Ada is here" },
+                { startSec: 10, speaker: "Speaker 1", text: "Ada is there" },
+            ],
+            ledger: [],
+            repeats: 2,
+        });
+        expect(reach.spelling?.occurrences.map(({ line, selected }) => ({ line, selected }))).toEqual([
+            { line: 1, selected: false },
+            { line: 2, selected: true },
+        ]);
+    });
+
+    test("changing only spelling reach stamps a new decision and permits explicit dictionary teaching", async () => {
+        const fx = await fixture([term("i1", 5, { proposed: "ADA" })]);
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: decisionActionSchema.parse({
+                kind: "confirm",
+                items: ["i1"],
+                reach: { lines: [{ atSec: 5, line: 0 }], dictionary: false },
+            }),
+            actor: person,
+        });
+        const nextReach = {
+            lines: [
+                { atSec: 5, line: 0 },
+                { atSec: 10, line: 1 },
+            ],
+            dictionary: true,
+        };
+        const second = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: decisionActionSchema.parse({ kind: "respell", item: "i1", text: "ADA", reach: nextReach }),
+            actor: person,
+        });
+        const reopened = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(reopened.items[0]).toMatchObject({ reach: nextReach, decision: { token: second.entry!.token } });
+        expect(second.entry!.token).not.toBe(first.entry!.token);
+        expect(fx.ledger.at(-1)).toMatchObject({ scope: "line", learn: true });
+        await fx.journal.revert({ meeting: fx.meeting.id, token: second.entry!.token, actor: person });
+        expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)?.items[0]).toMatchObject({
+            reach: { lines: [{ atSec: 5, line: 0 }], dictionary: false },
+        });
+    });
+
+    test("rephrasing a question preserves its answer and targets, survives reopen, and undoes without deciding it", async () => {
+        const fx = await fixture(lookAlikes());
+        const before = fx.item("i3")!;
+        if (before.kind !== "question") {
+            throw new Error("fixture must hold a question");
+        }
+        const action = decisionActionSchema.parse({
+            kind: "rephrase",
+            question: "Q1",
+            text: "Which API was named?",
+            expectedText: "Which word (i3)?",
+        });
+        const edited = await fx.journal.apply({ meeting: fx.meeting.id, action, actor: person });
+        expect(edited.entry?.decided).toEqual([]);
+        expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)?.items.find((item) => item.id === "i3")).toEqual({
+            ...before,
+            question: "Which API was named?",
+        });
+        expect(fx.item("i1")?.status).toBe("suggested");
+        await fx.journal.revert({ meeting: fx.meeting.id, token: edited.entry!.token, actor: person });
+        expect(fx.item("i3")).toEqual(before);
+        expect(fx.events()).toEqual([]);
+        expect(fx.ledger).toEqual([]);
+    });
+
+    test("rephrasing refuses an outdated draft and undo refuses to overwrite a later wording", async () => {
+        const fx = await fixture([question("i1", { status: "confirmed", answer: "ADA" })]);
+        const apply = (text: string, expectedText: string) =>
+            fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: decisionActionSchema.parse({ kind: "rephrase", question: "i1", text, expectedText }),
+                actor: person,
+            });
+        const first = await apply("First wording?", "Which word (i1)?");
+        await expect(apply("Stale wording?", "Which word (i1)?")).rejects.toMatchObject({ code: "item-changed" });
+        await apply("Second wording?", "First wording?");
+        await expect(
+            fx.journal.revert({ meeting: fx.meeting.id, token: first.entry!.token, actor: person })
+        ).rejects.toMatchObject({ code: "item-changed" });
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", answer: "ADA", question: "Second wording?" });
     });
 
     test("a speaker rename is an entry with the label before and after, and its revert takes the name away", async () => {
@@ -359,7 +572,7 @@ describe("decision journal", () => {
         expect(fx.events()).toEqual([]);
         expect(fx.ledger).toEqual([]);
 
-        rmSync(fx.journal.path(fx.meeting.id), { recursive: true });
+        rmdirSync(fx.journal.path(fx.meeting.id));
         const { entry } = await fx.journal.apply({ meeting: fx.meeting.id, action: answer, actor: person });
         expect(entry?.decided).toEqual(["i1", "i2", "i3", "i4"]);
 
@@ -551,10 +764,11 @@ describe("decision journal", () => {
             repeats: 2,
         });
 
+        // i1 is the question's own target inside the span it asks about: the same question, not a look-alike. i2
+        // goes with the look-alike question i4 that decides it.
         expect(reach.items).toEqual([
-            { id: "i4", match: "same" },
-            { id: "i1", match: "same" },
-            { id: "i2", match: "same" },
+            { id: "i4", match: "same", role: "look-alike", after: "ADO" },
+            { id: "i1", match: "same", role: "same", before: "ADA", after: "ADO" },
         ]);
         expect(reach.lines).toBe(1);
         expect(reach.dictionary).toEqual([
@@ -740,5 +954,496 @@ describe("speaker assignments (assign)", () => {
             { label: "S1", fromSec: 0, toSec: 35, lines: 1, why: "hint-range" },
             { label: "S1", fromSec: 60, toSec: 90, lines: 1, why: "present-set" },
         ]);
+    });
+});
+
+/**
+ * A word question with a target inside its span (i1) and one outside it (i5), a look-alike over another span (i4,
+ * deciding i2) and one over the same span (i6, deciding i7).
+ */
+const transaction = () => [
+    term("i1", 50, { proposed: "ADA" }),
+    term("i2", 70, { proposed: "ADA" }),
+    term("i5", 120, { proposed: "ADA" }),
+    term("i7", 51, { proposed: "ADA" }),
+    question("i3", { decides: ["i1", "i5"] }),
+    question("i4", { fromSec: 70, toSec: 74, decides: ["i2"] }),
+    question("i6", { decides: ["i7"] }),
+];
+
+describe("a decision and what it carries are one transaction", () => {
+    test("the reach never lists the asked span again, sorts targets from look-alikes, and quotes each item", async () => {
+        const fx = await fixture(transaction());
+        const record = fx.store.read(fx.meeting.id)!;
+        const transcript: TranscriptEntry[] = [
+            { speaker: "S1", text: "ada said so", startSec: 50 },
+            { speaker: "S2", text: "ada again much later", startSec: 120 },
+        ];
+        const planned = await fx.journal.plan({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO" },
+            actor: person,
+        });
+        const reach = decisionReach({
+            entry: planned.entry!,
+            named: ["i3"],
+            record,
+            rowOf: (item) => reviewRow(record, item, transcript),
+            ledger: [],
+            repeats: 2,
+        });
+
+        expect(reach.items.map((item) => [item.id, item.role])).toEqual([
+            ["i6", "same"],
+            ["i4", "look-alike"],
+            ["i1", "same"],
+            ["i5", "sets"],
+        ]);
+        const outside = reach.items.find((item) => item.id === "i5");
+        expect(outside).toMatchObject({ before: "ADA", after: "ADO", row: { id: "i5", target: { id: "i5" } } });
+        expect(outside?.row?.parts).toContainEqual({ kind: "said", text: "ada again much later" });
+        expect(reach.items.find((item) => item.id === "i4")?.row?.label).toBe("Q2");
+    });
+
+    test("a struck target and a struck look-alike stay as they were and leave it: the Undo does not touch them", async () => {
+        const fx = await fixture(transaction());
+        const { entry } = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO", except: ["i5", "i4"] },
+            actor: person,
+        });
+
+        expect(entry).toMatchObject({ settled: ["i6"] });
+        expect(entry?.decided).not.toContain("i5");
+        expect(fx.item("i3")).toMatchObject({ status: "confirmed", decides: ["i1"] });
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADO" });
+        expect(fx.item("i7")).toMatchObject({ status: "confirmed", proposed: "ADO" });
+        expect(fx.item("i5")).toMatchObject({ status: "suggested", proposed: "ADA" });
+        expect(fx.item("i4")).toMatchObject({ status: "suggested" });
+
+        await fx.journal.revert({ meeting: fx.meeting.id, token: entry!.token, actor: person });
+
+        // One Undo takes back the answer and everything it carried, in one step.
+        for (const id of ["i1", "i3", "i6", "i7"]) {
+            expect(fx.item(id)).toMatchObject({ status: "suggested" });
+            expect(fx.item(id)).not.toHaveProperty("decision");
+        }
+
+        expect(fx.item("i3")).toMatchObject({ decides: ["i1", "i5"] });
+        expect(fx.item("i7")).toMatchObject({ proposed: "ADA" });
+        expect(fx.item("i5")).not.toHaveProperty("decision");
+    });
+
+    test("a changed answer replaces the earlier one in one entry, keeps the struck items out, and its Undo brings the earlier answer back", async () => {
+        const fx = await fixture(transaction());
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO", except: ["i5"] },
+            actor: person,
+        });
+        const change = { kind: "answer", question: "i3", answer: "ADA", replaces: first.entry!.token } as const;
+        const planned = await fx.journal.plan({ meeting: fx.meeting.id, action: change, actor: person });
+        const reach = decisionReach({
+            entry: planned.entry!,
+            named: ["i3"],
+            record: fx.store.read(fx.meeting.id)!,
+            struck: ["i5"],
+            ledger: [],
+            repeats: 2,
+        });
+
+        // The carried items are asked again with the new answer; the one struck before is struck again.
+        expect(reach.items.map((item) => [item.id, item.role, item.after, item.struck ?? false])).toEqual([
+            ["i6", "same", "ADA", false],
+            ["i4", "look-alike", "ADA", false],
+            ["i1", "same", "ADA", false],
+            ["i5", "sets", "ADA", true],
+        ]);
+
+        const second = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { ...change, except: ["i5"] },
+            actor: person,
+        });
+
+        expect(fx.item("i3")).toMatchObject({ status: "confirmed", answer: "ADA", decides: ["i1"] });
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADA" });
+        expect(fx.item("i2")).toMatchObject({ status: "confirmed", proposed: "ADA" });
+        expect(fx.item("i5")).toMatchObject({ status: "suggested" });
+        expect(fx.item("i5")).not.toHaveProperty("decision");
+        expect(fx.journal.read(fx.meeting.id).find((one) => one.token === first.entry!.token)?.revertedBy).toBe(
+            second.entry!.token
+        );
+
+        await fx.journal.revert({ meeting: fx.meeting.id, token: second.entry!.token, actor: person });
+
+        expect(fx.item("i3")).toMatchObject({ status: "confirmed", answer: "ADO", decides: ["i1"] });
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADO" });
+        // The look-alike the earlier answer settled is back on that answer too.
+        expect(fx.item("i4")).toMatchObject({ status: "confirmed", answer: "ADO" });
+        expect(fx.item("i2")).toMatchObject({ status: "confirmed", proposed: "ADO" });
+        expect(fx.item("i5")).toMatchObject({ status: "suggested", proposed: "ADA" });
+        const reopened = new DecisionJournal({ store: new MeetingStore(fx.store.storage), ledger: () => {} });
+        const history = reopened.read(fx.meeting.id);
+        expect(history.find((one) => one.token === first.entry!.token)?.revertedBy).toBeUndefined();
+        expect(history.find((one) => one.token === second.entry!.token)?.revertedBy).toBeDefined();
+        await reopened.revert({ meeting: fx.meeting.id, token: first.entry!.token, actor: person });
+        expect(
+            new MeetingStore(fx.store.storage).read(fx.meeting.id)?.items.every((one) => one.status === "suggested")
+        ).toBe(true);
+    });
+
+    test("undoing an Undo makes the restored decision live in persisted history again", async () => {
+        const fx = await fixture(lookAlikes());
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO" },
+            actor: person,
+        });
+        const undo = await fx.journal.revert({ meeting: fx.meeting.id, token: first.entry!.token, actor: person });
+        await fx.journal.revert({ meeting: fx.meeting.id, token: undo.entry!.token, actor: person });
+        const store = new MeetingStore(fx.store.storage);
+        const reopened = new DecisionJournal({ store, ledger: () => {} });
+        expect(
+            reopened.read(fx.meeting.id).find((entry) => entry.token === first.entry!.token)?.revertedBy
+        ).toBeUndefined();
+        expect(store.read(fx.meeting.id)?.items.find((item) => item.id === "i3")).toMatchObject({
+            answer: "ADO",
+            status: "confirmed",
+            decision: { token: first.entry!.token },
+        });
+    });
+
+    for (const { except, preserved } of [
+        { except: "i1", preserved: ["i1"] },
+        { except: "i4", preserved: ["i4", "i2"] },
+    ]) {
+        test(`changing an answer leaves the struck ${except} and its effects as they were`, async () => {
+            const fx = await fixture(lookAlikes());
+            const first = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: "i3", answer: "ADO" },
+                actor: person,
+            });
+            const before = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+            const second = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: {
+                    kind: "answer",
+                    question: "i3",
+                    answer: "ADA",
+                    replaces: first.entry!.token,
+                    except: [except],
+                },
+                actor: person,
+            });
+            const store = new MeetingStore(fx.store.storage);
+            const after = store.read(fx.meeting.id)!;
+            expect(after.items.find((item) => item.id === "i3")).toMatchObject({ answer: "ADA", status: "confirmed" });
+            for (const id of preserved) {
+                expect(after.items.find((item) => item.id === id)).toEqual(before.items.find((item) => item.id === id));
+                expect(second.entry?.changes.some((change) => change.id === id)).toBe(false);
+            }
+            const reopened = new DecisionJournal({ store, ledger: () => {} });
+            expect(
+                reopened.read(fx.meeting.id).find((entry) => entry.token === first.entry!.token)?.revertedBy
+            ).toBeUndefined();
+            await reopened.revert({ meeting: fx.meeting.id, token: second.entry!.token, actor: person });
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
+        });
+    }
+
+    for (const changed of ["i1", "i2"]) {
+        test(`changing an answer preserves ${changed} decided again and can itself be undone after reopening the store`, async () => {
+            const fx = await fixture(lookAlikes());
+            const first = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: "i3", answer: "ADO" },
+                actor: person,
+            });
+            await fx.journal.revert({
+                meeting: fx.meeting.id,
+                token: first.entry!.token,
+                items: [changed],
+                actor: person,
+            });
+            await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "respell", item: changed, text: "Ado" },
+                actor: person,
+            });
+            const before = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+            const action = { kind: "answer", question: "i3", answer: "ADA", replaces: first.entry!.token } as const;
+            const planned = await fx.journal.plan({ meeting: fx.meeting.id, action, actor: person });
+            expect(planned.entry?.skipped).toContainEqual(expect.objectContaining({ id: changed }));
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)).toEqual(before);
+            const second = await fx.journal.apply({ meeting: fx.meeting.id, action, actor: person });
+            const store = new MeetingStore(fx.store.storage);
+            const after = store.read(fx.meeting.id)!;
+            expect(after.items.find((item) => item.id === changed)).toEqual(
+                before.items.find((item) => item.id === changed)
+            );
+            expect(after.items.find((item) => item.id === "i3")).toMatchObject({ answer: "ADA", status: "confirmed" });
+            await new DecisionJournal({ store, ledger: () => {} }).revert({
+                meeting: fx.meeting.id,
+                token: second.entry!.token,
+                actor: person,
+            });
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
+        });
+    }
+
+    for (const { selected, preserved } of [
+        { selected: "i3", preserved: ["i4", "i2"] },
+        { selected: "i4", preserved: ["i3", "i1"] },
+    ]) {
+        test(`changing only ${selected} keeps the other earlier answer and its target`, async () => {
+            const fx = await fixture(lookAlikes());
+            const first = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "answer", question: "i3", answer: "ADO" },
+                actor: person,
+            });
+            const before = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+            const second = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: {
+                    kind: "answer",
+                    question: selected,
+                    answer: "ADA",
+                    replaces: first.entry!.token,
+                    lookAlikes: "leave",
+                },
+                actor: person,
+            });
+            const after = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+            expect(after.items.find((item) => item.id === selected)).toMatchObject({
+                answer: "ADA",
+                status: "confirmed",
+            });
+            for (const id of preserved) {
+                expect(after.items.find((item) => item.id === id)).toEqual(before.items.find((item) => item.id === id));
+                expect(second.entry?.changes.some((change) => change.id === id)).toBe(false);
+                expect(second.entry?.corrections.some((line) => line.item === id)).toBe(false);
+            }
+            await new DecisionJournal({ store: new MeetingStore(fx.store.storage), ledger: () => {} }).revert({
+                meeting: fx.meeting.id,
+                token: second.entry!.token,
+                actor: person,
+            });
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
+        });
+    }
+
+    for (const initiallyStruck of [false, true]) {
+        test(`another replacement preserves an independently decided target (initially struck: ${initiallyStruck})`, async () => {
+            const fx = await fixture(lookAlikes());
+            const first = await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: {
+                    kind: "answer",
+                    question: "i3",
+                    answer: "ADO",
+                    ...(initiallyStruck ? { except: ["i1"] } : {}),
+                },
+                actor: person,
+            });
+            if (!initiallyStruck) {
+                await fx.journal.revert({
+                    meeting: fx.meeting.id,
+                    token: first.entry!.token,
+                    items: ["i1"],
+                    actor: person,
+                });
+            }
+            await fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: { kind: "respell", item: "i1", text: "Ado" },
+                actor: person,
+            });
+            const preceding = initiallyStruck
+                ? first
+                : await fx.journal.apply({
+                      meeting: fx.meeting.id,
+                      action: { kind: "answer", question: "i3", answer: "ADA", replaces: first.entry!.token },
+                      actor: person,
+                  });
+            const store = new MeetingStore(fx.store.storage);
+            const reopened = new DecisionJournal({ store, ledger: (lines) => fx.ledger.push(...lines) });
+            const before = store.read(fx.meeting.id)!;
+            const history = readFileSync(reopened.path(fx.meeting.id), "utf8");
+            const contribution = fx.ledger.filter((line) => line.item === "i1");
+            const action = { kind: "answer", question: "i3", answer: "ADP", replaces: preceding.entry!.token } as const;
+            const plan = await reopened.plan({ meeting: fx.meeting.id, action, actor: person });
+            expect(plan.entry?.skipped).toContainEqual(expect.objectContaining({ id: "i1" }));
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)).toEqual(before);
+            expect(readFileSync(reopened.path(fx.meeting.id), "utf8")).toBe(history);
+            const next = await reopened.apply({ meeting: fx.meeting.id, action, actor: person });
+            expect(
+                new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items.find((item) => item.id === "i3")
+            ).toMatchObject({
+                answer: "ADP",
+                status: "confirmed",
+            });
+            expect(
+                new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items.find((item) => item.id === "i1")
+            ).toEqual(before.items.find((item) => item.id === "i1"));
+            expect(next.entry?.changes.some((change) => change.id === "i1")).toBe(false);
+            expect(next.entry?.corrections.some((line) => line.item === "i1")).toBe(false);
+            expect(fx.ledger.filter((line) => line.item === "i1")).toEqual(contribution);
+            await new DecisionJournal({ store: new MeetingStore(fx.store.storage), ledger: () => {} }).revert({
+                meeting: fx.meeting.id,
+                token: next.entry!.token,
+                actor: person,
+            });
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
+        });
+    }
+
+    test("a replacement can reattach an untouched suggested target", async () => {
+        const fx = await fixture(lookAlikes());
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO", except: ["i1"] },
+            actor: person,
+        });
+        await new DecisionJournal({ store: new MeetingStore(fx.store.storage), ledger: () => {} }).apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADA", replaces: first.entry!.token },
+            actor: person,
+        });
+        expect(
+            new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items.find((item) => item.id === "i1")
+        ).toMatchObject({
+            status: "confirmed",
+            proposed: "ADA",
+        });
+    });
+
+    test("a stale replacement refuses the primary question without undoing any of its current targets", async () => {
+        const fx = await fixture(lookAlikes());
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO" },
+            actor: person,
+        });
+        await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADA", replaces: first.entry!.token },
+            actor: person,
+        });
+        const before = new MeetingStore(fx.store.storage).read(fx.meeting.id);
+        const journal = readFileSync(fx.journal.path(fx.meeting.id), "utf8");
+        for (const method of ["plan", "apply"] as const) {
+            await expect(
+                fx.journal[method]({
+                    meeting: fx.meeting.id,
+                    action: { kind: "answer", question: "i3", answer: "ADO", replaces: first.entry!.token },
+                    actor: person,
+                })
+            ).rejects.toThrow("decided again");
+            expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)).toEqual(before);
+            expect(readFileSync(fx.journal.path(fx.meeting.id), "utf8")).toBe(journal);
+        }
+    });
+
+    test("a changed speaker answer does not propagate over an independently decided range", async () => {
+        const range = (id: string) => ({
+            id,
+            kind: "speaker-range",
+            status: "suggested",
+            fromSec: 50,
+            toSec: 54,
+            label: "voice",
+            speaker: "Unclear",
+            confidence: 0.7,
+            rules: [],
+            suggestedAt: now,
+        });
+        const speakerQuestion = (id: string, target: string) =>
+            question(id, {
+                about: "speaker",
+                signature: "same-voice",
+                evidence: { labels: ["voice"] },
+                choices: ["Alice", "Bob", "Casey"],
+                decides: [target],
+            });
+        const fx = await fixture([range("i1"), range("i2"), speakerQuestion("i3", "i1"), speakerQuestion("i4", "i2")]);
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "Alice" },
+            actor: person,
+        });
+        expect(first.entry?.settled).toContain("i4");
+        await fx.journal.revert({ meeting: fx.meeting.id, token: first.entry!.token, items: ["i2"], actor: person });
+        await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "respell", item: "i2", text: "Bob" },
+            actor: person,
+        });
+        const before = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        const second = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "Casey", replaces: first.entry!.token },
+            actor: person,
+        });
+        const after = new MeetingStore(fx.store.storage).read(fx.meeting.id)!;
+        expect(after.items.find((item) => item.id === "i2")).toEqual(before.items.find((item) => item.id === "i2"));
+        expect(after.items.find((item) => item.id === "i1")).toMatchObject({ speaker: "Casey" });
+        await new DecisionJournal({ store: new MeetingStore(fx.store.storage), ledger: () => {} }).revert({
+            meeting: fx.meeting.id,
+            token: second.entry!.token,
+            actor: person,
+        });
+        expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)!.items).toEqual(before.items);
+    });
+
+    test("a replacement token must name an answer that decided this question", async () => {
+        const fx = await fixture([...lookAlikes(), question("i5", { heard: "Different", choices: ["One", "Two"] })], {
+            voice: "Earlier label",
+        });
+        const rename = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "rename", label: "voice", name: "Current label" },
+            actor: person,
+        });
+        const other = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i5", answer: "One" },
+            actor: person,
+        });
+        const before = new MeetingStore(fx.store.storage).read(fx.meeting.id);
+        const history = readFileSync(fx.journal.path(fx.meeting.id), "utf8");
+        for (const token of [rename.entry!.token, other.entry!.token, "missing-token"]) {
+            for (const method of ["plan", "apply"] as const) {
+                await expect(
+                    fx.journal[method]({
+                        meeting: fx.meeting.id,
+                        action: { kind: "answer", question: "i3", answer: "ADO", replaces: token },
+                        actor: person,
+                    })
+                ).rejects.toThrow("earlier answer to this question");
+                expect(new MeetingStore(fx.store.storage).read(fx.meeting.id)).toEqual(before);
+                expect(readFileSync(fx.journal.path(fx.meeting.id), "utf8")).toBe(history);
+            }
+        }
+    });
+
+    test("an answer may replace the answer that settled it as a look-alike", async () => {
+        const fx = await fixture(lookAlikes());
+        const first = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "i3", answer: "ADO" },
+            actor: person,
+        });
+        const second = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "answer", question: "Q2", answer: "ADA", replaces: first.entry!.token },
+            actor: person,
+        });
+        expect(second.entry?.question).toBe("i4");
+        expect(
+            new MeetingStore(fx.store.storage).read(fx.meeting.id)?.items.find((one) => one.id === "i4")
+        ).toMatchObject({ answer: "ADA", status: "confirmed" });
     });
 });

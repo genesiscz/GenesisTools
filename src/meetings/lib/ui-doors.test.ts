@@ -3,18 +3,15 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileS
 import { dirname, join } from "node:path";
 import { HUB_SERVER_DOORS } from "@app/hub/server/doors";
 import { doorlessPrefix } from "@app/hub/server/doors/types";
-import { ui } from "@genesiscz/utils/cli/ui";
+import type { LinkGate } from "@genesiscz/utils/browser-router/link-gate";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
 import * as ocrBoxes from "@genesiscz/utils/macos/ocr-boxes";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { readCorrections } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
-import { Command } from "commander";
 import type { z } from "zod";
-import { registerItemCommands } from "../commands/items";
 import { captureCost } from "./capture-cost";
 import {
     applyConfigEdits,
@@ -27,16 +24,17 @@ import {
     unsetConfigValue,
 } from "./config-edit";
 import { decideItems, reopenItems } from "./decide";
-import { DecisionJournal } from "./decision-journal";
 import { testPhrase } from "./dictionary-test";
 import { exportMeeting } from "./export";
+import { appendFrameIndex } from "./frame-index";
 import { matchPreview } from "./match-preview";
 import { projectLabels, setMeetingFields } from "./meeting-fields";
 import { momentClipPath, planMoment } from "./moment";
 import { meetingBadges, meetingsOverview } from "./overview";
 import { removeProject, renameProject } from "./project-admin";
-import { screenTimeline } from "./screen-timeline";
-import { openMeetingsWindow, windowOpenArgs } from "./window";
+import { displayFocusSpans, screenTimeline } from "./screen-timeline";
+import { InProcessMeetingsClient } from "./service/client";
+import { openMeetingsWindow, playInOpenWindow, type WindowRequest, windowOpenArgs } from "./window";
 import { revisionsRead, revisionTokens } from "./window-reads";
 
 let n = 0;
@@ -260,6 +258,167 @@ describe("dictionary test", () => {
 });
 
 describe("screen timeline", () => {
+    test("focus history leaves older intervals unknown rather than extending a later observation", () => {
+        expect(
+            displayFocusSpans([
+                { meetingSec: 0 },
+                { meetingSec: 10, focusedDisplayId: 1 },
+                { meetingSec: 20 },
+                { meetingSec: 30, focusedDisplayId: 1 },
+            ])
+        ).toEqual([
+            { displayId: 1, fromSec: 10, toSec: 20 },
+            { displayId: 1, fromSec: 30 },
+        ]);
+    });
+
+    test("keeps recorded display focus through the index, pending OCR and both service reads", async () => {
+        const { meetings } = stores();
+        const record = await meetings.create(
+            { title: "Focus", start: "2026-11-05T08:00:00Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const folder = meetings.folder(record.id);
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        const image = createCanvas(20, 10).toBuffer("image/png");
+        const captured = [
+            [0, 10, 1, 1],
+            [1, 10.1, 2, 1],
+            [2, 20, 1, 2],
+            [3, 20.1, 2, 2],
+        ] as const;
+        for (const [index, second, displayId, focusedDisplayId] of captured) {
+            const file = `frames/f${index}.png`;
+            writeFileSync(join(folder, file), image);
+            appendFrameIndex(folder, {
+                file,
+                at: new Date(Date.parse(record.start) + second! * 1000),
+                displayId: displayId!,
+                focusedDisplayId: focusedDisplayId!,
+                changePercent: 0,
+                reason: "focus-change",
+            });
+        }
+        const reopened = new MeetingStore(meetings.storage).read(record.id)!;
+        const client = new InProcessMeetingsClient({ deps: { store: () => new MeetingStore(meetings.storage) } });
+        try {
+            const timeline = await client.call("meeting.timeline", { meeting: record.id });
+            expect(timeline.pending).toBe(4);
+            expect(timeline.frames.map((frame) => frame.focusedDisplayId)).toEqual([1, 1, 2, 2]);
+            expect(timeline.focusSpans).toEqual([
+                { displayId: 1, fromSec: 10, toSec: 20 },
+                { displayId: 2, fromSec: 20 },
+            ]);
+            const screen = await client.call("meeting.screen", { meeting: reopened.id });
+            expect(screen.frames.map((frame) => frame.focusedDisplayId)).toEqual([1, 1, 2, 2]);
+            writeFileSync(
+                join(folder, "ocr.jsonl"),
+                `${captured
+                    .map(([index, second, displayId]) =>
+                        SafeJSON.stringify({
+                            file: `frames/f${index}.png`,
+                            at: new Date(Date.parse(record.start) + second * 1000).toISOString(),
+                            displayId,
+                            text: "",
+                            blocks: [],
+                        })
+                    )
+                    .join("\n")}\n`
+            );
+            const afterOldWorker = await client.call("meeting.timeline", { meeting: record.id });
+            expect(afterOldWorker.pending).toBe(0);
+            expect(afterOldWorker.focusSpans).toEqual(timeline.focusSpans);
+        } finally {
+            client.close();
+        }
+    });
+
+    test("one frame turns into boxes only itself and its display's frame before it, and stops there", async () => {
+        const { meetings } = stores();
+        const created = await meetings.create(
+            { title: "Demo", start: "2026-11-05T08:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const folder = meetings.folder(created.id);
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        const canvas = createCanvas(400, 200);
+        canvas.getContext("2d").fillRect(0, 0, 400, 200);
+        const block = (text: string, y: number) => ({
+            text,
+            confidence: 1,
+            bounds: { x: 0.1, y, width: 0.5, height: 0.1 },
+        });
+        const row = (file: string, second: number, displayId: number, lines: string[]) => ({
+            file,
+            at: `2026-11-05T08:00:${String(second).padStart(2, "0")}.000Z`,
+            displayId,
+            text: lines.join("\n"),
+            blocks: lines.map((line, index) => block(line, 0.8 - index * 0.2)),
+        });
+        // Written out of time order, as two displays append: the timeline sorts by time.
+        const rows = [
+            row("frames/c-d1.png", 30, 1, ["Agenda", "Budget totals"]),
+            row("frames/a-d1.png", 10, 1, ["Agenda", "Item one"]),
+            row("frames/b-d2.png", 15, 2, ["Chat", "Hello"]),
+            row("frames/b-d1.png", 20, 1, ["Agenda", "Item two"]),
+            row("frames/d-d2.png", 25, 2, ["Chat", "Bye"]),
+            row("frames/e-d1.png", 40, 1, ["Agenda", "Item four"]),
+        ];
+
+        for (const one of rows) {
+            writeFileSync(join(folder, one.file), canvas.toBuffer("image/png"));
+        }
+
+        writeFileSync(join(folder, "ocr.jsonl"), `${rows.map((one) => SafeJSON.stringify(one)).join("\n")}\n`);
+        for (const one of rows) {
+            appendFrameIndex(folder, {
+                file: one.file,
+                at: new Date(one.at),
+                displayId: one.displayId,
+                changePercent: 0,
+                reason: "change",
+            });
+        }
+        const pending = "frames/pending-d1.png";
+        writeFileSync(join(folder, pending), canvas.toBuffer("image/png"));
+        appendFrameIndex(folder, {
+            file: pending,
+            at: new Date("2026-11-05T08:00:26.000Z"),
+            displayId: 1,
+            changePercent: 0,
+            reason: "change",
+        });
+        const whole = await screenTimeline({ store: meetings, record: created });
+        const boxes = spyOn(ocrBoxes, "frameBoxes");
+
+        try {
+            const one = await screenTimeline({ store: meetings, record: created, frame: "frames/c-d1.png" });
+
+            // b-d1 (the frame before it on display 1) and c-d1: not a-d1, display 2, or e-d1 after it.
+            expect(boxes).toHaveBeenCalledTimes(2);
+            expect(one.frames.map((frame) => frame.file)).toEqual(["frames/c-d1.png"]);
+            // The same changed lines as the whole timeline shows for it.
+            const inWhole = whole.frames.find((frame) => frame.file === "frames/c-d1.png");
+            expect(inWhole).toBeDefined();
+            expect(one.frames[0]?.changed).toEqual(inWhole?.changed ?? []);
+            expect(one.frames[0]?.changed.map((line) => line.text)).toEqual(["Budget totals"]);
+            expect(one.frames[0]?.lines?.map((line) => line.text)).toEqual(["Agenda", "Budget totals"]);
+
+            boxes.mockClear();
+            const first = await screenTimeline({ store: meetings, record: created, frame: "frames/b-d2.png" });
+            expect(boxes).toHaveBeenCalledTimes(1);
+            expect(first.frames[0]?.changed.map((line) => line.text)).toEqual(["Chat", "Hello"]);
+
+            boxes.mockClear();
+            await expect(
+                screenTimeline({ store: meetings, record: created, frame: "frames/nosuch.png" })
+            ).rejects.toThrow(`No frame "frames/nosuch.png" in ${created.id}`);
+            expect(boxes).not.toHaveBeenCalled();
+        } finally {
+            boxes.mockRestore();
+        }
+    });
+
     test("each frame keeps only the lines the same display did not show before", async () => {
         const { meetings } = stores();
         const created = await meetings.create(
@@ -306,93 +465,17 @@ describe("screen timeline", () => {
             ["Item two"],
         ]);
         expect(view.frames[1]).toMatchObject({ meetingSec: 20, width: 400, height: 200, lineCount: 2 });
-
-        // One frame by its file carries every line; a file the timeline does not hold is an error, not an empty view.
-        const one = await screenTimeline({ store: meetings, record: created, frame: rows[1]!.file });
-        expect(one.frames.map((frame) => frame.lines?.map((line) => line.text))).toEqual([["Agenda", "Item two"]]);
-        await expect(screenTimeline({ store: meetings, record: created, frame: "frames/nosuch.png" })).rejects.toThrow(
-            `No frame "frames/nosuch.png" in ${created.id}`
-        );
-    });
-
-    test("one frame turns into boxes only itself and its display's frame before it, and stops there", async () => {
-        const { meetings } = stores();
-        const created = await meetings.create(
-            { title: "Demo", start: "2026-11-05T08:00:00.000Z", createdBy: "record" },
-            { command: "test", change: "fixture" }
-        );
-        const folder = meetings.folder(created.id);
-        mkdirSync(join(folder, "frames"), { recursive: true });
-        const canvas = createCanvas(400, 200);
-        canvas.getContext("2d").fillRect(0, 0, 400, 200);
-        const block = (text: string, y: number) => ({
-            text,
-            confidence: 1,
-            bounds: { x: 0.1, y, width: 0.5, height: 0.1 },
-        });
-        const row = (file: string, second: number, displayId: number, lines: string[]) => ({
-            file,
-            at: `2026-11-05T08:00:${String(second).padStart(2, "0")}.000Z`,
-            displayId,
-            text: lines.join("\n"),
-            blocks: lines.map((line, index) => block(line, 0.8 - index * 0.2)),
-        });
-        // Written out of time order, as two displays append: the timeline sorts by time.
-        const rows = [
-            row("frames/c-d1.png", 30, 1, ["Agenda", "Budget totals"]),
-            row("frames/a-d1.png", 10, 1, ["Agenda", "Item one"]),
-            row("frames/b-d2.png", 15, 2, ["Chat", "Hello"]),
-            row("frames/b-d1.png", 20, 1, ["Agenda", "Item two"]),
-            row("frames/d-d2.png", 25, 2, ["Chat", "Bye"]),
-            row("frames/e-d1.png", 40, 1, ["Agenda", "Item four"]),
-        ];
-
-        for (const one of rows) {
-            writeFileSync(join(folder, one.file), canvas.toBuffer("image/png"));
-        }
-
-        writeFileSync(join(folder, "ocr.jsonl"), `${rows.map((one) => SafeJSON.stringify(one)).join("\n")}\n`);
-        const whole = await screenTimeline({ store: meetings, record: created });
-        const boxes = spyOn(ocrBoxes, "frameBoxes");
-
+        const client = new InProcessMeetingsClient({ deps: { store: () => meetings } });
         try {
-            const one = await screenTimeline({ store: meetings, record: created, frame: "frames/c-d1.png" });
-
-            // b-d1 (the frame before it on display 1) and c-d1: not a-d1, display 2, or e-d1 after it.
-            expect(boxes).toHaveBeenCalledTimes(2);
-            expect(one.frames.map((frame) => frame.file)).toEqual(["frames/c-d1.png"]);
-            // The same changed lines as the whole timeline shows for it.
-            const inWhole = whole.frames.find((frame) => frame.file === "frames/c-d1.png");
-            expect(inWhole).toBeDefined();
-            expect(one.frames[0]?.changed).toEqual(inWhole?.changed ?? []);
-            expect(one.frames[0]?.changed.map((line) => line.text)).toEqual(["Budget totals"]);
-
-            boxes.mockClear();
-            const first = await screenTimeline({ store: meetings, record: created, frame: "frames/b-d2.png" });
-            expect(boxes).toHaveBeenCalledTimes(1);
-            expect(first.frames[0]?.changed.map((line) => line.text)).toEqual(["Chat", "Hello"]);
-
-            boxes.mockClear();
-            await expect(
-                screenTimeline({ store: meetings, record: created, frame: "frames/nosuch.png" })
-            ).rejects.toThrow(`No frame "frames/nosuch.png" in ${created.id}`);
-            expect(boxes).not.toHaveBeenCalled();
+            const typed = await client.call("meeting.timeline", { meeting: created.id });
+            expect(typed).toEqual(view);
+            const selected = await client.call("meeting.timeline", { meeting: created.id, frame: rows[1].file });
+            expect(selected.frames).toHaveLength(1);
+            expect(selected.frames[0]?.lines?.map((box) => box.text)).toEqual(["Agenda", "Item two"]);
+            const all = await client.call("meeting.timeline", { meeting: created.id, all: true });
+            expect(all.frames.every((frame) => frame.lines?.length === 2)).toBe(true);
         } finally {
-            boxes.mockRestore();
-        }
-    });
-});
-
-describe("Meetings service boundary", () => {
-    test("the resident hub has no Meetings door; the dedicated service owns those reads", () => {
-        expect(HUB_SERVER_DOORS.filter((door) => door.command[0] === "meetings")).toEqual([]);
-    });
-
-    test("a screen read always goes to the process, so a remote source cannot run inside the resident hub", () => {
-        for (const ref of ["last", "fixture-record", "wisprflow:fixture-call"]) {
-            expect(doorlessPrefix(["meetings", "screen", ref, "--timeline", "--json"], HUB_SERVER_DOORS)).toEqual([
-                "meetings",
-            ]);
+            client.close();
         }
     });
 });
@@ -456,16 +539,23 @@ describe("window revisions", () => {
             writeFileSync(path, "RIFF");
         };
 
-        // The first play makes moments/, which changed the meeting folder's own identity: it must change no token either.
         const before = await revisionsRead({ store: meetings, record: created });
         clip(0, 2);
-
         expect(await revisionsRead({ store: meetings, record: created })).toEqual(before);
-
-        // A later play adds a clip beside it.
         clip(1, 3);
 
         expect(await revisionsRead({ store: meetings, record: created })).toEqual(before);
+    });
+
+    test("word evidence invalidates only the transcript and unknown evidence forces a read", () => {
+        const facts = { meeting: "m1", recordFile: 1, config: 2, source: "r1", screen: [3], transcriptEvidence: "w1" };
+        const first = revisionTokens(facts);
+        const changed = revisionTokens({ ...facts, transcriptEvidence: "w2" });
+        expect(changed.transcript).not.toBe(first.transcript);
+        expect(changed.speakers).toBe(first.speakers);
+        expect(changed.timeline).toBe(first.timeline);
+        expect(changed.show).toBe(first.show);
+        expect(revisionTokens({ ...facts, transcriptEvidence: null }).transcript).toBeNull();
     });
 
     test("the timeline token holds the source's revision, which sets the timeline's clock", () => {
@@ -479,6 +569,24 @@ describe("window revisions", () => {
     });
 });
 
+/** Router facts are part of the export fixture, never this Mac's app, browser profiles or link host. */
+function exportFixture(options: Parameters<typeof exportMeeting>[0]) {
+    const linkGate: LinkGate = {
+        version: 2,
+        at: Date.now(),
+        configMtimeMs: 0,
+        installed: true,
+        defaultHandler: true,
+        httpsHandler: "com.example.router",
+        configured: true,
+        linkHost: "links.example",
+        presets: {
+            "meetings-play": { available: true, enabled: true, routed: true, missing: [] },
+        },
+    };
+    return exportMeeting({ ...options, linkGate });
+}
+
 describe("export", () => {
     test("writes the polished transcript to the project's folder and replaces it on the next export", async () => {
         const { meetings } = stores();
@@ -491,18 +599,21 @@ describe("export", () => {
         const transcript = [{ startSec: 5, speaker: "Alice", text: "We ship on Friday." }];
 
         await expect(
-            exportMeeting({ store: meetings, record: { ...created, project: undefined }, config, transcript })
+            exportFixture({ store: meetings, record: { ...created, project: undefined }, config, transcript })
         ).rejects.toThrow("has no project");
 
-        const dry = await exportMeeting({ store: meetings, record: created, config, transcript, dryRun: true });
+        const dry = await exportFixture({ store: meetings, record: created, config, transcript, dryRun: true });
         expect(dry).toMatchObject({ written: false, replaced: false });
         expect(existsSync(dry.path)).toBe(false);
 
-        const first = await exportMeeting({ store: meetings, record: created, config, transcript });
+        const first = await exportFixture({ store: meetings, record: created, config, transcript });
         expect(first.path).toBe(join(target, `${created.id}.md`));
         expect(readFileSync(first.path, "utf8")).toContain("We ship on Friday.");
+        expect(readFileSync(first.path, "utf8")).toContain(
+            `https://links.example/meetings/play?meeting=${created.id}&at=00%3A05`
+        );
 
-        const second = await exportMeeting({ store: meetings, record: created, config, transcript });
+        const second = await exportFixture({ store: meetings, record: created, config, transcript });
         expect(second).toMatchObject({ written: true, replaced: true, action: "replace" });
     });
 
@@ -528,7 +639,7 @@ describe("export", () => {
         mkdirSync(target, { recursive: true });
         symlinkSync(outside, join(target, `${created.id}.md`));
 
-        await expect(exportMeeting({ store: meetings, record: created, config, transcript })).rejects.toMatchObject({
+        await expect(exportFixture({ store: meetings, record: created, config, transcript })).rejects.toMatchObject({
             code: "export-unsafe-path",
         });
         expect(readFileSync(outside, "utf8")).toBe("OUTSIDE NOTE");
@@ -537,21 +648,21 @@ describe("export", () => {
 
     test("an edited note survives the next export: the new one goes beside it, or the export refuses", async () => {
         const { meetings, created, config, transcript } = await exported("work");
-        const first = await exportMeeting({ store: meetings, record: created, config, transcript });
+        const first = await exportFixture({ store: meetings, record: created, config, transcript });
         writeFileSync(first.path, `${readFileSync(first.path, "utf8")}\nMANUAL EDIT MUST SURVIVE\n`);
 
-        const second = await exportMeeting({ store: meetings, record: created, config, transcript });
+        const second = await exportFixture({ store: meetings, record: created, config, transcript });
         expect(readFileSync(first.path, "utf8")).toContain("MANUAL EDIT MUST SURVIVE");
         expect(second).toMatchObject({ written: true, replaced: false, action: "beside", kept: first.path });
         expect(second.path).not.toBe(first.path);
         expect(readFileSync(second.path, "utf8")).toContain("Northwind signs on Monday.");
 
         await expect(
-            exportMeeting({ store: meetings, record: created, config, transcript, ifEdited: "refuse" })
+            exportFixture({ store: meetings, record: created, config, transcript, ifEdited: "refuse" })
         ).rejects.toMatchObject({ code: "export-edited" });
         expect(readFileSync(first.path, "utf8")).toContain("MANUAL EDIT MUST SURVIVE");
 
-        const forced = await exportMeeting({
+        const forced = await exportFixture({
             store: meetings,
             record: created,
             config,
@@ -562,18 +673,18 @@ describe("export", () => {
         expect(readFileSync(first.path, "utf8")).not.toContain("MANUAL EDIT MUST SURVIVE");
 
         // The replaced note is the export's own again, so the next export replaces it without asking.
-        const again = await exportMeeting({ store: meetings, record: created, config, transcript, ifEdited: "refuse" });
+        const again = await exportFixture({ store: meetings, record: created, config, transcript, ifEdited: "refuse" });
         expect(again).toMatchObject({ path: first.path, action: "replace" });
     });
 
     test("the config decides what an export does with an edited note", async () => {
         const { meetings, created, config, transcript } = await exported("work", "refuse");
-        const first = await exportMeeting({ store: meetings, record: created, config, transcript });
+        const first = await exportFixture({ store: meetings, record: created, config, transcript });
         writeFileSync(first.path, "MANUAL EDIT");
 
-        const dry = await exportMeeting({ store: meetings, record: created, config, transcript, dryRun: true });
+        const dry = await exportFixture({ store: meetings, record: created, config, transcript, dryRun: true });
         expect(dry).toMatchObject({ written: false, action: "refuse" });
-        await expect(exportMeeting({ store: meetings, record: created, config, transcript })).rejects.toMatchObject({
+        await expect(exportFixture({ store: meetings, record: created, config, transcript })).rejects.toMatchObject({
             code: "export-edited",
         });
         expect(readFileSync(first.path, "utf8")).toBe("MANUAL EDIT");
@@ -581,6 +692,52 @@ describe("export", () => {
 });
 
 describe("capture cost", () => {
+    for (const indexed of [false, true]) {
+        test(`missing legacy change values are not measured as zero (indexed frames: ${indexed})`, async () => {
+            const { meetings } = stores();
+            const created = await meetings.create(
+                {
+                    title: "Planning",
+                    start: "2026-11-05T08:00:00.000Z",
+                    createdBy: "record",
+                    recording: {
+                        frames: 2,
+                        spans: [{ from: "2026-11-05T08:00:00.000Z", to: "2026-11-05T08:01:00.000Z" }],
+                    },
+                },
+                { command: "test", change: "mixed recording" }
+            );
+            const folder = meetings.folder(created.id);
+            writeFileSync(
+                join(folder, "ocr.jsonl"),
+                `${SafeJSON.stringify({ file: "frames/old.jpg", at: created.start, text: "Planning" })}\n`
+            );
+            writeFileSync(join(folder, "frames.jsonl"), "");
+            if (indexed) {
+                appendFrameIndex(folder, {
+                    file: "frames/new.jpg",
+                    at: new Date("2026-11-05T08:00:30.000Z"),
+                    displayId: 1,
+                    changePercent: 20,
+                    reason: "change",
+                });
+            }
+            const reopened = new MeetingStore(meetings.storage);
+            const cost = captureCost({
+                store: reopened,
+                records: reopened.list(),
+                config: meetingsConfigSchema.parse({}),
+            });
+            if (indexed) {
+                expect(cost.threshold.every((choice) => choice.keptShare === 1)).toBe(true);
+                expect(cost.thresholdNote).toBeUndefined();
+            } else {
+                expect(cost.threshold.every((choice) => choice.keptShare === undefined)).toBe(true);
+                expect(cost.thresholdNote).toContain("not measured");
+            }
+        });
+    }
+
     test("the maximum scales with fps and displays; the observed rate comes from the newest real recording", () => {
         const { meetings } = stores();
         const config = meetingsConfigSchema.parse({});
@@ -668,56 +825,6 @@ describe("reopen", () => {
         expect((await reopenItems({ store: meetings, record: saved ?? created, ids: ["i1"] })).skipped).toEqual([
             { id: "i1", reason: "it is not decided" },
         ]);
-    });
-
-    // A rename entry changes labels and no item, so an Undo that had to name items could never give the name back.
-    test("reopen --token with no items undoes a speaker rename; without a token it still needs the items", async () => {
-        // The command reads the default store, which the test preload keeps in a sandbox.
-        const store = new MeetingStore();
-        const created = await store.create(
-            { title: "Harbor sync", start: "2026-11-05T10:00:00.000Z", createdBy: "new", speakers: { labels: {} } },
-            { command: "test", change: "fixture" }
-        );
-        const renamed = await new DecisionJournal({ store }).apply({
-            meeting: created.id,
-            action: { kind: "rename", label: "S1", name: "Dana Example" },
-            actor: { kind: "cli" },
-        });
-        expect(store.read(created.id)?.speakers.labels).toEqual({ S1: "Dana Example" });
-
-        const printed: string[] = [];
-        const errors: string[] = [];
-        const result = spyOn(out, "result").mockImplementation((text: string) => {
-            printed.push(text);
-        });
-        const err = spyOn(ui, "err").mockImplementation((line: string) => {
-            errors.push(line);
-        });
-
-        try {
-            const run = async (...args: string[]) => {
-                const program = new Command().exitOverride();
-                registerItemCommands(program);
-                await program.parseAsync(args, { from: "user" });
-            };
-
-            await run("reopen", created.id);
-            expect(errors).toEqual([
-                "Name the items to reopen (i1 i2 …), or undo a whole decision with --token <token>.",
-            ]);
-
-            await run("reopen", created.id, "--token", renamed.entry!.token, "--json");
-        } finally {
-            result.mockRestore();
-            err.mockRestore();
-            process.exitCode = 0;
-        }
-
-        expect(errors).toHaveLength(1);
-        expect(store.read(created.id)?.speakers.labels).toEqual({});
-        expect(SafeJSON.parse(printed[0]!)).toMatchObject({
-            entry: { action: { kind: "revert", token: renamed.entry!.token }, labels: [{ label: "S1" }] },
-        });
     });
 });
 
@@ -887,6 +994,28 @@ describe("window", () => {
     });
 });
 
+test("routed playback uses an open window and preserves every Moment option", async () => {
+    const opened: WindowRequest[] = [];
+    const params = {
+        meeting: "m1",
+        target: { kind: "time" as const, atSec: 12 },
+        tone: false,
+        padSec: 1,
+        padAfterSec: 3,
+        lengthSec: 5,
+        screen: false,
+    };
+    const open = async (request: WindowRequest) => {
+        opened.push(request);
+    };
+    expect(await playInOpenWindow(params, { running: () => false, open })).toBe(false);
+    expect(opened).toEqual([]);
+    expect(await playInOpenWindow(params, { running: () => true, open })).toBe(true);
+    expect(opened).toEqual([{ meeting: "m1", play: params }]);
+    const args = windowOpenArgs(opened[0]!, "/A.app");
+    expect(SafeJSON.parse(args[args.indexOf("--play-request") + 1], { strict: true })).toEqual(params);
+});
+
 /** MU11: a project can be renamed everywhere it is named, and removed with a backup. */
 describe("projects rename and remove", () => {
     async function withProject() {
@@ -900,43 +1029,6 @@ describe("projects rename and remove", () => {
         );
         return { config, meetings, used: used.id };
     }
-
-    test("a rename moves the block, the folder pairing and the meetings' project", async () => {
-        const { config, meetings, used } = await withProject();
-        const result = await renameProject({ config, store: meetings, from: "wrok", to: "work" });
-        const read = await config.read();
-
-        expect(result.meetings).toEqual([used]);
-        expect(read.projects.wrok).toBeUndefined();
-        expect(read.projects.work?.labels).toEqual(["Checkout 2.0"]);
-        expect(read.sources.wisprflow.match.work?.folders).toEqual(["Work"]);
-        expect(meetings.read(used)?.project).toBe("work");
-        await expect(renameProject({ config, store: meetings, from: "work", to: "work" })).rejects.toThrow(
-            "exists already"
-        );
-    });
-
-    test("a project meetings use is refused unless --unassign, and the removed block is kept", async () => {
-        const { config, meetings, used } = await withProject();
-        const backupRoot = join(meetings.root, "..", "backups");
-
-        await expect(removeProject({ config, store: meetings, name: "wrok", backupRoot })).rejects.toThrow(used);
-        // The window offers the unassigning removal on this code, never on the sentence's words.
-        await expect(removeProject({ config, store: meetings, name: "wrok", backupRoot })).rejects.toMatchObject({
-            code: "project-in-use",
-        });
-
-        const result = await removeProject({ config, store: meetings, name: "wrok", unassign: true, backupRoot });
-        const kept = SafeJSON.parse(readFileSync(result.backup, "utf8"));
-
-        expect((await config.read()).projects.wrok).toBeUndefined();
-        expect(meetings.read(used)?.project).toBeUndefined();
-        expect(kept).toMatchObject({
-            project: "wrok",
-            block: { labels: ["Checkout 2.0"] },
-            sources: { wisprflow: { folders: ["Work"] } },
-        });
-    });
 
     test("a rename checks both names inside the config lock, so a name taken meanwhile is never overwritten", async () => {
         const { config, meetings } = await withProject();
@@ -1006,6 +1098,39 @@ describe("projects rename and remove", () => {
         expect(second.backup).not.toBe(first.backup);
         expect(SafeJSON.parse(readFileSync(first.backup, "utf8"))).toMatchObject({ block: { labels: ["First"] } });
         expect(SafeJSON.parse(readFileSync(second.backup, "utf8"))).toMatchObject({ block: { labels: ["Second"] } });
+    });
+
+    test("a rename moves the block, the folder pairing and the meetings' project", async () => {
+        const { config, meetings, used } = await withProject();
+        const result = await renameProject({ config, store: meetings, from: "wrok", to: "work" });
+        const read = await config.read();
+
+        expect(result.meetings).toEqual([used]);
+        expect(read.projects.wrok).toBeUndefined();
+        expect(read.projects.work?.labels).toEqual(["Checkout 2.0"]);
+        expect(read.sources.wisprflow.match.work?.folders).toEqual(["Work"]);
+        expect(meetings.read(used)?.project).toBe("work");
+        await expect(renameProject({ config, store: meetings, from: "work", to: "work" })).rejects.toThrow(
+            "exists already"
+        );
+    });
+
+    test("a project meetings use is refused unless --unassign, and the removed block is kept", async () => {
+        const { config, meetings, used } = await withProject();
+        const backupRoot = join(meetings.root, "..", "backups");
+
+        await expect(removeProject({ config, store: meetings, name: "wrok", backupRoot })).rejects.toThrow(used);
+
+        const result = await removeProject({ config, store: meetings, name: "wrok", unassign: true, backupRoot });
+        const kept = SafeJSON.parse(readFileSync(result.backup, "utf8"));
+
+        expect((await config.read()).projects.wrok).toBeUndefined();
+        expect(meetings.read(used)?.project).toBeUndefined();
+        expect(kept).toMatchObject({
+            project: "wrok",
+            block: { labels: ["Checkout 2.0"] },
+            sources: { wisprflow: { folders: ["Work"] } },
+        });
     });
 
     test("a waiting folder step follows a rename and closes on a removal, so no answer brings the old name back", async () => {
@@ -1133,5 +1258,19 @@ describe("the suggestions badge counts what a bulk confirm can take (R2-MC13)", 
         });
 
         expect(meetingBadges(meeting, 0.5)).toMatchObject({ suggestedAboveApply: 2, suggested: 5 });
+    });
+});
+
+describe("Meetings service boundary", () => {
+    test("the resident hub has no Meetings door; the dedicated service owns those reads", () => {
+        expect(HUB_SERVER_DOORS.filter((door) => door.command[0] === "meetings")).toEqual([]);
+    });
+
+    test("a screen read always goes to the process, so a remote source cannot run inside the resident hub", () => {
+        for (const ref of ["last", "fixture-record", "wisprflow:fixture-call"]) {
+            expect(doorlessPrefix(["meetings", "screen", ref, "--timeline", "--json"], HUB_SERVER_DOORS)).toEqual([
+                "meetings",
+            ]);
+        }
     });
 });

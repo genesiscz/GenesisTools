@@ -24,6 +24,20 @@ struct TranscriptSelection: Equatable, Hashable {
         return start == end ? start : "\(start) to \(end)"
     }
 
+    static func words(_ line: TranscriptBlockLine, range: NSRange) -> TranscriptSelection? {
+        let count = line.text.utf16.count
+        guard let second = line.startSec, count > 0, range.length > 0,
+              range.location <= count, range.length <= count - range.location,
+              let indices = Range(range, in: line.text) else { return nil }
+        let quote = String(line.text[indices])
+        guard quote.utf16.count == range.length,
+              line.text[..<indices.lowerBound].utf16.count == range.location else { return nil }
+        return TranscriptSelection(
+            from: LinePoint(atSec: second, line: line.index, fraction: Double(range.location) / Double(count)),
+            to: LinePoint(atSec: second, line: line.index, fraction: Double(range.location + range.length) / Double(count)),
+            quote: quote)
+    }
+
     /// The selection of whole lines, from the first line's start to the last line's start (fraction 1).
     static func lines(_ lines: [TranscriptBlockLine]) -> TranscriptSelection? {
         let sorted = lines.sorted { $0.index < $1.index }
@@ -46,7 +60,14 @@ struct SelectionPopover: View {
     let stage: (TranscriptSelection, String) -> Void
     /// Plays a Moment of the selection: the target and the length (G62).
     let clip: (MomentTarget, Double) -> Void
+    /// Plays the whole selection, from its first line to the end of its last; nil hides "Play selection".
+    var playAll: ((MomentTarget) -> Void)? = nil
+    var saveClip: ((TranscriptSelection, Double) -> Void)? = nil
+    var savingClip = false
     var close: () -> Void = {}
+
+    /// Words that start a comment of a usual kind: a click writes them, the reader types the rest.
+    static let starters = ["Fix the speaker", "Make this a question", "Add to glossary"]
 
     @State private var commenting = false
     @State private var text = ""
@@ -87,6 +108,34 @@ struct SelectionPopover: View {
             .padding(.horizontal, 6).frame(minHeight: 24)
             .instantTooltip("Play \(MeetingsFormat.seconds(clipLengthSec)) from \(MeetingsFormat.clock(selection.fromSec))")
             .accessibilityLabel("Clip \(MeetingsFormat.seconds(clipLengthSec)) from \(MeetingsFormat.clock(selection.fromSec))")
+            if let saveClip {
+                Button { saveClip(selection, clipLengthSec) } label: {
+                    Label(savingClip ? "Saving…" : "Save clip", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.genHoverPlain())
+                .padding(.horizontal, 6).frame(minHeight: 24)
+                .disabled(savingClip)
+                .instantTooltip("Save this audio under the meeting and add it to Context")
+                .accessibilityIdentifier("meetings.selection.saveClip")
+            }
+            if let playAll {
+                Button { playAll(selection.target) } label: {
+                    Label("Play selection", systemImage: "play.fill")
+                }
+                .buttonStyle(.genHoverPlain())
+                .padding(.horizontal, 6).frame(minHeight: 24)
+                .instantTooltip("Play \(selection.rangeText), every selected line to its end")
+            }
+            Divider().frame(height: 16)
+            Button {
+                Clipboard.copy(selection.quote, what: "the selected lines")
+                close()
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(.genHoverPlain())
+            .padding(.horizontal, 6).frame(minHeight: 24)
+            .instantTooltip("Copy the words of \(selection.rangeText)")
         }
         .font(.system(size: 12.5))
     }
@@ -97,6 +146,14 @@ struct SelectionPopover: View {
                 Badge(selection.rangeText, color: .purple, look: .tone, monospaced: true)
                 Text(verbatim: "“\(selection.quote)”")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+            }
+            WrapLayout(spacing: 6, lineSpacing: 6) {
+                ForEach(Self.starters, id: \.self) { starter in
+                    KitButton(starter, size: .small, tooltip: "Start the comment with “\(starter):”") {
+                        text = Self.started(text, with: starter)
+                        fieldFocused = true
+                    }
+                }
             }
             TextField("Comment for the listening agent", text: $text, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
@@ -112,13 +169,22 @@ struct SelectionPopover: View {
                 Button("Stage", action: submit)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(trimmed.isEmpty)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.genPrimary())
             }
         }
         .onAppear { fieldFocused = true }
     }
 
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// The comment with `starter` before it. Another starter that stood there is replaced, so two clicks do not stack.
+    static func started(_ text: String, with starter: String) -> String {
+        var rest = text
+        for other in starters where rest.hasPrefix("\(other): ") {
+            rest = String(rest.dropFirst(other.count + 2))
+        }
+        return "\(starter): \(rest)"
+    }
 
     private func submit() {
         guard !trimmed.isEmpty else { return }
@@ -136,7 +202,7 @@ enum CommentDelivery: Equatable {
     case sent(comments: Int, listeners: Int)
     case failed(message: String)
 
-    /// "Sent 3 comments to 1 listener", "Nobody listens: 3 comments stay staged", "Sending 2 comments…".
+    /// "Sent 3 comments to 1 listener", "Nobody is listening. Kept 3 comments staged.", "Sending 2 comments…".
     var text: String? {
         switch self {
         case .idle:
@@ -144,7 +210,7 @@ enum CommentDelivery: Equatable {
         case .sending(let count):
             return "Sending \(Plural.count(count, "comment"))…"
         case .sent(let comments, let listeners):
-            if listeners == 0 { return "Nobody listens: \(Plural.count(comments, "comment")) stay staged" }
+            if listeners == 0 { return "Nobody is listening. Kept \(Plural.count(comments, "comment")) staged." }
             return "Sent \(Plural.count(comments, "comment")) to \(Plural.count(listeners, "listener"))"
         case .failed(let message):
             return "Not sent: \(message). The comments stay staged."
@@ -233,12 +299,12 @@ struct StagedCommentsBar: View {
                 Button(action: send) {
                     Label(Self.sendTitle(count: comments.count, listeners: listeners.count), systemImage: "paperplane")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.genPrimary())
                 .disabled(comments.isEmpty || listeners.isEmpty || isSending)
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
                 .instantTooltip(listeners.isEmpty
                     ? "Nobody runs tools meetings listen on this meeting. The comments stay staged."
-                    : "Sends every staged comment as one message. A sent comment cannot be taken back.")
+                    : "Sends every staged comment as one message. An unread comment can be withdrawn.")
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 8)

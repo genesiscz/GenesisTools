@@ -20,6 +20,7 @@ import { choosePlayer, PLAYERS, pastTheEnd, pickPlayer, playbackPlan } from "../
 import { withMeetingsClient } from "../lib/service/client";
 import { MeetingsServiceError } from "../lib/service/handlers";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { playInOpenWindow } from "../lib/window";
 
 const { log } = logger.scoped("meetings-play");
 
@@ -29,9 +30,17 @@ interface PlayOptions {
     item?: string;
     target?: string;
     clip?: boolean;
+    save?: boolean;
+    title?: string;
+    quote?: string;
     moment?: boolean;
+    window?: boolean;
     before?: string;
-    tone?: string;
+    padBefore?: string;
+    padAfter?: string;
+    length?: string;
+    screen?: boolean;
+    tone?: string | false;
     player?: string;
     json?: boolean;
     start?: boolean;
@@ -91,7 +100,7 @@ function wanted(opts: PlayOptions): { target: MomentTarget } | { atSec: number }
     }
 
     if (opts.to === undefined) {
-        return opts.clip || opts.moment ? { target: { kind: "time", atSec } } : { atSec };
+        return opts.clip || opts.save || opts.moment ? { target: { kind: "time", atSec } } : { atSec };
     }
 
     const toSec = parseClock(opts.to);
@@ -150,7 +159,7 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
         return;
     }
 
-    const tone = opts.tone === undefined ? undefined : toneFlag(opts.tone);
+    const tone = typeof opts.tone === "string" ? toneFlag(opts.tone) : undefined;
 
     if (tone && "error" in tone) {
         fail(tone.error);
@@ -158,10 +167,56 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
     }
 
     const toneSound = tone?.sound;
+    const overrides: { padSec?: number; padAfterSec?: number; lengthSec?: number; screen?: false } = {};
+    for (const [flag, value, key] of [
+        ["--pad-before", opts.padBefore, "padSec"],
+        ["--pad-after", opts.padAfter, "padAfterSec"],
+        ["--length", opts.length, "lengthSec"],
+    ] as const) {
+        if (value === undefined) {
+            continue;
+        }
+
+        const parsed = seconds(value);
+        if (parsed === undefined || (key === "lengthSec" && parsed === 0)) {
+            fail(`${flag} needs ${key === "lengthSec" ? "a positive" : "a non-negative"} number of seconds.`);
+            return;
+        }
+
+        overrides[key] = parsed;
+    }
+
+    if (opts.screen === false) {
+        overrides.screen = false;
+    }
+
+    if (opts.save) {
+        const saved = await withMeetingsClient((client) =>
+            client.call("moment.save", {
+                meeting: record.id,
+                target,
+                ...overrides,
+                ...(toneSound ? { toneSound, tone: true } : {}),
+                ...(opts.tone === false ? { tone: false } : {}),
+                ...(opts.title ? { title: opts.title } : {}),
+                ...(opts.quote ? { quote: opts.quote } : {}),
+            })
+        );
+        opts.json
+            ? out.result(SafeJSON.stringify(saved, null, 2))
+            : ui.ok(`Saved ${saved.entry.title}: ${saved.clip.path}`);
+        return;
+    }
 
     if (opts.start === false) {
         const planned = await withMeetingsClient((client) =>
-            client.call("moment.plan", { meeting: record.id, target, ...(toneSound ? { toneSound } : {}) })
+            client.call("moment.plan", {
+                meeting: record.id,
+                target,
+                ...(toneSound ? { toneSound } : {}),
+                ...(opts.tone === false ? { tone: false } : {}),
+                ...overrides,
+            })
         );
 
         if (!planned.moment) {
@@ -170,6 +225,22 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
         }
 
         opts.json ? out.result(SafeJSON.stringify(planned.moment, null, 2)) : out.println(momentLine(planned.moment));
+        return;
+    }
+
+    if (
+        opts.window &&
+        !opts.clip &&
+        !opts.json &&
+        opts.player === undefined &&
+        (await playInOpenWindow({
+            meeting: record.id,
+            target,
+            ...(toneSound ? { toneSound } : {}),
+            ...(opts.tone === false ? { tone: false } : {}),
+            ...overrides,
+        }))
+    ) {
         return;
     }
 
@@ -199,9 +270,18 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
     }
 
     const cut = await withMeetingsClient((client) =>
-        client.call("moment.clip", { meeting: record.id, target, ...(toneSound ? { toneSound } : {}) })
+        client.call("moment.clip", {
+            meeting: record.id,
+            target,
+            ...(toneSound ? { toneSound } : {}),
+            ...(opts.tone === false ? { tone: false } : {}),
+            ...overrides,
+        })
     );
 
+    if (cut.tone?.sound.fallback && !opts.json) {
+        ui.warn(cut.tone.sound.fallback);
+    }
     if (!player) {
         opts.json ? out.result(SafeJSON.stringify(cut, null, 2)) : ui.ok(`Cut ${momentLine(cut)}: ${cut.path}`);
         return;
@@ -217,6 +297,14 @@ async function playMoment(record: MeetingRecord, target: MomentTarget, opts: Pla
 }
 
 async function play(ref: string, opts: PlayOptions): Promise<void> {
+    if (opts.save && (opts.clip || opts.start === false || opts.window || opts.player !== undefined)) {
+        fail("--save keeps a clip without playing it; omit --clip, --no-start, --window and --player.");
+        return;
+    }
+    if (!opts.save && (opts.title !== undefined || opts.quote !== undefined)) {
+        fail("--title and --quote describe a saved clip; add --save.");
+        return;
+    }
     const what = wanted(opts);
 
     if ("error" in what) {
@@ -226,6 +314,17 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
 
     if (opts.tone !== undefined && !("target" in what)) {
         fail("--tone sets a Moment's tone; --at alone plays on from there without one (add --moment, --to or --clip).");
+        return;
+    }
+
+    if (
+        !("target" in what) &&
+        (opts.padBefore !== undefined ||
+            opts.padAfter !== undefined ||
+            opts.length !== undefined ||
+            opts.screen === false)
+    ) {
+        fail("--pad-before, --pad-after, --length and --no-screen require a Moment (add --moment, --to or --clip).");
         return;
     }
 
@@ -292,7 +391,7 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
             ? out.result(SafeJSON.stringify({ ...shown, pid: child.pid }, null, 2))
             : ui.ok(`Playing ${record.id} from ${formatClock(plan.startSec)} in ${plan.player}.`);
     } catch (err) {
-        fail(momentFailure(err));
+        fail(new Error(momentFailure(err), { cause: err }));
     }
 }
 
@@ -326,14 +425,26 @@ export function registerPlayCommand(program: Command): void {
         )
         .option("--clip", "cut the Moment to a WAV in the clip cache and print it; plays nothing")
         .option(
+            "--save",
+            "save the clip under the meeting and list it in Context; no playback, tone or padding by default"
+        )
+        .option("--title <text>", "title for --save in the meeting's Context")
+        .option("--quote <text>", "selected words to keep beside --save in Context")
+        .option(
             "--moment",
             "with --at alone: play the Moment at that time (a bounded clip with the tone), not on from there"
         )
+        .option("--window", "prefer the open Meetings window for a Moment; otherwise use the command player")
         .option("--before <sec>", "start this many seconds earlier (default: playback.beforeSec, 5); --at alone only")
         .option(
             "--tone <sound>",
             `a Moment's tone for this call: a preset (${TONE_PRESET_NAMES.join(", ")}), a sound file, or JSON ({"hz":440,"sec":0.2}); default playback.listen.tone.sound. It sounds even when playback.listen.tone.enabled is off`
         )
+        .option("--no-tone", "suppress the tone for this Moment without changing the saved setting")
+        .option("--pad-before <sec>", "this Moment's leading pad in seconds")
+        .option("--pad-after <sec>", "this Moment's trailing pad in seconds")
+        .option("--length <sec>", "limit this Moment's requested span to this many seconds, before padding")
+        .option("--no-screen", "skip screen frames for this Moment")
         .option(
             "--player <id>",
             `this player for one call: ${MEETING_PLAYERS.join(", ")} for --at alone, ${LISTEN_PLAYERS.join(", ")} for a Moment`
@@ -342,6 +453,6 @@ export function registerPlayCommand(program: Command): void {
             "--json",
             "print { audioPath, startSec, player, pid } for --at alone; for a Moment the Moment, with path, player and pid when made"
         )
-        .option("--no-start", "resolve and start nothing (no sound); a Moment is planned, not cut, even with --clip")
+        .option("--no-start", "resolve and start nothing (no sound); plan without cutting, including with --clip")
         .action(play);
 }

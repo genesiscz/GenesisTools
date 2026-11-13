@@ -482,6 +482,11 @@ export function agentCaller(): FailureCaller | null {
     return typeof found === "object" && found !== null && "agent" in found ? (found as FailureCaller) : null;
 }
 
+/** Masks message text using the live run's raw credentials, without exposing those values to callers. */
+export function redactCurrentRunText(text: string): string {
+    return redactRunText(text, run?.argv ?? [], run?.secrets() ?? {});
+}
+
 /**
  * The tool run of this process as a record another module writes keeps it (a command deadline, deadline.ts): the
  * tool, its command path, its argv with secrets masked. Null when no CLI run is watched (a test, a library caller).

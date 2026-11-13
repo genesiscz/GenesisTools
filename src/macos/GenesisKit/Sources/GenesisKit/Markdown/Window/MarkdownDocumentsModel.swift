@@ -573,9 +573,13 @@ final class MarkdownDocumentsModel: ObservableObject {
     @Published var commitSheet: MarkdownCommitSheet?
     /// The live reading web view, for PDF export and print.
     let webProxy = MarkdownWebProxy()
-    /// The window's one message (`MarkdownNoticeSlot`): a save failure, a replace count, a closed batch of tabs.
-    @Published private(set) var notice: MarkdownNotice?
-    private var noticeClear: Task<Void, Never>?
+    /// Independent results retain their own actions until dismissed or expired.
+    let notices = NoticeStackModel()
+    private var noticeValues: [StackedNotice.ID: MarkdownNotice] = [:]
+    /// The latest active notice for callers that inspect the result of their operation.
+    var notice: MarkdownNotice? {
+        notices.notices.reversed().lazy.compactMap { self.noticeValues[$0.id] }.first
+    }
 
     /// What the reader is told after a task box click. A change that landed says nothing (the box is the answer),
     /// except a change that went into unsaved edits when a save was asked for. A refusal says why; the page already
@@ -604,19 +608,14 @@ final class MarkdownDocumentsModel: ObservableObject {
         }
     }
 
-    /// Shows `notice` in place of the one before, announces it to VoiceOver, and clears it after its lifetime
-    /// (an error stays until it is closed).
+    /// Adds one result without taking away another result's Undo or error details.
     func post(_ notice: MarkdownNotice) {
-        self.notice = notice
-        GenAnnounce.post(notice.text, priority: notice.tone == .error ? .high : .medium)
-        noticeClear?.cancel()
-        guard let lifetime = notice.lifetime else { return }
-        let id = notice.id
-        noticeClear = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(lifetime))
-            guard !Task.isCancelled else { return }
-            self?.dismissNotice(id)
-        }
+        objectWillChange.send()
+        noticeValues = noticeValues.filter { notices.contains($0.key) }
+        let id = notices.push(StackedNotice(text: notice.text, more: notice.more, tone: notice.tone.pill,
+                                           actions: notice.actions.map { .init(fix: $0, afterPress: .dismiss) },
+                                           lasting: notice.lifetime.map { .seconds($0) } ?? .untilDismissed))
+        noticeValues[id] = notice
     }
 
     /// Save as PDF… (⇧⌘S, File menu, toolbar): the reading page of the selected tab, a failure in the slot.
@@ -633,10 +632,13 @@ final class MarkdownDocumentsModel: ObservableObject {
         webProxy.printDocument(title: doc.title, in: NSApp.keyWindow) { [weak self] in self?.exportError = $0 }
     }
 
-    /// Closes the shown note; with an id, only while that note is still the one shown.
+    /// Closes the named result, or the newest active result when no id is supplied.
     func dismissNotice(_ id: UUID? = nil) {
-        guard let notice, id == nil || notice.id == id else { return }
-        self.notice = nil
+        guard let wanted = id ?? notice?.id,
+              let key = noticeValues.first(where: { $0.value.id == wanted })?.key else { return }
+        objectWillChange.send()
+        notices.dismiss(key)
+        noticeValues[key] = nil
     }
 
     /// The shown error's sentence. Setting a text posts it as an error; setting nil closes an error (a success

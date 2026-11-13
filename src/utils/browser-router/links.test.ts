@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -10,6 +10,7 @@ import { linkFor, mintLink, planMintedLink, presetEnabled } from "./links";
 import { presets } from "./presets";
 import { defaultRouterConfig, type RouterConfig, route } from "./route";
 import { routerLink, schemeLink } from "./router-link";
+import * as routerStatusModule from "./status";
 import { type RouterStatus, routerStatus } from "./status";
 import { mintToken, takeToken, tokenFile, withTokenLock } from "./tokens";
 
@@ -408,6 +409,9 @@ describe("routerLink and the link gate", () => {
 
     test("answers from a fresh gate file, and recomputes a stale or old-format one", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-link-gate-"));
+        const recompute = spyOn(routerStatusModule, "routerStatus").mockReturnValue(
+            status({ linkHost: "fresh.example" })
+        );
 
         try {
             await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
@@ -421,6 +425,7 @@ describe("routerLink and the link gate", () => {
 
                 writeFileSync(linkGatePath(), SafeJSON.stringify(cached));
                 expect(linkGate().linkHost).toBe("cached.example");
+                expect(recompute).not.toHaveBeenCalled();
 
                 writeFileSync(linkGatePath(), SafeJSON.stringify({ ...cached, at: Date.now() - 60 * 60_000 }));
                 expect(linkGate().linkHost).not.toBe("cached.example");
@@ -429,15 +434,18 @@ describe("routerLink and the link gate", () => {
                     linkGatePath(),
                     SafeJSON.stringify({ at: Date.now(), configMtimeMs, linkHost: "old.example", enabledPresets: [] })
                 );
-                expect(linkGate().linkHost).not.toBe("old.example");
+                expect(linkGate().linkHost).toBe("fresh.example");
+                expect(recompute).toHaveBeenCalledTimes(2);
             });
         } finally {
+            recompute.mockRestore();
             rmSync(home, { recursive: true, force: true });
         }
     });
 
     test("logs a link gate that cannot be saved, and not one that is simply absent", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-link-gate-log-"));
+        const recompute = spyOn(routerStatusModule, "routerStatus").mockReturnValue(status());
         const write = process.stderr.write.bind(process.stderr);
         const lines: string[] = [];
 
@@ -459,6 +467,7 @@ describe("routerLink and the link gate", () => {
                 expect(lines.join("")).toContain("Could not save the link gate");
             });
         } finally {
+            recompute.mockRestore();
             process.stderr.write = write;
             rmSync(home, { recursive: true, force: true });
         }
@@ -525,7 +534,7 @@ describe("probeGenesisTools", () => {
 
         expect(decision).toMatchObject({
             kind: "run",
-            argv: ["tools", "meetings", "play", "2026-01-01_10-00", "--at", "1:02:03", "--moment"],
+            argv: ["tools", "meetings", "play", "2026-01-01_10-00", "--at", "1:02:03", "--moment", "--window"],
         });
     });
 });

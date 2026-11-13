@@ -70,6 +70,7 @@ public struct AgentTextField: NSViewRepresentable {
         }
 
         override public func setAccessibilityValue(_ value: Any?) {
+            guard isEnabled, isEditable else { return }
             super.setAccessibilityValue(value)
             let written = value as? String ?? stringValue
             if stringValue != written { stringValue = written }

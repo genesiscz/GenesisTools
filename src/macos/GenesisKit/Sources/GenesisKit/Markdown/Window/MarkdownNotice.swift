@@ -2,10 +2,7 @@
 //  MarkdownNotice.swift
 //  GenesisKit
 //
-//  The window's one message slot (UX audit 2026-10-25, W2, E2, D1). Before, a failed save, "Replaced 3 matches" and a
-//  revision error shared one 9.5 pt line in the toolbar: cut to one line, in the accent colour, never cleared and never
-//  spoken. Now each message carries its tone, a success fades by itself, an error stays whole until it is closed (the
-//  raw text behind Details), and every message is announced to VoiceOver.
+//  The window's result notices. Each result retains its actions and lifetime in the shared notice stack.
 //
 
 import SwiftUI
@@ -58,23 +55,13 @@ struct MarkdownNotice: Identifiable {
     }
 }
 
-/// The slot, laid over the top of the document area so it is near what the reader is looking at. One note at a
-/// time: a new one replaces the old.
+/// Results over the document area, with independent actions and expiry.
 struct MarkdownNoticeSlot: View {
     @ObservedObject var model: MarkdownDocumentsModel
 
     var body: some View {
-        if let notice = model.notice {
-            NoticePill(text: notice.text, more: notice.more, tone: notice.tone.pill, fixes: notice.actions) {
-                model.dismissNotice(notice.id)
-            }
-            .id(notice.id)
-            .frame(maxWidth: 440, alignment: .trailing)
-            .background(model.theme.chrome.opacity(0.92), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
+        NoticeStackView(model.notices, maxWidth: 440, pinnedTo: .top)
             .padding(10)
-            .transition(.opacity)
             .accessibilityIdentifier("markdown-notice")
-        }
     }
 }

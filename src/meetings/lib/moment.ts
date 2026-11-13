@@ -20,6 +20,7 @@ import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type ClipPlan, type CutControl, cutClip, probeAudio } from "./audio";
+import { hasFrameIndex } from "./frame-index";
 import type { LinePoint, MomentErrorCode, MomentTarget } from "./moment-schema";
 import { OpenedMeeting } from "./opened-meeting";
 import { PAST_END_GRACE_SEC } from "./players";
@@ -110,7 +111,7 @@ export interface Moment {
     tone?: { atSec: number; sound: ToneSound };
     /** Seconds a surface waits before it plays the clip, so what it shows is read first. */
     delaySec: number;
-    /** The pause before the clip plays again; absent when `playback.listen.repeat` is off. */
+    /** The pause before the clip plays again; absent when `playback.listen.repeat.enabled` is off. */
     repeatGapSec?: number;
     /** The frame on each recorded display at the spot; absent without a screen recording there. */
     screen?: MomentFrame[];
@@ -472,7 +473,7 @@ function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment 
               }
             : {}),
         delaySec: listen.delaySec,
-        ...(listen.repeat ? { repeatGapSec: listen.repeatGapSec } : {}),
+        ...(listen.repeat.enabled ? { repeatGapSec: listen.repeat.gapSec } : {}),
     };
 }
 
@@ -483,26 +484,32 @@ export function planMoment(input: MomentInput & { target: MomentTarget }): Momen
         input.lengthSec === undefined
             ? whole
             : { ...whole, toSec: Math.min(whole.toSec, whole.fromSec + input.lengthSec) };
-    refuseTooLong(input.record, input.target, span, input.listen.longestClipSec);
-    return momentOf(input, input.target, span);
+    return momentOf(input, input.target, clampTooLong(input.record, input.target, span, input.listen.longestClipSec));
 }
 
 /**
- * A stretch the data names (an item, a speaker's turn) longer than `longestSec` is refused: a 51-minute hint range is
- * a thing to look at, not a clip. A question plays its own clip, and a range or a selection is bounded by the caller.
+ * A stretch the data names (an item, a speaker's turn) longer than `longestSec` plays its first `longestSec`: a play
+ * button always plays, and hearing the start is how a look-alike or a hint range is checked. The label says it is the
+ * start ("first 30 s of 00:50"). It refused with `too-long` until 2026-11-11, which left the play button of a long
+ * look-alike in "This also affects" with an error notice.
+ * A question plays its own clip, and a range or a selection is bounded by the caller.
  */
-function refuseTooLong(record: MeetingRecord, target: MomentTarget, span: Span, longestSec: number): void {
+function clampTooLong(record: MeetingRecord, target: MomentTarget, span: Span, longestSec: number): Span {
     const capped =
         target.kind === "stretch" ||
         (target.kind === "item" &&
             record.items.find((item) => item.id === questionIdOf(record, target.id))?.kind !== "question");
 
-    if (capped && span.toSec - span.fromSec > longestSec) {
-        throw new MomentError(
-            "too-long",
-            `${span.label} lasts ${formatClock(span.toSec - span.fromSec)}, longer than the ${longestSec} s a Moment plays (playback.listen.longestClipSec); show it instead.`
-        );
+    if (!capped || span.toSec - span.fromSec <= longestSec) {
+        return span;
     }
+
+    return {
+        ...span,
+        label: `${span.label} (first ${longestSec} s of ${formatClock(span.toSec - span.fromSec)})`,
+        toSec: span.fromSec + longestSec,
+        spotSec: Math.min(span.spotSec, span.fromSec + longestSec),
+    };
 }
 
 /**
@@ -582,7 +589,14 @@ function toneFileVersion(moment: Moment): number[] {
  * is cut once (G16, G-PLAY-10).
  */
 export function momentCachePath(moment: Moment, source: ClipSource): string {
-    const key = clipKey(moment, [source.path, source.mtimeMs, source.size, ...toneFileVersion(moment)]);
+    // Earlier clips dropped delayed-track timestamps. Keep those derived WAVs out of the corrected cache.
+    const key = clipKey(moment, [
+        "container-clock-v1",
+        source.path,
+        source.mtimeMs,
+        source.size,
+        ...toneFileVersion(moment),
+    ]);
     return join(momentCacheDir(moment.meeting), `${clipName(moment)}-${key}.wav`);
 }
 
@@ -665,7 +679,8 @@ export async function momentFrames(
 ): Promise<MomentFrame[]> {
     const folder = store.folder(record.id);
 
-    if (!existsSync(join(folder, "ocr.jsonl"))) {
+    // Frames the OCR worker has not read yet still show: a Moment shows the picture, the text only finds the word.
+    if (!hasFrameIndex(folder)) {
         return [];
     }
 
@@ -695,7 +710,8 @@ export async function momentFrames(
         }
 
         const files = new Set(frames.map((frame) => frame.file));
-        const rows = readOcrRows(join(folder, "ocr.jsonl")).filter((row) => files.has(row.file));
+        const ocrPath = join(folder, "ocr.jsonl");
+        const rows = existsSync(ocrPath) ? readOcrRows(ocrPath).filter((row) => files.has(row.file)) : [];
         const hits = frames.map((frame) => {
             const block = rows
                 .find((row) => row.file === frame.file)
@@ -741,6 +757,8 @@ export interface OpenMomentOptions {
      * when `playback.listen.tone.enabled` is off: the caller asked for it.
      */
     toneSound?: ToneSoundSetting;
+    /** Overrides whether this call has a tone. False wins over an explicit sound without changing saved settings. */
+    tone?: boolean;
     /** Reads a tone file's length (tests pass a fake); ffprobe by default. */
     probeTone?: (path: string) => Promise<{ durationSec: number }>;
     /** At most this long from the span's start (`MomentInput.lengthSec`). */
@@ -754,11 +772,14 @@ async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Prom
     const { store, record } = options;
     const [meeting, config] = await Promise.all([opened.meeting(), opened.config()]);
     const saved = config.global.playback.listen;
-    // A tone the caller names turns the tone on for this call; the saved setting stays as it is.
-    const listen =
-        options.toneSound && !saved.tone.enabled ? { ...saved, tone: { ...saved.tone, enabled: true } } : saved;
+    // An explicit sound enables this call unless the caller explicitly asks for silence. Never mutate the config.
+    const enabled = options.tone ?? (options.toneSound !== undefined || saved.tone.enabled);
+    const listen = enabled === saved.tone.enabled ? saved : { ...saved, tone: { ...saved.tone, enabled } };
     const toneSound = listen.tone.enabled
-        ? await resolveToneSound(options.toneSound ?? listen.tone.sound, { probe: options.probeTone ?? probeAudio })
+        ? await resolveToneSound(options.toneSound ?? listen.tone.sound, {
+              probe: options.probeTone ?? probeAudio,
+              onMissing: listen.tone.onMissing,
+          })
         : undefined;
     const moment = planMoment({
         record,
@@ -789,10 +810,11 @@ export async function clipMoment(
         cut?: typeof cutClip;
         control?: Pick<CutControl, "signal" | "onProgress">;
         /** The recording's audio streams; ffprobe reads them when absent. */
-        probe?: (path: string) => Promise<{ tracks: number }>;
+        probe?: (path: string, options?: { signal?: AbortSignal }) => Promise<{ tracks: number }>;
     }
 ): Promise<Moment & { path: string }> {
     const { store, record } = options;
+    options.control?.signal?.throwIfAborted();
     const opened = options.opened ?? OpenedMeeting.of(store, record);
     const moment = await momentIn(opened, options);
     const audioPath = await opened.audioPath();
@@ -812,10 +834,13 @@ export async function clipMoment(
     mkdirSync(dirname(path), { recursive: true });
 
     try {
-        const { tracks } = await (options.probe ?? probeAudio)(audioPath).catch((error: unknown) => {
-            log.debug({ error, audioPath }, "the recording's tracks do not read; it is cut as one track");
-            return { tracks: 1 };
-        });
+        const { tracks } = await (options.probe ?? probeAudio)(audioPath, { signal: options.control?.signal }).catch(
+            (error: unknown) => {
+                options.control?.signal?.throwIfAborted();
+                log.debug({ error, audioPath }, "the recording's tracks do not read; it is cut as one track");
+                return { tracks: 1 };
+            }
+        );
         await (options.cut ?? cutClip)({
             audioPath,
             outPath: partial,

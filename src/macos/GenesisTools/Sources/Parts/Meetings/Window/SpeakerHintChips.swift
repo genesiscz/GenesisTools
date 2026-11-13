@@ -40,8 +40,8 @@ struct HintChip: Equatable, Hashable, Identifiable {
     }
 }
 
-/// A hint's ranges as chips: ▸ plays a range, "Show" zooms a long one, "Review all N" opens all of them when there are
-/// more than `maxShown`.
+/// A hint's ranges as chips: ▸ plays a range, "Show" plays the meeting from a long one's start and zooms the timeline
+/// to it, "Review all N" opens all of them when there are more than `maxShown`.
 struct SpeakerHintChips: View {
     let ranges: [SpeakerHint.Range]
     /// The longest Moment the engine cuts (`global.playback.listen.longestClipSec`, 30).
@@ -96,7 +96,7 @@ struct SpeakerHintChips: View {
         }
         .buttonStyle(.genHoverPlain())
         .instantTooltip(tooltip(chip))
-        .accessibilityLabel(chip.action == .play ? "Play \(chip.rangeText)" : "Show \(chip.rangeText) on the timeline")
+        .accessibilityLabel(chip.action == .play ? "Play \(chip.rangeText)" : "Play the meeting from \(MeetingsFormat.clock(chip.fromSec)) and show \(chip.rangeText) on the timeline")
     }
 
     private func tooltip(_ chip: HintChip) -> String {
@@ -105,7 +105,7 @@ struct SpeakerHintChips: View {
         case .play:
             return chip.lines > 0 ? "Play \(Plural.count(chip.lines, "line")) from \(chip.rangeText).\(who)" : "Play \(chip.rangeText).\(who)"
         case .show:
-            return "Longer than \(MeetingsFormat.seconds(longestClipSec)): zooms the timeline to \(chip.rangeText).\(who)"
+            return "Longer than \(MeetingsFormat.seconds(longestClipSec)): plays the meeting from \(MeetingsFormat.clock(chip.fromSec)) and shows \(chip.rangeText) on the timeline.\(who)"
         }
     }
 }

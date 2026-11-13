@@ -154,8 +154,8 @@ final class MarkdownReadingUxTests: XCTestCase {
         XCTAssertLessThanOrEqual(host.frame.width, 520)
         let bottomGap = web.isFlipped ? web.bounds.height - host.frame.maxY : host.frame.minY
         XCTAssertEqual(bottomGap, 16, accuracy: 1)
-        // Far left of the host, outside the centred pill: the page gets the click.
-        let beside = host.convert(NSPoint(x: 1, y: host.bounds.midY), to: web)
+        // Outside the stack: the page gets the click.
+        let beside = host.convert(NSPoint(x: -1, y: host.bounds.midY), to: web)
         XCTAssertNil(host.hitTest(beside), "a click beside the pill reaches the page")
         coordinator.hideNotice()
         XCTAssertNil(host.superview)
@@ -188,6 +188,58 @@ final class MarkdownReadingUxTests: XCTestCase {
         _ = try await web.evaluateJavaScript("window.gnPropsUndo();true")
         try await settle()
         XCTAssertEqual(posted.last?.map(\.key), ["status", "tags"], "Undo posts the rows from before the removal")
+    }
+
+    func testPageNoticesKeepIndependentUndoTargets() async throws {
+        var posted: [[MarkdownProperty]] = []
+        let (web, coordinator) = try await page(view(onProperties: { posted.append($0) }))
+        let props = #"[{"key":"first","kind":"text","value":"one"},{"key":"second","kind":"text","value":"two"},{"key":"third","kind":"text","value":"three"}]"#
+        _ = try await render(web, "Body", props: props, editable: true)
+        _ = try await web.evaluateJavaScript("document.querySelector('.gn-prop-remove').click();true")
+        try await settle()
+        let first = try XCTUnwrap(coordinator.pageNotices.notices.first)
+        _ = try await web.evaluateJavaScript("document.querySelector('[aria-label=\"Remove property second\"]').click();true")
+        try await settle()
+        let second = try XCTUnwrap(coordinator.pageNotices.notices.last)
+        XCTAssertEqual(coordinator.pageNotices.notices.count, 2)
+        XCTAssertEqual(posted.last?.map(\.key), ["third"])
+
+        coordinator.pageNotices.press(try XCTUnwrap(first.actions.first), of: first.id)
+        try await settle()
+        XCTAssertEqual(posted.last?.map(\.key), ["third"], "an earlier button must not undo the newer removal")
+        XCTAssertTrue(coordinator.pageNotices.notices.contains { $0.tone == .warning })
+        coordinator.pageNotices.press(try XCTUnwrap(second.actions.first), of: second.id)
+        try await settle()
+        XCTAssertEqual(posted.last?.map(\.key), ["second", "third"])
+        coordinator.pageNotices.press(try XCTUnwrap(first.actions.first), of: first.id)
+        try await settle()
+        XCTAssertEqual(posted.last?.map(\.key), ["first", "second", "third"])
+    }
+
+    func testPropertyUndoCannotCrossDocumentsWithMatchingProperties() async throws {
+        var posted: [[MarkdownProperty]] = []
+        let (web, coordinator) = try await page(view(onProperties: { posted.append($0) }))
+        let props = #"[{"key":"first","kind":"text","value":"one"},{"key":"second","kind":"text","value":"two"}]"#
+        _ = try await render(web, "Original", props: props, editable: true)
+        _ = try await web.evaluateJavaScript("document.querySelector('.gn-prop-remove').click();true")
+        try await settle()
+        let token = try XCTUnwrap(coordinator.currentNotice?.undoToken)
+        let remaining = MarkdownFrontmatter.json(try XCTUnwrap(posted.last))
+        _ = try await web.evaluateJavaScript("window.gnRender('Another note',\(remaining),true,null,{},false,2,false)")
+        let count = posted.count
+        let undone = try await web.evaluateJavaScript("window.gnPropsUndo(\(token))") as? Bool
+        try await settle()
+        XCTAssertEqual(undone, false)
+        XCTAssertEqual(posted.count, count, "a different note's matching properties are not the removal's target")
+    }
+
+    func testSuccessfulRenderClearsFailuresWithoutRemovingOtherResults() async throws {
+        let (_, coordinator) = try await page(view())
+        coordinator.show(.noHeading("Missing"))
+        coordinator.show(.failure("raw"))
+        coordinator.show(.noFileLinks)
+        coordinator.hideFailures()
+        XCTAssertEqual(coordinator.pageNotices.notices.map(\.text), ["No heading “Missing” in this note.", MarkdownPageNotice.noFileLinks.text])
     }
 
     func testPropertyUndoSurvivesARenderButDoesNotDiscardLaterEdits() async throws {

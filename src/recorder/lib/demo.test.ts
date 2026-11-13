@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as captureRunner from "@app/control/lib/capture-runner";
@@ -15,7 +15,9 @@ import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { type DemoDriver, type DemoStepTiming, demoEditOps, demoScriptSchema, runDemo, subtractRanges } from "./demo";
 import * as edit from "./edit";
+import { eventsOf } from "./fx-analysis";
 import * as library from "./library";
+import { clickGroupsOf } from "./moments";
 import * as serviceClient from "./service-client";
 import { changedParts, everyTimes, Movie, movieDemoDriver } from "./toolset";
 import { recordVideo } from "./video-recording";
@@ -363,6 +365,66 @@ describe.skipIf(!hasFfmpeg)("movieDemoDriver on a recording session", () => {
     afterAll(async () => {
         const { rm } = await import("node:fs/promises");
         await rm(scratch, { recursive: true, force: true });
+    });
+
+    test("a cursor-off window recording persists clicks and opens hidden without disabling click tools", async () => {
+        const spy = spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(
+            async ({ plan, onRecording }) => {
+                const capture = plan.capture;
+                expect(capture?.cursorTrack).toBeString();
+                expect(capture?.cursorShapes).toBeString();
+                expect(capture?.shortcuts).not.toBe(true);
+                if (!capture?.videoOut || !capture.cursorTrack || !capture.cursorShapes) {
+                    throw new Error("the window capture lost its cursor sidecars");
+                }
+                copyFileSync(clip, capture.videoOut);
+                writeFileSync(
+                    capture.cursorTrack,
+                    '{"t":0,"x":0.2,"y":0.3,"shape":"arrow","pw":160}\n{"t":1000,"x":0.4,"y":0.5,"click":"left"}\n'
+                );
+                mkdirSync(capture.cursorShapes, { recursive: true });
+                writeFileSync(join(capture.cursorShapes, "arrow.png"), "fixture");
+                writeFileSync(join(capture.cursorShapes, "arrow.json"), '{"hotX":0,"hotY":0,"width":16,"height":16}');
+                onRecording?.({ sessionDir: join(scratch, "cursor-session") });
+                return {
+                    ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                    captureFailed: false,
+                    sessionDir: join(scratch, "cursor-session"),
+                    warnings: [],
+                    capture: { data: { stats: { durationMs: 3000 } } },
+                };
+            }
+        );
+        try {
+            const recorded = await recordVideo({
+                target: { kind: "window", windowIds: [7] },
+                systemCursor: true,
+                shortcuts: false,
+                maxSeconds: 1,
+                prepare: async () => {},
+            });
+            expect(readRecordingManifest(recorded.folder)?.settings.cursor).toBe("none");
+            const persisted = projectOps.readCursorTrack(join(recorded.folder, "cursor.jsonl"));
+            expect(persisted).toHaveLength(2);
+            expect(persisted[1]).toMatchObject({ ms: 1000, click: "left", x: 0.4, y: 0.5 });
+            const opened = await edit.openProject(recorded.folder);
+            expect(opened.project.cursor?.show).toBe(false);
+            expect(clickGroupsOf(opened.project)).toMatchObject([{ count: 1 }]);
+            expect((await eventsOf(opened.project)).filter((event) => event.kind === "click")).toHaveLength(1);
+            let project = projectOps.applyOp(opened.project, { op: "clicks", highlight: true });
+            project = projectOps.applyOp(project, { op: "annotateClicks" });
+            project = projectOps.applyOp(project, { op: "autoZoom" });
+            expect(project.cursor?.show).toBe(false);
+            expect(project.shapes).toHaveLength(1);
+            expect(project.zooms).toHaveLength(1);
+            projectOps.writeProject(opened.path, project);
+            expect((await edit.openProject(recorded.folder)).project.cursor?.show).toBe(false);
+            const shown = projectOps.applyOp(project, { op: "cursor", show: true });
+            projectOps.writeProject(opened.path, shown);
+            expect((await edit.openProject(recorded.folder)).project.cursor?.show).toBe(true);
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     test("starts the recorder with its start gate, marks each step over the live socket, edits the recorded movie", async () => {

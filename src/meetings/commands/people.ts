@@ -10,7 +10,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import type { MeetingsParams, MeetingsResult } from "../lib/service/api";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { fail, TOOL } from "../lib/shared";
 import { assignmentText } from "../lib/speaker-assign";
 
 const MEETING_REF = "meeting id, a unique prefix, last, or wisprflow:<id>";
@@ -68,7 +68,7 @@ async function list(query: string | undefined, opts: ListOptions): Promise<void>
     try {
         known = await withMeetingsClient((client) => client.call("people.known", params));
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 
@@ -130,7 +130,7 @@ async function add(name: string, opts: { email?: string; note?: string; json?: b
                 : `${personLabel(added.person)} was in the people book: updated${shown}.`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -152,7 +152,7 @@ async function hide(person: string, opts: { show?: boolean; json?: boolean }): P
                 : `${personLabel(hidden.person)} was ${opts.show ? "not hidden" : "hidden already"}.`
         );
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -205,7 +205,7 @@ async function merge(a: string, b: string, opts: { name?: string; yes?: boolean;
         printPlan(merged.plan);
         ui.ok(`Merged into ${merged.merge.name}. Undo: ${TOOL} people unmerge ${merged.merge.token}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -220,7 +220,7 @@ async function unmerge(token: string, opts: { json?: boolean }): Promise<void> {
 
         ui.ok(`${removed.people.map(personLabel).join(" and ")} are two people again.`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -322,7 +322,7 @@ async function assign(meeting: string, person: string, opts: AssignOptions): Pro
         ui.ok(`${given.map(assignmentText).join(", ")} → ${person.trim()}`);
         ui.dim(`Undo: ${TOOL} people unassign ${meeting} ${decided.entry.token}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -340,7 +340,7 @@ async function unassign(meeting: string, token: string, opts: { reason?: string;
         const back = reverted.entry?.assignments?.length ?? 0;
         ui.ok(back > 0 ? `Undone: ${back} assignment${back === 1 ? "" : "s"} put back.` : "Nothing to undo.");
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -365,6 +365,28 @@ export function registerPeopleCommand(program: Command): void {
         .option("--hidden", "list hidden people too")
         .option("--json", "print { query, people, total, sources } as JSON")
         .action(list);
+
+    people
+        .command("meetings")
+        .argument("<person>", PERSON_REF)
+        .description("Every meeting that names this person, newest first")
+        .option("--json", "print the person and every meeting appearance")
+        .action(async (person: string, options: { json?: boolean }) => {
+            try {
+                const result = await withMeetingsClient((client) => client.call("people.meetings", { person }));
+                if (options.json) {
+                    printJson(result);
+                } else {
+                    const table = createBoxTable(["MEETING", "TITLE", "DATE", "ROLES"]);
+                    for (const meeting of result.meetings) {
+                        table.push([meeting.meeting, meeting.title, localTime(meeting.start), meeting.as.join(", ")]);
+                    }
+                    out.println(table.toString());
+                }
+            } catch (error) {
+                fail(error);
+            }
+        });
 
     people
         .command("add")

@@ -1,10 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { CONTAINER_CLOCK_FILTER } from "@genesiscz/utils/audio/converter";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { DEFAULT_TONE_SOUND, type LISTEN_PLAYERS } from "@genesiscz/utils/meetings/config";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { z } from "zod";
 import { PLAYERS, pickPlayer } from "./players";
 import { meetingSource, sourceRefOf } from "./sources";
@@ -70,23 +72,39 @@ const probeSchema = z.object({
     format: z.object({ duration: z.union([z.string(), z.number()]).optional() }).optional(),
 });
 
-/** The audio streams and length of a recording. Needs ffprobe (it comes with ffmpeg). Throws a message ready to print. */
-export async function probeAudio(path: string): Promise<AudioProbe> {
+/** The audio streams and length, bounded to 10 seconds and 64 KiB per pipe. Needs ffprobe; throws a printable error. */
+export async function probeAudio(path: string, options: { signal?: AbortSignal } = {}): Promise<AudioProbe> {
+    options.signal?.throwIfAborted();
     if (!Bun.which("ffprobe")) {
         throw new Error("ffprobe is not installed (brew install ffmpeg); it reads the recording's tracks.");
     }
 
     const argv = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,channels:format=duration"];
-    const proc = Bun.spawn([...argv, "-of", "json", path], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    const [code, stdout, stderr] = await Promise.all([
-        proc.exited,
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-    ]);
+    const {
+        status: code,
+        stdout,
+        stderr,
+        error,
+    } = await boundedCommand({
+        command: [...argv, "-of", "json", path],
+        timeoutMs: 10_000,
+        maxBufferBytes: 65_536,
+        signal: options.signal,
+    });
+    options.signal?.throwIfAborted();
     log.debug({ path, code }, "recording probed");
 
-    if (code !== 0) {
-        throw new Error(`ffprobe could not read ${path} (exit ${code}): ${stderr.trim().slice(0, 300)}`);
+    if (error?.code === "ETIMEDOUT") {
+        throw new Error(`ffprobe timed out after 10 seconds while reading ${path}`, { cause: error });
+    }
+    if (error?.code === "ENOBUFS") {
+        throw new Error(`ffprobe output exceeded 64 KiB while reading ${path}`, { cause: error });
+    }
+    if (error || code !== 0) {
+        throw new Error(
+            `ffprobe could not read ${path} (exit ${code}): ${error?.message ?? stderr.trim().slice(0, 300)}`,
+            { cause: error }
+        );
     }
 
     const probe = probeSchema.parse(SafeJSON.parse(stdout, { strict: true }));
@@ -132,16 +150,19 @@ export async function cutClip(options: ClipPlan & CutControl & { audioPath: stri
         options.toneAtSec === undefined ? undefined : Math.round(Math.max(0, options.toneAtSec - startSec) * 1000);
     const sound = options.toneSound ?? DEFAULT_TONE_SOUND;
     const tracks = options.tracks ?? 1;
-    // The speech: one stream as it is, several mixed at their own level.
-    const speech =
-        tracks > 1
-            ? `${Array.from({ length: tracks }, (_, index) => `[0:a:${index}]`).join("")}amix=inputs=${tracks}:duration=longest:normalize=0`
-            : "[0:a]anull";
+    // Preserve each track's timestamp gaps before mixing; padding only the mixed result
+    // loses the offset between tracks. After input seeking, zero is the clip's start.
+    const clockedTracks = Array.from(
+        { length: tracks },
+        (_, index) => `[0:a:${index}]${CONTAINER_CLOCK_FILTER}[a${index}]`
+    ).join(";");
+    const inputs = Array.from({ length: tracks }, (_, index) => `[a${index}]`).join("");
+    const speech = `${clockedTracks};${inputs}${
+        tracks > 1 ? `amix=inputs=${tracks}:duration=longest:normalize=0` : "anull"
+    }`;
     const graph =
         toneMs === undefined
-            ? tracks > 1
-                ? ["-filter_complex", `${speech}[out]`, "-map", "[out]"]
-                : []
+            ? ["-filter_complex", `${speech}[out]`, "-map", "[out]"]
             : [
                   ...toneInput(sound),
                   "-filter_complex",

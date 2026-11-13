@@ -8,7 +8,7 @@ import pc from "picocolors";
 import { actorText, itemIdOf, type JournalReadEntry } from "../lib/decision-journal";
 import { questionLabel } from "../lib/questions";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { fail, TOOL } from "../lib/shared";
 import { assignmentText } from "../lib/speaker-assign";
 
 /** At most this many items are named on an entry's line; the rest are counted. */
@@ -50,6 +50,8 @@ function whatText(record: MeetingRecord, entry: JournalReadEntry): string {
             return `${action.kind} ${named(record, entry.decided)}`;
         case "respell":
             return `respell ${action.item} → ${action.text.trim()}`;
+        case "rephrase":
+            return `rephrase ${named(record, [action.question])} → ${action.text}`;
         case "answer": {
             const settled = entry.settled.length > 0 ? ` (settled ${named(record, entry.settled)})` : "";
             return `answer ${named(record, entry.question ? [entry.question] : [])} → ${action.answer.trim()}${settled}`;
@@ -76,6 +78,8 @@ function whatText(record: MeetingRecord, entry: JournalReadEntry): string {
             return `set ${(entry.fields ?? []).map((field) => `${field.field} ${fieldText(field.after)}`).join(", ")}`;
         case "comment":
             return `told the listening agent: ${action.comments.map((comment) => `"${comment.text.trim()}"`).join(", ")}`;
+        case "unsupported":
+            return `newer build: ${action.name} (open that build to undo)`;
     }
 }
 
@@ -86,7 +90,7 @@ async function journal(ref: string, opts: JournalOptions): Promise<void> {
     try {
         record = store.resolve(ref);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 
@@ -110,7 +114,7 @@ async function journal(ref: string, opts: JournalOptions): Promise<void> {
             client.call("journal.read", { meeting: record.id, ...(item ? { item } : {}), ...(limit ? { limit } : {}) })
         ));
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 
@@ -137,7 +141,7 @@ async function journal(ref: string, opts: JournalOptions): Promise<void> {
         out.println(pc.dim(`    token ${entry.token}${undone}`));
     }
 
-    ui.dim(`Undo one: ${TOOL} reopen ${record.id} --token <token> (add item ids to undo it for those items only)`);
+    ui.dim(`Undo one: ${TOOL} reopen ${record.id} <items> --token <token>`);
 }
 
 export function registerJournalCommand(program: Command): void {

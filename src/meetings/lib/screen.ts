@@ -9,7 +9,10 @@ export const ocrLineSchema = z.object({
     at: z.string(),
     /** The display the frame shows; absent in recordings from before several displays. */
     displayId: z.number().optional(),
+    focusedDisplayId: z.number().optional(),
     text: z.string(),
+    /** A kept frame the OCR worker has not read yet: it has no text so far (`readScreenRows`). */
+    pending: z.literal(true).optional(),
 });
 export type OcrLine = z.infer<typeof ocrLineSchema>;
 
@@ -26,13 +29,21 @@ export interface RecordedSpan {
  * the spans, each `record start` in the history that reached the screen until its stop.
  */
 export function recordedSpans(record: MeetingRecord, now = Date.now()): RecordedSpan[] {
-    const kept = (record.recording?.spans ?? []).map((span) => {
+    const saved = record.recording?.spans ?? [];
+    const kept = saved.map((span) => {
         const fromMs = Date.parse(span.from);
         const open = record.recording?.status === "recording" ? now : fromMs;
         return { fromMs, toMs: span.to ? Date.parse(span.to) : open };
     });
     const firstKept = kept[0]?.fromMs ?? Number.POSITIVE_INFINITY;
-    return [...historySpans(record, now).filter((span) => span.toMs <= firstKept), ...kept];
+    // An interrupted run without a kept frame ends where it began: it claims no captured time.
+    const captured = kept.filter(
+        (span, index) =>
+            (saved[index]?.stopReason !== "interrupted" && saved[index]?.interrupted !== true) ||
+            saved[index]?.to === undefined ||
+            span.toMs !== span.fromMs
+    );
+    return [...historySpans(record, now).filter((span) => span.toMs <= firstKept), ...captured];
 }
 
 /**
@@ -49,6 +60,92 @@ export function recordedDisplaySpans(
         fromMs: Date.parse(span.from),
         toMs: span.to ? Date.parse(span.to) : now,
     }));
+}
+
+export interface CaptureInterval {
+    fromSec: number;
+    toSec: number;
+}
+
+export interface ScreenCaptureCoverage {
+    /** Omitted means unknown; [] means saved interval metadata confirms no captured time. */
+    recordingSpans?: CaptureInterval[];
+    /** Omitted when any recording interval lacks display evidence; [] means known no captured display time. */
+    displaySpans?: Array<CaptureInterval & { displayId: number }>;
+}
+
+/**
+ * Saved capture intervals on the transcript clock, independent of frame changes. `live` must come from a verified
+ * running, unpaused recorder for this meeting; a persisted recording status alone cannot extend an open interval.
+ */
+export function screenCaptureCoverage(options: {
+    record: MeetingRecord;
+    zeroMs: number;
+    nowMs?: number;
+    live?: { startedAt: string; displaySpans?: RecordingDisplaySpan[] };
+}): ScreenCaptureCoverage {
+    const { record, zeroMs, live } = options;
+    const now = options.nowMs ?? Date.now();
+    const liveStart = live ? Date.parse(live.startedAt) : undefined;
+    const running = liveStart !== undefined && Number.isFinite(liveStart) && record.recording?.status === "recording";
+    const observed = running ? record : { ...record, recording: { ...record.recording, status: "stopped" as const } };
+    const spans = recordedSpans(observed, now);
+    const known = record.recording?.spans !== undefined || spans.length > 0;
+    const valid = (span: RecordedSpan) =>
+        Number.isFinite(span.fromMs) && Number.isFinite(span.toMs) && span.toMs > span.fromMs;
+
+    if (
+        !known ||
+        !Number.isFinite(zeroMs) ||
+        spans.some((span) => !valid(span) || (running && span.toMs === now && span.fromMs < liveStart!))
+    ) {
+        return {};
+    }
+
+    const onClock = (span: RecordedSpan): CaptureInterval => ({
+        fromSec: (span.fromMs - zeroMs) / 1000,
+        toSec: (span.toMs - zeroMs) / 1000,
+    });
+    const recordingSpans = spans.map(onClock);
+    const rawDisplays = live?.displaySpans ?? record.recording?.displaySpans;
+
+    if (rawDisplays === undefined || (!running && rawDisplays.some((span) => !span.to))) {
+        return { recordingSpans };
+    }
+
+    const displays = recordedDisplaySpans(record, { live: rawDisplays, now }) ?? [];
+
+    if (displays.some((span) => !valid(span))) {
+        return { recordingSpans };
+    }
+
+    const intersections = displays.flatMap((display) =>
+        spans
+            .map((span) => ({
+                displayId: display.displayId,
+                fromMs: Math.max(display.fromMs, span.fromMs),
+                toMs: Math.min(display.toMs, span.toMs),
+            }))
+            .filter(valid)
+    );
+    const ordered = [...intersections].sort((a, b) => a.fromMs - b.fromMs);
+    // Older session history can predate display tracking. A partial display log cannot prove absence elsewhere.
+    const allCovered = spans.every((span) => {
+        let through = span.fromMs;
+        for (const display of ordered) {
+            if (display.fromMs > through) {
+                break;
+            }
+            through = Math.max(through, display.toMs);
+        }
+        return through >= span.toMs;
+    });
+    return {
+        recordingSpans,
+        ...(allCovered
+            ? { displaySpans: intersections.map((span) => ({ displayId: span.displayId, ...onClock(span) })) }
+            : {}),
+    };
 }
 
 function historySpans(record: MeetingRecord, now: number): RecordedSpan[] {
@@ -197,6 +294,10 @@ export function recordingSummary(record: MeetingRecord, now = Date.now()): strin
 
     if (recording.warning) {
         lines.push(`recording warning: ${recording.warning}`);
+    }
+
+    if (recording.ocrWarning) {
+        lines.push(`OCR warning: ${recording.ocrWarning}`);
     }
 
     return lines;

@@ -132,14 +132,6 @@ function englishRoots(word: string): string[] {
  * slang or a new term, not a mistake, so they get no item and no question (MC3, 2026-11-06: the latest meeting had 40
  * such items at 30 %, and 8 of its 12 questions asked about them).
  */
-/**
- * Whether a word root is known: an English word, or a word the language's word check does not call unknown. Without a
- * word check only English words are known, so a missing check never makes every root known.
- */
-export function knownRoot(wordCheck?: WordCheck): (word: string) => boolean {
-    return (word) => isEnglishWord(word) || (wordCheck !== undefined && wordCheck.verdict(word).class !== "unknown");
-}
-
 export function spokenOnPurpose(words: string[], known: (word: string) => boolean): Set<string> {
     const families = new Map<string, Set<string>>();
 
@@ -609,7 +601,7 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
     const keptFamilies = new Set([...keep].map(wordFamily));
     const onPurpose = spokenOnPurpose(
         heardUnknown.map((word) => word.heard),
-        knownRoot(wordCheck)
+        (root) => isEnglishWord(root) || wordCheck?.verdict(root).class !== "unknown"
     );
     const unknown = heardUnknown.filter(
         (word) => !onPurpose.has(word.heard.toLowerCase()) && !keptFamilies.has(wordFamily(word.heard))
@@ -1070,7 +1062,7 @@ function swapWindowState(self: LineEvidence[], other: LineEvidence[]): SwapWindo
 /**
  * R20 over the calibrated energy: the stretches where the user's label and one platform-named label read the other
  * way round than elsewhere in the call. A run of swapped windows may hold one unclear window; a stretch starts and
- * ends at the first and last line that already reads swapped, and those lines must span 10 min or more (within `SWAP_EDGE_SEC`).
+ * ends at the first and last line that already reads swapped.
  */
 function swappedStretches(lines: LineEvidence[], selfName: string, platformLabels: Set<string>): SwapStretch[] {
     const measured = lines.filter((line) => line.energyMic !== undefined);

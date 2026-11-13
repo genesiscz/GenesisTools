@@ -13,6 +13,70 @@ final class NoticeStackTests: XCTestCase {
 
     private func texts(_ model: NoticeStackModel) -> [String] { model.notices.map(\.text) }
 
+    func testAdaptingAFixRetainsItsConfirmationAndFailurePreparation() async throws {
+        let model = stack(ManualNoticeClock())
+        var prepared = 0
+        var performed = 0
+        var fix = NoticeFix.button("Retry", symbol: "arrow.clockwise",
+                                   confirm: .init("Retry this operation?", confirmLabel: "Retry")) { performed += 1 }
+        fix.preparationID = "retained-failure"
+        fix.preparation = { prepared += 1 }
+        let action = StackedNotice.Action(fix: fix)
+        XCTAssertEqual(prepared, 1, "failure preparation starts when posted, including folded or hidden notices")
+        XCTAssertEqual(action.confirm?.question, "Retry this operation?")
+        let id = model.push(StackedNotice(text: "Failed", tone: .error, actions: [action]))
+        let host = NSHostingView(rootView: NoticeStackView(model, maxWidth: 400))
+        _ = try await settledHeight(host)
+        XCTAssertEqual(prepared, 1, "the adapted failure is prepared as soon as it appears")
+        model.press(action, of: id)
+        XCTAssertEqual(performed, 1)
+        XCTAssertTrue(model.contains(id), "a Details or Retry adapter keeps its default lifetime")
+    }
+
+    func testFloatingNoticesStayAboveNativeContentAttachedLater() async throws {
+        let model = stack(ManualNoticeClock())
+        model.push(StackedNotice(text: "A retained result", lasting: .untilDismissed))
+        let second = stack(ManualNoticeClock())
+        second.push(StackedNotice(text: "A different pane's result", lasting: .untilDismissed))
+        let root = GenRootHostingView(rootView: HStack {
+            Color.clear.noticeStack(model)
+            Color.clear.noticeStack(second)
+        }.frame(width: 600, height: 400).noticeStackViewport())
+        root.sizingOptions = []
+        let content = GenOverlayContentView(root: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = content
+        window.orderInForSnapshot()
+        defer { window.close() }
+        for _ in 0..<12 {
+            content.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        func slots(_ view: NSView) -> [GenOverlaySlot] {
+            (view as? GenOverlaySlot).map { [$0] } ?? view.subviews.flatMap(slots)
+        }
+        let floating = slots(root).filter { $0.elevation == .floating }
+        XCTAssertEqual(floating.count, 2)
+        let first = try XCTUnwrap(floating.first)
+        let last = try XCTUnwrap(floating.last)
+        XCTAssertFalse(first.overlay.frame.intersects(last.overlay.frame), "different panes share the stack area without overlapping")
+        let native = GenOverlaySlot(overlay: NSView(frame: root.bounds))
+        native.frame = root.bounds
+        content.addSubview(native)
+        content.layoutSubtreeIfNeeded()
+        let nativeIndex = try XCTUnwrap(content.subviews.firstIndex { $0 === native.overlay })
+        for notice in floating {
+            XCTAssertTrue(notice.overlay.superview === content)
+            XCTAssertGreaterThan(notice.overlay.frame.height, 30)
+            XCTAssertLessThanOrEqual(notice.overlay.frame.width, 520)
+            XCTAssertGreaterThan(try XCTUnwrap(content.subviews.firstIndex { $0 === notice.overlay }), nativeIndex,
+                                 "a native table attached later must not cover a notice")
+            XCTAssertTrue(notice.overlay.frame.intersects(native.overlay.frame), "the layering assertion covers overlapping content")
+        }
+    }
+
     func testThreePushesGiveThreeNoticesThatLeaveEachAfterItsOwnTime() {
         let clock = ManualNoticeClock()
         let model = stack(clock)
@@ -64,6 +128,15 @@ final class NoticeStackTests: XCTestCase {
         XCTAssertEqual(NoticeStackModel.split(Array(model.notices.prefix(3)), max: 3).folded.count, 0)
         limit = nil
         XCTAssertEqual(NoticeStackModel.split(model.notices, max: model.visibleLimit).shown.count, 5, "no limit shows all")
+    }
+
+    func testExpandedOverflowStaysExpandedUntilTheNoticesFit() {
+        let notices = (1...5).map { StackedNotice(text: "Notice \($0)") }
+        XCTAssertTrue(NoticeStackView.expansionAfterChange(showsAll: true, notices: notices, limit: 3))
+        XCTAssertFalse(NoticeStackView.expansionAfterChange(showsAll: false, notices: notices, limit: 3))
+        XCTAssertFalse(NoticeStackView.expansionAfterChange(showsAll: true, notices: Array(notices.prefix(3)), limit: 3))
+        XCTAssertFalse(NoticeStackView.expansionAfterChange(showsAll: true, notices: notices, limit: nil))
+        XCTAssertFalse(NoticeStackView.expansionAfterChange(showsAll: true, notices: [], limit: 3))
     }
 
     /// The "+N more" chip is a control: the shared hover (a brighter chip, the pointing hand), never a plain style that
@@ -316,6 +389,89 @@ final class NoticeStackTests: XCTestCase {
         let newest = try await settledFrame("notice-stack-item:Notice 12", in: host)
         XCTAssertEqual(stackFrame.height, 360, accuracy: 0.5, "twelve notices overflow the stack")
         XCTAssertTrue(stackFrame.insetBy(dx: -1, dy: -1).contains(newest), "the newest notice is in view: \(newest) in \(stackFrame)")
+    }
+
+    func testInactiveWindowAndHoverPauseReasonsDoNotCancelEachOther() {
+        let clock = ManualNoticeClock()
+        var policy = NoticeStackInteractionPolicy(pauseWhenInactive: true, passScrollWhenFits: true)
+        let model = NoticeStackModel(clock: clock, announces: false, interaction: { policy })
+        let id = model.push(StackedNotice(text: "Saved", lasting: .seconds(10)))
+        clock.advance(by: 3)
+        model.updateInteraction(pointerInside: false, windowIsKey: false)
+        clock.advance(by: 100)
+        XCTAssertEqual(model.remaining(id), 7)
+        model.updateInteraction(pointerInside: true, windowIsKey: true)
+        XCTAssertTrue(model.isPaused, "activation must not cancel the hover pause")
+        model.updateInteraction(pointerInside: false, windowIsKey: true)
+        clock.advance(by: 2)
+        XCTAssertEqual(model.remaining(id), 5)
+        model.updateInteraction(pointerInside: false, windowIsKey: false)
+        policy.pauseWhenInactive = false
+        model.updateInteraction(pointerInside: false, windowIsKey: false)
+        clock.advance(by: 5)
+        XCTAssertFalse(model.contains(id), "a changed policy applies to the existing timer")
+    }
+
+    func testShortStackStopsOwningAScrollViewWhenTheSettingChanges() async throws {
+        var policy = NoticeStackInteractionPolicy()
+        let model = NoticeStackModel(clock: ManualNoticeClock(), announces: false, interaction: { policy })
+        model.push(StackedNotice(text: "Saved", lasting: .untilDismissed))
+        let host = NSHostingView(rootView: NoticeStackView(model, maxWidth: 400, maxHeight: 150))
+        func scrolls(_ view: NSView) -> Int {
+            (view is NSScrollView ? 1 : 0) + view.subviews.reduce(0) { $0 + scrolls($1) }
+        }
+        _ = try await settledHeight(host)
+        XCTAssertEqual(scrolls(host), 1)
+        policy.passScrollWhenFits = true
+        model.refreshSettings()
+        _ = try await settledHeight(host)
+        XCTAssertEqual(scrolls(host), 0)
+        for index in 1...12 { model.push(StackedNotice(text: "Notice \(index)", lasting: .untilDismissed)) }
+        _ = try await settledHeight(host)
+        XCTAssertEqual(scrolls(host), 1, "overflow still scrolls its own notices")
+    }
+
+    func testShortStackWheelTargetsThePageInItsColumn() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        func addScroll(_ frame: NSRect) -> NSScrollView {
+            let scroll = NSScrollView(frame: frame)
+            scroll.documentView = NSView(frame: NSRect(x: 0, y: 0, width: frame.width, height: 2000))
+            root.addSubview(scroll)
+            return scroll
+        }
+        let page = addScroll(NSRect(x: 0, y: 100, width: 500, height: 500))
+        let inspector = addScroll(NSRect(x: 510, y: 0, width: 290, height: 600))
+        XCTAssertTrue(NoticeStackInteractionView.scrollTarget(at: NSPoint(x: 250, y: 50), in: root) === page,
+                      "a notice in the playback inset routes up to its page")
+        XCTAssertTrue(NoticeStackInteractionView.scrollTarget(at: NSPoint(x: 600, y: 50), in: root) === inspector)
+        XCTAssertNil(NoticeStackInteractionView.scrollTarget(at: NSPoint(x: 505, y: 50), in: root),
+                     "a gap between panes does not scroll either pane")
+    }
+
+    func testShrinkingAwayFromAStationaryPointerReleasesThePause() throws {
+        let clock = ManualNoticeClock()
+        let model = stack(clock)
+        let id = model.push(StackedNotice(text: "Saved", lasting: .seconds(6)))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+        let tracking = NoticeStackInteractionView(frame: container.bounds)
+        tracking.model = model
+        container.addSubview(tracking)
+        let window = NSWindow(contentRect: container.bounds, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = container
+        window.orderInForSnapshot()
+        defer { window.close() }
+        let stationary = window.convertPoint(toScreen: NSPoint(x: 50, y: 75))
+        tracking.pointerLocation = { stationary }
+        tracking.refreshInteraction()
+        XCTAssertTrue(model.isPaused)
+        clock.advance(by: 20)
+        XCTAssertTrue(model.contains(id))
+        tracking.setFrameSize(NSSize(width: 100, height: 20))
+        tracking.refreshInteraction()
+        XCTAssertFalse(model.isPaused, "new bounds exclude the unchanged pointer: bounds \(tracking.bounds), visible \(tracking.visibleRect), local \(tracking.convert(window.convertPoint(fromScreen: stationary), from: nil))")
+        clock.advance(by: 6)
+        XCTAssertFalse(model.contains(id))
     }
 
     /// The frame `name` reports once it holds still for three layout rounds.

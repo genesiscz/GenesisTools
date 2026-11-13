@@ -1,18 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { handleHandlers, toRpcTable } from "@genesiscz/utils/api-descriptor";
-import { newestLoadedModuleMtime } from "@genesiscz/utils/bun/loaded-modules";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
-import { claimPidFile, clearPidFile } from "@genesiscz/utils/process/pidfile";
-import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import type { EditProject } from "@genesiscz/utils/recording-editor/project";
 import type { RpcCallContext } from "@genesiscz/utils/rpc/peer";
-import { type RpcConnection, RpcSocketServer } from "@genesiscz/utils/rpc/socket-server";
+import { type ServiceHost, startServiceHost } from "@genesiscz/utils/rpc/service-host";
+import type { RpcConnection } from "@genesiscz/utils/rpc/socket-server";
 import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
 import { callTimeoutFor } from "@genesiscz/utils/screen-recorder/live";
 import { RECORDING_EVENT, RECORDINGS_CHANGED } from "@genesiscz/utils/screen-recorder/service-link";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { editPathOf, editProject, setEditOwner, withEditCancel } from "./edit";
 import { type EditSession, EditSessions, type ProjectChanged, withEditSession } from "./edit-session";
@@ -30,15 +24,12 @@ import {
     type LiveRecordingRow,
     protocolVersion,
     type RecordingsChanged,
-    readLiveService,
     recorderServiceDir,
     recordingEventSchema,
     SERVICE_PROTOCOL,
     type ServiceEntry,
     type ServiceRole,
     serviceApi,
-    serviceEntryPath,
-    servicePidPath,
     serviceSocketPath,
 } from "./service-protocol";
 import { Movie, moviesApi } from "./toolset";
@@ -47,12 +38,8 @@ const { log } = logger.scoped("recorder-service");
 
 /** The service exits after this long with no connection and no open session. */
 export const SERVICE_IDLE_MS = 10 * 60_000;
-/** How often it checks the idle rule and the code stamp. */
-const CHECK_EVERY_MS = 60_000;
 /** Without a host, a window or camera call starts the app and waits this long for its hello. */
 const HOST_WAIT_MS = 10_000;
-/** A start that finds another start claiming the service waits this long for its entry. */
-const RIVAL_WAIT_MS = 15_000;
 
 interface ConnectionState {
     /** Unique in this service: a gesture id a client picks is its own under it. */
@@ -119,70 +106,19 @@ function byOf(connection: Connection): string {
 }
 
 /**
- * Starts the recorder service in this process: claims `<dir>/service.pid` (a second start, in this process or
- * another, finds the first and answers `running`), listens on `<dir>/service.sock`, and writes `service.json`.
+ * Starts the recorder service in this process on the shared service host (src/utils/rpc/service-host.ts): it claims
+ * `<dir>/service.pid` (a second start, in this process or another, finds the first and answers `running`), listens on
+ * `<dir>/service.sock` (a hashed name when that path is too long), and writes `service.json`.
  */
 export async function startRecorderService(options: RecorderServiceOptions = {}): Promise<ServiceStart> {
     const dir = options.dir ?? recorderServiceDir();
-    mkdirSync(dir, { recursive: true });
-    const pidPath = servicePidPath(dir);
-    // A live holder keeps the claim, this process's own included: one service per folder.
-    const claim = await claimPidFile(pidPath, {
-        reclaimable: (state) => state.status !== "live" && state.status !== "unverified",
-    });
-
-    if (claim.status !== "claimed") {
-        const deadline = Date.now() + RIVAL_WAIT_MS;
-
-        for (;;) {
-            const entry = readLiveService(dir);
-
-            if (entry) {
-                log.info({ dir, pid: entry.pid }, "a recorder service runs already");
-                return { status: "running", entry };
-            }
-
-            if (Date.now() >= deadline) {
-                throw new Error(`another recorder service is starting in ${dir} and did not come up`);
-            }
-
-            await Bun.sleep(Math.min(200, deadline - Date.now()));
-        }
-    }
-
-    try {
-        return { status: "started", service: listen(dir, options) };
-    } catch (error) {
-        clearPidFile(pidPath);
-        throw error;
-    }
-}
-
-function listen(dir: string, options: RecorderServiceOptions): RecorderService {
-    const socket = serviceSocketPath(dir);
-    const entryPath = serviceEntryPath(dir);
-    const startedAt = Date.now();
-    const pidCommand = readProcessCommand(process.pid);
-    const entry: ServiceEntry = {
-        version: 1,
-        protocol: SERVICE_PROTOCOL,
-        pid: process.pid,
-        ...(pidCommand ? { pidCommand } : {}),
-        socket,
-        startedAt: new Date(startedAt).toISOString(),
-        codeStamp: startedAt,
-    };
     const headless = new HeadlessHost(options.headless);
     const hostWaitMs = options.hostWaitMs ?? HOST_WAIT_MS;
     let app: { connection: Connection; host: ConnectedAppHost } | undefined;
     const helloWaiters = new Set<() => void>();
-    let lastBusy = Date.now();
-    /** Calls answered now: a code change waits for them, so an export never loses its service halfway. */
-    let callsRunning = 0;
     let stopping = false;
-    const stopped = Promise.withResolvers<string>();
-    // `server` is assigned below; notifications only start once it listens.
-    let server: RpcSocketServer<ConnectionState> | undefined;
+    // Assigned once the host listens; notifications only start then.
+    let server: ServiceHost<ConnectionState> | undefined;
     /** The live recordings their processes registered, by id, with the connection that answers their calls. */
     const recordings = new Map<string, { connection: Connection; row: LiveRecordingRow }>();
     const emitRecordings = (change: RecordingsChanged): void => server?.emit(RECORDINGS_CHANGED, { ...change });
@@ -413,7 +349,6 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             }
 
             sessions.release(path);
-            lastBusy = Date.now();
             return { closed: true };
         },
         "edit.apply": async (params, { connection }: HandlerContext) => {
@@ -637,119 +572,6 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         });
     };
 
-    const removeFiles = (): void => {
-        server?.stopListening();
-
-        try {
-            const written = existsSync(entryPath)
-                ? z
-                      .object({ pid: z.number() })
-                      .safeParse(SafeJSON.parse(readFileSync(entryPath, "utf8"), { strict: true }))
-                : undefined;
-
-            if (written?.success && written.data.pid === process.pid) {
-                unlinkSync(entryPath);
-            }
-        } catch (error) {
-            log.debug({ error, entryPath }, "service.json went away before the stop");
-        }
-
-        if (existsSync(socket)) {
-            unlinkSync(socket);
-        }
-    };
-
-    const stop = (reason: string): void => {
-        if (stopping) {
-            return;
-        }
-
-        stopping = true;
-        clearInterval(check);
-        log.info(
-            { reason, sessions: sessions.size, connections: server?.connections.length },
-            "recorder service stopping"
-        );
-        sessions.closeAll();
-        setEditOwner(undefined);
-        setRecorderHostResolver(undefined);
-        server?.endConnections();
-
-        try {
-            withPathArbitrationSync(socket, removeFiles);
-        } catch (error) {
-            log.warn({ error, socket }, "recorder service socket lock busy; removing without it");
-            removeFiles();
-        }
-
-        clearPidFile(servicePidPath(dir));
-        options.onStopped?.(reason);
-        stopped.resolve(reason);
-    };
-
-    server = withPathArbitrationSync(socket, () => {
-        if (existsSync(socket)) {
-            unlinkSync(socket);
-        }
-
-        const listening = new RpcSocketServer<ConnectionState>({
-            socket,
-            state: () => ({ id: ++lastConnectionId, holds: new Map(), gestures: new Map(), recordings: new Set() }),
-            // A cancelled request's edit never lands: every edit it makes checks this request's signal before it saves.
-            call: async ({ method, params, connection, context }) => {
-                callsRunning += 1;
-
-                try {
-                    return await withEditCancel(context.signal, () => answer(method, params, connection, context));
-                } finally {
-                    callsRunning -= 1;
-                    lastBusy = Date.now();
-                }
-            },
-            onOpen: () => {
-                lastBusy = Date.now();
-            },
-            onClose: (connection) => {
-                lastBusy = Date.now();
-
-                for (const [key, path] of connection.state.gestures) {
-                    sessions.get(path)?.cancelGesture(key);
-                }
-
-                connection.state.gestures.clear();
-
-                for (const [path, holders] of connection.state.holds) {
-                    for (const _holder of holders) {
-                        sessions.release(path);
-                    }
-                }
-
-                connection.state.holds.clear();
-
-                for (const id of connection.state.recordings) {
-                    if (recordings.get(id)?.connection === connection) {
-                        recordings.delete(id);
-                        log.info({ id }, "a live recording left the recorder service");
-                        emitRecordings({ id, change: "ended" });
-                    }
-                }
-
-                connection.state.recordings.clear();
-
-                if (app?.connection === connection) {
-                    log.info({ pid: connection.state.pid }, "the recorder host disconnected");
-                    app = undefined;
-                }
-            },
-            logScope: "recorder-service",
-            label: "recorder service",
-        });
-        atomicWriteFileSync(entryPath, SafeJSON.stringify(entry, null, 2));
-        return listening;
-    });
-    setEditOwner({ sessionOf: (path) => sessions.get(path) });
-    setRecorderHostResolver(() => host);
-
     const prewarm = (trigger: string): void => {
         try {
             options.prewarmNative?.(trigger);
@@ -757,43 +579,89 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             log.warn({ error, trigger }, "the native recorder prewarm failed");
         }
     };
-    prewarm("recorder-service-start");
-    const idleMs = options.idleMs ?? SERVICE_IDLE_MS;
-    const check = setInterval(() => {
-        prewarm("recorder-service-check");
-        if (options.sourceRoot && newestLoadedModuleMtime(options.sourceRoot) > startedAt) {
-            // A running call (an export, a camera start) or a live recording would lose the service halfway: on
-            // 2026-11-09 four exports failed with "the connection closed while the call ran". Wait for them.
-            if (callsRunning > 0 || recordings.size > 0) {
-                log.info(
-                    { calls: callsRunning, recordings: recordings.size },
-                    "recorder service code changed; exiting once no call runs and no recording is live"
-                );
-                return;
+
+    const start = await startServiceHost<ConnectionState>({
+        dir,
+        socket: serviceSocketPath(dir),
+        label: "recorder service",
+        logScope: "recorder-service",
+        protocol: SERVICE_PROTOCOL,
+        state: () => ({ id: ++lastConnectionId, holds: new Map(), gestures: new Map(), recordings: new Set() }),
+        // A cancelled request's edit never lands: every edit it makes checks this request's signal before it saves.
+        call: ({ method, params, connection, context }) =>
+            withEditCancel(context.signal, () => answer(method, params, connection, context)),
+        onClose: (connection) => {
+            for (const [key, path] of connection.state.gestures) {
+                sessions.get(path)?.cancelGesture(key);
             }
 
-            log.info("recorder service code changed since start; exiting so the next caller starts the new code");
-            stop("code-changed");
-            return;
-        }
+            connection.state.gestures.clear();
 
-        if (
-            idleMs > 0 &&
-            (server?.connections.length ?? 0) === 0 &&
-            sessions.size === 0 &&
-            Date.now() - lastBusy >= idleMs
-        ) {
-            stop("idle");
-        }
-    }, options.checkEveryMs ?? CHECK_EVERY_MS);
-    log.info({ dir, socket, pid: process.pid, methods: allMethods.length, version }, "recorder service listening");
+            for (const [path, holders] of connection.state.holds) {
+                for (const _holder of holders) {
+                    sessions.release(path);
+                }
+            }
+
+            connection.state.holds.clear();
+
+            for (const id of connection.state.recordings) {
+                if (recordings.get(id)?.connection === connection) {
+                    recordings.delete(id);
+                    log.info({ id }, "a live recording left the recorder service");
+                    emitRecordings({ id, change: "ended" });
+                }
+            }
+
+            connection.state.recordings.clear();
+
+            if (app?.connection === connection) {
+                log.info({ pid: connection.state.pid }, "the recorder host disconnected");
+                app = undefined;
+            }
+        },
+        idleMs: options.idleMs ?? SERVICE_IDLE_MS,
+        checkEveryMs: options.checkEveryMs,
+        keepAlive: {
+            // An open edit session (a window's, or one whose last save still runs) keeps it from the idle exit.
+            idle: () => sessions.size > 0,
+            // A live recording would lose the service halfway, as a running call would: on 2026-11-09 four exports
+            // failed with "the connection closed while the call ran". A code change waits for both.
+            codeChange: () => recordings.size > 0,
+        },
+        // `serve` passes the repo's `src/`; the recorder's service.json readers know no `sourceRoot`.
+        sourceRoot: options.sourceRoot,
+        publishSourceRoot: false,
+        onCheck: () => prewarm("recorder-service-check"),
+        // The sessions save and close before the connections end, so a window's last change is on disk.
+        onStopping: () => {
+            stopping = true;
+            sessions.closeAll();
+            setEditOwner(undefined);
+            setRecorderHostResolver(undefined);
+        },
+        onStopped: options.onStopped,
+    });
+
+    if (start.status === "running") {
+        return start;
+    }
+
+    server = start.host;
+    setEditOwner({ sessionOf: (path) => sessions.get(path) });
+    setRecorderHostResolver(() => host);
+    prewarm("recorder-service-start");
+    log.info({ methods: allMethods.length, version }, "recorder service methods");
 
     return {
-        entry,
-        sessions,
-        liveRecordings,
-        host,
-        stop,
-        stopped: stopped.promise,
+        status: "started",
+        service: {
+            entry: start.host.entry,
+            sessions,
+            liveRecordings,
+            host,
+            stop: start.host.stop,
+            stopped: start.host.stopped,
+        },
     };
 }

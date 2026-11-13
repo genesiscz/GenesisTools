@@ -11,7 +11,7 @@ import {
     proposeProjects,
     reasonText,
 } from "@genesiscz/utils/meetings/proposals";
-import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
@@ -38,6 +38,9 @@ import {
 const ALICE = { name: "Alice Novak", email: "alice@example.com" };
 const BOB = { name: "Bob Smith", email: "bob@example.com" };
 const ME = { name: "Owner Example", email: "owner@example.com", self: true };
+
+import { meetingPairingSource, projectMeetingPeople } from "./project-people";
+import { frequentTitleWords } from "./project-suggestions";
 
 function entry(
     fields: Partial<CalendarEntry> & Pick<CalendarEntry, "entryId" | "title" | "start" | "end">
@@ -225,81 +228,6 @@ describe("proposals", () => {
 });
 
 describe("calendar candidates with the meeting's people", () => {
-    test("an entry that names others but none of the meeting's people is left out; shared people rank first", () => {
-        const start = "2026-11-09T13:32:00.000Z";
-        const end = "2026-11-09T15:58:00.000Z";
-        const someoneElse = { name: "Dana Example", email: "dana@example.com" };
-        const entries = [
-            entry({
-                entryId: "other",
-                title: "Time reports",
-                start: "2026-11-09T14:00:00.000Z",
-                end: "2026-11-09T14:15:00.000Z",
-                people: [someoneElse, ME],
-            }),
-            entry({
-                entryId: "short",
-                title: "Offers sync",
-                start: "2026-11-09T14:30:00.000Z",
-                end: "2026-11-09T14:45:00.000Z",
-                people: [BOB, ME],
-            }),
-            entry({ entryId: "long", title: "Focus", start, end, people: [] }),
-        ];
-        const people = [{ name: "Smith Bob (QT)" }, { name: "Owner Example", self: true }];
-
-        expect(
-            calendarCandidates({ entries, start, end, slackMin: 15, people }).map((c) => [
-                c.entry.entryId,
-                c.sharedPeople,
-            ])
-        ).toEqual([
-            ["short", 1],
-            ["long", 0],
-        ]);
-        expect(calendarCandidates({ entries, start, end, slackMin: 15 }).map((c) => c.entry.entryId)).toEqual([
-            "long",
-            "other",
-            "short",
-        ]);
-    });
-
-    test("a name without letters, or an unmarked copy of the user, is no shared person; a part of a name keeps the entry", () => {
-        const start = "2026-11-09T13:00:00.000Z";
-        const end = "2026-11-09T14:00:00.000Z";
-        const entries = [
-            entry({
-                entryId: "noise",
-                title: "Time reports",
-                start,
-                end,
-                people: [{ name: "---" }, { name: "Owner Example" }, { name: "Dana Example" }],
-            }),
-            entry({ entryId: "partly", title: "Sync", start, end, people: [BOB, ME] }),
-            entry({ entryId: "exact", title: "Planning", start, end, people: [ALICE, ME] }),
-        ];
-        // The user once marked and once not (participants and attendance), and a name with no letters.
-        const people = [
-            { name: "Owner Example", self: true },
-            { name: "Owner Example" },
-            { name: "(QT)" },
-            { name: "Bob" },
-            { name: "Alice Novak" },
-        ];
-
-        expect(
-            calendarCandidates({ entries, start, end, slackMin: 15, people }).map((c) => [
-                c.entry.entryId,
-                c.sharedPeople,
-            ])
-        ).toEqual([
-            ["exact", 1],
-            ["partly", 0],
-        ]);
-    });
-});
-
-describe("viewProposals with the meeting's people", () => {
     test("participants and attendance filter the calendar; a partly matching name still pairs the entry's people and labels", async () => {
         const start = "2026-11-04T14:00:00.000Z";
         const entries = [
@@ -348,6 +276,79 @@ describe("viewProposals with the meeting's people", () => {
         ]);
         expect(view.proposals.labels).toEqual([
             { project: "offers", label: "Offers 2.0", reason: '"Offers 2.0" is in the title' },
+        ]);
+    });
+
+    test("a name without letters, or an unmarked copy of the user, is no shared person; a part of a name keeps the entry", () => {
+        const start = "2026-11-09T13:00:00.000Z";
+        const end = "2026-11-09T14:00:00.000Z";
+        const entries = [
+            entry({
+                entryId: "noise",
+                title: "Time reports",
+                start,
+                end,
+                people: [{ name: "---" }, { name: "Owner Example" }, { name: "Dana Example" }],
+            }),
+            entry({ entryId: "partly", title: "Sync", start, end, people: [BOB, ME] }),
+            entry({ entryId: "exact", title: "Planning", start, end, people: [ALICE, ME] }),
+        ];
+        // The user once marked and once not (participants and attendance), and a name with no letters.
+        const people = [
+            { name: "Owner Example", self: true },
+            { name: "Owner Example" },
+            { name: "(QT)" },
+            { name: "Bob" },
+            { name: "Alice Novak" },
+        ];
+
+        expect(
+            calendarCandidates({ entries, start, end, slackMin: 15, people }).map((c) => [
+                c.entry.entryId,
+                c.sharedPeople,
+            ])
+        ).toEqual([
+            ["exact", 1],
+            ["partly", 0],
+        ]);
+    });
+
+    test("an entry that names others but none of the meeting's people is left out; shared people rank first", () => {
+        const start = "2026-11-09T13:32:00.000Z";
+        const end = "2026-11-09T15:58:00.000Z";
+        const someoneElse = { name: "Dana Example", email: "dana@example.com" };
+        const entries = [
+            entry({
+                entryId: "other",
+                title: "Time reports",
+                start: "2026-11-09T14:00:00.000Z",
+                end: "2026-11-09T14:15:00.000Z",
+                people: [someoneElse, ME],
+            }),
+            entry({
+                entryId: "short",
+                title: "Offers sync",
+                start: "2026-11-09T14:30:00.000Z",
+                end: "2026-11-09T14:45:00.000Z",
+                people: [BOB, ME],
+            }),
+            entry({ entryId: "long", title: "Focus", start, end, people: [] }),
+        ];
+        const people = [{ name: "Smith Bob (QT)" }, { name: "Owner Example", self: true }];
+
+        expect(
+            calendarCandidates({ entries, start, end, slackMin: 15, people }).map((c) => [
+                c.entry.entryId,
+                c.sharedPeople,
+            ])
+        ).toEqual([
+            ["short", 1],
+            ["long", 0],
+        ]);
+        expect(calendarCandidates({ entries, start, end, slackMin: 15 }).map((c) => c.entry.entryId)).toEqual([
+            "long",
+            "other",
+            "short",
         ]);
     });
 });
@@ -453,8 +454,6 @@ describe("ask each time", () => {
         expect(store.read(meeting.id)?.assign?.folder?.state).toBe("paired");
     });
 
-    // Regression test: review of PR 748, round 1. A yes for a project removed while its folder question was open threw
-    // in addSourceFolder, the step stayed asked, and every sweep logged "assign step failed" again.
     test("a yes for a project that is gone closes the folder step; a step a rename moved stays for the new name", async () => {
         const { store, config, inbox, deps, create, state } = setup();
         await config.addProject("offers");
@@ -981,4 +980,92 @@ test("an inbox answer for a replaced question, or after the project was set mean
     expect(late.stale).toBe(true);
     expect(store.read(setMeanwhile.id)?.project).toBe("side");
     expect((await config.read()).projects.work).toBeUndefined();
+});
+
+describe("the values the project rules offer, and the people of a project's meetings", () => {
+    const at = "2026-11-10T08:00:00.000Z";
+    const meeting = (id: string, start: string, extra: Record<string, unknown>) =>
+        meetingRecordSchema.parse({
+            id,
+            title: `Sync ${id}`,
+            project: "shop",
+            start,
+            createdAt: start,
+            createdBy: "link",
+            ...extra,
+        });
+    const config = meetingsConfigSchema.parse({
+        projects: {
+            shop: {
+                match: {
+                    people: [{ name: "Bob Example", email: "bob@example.com", pairedBy: [{ kind: "manual", at }] }],
+                },
+            },
+        },
+    });
+    const records = [
+        meeting("m1", "2026-11-01T09:00:00.000Z", {
+            participants: [{ name: "Owner Example", self: true }, { name: "Alice Example" }],
+            calendar: {
+                from: "apple-calendar",
+                eventId: "cal-1",
+                title: "Shop sync",
+                start: "2026-11-01T09:00:00.000Z",
+                attendees: ["Alice Example", "Bob Example"],
+                people: [{ name: "Alice Example", email: "alice@example.com" }],
+            },
+        }),
+        meeting("m2", "2026-11-03T09:00:00.000Z", {
+            participants: [{ name: "Alice Example" }],
+            // The owner as a named speaker carries no self mark; the first meeting marks them.
+            speakers: { labels: { "Speaker 1": "Owner Example", "Speaker 2": "Carol Example" } },
+        }),
+        meetingRecordSchema.parse({
+            id: "other",
+            title: "Other",
+            project: "elsewhere",
+            start: "2026-11-04T09:00:00.000Z",
+            createdAt: "2026-11-04T09:00:00.000Z",
+            createdBy: "link",
+            participants: [{ name: "Dan Example" }],
+        }),
+    ];
+
+    test("lists who is not paired yet, how often, and the last meeting; the owner and paired people are left out", () => {
+        expect(projectMeetingPeople({ records, config, project: "shop" })).toEqual([
+            {
+                name: "Alice Example",
+                email: "alice@example.com",
+                meetings: 2,
+                last: { id: "m2", title: "Sync m2", start: "2026-11-03T09:00:00.000Z" },
+            },
+            {
+                name: "Carol Example",
+                meetings: 1,
+                last: { id: "m2", title: "Sync m2", start: "2026-11-03T09:00:00.000Z" },
+            },
+        ]);
+    });
+
+    test("a person on the meeting's calendar entry is paired through it; anyone else by hand with the meeting named", () => {
+        const [first] = records;
+        expect(meetingPairingSource(first!, { name: "Alice Example" }, at)).toEqual({
+            kind: "calendar",
+            from: "apple-calendar",
+            entryId: "cal-1",
+            title: "Shop sync",
+            start: "2026-11-01T09:00:00.000Z",
+            meetingId: "m1",
+            at,
+        });
+        expect(meetingPairingSource(records[1]!, { name: "Carol Example" }, at)).toEqual({
+            kind: "manual",
+            at,
+            note: "from the meeting “Sync m2” on 2026-11-03",
+        });
+    });
+
+    test("the frequent title words skip numbers, short words and the generic ones", () => {
+        expect(frequentTitleWords(records)).toEqual(["Other"]);
+    });
 });

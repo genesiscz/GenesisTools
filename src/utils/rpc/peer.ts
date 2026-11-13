@@ -1,7 +1,8 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { logger } from "@genesiscz/utils/logger";
+import { currentToolName } from "@genesiscz/utils/security/vault-purpose";
 import { z } from "zod";
-import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "./errors";
+import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError, rpcErrorBody } from "./errors";
 
 /**
  * One side of a newline-delimited JSON-RPC 2.0 connection, the same on the server and on the client: it answers the
@@ -89,19 +90,22 @@ const rpcRequest = z.object({
     method: z.string(),
     params: z.unknown().optional(),
 });
+const remoteErrorFields = {
+    data: z.unknown().optional(),
+    stack: z.string().optional(),
+    issue: z.object({ tool: z.string(), title: z.string().optional() }).optional(),
+};
 const rpcReply = z.object({
     id: rpcIdSchema.optional(),
     result: z.unknown().optional(),
-    error: z.object({ code: z.number(), message: z.string(), data: z.unknown().optional() }).optional(),
+    error: z.object({ code: z.number(), message: z.string(), ...remoteErrorFields }).optional(),
 });
 /**
  * Without the `jsonrpc` field the other side speaks a JSON-RPC-like dialect (the Codex app-server), read as leniently
  * as its own client always read it: an error may come without a code or a message.
  */
 const liteReply = rpcReply.extend({
-    error: z
-        .object({ code: z.number().optional(), message: z.string().optional(), data: z.unknown().optional() })
-        .optional(),
+    error: z.object({ code: z.number().optional(), message: z.string().optional(), ...remoteErrorFields }).optional(),
 });
 const jsonrpcField = { jsonrpc: z.literal("2.0") };
 const schemas = {
@@ -244,6 +248,8 @@ export interface RpcPeerOptions {
     log: RpcLog;
     /** Names the connection in log lines: `live recording` gives "live recording call refused". */
     label: string;
+    /** The tool named by an error reply; the current process tool when absent. */
+    tool?: string;
     logFields?: Record<string, unknown>;
     /** What the other side speaks; a field left out keeps `DEFAULT_RPC_DIALECT`'s value. */
     dialect?: Partial<RpcDialect>;
@@ -495,8 +501,13 @@ export class RpcPeer {
         this.drop(id, waiting);
 
         if (reply.error) {
-            const { code = JSON_RPC_ERRORS.internal, message, data } = reply.error;
-            waiting.reject(new RpcError(code, message ?? `${this.options.label} returned an unknown RPC error`, data));
+            const { code = JSON_RPC_ERRORS.internal, message, data, stack, issue } = reply.error;
+            waiting.reject(
+                new RpcError(code, message ?? `${this.options.label} returned an unknown RPC error`, data, {
+                    stack,
+                    issue,
+                })
+            );
         } else {
             waiting.resolve(reply.result);
         }
@@ -616,18 +627,10 @@ export class RpcPeer {
             log.debug({ ...logFields, method }, `${label} call`);
             reply({ result: result ?? null });
         } catch (error) {
-            const code = error instanceof RpcError ? error.code : JSON_RPC_ERRORS.internal;
             const level = failedCallLevel(error, id === undefined);
             log[level]({ ...logFields, method, error }, `${label} call ${level === "warn" ? "failed" : "refused"}`);
 
-            const data = error instanceof RpcError ? error.data : undefined;
-            reply({
-                error: {
-                    code,
-                    message: error instanceof Error ? error.message : String(error),
-                    ...(data !== undefined ? { data } : {}),
-                },
-            });
+            reply({ error: rpcErrorBody(error, this.options.tool ?? currentToolName()) });
         }
     }
 }

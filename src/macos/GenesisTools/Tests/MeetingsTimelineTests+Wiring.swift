@@ -33,6 +33,18 @@ extension MeetingsTimelineTests {
         screen: { _ in throw MeetingsService.Unavailable(reason: "test") },
         rows: { _ in throw MeetingsService.Unavailable(reason: "test") })
 
+    func testPlaybackActivityUsesTheRecordedLevelAndHandlesMissingPeaks() {
+        XCTAssertEqual(MomentActivityGlyph.heights([], range: 0...1, at: 0.5), [])
+        XCTAssertEqual(MomentActivityGlyph.heights([0, 0, 0], range: 0...1, at: 0.5), [1, 1, 1])
+        XCTAssertEqual(MomentActivityGlyph.heights([1, 1, 1], range: 0...1, at: 0.5), [10, 10, 10])
+        let peaks = [0.0, 0, 1, 1]
+        XCTAssertEqual(MomentActivityGlyph.heights(peaks, range: 0...4, at: 1), [1, 1, 1])
+        XCTAssertEqual(MomentActivityGlyph.heights(peaks, range: 0...4, at: 3), [10, 10, 10])
+        let malformed = MomentActivityGlyph.heights([Double.nan, -1, 2], range: 0...1, at: 0.5)
+        XCTAssertTrue(malformed.allSatisfy { $0.isFinite && $0 >= 1 && $0 <= 10 })
+        XCTAssertEqual(MomentActivityGlyph.heights([1], range: 0...1, at: .infinity), [])
+    }
+
     // MARK: What the timeline shows (R1, R4, R47)
 
     func testTheDockShowsTheClipTheContextOrTheMeetingAndALensRangeOnlyForItsOwnLayer() {
@@ -49,6 +61,55 @@ extension MeetingsTimelineTests {
         XCTAssertEqual(view(.clip, override: .init(layer: layer, range: 100...200)), 100...200, "the lens range of this layer")
         XCTAssertEqual(view(.clip, override: .init(layer: UUID(), range: 100...200)), span.fitView,
                        "a new top shows its own clip again, not the lens range of the one before")
+    }
+
+    /// 2026-11-10: a click on a merged pin zoomed in, the breadcrumb did not change and nothing went back.
+    func testTheZoomedRangesAreATrailThatTheBreadcrumbNamesAndGoesBackThrough() throws {
+        let (defaults, name) = try suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let dock = TimelineDockModel(reads: Self.noReads, defaults: defaults)
+        let layer = UUID()
+        dock.showView(2926...5220, layer: layer)
+        dock.pushView(3040...3075, layer: layer)
+        dock.pushView(3040...3075, layer: layer)
+        XCTAssertEqual(dock.trail(of: layer), [2926...5220, 3040...3075], "a merged pin is one level deeper; the same range twice is one level")
+        XCTAssertEqual(dock.viewOverride?.range, 3040...3075)
+        dock.setView(3050...3085, layer: layer)
+        XCTAssertEqual(dock.trail(of: layer), [2926...5220, 3050...3085], "the lens moves the shown range; no level is added")
+        XCTAssertTrue(dock.trail(of: UUID()).isEmpty, "another layer has no trail")
+        dock.backView()
+        XCTAssertEqual(dock.trail(of: layer), [2926...5220])
+        dock.pushView(3040...3075, layer: layer)
+        dock.pushView(3056...3060, layer: layer)
+        dock.popView(to: 0)
+        XCTAssertEqual(dock.trail(of: layer), [2926...5220], "a click on a level goes back to it in one step")
+        dock.backView()
+        XCTAssertNil(dock.viewOverride, "back from the first level shows the layer's own view")
+        dock.showView(10...20, layer: layer)
+        dock.showView(30...40, layer: layer)
+        XCTAssertEqual(dock.trail(of: layer), [30...40], "Show is that range alone")
+        let next = UUID()
+        dock.moveView(from: layer, to: next)
+        XCTAssertEqual(dock.trail(of: next), [30...40], "the next stretch of the same play keeps the range")
+        dock.popView(to: nil)
+        XCTAssertNil(dock.viewOverride)
+    }
+
+    func testTheDockSaysWhatBackGoesToAndTheBreadcrumbWhatAClickDoes() {
+        var state = TimelineDockState(meetingTitle: "Design review", moments: [], isPlaying: true, span: nil, zoom: .meeting, view: 0...100,
+                                      durationSec: 100, wholePeaks: [], zoomPeaks: [], zoomPeaksRange: 0...100, pins: [], offerMore: false)
+        XCTAssertNil(state.backTitle, "no zoomed range: no Back button")
+        state.views = [2926...5220]
+        XCTAssertEqual(state.backTitle, "the whole meeting")
+        state.views = [2926...5220, 3040...3075]
+        XCTAssertEqual(state.backTitle, "48:46 to 1:27:00")
+        state.span = TimelineFixture.span
+        state.views = [3260...3300]
+        XCTAssertEqual(state.backTitle, "the clip")
+        XCTAssertEqual(TimelineDockState.viewTitle(3040...3075), "50:40 to 51:15")
+        XCTAssertEqual(StackBreadcrumb.tooltip(top: true, title: "Q1", zoomed: false), "Plays now")
+        XCTAssertEqual(StackBreadcrumb.tooltip(top: true, title: "Q1", zoomed: true), "Plays now. Click to show all of it on the timeline again")
+        XCTAssertEqual(StackBreadcrumb.tooltip(top: false, title: "Q1", zoomed: true), "Back to Q1, where it stopped")
     }
 
     func testZoomStepsHoldAtTheEndsAndAZoomChangeDropsTheLensRange() throws {
@@ -107,11 +168,26 @@ extension MeetingsTimelineTests {
         XCTAssertEqual(asked.last?.fromSec, 0)
         XCTAssertEqual(asked.last?.toSec, 300)
         XCTAssertEqual(dock.zoomPeaks("m", view: 100...200, durationSec: 8772).range, 0...300)
+        XCTAssertEqual(dock.activityPeaks("m", at: 150).peaks.first, 0.8,
+                       "a subsecond activity mark uses the finer cache even when its viewport-scale test would reject it")
+        XCTAssertEqual(dock.activityPeaks("m", at: 600).peaks.first, 0.2, "outside the fine cache, use the whole recording")
+        XCTAssertTrue(dock.activityPeaks("other", at: 150).peaks.isEmpty, "never borrow another meeting's peaks")
         dock.ensureZoomPeaks("m", view: 120...220, durationSec: 8772)
         XCTAssertEqual(asked.count, 2, "a view the held peaks cover asks nothing")
     }
 
     // MARK: The screen beside the sound (R41, G-SCR-1)
+
+    func testDockAutoDisplayPrefersRecordedFocusAtThePlayhead() {
+        var a = MeetingsAPI.MeetingScreen.Frame(file: "a", path: "/a", meetingSec: 0, displayId: 1, width: 20, height: 10, lineCount: 0)
+        a.focusedDisplayId = 1
+        var b = MeetingsAPI.MeetingScreen.Frame(file: "b", path: "/b", meetingSec: 10, displayId: 2, width: 20, height: 10, lineCount: 0)
+        b.focusedDisplayId = 2
+        let screen = MeetingsAPI.MeetingScreen.Result(meeting: "m", recorded: true, displays: [], frames: [a, b])
+        XCTAssertEqual(TimelineDockModel.autoDisplay(screen: screen, moment: nil, at: 5), 1)
+        XCTAssertEqual(TimelineDockModel.autoDisplay(screen: screen, moment: nil, at: 12), 2)
+        XCTAssertEqual(TimelineDockModel.frame(in: screen, at: 12, display: 1)?.file, "a")
+    }
 
     func testTheScreenPaneShowsTheLastFrameAtOrBeforeThePlayheadOnItsDisplay() throws {
         let json = #"""
@@ -141,6 +217,18 @@ extension MeetingsTimelineTests {
         XCTAssertEqual(MeetingsPlaybackKeys.key(keyCode: 53, characters: "\u{1b}", modifiers: []), .escape)
         XCTAssertNil(MeetingsPlaybackKeys.key(keyCode: 49, characters: " ", modifiers: [.command]), "⌘Space is the system's")
         XCTAssertNil(MeetingsPlaybackKeys.key(keyCode: 0, characters: "a", modifiers: []))
+    }
+
+    func testFocusedControlsKeepSpaceAndArrowKeys() {
+        for code: UInt16 in [49, 123, 124] {
+            XCTAssertNil(MeetingsPlaybackKeys.key(keyCode: code, characters: nil, modifiers: [], controlFocused: true),
+                         "A focused control keeps Space and arrows")
+        }
+        XCTAssertEqual(MeetingsPlaybackKeys.key(keyCode: 53, characters: nil, modifiers: [], controlFocused: true), .escape,
+                       "Escape retains the existing popover and playback stack order")
+        XCTAssertEqual(MeetingsPlaybackKeys.key(keyCode: 33, characters: "[", modifiers: [], controlFocused: true), .previousPin)
+        XCTAssertEqual(MeetingsPlaybackKeys.key(keyCode: 49, characters: " ", modifiers: []), .space,
+                       "Playback shortcuts still work when the list owns keyboard focus")
     }
 
     func testTheBracketsStepToTheNextAndThePreviousPinAndTheEndsHold() {

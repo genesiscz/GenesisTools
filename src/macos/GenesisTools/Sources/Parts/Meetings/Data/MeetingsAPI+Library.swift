@@ -109,6 +109,7 @@ extension MeetingsAPI {
             var entry: String?
             var project: String?
             var person: Person?
+            var by: PairedBy?
         }
 
         /// One removed pairing; `left`: the person is no longer paired with the project at all.
@@ -141,6 +142,84 @@ extension MeetingsAPI {
         }
 
         typealias Result = [MatchPreviewRow]
+    }
+
+    /// `projects.suggestions`: the values the rule fields offer while they are typed. A list that could not be read
+    /// says why in its `reason`.
+    enum ProjectsSuggestions: MeetingsServiceMethod {
+        static let name = "projects.suggestions"
+
+        struct Params: Codable, Equatable {}
+
+        /// A list of values, and why it is partial when the read was not possible.
+        struct Values: Decodable, Equatable {
+            let values: [String]
+            let reason: String?
+        }
+
+        /// A source's folders: its own list (`from` "source"), or the folders its meetings sit in ("meetings").
+        struct Folders: Decodable, Equatable {
+            let values: [String]
+            let from: String
+            let reason: String?
+        }
+
+        struct Result: Decodable, Equatable {
+            /// By source id ("wisprflow").
+            let folders: [String: Folders]
+            let calendars: Values
+            let titleWords: [String]
+            let labels: [String]
+        }
+    }
+
+    /// `projects.meetingPeople`: the people of the project's meetings who are not paired with it yet.
+    enum ProjectsMeetingPeople: MeetingsServiceMethod {
+        static let name = "projects.meetingPeople"
+
+        struct Params: Codable, Equatable { var project: String }
+
+        /// One person: in how many of the project's meetings, and the newest of them.
+        struct Person: Decodable, Equatable, Hashable, Identifiable {
+            struct Meeting: Decodable, Equatable, Hashable {
+                let id: String
+                let title: String
+                let start: String
+            }
+
+            let name: String
+            let email: String?
+            let meetings: Int
+            let last: Meeting
+            var id: String { email ?? name }
+            var label: String { email.map { "\(name) <\($0)>" } ?? name }
+        }
+
+        typealias Result = [Person]
+    }
+
+    /// `projects.pairFromMeetings`: people of the project's meetings paired with it, each with its source.
+    enum ProjectsPairFromMeetings: MeetingsServiceMethod {
+        static let name = "projects.pairFromMeetings"
+
+        struct Params: Codable, Equatable {
+            var project: String
+            /// nil pairs everyone `projects.meetingPeople` lists.
+            var people: [ProjectsUnpair.Person]?
+            /// Limits pairing to one meeting after its project is assigned.
+            var meeting: String?
+        }
+
+        struct Paired: Decodable, Equatable {
+            let name: String
+            let email: String?
+            let by: PairedBy
+        }
+
+        struct Result: Decodable, Equatable {
+            let project: String
+            let paired: [Paired]
+        }
     }
 
     // MARK: Dictionary

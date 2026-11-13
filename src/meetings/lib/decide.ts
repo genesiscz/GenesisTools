@@ -109,8 +109,7 @@ export function decisionOf(options: {
 /**
  * Takes back the decision of items: the Undo of a confirm or a reject. With `token` (a `DecideResult.token`, any
  * decision journal token) it reverts that decision for these items, refused (`item-changed`) when another decision
- * changed one of them since; a question named brings back its whole answer, and no items reverts the whole entry (a
- * speaker rename has no item, only labels). Without a token each item goes back to the
+ * changed one of them since; a question named brings back its whole answer. Without one each item goes back to the
  * state before its own last decision; a question is never reopened that way, because its answer also decided other
  * items. The corrections ledger is append-only, so a confirm's line stays and a retraction line follows it, which
  * `dictionary suggest` reads as the confirmation withdrawn.
@@ -125,7 +124,6 @@ export async function reopenEntry(options: ReopenOptions): Promise<Decided> {
     const journal = new DecisionJournal({ store });
     const actor = options.actor ?? callerActor();
     const reason = options.reason ? { reason: options.reason } : {};
-    // A token with no items reverts its whole entry, labels included: an entry of item ids gives back no rename.
     return token
         ? journal.revert({ meeting: record.id, token, ...(ids.length > 0 ? { items: ids } : {}), actor, ...reason })
         : journal.apply({ meeting: record.id, action: { kind: "reopen", items: ids }, actor, ...reason });

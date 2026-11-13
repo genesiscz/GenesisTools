@@ -16,6 +16,7 @@ import {
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { z } from "zod";
 import { CallTimeline } from "./call-timeline";
+import { hasFrameIndex, readIndexRows } from "./frame-index";
 import { readRecorderState } from "./recorder-shared";
 import {
     type DisplayFrames,
@@ -74,6 +75,42 @@ export function readOcrRows(path: string): OcrRow[] {
     }
 
     return rows;
+}
+
+/**
+ * A meeting's screen rows: every `ocr.jsonl` row, and each frame of the index that has none yet as a `pending` row
+ * with no text, oldest first; `pending` counts those. A meeting whose OCR is behind still shows every kept frame.
+ */
+export function readScreenRows(folder: string): { rows: OcrRow[]; pending: number } {
+    const path = join(folder, "ocr.jsonl");
+    const indexed = readIndexRows(folder);
+    const focused = new Map(
+        indexed.filter((row) => row.focusedDisplayId !== undefined).map((row) => [row.file, row.focusedDisplayId!])
+    );
+    // A still-running older OCR worker may omit this capture metadata; the frame index is authoritative.
+    const rows = (existsSync(path) ? readOcrRows(path) : []).map((row) =>
+        focused.has(row.file) ? { ...row, focusedDisplayId: focused.get(row.file) } : row
+    );
+    const done = new Set(rows.map((row) => row.file));
+    const waiting = indexed.filter((entry) => !done.has(entry.file));
+
+    if (waiting.length === 0) {
+        return { rows, pending: 0 };
+    }
+
+    const pendingRows: OcrRow[] = waiting.map((entry) => ({
+        file: entry.file,
+        at: entry.at,
+        displayId: entry.displayId,
+        ...(entry.focusedDisplayId !== undefined ? { focusedDisplayId: entry.focusedDisplayId } : {}),
+        changePercent: entry.changePercent,
+        reason: entry.reason,
+        text: "",
+        blocks: [],
+        pending: true,
+    }));
+    const all = [...rows, ...pendingRows].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    return { rows: all, pending: waiting.length };
 }
 
 /** The frames whose text holds `query` (without case and diacritics), oldest first, at most `limit`. */
@@ -223,6 +260,8 @@ export interface MeetingScreen {
     displays: DisplayFrames[];
     frames: Array<ScreenFrame & { meetingSec: number }>;
     boxes?: ScreenBoxFrame[];
+    /** Kept frames the OCR worker has not read yet; they are among the frames, as `pending` with no text. */
+    pending: number;
 }
 
 /** The running recorder's display intervals when it records this meeting; they are newer than the record's. */
@@ -235,10 +274,8 @@ function liveDisplaySpans(store: MeetingStore, meetingId: string) {
 export async function meetingScreen(request: MeetingScreenRequest): Promise<MeetingScreen> {
     const { store, record } = request;
     const folder = store.folder(record.id);
-    const ocrPath = join(folder, "ocr.jsonl");
-
-    if (!existsSync(ocrPath)) {
-        throw new Error(`${record.id} has no screen recording (no ocr.jsonl)`);
+    if (!hasFrameIndex(folder)) {
+        throw new Error(`${record.id} has no screen recording (no frames.jsonl or ocr.jsonl)`);
     }
 
     if (request.atSec === undefined && !request.match) {
@@ -246,7 +283,7 @@ export async function meetingScreen(request: MeetingScreenRequest): Promise<Meet
     }
 
     const zeroMs = (await CallTimeline.forRecord(record)).zeroMs;
-    const rows = readOcrRows(ocrPath);
+    const { rows, pending } = readScreenRows(folder);
     const spans = recordedSpans(record);
     const lines: OcrLine[] = rows.map((row) => ocrLineSchema.parse(row));
     const picked =
@@ -271,7 +308,14 @@ export async function meetingScreen(request: MeetingScreenRequest): Promise<Meet
     const frames = picked.displays
         .flatMap((display) => display.frames)
         .map((frame) => ({ ...frame, meetingSec: (Date.parse(frame.at) - zeroMs) / 1000 }));
-    const screen: MeetingScreen = { zeroMs, spans, recorded: picked.recorded, displays: picked.displays, frames };
+    const screen: MeetingScreen = {
+        zeroMs,
+        spans,
+        recorded: picked.recorded,
+        displays: picked.displays,
+        frames,
+        pending,
+    };
 
     if (request.boxes) {
         screen.boxes = await renderScreenBoxes({

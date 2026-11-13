@@ -135,9 +135,8 @@ struct ComparePushesSheet: View {
                 ProgressView().controlSize(.small)
                     .frame(maxWidth: .infinity, minHeight: 120)
             } else if let error = store.error, versions.isEmpty {
-                Text(error)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(ReviewPalette.removed)
+                FailureInline(message: error, outcome: "The PR's versions did not load", action: "List the PR's pushed versions",
+                              area: "hub", identifier: "review.versions.failure")
             } else {
                 HStack(spacing: 0) {
                     Text("From").frame(width: 44)

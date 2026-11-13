@@ -14,7 +14,7 @@ import {
     unsetConfigValue,
 } from "../lib/config-edit";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail } from "../lib/shared";
+import { fail } from "../lib/shared";
 import { configShowRead, windowJson } from "../lib/window-reads";
 
 async function show(path: string | undefined, opts: { json?: boolean }): Promise<void> {
@@ -45,7 +45,7 @@ async function show(path: string | undefined, opts: { json?: boolean }): Promise
         out.println(SafeJSON.stringify(view.value, null, 2));
         ui.dim(`config: ${view.path}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -68,7 +68,7 @@ async function set(path: string, text: string, opts: { expect?: string; json?: b
 
         ui.ok(`${segments.join(".")} = ${SafeJSON.stringify(value ?? null)}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -87,7 +87,7 @@ async function unset(path: string, opts: { expect?: string; json?: boolean }): P
 
         ui.ok(`${segments.join(".")} is back to ${value === undefined ? "unset" : SafeJSON.stringify(value)}`);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -112,7 +112,7 @@ async function edit(text: string, opts: { json?: boolean }): Promise<void> {
             ui.ok(`${one.path.join(".")} = ${SafeJSON.stringify(one.value)}`);
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 

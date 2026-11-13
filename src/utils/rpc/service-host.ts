@@ -1,5 +1,4 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 import { newestLoadedModuleMtime } from "@genesiscz/utils/bun/loaded-modules";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -11,6 +10,13 @@ import { awaitStart, startGatePath, stopPassedChild, sweepStartGates } from "@ge
 import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
+import {
+    readLiveServiceEntry,
+    type ServiceEntry,
+    serviceEntryPath,
+    servicePidPath,
+    serviceSocketPath,
+} from "./service-entry";
 import { type RpcCall, type RpcConnection, RpcSocketServer } from "./socket-server";
 
 /**
@@ -25,64 +31,19 @@ import { type RpcCall, type RpcConnection, RpcSocketServer } from "./socket-serv
  */
 
 const hostLog = logger.scoped("rpc-service-host");
-const { log } = hostLog;
 
 /** How long a second start waits for a rival start in the same folder to write its service.json. */
 const RIVAL_WAIT_MS = 15_000;
 const CHECK_EVERY_MS = 60_000;
 
-export function serviceSocketPath(dir: string): string {
-    return join(dir, "service.sock");
-}
-
-export function servicePidPath(dir: string): string {
-    return join(dir, "service.pid");
-}
-
-export function serviceEntryPath(dir: string): string {
-    return join(dir, "service.json");
-}
-
-/** `service.json`: where the running service listens, and what it speaks. */
-export const serviceEntrySchema = z.object({
-    version: z.literal(1),
-    protocol: z.number().int(),
-    pid: z.number().int().positive(),
-    /** The service's command line when it wrote the entry, so a recycled pid reads as gone. */
-    pidCommand: z.string().optional(),
-    socket: z.string(),
-    startedAt: z.string(),
-    /** When the service started, in ms; a loaded module that changed after it makes the service exit. */
-    codeStamp: z.number(),
-    /** The code the service runs (a hash of its checkout), which a client compares before it connects. */
-    code: z.string().optional(),
-    /**
-     * The checkout the service runs from, as a decoded absolute path with a trailing separator (`/…/GenesisTools/`),
-     * as Bun loaded the code (symlinks already resolved: `/tmp/…` reads `/private/tmp/…`). A client that runs no
-     * TypeScript (the Meetings window) compares it with the checkout of the `tools` it calls, both resolved, and reads
-     * through the command on a mismatch.
-     */
-    sourceRoot: z.string().optional(),
-});
-export type ServiceEntry = z.infer<typeof serviceEntrySchema>;
-
-/** The running service named in `<dir>/service.json`, or undefined when there is none or its process is gone. */
-export function readLiveServiceEntry(dir: string): ServiceEntry | undefined {
-    const path = serviceEntryPath(dir);
-
-    if (!existsSync(path)) {
-        return undefined;
-    }
-
-    try {
-        const entry = serviceEntrySchema.parse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
-        const status = classifyPid(entry.pid, entry.pidCommand).status;
-        return status === "live" || status === "unverified" ? entry : undefined;
-    } catch (error) {
-        log.debug({ error, path }, "service.json does not read; no service");
-        return undefined;
-    }
-}
+export {
+    readLiveServiceEntry,
+    type ServiceEntry,
+    serviceEntryPath,
+    serviceEntrySchema,
+    servicePidPath,
+    serviceSocketPath,
+} from "./service-entry";
 
 export interface ServiceHostOptions<S> {
     /** The folder of service.json, service.sock and service.pid. */
@@ -151,7 +112,6 @@ export type ServiceHostStart<S> =
 export async function startServiceHost<S>(options: ServiceHostOptions<S>): Promise<ServiceHostStart<S>> {
     const { dir } = options;
     const { log } = logger.scoped(options.logScope);
-    // The service answers with the owner's private data, and `hello` is no login: only the owner may reach its folder.
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     chmodSync(dir, 0o700);
     const pidPath = servicePidPath(dir);
@@ -292,10 +252,19 @@ function listen<S>(options: ServiceHostOptions<S>): ServiceHost<S> {
             label,
             ...(options.supersedes ? { supersedes: options.supersedes } : {}),
         });
-        // Only the owner may connect, also where the folder's mode is not checked on the way in.
-        chmodSync(socket, 0o600);
-        atomicWriteFileSync(entryPath, SafeJSON.stringify(entry, null, 2));
-        return listening;
+        try {
+            chmodSync(socket, 0o600);
+            atomicWriteFileSync(entryPath, SafeJSON.stringify(entry, null, 2));
+            return listening;
+        } catch (error) {
+            listening.stopListening();
+            listening.endConnections();
+            if (existsSync(socket)) {
+                unlinkSync(socket);
+            }
+
+            throw error;
+        }
     });
 
     const check = setInterval(() => {

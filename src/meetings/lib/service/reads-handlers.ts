@@ -85,11 +85,26 @@ export async function readScreen(
             path: frame.path,
             meetingSec: frame.meetingSec,
             ...(frame.displayId === undefined ? {} : { displayId: frame.displayId }),
+            ...(frame.focusedDisplayId === undefined ? {} : { focusedDisplayId: frame.focusedDisplayId }),
             width: frame.width,
             height: frame.height,
             lineCount: frame.lineCount,
         }));
-    return { meeting: record.id, recorded: true, displays: timeline.displays, frames };
+    return {
+        meeting: record.id,
+        recorded: true,
+        displays: timeline.displays,
+        frames,
+        ...(timeline.recordingSpans === undefined ? {} : { recordingSpans: timeline.recordingSpans }),
+        ...(timeline.displaySpans === undefined ? {} : { displaySpans: timeline.displaySpans }),
+    };
+}
+
+export async function readTimeline(
+    params: MeetingsParsedParams<"meeting.timeline">,
+    store: MeetingStore
+): Promise<MeetingsResult<"meeting.timeline">> {
+    return screenTimeline({ store, record: recordOf(store, params.meeting), all: params.all, frame: params.frame });
 }
 
 export async function readWaveform(

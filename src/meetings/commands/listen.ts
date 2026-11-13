@@ -52,7 +52,7 @@ import {
 } from "../lib/questions";
 import { speakerAnswerScores } from "../lib/review-rows";
 import { openMeetingsClient } from "../lib/service/client";
-import { errorText, fail, TOOL } from "../lib/shared";
+import { fail, TOOL } from "../lib/shared";
 
 const PAD_CHOICES = [5, 10] as const;
 const AGAIN = "\u0000again";
@@ -321,6 +321,8 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
 interface ListenOptions {
     item?: string;
     answer?: string;
+    except?: string[];
+    replaces?: string;
     comment?: string;
     reason?: string;
     subscribeAnswers?: boolean;
@@ -398,7 +400,7 @@ class TerminalAdapter implements ListenAdapter {
             player: this.deps.player,
             vocabulary: this.deps.vocabulary,
             delayMs: listen.delaySec * 1000,
-            ...(listen.repeat ? { repeatGapMs: listen.repeatGapSec * 1000 } : {}),
+            ...(listen.repeat.enabled ? { repeatGapMs: listen.repeat.gapSec * 1000 } : {}),
             ...(view.said ? { said: view.said } : {}),
             ...(view.context ? { context: view.context } : {}),
             ...(asked.earlier ? { earlier: asked.earlier } : {}),
@@ -546,13 +548,18 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
 };
 
 async function listen(ref: string, opts: ListenOptions): Promise<void> {
+    if (!opts.subscribeAnswers && (opts.withComments || opts.fromStart || opts.follow)) {
+        fail("--with-comments, --from-start and --follow require --subscribe-answers.");
+        return;
+    }
+
     const store = new MeetingStore();
     let meeting: MeetingRecord | undefined;
 
     try {
         meeting = store.resolve(ref);
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
         return;
     }
 
@@ -563,6 +570,46 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
 
     if (opts.subscribeAnswers) {
         await subscribe(meeting, store, opts);
+        return;
+    }
+
+    if (opts.answer !== undefined && !opts.clipOut) {
+        if (!opts.item) {
+            fail("--answer needs --item <Q12>: it answers one question.");
+            return;
+        }
+
+        const client = await openMeetingsClient({ role: "cli" });
+        try {
+            const result = await client.call("decision.apply", {
+                meeting: meeting.id,
+                action: {
+                    kind: "answer",
+                    question: opts.item,
+                    answer: opts.answer,
+                    ...(opts.comment ? { comment: opts.comment } : {}),
+                    ...(opts.except ? { except: opts.except } : {}),
+                    ...(opts.replaces ? { replaces: opts.replaces } : {}),
+                },
+                ...(opts.reason ? { reason: opts.reason } : {}),
+            });
+            if (!result.entry) {
+                fail(result.skipped[0]?.reason ?? "Nothing was answered.");
+            } else if (opts.json) {
+                out.result(SafeJSON.stringify(result.entry, null, 2));
+            } else {
+                ui.ok(`${opts.item} answered: ${opts.answer}`);
+            }
+        } catch (error) {
+            fail(error);
+        } finally {
+            client.close();
+        }
+        return;
+    }
+
+    if (opts.except || opts.replaces) {
+        fail("--except and --replaces need --answer and --item.");
         return;
     }
 
@@ -589,7 +636,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             const questions = openQuestions(meeting).filter((item) => !itemId || item.id === itemId);
             await clipsOut({ store, meeting, questions, dir: opts.clipOut, json: opts.json });
         } catch (err) {
-            fail(errorText(err));
+            fail(err);
         }
 
         return;
@@ -664,7 +711,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             out.result(SafeJSON.stringify(entry, null, 2));
         }
     } catch (err) {
-        fail(errorText(err));
+        fail(err);
     }
 }
 
@@ -678,6 +725,8 @@ export function registerListenCommand(program: Command): void {
         .option("--item <Q12|id>", "only this question: its number as listen shows it (Q12), or its item id")
         .option("--answer <text>", `answer --item without listening ("${NONE_OF_THESE}" rejects what it decides)`)
         .option("--comment <text>", "with --answer: a note kept on the question")
+        .option("--except <items...>", "with --answer: leave these item ids or question numbers out")
+        .option("--replaces <token>", "with --answer: replace this earlier answer in one decision")
         .option("--reason <text>", "why: kept in the decision journal with each answer")
         .option(
             "--subscribe-answers",

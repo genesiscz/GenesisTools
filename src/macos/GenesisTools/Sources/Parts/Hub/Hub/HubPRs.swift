@@ -370,7 +370,13 @@ final class PRsModel: ObservableObject {
     private var localLookup: (lookup: UUID, pick: PRCommitPick)?
     /// What a link asked of a PR and could not get (its commit is not in the PR), in that PR's header until
     /// dismissed or another PR opens. Not in `errors`: every list load replaces those.
-    @Published var notice: PRNotice?
+    let notices = NoticeStackModel()
+    @Published var notice: PRNotice? {
+        didSet {
+            guard let notice else { return }
+            notices.push(HubNotice("\(notice.ref.label): \(notice.text)", notice.isError ? .error : .success).stacked)
+        }
+    }
     /// Set by the command palette's "review" and cleared by the PR detail that opens "Review with
     /// agent". A flag, not a counter: the palette can switch modes, so the detail may mount after it.
     @Published var reviewRequested = false
@@ -2646,6 +2652,7 @@ struct PRsMain: View {
         content
             // Under the cover the last PR takes no clicks, and its file table hides: an AppKit view laid above the
             // whole root (GenesisKit `GenOverlayContentView`), which no SwiftUI view draws over.
+            .noticeStack(prs.notices)
             .allowsHitTesting(prs.opening == nil)
             .environment(\.genOverlaysHidden, prs.opening != nil)
             // A PR the list does not hold yet (a link, a resume): the view switches at once, the last view
@@ -2809,9 +2816,7 @@ struct PRDetailView: View {
                 PRHeaderState(pr: pr, mergeable: detail.flatMap { $0.headSha == nil || pr.headSha == nil || $0.headSha == pr.headSha ? $0.mergeable : nil })
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
                 Spacer()
-                if let notice = model.headerNotice {
-                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
-                }
+
                 if prs.review != nil {
                     IconButton(systemName: "arrow.up.right.square", tooltip: "Open this review in its own window: the same diff, threads and proposal") {
                         prs.openInReviewWindow(pr)
@@ -2907,11 +2912,7 @@ struct PRDetailView: View {
             }
             .font(.system(size: 11.5))
             .foregroundColor(ReviewPalette.dim)
-            // A row of its own: in the title row beside the title it had no width and wrapped a word per line.
-            if let notice = prs.notice, notice.ref.matches(pr) {
-                NoticePill(text: notice.text, isError: notice.isError) { prs.notice = nil }
-                    .padding(.top, 6)
-            }
+
         }
     }
 
@@ -3554,10 +3555,8 @@ struct PRSessionsSection: View {
                     .findRow("session:\(row.id)", cornerRadius: 6)
             }
             if let error = store.errors[pr.id] {
-                Text(verbatim: "Session search failed: \(error)")
-                    .font(.system(size: 11))
-                    .foregroundColor(ReviewPalette.removed)
-                    .lineLimit(2)
+                FailureInline(message: "\(error)", outcome: "The search for this PR's sessions failed",
+                              action: "Find the sessions of a PR", area: "hub", identifier: "pr.sessions.failure")
                     .textSelection(.enabled)
                     .instantTooltip(error)
             }

@@ -579,6 +579,10 @@ Modes for `--record`:
   elements (id, desc, role) so they replay.
 - **`all`**: both, deduplicated. This is the default.
 
+Shortcut key names follow the current keyboard layout. A recorded shortcut uses a physical token such as
+`cmd,code:16` (virtual key code 16), so QWERTZ or AZERTY replay keeps the original key position. Recorded modifiers,
+including Shift, stay in the plan. Explicit physical codes range from 0 through 127.
+
 Synthesis joins keystrokes into `type` steps (Return becomes `"return": true`), modifier combos into `hotkey` steps
 and wheel bursts into `scroll` steps. Clicks prefer id, then desc, then title, then raw coordinates. Review the plan
 before you run it. At stop, `--app <name>` forces the plan-level app instead of the most frequent one, and
@@ -714,7 +718,8 @@ failure:
   values legal. With `relativeTo` they are point offsets from the window's top-left, resolved when the action fires.
 - `region` in crop actions is frame pixels: display points times the captured screen's scale factor.
 - `capture.region` is screen points.
-- `duration` is seconds. `atMs`, `fromMs` and `toMs` are milliseconds. Plans warn on a duration over 180.
+- `duration` is seconds. `atMs`, `fromMs` and `toMs` are milliseconds. Frame-only plans warn above 180 seconds;
+  plans with `videoOut` may record up to 14,400 seconds (four hours).
 
 Four image products come out of a run: `frames` (kept full frames), `crops` (labelled tiles per crop window),
 `strip` (all tiles stacked in time order) and `strip-review` (the strip at 1600 px or less on its long side; read

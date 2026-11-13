@@ -17,10 +17,7 @@ interface ServeFlags {
     startGate?: string;
 }
 
-/**
- * `--detach`: starts the service in its own process and prints its service.json once it listens. The flags the
- * service itself reads (`--no-idle`) go with it; a running service is answered as it is.
- */
+/** `--detach`: starts the service in its own process and prints its service.json once it listens. */
 async function detach(flags: ServeFlags): Promise<void> {
     const launch = await launchService({
         dir: meetingsServiceDir(),

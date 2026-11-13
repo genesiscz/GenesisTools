@@ -7,6 +7,18 @@ import XCTest
 /// The failure notice's logic: the headline taken from a command's raw output, the log read as events, and the two
 /// markdown texts (the details the notice draws, the context an agent gets).
 final class FailureNoticeTests: XCTestCase {
+    @MainActor
+    func testTheRawTabKeepsTheRemoteStackWithoutPrintedOutput() {
+        var report = FailureReport(title: "Recorder", headline: "The request failed.", log: "",
+                                   stack: "Error: failed\n    at originalThrow (recorder.ts:4:2)")
+        let model = FailureNoticeModel(report: report, detailsOpen: true, retry: nil, dismiss: {})
+        XCTAssertTrue(model.rawMarkdown.contains("at originalThrow"))
+        XCTAssertTrue(model.detailsOpen)
+        report.stack = "Error: later detail\n    at updatedStack (recorder.ts:8:2)"
+        model.report = report
+        XCTAssertTrue(model.rawMarkdown.contains("at updatedStack"))
+        XCTAssertFalse(model.rawMarkdown.contains("at originalThrow"))
+    }
     /// A failed `tools recorder start`, as the recorder's start log holds it (2026-11-09, names made up).
     static let cameraFailure = """
     note: a window or app movie has no cursor track, so the editor draws no pointer, clicks or shortcuts; record --display or --region for those
@@ -50,6 +62,18 @@ final class FailureNoticeTests: XCTestCase {
 
     /// The defect: the notice's title read "The recording stopped at once (exit 1): {." because the first line that
     /// started with "error:" after trimming was the indented field `    error: {` of a WARN entry.
+    func testRemoteEvidenceSurvivesTheCompatibleReportAdapter() {
+        let stack = "RpcError: refused\n    at first (service.ts:1:2)\n    at second (caller.ts:3:4)"
+        let report = FailureReport(headline: "Refused", command: "tools meetings decide", stack: stack,
+                                   issue: FailureIssue(tool: "meetings", title: "Decision failed"))
+        XCTAssertTrue(report.hasLog)
+        XCTAssertTrue(report.detailsMarkdown().contains(stack))
+        XCTAssertTrue(report.rawText().contains(stack))
+        XCTAssertTrue(report.agentContext().contains(stack))
+        XCTAssertTrue(report.agentContext().contains("tool: meetings (issue: Decision failed)"))
+        XCTAssertTrue(report.agentContext().contains("command: tools meetings decide"))
+    }
+
     func testTheHeadlineIsTheErrorSentenceNeverAnIndentedErrorField() {
         XCTAssertEqual(FailureLog.headline(in: Self.cameraFailure),
                        "The camera was asked for, but it did not start: the camera needs GenesisTools.app's recorder face connected to the recorder service as its host.")
