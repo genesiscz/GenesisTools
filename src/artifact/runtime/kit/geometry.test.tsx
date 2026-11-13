@@ -6,7 +6,9 @@ import { PropertyGrid } from "./property-grid";
 import { mountDom } from "./test-dom";
 import {
     borderPoint,
+    connectorPoints,
     elementHeight,
+    headBase,
     orthogonal,
     type UmlConnectorKind,
     UmlDiagram,
@@ -152,6 +154,26 @@ describe("diagram geometry", () => {
         expect(borderPoint(ELEMENT, { x: 110, y: 1000 })).toEqual({ x: 110, y: 50 + h });
         expect(borderPoint(ELEMENT, { x: 110, y: -1000 })).toEqual({ x: 110, y: 50 });
         expect(borderPoint(ELEMENT, { x: 110, y: 50 + h / 2 })).toEqual({ x: 200, y: 50 + h / 2 });
+    });
+    test("a self-reference loops outside its element with two distinct border attachments", () => {
+        const h = elementHeight(ELEMENT);
+        const points = connectorPoints({}, ELEMENT, ELEMENT);
+        const inside = (p: { x: number; y: number }) => p.x > 20 && p.x < 200 && p.y > 50 && p.y < 50 + h;
+        expect(points.some(inside)).toBe(false);
+        expect(points[0]).not.toEqual(points[points.length - 1]);
+        expect(points[0].y).toBe(50);
+        expect(points[points.length - 1].x).toBe(200);
+        const base = headBase(points);
+        expect(base.x).toBeGreaterThan(200);
+    });
+    test("a via point on the target border does not turn the head sideways", () => {
+        const target: UmlElement = { ...ELEMENT, id: "b", y: 400 };
+        const onTop = { x: 110, y: 400 };
+        const points = connectorPoints({ via: [{ x: 110, y: 300 }, onTop] }, ELEMENT, target);
+        const tip = points[points.length - 1];
+        const base = headBase(points);
+        expect(tip).toEqual(onTop);
+        expect(Math.atan2(tip.y - base.y, tip.x - base.x)).toBeCloseTo(Math.PI / 2);
     });
     test("close vertically separated UML boxes use their facing borders in either direction", () => {
         const source: UmlElement = { id: "source", name: "Source", kind: "class", x: 20, y: 50, w: 180 };

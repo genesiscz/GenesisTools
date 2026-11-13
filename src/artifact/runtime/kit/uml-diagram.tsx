@@ -212,6 +212,52 @@ export function orthogonal(source: UmlElement, target: UmlElement): UmlPoint[] {
         { x: tx, y: t.y },
     ];
 }
+/**
+ * A connector from an element to itself: a loop outside the box, from the top border near the right corner, over and
+ * down to the right border, so the line and its head are not hidden under the opaque element.
+ */
+export function selfLoop(element: UmlElement): UmlPoint[] {
+    const right = element.x + element.w;
+    const top = element.y;
+    const reach = 24;
+    const across = right - Math.min(24, element.w / 4);
+    const down = top + Math.min(24, elementHeight(element) / 4);
+    return [
+        { x: across, y: top },
+        { x: across, y: top - reach },
+        { x: right + reach, y: top - reach },
+        { x: right + reach, y: down },
+        { x: right, y: down },
+    ];
+}
+
+/** The points of a connector: its `via` points between border points, a loop for a self-reference, else the route. */
+export function connectorPoints(
+    connector: Pick<UmlConnector, "via">,
+    source: UmlElement,
+    target: UmlElement
+): UmlPoint[] {
+    const via = connector.via;
+    if (via?.length) {
+        const path = [borderPoint(source, via[0]), ...via, borderPoint(target, via[via.length - 1])];
+        return path.filter((p, i) => i === 0 || p.x !== path[i - 1].x || p.y !== path[i - 1].y);
+    }
+
+    return source.id === target.id ? selfLoop(source) : orthogonal(source, target);
+}
+
+/** The point the head is aimed from: the last point before the tip that is not the tip itself. */
+export function headBase(points: UmlPoint[]): UmlPoint {
+    const tip = points[points.length - 1];
+    for (let i = points.length - 2; i >= 0; i--) {
+        if (points[i].x !== tip.x || points[i].y !== tip.y) {
+            return points[i];
+        }
+    }
+
+    return { x: tip.x - 1, y: tip.y };
+}
+
 export interface UmlConnectorHead {
     shape: "none" | "arrow" | "diamond" | "triangle";
     filled: boolean;
@@ -274,13 +320,10 @@ function UmlLine({
     theme: UmlThemeName;
     palette: UmlPalette;
 }) {
-    const via = connector.via;
-    const points = via?.length
-        ? [borderPoint(source, via[0]), ...via, borderPoint(target, via[via.length - 1])]
-        : orthogonal(source, target);
+    const points = connectorPoints(connector, source, target);
     const start = points[0];
     const end = points[points.length - 1];
-    const before = points[points.length - 2];
+    const before = headBase(points);
     const color = markColor(connector.mark, theme, palette.line);
     const head = umlConnectorHead(connector);
     const middle = Math.floor((points.length - 1) / 2);
