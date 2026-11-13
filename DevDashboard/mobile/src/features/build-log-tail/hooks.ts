@@ -28,7 +28,7 @@ export interface UseBuildLogStreamResult {
 
 /**
  * SSE lifecycle for the selected run's tail. Opens on mount / logFile change, re-opens on AppState
- * `active`, tears down on unmount / background (mirrors useQaStream). `live` is cleared whenever the
+ * `active`, tears down on unmount / background. `live` is cleared whenever the
  * selected logFile changes so switching runs doesn't bleed lines across.
  */
 export function useBuildLogStream(

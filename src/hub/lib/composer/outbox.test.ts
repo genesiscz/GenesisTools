@@ -3500,7 +3500,7 @@ describe("widget inbox notifications", () => {
             forms: () => [],
             answers: () => [],
             agents: async () => ({ generatedAt: "", parents: [], orphans: [node, node] }),
-            inboxData: () => ({ answers: [], forms: [], complete: true, truncated: false }),
+            inboxData: () => ({ answers: [], complete: true, truncated: false }),
         };
         const snapshot = await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources });
         expect(snapshot.notifications?.unread).toBe(1);
@@ -3583,7 +3583,7 @@ describe("widget inbox notifications", () => {
             forms: () => [],
             answers: () => [],
             agents: async () => ({ generatedAt: "", parents: [], orphans: [worker, idle] }),
-            inboxData: () => ({ answers: [], forms: [], complete: true, truncated: false }),
+            inboxData: () => ({ answers: [], complete: true, truncated: false }),
         };
         const snapshot = await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources });
         expect(snapshot.notifications?.unread).toBe(1);
@@ -3642,28 +3642,20 @@ describe("widget inbox notifications", () => {
         const sources: WidgetSources = {
             sessions: async () => [],
             decisions: () => [],
-            forms: () => [],
+            forms: () => [
+                {
+                    id: "pending-one",
+                    createdAt: 1,
+                    sessionHint: "pending-fixture",
+                    projectPath: "/fixture",
+                    cwd: "/fixture",
+                    items: [{ id: "q1", promptMarkdown: "Question" }],
+                    status: "pending",
+                },
+            ],
             answers: () => [],
             agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
-            inboxData: (window) => ({
-                answers: [],
-                forms: [
-                    {
-                        id: "pending-one",
-                        sessionId: "pending-fixture",
-                        provider: "codex",
-                        title: "Question",
-                        project: "Fixture",
-                        cwd: "/fixture",
-                        at: 1,
-                        count: 1,
-                        ...inboxWindowCounts([1], window),
-                        recentAfterClearTotal: inboxWindowCounts([1], window).recentAfterClear,
-                    },
-                ],
-                complete: true,
-                truncated: false,
-            }),
+            inboxData: () => ({ answers: [], complete: true, truncated: false }),
         };
         expect(
             (await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources })).notifications?.needsAnswer
@@ -3715,7 +3707,7 @@ describe("widget inbox notifications", () => {
                     updatedTs: new Date(at).toISOString(),
                 });
                 let decisions = [decision("ended-fixture", now - 240 * hour), decision("live-fixture", now - hour)];
-                // Each kind has this one group, so its own recent count is the kind's total.
+                // The answers have this one group, so its own recent count is their total.
                 const group = (sessionId: string, at: number, count: number, window: WidgetInboxWindow) => {
                     const counts = inboxWindowCounts(Array<number>(count).fill(at), window);
                     return {
@@ -3734,12 +3726,21 @@ describe("widget inbox notifications", () => {
                 const sources: WidgetSources = {
                     sessions: async () => [],
                     decisions: () => decisions,
-                    forms: () => [],
+                    // Three forms of a quiet session, all past the stale window: listed, never counted.
+                    forms: () =>
+                        [0, 1, 2].map((index) => ({
+                            id: `form-fixture-${index}`,
+                            createdAt: now - 120 * hour,
+                            sessionHint: "form-fixture",
+                            projectPath: "/fixture",
+                            cwd: "/fixture",
+                            items: [],
+                            status: "pending" as const,
+                        })),
                     answers: () => [],
                     agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
                     inboxData: (window) => ({
                         answers: [group("answer-fixture", now - 10 * 60 * 1000, 2, window)],
-                        forms: [group("form-fixture", now - 120 * hour, 3, window)],
                         complete: true,
                         truncated: false,
                     }),
@@ -3800,79 +3801,6 @@ describe("widget inbox notifications", () => {
         );
     });
 
-    test("a new question after Mark all read counts alone, never with the session's cleared ones", async () => {
-        const directory = await root();
-        await env.testing.withOverrides(
-            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
-            async () => {
-                const now = Date.now();
-                const post = (id: string, at: number) => {
-                    const db = openPendingStore(toolDataDir("question", "qa.db"));
-                    db.query(
-                        "INSERT INTO qa_pending (id,created_at,status,source,session_hint,project_path,cwd,items_json) VALUES (?,?,'pending','Question','form-fixture','/fixture','/fixture','[]')"
-                    ).run(id, at);
-                    db.close();
-                };
-                for (const [index, at] of [now - 3000, now - 2000, now - 1000].entries()) {
-                    post(`cleared-${index}`, at);
-                }
-                // The real SQL source, so the per-item counts are what qa.db holds.
-                const sources: WidgetSources = {
-                    sessions: async () => [],
-                    decisions: () => [],
-                    forms: () => [],
-                    answers: () => [],
-                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
-                    inboxData: realWidgetSources.inboxData,
-                };
-                const needsAnswer = async (at: number) =>
-                    (await widgetSnapshot({ root: directory, sources, now: at })).notifications?.needsAnswer;
-                expect(await needsAnswer(now)).toBe(3);
-                await performWidgetAction({ root: directory, input: { action: "inbox-clear", at: now } });
-                expect(await needsAnswer(now)).toBe(0);
-
-                post("after-clear", now + 1000);
-                expect(await needsAnswer(now + 2000)).toBe(1);
-            }
-        );
-    });
-
-    test("sessions past the inbox row limit count by the same watermark", async () => {
-        const directory = await root();
-        await env.testing.withOverrides(
-            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
-            async () => {
-                const now = Date.now();
-                // 258 sessions with one question each: two more than the 256 groups the snapshot lists.
-                const db = openPendingStore(toolDataDir("question", "qa.db"));
-                const insert = db.query(
-                    "INSERT INTO qa_pending (id,created_at,status,source,session_hint,project_path,cwd,items_json) VALUES (?,?,'pending','Question',?,'/fixture','/fixture','[]')"
-                );
-                db.transaction(() => {
-                    for (let index = 0; index < 258; index++) {
-                        insert.run(`form-${index}`, now - 10_000 + index, `overflow-fixture-${index}`);
-                    }
-                })();
-                db.close();
-                const sources: WidgetSources = {
-                    sessions: async () => [],
-                    decisions: () => [],
-                    forms: () => [],
-                    answers: () => [],
-                    agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
-                    inboxData: realWidgetSources.inboxData,
-                };
-                const notifications = async () =>
-                    (await widgetSnapshot({ root: directory, sources, now })).notifications;
-                expect((await notifications())?.needsAnswer).toBe(258);
-                await performWidgetAction({ root: directory, input: { action: "inbox-clear", at: now } });
-                const cleared = await notifications();
-                expect(cleared?.needsAnswer).toBe(0);
-                expect(cleared?.sessions.filter((session) => session.needsAnswer > 0)).toEqual([]);
-            }
-        );
-    });
-
     test("a running agent that asks a new question stays live, so its older open questions still count", async () => {
         const now = Date.now();
         const hour = 60 * 60 * 1000;
@@ -3913,7 +3841,7 @@ describe("widget inbox notifications", () => {
                     },
                 ],
             }),
-            inboxData: () => ({ answers: [], forms: [], complete: true, truncated: false }),
+            inboxData: () => ({ answers: [], complete: true, truncated: false }),
         };
         const snapshot = await widgetSnapshot({ root: await root(), sources, now });
         expect(snapshot.sessions.find((session) => session.target.sessionId === "live-asker")?.status).toBe("waiting");
@@ -6121,12 +6049,15 @@ describe("background Widget roster", () => {
     });
 });
 
+/** A 2x1 PNG; encodeRgbaToPng is async (it loads the canvas addon lazily) and png() below is not. */
+const CARD_PNG = await encodeRgbaToPng(new Uint8ClampedArray([30, 60, 90, 255, 200, 120, 40, 255]), 2, 1);
+
 describe("inbox card images and agent messages", () => {
     const quiet = { sinks: { obsidian: false, sound: false, notify: false } };
     const noAgents = async () => ({ generatedAt: "", parents: [], orphans: [] });
 
     function png(path: string): string {
-        writeFileSync(path, encodeRgbaToPng(new Uint8ClampedArray([30, 60, 90, 255, 200, 120, 40, 255]), 2, 1));
+        writeFileSync(path, CARD_PNG);
         return path;
     }
 

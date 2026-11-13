@@ -1,6 +1,6 @@
 import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
-import { CdpDeadlineError, type CdpEventListener, Conn, evaluationExpression, localDebuggerUrl, newTab } from "./cdp";
+import { CdpDeadlineError, type CdpEventListener, type Conn, connect, evaluationExpression, newTab } from "./cdp";
 import { listTabs, type TabInfo, tabTarget } from "./tabs";
 
 const { log } = logger.scoped("chrome-devtools-tab-driver");
@@ -172,7 +172,7 @@ class CdpTabDriver implements TabDriver {
             throw new TabGoneError(tabId);
         }
 
-        const conn = new Conn(localDebuggerUrl(target, this.port), { signal });
+        const conn = connect(target, this.port, { signal });
         try {
             await conn.send("Page.enable", {}, undefined, { signal });
             log.debug({ port: this.port, tabId, url: target.url }, "attached to tab");

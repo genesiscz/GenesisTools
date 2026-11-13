@@ -1,4 +1,3 @@
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { type AccountUsageSnapshot, absentLimitText } from "@genesiscz/utils/ai/providers/account-features";
@@ -8,6 +7,7 @@ import { pickRanked, rankAccounts } from "@genesiscz/utils/ai/usage/account-rank
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { resolveAccountName } from "./select-account";
 
 /**

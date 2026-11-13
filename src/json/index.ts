@@ -24,18 +24,7 @@ registerConvertCommand(program);
 registerSchemaCommand(program);
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "json" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(message);
-
-        if (error instanceof Error && error.stack) {
-            logger.debug(error.stack);
-        }
-
-        process.exit(1);
-    }
+    await runTool(program, { tool: "json" });
 }
 
 main().catch((err) => {

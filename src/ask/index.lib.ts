@@ -1,4 +1,3 @@
-export { AIAccount } from "@genesiscz/utils/ai/AIAccount";
 export type { ModelSelection } from "@genesiscz/utils/ask/providers/ModelResolver";
 export {
     AnthropicModelCategory,
@@ -6,7 +5,6 @@ export {
     resolveModel,
 } from "@genesiscz/utils/ask/providers/ModelResolver";
 export { AIChat } from "./AIChat";
-export type { OneShotOptions } from "./chat/ChatEngine";
 export { ChatEngine } from "./chat/ChatEngine";
 export { ChatEvent } from "./lib/ChatEvent";
 export { ChatLog } from "./lib/ChatLog";

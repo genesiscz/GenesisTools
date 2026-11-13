@@ -62,9 +62,11 @@ describe("mock dashboard client", () => {
         expect((await fixtureDashboardClient.qa.log()).entries.length).toBeGreaterThan(0);
     });
 
-    it("qa.subscribe emits a fixture entry then can be closed", async () => {
+    it("the live qa channel emits a fixture entry then can be closed", async () => {
         const received = await new Promise<boolean>((resolve) => {
-            const sub = fixtureDashboardClient.qa.subscribe(() => resolve(true));
+            const sub = fixtureDashboardClient.live.subscribe(["qa"], {
+                onFrame: (frame) => resolve(frame.channel === "qa"),
+            });
             setTimeout(() => {
                 sub.close();
                 resolve(false);

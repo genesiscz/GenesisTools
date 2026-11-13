@@ -1,23 +1,11 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { playDingInBrowser } from "@genesiscz/utils/audio/runner.client";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { IconPopover } from "@ui/components/icon-button";
 import { Wrench } from "lucide-react";
 import { useState } from "react";
-
-interface AudioEntry {
-    id: string;
-    label: string;
-    kind: "bundled" | "synth";
-    isDefault: boolean;
-}
-
-interface AudioLib {
-    bundled: AudioEntry[];
-    synth: AudioEntry[];
-    default: AudioEntry;
-}
+import { dashboard } from "@/lib/dashboard-client";
 
 function previewSound(id: string, vol: number): void {
     if (id.startsWith("synth:")) {
@@ -25,23 +13,15 @@ function previewSound(id: string, vol: number): void {
         return;
     }
 
-    const audio = new Audio(`/api/qa/sound?id=${encodeURIComponent(id)}`);
+    const audio = new Audio(dashboard.url(ENDPOINTS.qaSound, { id }));
     audio.volume = Math.max(0, Math.min(1, vol));
     void audio.play();
 }
 
 export function QaSoundWrench() {
-    const { data: lib } = useQuery<AudioLib>({
+    const { data: lib } = useQuery({
         queryKey: ["qa-audio-library"],
-        queryFn: async () => {
-            const r = await fetch("/api/qa/audio-library");
-
-            if (!r.ok) {
-                throw new Error(`audio-library: ${r.status}`);
-            }
-
-            return r.json() as Promise<AudioLib>;
-        },
+        queryFn: () => dashboard.call(ENDPOINTS.qaAudioLibrary, {}),
     });
     const [id, setId] = useState<string | null>(null);
     const [vol, setVol] = useState(0.6);
@@ -50,16 +30,7 @@ export function QaSoundWrench() {
 
     const apply = async (): Promise<void> => {
         try {
-            const res = await fetch("/api/qa/config", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: SafeJSON.stringify({ sound: selected, soundVolume: vol }),
-            });
-
-            if (!res.ok) {
-                return;
-            }
-
+            await dashboard.call(ENDPOINTS.qaConfig, { sound: selected, soundVolume: vol });
             setSaved(true);
             setTimeout(() => setSaved(false), 1500);
         } catch {

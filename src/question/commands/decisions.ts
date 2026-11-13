@@ -85,6 +85,7 @@ async function statusFilter(raw: string | true | undefined): Promise<string[] | 
         const picked = await p.multiselect({
             message: "Which statuses?",
             options: DECISION_STATUSES.map((status) => ({ value: status, label: status })),
+            cancel: "back",
         });
 
         return p.isCancel(picked) ? null : picked.map(String);

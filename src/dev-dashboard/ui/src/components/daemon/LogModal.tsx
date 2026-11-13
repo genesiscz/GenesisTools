@@ -1,6 +1,7 @@
 import type { LogEntry } from "@app/daemon/lib/types";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { useQuery } from "@tanstack/react-query";
-import { fetchJson } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 interface Props {
     logFile: string | null;
@@ -38,8 +39,7 @@ function LogLineRow({ entry }: { entry: LogEntry }) {
 export function LogModal({ logFile, onClose }: Props) {
     const { data, isLoading, isError, error } = useQuery({
         queryKey: ["daemon", "runs", "log", logFile],
-        queryFn: (): Promise<LogEntry[]> =>
-            fetchJson<LogEntry[]>(`/api/daemon/runs/log?logFile=${encodeURIComponent(logFile ?? "")}`),
+        queryFn: (): Promise<LogEntry[]> => dashboard.call(ENDPOINTS.daemonRunLog, { logFile: logFile ?? "" }),
         enabled: logFile !== null,
     });
 

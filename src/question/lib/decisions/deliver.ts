@@ -41,7 +41,7 @@ import { hasMembers, toolParts } from "@genesiscz/utils/harness/tool-parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { runsAgent } from "@genesiscz/utils/process/classify";
-import { batchPsInfo } from "@genesiscz/utils/process/ps";
+import { readProcessRows } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
@@ -95,7 +95,7 @@ function liveClaudePeers(session: string, sourceHome?: string): ClaudeLiveSessio
     const candidates = listClaudeSessionInventory({ dir: directory, liveOf: (pids) => new Set(pids) }).filter(
         (peer) => peer.sessionId === session
     );
-    const processes = batchPsInfo(candidates.map((peer) => peer.pid));
+    const processes = readProcessRows(candidates.map((peer) => peer.pid));
     return candidates.filter((peer) => {
         const process = processes.get(peer.pid);
         return process && runsAgent(process.command, "claude");

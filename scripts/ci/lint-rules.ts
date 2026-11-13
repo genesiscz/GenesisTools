@@ -32,7 +32,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { findInFiles, Lang, type NapiConfig, parse, type SgNode } from "@ast-grep/napi";
 import { TERMINAL_ENV_KEYS, TERMINAL_ENV_PREFIXES } from "@genesiscz/utils/agent/identity/terminals";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -43,11 +43,14 @@ import {
     RAW_AGENT_ENV_RATCHET,
     RAW_TERMINAL_ENV_RATCHET,
 } from "./agent-context-ratchet";
+import { EXEC_DEADLINE_RATCHET } from "./exec-deadline-ratchet";
 import { HARNESS_GUARD_STRICT, strictViolations } from "./harness-guard";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
 import { PROXY_PROVIDER_BRANCH_RATCHET } from "./proxy-provider-ratchet";
+import { parseRosters, ROSTER_DEFINITIONS, readRosters, rosterCounts, rosterGrowth } from "./rosters";
+import { SWIFT_ROSTERS, swiftRosterApplies, swiftRosterLines } from "./rosters/swift";
 import { checkSwiftRowRules, checkSwiftStructRules } from "./swift-lint-rules";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
@@ -188,6 +191,49 @@ export function namesToolCommand(text: string, node: SgNode): boolean {
     );
 }
 
+const README_SPECIFIER = /\bfrom\s+["']([^"']+)["']\s*;?\s*$|^import\s+["']([^"']+)["']/;
+const README_ALIAS = /^@(?:genesiscz|app)\/utils\/readme(?:\.[jt]s)?$/;
+
+/**
+ * Does this import or re-export statement load src/utils/readme.ts at runtime? Type-only imports are erased, so they
+ * pass. A relative specifier is resolved against the importing file, so `../readme` from src/utils/cli counts too.
+ */
+export function staticallyImportsReadme(text: string, file: string): boolean {
+    if (/^(?:import|export)\s+type\s/.test(text)) {
+        return false;
+    }
+
+    const match = README_SPECIFIER.exec(text);
+    const specifier = match?.[1] ?? match?.[2];
+
+    if (!specifier) {
+        return false;
+    }
+
+    if (README_ALIAS.test(specifier)) {
+        return true;
+    }
+
+    return (
+        specifier.startsWith(".") &&
+        join(dirname(file), specifier).replace(/\.[jt]s$/, "") === join("src", "utils", "readme")
+    );
+}
+
+/**
+ * Does this import or re-export statement load @napi-rs/canvas at runtime? Only `import type` / `export type` pass:
+ * under verbatimModuleSyntax an import whose names are all inline `type` still loads the module.
+ */
+export function staticallyImportsCanvas(text: string): boolean {
+    if (/^(?:import|export)\s+type\s/.test(text)) {
+        return false;
+    }
+
+    const match = README_SPECIFIER.exec(text);
+    const specifier = match?.[1] ?? match?.[2];
+    return specifier !== undefined && /^@napi-rs\/canvas(?:\/|$)/.test(specifier);
+}
+
 /** `import.meta` members only Bun sets; Vite's SSR runner and Node leave them undefined. */
 const BUN_ONLY_IMPORT_META = /^import\.meta\.(?:dir|dirname|filename|path)$/;
 /** Code a Vite dashboard can load server-side: the shared utils and the dashboards' own sources. */
@@ -202,6 +248,92 @@ const SSR_REACHABLE =
  */
 export const BARE_REQUIRE_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
+/** The retired v3 config facade and its projection, by module specifier (a relative or an aliased path). */
+const RETIRED_AI_CONFIG_MODULE = /["'](?:[^"']*\/)?(?:AIConfig|store-bridge|v3-adapter)(?:\.ts)?["']/;
+
+/**
+ * Files that still import the retired AIConfig facade or its projection (store-bridge, v3-adapter), 2026-11-10:
+ * only the three modules themselves and their four test files, which C23 deletes. Every consumer moved to
+ * AiConfigStore and account-ops. A ratchet: no file joins, and the list empties with the deletion.
+ */
+export const AI_CONFIG_IMPORT_RATCHET: ReadonlySet<string> = new Set<string>([]);
+
+/** An import, a re-export or a dynamic `import()` of the retired AIConfig facade or its projection. */
+export function importsRetiredAiConfig(text: string, node: SgNode): boolean {
+    if (node.kind() === "call_expression" && node.field("function")?.text() !== "import") {
+        return false;
+    }
+
+    return RETIRED_AI_CONFIG_MODULE.test(text);
+}
+
+/**
+ * The `ps` adapter of the process layer, by module specifier (`@genesiscz/utils/process/ps`, an `@app` alias, or a
+ * relative path ending in `process/ps`). `src/utils/worker/ps.ts` is another module and does not match.
+ */
+const PS_ADAPTER_MODULE = /["'](?:[^"']*\/)?process\/ps(?:\.ts)?["']/;
+/**
+ * Where importing the `ps` adapter is the implementation: the process layer itself, and the benchmarks that measure
+ * a `ps` read against the kernel read (the same files `no-process-tool-spawn` exempts). Test files are never scanned
+ * by that rule.
+ */
+const PS_ADAPTER_IMPORT_ALLOWED = /^(?:src\/utils\/process\/|scripts\/benchmarks\/)/;
+
+/** `@clack/prompts` by module specifier, in an import, a re-export or a dynamic `import()`. */
+const RAW_CLACK_MODULE = /["']@clack\/prompts["']/;
+/**
+ * Files that still import @clack/prompts while another session owns their folder (a ratchet: an entry only ever
+ * leaves). Exact paths, never a folder: a new meetings file starts on the facade.
+ */
+const RAW_CLACK_RATCHET: ReadonlySet<string> = new Set([
+    // src/meetings belongs to the meetings session (2026-11-10); C10 left its raw clack import in place.
+    "src/meetings/commands/listen.ts",
+]);
+
+export function importsRawClack(text: string, node: SgNode): boolean {
+    if (node.kind() === "call_expression" && node.field("function")?.text() !== "import") {
+        return false;
+    }
+
+    return RAW_CLACK_MODULE.test(text);
+}
+
+/**
+ * C10 (2026-11-10): prompts go through the facade, which owns the cancel outcome (`cancel: "exit" | "back"`) on every
+ * backend. A raw clack import brings back a per-file cancel policy and a prompt no test backend can answer. Test files
+ * are checked too: a test spies on or scripts the facade, never clack.
+ */
+const RAW_CLACK_IMPORT_RULE: Rule = {
+    name: "no-raw-clack-import",
+    severity: "error",
+    kinds: ["import_statement", "export_statement", "call_expression"],
+    matcher: {
+        rule: {
+            any: [
+                { kind: "import_statement" },
+                { kind: "export_statement", has: { kind: "string" } },
+                { kind: "call_expression", has: { field: "function", regex: "^import$" } },
+            ],
+        },
+    },
+    message:
+        "Import prompts from the facade, `@genesiscz/utils/prompts/p` (`import * as p`), not from @clack/prompts. " +
+        'A call whose cancel the caller handles passes `cancel: "back"` and checks `p.isCancel(answer)`; the default ' +
+        "ends the process. A clack function the facade lacks is added there as a pass-through (.claude/rules/tools.md).",
+    test: importsRawClack,
+    allowedIn: /^src\/utils\/prompts\//,
+    allowedFiles: RAW_CLACK_RATCHET,
+};
+
+/** An import, a re-export or a dynamic `import()` of `src/utils/process/ps.ts`. */
+export function importsPsAdapter(text: string, node: SgNode): boolean {
+    if (node.kind() === "call_expression" && node.field("function")?.text() !== "import") {
+        return false;
+    }
+
+    return PS_ADAPTER_MODULE.test(text);
+}
+
 // ─── The ratchet rules of 2026-10-25 (❓ DECISION 22 b) ────────────────────────────────────────────────────────────────
 // no-transcript-format-outside-readers, no-hand-built-claude-home, no-hand-built-codex-grok-home,
 // no-model-id-literal-outside-catalog, no-model-price-table, no-effort-vocabulary-list, no-harness-name-branch,
@@ -213,9 +345,13 @@ export const BARE_REQUIRE_RATCHET: ReadonlySet<string> = new Set<string>([]);
 /**
  * A literal that names a coding agent's transcript format: a Claude, Codex or Grok record type or field, or a raw-line
  * probe such as `'"type":"user"'`. That knowledge belongs to the provider readers (.claude/rules/agent-transcripts.md).
+ * The Claude change parse's raw-line probes count too (`readers/claude-changes-parse.ts`): the line markers
+ * `'"promptId"'`, `'"tool_use"'` and `'"file-history-'`, and a `"promptId":"…"` search. A bare `"tool_use"` stays
+ * allowed (it is also an Anthropic API block type), and so does a typed `case "file-history-snapshot":` over the
+ * Claude SDK message union (`src/utils/claude/types.ts`).
  */
 const TRANSCRIPT_FORMAT =
-    /^["'`](?:continued-in|continuedInSessionId|response_item|event_msg|session_meta|turn_context|compact_boundary|isCompactSummary|isSidechain|chat_history\.jsonl)["'`]$|\\?"(?:type|subtype)\\?"\s*:\s*\\?"(?:user|assistant|continued-in|response_item|event_msg|session_meta|turn_context|compact_boundary)\\?"/;
+    /^["'`](?:continued-in|continuedInSessionId|response_item|event_msg|session_meta|turn_context|compact_boundary|isCompactSummary|isSidechain|chat_history\.jsonl)["'`]$|\\?"(?:type|subtype)\\?"\s*:\s*\\?"(?:user|assistant|continued-in|response_item|event_msg|session_meta|turn_context|compact_boundary)\\?"|^['`]"(?:promptId|tool_use)"['`]$|\\?"promptId\\?"\s*:|^["'`]\\?"file-history-/;
 /** The readers own the format; the Claude SDK message types describe it; plugins are standalone; benchmarks replay it. */
 const TRANSCRIPT_FORMAT_ALLOWED =
     /^(?:src\/utils\/agent-sessions\/|src\/utils\/claude\/types\.ts$|plugins\/|scripts\/benchmarks\/)/;
@@ -664,7 +800,91 @@ const AGENT_CONTEXT_OUT_OF_SCOPE = /^scripts\/(?:benchmarks|ci)\//;
 const AGENT_ENV_SCRUBBERS =
     /^src\/(?:utils\/bun\/preload-test-(?:sandbox|tmpdir)\.ts|claude\/lib\/worker\/worker\.ts|utils\/tmux\/sessions\.ts)$/;
 
+/** The receivers an `Executor` call is made on in this repo: `executor`, `git`, `g`, `exec`, `….executor`, `new Executor(…)`. */
+const EXECUTOR_RECEIVER = /(?:^|\.)(?:executor|git|g|exec)$|^new Executor\(/;
+
+/** The named children of a call's argument list, comments left out. */
+function callArguments(node: SgNode): SgNode[] {
+    return (
+        node
+            .field("arguments")
+            ?.children()
+            .filter((child) => child.isNamed() && child.kind() !== "comment") ?? []
+    );
+}
+
+/**
+ * Whether a member call `….exec(…)` / `….execOrThrow(…)` is an `Executor` call that names no timeout. Read from the
+ * syntax alone, checked on 2026-11-10 against the type checker over every such call in src/ and scripts/ (the same
+ * set, no other API matched): `execOrThrow` is only Executor's; `exec` is Executor's when its first argument is an
+ * array literal (RegExp and Database take a string), or any non-string value on an Executor receiver
+ * ({@link EXECUTOR_RECEIVER}). The options argument names a timeout when it is an object with a `timeout` key or a
+ * spread; an options value that is not an object literal is passed through from a caller and counts as naming one.
+ */
+export function execCallWithoutDeadline(node: SgNode): boolean {
+    const callee = node.field("function");
+    const method = callee?.field("property")?.text();
+
+    if (callee?.kind() !== "member_expression" || (method !== "exec" && method !== "execOrThrow")) {
+        return false;
+    }
+
+    const args = callArguments(node);
+    const first = args[0];
+    const receiver = callee.field("object")?.text() ?? "";
+
+    if (!first || ["string", "template_string", "regex"].includes(String(first.kind()))) {
+        return false;
+    }
+
+    if (method === "exec" && first.kind() !== "array" && !EXECUTOR_RECEIVER.test(receiver)) {
+        return false;
+    }
+
+    const options = args[method === "exec" ? 1 : 2];
+
+    if (!options) {
+        return true;
+    }
+
+    if (options.kind() !== "object") {
+        return false;
+    }
+
+    return !options
+        .children()
+        .some(
+            (entry) =>
+                entry.kind() === "spread_element" ||
+                (entry.kind() === "pair" && entry.field("key")?.text() === "timeout") ||
+                (entry.kind() === "shorthand_property_identifier" && entry.text() === "timeout")
+        );
+}
+
 const RULES: Rule[] = [
+    {
+        name: "no-exec-without-deadline",
+        severity: "error",
+        kinds: ["call_expression"],
+        matcher: {
+            rule: {
+                kind: "call_expression",
+                has: {
+                    field: "function",
+                    kind: "member_expression",
+                    has: { field: "property", regex: "^(?:exec|execOrThrow)$" },
+                },
+            },
+        },
+        message:
+            "An Executor call without a timeout runs under the 60 s default (DEFAULT_EXEC_TIMEOUT_MS). When its command " +
+            "can run longer by design, say why: timeout: { ms, reason }. scripts/ci/exec-deadline-ratchet.ts lists how " +
+            "many calls on the default each file may keep, and no file may join it.",
+        onlyIn: /^(?:src|scripts)\//,
+        allowedIn: /(?:^|\/)src\/utils\/cli\/executor\.ts$/,
+        allowedCounts: EXEC_DEADLINE_RATCHET,
+        test: (_text, node) => execCallWithoutDeadline(node),
+    },
     {
         ...STORAGE_ROOT_RULE,
         kinds: LITERAL_KINDS,
@@ -742,6 +962,98 @@ const RULES: Rule[] = [
         onlyIn: /(?:^|\/)src\/utils\//,
         allowedIn: /\.test\.tsx?$|(?:^|\/)src\/utils\/test\//,
         allowedFiles: BARE_REQUIRE_RATCHET,
+    },
+    {
+        name: "no-aiconfig-import",
+        severity: "error",
+        kinds: ["import_statement", "export_statement", "call_expression"],
+        matcher: {
+            rule: {
+                any: [
+                    { kind: "import_statement" },
+                    { kind: "export_statement", has: { kind: "string" } },
+                    { kind: "call_expression", has: { field: "function", regex: "^import$" } },
+                ],
+            },
+        },
+        message:
+            "The AIConfig facade and its v3 projection (store-bridge, v3-adapter) are retired. Read accounts and " +
+            "defaults through AiConfigStore (@genesiscz/utils/ai/config/AiConfigStore), find an account by its id, and " +
+            "write through account-ops (addAccount, editAccount, patchAccount, storeRefreshedTokens). Resolve a secret " +
+            "with resolveSecret at the place it is spent (.claude/rules/ai.md).",
+        test: importsRetiredAiConfig,
+        allowedFiles: AI_CONFIG_IMPORT_RATCHET,
+    },
+    {
+        // The second half of `no-process-tool-spawn` (C49, 2026-11-10): the batched `ps` readers in `ps.ts` are the
+        // process layer's fallback, so a caller that imports them spawns `ps` where the kernel would answer.
+        name: "no-process-tool-spawn",
+        severity: "error",
+        kinds: ["import_statement", "export_statement", "call_expression"],
+        matcher: {
+            rule: {
+                any: [
+                    { kind: "import_statement" },
+                    { kind: "export_statement", has: { kind: "string" } },
+                    { kind: "call_expression", has: { field: "function", regex: "^import$" } },
+                ],
+            },
+        },
+        message:
+            "`@genesiscz/utils/process/ps` is the `ps` fallback of the process layer, private to src/utils/process/. " +
+            "Ask `@genesiscz/utils/process/processes` (readProcessRows, listProcessRows and the other readers read the " +
+            "kernel first), `process/cwd` for working directories, or `process/capture` to run a program.",
+        test: importsPsAdapter,
+        allowedIn: PS_ADAPTER_IMPORT_ALLOWED,
+    },
+    RAW_CLACK_IMPORT_RULE,
+    {
+        name: "no-pricing-steps-outside-priced-usage",
+        severity: "error",
+        kinds: ["call_expression"],
+        matcher: {
+            rule: {
+                kind: "call_expression",
+                has: { field: "function", regex: "^(?:resolvePrice|priceFor|priceForCandidates)$" },
+            },
+        },
+        message:
+            "Price a usage record with `priceUsage` (or `priceUsageAs` for a what-if model) from " +
+            "@genesiscz/utils/ai/usage/spend/priced-usage. It owns the harness's candidate ladder, the dated, banded and " +
+            "service-tier rules, one-hour writes and the recorded-cost rule; a caller that composes " +
+            "`priceFor` / `priceForCandidates` / `resolvePrice` itself drops some of them (the hub insights pricer did).",
+        test: (_text, node) =>
+            /^(?:resolvePrice|priceFor|priceForCandidates)$/.test(node.field("function")?.text() ?? ""),
+        allowedIn: /(?:^|\/)src\/utils\/ai\/usage\/spend\/(?:pricing|priced-usage)\.ts$|\.test\.tsx?$/,
+    },
+    {
+        name: "no-static-readme-import",
+        severity: "error",
+        kinds: ["import_statement", "export_statement"],
+        matcher: {
+            rule: { any: [{ kind: "import_statement" }, { kind: "export_statement", has: { kind: "string" } }] },
+        },
+        message:
+            "A static import of @genesiscz/utils/readme loads the README renderer (cli-html and highlight.js, about 590 " +
+            "modules and 110 to 220 ms) into every start of the tool. runTool already answers --readme; an entry " +
+            "without runTool calls `await answerReadmeFlag(import.meta.dir)` from @genesiscz/utils/cli/readme-flag.",
+        test: (text, node) => staticallyImportsReadme(text, node.getRoot().filename()),
+        allowedIn: /(?:^|\/)src\/utils\/readme\.test\.ts$/,
+    },
+    {
+        name: "no-canvas-import-outside-owner",
+        severity: "error",
+        kinds: ["import_statement", "export_statement"],
+        matcher: {
+            rule: { any: [{ kind: "import_statement" }, { kind: "export_statement", has: { kind: "string" } }] },
+        },
+        message:
+            "A static import of @napi-rs/canvas loads the addon, which reads every system font (about 100 ms), into " +
+            "every start of the tool, even one that only reads a constant. Call `await loadCanvas()` from " +
+            "@genesiscz/utils/image/canvas in the drawing function, and use `import type` for type positions.",
+        test: (text) => staticallyImportsCanvas(text),
+        onlyIn: /^src\//,
+        allowedIn: /^src\/utils\/image\/canvas\.ts$|\.test\.tsx?$/,
     },
     {
         name: "no-transcript-format-outside-readers",
@@ -1043,6 +1355,26 @@ const RULES: Rule[] = [
     },
 ];
 
+/**
+ * The rosters (scripts/ci/rosters/*.definition.ts): one rule each, whose per-file counts come from rosters.json, so a
+ * file outside its roster fails at its first match and a listed file fails when its count grows.
+ */
+const ROSTERS = readRosters();
+
+for (const roster of ROSTER_DEFINITIONS) {
+    RULES.push({
+        name: roster.name,
+        severity: "error",
+        kinds: [],
+        matcher: roster.matcher,
+        message: `${roster.message} (Roster ${roster.candidate}: scripts/ci/rosters/; after removing a match, run bun scripts/ci/rosters/generate.ts.)`,
+        test: (_text, node) => roster.test?.(node) ?? true,
+        onlyIn: roster.onlyIn,
+        allowedIn: roster.allowedIn,
+        allowedCounts: rosterCounts(ROSTERS, roster.name),
+    });
+}
+
 const PROMPT_BACKEND_RULE = {
     name: "no-direct-prompt-backend",
     severity: "error" as const,
@@ -1210,7 +1542,7 @@ const PROCESS_TOOL_SPAWN_RULE = {
     severity: "error" as const,
     message:
         "Spawning ps, lsof or pgrep costs tens to hundreds of ms of CPU per call. Read the kernel through " +
-        "`@genesiscz/utils/process` (libproc-table, socket-owner, ps.ts), which owns the fallbacks, or " +
+        "`@genesiscz/utils/process` (processes.ts, sockets.ts, cwd.ts), which owns the fallbacks, or " +
         "`// lint-rules-ignore: <why the kernel read does not fit>`.",
 };
 const PROCESS_TOOLS = new Set(["ps", "lsof", "pgrep"]);
@@ -1514,8 +1846,12 @@ interface SwiftLintString {
     interpolationDepth: number;
 }
 
-/** Blank Swift comments, strings and hash-delimited regexes without moving code's line or column offsets. */
-export function maskSwiftNonCode(source: string): string {
+/**
+ * Blank Swift comments, strings and hash-delimited regexes without moving code's line or column offsets.
+ * `keepStrings` leaves string text as it is and blanks only the comments: a Swift roster that reads what a literal
+ * says needs it, and a `//` inside a string is still no comment.
+ */
+export function maskSwiftNonCode(source: string, { keepStrings = false }: { keepStrings?: boolean } = {}): string {
     const masked = source.split("");
     let index = 0;
     let blockDepth = 0;
@@ -1529,6 +1865,14 @@ export function maskSwiftNonCode(source: string): string {
             }
 
             index++;
+        }
+    };
+    /** A string's own characters: blanked, or stepped over when strings are kept. */
+    const literal = (end: number) => {
+        if (keepStrings) {
+            index = end;
+        } else {
+            blank(end);
         }
     };
 
@@ -1556,15 +1900,15 @@ export function maskSwiftNonCode(source: string): string {
             }
         } else if (string?.interpolationDepth === 0) {
             if (source.startsWith(string.end, index)) {
-                blank(index + string.end.length);
+                literal(index + string.end.length);
                 strings.pop();
             } else if (source.startsWith(`\\${string.hashes}(`, index)) {
-                blank(index + string.hashes.length + 2);
+                literal(index + string.hashes.length + 2);
                 string.interpolationDepth = 1;
             } else if (source.startsWith(`\\${string.hashes}`, index)) {
-                blank(Math.min(index + string.hashes.length + 2, source.length));
+                literal(Math.min(index + string.hashes.length + 2, source.length));
             } else {
-                blank(index + 1);
+                literal(index + 1);
             }
         } else if (source.startsWith("//", index)) {
             const newline = source.indexOf("\n", index);
@@ -1581,7 +1925,7 @@ export function maskSwiftNonCode(source: string): string {
                 blank(index + regexOpening[0].length);
             } else if (opening) {
                 strings.push({ end: opening[2] + opening[1], hashes: opening[1], interpolationDepth: 0 });
-                blank(index + opening[0].length);
+                literal(index + opening[0].length);
             } else {
                 index++;
             }
@@ -1590,7 +1934,7 @@ export function maskSwiftNonCode(source: string): string {
             index++;
         } else if (string && source[index] === ")") {
             string.interpolationDepth--;
-            blank(index + 1);
+            literal(index + 1);
         } else {
             index++;
         }
@@ -1636,6 +1980,28 @@ export function checkSwiftSource(
                 message: rule.message,
                 text: text.trim().slice(0, 120),
             });
+        }
+    }
+
+    const rosters = SWIFT_ROSTERS.filter((roster) => swiftRosterApplies(roster, file));
+
+    if (rosters.length > 0) {
+        const withStrings = maskSwiftNonCode(source, { keepStrings: true }).split("\n");
+
+        for (const roster of rosters) {
+            for (const hit of swiftRosterLines(roster, { code: codeLines, withStrings }, (line) =>
+                isSuppressed(lines, line)
+            )) {
+                findings.push({
+                    file,
+                    line: hit.line,
+                    column: hit.column,
+                    rule: roster.name,
+                    severity: "error",
+                    message: `${roster.message} (Roster ${roster.candidate}: scripts/ci/rosters/swift.ts; after removing a match, run bun scripts/ci/rosters/generate.ts.)`,
+                    text: (lines[hit.line - 1] ?? "").trim().slice(0, 120),
+                });
+            }
         }
     }
 
@@ -1696,7 +2062,7 @@ function spawnCallVerdict(node: SgNode): { violates: boolean; needsChildProcessI
     return { violates: !spawnArgsCarryEnv(args), needsChildProcessImport: isBare };
 }
 
-function langFor(file: string): Lang | null {
+export function langFor(file: string): Lang | null {
     if (file.endsWith(".tsx") || file.endsWith(".jsx")) {
         return Lang.Tsx;
     }
@@ -1724,7 +2090,7 @@ function langFor(file: string): Lang | null {
  */
 const SUPPRESSION = /lint-rules-ignore\b/;
 
-function isSuppressed(lines: string[], lineNumber: number): boolean {
+export function isSuppressed(lines: string[], lineNumber: number): boolean {
     return SUPPRESSION.test(lines[lineNumber - 1] ?? "") || SUPPRESSION.test(lines[lineNumber - 2] ?? "");
 }
 
@@ -1783,7 +2149,7 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
     };
 
     if (testFile) {
-        // Test files get exactly one rule. The literal rules below stay off for them.
+        // Test files get two rules: a spawn needs an env, and no raw clack import. The literal rules stay off for them.
         const importsChildProcess = CHILD_PROCESS_IMPORT.test(source);
 
         for (const node of root.findAll(SPAWN_CALL_MATCHER)) {
@@ -1791,6 +2157,14 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
 
             if (verdict.violates && (!verdict.needsChildProcessImport || importsChildProcess)) {
                 record(node, SPAWN_ENV_RULE);
+            }
+        }
+
+        if (RAW_CLACK_IMPORT_RULE.matcher && ruleApplies(RAW_CLACK_IMPORT_RULE, file, ratchets)) {
+            for (const node of root.findAll(RAW_CLACK_IMPORT_RULE.matcher)) {
+                if (RAW_CLACK_IMPORT_RULE.test(node.text(), node)) {
+                    record(node, RAW_CLACK_IMPORT_RULE);
+                }
             }
         }
 
@@ -1883,10 +2257,56 @@ export function staleRatchetEntries(
     return stale;
 }
 
+/**
+ * The files a count ratchet lists with more than they have: each gets one finding, so the count is lowered in the change
+ * that removed a call (a count only goes down, and a stale one would let a new call in unseen). `scanned` is the file
+ * set the run looked at; a listed file outside it is judged only when it no longer exists.
+ */
+export function countRatchetShortfalls(
+    findings: Finding[],
+    scanned: ReadonlySet<string>,
+    counts: ReadonlyMap<string, ReadonlyMap<string, number>> = COUNT_RATCHETS
+): Finding[] {
+    const found = new Map<string, number>();
+
+    for (const finding of findings) {
+        const key = `${finding.rule}\0${finding.file}`;
+        found.set(key, (found.get(key) ?? 0) + 1);
+    }
+
+    const shortfalls: Finding[] = [];
+
+    for (const [rule, entries] of counts) {
+        for (const [file, allowed] of entries) {
+            if (!scanned.has(file) && existsSync(file)) {
+                continue;
+            }
+
+            const actual = found.get(`${rule}\0${file}`) ?? 0;
+
+            if (actual < allowed) {
+                shortfalls.push({
+                    file,
+                    line: 1,
+                    column: 1,
+                    rule,
+                    severity: "error",
+                    message: `The ratchet allows ${allowed} findings of ${rule} here and the file has ${actual}: lower its count to ${actual}.`,
+                    text: "",
+                });
+            }
+        }
+    }
+
+    return shortfalls;
+}
+
 /** The per-file counts of every rule that has them, by rule name. */
-const COUNT_RATCHETS: ReadonlyMap<string, ReadonlyMap<string, number>> = new Map(
-    RULES.flatMap((rule) => (rule.allowedCounts ? [[rule.name, rule.allowedCounts] as const] : []))
-);
+const COUNT_RATCHETS: ReadonlyMap<string, ReadonlyMap<string, number>> = new Map([
+    ...RULES.flatMap((rule) => (rule.allowedCounts ? [[rule.name, rule.allowedCounts] as const] : [])),
+    // The Swift rosters are line rules of `checkSwiftSource`, not `RULES`; their counts come from the same manifest.
+    ...SWIFT_ROSTERS.map((roster) => [roster.name, rosterCounts(ROSTERS, roster.name)] as const),
+]);
 
 /**
  * Drops the findings a per-file count still allows. A file over its count keeps every finding, each saying the
@@ -1934,10 +2354,12 @@ export function withinCountRatchets(
  */
 const RATCHET_INPUTS = [
     "scripts/ci/agent-context-ratchet.ts",
+    "scripts/ci/exec-deadline-ratchet.ts",
     "scripts/ci/harness-ratchet.ts",
     "scripts/ci/model-facts-ratchet.ts",
     "scripts/ci/native-home-ratchet.ts",
     "scripts/ci/proxy-provider-ratchet.ts",
+    "scripts/ci/rosters/rosters.json",
     "scripts/ci/tool-command-ratchet.ts",
     "scripts/ci/transcript-format-ratchet.ts",
 ];
@@ -2067,7 +2489,12 @@ function checkRatchetGrowth({ from, cwd, changed }: { from: string; cwd: string;
             throw new Error(`lint-rules: cannot read ${from}:${file}: ${previous.stderr.toString()}`);
         }
 
-        const additions = ratchetAdditions(previous.stdout.toString(), readFileSync(join(cwd, file), "utf8"));
+        const additions = file.endsWith("rosters.json")
+            ? rosterGrowth(
+                  parseRosters(previous.stdout.toString()),
+                  parseRosters(readFileSync(join(cwd, file), "utf8"))
+              )
+            : ratchetAdditions(previous.stdout.toString(), readFileSync(join(cwd, file), "utf8"));
 
         if (additions.length > 0) {
             throw new Error(`lint-rules: ratchet lists may only shrink (${file})\n${additions.join("\n")}`);
@@ -2108,7 +2535,7 @@ export function changedFiles(base: string, { cwd = process.cwd() }: { cwd?: stri
     return changed;
 }
 
-async function targetFiles(): Promise<string[]> {
+export async function targetFiles(): Promise<string[]> {
     const config = SafeJSON.parse(await Bun.file("biome.json").text()) as {
         files?: { includes?: string[] };
     };
@@ -2354,6 +2781,22 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
 
     // Test files and Swift sources carry other rules only.
     for (const [lang, paths] of options.processToolOnly ? [] : testsByLang) {
+        const clackScoped = paths.filter((path) => ruleApplies(RAW_CLACK_IMPORT_RULE, path));
+
+        if (RAW_CLACK_IMPORT_RULE.matcher && clackScoped.length > 0) {
+            await findInFiles(
+                lang,
+                { paths: clackScoped, matcher: RAW_CLACK_IMPORT_RULE.matcher },
+                guard((nodes) => {
+                    for (const node of nodes) {
+                        if (RAW_CLACK_IMPORT_RULE.test(node.text(), node)) {
+                            push(node, RAW_CLACK_IMPORT_RULE);
+                        }
+                    }
+                })
+            );
+        }
+
         await findInFiles(
             lang,
             { paths, matcher: SPAWN_CALL_MATCHER },
@@ -2387,17 +2830,21 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
         sources.set(file, (await Bun.file(file).text()).split("\n"));
     }
 
-    return withinCountRatchets(
-        unfiltered.filter((finding) => {
-            const lines = sources.get(finding.file) ?? [];
+    const kept = unfiltered.filter((finding) => {
+        const lines = sources.get(finding.file) ?? [];
 
-            if (needsImportCheck.has(finding) && !CHILD_PROCESS_IMPORT.test(lines.join("\n"))) {
-                return false;
-            }
+        if (needsImportCheck.has(finding) && !CHILD_PROCESS_IMPORT.test(lines.join("\n"))) {
+            return false;
+        }
 
-            return !isSuppressed(lines, finding.line);
-        })
-    );
+        return !isSuppressed(lines, finding.line);
+    });
+
+    if (options.processToolOnly) {
+        return withinCountRatchets(kept);
+    }
+
+    return [...withinCountRatchets(kept), ...countRatchetShortfalls(kept, new Set(files))];
 }
 
 if (import.meta.main) {

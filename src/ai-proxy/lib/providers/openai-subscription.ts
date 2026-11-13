@@ -7,11 +7,10 @@ import { jsonError } from "@app/ai-proxy/lib/http-error";
 import { clientAbortResponse } from "@app/ai-proxy/lib/providers/client-abort";
 import {
     CodexCompactionFlow,
-    CompactionRestoreError,
     compactionDispatch,
+    compactionTurn,
     type FailureClient,
     fileCompactionStore,
-    inputHasFallback,
     requestWithSignal,
 } from "@app/ai-proxy/lib/providers/codex/compaction-flow";
 import { execToolBridge } from "@app/ai-proxy/lib/providers/codex/exec/tool";
@@ -61,27 +60,14 @@ import {
     type WebSearchServerTool,
     webSearchResponse,
 } from "@app/ai-proxy/lib/server-tools/web-search";
-import {
-    compactionPoint,
-    shouldStartBackground,
-    takePendingNotice,
-    trackBackground,
-    withUserReminder,
-} from "@app/ai-proxy/lib/sessions/background-compaction";
+
 import {
     cacheResetNotice,
     cacheResetReason,
     preserveCacheReminders,
     shapeChange,
 } from "@app/ai-proxy/lib/sessions/cache-shape";
-import {
-    compactionMarkers,
-    compactionRecoveryMessage,
-    expandCompactionMarkers,
-} from "@app/ai-proxy/lib/sessions/codex-compaction";
-import { CompactionTrace } from "@app/ai-proxy/lib/sessions/compaction-events";
-import { loginAccountName, noteBlockedCompaction, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
-import { compactionPolicy } from "@app/ai-proxy/lib/sessions/settings";
+import { loginAccountName } from "@app/ai-proxy/lib/sessions/records";
 import {
     anthropicToResponses,
     stripReasoningInput,
@@ -448,349 +434,162 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const conversation = conversationId
             ? `${whamItemScope(req)}\u0000${conversationId}\u0000${stamp.accountHash}\u0000${stamp.compHash}`
             : undefined;
-        const compaction = turn.isCompaction;
-        // The compaction settings, read once: a config reload during the request cannot change its path midway.
-        const policy = compactionPolicy("codex", context?.sessionsIn);
-        const background = policy.background;
-        const nativeCompaction = compaction && !writtenCompaction && policy.mode === "native";
-        const summaryWords = compaction && !nativeCompaction ? policy.words : undefined;
         const claudeSessionId = turn.sessionId;
         const cacheScope = `${whamItemScope(req)}\u0000${stamp.accountHash}\u0000${conversationId ?? claudeSessionId ?? ""}`;
         const cacheThread = `${cacheScope}\u0000${turn.threadKey ?? claudeSessionId ?? ""}`;
-        const clientAgent = req.headers.get("user-agent") ?? undefined;
-        const trace = new CompactionTrace({
-            ...(context?.sessionId ? { session: context.sessionId } : {}),
-            ...(claudeSessionId ? { claudeSession: claudeSessionId } : {}),
-            model: concreteModel,
-            ...(clientAgent ? { client: clientAgent } : {}),
-        });
-
-        // Background compaction runs only for a ccx session, whose record knows where Claude Code will compact.
-        const point = compactionPoint(context?.sessionId ? readSessionRecord(context.sessionId) : undefined);
-        const threadKey = point && background.enabled ? turn.threadKey : undefined;
-
-        if (threadKey) {
-            trace.setThread(threadKey.slice(threadKey.lastIndexOf(":") + 1, threadKey.lastIndexOf(":") + 9));
-        }
-
-        if (compaction && !writtenCompaction) {
-            trace.record("turn", { mode: nativeCompaction ? "native" : "summary" });
-
-            if (turn.isCompactionRetry) {
-                trace.record("retry", {
-                    reason: "Claude Code asked for the summary again: the last reply had no <summary> tag",
-                });
-            }
-        }
-
-        if (nativeCompaction) {
-            // The server compacts what came before; Claude Code's summary prompt would only end the cached prefix.
-            parsed = turn.withoutCompactionPrompt();
-        }
-
-        if (summaryWords) {
-            parsed = turn.withSummaryLimit(summaryWords);
-        }
-
-        // Codex's `exec` rides on Claude Code's Bash: offered when the client has Bash, replayed as the model made it.
-        const exec = execToolBridge({
-            tools: parsed.tools,
-            sessionsIn: context?.sessionsIn,
-            sessionId: turn.sessionId,
-            model: concreteModel,
-        });
-
-        // System messages stay in place (`appendDeveloperMessage`): hoisted, they broke the prompt cache.
-        let responsesBody = anthropicToResponses(ensureToolRequiredArrays(parsed), concreteModel, {
-            // A Read of an image comes back as a tool result; WHAM takes it as input_image (codex-rs does the same).
-            toolResultImages: true,
-            // A change of `tools` reads 0% of the WHAM cache, so tool search's loads go in as input items.
-            deferredToolsAsInput: true,
-            deferredRecoveryScope: conversationId ? cacheThread : undefined,
-            reasoningItem: (thinking) => {
-                const opened = codec.open(thinking);
-
-                if (!opened.ok || this.deadReasoning.has(String(opened.item.id))) {
-                    const reason = opened.ok ? "dead" : opened.reason;
-                    replay.dropped[reason] = (replay.dropped[reason] ?? 0) + 1;
-                    return undefined;
-                }
-
-                replay.kept.push(contentHash(String(opened.item.encrypted_content)));
-                return opened.item;
-            },
-            // Claude Code leaves earlier thinking out of a turn's first request; the same items keep the cache.
-            restoreAssistantItems: (content) => {
-                const items = conversation ? rememberedMessageItems(conversation, content) : undefined;
-
-                if (!items || items.some((item) => this.deadReasoning.has(String(item.id)))) {
-                    return undefined;
-                }
-
-                replay.restored += items.filter((item) => item.type === "reasoning").length;
-                return items;
-            },
-            rememberAssistantItems: (content, items) => {
-                if (conversation) {
-                    rememberMessageItems(conversation, content, items);
-                }
-            },
-            ...(exec ? { customToolCall: exec.replayItem } : {}),
-        });
-
-        if (Array.isArray(responsesBody.tools)) {
-            responsesBody.tools = responsesBody.tools.map((tool) => (isObject(tool) ? nonStrictByDefault(tool) : tool));
-        }
-
-        // Last, after the function tools got `strict: false`: a custom tool has no `strict`.
-        if (exec) {
-            responsesBody.tools = [...(Array.isArray(responsesBody.tools) ? responsesBody.tools : []), exec.definition];
-        }
-
-        for (const item of Array.isArray(responsesBody.input) ? responsesBody.input : []) {
-            if (isObject(item) && item.type === "additional_tools" && Array.isArray(item.tools)) {
-                item.tools = item.tools.map((tool) => (isObject(tool) ? nonStrictByDefault(tool) : tool));
-            }
-        }
-
-        // Claude Code forbids tools in its compaction prompt in words only; a Codex model may still call one, which
-        // Claude Code refuses, and three refused compactions end the session.
-        if (compaction && !nativeCompaction) {
-            responsesBody.tool_choice = "none";
-        }
-
-        if (context?.promptCacheKey) {
-            responsesBody.prompt_cache_key = context.promptCacheKey.key;
-        }
-
-        // The effort rides inside `reasoning`, which every body builder branch reads (a top-level `reasoning_effort`
-        // is read only when no `reasoning` object exists). An `:effort` suffix, stamped as `reasoning_effort`, wins
-        // over Claude Code's `/effort` (`output_config.effort`); the catalog check refuses an effort the model lacks.
-        const clientEffort = turn.effort ?? "";
-        // A compaction turn writes a summary of what is already known: the session's xhigh only made it slower (6 to 8
-        // minutes per compaction on 2026-10-27), so it runs at the compaction effort when the model has that effort.
-        const compactionEffort = compaction && !nativeCompaction ? policy.effort : undefined;
-        const effort =
-            compactionEffort && (!catalog || catalog.efforts.includes(compactionEffort))
-                ? compactionEffort
-                : typeof responsesBody.reasoning_effort === "string"
-                  ? responsesBody.reasoning_effort
-                  : clientEffort;
-        delete responsesBody.reasoning_effort;
-        responsesBody.reasoning = {
-            ...reasoningOptions(catalog, this.account.openaiSub?.reasoningSummary),
-            ...(effort ? { effort } : {}),
-        };
-
-        const resolvedReasoning = resolveWhamReasoning(responsesBody, concreteModel, {
-            defaultReasoningEffort: this.account.openaiSub?.defaultReasoningEffort,
-            catalog,
-        });
-        const effectiveEffort = String(resolvedReasoning.reasoning?.effort ?? "");
-
-        // Codex keeps one cache per effort and model: say so where the cache was lost. A compaction turn is its own case.
-        const cacheReset =
-            claudeSessionId && !compaction
-                ? shapeChange(cacheThread, {
-                      effort: effectiveEffort,
-                      model: concreteModel,
-                  })
-                : undefined;
-
-        if (cacheReset) {
-            trace.record("cache-reset", { reason: cacheResetReason(cacheReset) });
-        }
-
-        if (claudeSessionId && Array.isArray(responsesBody.input)) {
-            responsesBody.input = preserveCacheReminders(
-                cacheThread,
-                responsesBody.input,
-                cacheReset ? cacheResetNotice(cacheReset) : undefined
-            );
-        }
-
-        logger.debug(
-            {
-                model: concreteModel,
-                replayed: replay.kept.length,
-                replayedHashes: replay.kept,
-                restored: replay.restored > 0 ? replay.restored : undefined,
-                dropped: Object.keys(replay.dropped).length > 0 ? replay.dropped : undefined,
-                compaction: responsesBody.tool_choice === "none" ? true : undefined,
-            },
-            "ai-proxy: codex /v1/messages reasoning replay"
-        );
-
         // A Claude Code client gets an account failure at the status it acts on, with this session's switch command.
         const client: FailureClient = {
             anthropic: true,
             ...(context?.sessionId ? { sessionId: context.sessionId } : {}),
         };
-        const rawInput = Array.isArray(responsesBody.input) ? responsesBody.input : [];
-        const template = responsesBody;
-        if (compactionMarkers(rawInput).length > 0) {
-            let expanded = rawInput;
-            try {
-                const restored = await compactionDispatch({
-                    signal: req.signal,
-                    stream: false,
-                    timeoutMs: 120_000,
-                    run: async (signal) => {
-                        const restoreReq = requestWithSignal(req, bodyText, signal);
-                        expanded = await expandCompactionMarkers(rawInput, async (id) => {
-                            try {
-                                return await this.compaction.compactionItem({
-                                    id,
-                                    req: restoreReq,
-                                    model,
-                                    template,
-                                    accountHash: stamp.accountHash,
-                                    client,
-                                });
-                            } catch (error) {
-                                if (
-                                    error instanceof CompactionRestoreError &&
-                                    !signal.aborted &&
-                                    inputHasFallback(rawInput, id)
-                                ) {
-                                    logger.warn({ error, id }, "ai-proxy: using the readable compaction fallback");
-                                    return undefined;
-                                }
+        const compacting = compactionTurn({
+            req,
+            model,
+            concreteModel,
+            bodyText,
+            context,
+            parsed,
+            claudeTurn: turn,
+            stamp,
+            client,
+            ...(catalog ? { efforts: catalog.efforts } : {}),
+            written: writtenCompaction,
+        });
 
-                                if (error instanceof CompactionRestoreError) {
-                                    throw new CompactionRestoreError(
-                                        id,
-                                        error.permanent,
-                                        error.message,
-                                        error.missingId,
-                                        error.upstreamResponse
-                                    );
-                                }
+        const next = await this.compaction.beforeUpstream(compacting, (shaping) => {
+            // Codex's `exec` rides on Claude Code's Bash: offered when the client has Bash, replayed as the model made it.
+            const exec = execToolBridge({
+                tools: shaping.parsed.tools,
+                sessionsIn: context?.sessionsIn,
+                sessionId: turn.sessionId,
+                model: concreteModel,
+            });
 
-                                throw error;
-                            }
-                        });
-                        return new Response(null, { status: 204 });
-                    },
-                });
+            // System messages stay in place (`appendDeveloperMessage`): hoisted, they broke the prompt cache.
+            const body = anthropicToResponses(ensureToolRequiredArrays(shaping.parsed), concreteModel, {
+                // A Read of an image comes back as a tool result; WHAM takes it as input_image (codex-rs does the same).
+                toolResultImages: true,
+                // A change of `tools` reads 0% of the WHAM cache, so tool search's loads go in as input items.
+                deferredToolsAsInput: true,
+                deferredRecoveryScope: conversationId ? cacheThread : undefined,
+                reasoningItem: (thinking) => {
+                    const opened = codec.open(thinking);
 
-                if (!restored.ok) {
-                    return toAnthropicErrorResponse(restored);
+                    if (!opened.ok || this.deadReasoning.has(String(opened.item.id))) {
+                        const reason = opened.ok ? "dead" : opened.reason;
+                        replay.dropped[reason] = (replay.dropped[reason] ?? 0) + 1;
+                        return undefined;
+                    }
+
+                    replay.kept.push(contentHash(String(opened.item.encrypted_content)));
+                    return opened.item;
+                },
+                // Claude Code leaves earlier thinking out of a turn's first request; the same items keep the cache.
+                restoreAssistantItems: (content) => {
+                    const items = conversation ? rememberedMessageItems(conversation, content) : undefined;
+
+                    if (!items || items.some((item) => this.deadReasoning.has(String(item.id)))) {
+                        return undefined;
+                    }
+
+                    replay.restored += items.filter((item) => item.type === "reasoning").length;
+                    return items;
+                },
+                rememberAssistantItems: (content, items) => {
+                    if (conversation) {
+                        rememberMessageItems(conversation, content, items);
+                    }
+                },
+                ...(exec ? { customToolCall: exec.replayItem } : {}),
+            });
+
+            if (Array.isArray(body.tools)) {
+                body.tools = body.tools.map((tool) => (isObject(tool) ? nonStrictByDefault(tool) : tool));
+            }
+
+            // Last, after the function tools got `strict: false`: a custom tool has no `strict`.
+            if (exec) {
+                body.tools = [...(Array.isArray(body.tools) ? body.tools : []), exec.definition];
+            }
+
+            for (const item of Array.isArray(body.input) ? body.input : []) {
+                if (isObject(item) && item.type === "additional_tools" && Array.isArray(item.tools)) {
+                    item.tools = item.tools.map((tool) => (isObject(tool) ? nonStrictByDefault(tool) : tool));
                 }
+            }
 
-                responsesBody = { ...responsesBody, input: expanded };
-            } catch (error) {
-                if (!(error instanceof CompactionRestoreError)) {
-                    throw error;
-                }
+            if (shaping.toolChoice) {
+                body.tool_choice = shaping.toolChoice;
+            }
 
-                if (error.upstreamResponse) {
-                    return toAnthropicErrorResponse(error.upstreamResponse);
-                }
+            if (context?.promptCacheKey) {
+                body.prompt_cache_key = context.promptCacheKey.key;
+            }
 
-                if (!error.permanent) {
-                    return toAnthropicErrorResponse(jsonError(503, error.message));
-                }
+            // The effort rides inside `reasoning`, which every body builder branch reads (a top-level
+            // `reasoning_effort` is read only when no `reasoning` object exists). The compaction's effort wins; then an
+            // `:effort` suffix, stamped as `reasoning_effort`, wins over Claude Code's `/effort`
+            // (`output_config.effort`); the catalog check refuses an effort the model lacks.
+            const clientEffort = turn.effort ?? "";
+            const effort =
+                shaping.effort ?? (typeof body.reasoning_effort === "string" ? body.reasoning_effort : clientEffort);
+            delete body.reasoning_effort;
+            body.reasoning = {
+                ...reasoningOptions(catalog, this.account.openaiSub?.reasoningSummary),
+                ...(effort ? { effort } : {}),
+            };
 
-                const session = context?.sessionId
-                    ? await noteBlockedCompaction(context.sessionId, error.marker)
+            const resolvedReasoning = resolveWhamReasoning(body, concreteModel, {
+                defaultReasoningEffort: this.account.openaiSub?.defaultReasoningEffort,
+                catalog,
+            });
+            const effectiveEffort = String(resolvedReasoning.reasoning?.effort ?? "");
+
+            // Codex keeps one cache per effort and model: say so where the cache was lost. A compaction turn is its own
+            // case.
+            const cacheReset =
+                claudeSessionId && !turn.isCompaction
+                    ? shapeChange(cacheThread, {
+                          effort: effectiveEffort,
+                          model: concreteModel,
+                      })
                     : undefined;
 
-                if (session && error.missingId !== error.marker) {
-                    await noteBlockedCompaction(session.id, error.missingId);
-                }
+            if (cacheReset) {
+                compacting.trace.record("cache-reset", { reason: cacheResetReason(cacheReset) });
+            }
 
-                trace.record("blocked", { id: error.marker, reason: error.message });
-
-                return toAnthropicErrorResponse(
-                    jsonError(
-                        400,
-                        `${error.message} ${compactionRecoveryMessage(session?.id, error.marker, error.missingId)}`
-                    )
+            if (claudeSessionId && Array.isArray(body.input)) {
+                body.input = preserveCacheReminders(
+                    cacheThread,
+                    body.input,
+                    cacheReset ? cacheResetNotice(cacheReset) : undefined
                 );
             }
+
+            logger.debug(
+                {
+                    model: concreteModel,
+                    replayed: replay.kept.length,
+                    replayedHashes: replay.kept,
+                    restored: replay.restored > 0 ? replay.restored : undefined,
+                    dropped: Object.keys(replay.dropped).length > 0 ? replay.dropped : undefined,
+                    compaction: body.tool_choice === "none" ? true : undefined,
+                },
+                "ai-proxy: codex /v1/messages reasoning replay"
+            );
+
+            return { body, exec, effectiveEffort };
+        });
+
+        if (next.answer) {
+            return next.answer;
         }
 
-        if (nativeCompaction) {
-            const startedAt = Date.now();
-            let notice: ((durationMs: number) => string) | undefined;
-
-            if (threadKey && point) {
-                const answered = await this.compaction.answerFromBackground({
-                    key: threadKey,
-                    point,
-                    rawInput,
-                    accountHash: stamp.accountHash,
-                    model,
-                    stream: parsed.stream === true,
-                    trace,
-                    startedAt,
-                    settings: background,
-                });
-
-                if (answered.response) {
-                    return answered.response;
-                }
-
-                notice = answered.notice;
-            }
-
-            return this.compaction.compactNatively({
-                req,
-                model,
-                bodyText,
-                context,
-                parsed,
-                responsesBody,
-                rawInput,
-                stamp,
-                client,
-                trace,
-                startedAt,
-                notice,
-                threadKey,
-            });
-        }
-
-        const pending = threadKey ? takePendingNotice(threadKey) : undefined;
-
-        if (pending && Array.isArray(responsesBody.input)) {
-            responsesBody = { ...responsesBody, input: withUserReminder(responsesBody.input, pending) };
-        }
-
-        // A turn near the compaction point starts the background compaction of what it sends, once its usage is in.
-        const sentBody = responsesBody;
-        const onUsage =
-            threadKey && point
-                ? (usage: Record<string, unknown>) => {
-                      const contextTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
-
-                      if (shouldStartBackground({ key: threadKey, contextTokens, point, settings: background })) {
-                          trackBackground(
-                              threadKey,
-                              contextTokens,
-                              this.compaction.runBackgroundCompaction({
-                                  req,
-                                  model,
-                                  concreteModel,
-                                  body: sentBody,
-                                  rawInput,
-                                  stamp,
-                                  contextTokens,
-                                  sessionId: context?.sessionId,
-                                  trace,
-                              }),
-                              (unused, reason) =>
-                                  trace.record("background-wasted", {
-                                      reason,
-                                      inputTokens: unused.inputTokens,
-                                      cachedTokens: unused.cachedTokens,
-                                      outputTokens: unused.outputTokens,
-                                  })
-                          );
-                      }
-                  }
-                : undefined;
+        const { exec, effectiveEffort } = next.built;
+        const onUsage = next.onUsage;
+        parsed = next.parsed;
+        let responsesBody = next.body;
 
         // The recall quest's mode B: the turn goes up without the reasoning carried from earlier turns.
         if (env.aiProxy.getReasoningReplay() === "drop" && replay.kept.length > 0) {

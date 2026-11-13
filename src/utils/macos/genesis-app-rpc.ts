@@ -1,6 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { installedGenesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
+import { hostEffectRefusal } from "@genesiscz/utils/test-process";
 import type { FileSink, Subprocess } from "bun";
 
 /**
@@ -109,6 +110,12 @@ export async function genesisAppRpc<T>(
     params?: Record<string, unknown>,
     opts: GenesisAppRpcOptions<T> = {}
 ): Promise<GenesisAppRpcOutcome<T>> {
+    const refused = refusedInTest(method);
+
+    if (refused) {
+        return refused;
+    }
+
     const launcher = installedGenesisAppLauncher();
 
     if (!launcher) {
@@ -183,6 +190,12 @@ export function genesisAppRpcSync<T>(
     params?: Record<string, unknown>,
     opts: GenesisAppRpcOptions<T> = {}
 ): GenesisAppRpcOutcome<T> {
+    const refused = refusedInTest(method);
+
+    if (refused) {
+        return refused;
+    }
+
     const launcher = installedGenesisAppLauncher();
 
     if (!launcher) {
@@ -221,6 +234,19 @@ export function genesisAppRpcSync<T>(
     }
 
     return parseReply<T>(method, line, proc.exitCode ?? -1, stderr, opts.isResult);
+}
+
+/**
+ * The spawned app acts as the user's TCC identity and can post banners, clear Notification Center or raise grant
+ * prompts, so a test process (and a child it spawns) gets a failure outcome that names the remedy, not a spawn.
+ */
+function refusedInTest(method: string): { ok: false; error: GenesisAppRpcFailure } | null {
+    const message = hostEffectRefusal(
+        `The GenesisTools.app RPC ${method}`,
+        "Assert the request instead of running it in the app."
+    );
+
+    return message ? { ok: false, error: { code: "refused_in_test", message } } : null;
 }
 
 export function parseReply<T>(

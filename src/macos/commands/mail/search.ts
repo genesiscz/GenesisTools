@@ -8,13 +8,13 @@ import {
     resolveListFilters,
 } from "@app/macos/lib/mail/command-helpers";
 import { DEFAULT_SEARCH_TIMEOUT_MS, resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
-import * as p from "@clack/prompts";
 import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
 import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
 import { logger } from "@genesiscz/utils/logger";
 import { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
 import type { SearchOptions } from "@genesiscz/utils/macos/mail/types";
 import { profiler } from "@genesiscz/utils/profile";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 
 const prof = profiler.scope("macos-mail");

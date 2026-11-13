@@ -21,13 +21,11 @@ import { CACHE_TTL_MS, type CacheStatus, computeCacheStatus } from "./cache-cloc
 export {
     CACHE_TTL_MS,
     type CacheStatus,
-    CODEX_CACHE_TTL_MS,
     COOLING_REMAINING_MS,
     COOLING_THRESHOLD_MS,
     CRITICAL_REMAINING_MS,
     CRITICAL_THRESHOLD_MS,
     computeCacheStatus,
-    GROK_CACHE_TTL_MS,
 } from "./cache-clock";
 
 const TAIL_BATCH_SIZE = 20;

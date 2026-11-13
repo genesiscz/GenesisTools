@@ -45,6 +45,7 @@ export async function deliver(options: DeliverOptions): Promise<Destination> {
                 { value: "file" as const, label: "a file" },
             ],
             initialValue: "stdout" as const,
+            cancel: "back",
         });
 
         if (p.isCancel(choice)) {
@@ -56,7 +57,7 @@ export async function deliver(options: DeliverOptions): Promise<Destination> {
         }
 
         if (choice === "file") {
-            const path = await p.text({ message: "File path", placeholder: "./out.md" });
+            const path = await p.text({ message: "File path", placeholder: "./out.md", cancel: "back" });
 
             if (!p.isCancel(path) && typeof path === "string" && path.trim() !== "") {
                 return deliver({ ...options, file: path.trim(), ask: false });

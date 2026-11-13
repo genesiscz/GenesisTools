@@ -5,6 +5,7 @@ import {
     ApifyError,
     type ApifyFetch,
     type ApifyRun,
+    formatApifyError,
     parseInput,
     runCosts,
     sanitizeResult,
@@ -99,6 +100,20 @@ describe("Apify credentials", () => {
         await expect(requireToken(absent)).rejects.toThrow("tools apify login");
         expect(() => validateToken("bad\ntoken")).toThrow("single Apify API token");
         expect(() => validateToken("x".repeat(5000))).toThrow("single Apify API token");
+    });
+});
+
+describe("Apify error report", () => {
+    test("shows an ApifyError's message and hides the raw text of any other error", () => {
+        expect(formatApifyError(new ApifyError("Actor not found", 404))).toEqual({
+            message: "apify: Actor not found",
+            exitCode: 1,
+        });
+
+        const leaky = formatApifyError(new Error("GET https://api.apify.com/v2/acts?token=apify_api_SECRET failed"));
+        expect(leaky.message).toBe("apify: Apify command failed. Check the vault and network connection.");
+        expect(leaky.message).not.toContain("SECRET");
+        expect(formatApifyError("raw apify_api_SECRET").message).not.toContain("SECRET");
     });
 });
 

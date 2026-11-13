@@ -7,11 +7,17 @@
  * inline, so the help for the flag a new user most needs was the one that wrapped worst.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { enhanceHelp } from "@genesiscz/utils/cli";
 import {
+    DEFAULT_EXEC_TIMEOUT_MS,
+    deadlineMessage,
     Executor,
     formatMissingEnumHelp,
     PLAIN_OUTPUT_ENV,
+    resolveExecDeadline,
     setSuggestCommandProgram,
     spawnLabel,
     suggestCommand,
@@ -19,6 +25,7 @@ import {
 } from "@genesiscz/utils/cli/executor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { Command } from "commander";
 
 const LONG =
@@ -355,12 +362,97 @@ describe("Executor bounded calls", () => {
         expect(result).toMatchObject({ success: true, exitCode: 0, stdout: "call", stderr: "diagnostic" });
     });
 
-    test("timeout 0 still means no timeout, as it did before bounded calls", async () => {
+    // Decision 3 (D3, 2026-11-10): a bare 0 no longer means "no deadline"; it reads as unset and the default applies.
+    test("a bare timeout 0 gets the default deadline, and still runs the command", async () => {
+        expect(resolveExecDeadline(0, undefined)).toEqual({
+            ms: DEFAULT_EXEC_TIMEOUT_MS,
+            reason: null,
+            source: "default",
+        });
+        expect(resolveExecDeadline(0, 250)).toEqual({ ms: 250, reason: null, source: "executor" });
+
         const result = await new Executor().exec([process.execPath, "-e", "process.stdout.write('ran')"], {
             timeout: 0,
         });
 
         expect(result).toMatchObject({ success: true, stdout: "ran" });
+    });
+
+    test("the call's bound wins over the executor's, which wins over the default", () => {
+        expect(resolveExecDeadline(undefined, undefined)).toEqual({ ms: 60_000, reason: null, source: "default" });
+        expect(resolveExecDeadline(undefined, { ms: 5_000, reason: "slow host" })).toEqual({
+            ms: 5_000,
+            reason: "slow host",
+            source: "executor",
+        });
+        expect(resolveExecDeadline({ ms: 9_000, reason: "a clone" }, 5_000)).toEqual({
+            ms: 9_000,
+            reason: "a clone",
+            source: "call",
+        });
+        expect(() => resolveExecDeadline({ ms: 0, reason: " " }, undefined)).toThrow("needs a reason");
+        expect(() => resolveExecDeadline({ ms: -1, reason: "x" }, undefined)).toThrow("0 or a positive number");
+    });
+
+    test("the message names the command, the bound, its source, and for the default the fix", () => {
+        const cmd = ["git", "fetch", "--token", "s3cret", "origin"];
+
+        expect(deadlineMessage(resolveExecDeadline(undefined, undefined), cmd)).toBe(
+            "Command timed out after 60000ms (the default deadline of an Executor call): git fetch *** *** origin. " +
+                "A command that can run longer by design passes timeout: { ms, reason }."
+        );
+        expect(deadlineMessage(resolveExecDeadline({ ms: 600_000, reason: "a network fetch" }, undefined), cmd)).toBe(
+            "Command timed out after 600000ms (this call's bound: a network fetch): git fetch *** *** origin"
+        );
+        expect(deadlineMessage(resolveExecDeadline(undefined, 300), cmd)).toBe(
+            "Command timed out after 300ms (its Executor's bound): git fetch *** *** origin"
+        );
+    });
+
+    test("an executor-level bound expires and kills the whole process group, the grandchild too", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "exec-group-"));
+        const pids = join(dir, "pids");
+        const started = performance.now();
+
+        // sh starts in milliseconds even under a loaded test run; bun -e took past a 400 ms bound there.
+        await expect(
+            new Executor({ timeout: 1_000 }).exec(["sh", "-c", 'sleep 30 & echo "$$ $!" > "$0"; wait', pids])
+        ).rejects.toThrow("Command timed out after 1000ms (its Executor's bound)");
+        expect(performance.now() - started).toBeLessThan(3_000);
+
+        const [child, grandchild] = readFileSync(pids, "utf8").trim().split(" ").map(Number);
+        // A killed process is reaped by its new parent (launchd) a moment after the group signal.
+        for (let wait = 0; wait < 20 && (isProcessAlive(child) || isProcessAlive(grandchild)); wait++) {
+            await Bun.sleep(50);
+        }
+
+        expect([isProcessAlive(child), isProcessAlive(grandchild)]).toEqual([false, false]);
+    });
+
+    test("{ ms: 0, reason } sets no deadline, even under a short executor bound", async () => {
+        const result = await new Executor({ timeout: 100 }).exec(
+            [process.execPath, "-e", "setTimeout(() => process.stdout.write('done'), 400)"],
+            { timeout: { ms: 0, reason: "the test waits on purpose" } }
+        );
+
+        expect(result).toMatchObject({ success: true, stdout: "done" });
+    });
+
+    test("an explicit { ms, reason } is honoured over the executor's bound", async () => {
+        const result = await new Executor({ timeout: 100 }).exec(
+            [process.execPath, "-e", "setTimeout(() => process.stdout.write('done'), 400)"],
+            { timeout: { ms: 5_000, reason: "the test needs more than 100 ms" } }
+        );
+
+        expect(result).toMatchObject({ success: true, stdout: "done" });
+    });
+
+    test("execOrThrow passes the call's bound through", async () => {
+        await expect(
+            new Executor().execOrThrow([process.execPath, "-e", "setInterval(() => {}, 1000)"], undefined, {
+                timeout: { ms: 300, reason: "a test bound" },
+            })
+        ).rejects.toThrow("this call's bound: a test bound");
     });
 
     test("trim false keeps the leading space of NUL-delimited output, and the default still trims", async () => {

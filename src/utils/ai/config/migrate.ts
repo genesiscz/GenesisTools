@@ -1,11 +1,31 @@
-import { runMigrations } from "@genesiscz/utils/config/migration";
 import { migrateAI } from "@genesiscz/utils/config/migrations/2026-04-07-migrateAI";
+import { mayPersistMigration } from "@genesiscz/utils/config/real-home-write";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { MIGRATION_SKIPPED_MESSAGE, migrationAllowedHere } from "./migration-guard";
 import { migrateConfigV4 } from "./migrations/2026-08-configV4";
 import { migrateSecretsToVault } from "./migrations/2026-08-secretsToVault";
 import { CONFIG_VERSION } from "./schema";
+
+/** One step of the AI config chain. Each step checks its own target state, so running it twice is a no-op. */
+export interface ConfigMigration {
+    /** Unique ID, format "YYYY-MM-DD-description". */
+    id: string;
+    description: string;
+    /** True when the target config is missing or behind. */
+    shouldRun: () => Promise<boolean>;
+    /** Responsible for its own atomicity (Storage locks). */
+    run: () => Promise<void>;
+}
+
+/** A step that threw, from its `shouldRun` or its `run`. */
+export interface MigrationFailure {
+    id: string;
+    phase: "shouldRun" | "run";
+    error: unknown;
+}
+
+export const MIGRATION_SKIPPED_MESSAGE =
+    "skipping AI config migration: the real config is shared with the installed tools and this process may not write it. Set GENESIS_TOOLS_ALLOW_REAL_MIGRATION=1 to override.";
 
 /**
  * The AI config migration chain, in dependency order: legacy consolidation,
@@ -26,18 +46,31 @@ import { CONFIG_VERSION } from "./schema";
  * What is still missing is the visible half: those variables never become
  * reviewable entries in the user's config.
  *
- * Both entry points (`AiConfigStore.load` and the deprecated `AIConfig.load`)
- * run this, so reaching the config through either one cannot land on a shape the
+ * `AiConfigStore.load` runs this (the retired v3 facade did too), so reaching the
+ * config through any entry point cannot land on a shape the
  * reader does not understand. Each migration is individually idempotent and
  * guarded, so running it on every load costs a stat and nothing else.
  */
-let migrated = false;
+/**
+ * The config path the chain last finished for, or null. Keyed by path, not a plain flag: a process whose
+ * GENESIS_TOOLS_HOME moves (a test, a sandboxed run) has a different config that the chain has not seen.
+ */
+let migratedFor: string | null = null;
+
+function currentConfigPath(): string {
+    return new Storage("ai").getConfigPath();
+}
 
 const CHAIN = [migrateAI, migrateConfigV4, migrateSecretsToVault];
 
-export async function ensureAiConfigMigrated(): Promise<void> {
-    if (migrated) {
-        return;
+/**
+ * Runs the chain once for the current config path and returns the steps that failed. An empty list after a
+ * real run latches the process guard; a failure leaves it open, so the next load retries.
+ */
+export async function ensureAiConfigMigrated(): Promise<MigrationFailure[]> {
+    const configPath = currentConfigPath();
+    if (migratedFor === configPath) {
+        return [];
     }
 
     // The guard is applied to the WHOLE chain, not just to the members that
@@ -46,20 +79,60 @@ export async function ensureAiConfigMigrated(): Promise<void> {
     // the guarded v4 step, which is exactly the write this guard exists to
     // refuse. Each migration keeps its own gate as well: two independent checks
     // are what stop a bug in one from reaching the user's real file.
-    if (!migrationAllowedHere()) {
-        migrated = true;
-        await warnIfConfigIsBehind();
-        return;
+    const verdict = mayPersistMigration();
+
+    if (!verdict.allowed) {
+        // Debug, not warn: every `tools` process started in a worktree asks this on its first config read,
+        // almost always with nothing to migrate (420 warnings on 2026-09-29/30, all with a current config).
+        // `warnIfConfigIsBehind` warns when a skipped migration was really due.
+        logger.debug({ reason: verdict.reason }, MIGRATION_SKIPPED_MESSAGE);
+        migratedFor = configPath;
+        await warnIfConfigIsBehind(verdict.reason);
+        return [];
     }
 
-    await runMigrations(CHAIN);
+    const failures = await runChain();
 
-    // `runMigrations` logs a failing migration, stops the chain and resolves
-    // normally, so nothing it returns distinguishes "all done" from "step two
-    // threw". Latching the process guard on that left a half-migrated config
-    // (plaintext credentials still in the file) with every later load in this
-    // process skipping the retry. Re-asking each migration costs a stat apiece.
-    migrated = !(await chainStillPending());
+    // Latching the process guard after a failed step left a half-migrated config (plaintext credentials
+    // still in the file) with every later load in this process skipping the retry.
+    migratedFor = failures.length === 0 ? configPath : null;
+    return failures;
+}
+
+/**
+ * Runs each step whose `shouldRun` says yes, in order. A `shouldRun` that throws is skipped and reported; a
+ * `run` that throws stops the chain, since the later steps may depend on it.
+ */
+async function runChain(): Promise<MigrationFailure[]> {
+    const failures: MigrationFailure[] = [];
+
+    for (const migration of CHAIN) {
+        let due: boolean;
+
+        try {
+            due = await migration.shouldRun();
+        } catch (error) {
+            logger.warn({ err: error, migration: migration.id }, "AI config migration: shouldRun threw, skipping");
+            failures.push({ id: migration.id, phase: "shouldRun", error });
+            continue;
+        }
+
+        if (!due) {
+            continue;
+        }
+
+        try {
+            logger.info(`Running migration: ${migration.id} -- ${migration.description}`);
+            await migration.run();
+            logger.info(`Migration complete: ${migration.id}`);
+        } catch (error) {
+            logger.error({ err: error, migration: migration.id }, "AI config migration failed, the chain stops");
+            failures.push({ id: migration.id, phase: "run", error });
+            break;
+        }
+    }
+
+    return failures;
 }
 
 /**
@@ -67,30 +140,15 @@ export async function ensureAiConfigMigrated(): Promise<void> {
  * version is the cheap tell: the members' own `shouldRun` cannot answer, since each asks the same
  * guard and says "no" in a worktree.
  */
-async function warnIfConfigIsBehind(): Promise<void> {
+async function warnIfConfigIsBehind(reason: string): Promise<void> {
     const raw = await new Storage("ai").getConfig<{ version?: number; _schemaVersion?: number }>();
     const version = raw?.version ?? raw?._schemaVersion;
     if (typeof version === "number" && version < CONFIG_VERSION) {
-        logger.warn({ cwd: process.cwd(), version, current: CONFIG_VERSION }, MIGRATION_SKIPPED_MESSAGE);
+        logger.warn({ reason, version, current: CONFIG_VERSION }, MIGRATION_SKIPPED_MESSAGE);
     }
-}
-
-async function chainStillPending(): Promise<boolean> {
-    for (const migration of CHAIN) {
-        try {
-            if (await migration.shouldRun()) {
-                return true;
-            }
-        } catch (err) {
-            logger.debug({ err, migration: migration.id }, "shouldRun threw while confirming the chain finished");
-            return true;
-        }
-    }
-
-    return false;
 }
 
 /** Test seam: the chain is process-scoped, and tests switch config roots. */
 export function _resetMigrationStateForTest(): void {
-    migrated = false;
+    migratedFor = null;
 }

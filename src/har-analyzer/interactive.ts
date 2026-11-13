@@ -4,10 +4,10 @@ import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarFile, HarSession, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { formatTable } from "@genesiscz/utils/table";
 import pc from "picocolors";
 
@@ -26,6 +26,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
         const filePath = await p.text({
             message: "Path to .har file:",
             placeholder: "/path/to/capture.har",
+            cancel: "back",
         });
 
         if (p.isCancel(filePath)) {
@@ -77,6 +78,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 { value: "load", label: "Load different HAR", hint: "switch to another file" },
                 { value: "quit", label: "Quit" },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(action) || action === "quit") {
@@ -96,6 +98,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 const entryNum = await p.text({
                     message: "Entry number (e.g. 0 or e0):",
                     placeholder: "0",
+                    cancel: "back",
                 });
                 if (p.isCancel(entryNum)) {
                     break;
@@ -118,6 +121,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 const showBody = await p.confirm({
                     message: "Show response body?",
                     initialValue: false,
+                    cancel: "back",
                 });
 
                 if (!p.isCancel(showBody) && showBody) {
@@ -152,6 +156,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                         value: d,
                         label: `${d} (${indices.length} reqs)`,
                     })),
+                    cancel: "back",
                 });
 
                 if (p.isCancel(domain)) {
@@ -169,6 +174,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 const query = await p.text({
                     message: "Search query:",
                     placeholder: "error",
+                    cancel: "back",
                 });
                 if (p.isCancel(query)) {
                     break;
@@ -182,6 +188,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                         { value: "body", label: "Body only" },
                         { value: "header", label: "Headers only" },
                     ],
+                    cancel: "back",
                 });
                 if (p.isCancel(scope)) {
                     break;
@@ -338,6 +345,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                         { value: "dashboard", label: "Dashboard (refresh)" },
                         { value: "back", label: "\u2190 Back" },
                     ],
+                    cancel: "back",
                 });
 
                 if (p.isCancel(moreAction) || moreAction === "back") {
@@ -347,11 +355,11 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 if (moreAction === "dashboard") {
                     out.println(formatDashboard(session.stats, session.sourceFile));
                 } else if (moreAction === "diff") {
-                    const e1 = await p.text({ message: "First entry (e.g. 0):", placeholder: "0" });
+                    const e1 = await p.text({ message: "First entry (e.g. 0):", placeholder: "0", cancel: "back" });
                     if (p.isCancel(e1)) {
                         break;
                     }
-                    const e2 = await p.text({ message: "Second entry:", placeholder: "1" });
+                    const e2 = await p.text({ message: "Second entry:", placeholder: "1", cancel: "back" });
                     if (p.isCancel(e2)) {
                         break;
                     }
@@ -368,6 +376,7 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                 const filePath = await p.text({
                     message: "Path to .har file:",
                     placeholder: "/path/to/capture.har",
+                    cancel: "back",
                 });
                 if (p.isCancel(filePath)) {
                     break;

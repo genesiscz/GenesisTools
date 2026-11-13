@@ -1,7 +1,10 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve, sep } from "node:path";
-import * as p from "@clack/prompts";
+import {
+    AmbiguousSessionIdError,
+    canonicalClaudeTranscriptSync,
+} from "@genesiscz/utils/agent-sessions/readers/claude-locate";
 import { ClaudeSessionFormatter } from "@genesiscz/utils/claude/ClaudeSessionFormatter";
 import { ClaudeSessionTailer } from "@genesiscz/utils/claude/ClaudeSessionTailer";
 import { INCLUDE_HELP, IncludeSpec } from "@genesiscz/utils/claude/cli/dsl";
@@ -12,6 +15,7 @@ import { readHeadTailLines } from "@genesiscz/utils/claude/session.utils";
 import { suggestCommand } from "@genesiscz/utils/cli/executor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -248,23 +252,34 @@ async function startTailing(target: TailTarget, opts: TailOptions): Promise<void
     }
 }
 
+/**
+ * The transcript of a session id or prefix, from the Claude locator (`canonicalClaudeTranscriptSync`) over the
+ * projects folder, scoped to `--project` when given. It lists the folders on every call, so a session that started
+ * seconds ago is found; of two copies of one id, the conversation wins over a title-only stub. Agent transcripts
+ * (`agent-<id>.jsonl`, `subagents/`) answer too, as the tail's own folder scan matched them.
+ */
+function locateSession(id: string, projectPath?: string): string | undefined {
+    return canonicalClaudeTranscriptSync(
+        id,
+        { native: [PROJECTS_DIR] },
+        { projectFolder: projectPath ? encodedProjectDir(projectPath) : undefined, includeSubagents: true }
+    );
+}
+
+function sessionTarget(filePath: string): TailTarget {
+    const sessionId = basename(filePath, ".jsonl");
+    const isAgent = filePath.includes(`${sep}subagents${sep}`) || sessionId.startsWith("agent-");
+    return { filePath, label: sessionId, sessionId, isAgent };
+}
+
 function findActiveTargets(activeIds: Set<string>, projectPath?: string): TailTarget[] {
-    const dirs = getProjectDirs(projectPath);
     const targets: TailTarget[] = [];
 
     for (const id of activeIds) {
-        for (const dir of dirs) {
-            const jsonlPath = resolve(dir, `${id}.jsonl`);
+        const filePath = locateSession(id, projectPath);
 
-            if (existsSync(jsonlPath)) {
-                targets.push({
-                    filePath: jsonlPath,
-                    label: id,
-                    sessionId: id,
-                    isAgent: false,
-                });
-                break;
-            }
+        if (filePath) {
+            targets.push(sessionTarget(filePath));
         }
     }
 
@@ -372,36 +387,42 @@ export function getProjectDirs(projectPath?: string): string[] {
     }
 }
 
+/** A session by its full id or a prefix of 8+ characters; a prefix of several sessions lists them to pick from. */
 async function findSessionByPrefix(prefix: string, projectPath?: string): Promise<TailTarget | null> {
-    const lowerPrefix = prefix.toLowerCase();
-    const matches: TailTarget[] = [];
+    try {
+        const filePath = locateSession(prefix, projectPath);
+        return filePath ? sessionTarget(filePath) : null;
+    } catch (error) {
+        if (!(error instanceof AmbiguousSessionIdError)) {
+            throw error;
+        }
 
-    for (const baseDir of getProjectDirs(projectPath)) {
+        const matches = error.ids.flatMap((id) => {
+            const filePath = locateSession(id, projectPath);
+            return filePath ? [sessionTarget(filePath)] : [];
+        });
+
+        return await promptSelectTarget(matches);
+    }
+}
+
+/** The session ids whose main transcript is directly in one of these project folders. */
+function sessionIdsIn(dirs: string[]): Set<string> {
+    const ids = new Set<string>();
+
+    for (const dir of dirs) {
         try {
-            for (const entry of readdirSync(baseDir)) {
-                if (entry.endsWith(".jsonl") && entry.toLowerCase().startsWith(lowerPrefix)) {
-                    matches.push({
-                        filePath: resolve(baseDir, entry),
-                        label: entry.replace(".jsonl", ""),
-                        sessionId: entry.replace(".jsonl", ""),
-                        isAgent: false,
-                    });
+            for (const entry of readdirSync(dir)) {
+                if (entry.endsWith(".jsonl")) {
+                    ids.add(entry.slice(0, -".jsonl".length));
                 }
             }
         } catch (err) {
-            logger.debug({ err, dir: baseDir }, "[claude] session-discovery directory scan failed");
+            logger.debug({ err, dir }, "[claude] session-discovery directory scan failed");
         }
     }
 
-    if (matches.length === 1) {
-        return matches[0];
-    }
-
-    if (matches.length > 1) {
-        return await promptSelectTarget(matches);
-    }
-
-    return null;
+    return ids;
 }
 
 function findMostRecentSession(projectPath?: string): TailTarget | null {
@@ -419,19 +440,14 @@ function findMostRecentSession(projectPath?: string): TailTarget | null {
                 }))
                 .sort((a, b) => b.mtime - a.mtime);
 
-            for (const file of files) {
-                for (const baseDir of dirs) {
-                    const jsonlPath = resolve(baseDir, `${file.sessionId}.jsonl`);
+            // One listing of the ids in scope picks the newest active one (thousands of statusline files, so no
+            // locator call per file); the locator then names that id's file.
+            const inScope = sessionIdsIn(dirs);
+            const newest = files.find((file) => inScope.has(file.sessionId));
+            const filePath = newest ? locateSession(newest.sessionId, projectPath) : undefined;
 
-                    if (existsSync(jsonlPath)) {
-                        return {
-                            filePath: jsonlPath,
-                            label: file.sessionId,
-                            sessionId: file.sessionId,
-                            isAgent: false,
-                        };
-                    }
-                }
+            if (filePath) {
+                return sessionTarget(filePath);
             }
         } catch {
             // Fall through to directory scan
@@ -490,6 +506,7 @@ async function promptSelectTarget(targets: TailTarget[]): Promise<TailTarget | n
             label: t.agentDescription ?? t.label,
             hint: basename(t.filePath),
         })),
+        cancel: "back",
     });
 
     if (p.isCancel(result)) {
@@ -535,6 +552,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
             { value: "agents", label: "Agent details" },
         ],
         initialValues: ["thinking", "tools", "agents"],
+        cancel: "back",
     });
 
     if (p.isCancel(categories)) {
@@ -552,6 +570,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
             message: "Tool input max chars?",
             placeholder: "500",
             defaultValue: "500",
+            cancel: "back",
         });
 
         if (p.isCancel(toolInChars)) {
@@ -562,6 +581,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
             message: "Tool output max chars?",
             placeholder: "500",
             defaultValue: "500",
+            cancel: "back",
         });
 
         if (p.isCancel(toolOutChars)) {
@@ -582,6 +602,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
                 { value: "thinking", label: "Agent thinking" },
             ],
             initialValues: ["input", "tools", "result"],
+            cancel: "back",
         });
 
         if (p.isCancel(agentParts)) {
@@ -597,6 +618,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
                 message: "Agent tool input max chars?",
                 placeholder: "50",
                 defaultValue: "50",
+                cancel: "back",
             });
 
             if (p.isCancel(agentToolIn)) {
@@ -607,6 +629,7 @@ async function runInteractiveSetup(explicit: boolean): Promise<IncludeSpec> {
                 message: "Agent tool output max chars?",
                 placeholder: "500",
                 defaultValue: "500",
+                cancel: "back",
             });
 
             if (p.isCancel(agentToolOut)) {

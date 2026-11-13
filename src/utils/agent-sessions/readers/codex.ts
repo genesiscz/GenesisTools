@@ -9,6 +9,7 @@ import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/sour
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 import { eachLine } from "@genesiscz/utils/ai/transcripts/native-scan";
+import { isRecord } from "@genesiscz/utils/ai/usage/transcripts/parse-helpers";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -31,6 +32,7 @@ import type {
     ReadForwardOptions,
     RowAnchorIds,
     RowAnchorWalk,
+    SpawnLink,
     TurnBoundary,
 } from "../types";
 import { codexCurrentModel, codexModelOfRow } from "./codex-model";
@@ -147,6 +149,51 @@ function firstHeader(row: JsonRecord): CodexHeader | undefined {
         isSubagent: Boolean(asRecord(payload.source).subagent),
         timestamp: asText(row.timestamp ?? payload.timestamp) || null,
     };
+}
+
+/**
+ * The spawn link of a Codex `session_meta` payload, or null for a thread nobody spawned. A sub-agent's header names
+ * its spawner in `source.subagent.thread_spawn`; some Codex releases also copy the fields to the payload's top level
+ * and mark it with `thread_source: "subagent"`, so either shape counts. The one parse of these fields: the reader's
+ * `readSpawnLink` and the usage context (`codex-usage-context.ts`) both call it.
+ */
+export function codexSpawnLink(payload: Readonly<Record<string, unknown>>): SpawnLink | null {
+    const subagent = isRecord(payload.source) ? payload.source.subagent : undefined;
+    // A spawned agent's `subagent` is an object; a bare string value names no spawn.
+    const spawned = isRecord(subagent);
+    const spawn: Record<string, unknown> = spawned && isRecord(subagent.thread_spawn) ? subagent.thread_spawn : {};
+    const isSubagent = spawned || payload.thread_source === "subagent";
+    const pick = (key: string): string | undefined => {
+        const value = spawn[key] ?? payload[key];
+        return typeof value === "string" && value ? value : undefined;
+    };
+    const parentSessionId = pick("parent_thread_id");
+
+    if (!isSubagent || !parentSessionId) {
+        return null;
+    }
+
+    const depth = spawn.depth ?? payload.depth;
+    const role = pick("agent_role");
+    const nickname = pick("agent_nickname");
+    const agentPath = pick("agent_path");
+
+    return {
+        parentSessionId,
+        ...(typeof depth === "number" ? { depth } : {}),
+        ...(role ? { role } : {}),
+        ...(nickname ? { nickname } : {}),
+        ...(agentPath ? { agentPath } : {}),
+    };
+}
+
+/** `NativeSessionReader.readSpawnLink` for Codex: the spawn link of the rollout's first record, its header. */
+export async function readCodexSpawnLink(source: NativeSessionSource<"codex">): Promise<SpawnLink | null> {
+    for await (const parsed of iterateLegacyRows(source)) {
+        return parsed.row.type === "session_meta" ? codexSpawnLink(asRecord(parsed.row.payload)) : null;
+    }
+
+    return null;
 }
 
 function textBlocks(content: JsonValue | undefined): string[] {

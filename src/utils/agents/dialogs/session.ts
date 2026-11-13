@@ -1,0 +1,125 @@
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
+import { openDialogFor } from "@genesiscz/utils/agents/dialogs/guard";
+import { openQuestions } from "@genesiscz/utils/agents/dialogs/store";
+import type { DialogProvider, OpenDialog, OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+import { type ClaudeLiveSession, listClaudeSessionInventory } from "@genesiscz/utils/claude/peer-message";
+import { logger } from "@genesiscz/utils/logger";
+import { isTestProcess } from "@genesiscz/utils/test-process";
+
+const { log } = logger.scoped("cmux-dialog-guard");
+
+/** The registry's `waitingFor` while a permission or plan dialog is open (Claude Code 2.1.314, 2026-11-04). */
+export const CLAUDE_PERMISSION_WAIT = "permission prompt";
+
+/**
+ * Claude Code's own registry entry (`<config dir>/sessions/<pid>.json`) says `status: "waiting"` with `waitingFor:
+ * "input needed"` while a question dialog is open (observed live on 2.1.312, 2026-10-30), `waitingFor: "permission
+ * prompt"` while a permission or plan dialog is open (2.1.314, 2026-11-04), and `idle` or `busy` otherwise. It is the
+ * one signal that sees an open `AskUserQuestion` before it is answered: Claude Code writes the assistant record that
+ * holds that tool call only after the tool returns, so the transcript's turn state cannot. A permission prompt is kind
+ * `permission`; any other wait stays `decision`. The signal is `registry`.
+ */
+export function claudeRegistryDialog(
+    sessionId: string,
+    sessions: (directory?: string) => ClaudeLiveSession[] = (dir) => listClaudeSessionInventory({ dir }),
+    directory?: string | null
+): OpenDialog | null {
+    const waiting = sessions(directory ?? undefined).find(
+        (session) => session.sessionId === sessionId && session.status === "waiting" && !session.parkedJobId
+    );
+
+    if (!waiting) {
+        return null;
+    }
+
+    // A permission and a plan dialog both write `permission prompt` (2.1.314); the pending tool call tells them apart.
+    const kind = waiting.waitingFor === CLAUDE_PERMISSION_WAIT ? "permission" : "decision";
+    return { kind, question: null, signal: "registry" };
+}
+
+/**
+ * Is a question, plan or permission dialog open in this session right now? State signals only, never a screen read
+ * (handoff h_ppczhri1): the hook records first, then the transcript's turn state (`openDialogFor`), then, for a
+ * Claude session, Claude Code's own registry entry (`claudeRegistryDialog`).
+ *
+ * Every path that types into a pane asks this first: `tools claude cmux send` and the typed rung of
+ * `deliverToSession`. Without a provider the resolved transcript names it; a session whose transcript is not found
+ * still gets every harness's hook records, so a recorded permission prompt blocks the typing either way. A test
+ * process reads the records only, because the transcript folders are the real home and the test sandbox covers only
+ * `~/.genesis-tools`.
+ */
+export async function sessionOpenDialog({
+    sessionId,
+    provider,
+}: {
+    sessionId: string;
+    provider?: DialogProvider;
+}): Promise<OpenDialog | null> {
+    let transcript: ResolvedTranscript | undefined;
+
+    if (!isTestProcess()) {
+        try {
+            transcript = await resolveTranscript(sessionId, {}, provider);
+        } catch (error) {
+            log.debug({ error, sessionId, provider }, "no transcript for the dialog guard; hook records only");
+        }
+    }
+
+    const providers: readonly DialogProvider[] = provider
+        ? [provider]
+        : transcript
+          ? [transcript.provider]
+          : ACCOUNT_PROVIDER_ALIASES;
+
+    // An unreadable registry is unknown, not evidence that the session exited.
+    const sessionAlive =
+        transcript?.source === "native"
+            ? resolveHistoryProvider(transcript.provider).reader.dialog.sessionAlive(transcript.filePath, sessionId)
+            : null;
+
+    for (const owner of providers) {
+        try {
+            const dialog = openDialogFor({
+                provider: owner,
+                sessionId,
+                transcriptPath: transcript?.filePath,
+                sessionAlive,
+            });
+
+            if (dialog) {
+                return dialog;
+            }
+        } catch (error) {
+            // Only a session id the record store refuses gets here, and no hook can have written a record for it.
+            log.warn({ error, sessionId, provider: owner }, "the dialog guard could not read this session");
+        }
+    }
+
+    // The registry is this Mac's live processes, which a test must not read.
+    if (providers.includes("claude") && !isTestProcess()) {
+        const directory =
+            transcript?.source === "native"
+                ? resolveHistoryProvider(transcript.provider).reader.dialog.registryDirectory(transcript.filePath)
+                : null;
+        return claudeRegistryDialog(sessionId, undefined, directory);
+    }
+
+    return null;
+}
+
+/**
+ * The open dialog records of a session across every harness, newest first: what `tools claude cmux send --option`
+ * answers. Only a record carries the options and the tool call id; the registry and turn-state signals do not.
+ */
+export function sessionOpenRecords(sessionId: string): OpenQuestion[] {
+    return ACCOUNT_PROVIDER_ALIASES.flatMap((provider) => {
+        try {
+            return openQuestions(provider, sessionId);
+        } catch (error) {
+            log.warn({ error, sessionId, provider }, "could not read this session's dialog records");
+            return [];
+        }
+    }).sort((a, b) => b.askedAt.localeCompare(a.askedAt));
+}

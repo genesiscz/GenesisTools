@@ -51,6 +51,10 @@ day of review (PRs #499, #501).
   real-path function on both sides.
 - `GitRepos.shared` runs one status per repository; no timer, refresh on git-folder events or `noteSaved`.
   `lookup(for:)` is tri-state: show "not in a git repository" only for `.none`, never while `.pending`.
+- A view of a repository never runs its own `git status` or `rev-parse` per refresh: roots come from `GitRootCache`, a
+  file's state and the tree's line counts from `GitRepoModel.fileState(of:)` / `lineCounts` (once per read for every
+  view), and a read started by file events wakes `generation` followers only when the status or HEAD changed.
+  `GitRepoFanOutTests` counts the git runs (5 views, one git-folder burst: 3 runs; 42 before 2026-11-13).
 - A tab switch takes a warm spare page (`MarkdownWebSpare`) and keeps the old tab on screen until the new page's
   render call returns (`GenRenderSwap`, shared with the hub's session switch). The leaving pane owns no sheet, find
   panel or web proxy (`leaving`).

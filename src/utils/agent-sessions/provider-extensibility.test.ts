@@ -22,6 +22,8 @@ import {
     noMidWork,
     noRowAnchors,
     noSessionChanges,
+    noSpawnLink,
+    noStatistics,
 } from "./testing/no-backward-read";
 import type { NativeSessionSource } from "./types";
 
@@ -68,6 +70,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
             continuedIn: noContinuedIn,
             currentModel: noCurrentModel,
             midWork: noMidWork,
+            readSpawnLink: noSpawnLink,
             scanInsights: () => ({ native: null, defaultModel: null }),
             classifyPath: classifiesNoPath,
             readChanges: noSessionChanges,
@@ -83,6 +86,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
             readMetadata: (source, options) => operations.readMetadata(asClaude(source), options),
             scan: (source, options) => operations.scan(asClaude(source), options),
             readRecords: (source, options) => operations.readRecords(asClaude(source), options),
+            readStatistics: noStatistics,
             read: async () => {
                 throw new Error("Shared history must use source operations");
             },

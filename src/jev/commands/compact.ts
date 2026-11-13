@@ -1,4 +1,3 @@
-import * as p from "@clack/prompts";
 import {
     COMPACT_SOURCES,
     type CompactResult,
@@ -14,6 +13,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import { failPlain, printResult, withSigint } from "../lib/cli-output";
 
@@ -61,6 +61,7 @@ async function resolveSource(value: string | boolean | undefined): Promise<Compa
     const picked = await p.select({
         message: "Transcript source",
         options: COMPACT_SOURCES.map((source) => ({ value: source, label: source })),
+        cancel: "back",
     });
     return p.isCancel(picked) ? null : (picked as CompactSource);
 }

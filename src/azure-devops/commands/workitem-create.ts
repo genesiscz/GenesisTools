@@ -118,7 +118,7 @@ async function runInteractiveCreate(api: Api, config: AzureConfig): Promise<void
                 let projects = await loadProjectsCache(config.org);
                 if (!projects) {
                     out.println("📥 Fetching projects...");
-                    const fetchedProjects = await Api.getProjects(config.org);
+                    const fetchedProjects = await Api.forOrganization(config.org).getProjects();
                     await saveProjectsCache(config.org, fetchedProjects);
                     projects = fetchedProjects;
                 }

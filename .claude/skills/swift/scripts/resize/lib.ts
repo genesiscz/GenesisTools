@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { execTool } from "@genesiscz/utils/cli/tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisAppLauncherPath } from "@genesiscz/utils/macos/genesis-app";
-import { listPsRows } from "@genesiscz/utils/process/ps";
+import { listProcessRows } from "@genesiscz/utils/process/processes";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 export const APP = genesisAppLauncherPath();
@@ -23,7 +23,7 @@ export async function control(args: string[]): Promise<string> {
 
 /// The live hub's pid (the process table through the kit's reader, not a `pgrep` per call).
 export async function hubPid(): Promise<string> {
-    const row = (await listPsRows()).find((r) => r.command.includes("MacOS/GenesisTools --hub"));
+    const row = (await listProcessRows()).find((r) => r.command.includes("MacOS/GenesisTools --hub"));
     return row ? String(row.pid) : "";
 }
 

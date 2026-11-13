@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { displayComparison, displayResults } from "../lib/display";

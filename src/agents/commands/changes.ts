@@ -7,10 +7,10 @@ import {
     turnChangesJson,
 } from "@app/agents/lib/changes/tool-changes";
 import { resolveCachedSessionId, type SessionIdResolution } from "@genesiscz/utils/agent-sessions/cached-title";
-import { readJsonlRows } from "@genesiscz/utils/jsonl";
+import { type ChangeLogRow, changeLogPath, readChangeLogFile } from "@genesiscz/utils/agents/change-log";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { type ChangeEvent, lastTurnIds, sessionChangesPath } from "../lib/changes/log";
+import { lastTurnIds } from "../lib/changes/log";
 import { objectsDir } from "../lib/changes/objects";
 
 export const { log } = logger.scoped("agents-changes");
@@ -19,12 +19,12 @@ export interface RawLogFile {
     path: string;
     beforeOid: string | null;
     afterOid: string | null;
-    source: ChangeEvent["source"];
-    skipped: ChangeEvent["skipped"] | null;
+    source: ChangeLogRow["source"];
+    skipped: ChangeLogRow["skipped"] | null;
     /** Why the first before-state was not stored; null when it was (or the row predates the per-side fields). */
-    beforeSkipped: ChangeEvent["beforeSkipped"] | null;
+    beforeSkipped: ChangeLogRow["beforeSkipped"] | null;
     /** Why the last after-state was not stored. */
-    afterSkipped: ChangeEvent["afterSkipped"] | null;
+    afterSkipped: ChangeLogRow["afterSkipped"] | null;
     /** Every call that changed the path, in log order. Rows from before 2026-09-24 carry none. */
     toolUseIds: string[];
 }
@@ -40,13 +40,13 @@ export function rawTransition(file: RawLogFile): string {
 }
 
 /** A row from before the per-side fields says that a side was skipped, not which one. */
-function legacySkipped(row: ChangeEvent): ChangeEvent["skipped"] | undefined {
+function legacySkipped(row: ChangeLogRow): ChangeLogRow["skipped"] | undefined {
     return row.beforeSkipped || row.afterSkipped ? undefined : row.skipped;
 }
 
 /** The change log as recorded: every row, each path from its first before-state to its last after-state. */
-export function rawLogFiles(rows: readonly ChangeEvent[]): RawLogFile[] {
-    const byPath = new Map<string, { first: ChangeEvent; last: ChangeEvent; toolUseIds: Set<string> }>();
+export function rawLogFiles(rows: readonly ChangeLogRow[]): RawLogFile[] {
+    const byPath = new Map<string, { first: ChangeLogRow; last: ChangeLogRow; toolUseIds: Set<string> }>();
 
     for (const row of rows) {
         const existing = byPath.get(row.path);
@@ -75,7 +75,7 @@ export function rawLogFiles(rows: readonly ChangeEvent[]): RawLogFile[] {
     }));
 }
 
-function rawAction(session: string, file: string, rows: ChangeEvent[], options: ChangesOptions, count?: number): void {
+function rawAction(session: string, file: string, rows: ChangeLogRow[], options: ChangesOptions, count?: number): void {
     const turns = count === undefined ? null : lastTurnIds(rows, count);
     let selected = turns ? rows.filter((row) => turns.includes(row.turn)) : rows;
 
@@ -194,14 +194,14 @@ export function registerChangesCommand(program: Command): void {
             let file: string;
 
             try {
-                file = sessionChangesPath(session);
+                file = changeLogPath(session);
             } catch (error) {
                 out.log.error(error instanceof Error ? error.message : String(error));
                 process.exitCode = 1;
                 return;
             }
 
-            const read = readJsonlRows<ChangeEvent>(file);
+            const read = readChangeLogFile(file);
 
             if (read.skipped > 0) {
                 out.log.warn(`Skipped ${read.skipped} unreadable line(s) in ${file}`);

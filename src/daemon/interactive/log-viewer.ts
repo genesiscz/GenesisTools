@@ -1,6 +1,6 @@
-import * as p from "@clack/prompts";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import { getLogsBaseDir } from "../lib/config";
 import { listRunsForTask, listTasksWithLogs, parseLogFile } from "../lib/log-reader";
@@ -19,6 +19,7 @@ export async function runLogViewer(): Promise<void> {
         const taskName = await p.select({
             message: "Select task",
             options: [...tasks.map((t) => ({ value: t, label: t })), { value: "back", label: pc.dim("← Back") }],
+            cancel: "back",
         });
 
         if (p.isCancel(taskName) || taskName === "back") {
@@ -49,6 +50,7 @@ async function showTaskRuns(taskName: string): Promise<void> {
                 })),
                 { value: "back", label: pc.dim("← Back") },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(selected) || selected === "back") {
@@ -57,7 +59,7 @@ async function showTaskRuns(taskName: string): Promise<void> {
 
         showLogContent(selected);
 
-        const cont = await p.confirm({ message: "View another run?" });
+        const cont = await p.confirm({ message: "View another run?", cancel: "back" });
 
         if (p.isCancel(cont) || !cont) {
             break;

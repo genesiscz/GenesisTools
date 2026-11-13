@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { formatDateTime } from "@genesiscz/utils/date";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import type { SearchResult } from "./types";
 

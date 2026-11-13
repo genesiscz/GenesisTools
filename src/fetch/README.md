@@ -205,10 +205,10 @@ The same three tools are in the `genesis-tools` MCP server under the capability 
 | `fetch_jsonld` | `url`, `transport?`, `headers?` |
 
 - All three are read-only and default to `transport: "auto"`. An argument the tool does not list is an error.
-- A markdown or raw result starts with one HTML comment line that names the final URL, the status and the transport (`<!-- fetched https://… (HTTP 200) via chrome, escalated after plain got … -->`, plus `, truncated to N tokens` when cut), because many MCP clients do not show `_meta`. `tools fetch mcp` also puts `source`, `status`, `transport`, `escalation`, `tokens` and `truncated` in `_meta`.
+- A markdown or raw result starts with one HTML comment line that names the final URL, the status and the transport (`<!-- fetched https://… (HTTP 200) via chrome, escalated after plain got … -->`, plus `, truncated to N tokens` when cut), because many MCP clients do not show `structuredContent`. Both servers also put `source`, `status`, `transport`, `escalation` (only when it escalated), `tokens` and `truncated` in the result's `structuredContent`; until 2026-11-10 `tools fetch mcp` sent them in `_meta`.
 - The jsonld result is the JSON document above.
 - A blocked page, or any other failure, is an error result (`isError`) that carries the message from [Challenge pages and refusals](#challenge-pages-and-refusals). `tools fetch mcp` starts its text with `Error:`; the `genesis-tools` server starts it with `<tool> failed:`.
-- Both servers end the Chrome worker when their stdin ends, and after one minute without a request; the next chrome request starts a new one. A CLI run ends it before it exits. The worker runs in the same process, so nothing is left behind.
+- Both servers end the Chrome worker when their stdin ends (`tools fetch mcp` also on SIGINT and SIGTERM), and after one minute without a request; the next chrome request starts a new one. A CLI run ends it before it exits. The worker runs in the same process, so nothing is left behind.
 
 ## Troubleshooting
 

@@ -4,6 +4,7 @@ import { runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
 import { registerAreasCommands } from "./commands/areas";
+import { registerCopiesCommands } from "./commands/copies";
 import { registerDepthCommands } from "./commands/depth";
 import { registerDuplicatesCommands } from "./commands/duplicates";
 import { registerImportsCommands } from "./commands/imports";
@@ -24,6 +25,7 @@ program
 registerImportsCommands(program);
 registerSkeletonCommands(program);
 registerDuplicatesCommands(program);
+registerCopiesCommands(program);
 registerRefactorsCommands(program);
 registerSourcemapsCommands(program);
 registerProfileCommands(program);

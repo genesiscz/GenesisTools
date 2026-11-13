@@ -1,4 +1,4 @@
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import { getDaemonStatus, installLaunchd, uninstallLaunchd } from "../lib/launchd";
 

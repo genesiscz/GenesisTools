@@ -1,6 +1,5 @@
-import { resolveGrokAuthPath } from "@app/ai-proxy/lib/account-config";
+import { resolveGrokAuthPath } from "@app/ai-proxy/lib/providers/account-paths";
 import type { ProviderDefinition } from "@app/ai-proxy/lib/providers/definition";
-import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
 import { listGrokProxyModels } from "@app/ai-proxy/lib/providers/grok-subscription.models";
 import {
     buildGrokModelCatalog,
@@ -76,7 +75,11 @@ export const grokSubscriptionDefinition: ProviderDefinition = {
     // coalescing and broke the thinking UI.
     routes: { chatViaResponses: false, reshapesChat: true, recoversCompaction: false },
     upstreamEndpoints: GROK_UPSTREAM_ENDPOINTS,
-    create: (account, options) => GrokSubscriptionProvider.create({ account, options }),
+    create: async (account, options) =>
+        (await import("@app/ai-proxy/lib/providers/grok-subscription")).GrokSubscriptionProvider.create({
+            account,
+            options,
+        }),
     suggestedModel: (account) => `${account.name}/grok/grok-composer-2.5-fast`,
     introspect: async (account) => {
         const authPath = resolveGrokAuthPath(account);

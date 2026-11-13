@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration, formatRelativeTime } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { formatTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";

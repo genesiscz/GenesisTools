@@ -8,7 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { isPromptCancelled } from "@genesiscz/utils/prompt-helpers.js";
 import * as p from "@genesiscz/utils/prompts/p";
-import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
+import { clackBackend } from "@genesiscz/utils/prompts/p/clack-backend";
 import chalk from "chalk";
 import type { Command } from "commander";
 
@@ -850,7 +850,7 @@ async function checkCommitsArePushed(repoDir: string, currentBranch: string): Pr
 async function renameCommits(opts: Options) {
     // The prompt facade's backend is process-wide state, so it is chosen when this command runs
     // rather than when `tools git` loads and every other subcommand inherits it.
-    p.setBackend(inquirerBackend);
+    p.setBackend(clackBackend);
 
     try {
         // Get repository directory

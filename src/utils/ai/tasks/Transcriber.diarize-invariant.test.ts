@@ -9,7 +9,7 @@ import type { AITranscriptionProvider, TranscriptionResult } from "@genesiscz/ut
 //
 // Only the leaf sherpa `diarize` module is mocked (nothing else imports it,
 // so the global mock cannot leak into other suites); the Transcriber is
-// constructed directly via its (runtime-accessible) constructor so AIConfig
+// constructed directly via its (runtime-accessible) constructor so the AI config
 // and the provider registry are NOT mocked.
 
 const seenLengths: number[] = [];

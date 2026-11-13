@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { appendMemory, getMemoryPath, grepMemory, readMemory } from "../lib/memory";

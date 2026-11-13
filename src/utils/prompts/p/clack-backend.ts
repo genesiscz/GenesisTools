@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TextOptions } from "@clack/prompts";
 import * as clack from "@clack/prompts";
-import { handleCancel, isCancelled } from "@genesiscz/utils/prompts/clack/helpers";
+import { promptCancelSymbol } from "@genesiscz/utils/prompts/cancel";
+import { isCancelled } from "@genesiscz/utils/prompts/clack/helpers";
 import { multilineText } from "@genesiscz/utils/prompts/clack/multiline";
 import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
 import pc from "picocolors";
@@ -34,9 +35,10 @@ import type {
     TypedConfirmOpts,
 } from "./types";
 
-function unwrap<T>(result: T | symbol): T {
+/** clack's own cancel symbol becomes the facade's, so p/index.ts applies the call's cancel outcome. */
+function unwrap<T>(result: T | symbol): T | typeof promptCancelSymbol {
     if (isCancelled(result)) {
-        handleCancel();
+        return promptCancelSymbol;
     }
 
     return result as T;
@@ -62,6 +64,10 @@ function toTextOptions(opts: TextOpts): TextOptions {
         textOpts.initialValue = opts.initialValue;
     }
 
+    if (opts.defaultValue !== undefined) {
+        textOpts.defaultValue = opts.defaultValue;
+    }
+
     if (opts.validate) {
         textOpts.validate = (value) => opts.validate?.(value ?? "");
     }
@@ -69,15 +75,15 @@ function toTextOptions(opts: TextOpts): TextOptions {
     return textOpts;
 }
 
-function toClackOptions(options: SelectOption[]) {
-    return options.map((option) => ({
-        value: option.value,
-        label: option.label,
-        hint: option.hint ?? "",
-    }));
+function toClackOptions<V>(options: SelectOption<V>[]): clack.Option<V>[] {
+    // clack's Option<V> is a conditional type that a generic V cannot resolve; every facade option carries the label
+    // both of its branches accept, so this is the one place the facade asserts the shape.
+    return options.map(
+        (option) => ({ value: option.value, label: option.label, hint: option.hint ?? "" }) as clack.Option<V>
+    );
 }
 
-async function typedConfirmImpl(opts: TypedConfirmOpts): Promise<boolean> {
+async function typedConfirmImpl(opts: TypedConfirmOpts): Promise<boolean | symbol> {
     const expected = opts.caseSensitive === false ? opts.phrase.toLowerCase() : opts.phrase;
     const typed = unwrap(
         await clack.text({
@@ -95,6 +101,10 @@ async function typedConfirmImpl(opts: TypedConfirmOpts): Promise<boolean> {
         })
     );
 
+    if (typed === promptCancelSymbol) {
+        return typed;
+    }
+
     const compared = opts.caseSensitive === false ? typed.toLowerCase() : typed;
     return compared === expected;
 }
@@ -109,23 +119,30 @@ export const clackBackend: PromptBackend = {
 
     confirm: async (opts) => {
         const message = opts.danger ? pc.red(opts.message) : opts.message;
-        return unwrap(await clack.confirm({ message, initialValue: opts.initialValue }));
+        return unwrap(
+            await clack.confirm({
+                message,
+                initialValue: opts.initialValue,
+                active: opts.active,
+                inactive: opts.inactive,
+            })
+        );
     },
 
     typedConfirm: typedConfirmImpl,
 
-    select: async (opts: SelectOpts) =>
+    select: async <V>(opts: SelectOpts<V>) =>
         unwrap(
-            await clack.select({
+            await clack.select<V>({
                 message: opts.message,
                 options: toClackOptions(opts.options),
                 initialValue: opts.initialValue,
             })
         ),
 
-    multiselect: async (opts: MultiSelectOpts) =>
+    multiselect: async <V>(opts: MultiSelectOpts<V>) =>
         unwrap(
-            await clack.multiselect({
+            await clack.multiselect<V>({
                 message: opts.message,
                 options: toClackOptions(opts.options),
                 required: opts.required ?? false,
@@ -156,7 +173,7 @@ export const clackBackend: PromptBackend = {
     // then pass to searchSelect which has its own typed-query filter on the list.
     // Dynamic-filter behavior (re-fetching as user types) is not supported by
     // searchSelect's UX — it filters the initial snapshot instead.
-    search: async <T>(opts: SearchOpts<T>): Promise<T> => {
+    search: async <T>(opts: SearchOpts<T>): Promise<T | symbol> => {
         const items = await opts.options("");
         const result = await searchSelect<T>({
             message: opts.message,
@@ -164,13 +181,13 @@ export const clackBackend: PromptBackend = {
         });
 
         if (typeof result === "symbol") {
-            handleCancel();
+            return promptCancelSymbol;
         }
 
-        return result as T;
+        return result;
     },
 
-    editor: async (opts: EditorOpts): Promise<string> => {
+    editor: async (opts: EditorOpts): Promise<string | symbol> => {
         const editor = env.editor.getEditor() ?? env.editor.getVisual();
 
         if (editor) {
@@ -214,7 +231,7 @@ export const clackBackend: PromptBackend = {
         );
     },
 
-    number: async (opts: NumberOpts): Promise<number> => {
+    number: async (opts: NumberOpts): Promise<number | symbol> => {
         const raw = unwrap(
             await clack.text({
                 message: opts.message,
@@ -249,6 +266,10 @@ export const clackBackend: PromptBackend = {
                 },
             })
         );
+
+        if (raw === promptCancelSymbol) {
+            return raw;
+        }
 
         return Number(raw);
     },

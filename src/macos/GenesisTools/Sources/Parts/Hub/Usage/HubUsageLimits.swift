@@ -175,8 +175,7 @@ struct UsageAdvicePickChip: View, Equatable {
                 lines.append(left.prefix(1).uppercased() + left.dropFirst() + ".")
             }
         }
-        // The advisor writes its reasoning with a dash between the clauses; a period reads plainer.
-        lines.append("Advisor: " + pick.why.replacingOccurrences(of: " — ", with: ". ").replacingOccurrences(of: " – ", with: ". "))
+        lines.append("Advisor: " + pick.why)
         if row != nil { lines.append("Click to show its lanes.") }
         return lines.joined(separator: "\n")
     }

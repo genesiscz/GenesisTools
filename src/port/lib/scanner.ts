@@ -2,14 +2,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { captureSync } from "@genesiscz/utils/process/capture";
+import { batchCwd } from "@genesiscz/utils/process/cwd";
 import { listOpenFiles, type NetworkSnapshot, readNetworkSnapshot } from "@genesiscz/utils/process/process-files";
 import {
     listProcessesWithUsage,
     type ProcessWithUsage,
+    type PsRow,
     readProcessesWithUsage,
     userName,
 } from "@genesiscz/utils/process/processes";
-import { batchCwd, captureSync, type PsRow } from "@genesiscz/utils/process/ps";
 import { listSockets, type SocketEntry } from "@genesiscz/utils/process/sockets";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";

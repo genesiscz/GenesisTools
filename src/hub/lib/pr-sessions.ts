@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { type ChangeEvent, sessionChangesPath } from "@app/agents/lib/changes/log";
 import { createClaudeAdapter, createCodexAdapter, createGrokAdapter } from "@genesiscz/utils/agent-sessions";
 import type { AgentSession } from "@genesiscz/utils/agent-sessions/types";
+import { type ChangeLogRow, walkChangeLogs } from "@genesiscz/utils/agents/change-log";
 import { createGit, listWorktrees, type WorktreeInfo } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -75,7 +73,7 @@ export interface PrSessionsDeps {
     changedFiles: (root: string, base: string, head: string) => Promise<string[]>;
     commitsBetween: (root: string, base: string, head: string) => Promise<string[]>;
     indexed: (since: Date) => Promise<IndexedSession[]>;
-    changeLogs: (since: Date, roots: string[]) => ChangeEvent[];
+    changeLogs: (since: Date, roots: string[]) => ChangeLogRow[];
     /** Short shas found in `git commit` output lines, per transcript path. */
     commitOutput: (files: string[], shas: string[]) => Promise<Map<string, Set<string>>>;
 }
@@ -302,58 +300,17 @@ async function indexedSessions(since: Date): Promise<IndexedSession[]> {
 }
 
 /** Change-log events under `roots` from logs written since `since`, the newest logs first. */
-function changeLogEvents(since: Date, roots: string[]): ChangeEvent[] {
-    const dir = dirname(dirname(sessionChangesPath("probe")));
-    let names: string[];
+function changeLogEvents(since: Date, roots: string[]): ChangeLogRow[] {
+    const events: ChangeLogRow[] = [];
+    const walk = walkChangeLogs({
+        since: since.getTime(),
+        maxSessions: MAX_CHANGE_LOGS,
+        // Cheap gate before parsing: most lines of most logs are about other repositories.
+        keepLine: (line) => line.length > 0 && roots.some((root) => line.includes(root)),
+    });
 
-    try {
-        names = readdirSync(dir).filter((name) => !name.startsWith("_"));
-    } catch (error) {
-        log.debug({ error, dir }, "no change logs");
-        return [];
-    }
-
-    const logs: { path: string; mtime: number }[] = [];
-
-    for (const name of names) {
-        const path = join(dir, name, "changes.jsonl");
-
-        try {
-            const mtime = statSync(path).mtimeMs;
-
-            if (mtime >= since.getTime()) {
-                logs.push({ path, mtime });
-            }
-        } catch (error) {
-            // A session directory without a change log (decisions only) is the common case.
-            log.trace({ error, path }, "no change log");
-        }
-    }
-
-    const events: ChangeEvent[] = [];
-
-    for (const { path } of logs.sort((a, b) => b.mtime - a.mtime).slice(0, MAX_CHANGE_LOGS)) {
-        let text: string;
-
-        try {
-            text = readFileSync(path, "utf8");
-        } catch (error) {
-            log.debug({ error, path }, "change log unreadable");
-            continue;
-        }
-
-        for (const line of text.split("\n")) {
-            // Cheap gate before parsing: most lines of most logs are about other repositories.
-            if (!line || !roots.some((root) => line.includes(root))) {
-                continue;
-            }
-
-            try {
-                events.push(SafeJSON.parse(line, { strict: true }) as ChangeEvent);
-            } catch (error) {
-                log.debug({ error, path }, "change log line unreadable");
-            }
-        }
+    for (const { rows } of walk) {
+        events.push(...rows);
     }
 
     return events;

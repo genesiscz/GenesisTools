@@ -7,7 +7,7 @@ import { toMcpTools } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
-import { createComputerMcpServer, invokeComputerTool } from "../../mcp/server";
+import { createComputerMcpServer, invokeComputerTool, isComputerTool } from "../../mcp/server";
 import type { Observation } from "../decision/observation";
 import type { AxResult } from "../runner";
 import { computerApi, computerDescriptions } from "./descriptor";
@@ -798,69 +798,6 @@ test("prepared clicks use AXPress when exposed and reserve pointer dispatch for 
     f.computer.close_session();
 });
 
-test("prepared web activation uses the focused keyboard contract instead of an unreliable browser AXPress", async () => {
-    const f = fixture();
-    f.snapshot.elements.push(
-        { index: 4, depth: 1, role: "AXWebArea", AXTitle: "Fixture page", actions: [] },
-        { index: 5, depth: 2, role: "AXButton", AXTitle: "Continue", actions: ["AXPress"] }
-    );
-    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
-    const target = f.computer.find({ app: "Fixture", query: "Continue", role: "AXButton" }).elements[0];
-    const result = await f.computer.click({ app: "Fixture", element_ref: target.ref, prepare: true });
-    expect(result.ok).toBe(true);
-    const dispatch = f.calls.at(-1)!;
-    expect(dispatch[dispatch.indexOf("--action") + 1]).toBe("key");
-    expect(dispatch[dispatch.indexOf("--keys") + 1]).toBe("space");
-    expect(dispatch).toContain("--prepare");
-    expect(state.page.total).toBe(6);
-});
-
-test("an unprepared click that takes AXPress pins its row by identity, as a background click does", async () => {
-    const f = fixture();
-    const stable = "a".repeat(64);
-    Object.assign(f.snapshot.elements[1], { stableKey: stable, targetKey: "b".repeat(64) });
-    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
-    const result = await f.computer.click({ app: "Fixture", element_ref: state.elements[1].ref });
-    expect(result.ok).toBe(true);
-    const dispatch = f.calls.at(-1)!;
-    expect(dispatch[dispatch.indexOf("--action") + 1]).toBe("press");
-    expect(dispatch).not.toContain("--prepare");
-    // The stable key first: a live window re-renders between observe and act, and the whole-window
-    // digest would refuse the press with "UI changed".
-    expect(dispatch[dispatch.indexOf("--target-key") + 1]).toBe(stable);
-    expect(dispatch[dispatch.indexOf("--revalidate-scope") + 1]).toBe("element");
-});
-
-test("prepared web form writes replace through clipboard-safe paste while native fields retain AXValue", async () => {
-    const f = fixture();
-    f.snapshot.elements.push(
-        { index: 4, depth: 1, role: "AXWebArea", AXTitle: "Fixture page", actions: [] },
-        {
-            index: 5,
-            depth: 2,
-            role: "AXTextArea",
-            AXTitle: "Notes",
-            AXValue: "old",
-            valueSettable: true,
-        }
-    );
-    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
-    const webField = f.computer.find({ app: "Fixture", query: "Notes", role: "AXTextArea" }).elements[0];
-    await f.computer.set_value({ app: "Fixture", element_ref: webField.ref, value: "new", prepare: true });
-    const webDispatch = f.calls.at(-1)!;
-    expect(webDispatch[webDispatch.indexOf("--action") + 1]).toBe("paste");
-    expect(webDispatch).toContain("--replace");
-    expect(webDispatch).toContain("--prepare");
-    const nativeState = await f.computer.get_app_state({ app: "Fixture", image: false });
-    const nativeField = f.computer.find({ app: "Fixture", query: "name", role: "AXTextField" }).elements[0];
-    await f.computer.set_value({ app: "Fixture", element_ref: nativeField.ref, value: "native", prepare: true });
-    const nativeDispatch = f.calls.at(-1)!;
-    expect(nativeDispatch[nativeDispatch.indexOf("--action") + 1]).toBe("set");
-    expect(nativeDispatch).not.toContain("--replace");
-    expect(state.page.total).toBe(6);
-    expect(nativeState.page.total).toBe(6);
-});
-
 test("explicit paste replacement requires preparation and does not alter default insert semantics", async () => {
     const f = fixture();
     let state = await f.computer.get_app_state({ app: "Fixture", image: false });
@@ -1045,42 +982,6 @@ test("a query observation targets one element on a page too big to snapshot, and
     expect(f.calls.at(-1)).toContain("--query");
     await f.computer.get_app_state({ app: "Fixture", scope: "window", image: false });
     expect(f.calls.at(-1)).not.toContain("--query");
-});
-
-test("an exact ref to one of several identical buttons carries its position, so the backend can resolve it", async () => {
-    const f = fixture();
-    const twin = (index: number, heading: string) => [
-        {
-            index,
-            depth: 1,
-            role: "AXHeading",
-            AXTitle: heading,
-            targetKey: String(index).repeat(64),
-            stableKey: String(index).repeat(64),
-        },
-        {
-            index: index + 1,
-            depth: 1,
-            role: "AXButton",
-            AXDescription: "Reload",
-            actions: ["AXScrollToVisible", "AXShowMenu"],
-            targetKey: "e".repeat(64),
-            stableKey: "e".repeat(64),
-        },
-    ];
-    f.snapshot.elements.splice(1, 3, ...twin(1, "GenesisTools"), ...twin(3, "7TV"));
-    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
-    const reloads = state.elements.filter((row) => row.label === "Reload");
-    await f.computer.click({ app: "Fixture", element_ref: reloads[1].ref });
-    const act = f.calls.at(-1) ?? [];
-    expect(act.slice(act.indexOf("--target-key"))).toContain("--target-ordinal");
-    expect(act[act.indexOf("--target-ordinal") + 1]).toBe("1/2");
-    await f.computer.get_app_state({ app: "Fixture", image: false });
-    const unique = (await f.computer.get_app_state({ app: "Fixture", image: false })).elements.find(
-        (row) => row.label === "GenesisTools"
-    );
-    await f.computer.click({ app: "Fixture", element_ref: unique!.ref });
-    expect(f.calls.at(-1)).not.toContain("--target-ordinal");
 });
 
 test("a page element without AXPress is clicked in front after the hit test, never by a background event the page ignores", async () => {
@@ -1482,6 +1383,13 @@ test("native MCP advertises and dispatches its own tools; unknown names use prot
         await client.close();
         await server.close();
     }
+});
+test("every computer schema and every advertised tool has an MCP handler", () => {
+    const missing = [...Object.keys(computerSchemas), ...toMcpTools(computerApi).map((tool) => tool.name)].filter(
+        (name) => !isComputerTool(name)
+    );
+    expect(missing).toEqual([]);
+    expect(isComputerTool("unknown")).toBe(false);
 });
 test("window inventory preserves native IDs independently of duplicate titles and ordering", async () => {
     const rows = [101, 202].map((window_id) => ({

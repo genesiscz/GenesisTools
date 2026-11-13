@@ -1,4 +1,5 @@
 import { isInteractive } from "@genesiscz/utils/cli/is-interactive";
+import { promptCancelSymbol } from "@genesiscz/utils/prompts/cancel";
 import pc from "picocolors";
 
 import type { PromptBackend } from "./backend";
@@ -11,7 +12,6 @@ import type {
     PasswordOpts,
     SearchOpts,
     SelectOpts,
-    SelectValue,
     Spinner,
     TextOpts,
     TypedConfirmOpts,
@@ -32,10 +32,10 @@ function writeStderr(msg: string): void {
     process.stderr.write(`${msg}\n`);
 }
 
-function exitOnCancel(err: unknown): never {
+/** inquirer reports a cancel by throwing ExitPromptError; the facade (p/index.ts) applies the call's cancel outcome. */
+function cancelledOrThrow(err: unknown): typeof promptCancelSymbol {
     if (err instanceof Error && err.name === "ExitPromptError") {
-        writeStderr(pc.red("Operation cancelled"));
-        process.exit(0);
+        return promptCancelSymbol;
     }
 
     throw err;
@@ -57,12 +57,12 @@ const noopSpinner: Spinner = {
     message: (_msg: string) => {},
 };
 
-async function textImpl(opts: TextOpts): Promise<string> {
+async function textImpl(opts: TextOpts): Promise<string | symbol> {
     try {
         const { input } = await prompts();
         const result = await input({
             message: opts.message,
-            default: opts.initialValue,
+            default: opts.initialValue ?? opts.defaultValue,
             validate: opts.validate
                 ? (value: string) => {
                       const err = opts.validate!(value);
@@ -73,11 +73,11 @@ async function textImpl(opts: TextOpts): Promise<string> {
 
         return result;
     } catch (err) {
-        exitOnCancel(err);
+        return cancelledOrThrow(err);
     }
 }
 
-async function confirmImpl(opts: ConfirmOpts): Promise<boolean> {
+async function confirmImpl(opts: ConfirmOpts): Promise<boolean | symbol> {
     try {
         const message = opts.danger ? pc.red(opts.message) : opts.message;
 
@@ -89,11 +89,11 @@ async function confirmImpl(opts: ConfirmOpts): Promise<boolean> {
 
         return result;
     } catch (err) {
-        exitOnCancel(err);
+        return cancelledOrThrow(err);
     }
 }
 
-async function typedConfirmImpl(opts: TypedConfirmOpts): Promise<boolean> {
+async function typedConfirmImpl(opts: TypedConfirmOpts): Promise<boolean | symbol> {
     const expected = opts.caseSensitive === false ? opts.phrase.toLowerCase() : opts.phrase;
 
     try {
@@ -114,14 +114,14 @@ async function typedConfirmImpl(opts: TypedConfirmOpts): Promise<boolean> {
         const compared = opts.caseSensitive === false ? result.toLowerCase() : result;
         return compared === expected;
     } catch (err) {
-        exitOnCancel(err);
+        return cancelledOrThrow(err);
     }
 }
 
-async function selectImpl(opts: SelectOpts): Promise<SelectValue> {
+async function selectImpl<V>(opts: SelectOpts<V>): Promise<V | symbol> {
     try {
         const { select } = await prompts();
-        const result = await select({
+        const result = await select<V>({
             message: opts.message,
             choices: opts.options.map((o) => ({
                 name: o.label,
@@ -131,16 +131,16 @@ async function selectImpl(opts: SelectOpts): Promise<SelectValue> {
             default: opts.initialValue,
         });
 
-        return result as SelectValue;
+        return result;
     } catch (err) {
-        exitOnCancel(err);
+        return cancelledOrThrow(err);
     }
 }
 
-async function multiselectImpl(opts: MultiSelectOpts): Promise<SelectValue[]> {
+async function multiselectImpl<V>(opts: MultiSelectOpts<V>): Promise<V[] | symbol> {
     try {
         const { checkbox } = await prompts();
-        const result = await checkbox({
+        const result = await checkbox<V>({
             message: opts.message,
             choices: opts.options.map((o) => ({
                 name: o.label,
@@ -150,13 +150,13 @@ async function multiselectImpl(opts: MultiSelectOpts): Promise<SelectValue[]> {
             required: opts.required,
         });
 
-        return result as SelectValue[];
+        return result;
     } catch (err) {
-        exitOnCancel(err);
+        return cancelledOrThrow(err);
     }
 }
 
-async function passwordImpl(opts: PasswordOpts): Promise<string> {
+async function passwordImpl(opts: PasswordOpts): Promise<string | symbol> {
     try {
         const { password } = await prompts();
         const result = await password({
@@ -172,11 +172,11 @@ async function passwordImpl(opts: PasswordOpts): Promise<string> {
 
         return result;
     } catch (err) {
-        exitOnCancel(err);
+        return cancelledOrThrow(err);
     }
 }
 
-async function searchImpl<T>(opts: SearchOpts<T>): Promise<T> {
+async function searchImpl<T>(opts: SearchOpts<T>): Promise<T | symbol> {
     if (!isInteractive()) {
         writeStderr(`${pc.red("✘")} search prompt requires an interactive terminal`);
         process.exit(1);
@@ -197,11 +197,11 @@ async function searchImpl<T>(opts: SearchOpts<T>): Promise<T> {
 
         return result;
     } catch (err) {
-        exitOnCancel(err);
+        return cancelledOrThrow(err);
     }
 }
 
-async function editorImpl(opts: EditorOpts): Promise<string> {
+async function editorImpl(opts: EditorOpts): Promise<string | symbol> {
     if (!isInteractive()) {
         writeStderr(`${pc.red("✘")} editor prompt requires an interactive terminal`);
         process.exit(1);
@@ -217,11 +217,11 @@ async function editorImpl(opts: EditorOpts): Promise<string> {
 
         return result;
     } catch (err) {
-        exitOnCancel(err);
+        return cancelledOrThrow(err);
     }
 }
 
-async function numberImpl(opts: NumberOpts): Promise<number> {
+async function numberImpl(opts: NumberOpts): Promise<number | symbol> {
     if (!isInteractive()) {
         writeStderr(`${pc.red("✘")} number prompt requires an interactive terminal`);
         process.exit(1);
@@ -255,7 +255,7 @@ async function numberImpl(opts: NumberOpts): Promise<number> {
         // validate guarantees non-undefined at acceptance
         return result as number;
     } catch (err) {
-        exitOnCancel(err);
+        return cancelledOrThrow(err);
     }
 }
 

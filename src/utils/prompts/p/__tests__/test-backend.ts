@@ -1,4 +1,15 @@
-import type { PromptBackend, SelectValue } from "@genesiscz/utils/prompts/p";
+import { promptCancelSymbol } from "@genesiscz/utils/prompts/cancel";
+import type { PromptBackend } from "@genesiscz/utils/prompts/p";
+
+/**
+ * Give this as an answer to cancel that prompt, as Escape does. The facade then follows the call's `cancel` option:
+ * "back" hands the cancel symbol to the caller, the default "exit" throws PromptCancelledError (a test never exits).
+ */
+export const CANCEL_ANSWER = promptCancelSymbol;
+
+function orCancel<T>(value: unknown, read: (value: unknown) => T): T | symbol {
+    return value === promptCancelSymbol ? promptCancelSymbol : read(value);
+}
 
 /**
  * A simple test backend that returns pre-canned answers for each prompt type.
@@ -13,6 +24,8 @@ import type { PromptBackend, SelectValue } from "@genesiscz/utils/prompts/p";
  *
  * For sequential calls of the same type, use indexed keys:
  *   - "text.0", "text.1", … (falls back to "text" when index key not found)
+ *
+ * Any answer may be CANCEL_ANSWER, which cancels that prompt.
  */
 export function makeTestBackend(answers: Record<string, unknown> = {}): PromptBackend {
     const counters: Record<string, number> = {};
@@ -30,19 +43,19 @@ export function makeTestBackend(answers: Record<string, unknown> = {}): PromptBa
         cancel: () => {},
         note: () => {},
 
-        text: async () => (next("text") as string) ?? "",
-        confirm: async () => (next("confirm") as boolean) ?? false,
-        typedConfirm: async () => (next("typedConfirm") as boolean) ?? true,
-        select: async () => next("select") as SelectValue,
-        multiselect: async () => (next("multiselect") as SelectValue[]) ?? [],
-        password: async () => (next("password") as string) ?? "",
+        text: async () => orCancel(next("text"), (v) => (v as string) ?? ""),
+        confirm: async () => orCancel(next("confirm"), (v) => (v as boolean) ?? false),
+        typedConfirm: async () => orCancel(next("typedConfirm"), (v) => (v as boolean) ?? true),
+        select: async <V>() => orCancel(next("select"), (v) => v as V),
+        multiselect: async <V>() => orCancel(next("multiselect"), (v) => (v as V[]) ?? []),
+        password: async () => orCancel(next("password"), (v) => (v as string) ?? ""),
 
         // Canonical PromptBackend methods added in COS-T2 (Agent B); their
         // test stubs were deferred to the integrator since Agent A's
         // inquirer-backend was being written in parallel.
-        search: async <T>() => next("search") as T,
-        editor: async () => (next("editor") as string) ?? "",
-        number: async () => (next("number") as number) ?? 0,
+        search: async <T>() => orCancel(next("search"), (v) => v as T),
+        editor: async () => orCancel(next("editor"), (v) => (v as string) ?? ""),
+        number: async () => orCancel(next("number"), (v) => (v as number) ?? 0),
 
         spinner: () => ({
             start: () => {},

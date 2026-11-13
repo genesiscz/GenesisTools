@@ -595,7 +595,3 @@ export function loadNativeSessionEvents(
 
     return parseDriverFiles({ driver, source, roots, files, sessionId });
 }
-
-export function nativePriceCandidates(source: NativeSourceId, model: string): string[] {
-    return spendDriver(source).priceCandidates(model);
-}

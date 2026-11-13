@@ -1,10 +1,11 @@
 import type { QaRow } from "@dd/contract";
+import type { LiveStatus } from "@/live/live-cache";
 
 /**
  * Pure, runtime-free QA feed logic — the testable seam (no React, no I/O). Mirrors the web
  * `qa.tsx` resync model: live rows (newest-first) are merged ahead of the persisted `/api/qa/log`
- * rows, deduped by `entry.id`, then filtered by project / tag / free-text. The `useQaStream` /
- * `useQaLog` hooks wire these to the live SSE subscription + the persisted query; the screen calls
+ * rows, deduped by `entry.id`, then filtered by project / tag / free-text. The `useQaLive` /
+ * `useQaLog` hooks wire these to the live `qa` channel + the persisted query; the screen calls
  * `filterQa` on the merged list. Keeping this pure means it is covered by `bun:test` without a
  * renderer (same rationale as Pulse's `units.ts`).
  *
@@ -12,6 +13,59 @@ import type { QaRow } from "@dd/contract";
  * flagged in the notes), so every field access here tolerates `undefined` rather than crashing the
  * mock / parallel-dev render. On a real device the payload is a full `QaRow` and nothing degrades.
  */
+
+/**
+ * Stream liveness:
+ * - `"connecting"` — the live stream is not carrying the `qa` channel yet.
+ * - `"open"` — the stream carries `qa`, but no row has streamed.
+ * - `"live"` — the stream carries `qa` and at least one row has streamed.
+ * - `"down"` — the stream dropped; its reconnecting adapter is recovering or gave up.
+ *
+ * The header dot treats both `"open"` and `"live"` as connected.
+ */
+export type QaLiveStatus = "connecting" | "open" | "live" | "down";
+
+/** The QA dot's status from the phone's one live stream and the rows the `qa` channel delivered. */
+export function qaLiveStatus(stream: LiveStatus, streamsQa: boolean, rows: number): QaLiveStatus {
+    if (stream === "down") {
+        return "down";
+    }
+
+    if (!streamsQa) {
+        return "connecting";
+    }
+
+    return rows > 0 ? "live" : "open";
+}
+
+/** Live rows kept on screen; older ones are already in the persisted log the screen merges with. */
+export const QA_LIVE_WINDOW = 200;
+/** Ids remembered for dedupe. Larger than the live window, so an evicted row is not shown twice. */
+export const QA_SEEN_LIMIT = QA_LIVE_WINDOW * 4;
+
+/** The rows the live `qa` channel delivered this session, newest first, and the ids already taken (oldest first). */
+export interface QaLiveWindow {
+    rows: QaRow[];
+    seen: readonly string[];
+}
+
+export const EMPTY_QA_LIVE_WINDOW: QaLiveWindow = { rows: [], seen: [] };
+
+/**
+ * Prepend a live row, deduped by id and capped at {@link QA_LIVE_WINDOW}. The dedupe remembers the last
+ * {@link QA_SEEN_LIMIT} ids, so it outlives the window. A repeated id returns `prev` itself.
+ */
+export function pushLiveRow(prev: QaLiveWindow, entry: QaRow): QaLiveWindow {
+    const id = entry.id;
+    if (id != null && prev.seen.includes(id)) {
+        return prev;
+    }
+
+    return {
+        rows: [entry, ...prev.rows].slice(0, QA_LIVE_WINDOW),
+        seen: id == null ? prev.seen : [...prev.seen, id].slice(-QA_SEEN_LIMIT),
+    };
+}
 
 export interface MergeQaArgs {
     /** Rows received live over SSE, newest-first. */
