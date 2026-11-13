@@ -8,6 +8,11 @@ interface ClientContextValue {
     client: DashboardClient;
     /** True when no transport is connected and the client runs over the fixture wire. */
     isMock: boolean;
+    /**
+     * The saved connection this client talks to, or null while the fixture wire answers. It comes from the same
+     * transport as `client`, so a failed restore (an active id without a transport) never scopes Mac data to the mock.
+     */
+    connectionId: string | null;
 }
 
 const ClientContext = createContext<ClientContextValue | null>(null);
@@ -25,14 +30,16 @@ const ClientContext = createContext<ClientContextValue | null>(null);
  */
 export function ClientProvider({ children }: { children: ReactNode }) {
     const transport = useConnectionStore((s) => s.transport);
+    const activeId = useConnectionStore((s) => s.activeId);
+    const client = useMemo(() => transport?.client() ?? null, [transport]);
 
     const value = useMemo<ClientContextValue>(() => {
-        if (transport) {
-            return { client: transport.client(), isMock: false };
+        if (client) {
+            return { client, isMock: false, connectionId: activeId };
         }
 
-        return { client: fixtureDashboardClient, isMock: true };
-    }, [transport]);
+        return { client: fixtureDashboardClient, isMock: true, connectionId: null };
+    }, [client, activeId]);
 
     return <ClientContext.Provider value={value}>{children}</ClientContext.Provider>;
 }
@@ -49,6 +56,11 @@ function useClientContext(): ClientContextValue {
 /** The active dashboard client (real or mock). Query factories close over this — see queries.ts. */
 export function useDashboardClient(): DashboardClient {
     return useClientContext().client;
+}
+
+/** The saved connection the active client talks to; null while the mock client answers. */
+export function useDashboardConnectionId(): string | null {
+    return useClientContext().connectionId;
 }
 
 /** True when the mock client is active (no device connected) — drives the "mock data" badge. */

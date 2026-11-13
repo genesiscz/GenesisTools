@@ -2,10 +2,9 @@ import type { WakeRelayDto } from "@dd/contract";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import * as SecureStore from "expo-secure-store";
 import { useEffect, useState } from "react";
-import { useDashboardClient } from "@/api/client-provider";
+import { useDashboardClient, useDashboardConnectionId } from "@/api/client-provider";
 import { HEALTH_INTERVAL_MS, healthQuery, relayQuery, sendWake } from "@/features/wake/queries";
 import { createRelayStore, type RelayStore } from "@/features/wake/relay-store";
-import { useConnectionStore } from "@/state/connection-store";
 
 const secureRelayStore = createRelayStore(SecureStore);
 
@@ -15,7 +14,8 @@ export function useWakeRelay(store: RelayStore = secureRelayStore): {
     fromMac: boolean;
     isPending: boolean;
 } {
-    const connectionId = useConnectionStore((s) => s.activeId);
+    // The relay is stored per Mac only while that Mac's own client answers, never the fixture's.
+    const connectionId = useDashboardConnectionId();
     const query = useQuery(relayQuery({ client: useDashboardClient(), connectionId, store }));
     const [stored, setStored] = useState<{ connectionId: string; relay: WakeRelayDto | null } | null>(null);
 
