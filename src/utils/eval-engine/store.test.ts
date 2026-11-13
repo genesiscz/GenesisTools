@@ -154,7 +154,7 @@ it("lets one process play a run at a time, and takes over the lock of an ended o
     const again = await second.claim();
     await again.release();
 
-    const ended = spawnSync(process.execPath, ["-e", ""]).pid;
+    const ended = spawnSync(process.execPath, ["-e", ""], { env: process.env }).pid;
     await writeFile(
         join(store.dir, "run.lock"),
         `${JSON.stringify({ pid: ended, host: hostname(), at: new Date(0).toISOString() })}\n`

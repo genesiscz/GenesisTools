@@ -458,7 +458,7 @@ describe("tree rosters: what one file cannot show", () => {
             expect(inventory.imports).toEqual([{ file, line: 2, target: "src/question/lib/verbs" }]);
 
             const planted = inventory.imports.map((fact) => ({ ...fact, file: "src/hub/lib/planted.ts" }));
-            const matches = TOOL_DEPENDENCY_ADDED.scan({ functions: [], imports: planted });
+            const matches = TOOL_DEPENDENCY_ADDED.scan({ functions: [], imports: planted }, keepAll);
             expect(matches.map((match) => match.key)).toEqual(["hub → question"]);
         } finally {
             rmSync(dir, { recursive: true, force: true });
