@@ -12,7 +12,7 @@ import { decideItems } from "./decide";
 import { DecisionJournal } from "./decision-journal";
 import { findingItems, findingsFileSchema } from "./findings";
 import { SPEAKER_PAD_SEC, writeQuestionClips } from "./listen-clips";
-import { listenQuestionFindings, selectedQuestionIds } from "./listen-input";
+import { listenQuestionFindings, roundQuestionIds, selectedQuestionIds } from "./listen-input";
 import {
     type AskedQuestion,
     type ListenAdapter,
@@ -639,6 +639,16 @@ test("ad-hoc questions persist, selected rounds answer and undo through the norm
         actor: { kind: "listen" },
     });
     expect(added.entry).toBeDefined();
+    const stored = roundQuestionIds(fx.read(), findings);
+    expect(stored).toEqual(added.entry!.changes.flatMap((change) => (change.before ? [] : [change.id])));
+    expect(stored).not.toContain("i2");
+    const again = await journal.apply({
+        meeting: fx.meeting.id,
+        action: { kind: "add", findings },
+        actor: { kind: "listen" },
+    });
+    expect(again.entry).toBeUndefined();
+    expect(roundQuestionIds(fx.read(), findings)).toEqual(stored);
     const selected = selectedQuestionIds(fx.read(), ["Q2", "Q3"]);
     expect(() => selectedQuestionIds(fx.read(), ["Q999"])).toThrow("not an open question");
     const adapter = new ScriptedAdapter([{ answer: "Alice" }, "back", { answer: "Bob" }, { answer: "Alice" }]);
