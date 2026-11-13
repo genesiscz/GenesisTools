@@ -491,6 +491,10 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         for (before, after) in zip(merged, merged.dropFirst()) {
             XCTAssertGreaterThanOrEqual(after.x - before.x, TalkTimeLayout.bannerWidth)
         }
+        // A merged banner lists each of its questions: a click opened only the first, and Q9 had no way to its row.
+        let choices = SpeakerTalkTimeLanes.bannerChoices(merged[0], questions: near)
+        XCTAssertEqual(choices.map(\.id), ["q7", "q9"])
+        XCTAssertEqual(choices.map(\.title), ["Q7 at 06:40", "Q9 at 07:40"])
     }
 
     func testRulerMarksUseARoundStep() {

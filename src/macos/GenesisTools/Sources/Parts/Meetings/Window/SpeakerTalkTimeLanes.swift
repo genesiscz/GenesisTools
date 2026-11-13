@@ -324,31 +324,57 @@ struct SpeakerTalkTimeLanes: View {
         let banners = TalkTimeLayout.banners(questions, durationSec: durationSec, width: width)
         return ZStack(alignment: .topLeading) {
             ForEach(banners, id: \.self) { banner in
-                Button { openQuestion(banner.ids) } label: {
-                    VStack(spacing: 0) {
-                        Text(verbatim: banner.text)
-                            .font(.system(size: 10.5, weight: .bold))
-                            .foregroundStyle(Color.white)
-                            .padding(.horizontal, 5).frame(height: 16)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(Color.purple))
-                        Rectangle().fill(Color.purple.opacity(0.5)).frame(width: 1, height: 8)
-                    }
-                    .frame(minWidth: 22, minHeight: 24)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.genHoverPlain())
-                .fixedSize()
-                .position(x: banner.x, y: 12)
-                .instantTooltip(bannerText(banner))
-                .accessibilityLabel(bannerText(banner))
+                bannerControl(banner)
+                    .fixedSize()
+                    .position(x: banner.x, y: 12)
+                    .instantTooltip(bannerText(banner))
+                    .accessibilityLabel(bannerText(banner))
             }
         }
         .frame(width: width, height: 26, alignment: .topLeading)
     }
 
+    /// One question opens on a click; a merged banner lists its questions, so each one keeps its way to the row (the
+    /// click opened only the first, and the others under it had none).
+    @ViewBuilder
+    private func bannerControl(_ banner: TalkTimeBanner) -> some View {
+        if banner.ids.count == 1 {
+            Button { openQuestion(banner.ids) } label: { bannerLabel(banner) }
+                .buttonStyle(.genHoverPlain())
+        } else {
+            MenuButton(items: {
+                Self.bannerChoices(banner, questions: questions).map { choice in
+                    .action(choice.title) { openQuestion([choice.id]) }
+                }
+            }) { bannerLabel(banner) }
+        }
+    }
+
+    private func bannerLabel(_ banner: TalkTimeBanner) -> some View {
+        VStack(spacing: 0) {
+            Text(verbatim: banner.text)
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(Color.white)
+                .padding(.horizontal, 5).frame(height: 16)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color.purple))
+            Rectangle().fill(Color.purple.opacity(0.5)).frame(width: 1, height: 8)
+        }
+        .frame(minWidth: 22, minHeight: 24)
+        .contentShape(Rectangle())
+    }
+
+    /// The menu of a merged banner: each question under it, by its name and time, in time order.
+    static func bannerChoices(_ banner: TalkTimeBanner, questions: [TalkTimeQuestion]) -> [(id: String, title: String)] {
+        banner.ids.map { id in
+            let question = questions.first { $0.id == id }
+            let time = question.map { " at \(MeetingsFormat.clock($0.atSec))" } ?? ""
+            return (id: id, title: "\(question?.label ?? "Question")\(time)")
+        }
+    }
+
     private func bannerText(_ banner: TalkTimeBanner) -> String {
         banner.ids.count == 1 ? "Open question at \(MeetingsFormat.clock(banner.atSec))"
-            : "\(banner.ids.count) open questions from \(MeetingsFormat.clock(banner.atSec))"
+            : "\(banner.ids.count) open questions from \(MeetingsFormat.clock(banner.atSec)): pick one to open"
     }
 
     private var ruler: some View {
