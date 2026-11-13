@@ -66,7 +66,7 @@ generated list of the places that still hold it, which only shrinks. Two kinds:
   `const { name: x } = api`, each counted at the binding),
   `literal(/^state-file\.jsonl$/)` (a string's text, in quotes or a template), `importFrom(/^axios$/)` (an import,
   an `export … from` and a dynamic `import("axios")`), `declaration(/^name$/)` (a function, class, `const` or method
-  of that name), and the `test` helper `argvFor(node, /cmux/i)` (an argv array passed to a call that names the
+  of that name; TypeScript grammars only, so its `onlyIn` keeps `.js` out), and the `test` helper `argvFor(node, /cmux/i)` (an argv array passed to a call that names the
   program, or kept first in a variable or an object whose name then reaches such a call, or a runner named only by
   its verb in a file that runs the program, as `const TREE_ARGS = […]` and `run(TREE_ARGS)`; `z.enum(verbs)` or
   `runAx(AX_ARGS)` in that file is no finding).

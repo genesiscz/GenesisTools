@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildInventory, copyNames, type FunctionFact, fingerprint, isDistinctName } from "@app/ts/lib/inventory";
 import { Lang, parse } from "@ast-grep/napi";
-import { checkSource, maskSwiftNonCode, withinCountRatchets } from "../lint-rules";
+import { checkSource, langFor, maskSwiftNonCode, withinCountRatchets } from "../lint-rules";
 import adoFetchOutsideApi from "./ado-fetch-outside-api.definition";
 import appStatusOutsidePermissions from "./app-status-outside-permissions.definition";
 import cdpConnOutsideConnect from "./cdp-conn-outside-connect.definition";
@@ -211,6 +211,28 @@ describe("roster patterns", () => {
         expect(new Set(ROSTER_CASES.map((rosterCase) => rosterCase.definition.name))).toEqual(
             new Set(ROSTER_DEFINITIONS.map((definition) => definition.name))
         );
+    });
+
+    test("every matcher compiles in each grammar its scope admits, so no .js file aborts a roster run", () => {
+        const refused = ROSTER_CASES.flatMap(({ definition, planted }) =>
+            [".ts", ".tsx", ".js"].flatMap((extension) => {
+                const file = planted.replace(/\.[^./]+$/, extension);
+                const lang = langFor(file);
+
+                if (lang === null || !(definition.onlyIn?.test(file) ?? true)) {
+                    return [];
+                }
+
+                try {
+                    parse(lang, "").root().findAll(definition.matcher);
+                    return [];
+                } catch (error) {
+                    return [`${definition.name} in ${file}: ${String(error).split("\n")[0]}`];
+                }
+            })
+        );
+
+        expect(refused).toEqual([]);
     });
 
     for (const { definition, bad, good, owner, planted, form } of ROSTER_CASES) {

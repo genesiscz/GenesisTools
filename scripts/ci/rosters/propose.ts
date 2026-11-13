@@ -254,6 +254,19 @@ const SCAFFOLD_IMPORTS: Record<ShapeKind, string> = {
 };
 
 /**
+ * The files a scaffold covers. `declaration()` names `abstract_class_declaration`, a kind the JavaScript grammar lacks,
+ * and ast-grep refuses the whole rule for a `.js` file, so that roster keeps to the TypeScript grammars.
+ */
+const SCAFFOLD_SCOPE: Record<ShapeKind, string> = {
+    call: "/^src\\//",
+    import: "/^src\\//",
+    new: "/^src\\//",
+    argv: "/^src\\//",
+    declare: "/^src\\/.*\\.(?:[cm]?ts|[jt]sx)$/",
+    literal: "/^src\\//",
+};
+
+/**
  * A new definition. `allowedIn` is a module: a folder ending with `/` becomes a prefix regex, a file an exact one.
  * Pure.
  */
@@ -270,7 +283,7 @@ export default defineRoster({
     candidate: "${input.candidate}",
     message: "TODO: what to call instead, and what the bypass skips.",
     matcher: ${matcherSource(input.shape)},
-    onlyIn: /^src\\//,
+    onlyIn: ${SCAFFOLD_SCOPE[input.shape.kind]},
 ${allowed}});
 `;
 }

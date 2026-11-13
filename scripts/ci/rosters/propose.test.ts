@@ -131,6 +131,28 @@ describe("shadowedCandidates", () => {
     });
 });
 
+/** The grammars the definition's scope admits (a file under `src/` of each kind) whose ast-grep refuses its matcher. */
+function refusedGrammars(definition: RosterDefinition): string[] {
+    const grammars: [string, Lang][] = [
+        ["src/a.ts", Lang.TypeScript],
+        ["src/a.tsx", Lang.Tsx],
+        ["src/a.js", Lang.JavaScript],
+    ];
+
+    return grammars.flatMap(([file, lang]) => {
+        if (!(definition.onlyIn?.test(file) ?? true)) {
+            return [];
+        }
+
+        try {
+            parse(lang, "").root().findAll(definition.matcher);
+            return [];
+        } catch (error) {
+            return [`${file}: ${String(error).split("\n")[0]}`];
+        }
+    });
+}
+
 describe("a scaffolded definition matches its shape", () => {
     /** Each shape, source that holds it (one match per line) and look-alikes that must not match. */
     const cases: { shape: Shape; hits: string[]; misses: string[] }[] = [
@@ -210,6 +232,8 @@ describe("a scaffolded definition matches its shape", () => {
 
                 expect([shape.kind, count(definition, hits)]).toEqual([shape.kind, hits.length]);
                 expect([shape.kind, count(definition, misses)]).toEqual([shape.kind, 0]);
+                // A grammar that refuses the matcher aborts the whole roster run, so the scope must keep it out.
+                expect([shape.kind, refusedGrammars(definition)]).toEqual([shape.kind, []]);
             }
         } finally {
             rmSync(dir, { recursive: true, force: true });

@@ -256,7 +256,9 @@ export function argvFor(node: SgNode, program: RegExp): boolean {
 
 /**
  * A function, class, `const` or method declared under a name that matches: the forms the `shadowed` refactor analyser
- * reports as a private copy of a shared helper.
+ * reports as a private copy of a shared helper. TypeScript grammars only: JavaScript has no
+ * `abstract_class_declaration`, and ast-grep refuses the whole rule for a `.js` file, which aborts the roster run. A
+ * definition that uses it keeps `onlyIn` to `.ts`, `.tsx` and their kin, as the scaffold writes it.
  */
 export function declaration(name: RegExp): NapiConfig {
     const named = { field: "name", regex: name.source };
