@@ -6,7 +6,7 @@ import { PhaseBadge } from "@/features/agents/components/PhaseBadge";
 import { PingButton } from "@/features/agents/components/PingButton";
 import { ago } from "@/features/agents/components/SessionCard";
 import { SteerComposer } from "@/features/agents/components/SteerComposer";
-import { useAgentsBoard, useAgentTranscript, useBoardSession, useStopSession } from "@/features/agents/hooks";
+import { useAgentsBoard, useAgentTranscript, useStopSession } from "@/features/agents/hooks";
 import { idempotencyKey } from "@/features/answer-queue/units";
 import { confirmWithFaceId } from "@/lib/face-id";
 import { Empty } from "@/ui/Empty";
@@ -204,9 +204,11 @@ function Transcript({ session }: { session: AgentBoardSession }) {
  * composer with a message (a saved prompt, a transcribed clip).
  */
 export default function AgentSessionScreen() {
+    const c = useThemeColors();
     const { key, text } = useLocalSearchParams<{ key?: string; text?: string }>();
-    const session = useBoardSession(key ?? "");
-    const timings = useAgentsBoard().data?.sendTimings;
+    const board = useAgentsBoard();
+    const session = board.data?.sessions.find((entry) => entry.key === key);
+    const timings = board.data?.sendTimings;
 
     return (
         <>
@@ -222,8 +224,15 @@ export default function AgentSessionScreen() {
                         <Transcript session={session} />
                         <SteerComposer session={session} timings={timings?.[session.provider]} initialText={text} />
                     </KeyboardAvoidingView>
+                ) : board.isPending ? (
+                    // "Not live" is a verdict about a board the phone has read; before that it only knows it is reading.
+                    <View testID="session-loading" className="flex-1 items-center justify-center">
+                        <ActivityIndicator color={c.accent} />
+                    </View>
+                ) : board.isError && !board.data ? (
+                    <Empty testID="session-board-error" title="Could not read the board" hint={String(board.error)} />
                 ) : (
-                    <Empty testID="session-gone" title="Session not live" hint="It ended, or the board has not loaded it." />
+                    <Empty testID="session-gone" title="Session not live" hint="It ended on the Mac." />
                 )}
             </View>
         </>
