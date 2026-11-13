@@ -150,6 +150,7 @@ struct SpeakerListRow: View, Equatable {
     let hints: [SpeakerHintLine]
     let longestClipSec: Double
     let maxShown: Int
+    // lint-rules-ignore: closures only (the row's actions), which run on a click and show nothing, so == leaves them out
     let actions: Actions
 
     static func == (lhs: Self, rhs: Self) -> Bool {
