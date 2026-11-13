@@ -135,7 +135,7 @@ private struct FrameReviewDetails: View {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         if model.query.isEmpty {
                             Text("Screen text").font(.headline)
-                            ForEach(Array((model.frame?.lines ?? model.frame?.changed ?? []).enumerated()), id: \.offset) { _, box in
+                            ForEach(Array((model.detailsFrame?.lines ?? model.detailsFrame?.changed ?? []).enumerated()), id: \.offset) { _, box in
                                 Text(box.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                                     .fixedSize(horizontal: false, vertical: true)
                             }

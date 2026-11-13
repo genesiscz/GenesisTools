@@ -33,6 +33,7 @@ final class FrameReviewModel {
     var timeline: Loadable<ScreenTimeline> = .idle
     var transcript: Loadable<MeetingTranscript> = .idle
     private(set) var frame: TimelineFrame?
+    private(set) var detailsFrame: TimelineFrame?
     private(set) var time: Double
     var display: Int?
     var followsFocus: Bool
@@ -290,11 +291,16 @@ final class FrameReviewModel {
         let selected = Self.nearest(in: selectedFrames(at: time), at: time)
         if frame?.file != selected?.file { frame = selected }
         if let frame { requestedFile = frame.file }
+        if !isScrubbing { settleDetails() }
+    }
+
+    private func settleDetails() {
+        detailsFrame = frame
         updateContext()
     }
 
     private func updateContext() {
-        guard !words.isEmpty else { return }
+        guard !isScrubbing, !words.isEmpty else { return }
         var lower = 0, upper = words.count
         while lower < upper {
             let middle = (lower + upper) / 2
@@ -321,6 +327,7 @@ final class FrameReviewModel {
     }
     func endScrub(seek: Bool) {
         isScrubbing = false
+        settleDetails()
         if seek { seekPlayback() }
     }
     private func scheduleSeek() {
