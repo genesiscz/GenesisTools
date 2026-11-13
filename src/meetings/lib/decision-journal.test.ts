@@ -370,6 +370,17 @@ describe("decision journal", () => {
         expect(fx.item("i1")).toMatchObject({ status: "suggested", proposed: "OMP" });
     });
 
+    test("confirming a stem term with another spelling moves its replacement stem too", async () => {
+        const fx = await fixture([term("i1", 10, { heardStem: "Ada", proposed: "ADA", proposedStem: "ADA" })]);
+        await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i1"], proposed: "ADO" },
+            actor: person,
+        });
+
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADO", proposedStem: "ADO" });
+    });
+
     test("a respelt question names the answer command with the text quoted for the shell", async () => {
         const fx = await fixture([question("i1")]);
         const result = await fx.journal.apply({
