@@ -180,6 +180,17 @@ struct TranscriptSketchAPaneBar: View {
     @Environment(\.transcriptSubjectAbove) private var subjectAbove
 
     var body: some View {
+        VStack(spacing: 0) {
+            bar
+            SessionDetailAlertRow(info: info, actions: actions)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(SessionPalette.hairline).frame(height: 1)
+        }
+        .accessibilityIdentifier("session-details-header")
+    }
+
+    private var bar: some View {
         HStack(spacing: 14) {
             if !subjectAbove {
                 Text(verbatim: info.title)
@@ -218,10 +229,6 @@ struct TranscriptSketchAPaneBar: View {
         .padding(.leading, min(leadingInset, 16))
         .padding(.trailing, 12)
         .frame(height: 30)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(SessionPalette.hairline).frame(height: 1)
-        }
-        .accessibilityIdentifier("session-details-header")
     }
 
     private func counters(full: Bool) -> some View {

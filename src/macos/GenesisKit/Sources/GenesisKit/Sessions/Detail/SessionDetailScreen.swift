@@ -351,6 +351,40 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
 
 // MARK: - Header
 
+/// The header's alert line (see `SessionDetailInfo.alert`): one line, the whole row a button when the host gave an
+/// action. Every form of the header draws it (the sketches of `--sketch transcript=a|b` too), so a stuck or looping
+/// session keeps its warning whichever header shows.
+struct SessionDetailAlertRow: View {
+    let info: SessionDetailInfo
+    let actions: SessionDetailActions
+
+    var body: some View {
+        if let text = info.alert {
+            let color = info.alertIsSevere ? SessionPalette.red : SessionPalette.orange
+            Button { actions.alertAction?() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                    Text(verbatim: text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(color)
+                .padding(.horizontal, 16)
+                .frame(height: 24)
+                .background(color.opacity(0.10))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.genHoverPlain())
+            .disabled(actions.alertAction == nil)
+            .instantTooltip(text + (actions.alertAction == nil ? "" : "\nClick to open the call in the transcript"))
+            .accessibilityIdentifier("session-details-alert")
+        }
+    }
+}
+
 public struct SessionDetailHeader: View {
     public let info: SessionDetailInfo
     public let actions: SessionDetailActions
@@ -448,40 +482,12 @@ public struct SessionDetailHeader: View {
             }
             .padding(.horizontal, 16)
             .frame(height: 28)
-            // The alert line (see `SessionDetailInfo.alert`).
-            if let alert = info.alert {
-                alertRow(alert)
-            }
+            SessionDetailAlertRow(info: info, actions: actions)
         }
         .overlay(alignment: .bottom) {
             Rectangle().fill(SessionPalette.hairline).frame(height: 1)
         }
         .accessibilityIdentifier("session-details-header")
-    }
-
-    // One line, the whole row a button when the host gave an action.
-    private func alertRow(_ text: String) -> some View {
-        let color = info.alertIsSevere ? SessionPalette.red : SessionPalette.orange
-        return Button { actions.alertAction?() } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10))
-                Text(verbatim: text)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 0)
-            }
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(color)
-            .padding(.horizontal, 16)
-            .frame(height: 24)
-            .background(color.opacity(0.10))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.genHoverPlain())
-        .disabled(actions.alertAction == nil)
-        .instantTooltip(text + (actions.alertAction == nil ? "" : "\nClick to open the call in the transcript"))
-        .accessibilityIdentifier("session-details-alert")
     }
 
     private func metaRow(showStarted: Bool) -> some View {
