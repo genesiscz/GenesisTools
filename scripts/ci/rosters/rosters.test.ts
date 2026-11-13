@@ -32,10 +32,10 @@ import { SWIFT_ROSTERS, swiftRosterApplies, swiftRosterLines } from "./swift";
 import {
     countByKey,
     FUNCTION_BODY_COPIED,
+    notSuppressed,
     SHARED_EXPORT_REDECLARED,
     TOOL_DEPENDENCY_ADDED,
     toolOf,
-    unsuppressed,
 } from "./tree";
 
 function matches(definition: RosterDefinition, source: string): number {
@@ -379,6 +379,7 @@ describe("rosterGrowth", () => {
 });
 
 describe("tree rosters: what one file cannot show", () => {
+    const keepAll = () => true;
     const fn = (over: Partial<FunctionFact>): FunctionFact => ({
         file: "src/port/lib/a.ts",
         line: 1,
@@ -472,16 +473,19 @@ describe("tree rosters: what one file cannot show", () => {
     });
 
     test("the same name, and a renamed copy, outside the owner; never the owner or a one-word name", () => {
-        const matches = SHARED_EXPORT_REDECLARED.scan({
-            functions: [
-                ...shared,
-                fn({ name: "formatDuration", line: 3 }),
-                fn({ name: "myFormatDuration", line: 9 }),
-                fn({ file: "src/hub/lib/b.ts", name: "walk" }),
-                fn({ file: "src/hub/lib/b.ts", name: "formatBytes" }),
-            ],
-            imports: [],
-        });
+        const matches = SHARED_EXPORT_REDECLARED.scan(
+            {
+                functions: [
+                    ...shared,
+                    fn({ name: "formatDuration", line: 3 }),
+                    fn({ name: "myFormatDuration", line: 9 }),
+                    fn({ file: "src/hub/lib/b.ts", name: "walk" }),
+                    fn({ file: "src/hub/lib/b.ts", name: "formatBytes" }),
+                ],
+                imports: [],
+            },
+            keepAll
+        );
 
         expect(matches.map((match) => [match.key, match.line, match.detail])).toEqual([
             ["src/port/lib/a.ts", 3, "formatDuration: exported from src/utils/format.ts"],
@@ -494,21 +498,24 @@ describe("tree rosters: what one file cannot show", () => {
     });
 
     test("a copied body under another name names the shared owner; the owner itself is no finding", () => {
-        const matches = FUNCTION_BODY_COPIED.scan({
-            functions: [
-                ...shared,
-                fn({ name: "isJsonRecord", line: 20, fingerprint: fingerprint(record("input"), ["input"]) }),
-                fn({
-                    name: "isText",
-                    line: 30,
-                    fingerprint: fingerprint(
-                        "{ return typeof input === 'string' && input.length > 0 && input.trim() !== ''; }",
-                        ["input"]
-                    ),
-                }),
-            ],
-            imports: [],
-        });
+        const matches = FUNCTION_BODY_COPIED.scan(
+            {
+                functions: [
+                    ...shared,
+                    fn({ name: "isJsonRecord", line: 20, fingerprint: fingerprint(record("input"), ["input"]) }),
+                    fn({
+                        name: "isText",
+                        line: 30,
+                        fingerprint: fingerprint(
+                            "{ return typeof input === 'string' && input.length > 0 && input.trim() !== ''; }",
+                            ["input"]
+                        ),
+                    }),
+                ],
+                imports: [],
+            },
+            keepAll
+        );
 
         expect(matches.map((match) => [match.file, match.line, match.detail])).toEqual([
             ["src/port/lib/a.ts", 20, "isJsonRecord: the body of isObject (src/utils/object.ts:1)"],
@@ -517,17 +524,20 @@ describe("tree rosters: what one file cannot show", () => {
 
     test("a dependency is one entry per pair of tools; utils is free to import, and never free to import a tool", () => {
         const from = (file: string, target: string, line = 1) => ({ file, line, target });
-        const matches = TOOL_DEPENDENCY_ADDED.scan({
-            functions: [],
-            imports: [
-                from("src/hub/lib/a.ts", "src/question/lib/store"),
-                from("src/hub/lib/b.ts", "src/question/lib/verbs", 7),
-                from("src/hub/lib/a.ts", "src/hub/lib/b"),
-                from("src/hub/lib/a.ts", "src/utils/json"),
-                from("src/utils/agent-sessions/x.ts", "src/claude/lib/history/search", 4),
-                from("src/single.ts", "src/hub/lib/a"),
-            ],
-        });
+        const matches = TOOL_DEPENDENCY_ADDED.scan(
+            {
+                functions: [],
+                imports: [
+                    from("src/hub/lib/a.ts", "src/question/lib/store"),
+                    from("src/hub/lib/b.ts", "src/question/lib/verbs", 7),
+                    from("src/hub/lib/a.ts", "src/hub/lib/b"),
+                    from("src/hub/lib/a.ts", "src/utils/json"),
+                    from("src/utils/agent-sessions/x.ts", "src/claude/lib/history/search", 4),
+                    from("src/single.ts", "src/hub/lib/a"),
+                ],
+            },
+            keepAll
+        );
 
         expect(matches.map((match) => match.key)).toEqual(["hub → question", "utils → claude"]);
         expect(toolOf("src/hub/lib/a.ts")).toBe("hub");
@@ -535,11 +545,34 @@ describe("tree rosters: what one file cannot show", () => {
         expect(countByKey(matches)).toEqual({ "hub → question": 1, "utils → claude": 1 });
     });
 
-    test("a suppressed line is no match, and a new entry is growth the plan refuses", () => {
-        const match = { key: "src/a.ts", file: "src/a.ts", line: 2, detail: "x" };
+    test("a suppressed first import of a pair exempts itself only: the next import of the pair is the entry", () => {
+        const sources: Record<string, string> = {
+            "src/hub/lib/a.ts":
+                '// lint-rules-ignore: the store is wanted here\nimport { s } from "../../question/lib/store";',
+            "src/hub/lib/b.ts": 'import { v } from "../../question/lib/verbs";',
+        };
+        const kept = notSuppressed((file) => sources[file] ?? "");
+        const matches = TOOL_DEPENDENCY_ADDED.scan(
+            {
+                functions: [],
+                imports: [
+                    { file: "src/hub/lib/a.ts", line: 2, target: "src/question/lib/store" },
+                    { file: "src/hub/lib/b.ts", line: 1, target: "src/question/lib/verbs" },
+                ],
+            },
+            kept
+        );
 
-        expect(unsuppressed([match], () => "// lint-rules-ignore: wanted\nfunction x() {}")).toEqual([]);
-        expect(unsuppressed([match], () => "\nfunction x() {}")).toEqual([match]);
+        expect(matches.map((match) => [match.key, match.file, match.line])).toEqual([
+            ["hub → question", "src/hub/lib/b.ts", 1],
+        ]);
+    });
+
+    test("a suppressed line is no match, and a new entry is growth the plan refuses", () => {
+        const kept = (source: string) => notSuppressed(() => source)("src/a.ts", 2);
+
+        expect(kept("// lint-rules-ignore: wanted\nfunction x() {}")).toBe(false);
+        expect(kept("\nfunction x() {}")).toBe(true);
 
         const plan = planRosters(
             { "roster-tool-dependency-added": { "hub → question": 1 } },

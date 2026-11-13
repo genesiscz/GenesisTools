@@ -22,7 +22,7 @@ import { isSuppressed, isTestFile, langFor, maskSwiftNonCode, pluginsDisabledFor
 import type { RosterDefinition } from "./define";
 import { parseRosters, ROSTER_DEFINITIONS, ROSTERS_FILE, type Rosters, readRosters, rosterGrowth } from "./index";
 import { SWIFT_ROSTERS, type SwiftRoster, swiftRosterApplies, swiftRosterLines } from "./swift";
-import { countByKey, TREE_ROSTERS, type TreeMatch, treeInventory, unsuppressed } from "./tree";
+import { countByKey, notSuppressed, TREE_ROSTERS, type TreeMatch, treeInventory } from "./tree";
 
 export interface RosterMatch {
     file: string;
@@ -273,9 +273,10 @@ if (import.meta.main) {
 
     if (trees.length > 0) {
         const inventory = await treeInventory(files);
+        const kept = notSuppressed();
 
         for (const tree of trees) {
-            const matches = unsuppressed(tree.scan(inventory));
+            const matches = tree.scan(inventory, kept);
 
             treeMatches.set(tree.name, matches);
             found[tree.name] = countByKey(matches);

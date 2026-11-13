@@ -40,11 +40,18 @@ export interface TreeMatch {
     detail: string;
 }
 
+/** Whether a fact at this file and line may become a match: its line carries no `lint-rules-ignore`. */
+export type KeptLine = (file: string, line: number) => boolean;
+
 export interface TreeRoster {
     name: string;
     candidate: string;
     message: string;
-    scan: (inventory: Inventory) => TreeMatch[];
+    /**
+     * The matches of the tree. `kept` filters each fact before it becomes a match, so a roster that collapses several
+     * facts into one entry (a dependency is one entry per pair of tools) picks its entry among the unsuppressed ones.
+     */
+    scan: (inventory: Inventory, kept: KeptLine) => TreeMatch[];
 }
 
 /**
@@ -89,11 +96,15 @@ export const SHARED_EXPORT_REDECLARED: TreeRoster = {
     message:
         "This function has the name of a helper that src/utils already exports. Import the shared one; when it lacks " +
         "what you need, extend it there.",
-    scan: (inventory) => {
+    scan: (inventory, kept) => {
         const owners = sharedExports(inventory);
         const matches: TreeMatch[] = [];
 
         for (const fact of inventory.functions) {
+            if (!kept(fact.file, fact.line)) {
+                continue;
+            }
+
             for (const candidate of copyNames(fact.name)) {
                 const owned = owners.get(candidate);
 
@@ -126,7 +137,7 @@ export const FUNCTION_BODY_COPIED: TreeRoster = {
     message:
         "This function's body is the body of a helper that src/utils exports, under this or another name. Import " +
         "the shared one instead of the copy.",
-    scan: (inventory) => {
+    scan: (inventory, kept) => {
         const owners = new Map<string, FunctionFact>();
 
         for (const fact of inventory.functions) {
@@ -144,6 +155,10 @@ export const FUNCTION_BODY_COPIED: TreeRoster = {
 
             // Another export of utils with the same body is utils' own matter (two owners), not a tool's copy.
             if (!owner || owner.file === fact.file || (fact.exported && isShared(fact.file))) {
+                continue;
+            }
+
+            if (!kept(fact.file, fact.line)) {
                 continue;
             }
 
@@ -180,7 +195,7 @@ export const TOOL_DEPENDENCY_ADDED: TreeRoster = {
         "This import makes one tool depend on another tool for the first time (or src/utils on a tool). Move what " +
         "you need into src/utils and import it from there; a dependency between two tools that is wanted gets " +
         "`// lint-rules-ignore: <why>` on the import.",
-    scan: (inventory) => {
+    scan: (inventory, kept) => {
         const first = new Map<string, TreeMatch>();
 
         for (const fact of inventory.imports) {
@@ -194,7 +209,8 @@ export const TOOL_DEPENDENCY_ADDED: TreeRoster = {
 
             const key = `${from} → ${to}`;
 
-            if (!first.has(key)) {
+            // A suppressed import exempts itself only: the pair's entry is its first import without the comment.
+            if (!first.has(key) && kept(fact.file, fact.line)) {
                 first.set(key, { key, file: fact.file, line: fact.line, detail: `${key}: ${fact.target}` });
             }
         }
@@ -209,20 +225,20 @@ export const TREE_ROSTERS: readonly TreeRoster[] = [
     TOOL_DEPENDENCY_ADDED,
 ];
 
-/** The matches whose line carries no `lint-rules-ignore`. `read` is injected so a test needs no files. */
-export function unsuppressed(
-    matches: readonly TreeMatch[],
-    read: (file: string) => string = (file) => readFileSync(file, "utf8")
-): TreeMatch[] {
+/**
+ * The `kept` of a scan: a line that carries no `lint-rules-ignore` (on it or the line above). Each file is read once.
+ * `read` is injected so a test needs no files.
+ */
+export function notSuppressed(read: (file: string) => string = (file) => readFileSync(file, "utf8")): KeptLine {
     const lines = new Map<string, string[]>();
 
-    return matches.filter((match) => {
-        if (!lines.has(match.file)) {
-            lines.set(match.file, read(match.file).split("\n"));
+    return (file, line) => {
+        if (!lines.has(file)) {
+            lines.set(file, read(file).split("\n"));
         }
 
-        return !isSuppressed(lines.get(match.file) ?? [], match.line);
-    });
+        return !isSuppressed(lines.get(file) ?? [], line);
+    };
 }
 
 export function countByKey(matches: readonly TreeMatch[]): Record<string, number> {
