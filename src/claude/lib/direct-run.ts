@@ -2,6 +2,7 @@ import { type DirectRunDeps, runBinaryDirect } from "@app/ai/lib/embed/direct-ru
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 /**
  * How an embedding app's steer reaches claude. `now` (Claude Code's default) aborts the running step, so a steer
@@ -51,17 +52,13 @@ export function rewriteSteerLine(line: string): string {
     return line;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Claude Code's synthetic root assistant frame for a rate-limited request (`error: "rate_limit"`). */
 function isLimitAssistant(frame: Record<string, unknown>): boolean {
     return (
         frame.type === "assistant" &&
         frame.parent_tool_use_id === null &&
         frame.error === "rate_limit" &&
-        isRecord(frame.message) &&
+        isObject(frame.message) &&
         Array.isArray(frame.message.content)
     );
 }
@@ -97,18 +94,18 @@ export function annotateLimitLine(line: string, note: string): string {
     try {
         const frame: unknown = SafeJSON.parse(body, { strict: true });
 
-        if (!isRecord(frame)) {
+        if (!isObject(frame)) {
             return line;
         }
 
-        if (isLimitAssistant(frame) && isRecord(frame.message) && Array.isArray(frame.message.content)) {
+        if (isLimitAssistant(frame) && isObject(frame.message) && Array.isArray(frame.message.content)) {
             const content: unknown[] = frame.message.content;
-            const lastText = content.findLastIndex((block) => isRecord(block) && block.type === "text");
+            const lastText = content.findLastIndex((block) => isObject(block) && block.type === "text");
             const annotated =
                 lastText === -1
                     ? [...content, { type: "text", text: note }]
                     : content.map((block, index) =>
-                          index === lastText && isRecord(block) && typeof block.text === "string"
+                          index === lastText && isObject(block) && typeof block.text === "string"
                               ? { ...block, text: withNote(block.text, note) }
                               : block
                       );
