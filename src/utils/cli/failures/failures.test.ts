@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
@@ -12,7 +12,7 @@ import { recordMcpCall, recordMcpTransport } from "@genesiscz/utils/mcp/record-c
 import { Command } from "commander";
 import { claudeProjectFolder, failureCaller, failureCallerOf, transcriptOf } from "./caller";
 import { enrichFailureContext, readFailureContext } from "./context";
-import { deadlineCaller } from "./deadline";
+import { deadlineCaller, deadlineWrite } from "./deadline";
 import { recordHandledFailure } from "./handled";
 import { recordSignalEnd, signalEnd, signalOfStatus, WITHHELD_ARGV } from "./launcher";
 import { appendFailure, failureDays, failureLogPath, readFailures, type ToolFailure } from "./record";
@@ -1262,5 +1262,39 @@ describe("a command deadline record", () => {
         await new Executor({ timeout: 2_000 }).exec(["sh", "-c", "true", `marker-${process.pid}-d`]);
 
         expect([...readFailures({ fromDay: today(), toDay: today() })]).toHaveLength(before);
+    });
+
+    it("writes the record on a worker thread, and gives up on it at its bound", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "deadline-write-"));
+        const failure: ToolFailure = {
+            v: 1,
+            id: `deadline-write-${process.pid}`,
+            at: new Date().toISOString(),
+            kind: "deadline",
+            tool: "fixture",
+            command: null,
+            argv: [],
+            exitCode: null,
+            message: "Command timed out after 1ms",
+            errorName: "Error",
+            stack: null,
+            stderrTail: null,
+            fatal: false,
+            durationMs: 1,
+            pid: process.pid,
+            ppid: process.ppid,
+            cwd: dir,
+            traceId: null,
+            toolsRoot: dir,
+            caller: null,
+        };
+
+        // The main thread is busy while the worker writes, so the write is not on it.
+        const written = deadlineWrite.write(failure, dir, 5_000);
+        expect(readdirSync(dir)).toEqual([]);
+        expect(await written).toBe(true);
+        expect([...readFailures({ fromDay: today(), toDay: today(), dir })].map((f) => f.id)).toEqual([failure.id]);
+
+        expect(await deadlineWrite.write(failure, join(dir, "late"), 0)).toBe(false);
     });
 });
