@@ -9,6 +9,7 @@
 // Both stages stay alive only to proxy exit status, signals and parent death.
 
 import Darwin
+import Carbon
 import Foundation
 
 /// Private libSystem API (used by Chromium, kitty, WezTerm): the spawned child stops being
@@ -147,6 +148,15 @@ func waitAndExit(_ pid: pid_t, run: LauncherFailures.Run? = nil) -> Never {
     }
 
     exit((status >> 8) & 0xff)
+}
+
+/// A launcher owns TCC attribution, but must not compete with a window in System Events.
+@MainActor
+func markBackgroundHelper() {
+    var serial = ProcessSerialNumber(highLongOfPSN: 0, lowLongOfPSN: UInt32(kCurrentProcess))
+    let status = TransformProcessType(&serial, ProcessApplicationTransformState(kProcessTransformToBackgroundApplication))
+    if status != noErr { warn("cannot mark background helper (\(status))") }
+    ProcessInfo.processInfo.processName = "GenesisTools Helper"
 }
 
 func runLauncher(_ arguments: [String]) -> Never {

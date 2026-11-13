@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, spyOn, test } from "bun:test";
 import {
     chmodSync,
@@ -67,6 +68,7 @@ import { suggestDictionary } from "./lib/dictionary-suggest";
 import { captionSegments } from "./lib/editor-project";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
 import { appliedLine, itemWhat } from "./lib/item-text";
+import { localSpeechDuring, localSpeechLines } from "./lib/local-speech";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { selectQuestions } from "./lib/question-select";
@@ -6502,6 +6504,99 @@ test("canonical matched call embeddings feed speaker rules without asking, while
             rules: [MeetingRule.VoiceEmbedding],
         })
     );
+});
+
+test("compact evidence bounds 509 line prefixes and prints microphone percent or unknown", () => {
+    const raw = rawMeeting({
+        record,
+        meeting: {
+            ...meeting,
+            transcript: Array.from({ length: 509 }, (_, index) =>
+                line("Alice", index * 5, "Long transcript words ".repeat(30))
+            ),
+        },
+        evidence: null,
+        points: [],
+    });
+    raw.lines[0]!.channel.micShare = 0.875;
+    const compact = compactEvidence(raw);
+    expect(compact).toContain("|mic88%|e?");
+    expect(compact).toContain("|mic?|e?");
+    expect(
+        compact
+            .split("\n")
+            .slice(1)
+            .every((line) => [...line.split("|").at(-1)!].length <= 48)
+    ).toBe(true);
+    expect(Buffer.byteLength(compact)).toBeLessThan(50_000);
+});
+
+test("local speech matches words and clock, emits removal at 0.9 and raw facts", () => {
+    const start = "2026-11-02T15:00:00.000Z";
+    const transcript = [line("Alice", 5, "Fixture task done."), line("Alice", 100, "Fixture task done.")];
+    const calls = [{ ts: Date.parse(start) + 5_000, text: "Fixture task done" }];
+    expect(localSpeechLines({ start, transcript, calls }).map((line) => line.index)).toEqual([0]);
+    const current = { ...meeting, start, transcript };
+    const items = suggestItems({
+        record,
+        meeting: current,
+        rules: [],
+        dictionary: { entries: [], abbrExpansion: "off" },
+        sourceWords: [],
+        localSpeech: calls,
+        now: start,
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "removal", confidence: 0.9, evidence: { reason: "local speech output" } });
+    const raw = rawMeeting({ record, meeting: current, evidence: null, points: [], localSpeech: calls });
+    expect(raw.lines[0]?.localSpeechOutput).toBe(true);
+    expect(raw.lines[1]?.localSpeechOutput).toBeUndefined();
+    expect(localSpeechDuring({ start, dbPath: join(tmpdir(), "missing-fixture-speech.db") })).toEqual([]);
+});
+
+test("platform label prehistory emits one meaningless stretch and keeps later own lines", () => {
+    const transcript = [
+        ...Array.from({ length: 12 }, (_, index) => line("Alice Example", index * 10, "A spoken line.")),
+        line("Alice Example", 130, "Own voice."),
+    ];
+    const current = { ...meeting, speakers: [{ speakerId: 1, name: "Alice Example", origin: "platform" }], transcript };
+    const items = suggestItems({
+        record,
+        meeting: current,
+        rules: ["evidence"],
+        dictionary: { entries: [], abbrExpansion: "off" },
+        sourceWords: [],
+        evidence: { segments: [], speaking: [{ tSec: 120, speaking: ["Alice Example"] }], files: [] },
+        now: record.start,
+    });
+    expect(items.filter((item) => item.kind === "label")).toEqual([
+        expect.objectContaining({
+            kind: "label",
+            label: "Alice Example",
+            fromSec: 0,
+            toSec: 110,
+            meaningless: true,
+            confidence: 0.8,
+        }),
+    ]);
+});
+
+test("local speech history is read-only and excludes muted, failed and file-only calls", () => {
+    const folder = mkdtempSync(join(tmpdir(), "speech-history-"));
+    const file = join(folder, "calls.db");
+    const db = new Database(file);
+    db.exec("CREATE TABLE calls (ts INTEGER, text TEXT, status TEXT)");
+    const start = "2026-11-02T15:00:00.000Z";
+    const stamp = Date.parse(start);
+    for (const status of ["spoken", "muted", "failed", "written"]) {
+        db.query("INSERT INTO calls VALUES (?, ?, ?)").run(stamp, status, status);
+    }
+    db.close();
+    const before = readFileSync(file);
+    const mtime = statSync(file).mtimeMs;
+    expect(localSpeechDuring({ start, end: start, dbPath: file })).toEqual([{ ts: stamp, text: "spoken" }]);
+    expect(readFileSync(file).equals(before)).toBe(true);
+    expect(statSync(file).mtimeMs).toBe(mtime);
 });
 
 test("question selection and review order use uncertain words without changing displayed priority", async () => {

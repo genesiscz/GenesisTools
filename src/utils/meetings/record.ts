@@ -228,6 +228,7 @@ export type SpeakerAssignment = z.infer<typeof speakerAssignmentSchema>;
 
 /** A suggestion a rule made and a person decides: confirm or reject. */
 export const meetingItemSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("removal"), fromSec: z.number(), toSec: z.number(), heard: z.string(), ...itemBase }),
     /** A time range of one label that belongs to someone else. */
     z.object({
         kind: z.literal("speaker-range"),

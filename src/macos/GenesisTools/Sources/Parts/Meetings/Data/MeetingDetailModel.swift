@@ -829,6 +829,7 @@ enum MeetingsWords {
         switch item.kind {
         case "speaker-range": return "Speaker range"
         case "label": return "Mixed voices"
+        case "removal": return "Local speech output"
         case "join": return "Join lines"
         case "term": return "Word"
         case "question": return "Question"
@@ -843,6 +844,7 @@ enum MeetingsWords {
             let range = from == to ? "at \(from)" : "from \(from) to \(to)"
             return "\(item.label ?? "?") \(range) is \(item.speaker ?? "someone else")"
         case "label": return "\(item.label ?? "?") holds several voices"
+        case "removal": return "Remove local speech output: \(item.heard ?? "")"
         case "join": return "Join the line at \(MeetingsFormat.clock(item.atSec ?? 0))"
         case "term":
             if let proposed = item.proposed { return "“\(item.heard ?? "")” → “\(proposed)”" }

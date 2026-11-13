@@ -39,6 +39,10 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    `terms.documents` lists, for the meeting's context documents, each passage that reads a document line aloud
    (`readAloud`: the heard words, the line and its text) and each spoken path or identifier (`identifiers`). It has
    no rule weights and no confidence.
+   Every timed line has `channel.micShare`, `null` when unknown. `meeting.labels` includes first own indicator/join
+   and early-label counts; `meeting.indicatorGaps` names long missing observations. Indicator-only people have origin
+   `indicator`. `--format lines` gives a compact legend and 48-character text prefixes with mic %, energy, speaking
+   and muted names; read raw JSON for the full text. `localSpeechOutput` identifies matching local audible speech.
    Pull the documents the meeting discussed (read-only). Save the version the meeting read with
    `tools meetings context add <meeting> <file> --before-meeting`, or choose a known commit with `--rev <sha>`.
    The first flag uses the meeting start, not its end. Both save the chosen text and full commit inside the record;
@@ -65,6 +69,10 @@ Both modes share the meeting record, its items and `tools meetings listen`.
      when the same words are right elsewhere. Put the words that agree with the fix into `heard` too ("nějakej
      implementátor" becomes "nějaká implementace"), or the fixed sentence breaks its grammar. A real word the word
      check flags needs no item: note it for the glossary of step 6 as `keep`.
+   - A stem `term` may supply `heardStem` and `proposedStem` together. Recognized Czech endings are preserved across
+     occurrences; `scope: "line"` still limits its reach. CLI: `--heard-stem` and `--proposed-stem`.
+   - `removal`: `from`, `to`, `heard`, confidence and reason. Confirmed local speech findings hide the matching line
+     only in the corrected view. Raw source text and the read-only speech history stay intact.
    - `join`: `at` (the start of the line after the cut) and `joined`. The first word of the line after the cut moves
      to the end of the line before it. For a cut word, `joined` is the whole word ("dotáhnu") and the parts are glued;
      for a sentence cut between two whole words, `joined` has a space ("jsem zvědavej") and the space stays. `label` is
@@ -131,7 +139,12 @@ Both modes share the meeting record, its items and `tools meetings listen`.
    the original project and do not ask for project assignment again. A normal duplicate retains items and copied
    journal tokens with `copiedFrom`; its Undo changes only the copy. An older journal naming another meeting is
    refused: use a clean copy or resolve that incompatibility explicitly before Undo.
-2. `tools meetings suggest <meeting> --attendance teams`. The term rules use the word check (`--word-check hunspell`,
+2. `tools meetings suggest <meeting> --attendance teams`. Attendance uses the linked source's title and
+   transcript clock, including for a renamed copy. Unavailable platform attendance warns, skips E2 and saves the
+   other suggestions. A missing or ambiguous Teams chat lists cached candidate titles and IDs; last-message
+   proximity does not prove a chat belongs to this call. Select a known chat with `--attendance-id <threadId>`,
+   or `meeting.items.suggest({ attendance: 'teams', attendanceId: '<threadId>' })` in the REPL. Invalid input and
+   unreadable or malformed attendance files still fail. The term rules use the word check (`--word-check hunspell`,
    the default; `hunspell-cc0`, `macos` or `off`). Its dictionaries download on first use.
 3. `tools meetings listen <meeting>` for the user, with `--subscribe-answers` for you as in step 4 above, then review
    the items (`tools meetings items <meeting>`) and decide each one

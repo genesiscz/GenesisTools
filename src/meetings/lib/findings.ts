@@ -31,6 +31,7 @@ const ref = z
  * needs neither.
  */
 export const findingSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("removal"), ref, from: clock, to: clock, heard: text, confidence, reason: text }),
     z.object({
         kind: z.literal("speaker-range"),
         ref,
@@ -109,7 +110,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
     }),
 ]);
 export type Finding = z.output<typeof findingSchema>;
-export const FINDING_KINDS = ["speaker-range", "label", "join", "term", "question"] as const;
+export const FINDING_KINDS = ["speaker-range", "label", "join", "term", "question", "removal"] as const;
 
 /** A file of findings: an array, or `{ findings: [...] }`. */
 export const findingsFileSchema = z.union([
@@ -134,6 +135,9 @@ function findingProblem(
     refs: Set<string>,
     twice: Set<string>
 ): string | undefined {
+    if (finding.kind === "term" && Boolean(finding.heardStem) !== Boolean(finding.proposedStem)) {
+        return "heardStem and proposedStem must be supplied together";
+    }
     if ("from" in finding && finding.to < finding.from) {
         return `ends before it starts (${finding.from} > ${finding.to} s)`;
     }
@@ -198,6 +202,9 @@ export function findingItems(findings: Finding[], items: MeetingItem[], now: str
 
 /** A finding's own fields, in the record's names. */
 function kindFields(finding: Finding, idOfRef: Map<string, string>): Record<string, unknown> {
+    if (finding.kind === "removal") {
+        return { kind: finding.kind, fromSec: finding.from, toSec: finding.to, heard: finding.heard };
+    }
     if (finding.kind === "speaker-range") {
         return {
             kind: finding.kind,

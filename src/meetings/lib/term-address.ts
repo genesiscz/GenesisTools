@@ -1,7 +1,8 @@
 import type { MeetingItem } from "@genesiscz/utils/meetings/record";
 import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
-import { heardIn, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
+import { termFixPattern } from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 
 export interface TermAddressDiagnostic {
@@ -24,6 +25,13 @@ export function diagnoseTermAddress(options: {
     }
 
     const lines = new TranscriptLines(transcript);
+    const stemPattern = termFixPattern({
+        heard: item.heard,
+        replacement: item.proposed ?? item.heard,
+        heardStem: item.heardStem,
+        proposedStem: item.proposedStem,
+    });
+    const pattern = new RegExp(stemPattern.source, stemPattern.flags.replace("g", ""));
     const explicit = item.evidence?.transcriptLine;
     const found = heardLineAt(
         lines,
@@ -31,10 +39,10 @@ export function diagnoseTermAddress(options: {
             atSec: item.atSec,
             ...(typeof explicit === "number" ? { line: explicit } : {}),
         },
-        item.heard
+        pattern
     );
 
-    if (found.kind === "found" && heardIn(transcript[found.index]!.text, item.heard).length > 0) {
+    if (found.kind === "found" && pattern.test(transcript[found.index]!.text)) {
         return { item: item.id, kind: "found", line: found.index };
     }
 
@@ -48,7 +56,7 @@ export function diagnoseTermAddress(options: {
 
     const nearest = transcript
         .flatMap((entry, line) =>
-            entry.startSec !== undefined && heardIn(entry.text, item.heard).length > 0
+            entry.startSec !== undefined && pattern.test(entry.text)
                 ? [{ line, atSec: entry.startSec, text: entry.text }]
                 : []
         )

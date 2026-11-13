@@ -7,6 +7,33 @@ import XCTest
 /// times it shows, and which meetings each sidebar place lists.
 @MainActor
 final class MeetingsWindowTests: XCTestCase {
+    func testStemAndRemovalItemsDecodeWithoutLosingNativeReviewFields() throws {
+        let source = #"{"id":"i1","kind":"term","status":"confirmed","heard":"fixture","proposed":"correct","heardStem":"fixture","proposedStem":"correct","rules":[],"suggestedAt":"2026-11-02T15:00:00.000Z"}"#
+        let item = try JSONDecoder().decode(MeetingItem.self, from: Data(source.utf8))
+        XCTAssertEqual(item.heardStem, "fixture")
+        XCTAssertEqual(item.proposedStem, "correct")
+        let removal = #"{"id":"i2","kind":"removal","status":"suggested","fromSec":5,"toSec":5,"heard":"Fixture done","rules":["local-speech"],"suggestedAt":"2026-11-02T15:00:00.000Z"}"#
+        let removed = try JSONDecoder().decode(MeetingItem.self, from: Data(removal.utf8))
+        XCTAssertEqual(MeetingsWords.itemKind(removed), "Local speech output")
+        XCTAssertTrue(removed.isDecidable)
+    }
+
+    func testNativeSpeakerEvidenceDecodesTheSharedCompactFacts() throws {
+        let source = #"{"meeting":"m1","gapSec":120,"timed":true,"speakers":[],"hints":[],"evidence":{"summary":["Indicator gap 60s to 120s"],"lines":"0|00:05|p1|mic?|e?|s[]|m[]|Fixture"}}"#
+        let result = try JSONDecoder().decode(MeetingsAPI.MeetingSpeakers.Result.self, from: Data(source.utf8))
+        XCTAssertEqual(result.evidence?.summary.count, 1)
+        XCTAssertTrue(result.evidence?.lines.contains("mic?") == true)
+    }
+
+    func testNewWindowPreservesMeetingTabAndBackgroundRequest() {
+        let request = MeetingsRequest.parse(["--meeting", "m2", "--new-window", "--tab", "items", "--no-focus"])
+        XCTAssertTrue(request.newWindow)
+        XCTAssertEqual(request.meeting, "m2")
+        XCTAssertEqual(request.tab, .items)
+        XCTAssertFalse(request.focus)
+        XCTAssertFalse(MeetingsRequest.parse(["--meeting", "m1"]).newWindow)
+    }
+
     func testNoServiceShowsStaleDataAndFailedReadsKeepLastSuccessfulAge() throws {
         let model = MeetingsWindowModel(loadDetail: { _ in })
         model.startLiveUpdates()

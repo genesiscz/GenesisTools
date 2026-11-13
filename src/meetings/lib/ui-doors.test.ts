@@ -1274,3 +1274,19 @@ describe("Meetings service boundary", () => {
         }
     });
 });
+
+test("new-window reaches the native face as an explicit independent-window request", () => {
+    expect(windowOpenArgs({ meeting: "m2", tab: "items", newWindow: true, focus: false }, "/A.app")).toEqual([
+        "-n",
+        "-g",
+        "/A.app",
+        "--args",
+        "--meetings",
+        "--new-window",
+        "--meeting",
+        "m2",
+        "--tab",
+        "items",
+        "--no-focus",
+    ]);
+});

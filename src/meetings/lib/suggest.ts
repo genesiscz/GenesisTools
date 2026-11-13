@@ -40,6 +40,7 @@ import { contextEntryText } from "./context-file";
 import { identifiedDepartures } from "./departure";
 import { indicatorFacts } from "./indicator-facts";
 import { uncertainSharedCallRanges } from "./listen-quality";
+import { type LocalSpeech, localSpeechLines } from "./local-speech";
 import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey, questionRank } from "./questions";
 import { assessIndicator } from "./speaker-indicator";
@@ -607,7 +608,10 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
         (root) => isEnglishWord(root) || wordCheck?.verdict(root).class !== "unknown"
     );
     const unknown = heardUnknown.filter(
-        (word) => !onPurpose.has(word.heard.toLowerCase()) && !keptFamilies.has(wordFamily(word.heard))
+        (word) =>
+            (word.candidates.some((candidate) => candidate.source === "meeting" && candidate.confidence >= 80) ||
+                !onPurpose.has(word.heard.toLowerCase())) &&
+            !keptFamilies.has(wordFamily(word.heard))
     );
     log.debug(
         {
@@ -693,16 +697,16 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
                 },
             ];
         }),
-        // Its candidates are all below the suspect threshold ("namokovat" scored "Nomic"): evidence, never a proposal.
+        // Weak phonetic matches remain evidence; an observed one-edit match can be proposed.
         ...unknown.map((word): NewItem => {
-            const best = word.candidates.find((candidate) => candidate.confidence >= 80);
+            const proposed = word.candidates.find((candidate) => candidate.confidence >= 80);
             return {
                 kind: "term",
                 status: "suggested",
                 heard: word.heard,
-                ...(best ? { proposed: best.term } : {}),
+                ...(proposed ? { proposed: proposed.term } : {}),
                 ...(word.examples[0]?.atSec !== undefined ? { atSec: word.examples[0].atSec } : {}),
-                confidence: CONFIDENCE.unknownWord,
+                confidence: proposed ? proposed.confidence / 100 : CONFIDENCE.unknownWord,
                 rules: [MeetingRule.UnknownWord],
                 evidence: {
                     occurrences: word.occurrences,
@@ -1739,6 +1743,9 @@ function evidenceItems(options: {
 
 /** Two items say the same thing: the same kind on the same label, time or word. */
 function itemKey(item: NewItem | MeetingItem): string {
+    if (item.kind === "removal") {
+        return `removal|${item.fromSec}|${item.heard}`;
+    }
     if (item.kind === "speaker-range") {
         return `range|${item.label}|${Math.round(item.fromSec)}|${Math.round(item.toSec)}|${item.speaker ?? ""}`;
     }
@@ -1798,6 +1805,7 @@ function agreeing(first: NewItem, second: NewItem): NewItem {
  * suggested again, so a rejected one stays rejected.
  */
 export function suggestItems(options: {
+    localSpeech?: LocalSpeech[];
     record: MeetingRecord;
     meeting: SourceMeeting;
     rules: SuggestRule[];
@@ -1868,6 +1876,24 @@ export function suggestItems(options: {
     );
     const meeting = unlabeled.meeting;
     const found: NewItem[] = [...prehistory];
+    found.push(
+        ...localSpeechLines({
+            transcript: meeting.transcript,
+            start: meeting.start,
+            calls: options.localSpeech ?? [],
+        }).map(
+            (line): NewItem => ({
+                kind: "removal",
+                fromSec: line.fromSec,
+                toSec: line.fromSec,
+                heard: line.text,
+                status: "suggested",
+                confidence: 0.9,
+                rules: [MeetingRule.LocalSpeech],
+                evidence: { reason: "local speech output", transcriptLine: line.index },
+            })
+        )
+    );
 
     const selfNameForDeparture = record.participants.find((person) => person.self)?.name ?? options.evidence?.selfName;
     const departureLines = options.evidence

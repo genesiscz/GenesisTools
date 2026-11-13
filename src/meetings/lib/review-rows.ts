@@ -608,6 +608,7 @@ function sourcesOf(item: MeetingItem, parts: RowPart[], lines: TranscriptLines |
 }
 
 const EDITS: Record<MeetingItem["kind"], ReviewRow["edit"]> = {
+    removal: "none",
     term: "spelling",
     "speaker-range": "person",
     question: "answer",
@@ -617,6 +618,8 @@ const EDITS: Record<MeetingItem["kind"], ReviewRow["edit"]> = {
 
 function choicesOf(record: MeetingRecord, item: MeetingItem): RowChoice[] {
     switch (item.kind) {
+        case "removal":
+            return plainChoices(item, "Remove local speech output");
         case "question":
             return questionChoices(record, item);
         case "term":

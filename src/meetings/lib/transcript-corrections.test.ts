@@ -607,3 +607,56 @@ test("one persisted stem item keeps Czech endings across corrected lines", async
         "i na browserovéx",
     ]);
 });
+
+test("a persisted confirmed removal hides only the matched speech line", async () => {
+    const transcript = [line("Alice", 5, "Fixture task done."), line("Alice", 100, "Fixture task done.")];
+    const folder = await mkdtemp(join(tmpdir(), "speech-roundtrip-"));
+    const file = join(folder, "meeting.json");
+    const saved = {
+        ...base,
+        items: [item({ id: "i1", kind: "removal", fromSec: 5, toSec: 5, heard: "Fixture task done." })],
+    };
+    await writeFile(file, SafeJSON.stringify(saved));
+    const reopened = meetingRecordSchema.parse(SafeJSON.parse(await readFile(file, "utf8")));
+    expect(
+        correctTranscript({ record: reopened, transcript, config, format: "txt", dictionary: false }).entries.map(
+            (line) => line.startSec
+        )
+    ).toEqual([100]);
+    expect(transcript).toHaveLength(2);
+    const transformed = applyCorrections(transcript, {
+        removals: [{ item: "i1", fromSec: 5, toSec: 5, heard: "Fixture task done." }],
+        terms: [{ heard: "Fixture", replacement: "Changed" }],
+    });
+    expect(transformed.entries.map((line) => line.startSec)).toEqual([100]);
+});
+
+test("a line-scoped stem fixes the addressed inflected form and leaves its neighbour", () => {
+    const transcript = [line("Alice", 5, "i na browserem"), line("Alice", 8, "i na browseru")];
+    const prepared = prepareFindings({
+        items: [],
+        transcript,
+        findings: [
+            findingSchema.parse({
+                kind: "term",
+                at: 5,
+                heard: "i na browser",
+                heardStem: "i na browser",
+                proposedStem: "in-app browser",
+                scope: "line",
+                confidence: 0.9,
+                reason: "one addressed occurrence",
+            }),
+        ],
+    });
+    expect(prepared.warnings).toEqual([]);
+    const record = meetingRecordSchema.parse({
+        ...base,
+        items: prepared.added.map((item) => ({ ...item, status: "confirmed" })),
+    });
+    expect(
+        correctTranscript({ record, transcript, config, format: "txt", dictionary: false }).entries.map(
+            (entry) => entry.text
+        )
+    ).toEqual(["in-app browserem", "i na browseru"]);
+});

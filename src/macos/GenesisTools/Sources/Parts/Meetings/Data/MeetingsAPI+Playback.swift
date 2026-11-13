@@ -262,12 +262,14 @@ extension MeetingsAPI {
 
     /// `meeting.speakers`: talk time per label with its spans, and the hints with their ranges.
     enum MeetingSpeakers: MeetingsServiceMethod {
+        struct Evidence: Decodable, Equatable { let summary: [String]; let lines: String }
         static let name = "meeting.speakers"
 
         struct Params: Codable, Equatable {
             var meeting: String
             var gapSec: Double?
             var attendance: String?
+            var evidence: Bool? = true
         }
 
         struct Span: Decodable, Equatable, Hashable { let fromSec: Double; let toSec: Double; let turns: Int }
@@ -297,6 +299,7 @@ extension MeetingsAPI {
             /// False when no line has a time: the lanes show nothing, only counts.
             let timed: Bool
             let speakers: [Speaker]
+            var evidence: Evidence? = nil
             let hints: [SpeakerHint]
         }
     }

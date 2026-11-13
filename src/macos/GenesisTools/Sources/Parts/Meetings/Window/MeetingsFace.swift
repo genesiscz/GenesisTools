@@ -46,6 +46,7 @@ struct MeetingsRequest {
     var meeting: String?
     var tab: MeetingDetailModel.Tab?
     var focus = true
+    var newWindow = false
     /// `--muted`: the window's Moments play without sound.
     var muted = false
     /// `--side-panel`: the settings side panel opens beside the meeting.
@@ -90,6 +91,7 @@ struct MeetingsRequest {
                 default: break
                 }
             case "--meeting": request.meeting = value()
+            case "--new-window": request.newWindow = true
             case "--tab": request.tab = value().flatMap(MeetingDetailModel.Tab.init(rawValue:))
             case "--no-focus", "--no-activate": request.focus = false
             case "--muted": request.muted = true
@@ -137,7 +139,10 @@ package func runMeetings(_ args: [String]) -> Never {
         HangWatch.start()
         meetingsInstance.serve { forwarded in
             let next = MeetingsRequest.parse(forwarded)
-            MainActor.assumeIsolated { MeetingsWindow.shared.show(next) }
+            MainActor.assumeIsolated {
+                if next.newWindow { MeetingsWindow.openExtra(request: next) }
+                else { MeetingsWindow.shared.show(next) }
+            }
         }
         MeetingsWindow.shared.show(request)
         app.run()
@@ -161,10 +166,14 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
 
     /// Opens `meeting` in a new window of its own, offset from the key window, so the reader can put the two side by side.
     static func openExtra(meeting: String) {
-        let face = MeetingsWindow(primary: false)
-        extras.append(face)
         var request = MeetingsRequest()
         request.meeting = meeting
+        openExtra(request: request)
+    }
+
+    static func openExtra(request: MeetingsRequest) {
+        let face = MeetingsWindow(primary: false)
+        extras.append(face)
         let source = NSApp.keyWindow
         face.show(request)
         if let source, let window = face.window {

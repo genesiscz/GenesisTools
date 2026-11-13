@@ -144,6 +144,8 @@ function findingKey(item: MeetingItem): string {
         "meaningless",
         "atSec",
         "heard",
+        "heardStem",
+        "proposedStem",
         "proposed",
         "scope",
         "meaning",

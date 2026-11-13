@@ -135,9 +135,7 @@ class LayeredWordCheck implements WordCheck {
                 }
             }
 
-            stems.add(word);
-
-            for (const stem of this.rules.loanStems(word)) {
+            for (const stem of loanForms(word, this.rules)) {
                 stems.add(stem);
             }
         }
@@ -205,7 +203,7 @@ class LayeredWordCheck implements WordCheck {
         const loanEngine = this.loanEngine;
 
         if (loanEngine) {
-            const stem = [word, ...this.rules.loanStems(word)].find(
+            const stem = loanForms(word, this.rules).find(
                 (candidate) =>
                     this.loanWords.has(candidate.toLowerCase()) || accepts(loanEngine, this.loanKnown, candidate)
             );
@@ -222,6 +220,11 @@ class LayeredWordCheck implements WordCheck {
         this.engine.dispose();
         this.loanEngine?.dispose();
     }
+}
+
+/** Spoken endings can wrap a borrowed-word ending; prime and classify exactly the same candidates. */
+function loanForms(word: string, rules: LanguageRules): string[] {
+    return [...new Set([word, ...rules.writtenForms(word)].flatMap((form) => [form, ...rules.loanStems(form)]))];
 }
 
 function ask(engine: SpellEngine, cache: Map<string, boolean>, words: Iterable<string>): void {
