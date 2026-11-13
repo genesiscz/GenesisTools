@@ -32,6 +32,7 @@ import {
     NoChannelError,
     pasteIntoSurface,
     pickClaudeSession,
+    pressDialogKeysInSurface,
     resolveSessionId,
     SessionQueryError,
 } from "./delivery";
@@ -622,6 +623,7 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
         sessionId: target.sessionId,
         text: "hello",
         agentsOnTty: () => new Set(["grok"]),
+        openDialog: async () => null,
         live: async () => [target],
         run: async (args) => {
             calls.push(args);
@@ -638,80 +640,49 @@ test("the keystroke fallback pastes through the bounded cmux runner and reports 
         sessionId: target.sessionId,
         text: "hello",
         agentsOnTty: () => new Set(["grok"]),
+        openDialog: async () => null,
         live: async () => [target],
         run: async () => ({ code: -1, stdout: "", stderr: "cmux paste timed out after 30000 ms", timedOut: true }),
     });
     await expect(wedged).rejects.toThrow(MessageError);
     await expect(wedged).rejects.toThrow("timed out");
 
-    const noUuid = pasteIntoSurface({
-        alias: "grok",
-        sessionId: target.sessionId,
-        text: "hello",
-        agentsOnTty: () => new Set(["grok"]),
-        live: async () => [{ ...target, surface: { ...target.surface, id: null } }],
-        run: async () => {
-            throw new Error("cmux paste must not run without a surface UUID");
-        },
-    });
-    await expect(noUuid).rejects.toThrow("no surface UUID");
-
-    // A --via-tmux session: the surface shows tmux pane %41 only while the tmux client displays it.
-    const tmuxTarget = {
-        ...target,
-        tmux: { pane: "%41", session: "work-grok", surface: "surface:7", paneTty: "ttys041", sessionCreatedMs: 0 },
-    };
-    const switched = pasteIntoSurface({
-        alias: "grok",
-        sessionId: target.sessionId,
-        text: "hello",
-        agentsOnTty: () => new Set(["grok"]),
-        live: async () => [tmuxTarget],
-        stillShown: async () => ({ ok: false, reason: "tmux shows another pane of work-grok now" }),
-        run: async () => {
-            throw new Error("cmux paste must not run after the user switched tmux panes");
-        },
-    });
-    await expect(switched).rejects.toThrow("nothing was pasted");
-
-    const shownCalls: string[][] = [];
-    await pasteIntoSurface({
-        alias: "grok",
-        sessionId: target.sessionId,
-        text: "hello",
-        agentsOnTty: () => new Set(["grok"]),
-        live: async () => [tmuxTarget],
-        stillShown: async () => ({ ok: true }),
-        run: async (args) => {
-            shownCalls.push(args);
-            return { code: 0, stdout: "", stderr: "" };
-        },
-    });
-    expect(shownCalls).toHaveLength(1);
-
-    // Sonnet F13: a worker started inside a Claude tab owns the tab's newest journal line. The paste must not
-    // submit the text to the Claude prompt, and a tab that runs both agents is just as unsafe.
-    const never = async (): Promise<never> => {
-        throw new Error("cmux paste must not run into another agent's prompt");
-    };
+    // A refusal of the guarded input (here its tty guard, Sonnet F13) is a MessageError naming why. Each guard has its
+    // own case in the `sendToSession` suite (src/utils/ai/live-sessions/live-sessions.test.ts).
     const otherAgent = pasteIntoSurface({
         alias: "grok",
         sessionId: target.sessionId,
         text: "hello",
         live: async () => [target],
         agentsOnTty: () => new Set(["claude"]),
-        run: never,
+        run: async (): Promise<never> => {
+            throw new Error("cmux paste must not run into another agent's prompt");
+        },
     });
+    await expect(otherAgent).rejects.toThrow(MessageError);
     await expect(otherAgent).rejects.toThrow("it runs claude, not grok");
-    const both = pasteIntoSurface({
+
+    // A dialog answer goes through the same input, forced: the dialog is the target, so the guard is not asked.
+    const pressed: string[][] = [];
+    const answered = await pressDialogKeysInSurface({
         alias: "grok",
         sessionId: target.sessionId,
-        text: "hello",
+        presses: [{ text: "2" }, { key: "enter" }],
+        agentsOnTty: () => new Set(["grok"]),
+        openDialog: async () => {
+            throw new Error("a dialog answer must not ask the dialog guard");
+        },
         live: async () => [target],
-        agentsOnTty: () => new Set(["claude", "grok"]),
-        run: never,
+        run: async (args) => {
+            pressed.push(args);
+            return { code: 0, stdout: "", stderr: "" };
+        },
     });
-    await expect(both).rejects.toThrow("it also runs claude");
+    expect(answered).toEqual({ ref: "surface:7", title: "side - grok" });
+    expect(pressed).toEqual([
+        ["send", "--surface", "uuid-surface:7", "--force", "--", "2"],
+        ["send-key", "--surface", "uuid-surface:7", "--force", "enter"],
+    ]);
 });
 
 test("the live-session listing checks every registry pid in ONE batch, not one probe per entry", () => {

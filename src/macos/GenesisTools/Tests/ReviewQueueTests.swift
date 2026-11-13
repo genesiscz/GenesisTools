@@ -81,8 +81,8 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertEqual(store.comments.first?.deliveredTo, "Fix the jest pattern")
         XCTAssertEqual(store.rendered(for: [file]).first?.deliveredTo, "Fix the jest pattern")
         // A sent comment can still go to the PR: the gate only refuses a posted one.
-        XCTAssertNil(SuggestionSendGate.refusal(kind: "local", state: "sent", toPR: true, inFlight: false, busy: nil))
-        XCTAssertNil(SuggestionSendGate.refusal(kind: "local", state: "queued", toPR: true, inFlight: false, busy: nil))
+        XCTAssertNil(SuggestionSendGate.refusal(card: .localComment("fixture"), state: "sent", toPR: true, inFlight: false, busy: nil))
+        XCTAssertNil(SuggestionSendGate.refusal(card: .localComment("fixture"), state: "queued", toPR: true, inFlight: false, busy: nil))
 
         store.mark(comment.id, .draft, remoteID: "d1")
         store.markDelivered([comment.id], to: "Again")

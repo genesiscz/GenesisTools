@@ -1,3 +1,4 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import {
@@ -29,7 +30,7 @@ import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { useLockPageScroll } from "@/hooks/useLockPageScroll";
 import { useTmuxHubSessions } from "@/hooks/useTmuxHubSessions";
 import { useVisualViewportSize } from "@/hooks/useVisualViewportSize";
-import { ttydApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 import {
     pasteTextToIframe,
     scrollIframeTerminal,
@@ -60,7 +61,7 @@ export function TtydRoute() {
     const queryClient = useQueryClient();
     const navigate = useNavigate({ from: "/ttyd" });
     const { tab: urlTabId } = useSearch({ from: "/ttyd" });
-    const { data } = useQuery({ queryKey: ["ttyd", "list"], queryFn: ttydApi.list });
+    const { data } = useQuery({ queryKey: ["ttyd", "list"], queryFn: () => dashboard.call(ENDPOINTS.ttydList, {}) });
     const sessions = data?.sessions ?? [];
     const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
     const { mode, isMobile, setMode } = useLayoutMode("ttyd");
@@ -195,7 +196,7 @@ export function TtydRoute() {
     }, [mode]);
 
     const spawn = useMutation({
-        mutationFn: () => ttydApi.spawn(),
+        mutationFn: () => dashboard.call(ENDPOINTS.ttydSpawn, {}),
         onSuccess: (data) => {
             queryClient.invalidateQueries({ queryKey: ["ttyd", "list"] });
             queryClient.invalidateQueries({ queryKey: ["tmux"] });
@@ -207,7 +208,8 @@ export function TtydRoute() {
     });
 
     const kill = useMutation({
-        mutationFn: ({ id, killTmux }: { id: string; killTmux: boolean }) => ttydApi.kill(id, killTmux),
+        mutationFn: ({ id, killTmux }: { id: string; killTmux: boolean }) =>
+            dashboard.call(ENDPOINTS.ttydKill, { id, killTmux }),
         onSuccess: (_, { id: killedId }) => {
             queryClient.invalidateQueries({ queryKey: ["ttyd", "list"] });
             queryClient.invalidateQueries({ queryKey: ["tmux"] });
@@ -217,7 +219,7 @@ export function TtydRoute() {
     });
 
     const renameMut = useMutation({
-        mutationFn: ({ id, name }: { id: string; name: string }) => ttydApi.rename(id, name),
+        mutationFn: ({ id, name }: { id: string; name: string }) => dashboard.call(ENDPOINTS.ttydRename, { id, name }),
         onSuccess: () => {
             invalidateTmuxAndTtyd(queryClient);
         },

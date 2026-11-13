@@ -6,8 +6,8 @@ import {
     readManifest,
     writeManifest,
 } from "@app/claude/lib/desktop";
-import * as p from "@clack/prompts";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -77,6 +77,7 @@ export function registerDesktopCommand(program: Command): void {
                             };
                         }),
                         required: false,
+                        cancel: "back",
                     })
                 );
 

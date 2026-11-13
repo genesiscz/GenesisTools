@@ -22,21 +22,16 @@
  *   tools azure-devops testplan <list|show|search|create|update|delete|suite|points|outcome|case> [options]
  */
 
-import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
+import { authGuide, isAuthError, isSslError, SSL_PROXY_GUIDE } from "@app/azure-devops/cli.utils";
 import { azLoginSuggestionBlock } from "@app/azure-devops/lib/az-cli.utils";
+import type { ToolErrorReport } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
-import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
+import { clackBackend } from "@genesiscz/utils/prompts/p/clack-backend";
 
 // Use inquirer backend for this tool
-p.setBackend(inquirerBackend);
-
-import { Command } from "commander";
-
-// Handle --readme flag early (before Commander parses)
-handleReadmeFlag(import.meta.url);
+p.setBackend(clackBackend);
 
 // Import command registration functions
 import { registerAncestorsCommand } from "@app/azure-devops/commands/ancestors";
@@ -57,6 +52,7 @@ import { registerWorkitemCacheCommand } from "@app/azure-devops/commands/workite
 import { registerWorkitemCreateCommand } from "@app/azure-devops/commands/workitem-create";
 import { registerWorkItemUpdateCommand } from "@app/azure-devops/commands/workitem-update";
 import { runTool } from "@genesiscz/utils/cli";
+import { Command } from "commander";
 
 // Wire up cross-command dependencies
 // Query command needs to call workitem handler for --download-workitems
@@ -301,28 +297,23 @@ Documentation: https://learn.microsoft.com/en-us/azure/devops/cli/?view=azure-de
 `);
 }
 
-async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "azure-devops" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+/** The SSL/proxy and login guides, which used to print from this entry's own catch before runTool reported errors. */
+function formatAzureDevOpsError(error: unknown): ToolErrorReport | undefined {
+    const message = error instanceof Error ? error.message : String(error);
 
-        if (isSslError(message)) {
-            exitWithSslGuide(error);
-        }
-
-        if (isAuthError(message)) {
-            exitWithAuthGuide(error);
-        }
-
-        logger.error(message);
-
-        if (error instanceof Error && error.stack) {
-            logger.debug(error.stack);
-        }
-
-        process.exit(1);
+    if (isSslError(message)) {
+        return { message: SSL_PROXY_GUIDE };
     }
+
+    if (isAuthError(message)) {
+        return { message: `ERROR: ${message}\n${authGuide()}` };
+    }
+
+    return undefined;
+}
+
+async function main(): Promise<void> {
+    await runTool(program, { tool: "azure-devops", formatError: formatAzureDevOpsError });
 }
 
 main().catch((err) => {

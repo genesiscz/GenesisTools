@@ -385,7 +385,9 @@ export async function ensureWorktreeForBranch(options: WorktreeCreateOptions): P
 
     if (!localExists.success && !options.startPoint) {
         // Try to fetch from origin (only when no explicit startPoint was given)
-        const fetchResult = await g.exec(["fetch", "origin", branch]);
+        const fetchResult = await g.exec(["fetch", "origin", branch], {
+            timeout: { ms: 600_000, reason: "a fetch of a branch from origin goes over the network" },
+        });
 
         if (fetchResult.success) {
             startPoint = `origin/${branch}`;
@@ -395,7 +397,12 @@ export async function ensureWorktreeForBranch(options: WorktreeCreateOptions): P
     }
 
     // Create the worktree
-    const createResult = await g.exec(["worktree", "add", worktreePath, startPoint]);
+    const createResult = await g.exec(["worktree", "add", worktreePath, startPoint], {
+        timeout: {
+            ms: 600_000,
+            reason: "a new worktree checks out the whole tree and runs the post-checkout hook, which installs",
+        },
+    });
 
     if (!createResult.success) {
         throw new Error(`Failed to create worktree: ${createResult.stderr}`);

@@ -1,7 +1,7 @@
-import type { NetStatus } from "@app/dev-dashboard/lib/net/types";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { useQuery } from "@tanstack/react-query";
 import { NetworkStatusCard } from "@/components/network-status/NetworkStatusCard";
-import { fetchJson } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 /**
  * Network & Transport Status route — an at-a-glance HEALTH panel for the active link (latency +
@@ -11,7 +11,7 @@ import { fetchJson } from "@/lib/api";
 export function NetworkStatusRoute() {
     const { data, isLoading, isError, error } = useQuery({
         queryKey: ["net", "status"],
-        queryFn: () => fetchJson<NetStatus>("/api/net/status"),
+        queryFn: () => dashboard.call(ENDPOINTS.netStatus, {}),
         refetchInterval: 8000,
     });
 

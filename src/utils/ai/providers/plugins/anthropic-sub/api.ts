@@ -1,4 +1,4 @@
-import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { UpstreamStatusError } from "@genesiscz/utils/ai/http-auth";
 import type { AbsentLimit } from "@genesiscz/utils/ai/providers/account-features";
 import { recordUsageEvent } from "@genesiscz/utils/ai/usage/events/record";
@@ -14,8 +14,8 @@ import {
 } from "@genesiscz/utils/ai/usage-poll/poll-gate";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import { longLivedTokenUsable } from "@genesiscz/utils/claude/token-verify";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
+import { resolveSecret } from "@genesiscz/utils/security";
 import { type ProbeBudget, ProbeBudgetExceeded } from "./probe-budget";
 import { fableReadingDue, fetchUsageFromHeaders, isHeaderReading, mergeHeaderReading } from "./quota-headers";
 import {
@@ -303,7 +303,7 @@ export interface FetchAllAccountsOptions {
 }
 
 /** The account fields every result row carries, fetched or not. */
-function identityOf(account: AIAccountEntry) {
+function identityOf(account: AccountEntry) {
     return {
         accountName: account.name,
         label: account.label,
@@ -312,17 +312,16 @@ function identityOf(account: AIAccountEntry) {
         subscriptionPlan: account.subscriptionPlan,
         subscriptionStatus: account.subscriptionStatus,
         planContradictedAt: account.planContradictedAt,
-        refreshExpiresAt: account.tokens.refreshExpiresAt,
+        refreshExpiresAt: account.credentials.refreshExpiresAt,
     };
 }
 
-function planReason(account: AIAccountEntry): string {
-    return `plan is ${account.subscriptionPlan ?? "unknown"} (${account.subscriptionStatus ?? "unknown"}) — Claude Code needs a paid subscription`;
+function planReason(account: AccountEntry): string {
+    return `plan is ${account.subscriptionPlan ?? "unknown"} (${account.subscriptionStatus ?? "unknown"}). Claude Code needs a paid subscription`;
 }
 
 export interface PollAccountArgs {
-    account: AIAccountEntry;
-    config: AIConfig;
+    account: AccountEntry;
     gate: PollGate;
     now: number;
     signal?: AbortSignal;
@@ -353,14 +352,20 @@ export interface PollAccountArgs {
 export const HEADER_READING_INTERVAL_MS = 2 * 60_000 - 5_000;
 
 /** The long-lived token when a header reading may stand in for the usage endpoint. Never in a probe. */
-function headerReadingToken(account: AIAccountEntry, probe: boolean | undefined): string | undefined {
-    const tokens = account.tokens;
-
-    if (probe || !tokens.longLivedToken || !longLivedTokenUsable(tokens)) {
+async function headerReadingToken(account: AccountEntry, probe: boolean | undefined): Promise<string | undefined> {
+    if (probe || !account.credentials.longLivedToken) {
         return undefined;
     }
 
-    return tokens.longLivedToken;
+    // Resolved here, where the header reading spends it.
+    const longLivedToken = await resolveSecret(account.credentials.longLivedToken);
+    const tokens = { longLivedToken, longLivedTokenExpiresAt: account.credentials.longLivedTokenExpiresAt };
+
+    if (!longLivedToken || !longLivedTokenUsable(tokens)) {
+        return undefined;
+    }
+
+    return longLivedToken;
 }
 
 /**
@@ -375,7 +380,7 @@ function headerReadingToken(account: AIAccountEntry, probe: boolean | undefined)
  *     is the only way a renewed subscription is ever noticed.
  */
 export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> {
-    const { account, config, gate, now, signal, probe } = args;
+    const { account, gate, now, signal, probe } = args;
     const tag = `[usage:${account.name}]`;
 
     const blocked = blockedEntry(gate, account.name, now);
@@ -389,7 +394,7 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
     // still prove the org is alive, which retires the contradicted reading. Gated
     // on `anchorDue` so this costs one probe per recheck window, not one per poll.
     if (anchorDue && !planAllowsClaudeCode(account)) {
-        await revalidateStalePlan(config, account, now);
+        await revalidateStalePlan(account, now);
     }
 
     const planDead = !planAllowsClaudeCode(account);
@@ -418,7 +423,7 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
     // window no longer holds the reading back: waiting kept accounts stale for hours while in use.
     // An idle account with a 5-hour limit still gets the 5h headers, so since 2026-10-31 a reading
     // without them means the account has no 5-hour limit (`five_hour: null`, `fiveHourState`).
-    const longLived = headerReadingToken(account, probe);
+    const longLived = await headerReadingToken(account, probe);
     const viaHeaders = async (why: string, extra: { oauthFailure?: string } = {}): Promise<AccountUsage> => {
         const readAt = args.previousFetchedAt;
         const reused =
@@ -467,10 +472,7 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
     let resolved: Awaited<ReturnType<typeof resolveAccountToken>>;
 
     try {
-        resolved = await resolveAccountToken(account.name, {
-            staleAccessToken: account.tokens.accessToken,
-            ...(probe ? { noRefresh: true } : {}),
-        });
+        resolved = await resolveAccountToken(account.id, probe ? { noRefresh: true } : undefined);
     } catch (err) {
         // No OAuth pair, or its refresh grant died: the long-lived token still reads the windows.
         if (!longLived) {
@@ -490,7 +492,7 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
     if (anchorDue) {
         // Mutates `account` in place on success, so the plan check below sees
         // the fresh reading — this is the recovery path for a renewed plan.
-        await refreshSubscriptionProfile(config, account, token, now);
+        await refreshSubscriptionProfile(account, token, now);
     }
 
     if (!planAllowsClaudeCode(account)) {
@@ -520,7 +522,7 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
         let refreshed: boolean;
 
         try {
-            ({ token: freshToken, refreshed } = await resolveAccountToken(account.name, {
+            ({ token: freshToken, refreshed } = await resolveAccountToken(account.id, {
                 staleAccessToken: token,
                 forceRefresh: true,
             }));
@@ -563,9 +565,8 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
 
 export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}): Promise<AccountUsage[]> {
     const { accountFilter, signal } = opts;
-    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-    const config = await AIConfig.load();
-    let accounts = config.getAccountsByProvider("anthropic-sub");
+    const { AiConfigStore } = await import("@genesiscz/utils/ai/config/AiConfigStore");
+    let accounts = (await AiConfigStore.load()).accounts({ provider: "anthropic-sub" });
 
     if (typeof accountFilter === "string") {
         accounts = accounts.filter((a) => a.name === accountFilter);
@@ -577,10 +578,12 @@ export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}):
     // Logged-out accounts (no OAuth pair — e.g. after `tools claude logout`)
     // are invisible to polling: they can't fetch usage and would only render
     // permanent error rows.
-    const loggedOut = accounts.filter((a) => !a.tokens.accessToken && !a.tokens.refreshToken);
+    // Presence of the credential is metadata: no vault read decides who is logged out.
+    const loggedIn = (a: AccountEntry) => Boolean(a.credentials.accessToken || a.credentials.refreshToken);
+    const loggedOut = accounts.filter((a) => !loggedIn(a));
     if (loggedOut.length > 0) {
         logger.debug(`[usage] skipping logged-out account(s): ${loggedOut.map((a) => a.name).join(", ")}`);
-        accounts = accounts.filter((a) => a.tokens.accessToken || a.tokens.refreshToken);
+        accounts = accounts.filter(loggedIn);
     }
 
     if (accounts.length === 0) {
@@ -604,9 +607,7 @@ export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}):
     let gateDirty = Object.keys(gate).length !== Object.keys(storedGate).length;
 
     const results = await Promise.allSettled(
-        accounts.map((account: AIAccountEntry) =>
-            pollAccount({ account, config, gate, now, signal, orgBlocked: opts.orgBlocked })
-        )
+        accounts.map((account) => pollAccount({ account, gate, now, signal, orgBlocked: opts.orgBlocked }))
     );
 
     const gateSuccesses: string[] = [];

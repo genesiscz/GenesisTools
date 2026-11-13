@@ -1,5 +1,5 @@
 import type { CatalogOptions } from "@app/ai-proxy/lib/providers/definition";
-import { providerKey } from "@app/ai-proxy/lib/providers/registry";
+import { providerKey } from "@app/ai-proxy/lib/providers/provider-key";
 import type { AiProxyAccountConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import {
     ANTHROPIC_SUB_ALIASES,

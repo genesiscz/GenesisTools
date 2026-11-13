@@ -48,7 +48,7 @@ export function resolveRenameTo(opts: { positional?: string; toFlag?: string; in
  */
 export function partialRenameAdvice(oldName: string, newName: string): string[] {
     return [
-        `Re-running the rename cannot fix these: AIConfig no longer knows "${oldName}".`,
+        `Re-running the rename cannot fix these: the AI config no longer knows "${oldName}".`,
         "Rename back to get one consistent set of names again, then retry once the store is writable:",
         `  ${toolCommand("claude config rename")} ${newName} --to ${oldName}`,
     ];
@@ -70,9 +70,23 @@ export type RenameStepFailure = { step: RenameStep; error: string };
 export type RenameClaudeAccountResult = { historyRows: number; failed: RenameStepFailure[] };
 
 async function defaultRenameAiAccount(oldName: string, newName: string): Promise<void> {
-    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-    const config = await AIConfig.load();
-    await config.renameAccount(oldName, newName);
+    const { AiConfigStore } = await import("@genesiscz/utils/ai/config/AiConfigStore");
+    const { editAccount } = await import("@genesiscz/utils/ai/config/account-ops");
+    const store = await AiConfigStore.load();
+    const account = store.account(oldName);
+
+    if (!account) {
+        throw new Error(`Account "${oldName}" not found`);
+    }
+
+    // A name is a handle people type, so two that differ only in case would be one too many.
+    const lower = newName.toLowerCase();
+    if (store.accounts().some((entry) => entry.id !== account.id && entry.name.toLowerCase() === lower)) {
+        throw new Error(`Account "${newName}" already exists`);
+    }
+
+    // Defaults point at the immutable id, so the rename is one field and nothing else moves.
+    await editAccount(account.id, { rename: newName });
 }
 
 async function defaultRewriteWarmup(oldName: string, newName: string): Promise<void> {
@@ -120,7 +134,7 @@ async function defaultInvalidateUsageCache(): Promise<void> {
 }
 
 /**
- * Rename a Claude account across AIConfig, warmup lists, usage history, poll
+ * Rename a Claude account across the AI config, warmup lists, usage history, poll
  * gate, invalid-grant cooldown, and the shared usage cache.
  */
 export async function renameClaudeAccount(
@@ -135,12 +149,12 @@ export async function renameClaudeAccount(
     const rekeyInvalidGrant = deps.rekeyInvalidGrant ?? defaultRekeyInvalidGrant;
     const invalidateUsageCache = deps.invalidateUsageCache ?? defaultInvalidateUsageCache;
 
-    // AIConfig first: it is the identity of record, and the only step whose
+    // The AI config first: it is the identity of record, and the only step whose
     // failure means "nothing happened".
     await renameAiAccount(oldName, newName);
 
     // Every later store is secondary, history included. Running them with no
-    // handler meant one throw left the account renamed in AIConfig while warmup
+    // handler meant one throw left the account renamed in the AI config while warmup
     // lists, the poll gate and the cooldown still held oldName. History used to
     // sit outside this loop, so a locked SQLite file skipped all four remaining
     // stores AND reported nothing (PR #332 review).

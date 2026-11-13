@@ -300,6 +300,10 @@ options object, so `hub.prs()` and `hub.pr("owner/repo#42")` are refused.
 
 ### Writing a toolset
 
+Each toolset has one row in the table: its one-line summary, its global name when that differs from the id, and a
+`load()` that imports the toolset only when a run names it (a test pins the row to the loaded toolset's `api`). So
+`--help`, id parsing and the MCP start line load no toolset, and a toolset whose module throws at import fails alone.
+
 A toolset is a `ReplToolset` subclass (`@genesiscz/utils/repl/toolset`) with an `ApiDescriptor`
 (`@genesiscz/utils/api-descriptor`: per method a name, zod params and result, one line and an effect of `read`,
 `reversible` or `destructive`) and a `bootstrap(ctx)` that returns its globals. Each toolset lives in one file and

@@ -3,11 +3,8 @@ import { join } from "node:path";
 import { type CommandRunner, isLocalRemoteUrl } from "@genesiscz/utils/git/origins";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import { hubPr, hubPrs, missingCommits, PrRefError } from "./prs";
-
-setupStorageSandbox();
 
 const repos: TestRepo[] = [];
 

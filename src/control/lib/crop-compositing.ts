@@ -8,8 +8,9 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { type CanvasModule, loadCanvas } from "@genesiscz/utils/image/canvas";
 import { canvasFont } from "@genesiscz/utils/image/canvas-fonts";
-import { type Canvas, createCanvas, type Image, loadImage } from "@napi-rs/canvas";
+import type { Canvas, Image } from "@napi-rs/canvas";
 import { type CropOut, type CropSpec, type FrameInfo, parseRegion } from "./capture-plan";
 
 const TILE_BG = "#181818";
@@ -23,7 +24,12 @@ interface TileOut extends CropOut {
     canvas?: Canvas;
 }
 
-function buildTile(frame: Image, region: { x: number; y: number; w: number; h: number }, label: string): Canvas {
+function buildTile(
+    createCanvas: CanvasModule["createCanvas"],
+    frame: Image,
+    region: { x: number; y: number; w: number; h: number },
+    label: string
+): Canvas {
     // magick -crop clips to the frame; empty intersections are the caller's error
     const x = Math.max(0, Math.round(region.x));
     const y = Math.max(0, Math.round(region.y));
@@ -50,6 +56,7 @@ function buildTile(frame: Image, region: { x: number; y: number; w: number; h: n
 
 /** Vision-sized copy: only ever shrinks the longest side to REVIEW_MAX; copies as-is otherwise. */
 async function writeReviewCopy(source: Canvas, reviewPath: string): Promise<void> {
+    const { createCanvas } = await loadCanvas();
     const longest = Math.max(source.width, source.height);
     if (longest > REVIEW_MAX) {
         const scale = REVIEW_MAX / longest;
@@ -69,6 +76,7 @@ export async function applyCrops(
     frames: FrameInfo[],
     specs: CropSpec[]
 ): Promise<{ crops: CropOut[]; strip: string | null; stripReview: string | null }> {
+    const { createCanvas, loadImage } = await loadCanvas();
     const tiles: TileOut[] = [];
     let strip: string | null = null;
     let stripReview: string | null = null;
@@ -111,7 +119,7 @@ export async function applyCrops(
                     frameImages.set(f.path, frame);
                 }
 
-                const tile = buildTile(frame, region, label);
+                const tile = buildTile(createCanvas, frame, region, label);
                 await Bun.write(outPath, tile.toBuffer("image/png"));
                 tiles.push({ frame: f.file, timestampMs: f.timestampMs, label, path: outPath, ok: true, canvas: tile });
             } catch (e) {

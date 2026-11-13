@@ -1,43 +1,14 @@
-import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
 import { exportMonth, type MonthExport } from "@app/azure-devops/lib/timelog/export";
-import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
 import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
-import type { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
 import {
     getTimelogWorkItems,
     type TimelogWorkItemGroup,
     type TimelogWorkItemsResult,
 } from "@app/clarity/lib/timelog-workitems";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { requireAdoTimeLogConfig } from "@app/clarity/ui/src/server/ado-config";
 
 export type { TimelogWorkItemGroup, TimelogWorkItemsResult };
-
-function requireAdoConfig(): AzureConfigWithTimeLog {
-    const adoConfig = loadAdoConfig() as AzureConfigWithTimeLog | null;
-
-    if (!adoConfig) {
-        throw new Error(`Azure DevOps not configured. Run: ${toolCommand("azure-devops configure")} <url>`);
-    }
-
-    if (!adoConfig.timelog?.functionsKey) {
-        throw new Error(`TimeLog not configured. Run: ${toolCommand("azure-devops timelog configure")}`);
-    }
-
-    if (!adoConfig.timelog.defaultUser) {
-        throw new Error(`TimeLog user not configured. Run: ${toolCommand("azure-devops timelog configure")}`);
-    }
-
-    return adoConfig;
-}
-
-function createTimeLogApi(adoConfig: AzureConfigWithTimeLog): TimeLogApi {
-    if (!adoConfig.orgId) {
-        throw new Error(`Organization ID missing from config. Re-run: ${toolCommand("azure-devops configure")} <url>`);
-    }
-
-    return getTimeLogApi({ config: adoConfig });
-}
 
 async function enrichExportEntries(
     result: MonthExport,
@@ -79,9 +50,8 @@ async function enrichExportEntries(
 }
 
 export async function getExportData(month: number, year: number, options?: { force?: boolean }): Promise<MonthExport> {
-    const adoConfig = requireAdoConfig();
-    const adoApi = createTimeLogApi(adoConfig);
-    const result = await exportMonth(adoApi, month, year, adoConfig.timelog!.defaultUser!.userId);
+    const { config: adoConfig, api: adoApi } = requireAdoTimeLogConfig();
+    const result = await exportMonth(adoApi, month, year, adoApi.user.userId);
 
     await enrichExportEntries(result, adoConfig, options);
 
@@ -89,7 +59,6 @@ export async function getExportData(month: number, year: number, options?: { for
 }
 
 export async function getTimelogEntries(month: number, year: number): Promise<TimelogWorkItemsResult> {
-    const adoConfig = requireAdoConfig();
-    const adoApi = createTimeLogApi(adoConfig);
-    return getTimelogWorkItems(adoApi, adoConfig, month, year, adoConfig.timelog!.defaultUser!.userId);
+    const { config: adoConfig, api: adoApi } = requireAdoTimeLogConfig();
+    return getTimelogWorkItems(adoApi, adoConfig, month, year, adoApi.user.userId);
 }

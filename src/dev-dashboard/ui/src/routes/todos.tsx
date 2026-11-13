@@ -1,6 +1,7 @@
-import type { TodoGroupBy, TodoStatusFilter, TodosResult } from "@app/dev-dashboard/lib/todos/types";
+import { DashboardHttpError } from "@app/dev-dashboard/contract/client";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
+import type { TodoGroupBy, TodoPriority, TodoStatusFilter, TodosResult } from "@app/dev-dashboard/lib/todos/types";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -11,7 +12,7 @@ import { GroupBySelect } from "@/components/todos/GroupBySelect";
 import { StatusFilter } from "@/components/todos/StatusFilter";
 import { TodoDeleteDialog } from "@/components/todos/TodoDeleteDialog";
 import { TodoList } from "@/components/todos/TodoList";
-import { fetchJson } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 const DEFAULT_LIST = "GenesisTools";
 
@@ -19,28 +20,26 @@ class PermissionError extends Error {
     readonly kind = "permission" as const;
 }
 
+const TODO_PRIORITIES: readonly TodoPriority[] = ["none", "low", "medium", "high"];
+
+/** The form's priority select gives a string; only a priority Reminders knows is sent. */
+function todoPriority(value: string | undefined): TodoPriority | undefined {
+    return TODO_PRIORITIES.find((priority) => priority === value);
+}
+
 async function fetchTodos(listIds: string[], includeCompleted: boolean): Promise<TodosResult> {
-    const params = new URLSearchParams();
+    try {
+        return await dashboard.call(ENDPOINTS.todos, {
+            listIds: listIds.length > 0 ? listIds.join(",") : undefined,
+            includeCompleted: includeCompleted ? "true" : undefined,
+        });
+    } catch (err) {
+        if (err instanceof DashboardHttpError && err.status === 503) {
+            throw new PermissionError("Reminders permission needed");
+        }
 
-    if (listIds.length > 0) {
-        params.set("listIds", listIds.join(","));
+        throw err instanceof DashboardHttpError ? new Error(`Failed to load todos: ${err.status}`) : err;
     }
-
-    if (includeCompleted) {
-        params.set("includeCompleted", "true");
-    }
-
-    const res = await fetch(`/api/todos?${params.toString()}`);
-
-    if (res.status === 503) {
-        throw new PermissionError("Reminders permission needed");
-    }
-
-    if (!res.ok) {
-        throw new Error(`Failed to load todos: ${res.status}`);
-    }
-
-    return SafeJSON.parse(await res.text(), { strict: true }) as TodosResult;
 }
 
 function isPermissionError(error: unknown): error is PermissionError {
@@ -107,31 +106,21 @@ export function TodosRoute() {
 
     const addMutation = useMutation({
         mutationFn: (input: { title: string; due?: string; priority?: string }) =>
-            fetchJson("/api/todos", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: SafeJSON.stringify({ ...input, listName: addTargetList }),
+            dashboard.call(ENDPOINTS.todoAdd, {
+                ...input,
+                priority: todoPriority(input.priority),
+                listName: addTargetList,
             }),
         onSuccess: invalidate,
     });
 
     const completeMutation = useMutation({
-        mutationFn: (reminderId: string) =>
-            fetchJson("/api/todos/complete", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: SafeJSON.stringify({ reminderId }),
-            }),
+        mutationFn: (reminderId: string) => dashboard.call(ENDPOINTS.todoComplete, { reminderId }),
         onSuccess: invalidate,
     });
 
     const deleteMutation = useMutation({
-        mutationFn: (reminderId: string) =>
-            fetchJson("/api/todos", {
-                method: "DELETE",
-                headers: { "Content-Type": "application/json" },
-                body: SafeJSON.stringify({ reminderId }),
-            }),
+        mutationFn: (reminderId: string) => dashboard.call(ENDPOINTS.todoDelete, { reminderId }),
         onSuccess: () => {
             setDeleteTargetId(null);
             invalidate();
@@ -139,12 +128,7 @@ export function TodosRoute() {
     });
 
     const editMutation = useMutation({
-        mutationFn: (input: EditTodoInput) =>
-            fetchJson("/api/todos", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: SafeJSON.stringify(input),
-            }),
+        mutationFn: (input: EditTodoInput) => dashboard.call(ENDPOINTS.todoUpdate, input),
         onSuccess: () => {
             setEditTargetId(null);
             invalidate();
@@ -152,10 +136,7 @@ export function TodosRoute() {
     });
 
     const requestAccessMutation = useMutation({
-        mutationFn: () =>
-            fetchJson<{ authorized: boolean; status: string }>("/api/todos/request-access", {
-                method: "POST",
-            }),
+        mutationFn: () => dashboard.call(ENDPOINTS.todosRequestAccess, {}),
         onSuccess: (result) => {
             if (result.authorized) {
                 invalidate();

@@ -1,3 +1,5 @@
+import type { PendingAnswerResultDto } from "@app/dev-dashboard/contract/endpoint-table";
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { renderQaQuestionHtml } from "@app/dev-dashboard/lib/qa-render";
 import type { AskAnswer, AskForm, AskItem } from "@app/question/lib/pending/types";
 import { useMutation } from "@tanstack/react-query";
@@ -10,7 +12,7 @@ import { truncateMiddle } from "@/components/handoff/handoff-format";
 import { QaRecencyTime } from "@/components/QaRecencyTime";
 import { QaSectionHeading } from "@/components/QaSectionHeading";
 import { QaSessionActions } from "@/components/QaSessionActions";
-import { type AnswerResponse, qaPendingApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 type Draft = Record<string, { choices: string[]; freeText: string; fileTags: string }>;
 
@@ -81,23 +83,29 @@ function ChoiceRow({
  */
 export function QaPendingCard({ form, pinned }: { form: AskForm; pinned?: boolean }) {
     const [draft, setDraft] = useState<Draft>(() => emptyDraft(form));
-    const [failure, setFailure] = useState<AnswerResponse | null>(null);
+    const [failure, setFailure] = useState<PendingAnswerResultDto | null>(null);
 
-    // Both calls can REJECT as well as resolve unhappily: `qaPendingApi.cancel` throws on a
+    // Both calls can REJECT as well as resolve unhappily: the cancel throws on a
     // 404, which is exactly what someone answering the form elsewhere first produces. With no
     // onError the button simply went quiet and the card sat there giving no reason.
-    const asFailure = (err: unknown): AnswerResponse => ({
+    const asFailure = (err: unknown): PendingAnswerResultDto => ({
         ok: false,
         code: "not_found",
         error: err instanceof Error ? err.message : String(err),
     });
     const submit = useMutation({
-        mutationFn: () => qaPendingApi.answer(form.id, draftToAnswers(form, draft)),
+        // A refusal (an incomplete form is a 400 with `missing`) carries the answer shape, so the card renders it.
+        mutationFn: () =>
+            dashboard.call(
+                ENDPOINTS.qaPendingAnswer,
+                { id: form.id, answers: draftToAnswers(form, draft) },
+                { answerOnRefusal: true }
+            ),
         onSuccess: (result) => setFailure(result.ok ? null : result),
         onError: (err: unknown) => setFailure(asFailure(err)),
     });
     const cancel = useMutation({
-        mutationFn: () => qaPendingApi.cancel(form.id),
+        mutationFn: () => dashboard.call(ENDPOINTS.qaPendingCancel, { id: form.id }),
         onError: (err: unknown) => setFailure(asFailure(err)),
     });
 

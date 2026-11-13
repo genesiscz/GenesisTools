@@ -5,7 +5,7 @@ import {
     aiConfigDefaultSetCommand,
 } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
-import { byId, byProvider, catalogKeysFor, providerNameFor } from "../catalog";
+import { byId, catalogKeysFor, defaultModelIdFor, providerNameFor } from "../catalog";
 import { AiConfigStore } from "../config/AiConfigStore";
 import { ephemeralEnvAccounts } from "../config/migrations/2026-08-seedEnvAccounts";
 import type { AccountEntry, AiConfigData, TaskDefault, TaskName } from "../config/schema";
@@ -364,18 +364,6 @@ function defaultAccountRef(cfg: AiConfigData, task: TaskName): { id: string; via
 
         if (ref) {
             return { id: ref.slice("@account/".length), via };
-        }
-    }
-
-    return undefined;
-}
-
-function defaultModelIdFor(providerId: string, capability: Capability): string | undefined {
-    for (const key of catalogKeysFor(providerId)) {
-        const entry = byProvider(key).find((model) => model.capabilities.has(capability) && !model.flags?.hidden);
-
-        if (entry) {
-            return entry.id;
         }
     }
 

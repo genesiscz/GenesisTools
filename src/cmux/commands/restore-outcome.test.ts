@@ -10,9 +10,9 @@ import * as restartLib from "@app/cmux/lib/restore-after-restart";
 import { profileJournalJoin } from "@app/cmux/lib/restore-after-restart";
 import { ProfileStore } from "@app/cmux/lib/store";
 import { PROFILE_VERSION, type Profile, type Surface } from "@app/cmux/lib/types";
-import * as prompts from "@clack/prompts";
 import * as health from "@genesiscz/utils/cmux/lib/health";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as prompts from "@genesiscz/utils/prompts/p";
 import { Command } from "commander";
 
 const originalExitCode = process.exitCode;

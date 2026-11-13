@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { TelegramToolConfig } from "../lib/TelegramToolConfig";
@@ -39,6 +39,7 @@ export function registerContactsCommand(program: Command): void {
                     { value: "done" as const, label: "Done" },
                     { value: "remove" as const, label: "Remove a contact" },
                 ],
+                cancel: "back",
             });
 
             if (p.isCancel(action) || action === "done") {
@@ -53,6 +54,7 @@ export function registerContactsCommand(program: Command): void {
                         value: c.userId,
                         label: `${c.displayName} ${c.username ? `(@${c.username})` : ""}`,
                     })),
+                    cancel: "back",
                 });
 
                 if (p.isCancel(toRemove)) {

@@ -1,23 +1,11 @@
+import { type Api, createApi } from "@genesiscz/utils/telegram-bot/lib/api";
 import type { TelegramBotConfig } from "@genesiscz/utils/telegram-bot/lib/types";
-import { Api } from "grammy";
 import { resolveApiRoot } from "./settings";
 
-export function createTelegramApi(config: Pick<TelegramBotConfig, "botToken" | "apiRoot">): Api {
-    return new Api(config.botToken, { apiRoot: resolveApiRoot(config.apiRoot) });
-}
-
-const MASK = "***";
-
 /**
- * Text that names the bot token with the token hidden. The Bot API puts the token in the request path
- * (`/bot<token>/<method>`), so a failed request can carry it into an error message.
+ * The bot's short-call client: the shared `createApi` (its request timeout), with a bad `apiRoot` reported as a
+ * webhook settings error.
  */
-export function maskToken(text: string, token: string): string {
-    const withoutToken = token ? text.split(token).join(MASK) : text;
-
-    return withoutToken.replace(/\bbot\d+:[A-Za-z0-9_-]+/g, `bot${MASK}`).replace(/\b\d{5,}:[A-Za-z0-9_-]{30,}/g, MASK);
-}
-
-export function describeApiError(err: unknown, token: string): string {
-    return maskToken(err instanceof Error ? err.message : String(err), token);
+export function createTelegramApi(config: Pick<TelegramBotConfig, "botToken" | "apiRoot">): Api {
+    return createApi(config.botToken, resolveApiRoot(config.apiRoot));
 }

@@ -839,7 +839,7 @@ describe("window", () => {
     test("an app without the Meetings part gets it built before the window opens, or the command says how", async () => {
         const calls: string[] = [];
         const deps = (parts: string[]) => ({
-            status: () => ({ built: true, parts }),
+            status: () => ({ built: true, stale: false, parts }),
             build: async () => {
                 calls.push("build");
             },

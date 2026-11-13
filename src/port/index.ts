@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
-import * as p from "@clack/prompts";
 import { enhanceHelp, isInteractive, runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Command } from "commander";
 import pc from "picocolors";
 import {
@@ -132,6 +132,7 @@ async function maybeKillProcessesForPort(
                 message: `Select what to kill ${pc.dim("(space to toggle, enter to confirm)")}`,
                 options: buildSelectionOptions(processes),
                 required: true,
+                cancel: "back",
             })
         );
 
@@ -151,6 +152,7 @@ async function maybeKillProcessesForPort(
         const confirmed = await withCancel(
             p.confirm({
                 message: `Kill ${pidsToKill.length} process(es)? ${pc.dim(labels.join(", "))}`,
+                cancel: "back",
             })
         );
 
@@ -251,6 +253,7 @@ async function cleanPorts(options: { yes?: boolean }): Promise<void> {
         const confirmed = await withCancel(
             p.confirm({
                 message: `Kill ${orphaned.length} orphaned/zombie listener(s)?`,
+                cancel: "back",
             })
         );
 
@@ -342,13 +345,7 @@ program
 enhanceHelp(program);
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "port" });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        p.log.error(message);
-        process.exit(1);
-    }
+    await runTool(program, { tool: "port" });
 }
 
 main();

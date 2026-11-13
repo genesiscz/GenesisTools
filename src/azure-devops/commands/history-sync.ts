@@ -17,9 +17,9 @@ import {
 } from "@app/azure-devops/cache";
 import { buildHistoryFromRevisions, buildWorkItemHistory } from "@app/azure-devops/history";
 import { requireConfig } from "@app/azure-devops/utils";
-import * as p from "@clack/prompts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 interface SyncOptions {

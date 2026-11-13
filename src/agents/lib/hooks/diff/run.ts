@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { changeLogPath } from "@genesiscz/utils/agents/change-log";
 import { env } from "@genesiscz/utils/env";
 import { isDatalessFile, namesCloudRoot } from "@genesiscz/utils/fs/cloud-placeholder";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
@@ -32,7 +33,6 @@ import {
     readCapped,
     recordFileToolEdit,
     recordScriptedEdits,
-    sessionChangesPath,
 } from "../../changes/log";
 import { gitObjectSink } from "../../changes/objects";
 import { type DiffConfig, diffFor, type HooksConfig } from "../config";
@@ -2205,7 +2205,7 @@ function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], { since
             return;
         }
 
-        const file = sessionChangesPath(payload.sessionId);
+        const file = changeLogPath(payload.sessionId);
         const known = new Set(captures.map((item) => item.path));
         const sink = gitObjectSink(undefined, (line) => hookDiag(line));
         const event = {
@@ -2266,7 +2266,7 @@ export function recordFileToolChange(payload: HookPayload): void {
         }
 
         recordFileToolEdit(
-            sessionChangesPath(payload.sessionId),
+            changeLogPath(payload.sessionId),
             {
                 provider: payload.harness,
                 session: payload.sessionId,

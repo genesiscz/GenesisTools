@@ -1,0 +1,286 @@
+/**
+ * A decision's options as every reader shows them. Some agents post bare letters (`options: ["a", "b", "c"]`) and write
+ * each option's words only in the prompt, as "a) …" lines; a button that reads "a) a" names nothing (decision 31 of
+ * 2026-11-01: the widget drew "a) a", "b) b", and the inbox of every session "a", "b", "c"). One rule, used where a
+ * decision is saved (`question_post`) and by every reader (the hub's Inbox, the widget snapshot, the CLI and the
+ * delivered answer), so a row saved before the fix reads the same as a new one.
+ */
+
+/** One "a) …" line of a prompt, with the indented lines under it that continue it. */
+interface OptionLine {
+    letter: string;
+    text: string;
+    /** The line's index in the prompt, and the index after its last continuation line. */
+    start: number;
+    end: number;
+}
+
+/**
+ * "a) text", "a. text", "a: text", "(a) text", "**a)** text", "**a) text**", and each of them as a list item ("- a) text").
+ * The letter is read case-insensitively; the text is the rest of the line.
+ */
+const OPTION_LINE = /^\s*(?:[-*+]\s+)?(\*\*|__)?\(?([a-z])[).:](\*\*|__)?(?:\s+(.*))?$/i;
+
+/** An indented line under an option line, with something on it. */
+const CONTINUATION = /^(?:\t| {2,})\S/;
+
+/** The fence that opens or closes a fenced code block: three or more backticks or tildes, at any indent. */
+const FENCE = /^\s*(`{3,}|~{3,})/;
+
+/**
+ * Whether each line is part of a fenced code block, its fence lines included. An unclosed fence runs to the end, as
+ * in Markdown. A closing fence is the opening one's character, at least as long, with nothing after it.
+ */
+function fencedLines(lines: readonly string[]): boolean[] {
+    let open: string | null = null;
+
+    return lines.map((line) => {
+        const fence = FENCE.exec(line)?.[1] ?? null;
+
+        if (open === null) {
+            open = fence;
+            return fence !== null;
+        }
+
+        if (fence !== null && fence[0] === open[0] && fence.length >= open.length && line.trim() === fence) {
+            open = null;
+        }
+
+        return true;
+    });
+}
+
+function letterAt(index: number): string {
+    return String.fromCharCode(97 + index);
+}
+
+function optionLine(line: string): { letter: string; text: string } | null {
+    const match = OPTION_LINE.exec(line);
+
+    if (!match) {
+        return null;
+    }
+
+    const [, open, letter = "", close, rest = ""] = match;
+    let text = rest.trim();
+
+    // "**a) text**": the bold that opened before the letter closes at the end of the line.
+    if (open && !close && text.endsWith(open)) {
+        text = text.slice(0, -open.length).trim();
+    }
+
+    return { letter: letter.toLowerCase(), text };
+}
+
+/**
+ * The last list in the prompt that starts at "a)", each letter at its line. An earlier list (findings numbered a, b, c
+ * above the question) gives way to the later one, because the options close the question in every posted prompt.
+ * A line of prose after an option ends its list, so a later "c) …" (an example under the options) is never option c;
+ * blank lines and indented lines between the options keep the list going. A line in a fenced code block is never an
+ * option: a sample with "a) …" lines, above or below the options, keeps its letters to itself. An unindented fence
+ * ends the list as prose does; an indented one under an option continues that option.
+ */
+function lastOptionList(lines: string[]): Map<string, OptionLine> {
+    let current: Map<string, OptionLine> | null = null;
+    let last = new Map<string, OptionLine>();
+    let previous: OptionLine | null = null;
+    const fenced = fencedLines(lines);
+
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index] ?? "";
+        const found = fenced[index] ? null : optionLine(line);
+
+        if (!found) {
+            const indented = CONTINUATION.test(line);
+
+            if (previous && previous.end === index && indented) {
+                previous.text = `${previous.text}\n${line.trim()}`;
+                previous.end = index + 1;
+            } else if (!indented && line.trim()) {
+                current = null;
+                previous = null;
+            }
+
+            continue;
+        }
+
+        const entry: OptionLine = { ...found, start: index, end: index + 1 };
+
+        if (found.letter === "a") {
+            current = new Map([["a", entry]]);
+            last = current;
+            previous = entry;
+            continue;
+        }
+
+        const highest = current ? [...current.keys()].at(-1) : undefined;
+
+        if (current && highest && found.letter > highest && found.text) {
+            current.set(found.letter, entry);
+            previous = entry;
+            continue;
+        }
+
+        previous = null;
+    }
+
+    return last;
+}
+
+/** A label without the letter it may start with ("a) Keep it" is "Keep it"); "" for a bare letter. */
+function withoutLetter(label: string, letter: string): string {
+    const found = optionLine(label);
+    return found && found.letter === letter ? found.text : label.trim();
+}
+
+/**
+ * The options a recommendation names by letter: one ("b"), or several in order ("abd", "a, b, d", "a + b + d"), as a
+ * decision that takes any set of letters recommends them. Decision 12 of 2026-11-05 recommended "abd", and no button
+ * read recommended. Free text names no letter here. The letters must rise, so a word ("keep it") is never a set.
+ * GenesisKit's `WidgetOptionText.recommendedLetters` is the same rule for the widget.
+ */
+export function recommendedLetters(recommended: string | null | undefined): Set<string> {
+    const plain = (recommended ?? "").trim().toLowerCase();
+
+    if (!/^[a-z](?:[\s,+&/]*[a-z])*$/.test(plain)) {
+        return new Set();
+    }
+
+    const letters = plain.replace(/[^a-z]/g, "");
+
+    for (let index = 1; index < letters.length; index++) {
+        if (letters.charCodeAt(index) <= letters.charCodeAt(index - 1)) {
+            return new Set();
+        }
+    }
+
+    return new Set(letters);
+}
+
+/**
+ * The words of a prompt that ask for a set of the options: "Pick any set of letters", "choose several of these", "all
+ * that apply". "Pick several" counts only about the options themselves (the clause ends, goes on with "if", or names
+ * the letters, a list of letters or the options), so a yes/no question such as "Should users select multiple
+ * sessions?" is not a set.
+ */
+const ASKS_FOR_SEVERAL =
+    /\b(?:any set of (?:the )?(?:letters|options)\b|all that apply\b|several letters\b|multiple letters\b|(?:pick|choose|select|tick) (?:several|multiple|one or more|any number)(?=\s+of\s+(?:the|these|them|letters|options)\b|\s+of\s+\(?[a-z]\s*[,)+/]|\s+(?:letters|options|if)\b|\s*(?:[.:!;),\n]|$)))/i;
+
+/**
+ * Whether a decision takes any set of its options (`"ac"`) instead of one: it was posted with `multiple`
+ * (`allowMultiple`), its recommendation names two or more letters (`"abc"`, "a + b"), or its prompt asks for a set.
+ * DECISION 15 of 2026-11-07 asked "Pick any set of letters" and recommended `abc`, and every surface answered one
+ * letter per click. Every reader asks this one rule, and the apps read its result (`multiple`) from the snapshot.
+ */
+export function takesSeveral(row: {
+    multiple?: boolean;
+    recommended?: string | null;
+    prompt?: string | null;
+    options?: readonly string[];
+}): boolean {
+    if (row.options !== undefined && row.options.length < 2) {
+        return false;
+    }
+
+    // A recommendation counts only as letters of the options: "no" on a yes/no decision names n and o, not a set.
+    const recommended = [...recommendedLetters(row.recommended)];
+    const inRange =
+        row.options === undefined ||
+        recommended.every((letter) => letter.charCodeAt(0) - 97 < (row.options?.length ?? 0));
+
+    return row.multiple === true || (recommended.length > 1 && inRange) || ASKS_FOR_SEVERAL.test(row.prompt ?? "");
+}
+
+/** Whether `label` names nothing beyond its letter: "", "a", "a)", "(a)", "a.", "**a)**". */
+export function isBareOptionLabel(label: string, letter: string): boolean {
+    const plain = label
+        .replace(/\*\*|__/g, "")
+        .trim()
+        .toLowerCase();
+    return plain === "" || plain === letter || withoutLetter(plain, letter) === "";
+}
+
+/** Whether two texts are the same up to spacing. Case counts: `make CLEAN` and `make clean` name different targets. */
+function sameText(a: string, b: string): boolean {
+    const plain = (text: string) => text.replace(/\s+/g, " ").trim();
+    return plain(a) === plain(b);
+}
+
+/**
+ * The options of a decision posted with none: its prompt's last "a) …" list, when that list holds a), b) and on in
+ * order. Decision 12 of 2026-11-05 wrote "- a) Step 1: …" to "- d) …" in its prompt and passed no options, so the
+ * widget drew no buttons and said "Answer in its session" (Martin: "this incorrectly didnt show it as answer options?").
+ * One "a) …" line alone, or a list that skips a letter, is no set of options.
+ */
+function promptOptions(prompt: string): string[] {
+    const list = [...lastOptionList(prompt.split("\n")).values()];
+    const inOrder = list.every((line, index) => line.letter === letterAt(index) && line.text !== "");
+    return list.length >= 2 && inOrder ? list.map((line) => line.text) : [];
+}
+
+/**
+ * The options with each bare letter replaced by the text of its line in the prompt ("a) empty it now" makes option a
+ * "empty it now"). An option with words of its own is unchanged, and a bare letter with no line keeps its letter. No
+ * options at all: the prompt's list (`promptOptions`). For a decision only: a to-do item passes through
+ * `shownDecisionText` with its kind, and its "a) …" lines are steps of the work, never answers.
+ */
+export function decisionOptionLabels(prompt: string, options: readonly string[]): string[] {
+    if (options.length === 0) {
+        return promptOptions(prompt);
+    }
+
+    if (!options.some((option, index) => isBareOptionLabel(option, letterAt(index)))) {
+        return [...options];
+    }
+
+    const list = lastOptionList(prompt.split("\n"));
+    return options.map((option, index) => {
+        const letter = letterAt(index);
+        const line = list.get(letter);
+        return isBareOptionLabel(option, letter) && line?.text ? line.text : option;
+    });
+}
+
+/**
+ * The prompt and the options as a decision card shows them. The options are `decisionOptionLabels`. The prompt leaves
+ * out its "a) …" lines when every one of them says exactly what its option's button says, so a card does not print each
+ * option twice, once in the question and once on its button. When any line says more than its button (an agent that
+ * posted "Keep it" and wrote "a) Keep it: it saves 2 s" in the prompt), every line stays: a list with holes reads
+ * worse than a repeat. A prompt that is nothing but the options keeps them.
+ */
+export function shownDecisionText({
+    prompt,
+    options,
+    type,
+}: {
+    prompt: string;
+    options: readonly string[];
+    type?: "decision" | "todo";
+}): {
+    prompt: string;
+    options: string[];
+} {
+    // A to-do item takes no options from its prompt: its "a) …" lines stay in it.
+    const labels = type === "todo" && options.length === 0 ? [] : decisionOptionLabels(prompt, options);
+    const lines = prompt.split("\n");
+    const list = [...lastOptionList(lines).values()];
+    const repeats =
+        list.length > 0 &&
+        list.every((line) => {
+            const index = line.letter.charCodeAt(0) - 97;
+            const label = labels[index];
+            return label !== undefined && sameText(line.text, withoutLetter(label, line.letter));
+        });
+
+    if (!repeats) {
+        return { prompt, options: labels };
+    }
+
+    const dropped = new Set(list.flatMap((line) => lines.slice(line.start, line.end).map((_, at) => line.start + at)));
+    const shown = lines
+        .filter((_, index) => !dropped.has(index))
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    return { prompt: shown ? shown : prompt, options: labels };
+}

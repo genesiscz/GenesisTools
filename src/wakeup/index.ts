@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 
-import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
+import * as p from "@genesiscz/utils/prompts/p";
 import { Storage } from "@genesiscz/utils/storage";
 import { Command } from "commander";
 import { registerConfigCommand, runConfigurationMenu } from "./commands/config";
@@ -13,8 +12,6 @@ import { registerSendCommand, runSendFlow } from "./commands/send";
 import { registerServerCommand } from "./commands/server";
 import { registerWakeCommand, runWakeFlow } from "./commands/wake";
 import { readWakeupConfig } from "./config";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 const storage = new Storage("wakeup");
@@ -50,6 +47,7 @@ program.action(async () => {
             { value: "send", label: "Send raw magic packet" },
         ],
         initialValue: "wake",
+        cancel: "back",
     });
 
     if (p.isCancel(choice)) {
@@ -71,12 +69,7 @@ program.action(async () => {
 });
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "wakeup" });
-    } catch (error) {
-        p.log.error(error instanceof Error ? error.message : String(error));
-        process.exit(1);
-    }
+    await runTool(program, { tool: "wakeup" });
 }
 
 main().catch((err) => {

@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { logger } from "@genesiscz/utils/logger";
-import { kickstartLaunchd } from "./launchd";
+import { kickstartLaunchd } from "@genesiscz/utils/process/launchd-agent";
 
 describe("launchd swallowed-error logging", () => {
     test("kickstartLaunchd logs a failed launchctl kickstart -k", async () => {

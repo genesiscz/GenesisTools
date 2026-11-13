@@ -577,6 +577,28 @@ const CALLOUT_HEAD_RE = /^ {0,3}> ?\[!([A-Za-z][\w-]*)\]([-+])?[ \t]*([^\n]*)(?:
 // alias groups, optional custom titles, and fold markers — marked-alert@2 only
 // handles the 5 GH types and discards the custom title, so we own the whole
 // blockquote-callout path here instead.
+/**
+ * marked reads `Intro\n***\nSetup\n-----` as one Setext heading; in CommonMark (and Obsidian) the `***` or `___`
+ * line is a thematic break that ends the paragraph, so only `Setup` is the heading. Declining the Setext match
+ * lets the paragraph rule stop at the break.
+ */
+function setextStopsAtBreakExtension(): MarkedExtension {
+    return {
+        tokenizer: {
+            lheading(src) {
+                const match = this.rules.block.lheading.exec(src);
+                const hr = this.rules.block.hr;
+
+                if (match?.[1].split("\n").some((line) => hr.test(line))) {
+                    return undefined;
+                }
+
+                return false;
+            },
+        },
+    };
+}
+
 function obsidianCalloutExtension(): MarkedExtension {
     return {
         extensions: [
@@ -890,6 +912,7 @@ function buildMarked(opts: RenderOptions, book: FootnoteBook, openHtml: string[]
             langPrefix: "hljs language-",
             highlight: highlightCode,
         }),
+        setextStopsAtBreakExtension(),
         obsidianCalloutExtension(),
         obsidianSyntaxExtension(book),
         detailsExtension(),
@@ -918,6 +941,40 @@ function lexDocument(md: Marked, markdown: string): Token[] {
     }
 
     return tokens;
+}
+
+/** A note body without its YAML frontmatter, cut by the rule the renderer uses. */
+export function stripFrontmatter(source: string): string {
+    const match = source.match(FRONTMATTER_RE);
+
+    return match ? source.slice(match[0].length) : source;
+}
+
+export interface NoteHeading {
+    /** The 0-based line of the body the heading starts on (a Setext heading: its text line). */
+    line: number;
+    depth: number;
+    text: string;
+}
+
+/**
+ * The top-level headings of a note body, read from the tokens the renderer draws, so a heading in a fence,
+ * an indented code block or an HTML block is never one. A heading inside a `<details>` fold is not listed.
+ */
+export function noteHeadings(body: string): NoteHeading[] {
+    const md = buildMarked({ resolveWikilink: () => null }, new FootnoteBook(), []);
+    const headings: NoteHeading[] = [];
+    let line = 0;
+
+    for (const token of lexDocument(md, body)) {
+        if (token.type === "heading") {
+            headings.push({ line, depth: token.depth, text: token.text });
+        }
+
+        line += lineCount(token.raw);
+    }
+
+    return headings;
 }
 
 function renderWithLineAnchors(md: Marked, markdown: string, lineOffset: number): string {

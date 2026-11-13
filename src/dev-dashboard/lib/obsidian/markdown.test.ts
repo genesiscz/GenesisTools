@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import * as fsPromises from "node:fs/promises";
 import { renderMarkdown } from "@app/dev-dashboard/lib/obsidian/markdown";
 import { offlineShareAssets } from "@app/dev-dashboard/lib/obsidian/offline-assets";
+import { noteSection } from "@app/dev-dashboard/lib/obsidian/share-assets";
 
 const noop = { resolveWikilink: () => null };
 
@@ -638,5 +639,56 @@ describe("Obsidian tasks, properties and nested callouts", () => {
 
         expect(html).toContain('markdown-alert-note" data-callout="note"');
         expect(html).toMatch(/markdown-alert-body">[\s\S]*markdown-alert-warning/);
+    });
+});
+
+describe("note sections follow the renderer's headings", () => {
+    /** The heading ids the page itself renders, so a section test cannot agree with itself instead of the page. */
+    function pageHeadings(note: string): string[] {
+        return [...renderMarkdown(note, noop).html.matchAll(/<h[1-6] id="([^"]+)"/g)].map((match) => match[1]);
+    }
+
+    test("a heading inside a code fence is code, not a section start or end", () => {
+        const note = "# Top\n\n## Setup\n```sh\n# install\n```\n~~~\n## not a heading\n~~~\nafter\n## Next\nend";
+
+        expect(pageHeadings(note)).toEqual(["top", "setup", "next"]);
+        expect(noteSection(note, "Setup")).toBe("## Setup\n```sh\n# install\n```\n~~~\n## not a heading\n~~~\nafter");
+        expect(noteSection(note, "install")).toBe("");
+        expect(noteSection(note, "not a heading")).toBe("");
+    });
+
+    test("a heading-like line in frontmatter is not a section", () => {
+        const note = "---\ntitle: Plan\n# comment: not a heading\n---\n# Real\nbody\n";
+
+        expect(pageHeadings(note)).toEqual(["real"]);
+        expect(noteSection(note, "comment: not a heading")).toBe("");
+        expect(noteSection(note, "Real")).toBe("# Real\nbody\n");
+        expect(noteSection(note, "")).toBe("# Real\nbody\n");
+    });
+
+    test("a Setext heading after an indented code block is found by its own text", () => {
+        const note = "Intro\n\n    indented code\nSetup\n-----\nconfigure\n\n## Next\nend";
+
+        expect(pageHeadings(note)).toEqual(["setup", "next"]);
+        expect(noteSection(note, "Setup")).toBe("Setup\n-----\nconfigure\n");
+        expect(noteSection(note, "indented code Setup")).toBe("");
+    });
+
+    test("a thematic break ends the paragraph, so the page's Setext heading is only the text after it", () => {
+        const note = "Intro\n***\nSetup\n-----\nbody";
+
+        expect(pageHeadings(note)).toEqual(["setup"]);
+        expect(renderMarkdown(note, noop).html).toContain("<hr>");
+        expect(noteSection(note, "Setup")).toBe("Setup\n-----\nbody");
+    });
+
+    test("a heading with inline code matches the id the page gives it, and a deeper heading stays inside", () => {
+        const note = "# Guide\n\n## Install `bun` first ##\nrun it\n### The `bun x` flags\nflags\n## Next\nend";
+
+        expect(pageHeadings(note)).toEqual(["guide", "install-bun-first", "the-bun-x-flags", "next"]);
+        expect(noteSection(note, "Install bun first")).toBe(
+            "## Install `bun` first ##\nrun it\n### The `bun x` flags\nflags"
+        );
+        expect(noteSection(note, "The `bun x` flags")).toBe("### The `bun x` flags\nflags");
     });
 });

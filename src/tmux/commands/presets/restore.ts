@@ -1,7 +1,7 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import { listTmuxSessions } from "@genesiscz/utils/tmux/sessions";
 import { restoreTmuxSession, type TmuxPreset } from "@genesiscz/utils/tmux/snapshot";
 import { PresetNotFoundError, TmuxPresetStore } from "@genesiscz/utils/tmux/snapshot-store";
@@ -84,7 +84,7 @@ export async function runRestorePreset(name: string, flags: RestoreFlags): Promi
         }
 
         const proceed = await withCancel(
-            p.confirm({ message: `Restore ${targets.length} session(s)?`, initialValue: true })
+            p.confirm({ message: `Restore ${targets.length} session(s)?`, initialValue: true, cancel: "back" })
         );
 
         if (!proceed) {

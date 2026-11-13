@@ -6,7 +6,7 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { BROWSER_DEVTOOLS_PORT } from "@genesiscz/utils/net/ports";
-import { Conn, localDebuggerUrl, newTab, type Target, targets } from "./cdp.ts";
+import { type Conn, connect, newTab, type Target, targets } from "./cdp.ts";
 import { harFromMessages } from "./har/build.ts";
 import type { CdpMessage, HarFile } from "./har/types.ts";
 import { discoverListeningCdpPorts } from "./resolve-attach.ts";
@@ -123,7 +123,7 @@ export async function capturePageTraffic(options: PageCaptureOptions): Promise<P
     const target: Target = open[0] ?? (await newTab(options.port, "about:blank"));
     log.debug({ port: options.port, tab: target.id, opened, page: options.pageUrl }, "Page capture tab");
 
-    const conn = new Conn(localDebuggerUrl(target, options.port), { signal: options.signal });
+    const conn = connect(target, options.port, { signal: options.signal });
     const messages: CdpMessage[] = [];
     const sessions = new Set<string>();
     let matchedAt: number | null = null;

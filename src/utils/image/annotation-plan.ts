@@ -204,3 +204,57 @@ export function parseRect(rect: RectInput): AnnotationRect {
 
     return rect;
 }
+
+const KNOWN_KINDS = ["highlight", "box", "ellipse", "arrow", "label", "blur", "crop", "grid"] as const;
+
+export function validateAnnotations(annotations: unknown): asserts annotations is Annotation[] {
+    if (!Array.isArray(annotations) || annotations.length === 0) {
+        throw new Error(`annotations must be a non-empty array — kinds: ${KNOWN_KINDS.join(", ")}`);
+    }
+
+    for (const [i, a] of annotations.entries()) {
+        if (a !== null && typeof a === "object" && "target" in a && !("rect" in a)) {
+            throw new Error(
+                `annotations[${i}] names a target (a page locator), which only a live page resolves: draw it with the page-shot command of chrome-devtools (shot --annotate)`
+            );
+        }
+
+        if (a === null || typeof a !== "object" || typeof (a as { kind?: unknown }).kind !== "string") {
+            throw new Error(`annotations[${i}] must be an object with a "kind" — kinds: ${KNOWN_KINDS.join(", ")}`);
+        }
+
+        const kind = (a as { kind: string }).kind;
+        if (!KNOWN_KINDS.includes(kind as (typeof KNOWN_KINDS)[number])) {
+            throw new Error(`annotations[${i}] has unknown kind "${kind}" — valid kinds: ${KNOWN_KINDS.join(", ")}`);
+        }
+
+        const obj = a as Record<string, unknown>;
+        if (
+            (kind === "highlight" || kind === "box" || kind === "ellipse" || kind === "blur" || kind === "crop") &&
+            !obj.rect
+        ) {
+            throw new Error(`annotations[${i}] (${kind}) requires "rect"`);
+        }
+
+        if (kind === "arrow" && (!obj.from || !obj.to)) {
+            throw new Error(`annotations[${i}] (arrow) requires "from" and "to"`);
+        }
+
+        if (kind === "label" && (!obj.at || typeof obj.text !== "string")) {
+            throw new Error(`annotations[${i}] (label) requires "at" and "text"`);
+        }
+
+        if (obj.preset !== undefined && !(typeof obj.preset === "string" && isPresetName(obj.preset))) {
+            throw new Error(
+                `annotations[${i}] has unknown preset "${String(obj.preset)}" — valid presets: ${Object.keys(ANNOTATION_PRESETS).join(", ")}`
+            );
+        }
+
+        const position = (obj.label as { position?: unknown } | undefined)?.position;
+        if (position !== undefined && !LABEL_POSITIONS.some((known) => known === position)) {
+            throw new Error(
+                `annotations[${i}] has unknown label position "${String(position)}" — valid positions: ${LABEL_POSITIONS.join(", ")}`
+            );
+        }
+    }
+}

@@ -1,7 +1,9 @@
-import { GROK_CACHE_TTL_MS } from "@app/claude/lib/usage/session-rows";
 import { grokAccountNameLookup } from "@genesiscz/utils/ai/providers/plugins/grok-sub/discover";
 import { logger } from "@genesiscz/utils/logger";
 import { nativeRows } from "../agent-session-rows";
+
+/** The Grok prompt-cache clock, a warning clock only: xAI publishes no TTL and may evict at any time. */
+export const GROK_CACHE_TTL_MS = 30 * 60 * 1000;
 
 /** Grok names a login by its home; a home with no account simply has none. */
 function grokAccount(lookup: (home: string) => string | undefined, home: string): string | null {

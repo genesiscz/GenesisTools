@@ -1,6 +1,6 @@
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 import { getDaemonPid, getSignalableDaemonPid, startDaemon } from "../daemon";
 import { loadConfig, removeTask, setTaskEnabled, upsertTask } from "../lib/config";
@@ -22,6 +22,7 @@ export async function runInteractiveMenu(): Promise<void> {
                 { value: "launchd", label: "Launchd", hint: "install/uninstall auto-start" },
                 { value: "quit", label: "Quit" },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(action) || action === "quit") {
@@ -93,6 +94,7 @@ async function tasksSubmenu(): Promise<void> {
                 { value: "delete", label: "Delete task" },
                 { value: "back", label: pc.dim("← Back") },
             ],
+            cancel: "back",
         });
 
         if (p.isCancel(action) || action === "back") {
@@ -161,6 +163,7 @@ async function toggleTask(): Promise<void> {
             })),
             { value: "back", label: pc.dim("← Back") },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(taskName) || taskName === "back") {
@@ -193,13 +196,14 @@ async function deleteTask(): Promise<void> {
             ...config.tasks.map((t) => ({ value: t.name, label: t.name })),
             { value: "back", label: pc.dim("← Back") },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(taskName) || taskName === "back") {
         return;
     }
 
-    const confirmed = await p.confirm({ message: `Delete task "${taskName}"?` });
+    const confirmed = await p.confirm({ message: `Delete task "${taskName}"?`, cancel: "back" });
 
     if (p.isCancel(confirmed) || !confirmed) {
         return;
@@ -266,6 +270,7 @@ async function launchdSubmenu(): Promise<void> {
                 : [{ value: "install" as const, label: "Install", hint: "auto-start on login" }]),
             { value: "back" as const, label: pc.dim("← Back") },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(action) || action === "back") {

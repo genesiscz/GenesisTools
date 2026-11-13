@@ -1,4 +1,4 @@
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 import { getTask } from "../lib/config";
 import { parseInterval } from "../lib/interval";
 import { DEFAULT_RETENTION } from "../lib/register";
@@ -18,6 +18,7 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
                 return "Only letters, numbers, hyphens, and underscores";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(name)) {
@@ -42,6 +43,7 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
                 return "Command is required";
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(command)) {
@@ -63,6 +65,7 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
                 return err instanceof Error ? err.message : String(err);
             }
         },
+        cancel: "back",
     });
 
     if (p.isCancel(every)) {
@@ -78,6 +81,7 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
             { value: "3", label: "3 retries (default)" },
             { value: "5", label: "5 retries" },
         ],
+        cancel: "back",
     });
 
     if (p.isCancel(retries)) {
@@ -88,6 +92,7 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
         message: "Description (optional)",
         placeholder: "What does this task do?",
         initialValue: initial?.description ?? "",
+        cancel: "back",
     });
 
     if (p.isCancel(description)) {
@@ -102,6 +107,7 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
     const useDefaultRetention = await p.confirm({
         message: `Use default retention (${DEFAULT_RETENTION.maxAgeDays} days, keep ${DEFAULT_RETENTION.minRuns} runs)?`,
         initialValue: usesDefaultRetention,
+        cancel: "back",
     });
 
     if (p.isCancel(useDefaultRetention)) {
@@ -121,6 +127,7 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
                     return "Enter a non-negative number of days";
                 }
             },
+            cancel: "back",
         });
 
         if (p.isCancel(maxAgeDaysRaw)) {
@@ -137,6 +144,7 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
                     return "Enter an integer of at least 1";
                 }
             },
+            cancel: "back",
         });
 
         if (p.isCancel(minRunsRaw)) {
@@ -151,6 +159,7 @@ export async function runTaskEditor(initial?: Partial<DaemonTask>): Promise<Daem
 
     const confirmed = await p.confirm({
         message: `Create task "${name}"?`,
+        cancel: "back",
     });
 
     if (p.isCancel(confirmed) || !confirmed) {

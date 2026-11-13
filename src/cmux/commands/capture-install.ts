@@ -5,9 +5,9 @@ import {
     planCaptureRcChange,
     uninstallCapture,
 } from "@app/cmux/lib/capture-installer";
-import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 
 interface Flags {
@@ -84,7 +84,10 @@ export function registerCaptureLifecycleCommands(parent: Command): void {
                             process.exitCode = 1;
                             return;
                         }
-                        const approved = await p.confirm({ message: `Apply this change to ${plan.rcPath}?` });
+                        const approved = await p.confirm({
+                            message: `Apply this change to ${plan.rcPath}?`,
+                            cancel: "back",
+                        });
                         if (p.isCancel(approved) || !approved) {
                             p.cancel("No installation changes were made.");
                             return;

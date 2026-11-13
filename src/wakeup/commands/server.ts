@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import { DEFAULT_HTTP_PORT, DEFAULT_WOL_PORT, mergeRole, readWakeupConfig, updateWakeupConfig } from "../config";
@@ -46,6 +46,7 @@ async function promptServerSettings(storage: Storage): Promise<ServerSetupResult
                     message: "Bind host",
                     initialValue: defaults.host ?? "0.0.0.0",
                     placeholder: "0.0.0.0",
+                    cancel: "back",
                 }),
             port: () =>
                 p.text({
@@ -57,11 +58,13 @@ async function promptServerSettings(storage: Storage): Promise<ServerSetupResult
                             return "Enter a valid port (1-65535)";
                         }
                     },
+                    cancel: "back",
                 }),
             broadcast: () =>
                 p.text({
                     message: "Default broadcast address",
                     initialValue: defaults.broadcast ?? iface?.broadcast ?? "255.255.255.255",
+                    cancel: "back",
                 }),
             wolPort: () =>
                 p.text({
@@ -73,22 +76,26 @@ async function promptServerSettings(storage: Storage): Promise<ServerSetupResult
                             return "Enter a valid port (1-65535)";
                         }
                     },
+                    cancel: "back",
                 }),
             defaultMac: () =>
                 p.text({
                     message: "Default target MAC (optional)",
                     initialValue: defaults.defaultMac ?? iface?.mac ?? "",
                     placeholder: iface?.mac ?? "01:23:45:67:89:ab",
+                    cancel: "back",
                 }),
             token: () =>
                 p.text({
                     message: "Shared token (optional, secures all requests)",
                     initialValue: defaults.token ?? "",
+                    cancel: "back",
                 }),
             logRequests: () =>
                 p.confirm({
                     message: "Log wakeup requests?",
                     initialValue: defaults.logRequests ?? true,
+                    cancel: "back",
                 }),
         },
         {

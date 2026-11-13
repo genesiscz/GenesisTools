@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import { collectKeyValue, parseKeyValuePairs } from "../lib/helpers";
 import { BUILTIN_SUITES, getCustomSuites, saveCustomSuites } from "../lib/suites";

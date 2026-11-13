@@ -39,12 +39,7 @@ program.addCommand(createProvidersCommand());
 enhanceHelp(program);
 
 async function main(): Promise<void> {
-    try {
-        await runTool(program, { tool: "domains" });
-    } catch (error) {
-        out.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-        process.exit(1);
-    }
+    await runTool(program, { tool: "domains" });
 }
 
 main().catch((error) => {

@@ -12,8 +12,10 @@ these names.
   `src/utils/recording-editor/project.ts`.
 - **Edit op**: one typed change to an edit project (`split`, `zoom`, `range`, ...), the `EditOp` union in the same file,
   applied by `applyOp`.
-- **Edit session**: the one owner of an edit project while the recorder service runs. It applies ops in memory, checks
-  the revision on disk before it writes, saves after a short delay, keeps the undo stack and runs gestures.
+- **Edit session**: the one owner of an edit project, and the one place of its undo rules. The recorder service keeps a
+  resident one while a client (a window) holds the edit open; every other undo, redo or collapse opens a short-lived one
+  (`withEditSession`) that loads the file, saves and closes. It applies ops in memory, checks the revision on disk
+  before it writes, saves after a short delay, keeps the undo stack and runs gestures.
 - **Gesture**: a continuous change (a drag) made of `begin`, any number of `preview`s that change only a draft, and
   `commit` (one undo step) or `cancel`.
 - **Recorder service**: the one resident TypeScript process (`tools recorder serve`) that every recorder client talks to

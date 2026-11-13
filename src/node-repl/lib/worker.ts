@@ -388,28 +388,33 @@ function unloadedGlobal(failure: ToolsetFailure): object {
  * toolset and plain JavaScript keep working (NR2; a broken native backend used to fail even `1 + 1`).
  */
 async function preload(request: PreloadRequest): Promise<{ text: string; failed: ToolsetFailure[] }> {
-    const { createToolsets } = await import("./toolsets");
+    // The table imports no toolset module itself; each named row loads in its own try inside createToolsets.
+    const { createToolsets, isToolsetId, toolsetGlobal } = await import("./toolsets");
     const ctx: ToolsetContext = {
         scratchDir: request.scratchDir,
         show: showImages,
         write: replApi.write,
         recorder: { start: startHostedRecording },
     };
+    const created = await createToolsets(request.toolsets);
 
-    for (const entry of request.toolsets) {
-        let toolset: ReplToolset | undefined;
+    for (const { id, reason } of created.failed) {
+        const failure = { id, error: reason };
+        failedToolsets.push(failure);
 
+        if (isToolsetId(id)) {
+            Reflect.set(globalThis, toolsetGlobal(id), unloadedGlobal(failure));
+        }
+    }
+
+    for (const toolset of created.loaded) {
         try {
-            [toolset] = await createToolsets([entry]);
             Object.assign(globalThis, await toolset.load(ctx));
             toolsets.push(toolset);
         } catch (error) {
-            const failure = { id: toolset?.id ?? entry, error: describeError(error).message };
+            const failure = { id: toolset.id, error: describeError(error).message };
             failedToolsets.push(failure);
-
-            if (toolset) {
-                Reflect.set(globalThis, toolset.api.global, unloadedGlobal(failure));
-            }
+            Reflect.set(globalThis, toolset.api.global, unloadedGlobal(failure));
         }
     }
 

@@ -1,7 +1,5 @@
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { formatCostLine } from "@app/ai-spend/lib/workers/cost";
-import { recordWorkerTurnCost } from "@app/ai-spend/lib/workers/ledger";
 import { pinnedLaunchEnv } from "@app/claude/lib/launch-env";
 import { resolveClaudeBinaryForTeammates } from "@app/claude/lib/teammate-wrapper";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -12,6 +10,8 @@ import { withFileLock } from "@genesiscz/utils/storage";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import { assertWorkerDeliveryTarget, type WorkerDeliveryExpectation } from "@genesiscz/utils/worker/delivery";
 import { isText, isToolCall, isTurnCompleted, isTurnFailed, type WorkerEvent } from "@genesiscz/utils/worker/events";
+import { recordWorkerTurnCost } from "@genesiscz/utils/worker/spend-ledger";
+import { formatCostLine } from "@genesiscz/utils/worker/spend-pricing";
 import { workerMetaPath, workerTurnErrPath, workerTurnLogPath } from "./paths";
 import { type ClaudeWorkerMeta, ClaudeWorkerStore, claudeWorkerSourceHome } from "./store";
 import { claudeTurnUsage, parseTurnEvents } from "./stream";

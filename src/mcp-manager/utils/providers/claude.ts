@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { PerProjectEnabledState } from "@app/mcp-manager/utils/types.js";
@@ -9,13 +9,12 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { claudeJsonPath, nativeHome } from "@genesiscz/utils/providers/session-paths";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { matchGlob } from "@genesiscz/utils/string";
 import chalk from "chalk";
 import type { ClaudeGenericConfig, ClaudeMCPServerConfig } from "./claude.types.js";
 import { claudeEnabledPluginServers, readClaudeSettings } from "./plugins.js";
 import type { EnableServersOptions, MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
-import { MCPProvider, WriteResult } from "./types.js";
+import { MCPProvider, type WriteResult } from "./types.js";
 
 interface ClaudePluginServer {
     info: MCPServerInfo;
@@ -82,10 +81,6 @@ export class ClaudeProvider extends MCPProvider {
         return existsSync(this.configPath);
     }
 
-    supportsDisabledState(): boolean {
-        return true; // Claude has disabledMcpServers list
-    }
-
     shouldBeInstalled(serverConfig: UnifiedMCPServerConfig): boolean {
         // A globally-disabled server (_meta.enabled.claude === false) must be
         // ABSENT from ~/.claude.json — absence is the only global disable
@@ -103,29 +98,16 @@ export class ClaudeProvider extends MCPProvider {
         return SafeJSON.parse(content) as ClaudeGenericConfig;
     }
 
-    async writeConfig(config: unknown): Promise<WriteResult> {
-        const newContent = SafeJSON.stringify(config, { strict: true }, 2);
-
-        // Read old content (empty string if file doesn't exist)
-        const oldContent = (await this.configExists()) ? await readFile(this.configPath, "utf-8") : "";
-
-        // Early exit if no changes
-        if (oldContent === newContent) {
-            return WriteResult.NoChanges;
-        }
-
-        // Show diff and ask for confirmation
-        await this.backupManager.showDiff(oldContent, newContent, this.configPath);
-        const confirmed = await this.backupManager.askConfirmation();
-
-        if (!confirmed) {
-            return WriteResult.Rejected;
-        }
-
-        // Only now write to file (with backup)
-        await this.writeFileWithBackup(newContent);
-        logger.info(chalk.green(`✓ Configuration written to ${this.configPath}`));
-        return WriteResult.Applied;
+    private update(
+        change: (config: ClaudeGenericConfig) => ClaudeGenericConfig | null | Promise<ClaudeGenericConfig | null>
+    ): Promise<WriteResult> {
+        return this.writeCycle({
+            read: () => this.readConfig(),
+            change,
+            serialize: (next) => SafeJSON.stringify(next, { strict: true }, 2),
+            path: this.configPath,
+            describe: "Claude MCP servers",
+        });
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
@@ -236,74 +218,60 @@ export class ClaudeProvider extends MCPProvider {
      * Enabling removes exactly those `serverName` entries, and the key when it ends up empty.
      */
     async setPluginServersEnabled(serverNames: string[], enabled: boolean): Promise<WriteResult> {
-        const settings = await this.readSettings();
-        const registered = new Set(
-            (await this.discoverPluginServers(settings))
-                .filter((server) => serverNames.includes(server.info.name))
-                .map((server) => server.registeredName)
-        );
+        return this.writeCycle({
+            read: () => this.readSettings(),
+            change: async (settings) => {
+                const registered = new Set(
+                    (await this.discoverPluginServers(settings))
+                        .filter((server) => serverNames.includes(server.info.name))
+                        .map((server) => server.registeredName)
+                );
 
-        if (registered.size === 0) {
-            return WriteResult.NoChanges;
-        }
+                if (registered.size === 0) {
+                    return null;
+                }
 
-        const current = deniedEntries(settings);
-        const namedIn = (entry: unknown): boolean =>
-            isObject(entry) && typeof entry.serverName === "string" && registered.has(entry.serverName);
+                const current = deniedEntries(settings);
+                const namedIn = (entry: unknown): boolean =>
+                    isObject(entry) && typeof entry.serverName === "string" && registered.has(entry.serverName);
 
-        if (enabled) {
-            const kept = current.filter((entry) => !namedIn(entry));
+                if (enabled) {
+                    const kept = current.filter((entry) => !namedIn(entry));
 
-            if (kept.length === current.length) {
-                return WriteResult.NoChanges;
-            }
+                    if (kept.length === current.length) {
+                        return null;
+                    }
 
-            if (kept.length === 0) {
-                delete settings.deniedMcpServers;
-            } else {
-                settings.deniedMcpServers = kept;
-            }
-        } else {
-            const present = new Set(
-                current
-                    .filter(isObject)
-                    .flatMap((entry) => (typeof entry.serverName === "string" ? [entry.serverName] : []))
-            );
-            const missing = [...registered].filter((name) => !present.has(name));
+                    if (kept.length === 0) {
+                        delete settings.deniedMcpServers;
+                    } else {
+                        settings.deniedMcpServers = kept;
+                    }
+                } else {
+                    const present = new Set(
+                        current
+                            .filter(isObject)
+                            .flatMap((entry) => (typeof entry.serverName === "string" ? [entry.serverName] : []))
+                    );
+                    const missing = [...registered].filter((name) => !present.has(name));
 
-            if (missing.length === 0) {
-                return WriteResult.NoChanges;
-            }
+                    if (missing.length === 0) {
+                        return null;
+                    }
 
-            settings.deniedMcpServers = [...current, ...missing.map((serverName) => ({ serverName }))];
-        }
+                    settings.deniedMcpServers = [...current, ...missing.map((serverName) => ({ serverName }))];
+                }
 
-        return this.writeSettings(settings);
-    }
-
-    /** Same flow as every harness write (diff, confirm or --yes, backup), aimed at settings.json. */
-    private async writeSettings(settings: Record<string, unknown>): Promise<WriteResult> {
-        const settingsPath = this.getSettingsPath();
-        const oldContent = existsSync(settingsPath) ? await readFile(settingsPath, "utf-8") : "";
-        const body = SafeJSON.stringify(settings, null, 2);
-        const newContent = oldContent === "" || oldContent.endsWith("\n") ? `${body}\n` : body;
-
-        if (oldContent === newContent) {
-            return WriteResult.NoChanges;
-        }
-
-        await this.backupManager.showDiff(oldContent, newContent, settingsPath);
-        const confirmed = await this.backupManager.askConfirmation();
-
-        if (!confirmed) {
-            return WriteResult.Rejected;
-        }
-
-        await this.backupManager.createBackup(settingsPath, this.providerName);
-        await mkdir(path.dirname(settingsPath), { recursive: true });
-        atomicWriteFileSync(settingsPath, newContent, { mode: 0o600 });
-        logger.info(chalk.green(`✓ Configuration written to ${settingsPath}`));
-        return WriteResult.Applied;
+                return settings;
+            },
+            // Keep the file's trailing newline (a new file gets one).
+            serialize: (next, previous) => {
+                const body = SafeJSON.stringify(next, null, 2);
+                return previous === "" || previous.endsWith("\n") ? `${body}\n` : body;
+            },
+            path: this.getSettingsPath(),
+            describe: "Claude user settings",
+        });
     }
 
     async getServerConfig(serverName: string): Promise<UnifiedMCPServerConfig | null> {
@@ -379,66 +347,32 @@ export class ClaudeProvider extends MCPProvider {
         return result;
     }
 
-    async enableServer(serverName: string, projectPath?: string | null): Promise<void> {
-        const config = await this.readConfig();
-
-        if (projectPath === null || projectPath === undefined) {
-            // Global enable (no project specified = global)
-            await this.applyGlobalEnable([serverName], config);
-        } else {
-            await this.applyProjectEnable([serverName], projectPath, config);
-        }
-
-        await this.writeConfig(config);
-    }
-
-    async disableServer(serverName: string, projectPath?: string | null): Promise<void> {
-        const config = await this.readConfig();
-
-        if (projectPath === null || projectPath === undefined) {
-            // Global disable (no project specified = global)
-            await this.applyGlobalDisable([serverName], config);
-        } else {
-            this.applyProjectDisable([serverName], projectPath, config);
-        }
-
-        await this.writeConfig(config);
-    }
-
-    async enableServerForAllProjects(serverName: string): Promise<void> {
-        await this.enableServer(serverName, null);
-    }
-
-    async disableServerForAllProjects(serverName: string): Promise<void> {
-        await this.disableServer(serverName, null);
-    }
-
     async enableServers(
         serverNames: string[],
         projectPath?: string | null,
         options: EnableServersOptions = {}
     ): Promise<WriteResult> {
-        const config = await this.readConfig();
+        return this.update(async (config) => {
+            if (projectPath === null || projectPath === undefined) {
+                await this.applyGlobalEnable(serverNames, config, options);
+            } else {
+                await this.applyProjectEnable(serverNames, projectPath, config);
+            }
 
-        if (projectPath === null || projectPath === undefined) {
-            await this.applyGlobalEnable(serverNames, config, options);
-        } else {
-            await this.applyProjectEnable(serverNames, projectPath, config);
-        }
-
-        return this.writeConfig(config);
+            return config;
+        });
     }
 
     async disableServers(serverNames: string[], projectPath?: string | null): Promise<WriteResult> {
-        const config = await this.readConfig();
+        return this.update(async (config) => {
+            if (projectPath === null || projectPath === undefined) {
+                await this.applyGlobalDisable(serverNames, config);
+            } else {
+                this.applyProjectDisable(serverNames, projectPath, config);
+            }
 
-        if (projectPath === null || projectPath === undefined) {
-            await this.applyGlobalDisable(serverNames, config);
-        } else {
-            this.applyProjectDisable(serverNames, projectPath, config);
-        }
-
-        return this.writeConfig(config);
+            return config;
+        });
     }
 
     /**
@@ -678,99 +612,100 @@ export class ClaudeProvider extends MCPProvider {
     async installServer(serverName: string, config: UnifiedMCPServerConfig): Promise<WriteResult> {
         // Strip _meta before processing (unified utility ensures _meta never reaches providers)
         const cleanConfig = stripMeta(config);
-        const claudeConfig = await this.readConfig();
 
-        if (!claudeConfig.mcpServers) {
-            claudeConfig.mcpServers = {};
-        }
+        return this.update((claudeConfig) => {
+            if (!claudeConfig.mcpServers) {
+                claudeConfig.mcpServers = {};
+            }
 
-        claudeConfig.mcpServers[serverName] = this.unifiedToClaude(cleanConfig);
+            claudeConfig.mcpServers[serverName] = this.unifiedToClaude(cleanConfig);
 
-        // Ensure it's enabled by removing from the top-level marker. Project lists
-        // are not touched: an install is a global operation (see the class comment).
-        if (claudeConfig.disabledMcpServers) {
-            claudeConfig.disabledMcpServers = claudeConfig.disabledMcpServers.filter((name) => name !== serverName);
-        }
+            // Ensure it's enabled by removing from the top-level marker. Project lists
+            // are not touched: an install is a global operation (see the class comment).
+            if (claudeConfig.disabledMcpServers) {
+                claudeConfig.disabledMcpServers = claudeConfig.disabledMcpServers.filter((name) => name !== serverName);
+            }
 
-        return this.writeConfig(claudeConfig);
+            return claudeConfig;
+        });
     }
 
     async removeServers(serverNames: string[]): Promise<WriteResult> {
-        const config = await this.readConfig();
-
-        for (const serverName of serverNames) {
-            // Global entry
-            if (config.mcpServers?.[serverName]) {
-                delete config.mcpServers[serverName];
-            }
-            // Top-level marker (mcp-manager-only)
-            if (config.disabledMcpServers) {
-                config.disabledMcpServers = config.disabledMcpServers.filter((name) => name !== serverName);
-            }
-            // Project-scope entries (incl. per-project overrides). The
-            // per-project disabledMcpServers lists are intentionally left
-            // untouched — harmless leftovers, and scrubbing them would churn
-            // dozens of project entries for no behavioral gain.
-            if (config.projects) {
-                for (const projectConfig of Object.values(config.projects)) {
-                    if (projectConfig.mcpServers?.[serverName]) {
-                        delete projectConfig.mcpServers[serverName];
+        return this.update((config) => {
+            for (const serverName of serverNames) {
+                // Global entry
+                if (config.mcpServers?.[serverName]) {
+                    delete config.mcpServers[serverName];
+                }
+                // Top-level marker (mcp-manager-only)
+                if (config.disabledMcpServers) {
+                    config.disabledMcpServers = config.disabledMcpServers.filter((name) => name !== serverName);
+                }
+                // Project-scope entries (incl. per-project overrides). The
+                // per-project disabledMcpServers lists are intentionally left
+                // untouched — harmless leftovers, and scrubbing them would churn
+                // dozens of project entries for no behavioral gain.
+                if (config.projects) {
+                    for (const projectConfig of Object.values(config.projects)) {
+                        if (projectConfig.mcpServers?.[serverName]) {
+                            delete projectConfig.mcpServers[serverName];
+                        }
                     }
                 }
             }
-        }
 
-        return this.writeConfig(config);
+            return config;
+        });
     }
 
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
-        const config = await this.readConfig();
-
-        if (!config.mcpServers) {
-            config.mcpServers = {};
-        }
-        if (!config.disabledMcpServers) {
-            config.disabledMcpServers = [];
-        }
-
-        for (const [name, serverConfig] of Object.entries(servers)) {
-            const cleanConfig = stripMeta(serverConfig);
-
-            const enabledState = serverConfig._meta?.enabled?.claude;
-            const isGloballyEnabled = enabledState === true;
-            const isGloballyDisabled = enabledState === false;
-
-            if (isGloballyDisabled) {
-                // TRUE global disable = absent from mcpServers (Claude Code
-                // never reads the top-level disabledMcpServers key, and the
-                // per-project sweep misses projects registered later).
-                delete config.mcpServers[name];
-            } else {
-                config.mcpServers[name] = this.unifiedToClaude(cleanConfig);
+        return this.update((config) => {
+            if (!config.mcpServers) {
+                config.mcpServers = {};
+            }
+            if (!config.disabledMcpServers) {
+                config.disabledMcpServers = [];
             }
 
-            if (isGloballyEnabled) {
-                config.disabledMcpServers = config.disabledMcpServers.filter((n) => n !== name);
-            } else if (!config.disabledMcpServers.includes(name)) {
-                config.disabledMcpServers.push(name);
-            }
+            for (const [name, serverConfig] of Object.entries(servers)) {
+                const cleanConfig = stripMeta(serverConfig);
 
-            // Per-project override entry (.projects[<path>].mcpServers.<name>):
-            // refresh its config from the unified config, NEVER delete it.
-            for (const projectConfig of Object.values(config.projects ?? {})) {
-                if (projectConfig.mcpServers?.[name]) {
-                    projectConfig.mcpServers[name] = this.unifiedToClaude(cleanConfig);
+                const enabledState = serverConfig._meta?.enabled?.claude;
+                const isGloballyEnabled = enabledState === true;
+                const isGloballyDisabled = enabledState === false;
+
+                if (isGloballyDisabled) {
+                    // TRUE global disable = absent from mcpServers (Claude Code
+                    // never reads the top-level disabledMcpServers key, and the
+                    // per-project sweep misses projects registered later).
+                    delete config.mcpServers[name];
+                } else {
+                    config.mcpServers[name] = this.unifiedToClaude(cleanConfig);
+                }
+
+                if (isGloballyEnabled) {
+                    config.disabledMcpServers = config.disabledMcpServers.filter((n) => n !== name);
+                } else if (!config.disabledMcpServers.includes(name)) {
+                    config.disabledMcpServers.push(name);
+                }
+
+                // Per-project override entry (.projects[<path>].mcpServers.<name>):
+                // refresh its config from the unified config, NEVER delete it.
+                for (const projectConfig of Object.values(config.projects ?? {})) {
+                    if (projectConfig.mcpServers?.[name]) {
+                        projectConfig.mcpServers[name] = this.unifiedToClaude(cleanConfig);
+                    }
+                }
+
+                // A boolean or unset state is the global switch only, handled above.
+                // A per-project map writes the lists of the projects it names, no others.
+                if (typeof enabledState === "object" && enabledState !== null) {
+                    this.applyNamedProjectStates(name, enabledState, config);
                 }
             }
 
-            // A boolean or unset state is the global switch only, handled above.
-            // A per-project map writes the lists of the projects it names, no others.
-            if (typeof enabledState === "object" && enabledState !== null) {
-                this.applyNamedProjectStates(name, enabledState, config);
-            }
-        }
-
-        return this.writeConfig(config);
+            return config;
+        });
     }
 
     /**
@@ -826,28 +761,6 @@ export class ClaudeProvider extends MCPProvider {
         const config = await this.readConfig();
         const disabledServers = new Set(config.disabledMcpServers || []);
         return !disabledServers.has(serverName);
-    }
-
-    fromUnifiedConfig(servers: Record<string, UnifiedMCPServerConfig>): unknown {
-        const config: ClaudeGenericConfig = {
-            mcpServers: {},
-            disabledMcpServers: [],
-        };
-
-        for (const [name, unified] of Object.entries(servers)) {
-            // Read enabled state using utility method (checks global enablement)
-            const isEnabled = this.isServerEnabledInMeta(unified);
-
-            // Strip _meta before converting
-            const cleanConfig = stripMeta(unified);
-            config.mcpServers![name] = this.unifiedToClaude(cleanConfig);
-
-            if (!isEnabled) {
-                config.disabledMcpServers?.push(name);
-            }
-        }
-
-        return config;
     }
 
     private claudeToUnified(claude: ClaudeMCPServerConfig): UnifiedMCPServerConfig {

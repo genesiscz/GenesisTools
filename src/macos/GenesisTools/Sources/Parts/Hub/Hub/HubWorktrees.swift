@@ -42,12 +42,45 @@ enum WorktreeDiscovery {
         cache.write(worktrees, key: "all")
     }
 
-    /// One `git worktree list` per repository, found from the distinct session folders and `extra`
-    /// folders (a worktree a link names).
+    /// Repositories the person added by hand ("Add repository…"): listed whether or not a session worked there.
+    static let addedReposKey = "worktrees.addedRepos"
+
+    static var addedRepos: [String] {
+        HubDefaults.store.stringArray(forKey: addedReposKey) ?? []
+    }
+
+    static func addRepo(_ path: String) {
+        HubDefaults.store.set(Array(Set(addedRepos + [path])).sorted(), forKey: addedReposKey)
+    }
+
+    static func removeRepo(_ path: String) {
+        HubDefaults.store.set(addedRepos.filter { $0 != path }, forKey: addedReposKey)
+    }
+
+    /// The git roots each session's shell commands worked in, as the Bash hook recorded them
+    /// (`<temp>/GenesisTools/ai/hooks/mentions/<session>.json`, `roots`). A session started in one repository often
+    /// works in another by `cd` (an app session that also builds its backend): its folder alone missed that repository.
+    static func hookRoots(of sessions: [HubSession]) -> [String] {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GenesisTools/ai/hooks/mentions", isDirectory: true)
+        var roots = Set<String>()
+        for id in Set(sessions.map(\.sessionId)) where !id.isEmpty && !id.contains("/") {
+            guard let data = try? Data(contentsOf: dir.appendingPathComponent("\(id).json")),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let list = object["roots"] as? [String]
+            else { continue }
+            roots.formUnion(list)
+        }
+        return roots.sorted()
+    }
+
+    /// One `git worktree list` per repository, found from the distinct session folders, the roots their shell
+    /// commands worked in, the repositories added by hand, and `extra` folders (a worktree a link names).
     static func discover(sessions: [HubSession], extra: [String] = []) -> [HubWorktree] {
         var seenCommonDirs = Set<String>()
         var worktrees: [HubWorktree] = []
-        for cwd in Set(sessions.map(\.cwd)).union(extra) where !cwd.isEmpty && FileManager.default.fileExists(atPath: cwd) {
+        let folders = Set(sessions.map(\.cwd)).union(hookRoots(of: sessions)).union(addedRepos).union(extra)
+        for cwd in folders.sorted() where !cwd.isEmpty && FileManager.default.fileExists(atPath: cwd) {
             guard let common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"])?.trimmed,
                   seenCommonDirs.insert(common).inserted,
                   let list = git(cwd, ["worktree", "list", "--porcelain"])
@@ -359,6 +392,13 @@ struct WorktreeListView: View {
         return prefs.sorted(Array(grouped.keys)).map { ($0, grouped[$0] ?? []) }
     }
 
+    /// The hand-added folder that brought this repository in, when one did: its header can hide it again.
+    private func addedRepo(of rows: [HubWorktree]) -> String? {
+        WorktreeDiscovery.addedRepos.first { added in
+            rows.contains { added == $0.path || added.hasPrefix("\($0.path)/") }
+        }
+    }
+
     var body: some View {
         let _ = RenderProbe.hit("worktrees.list.body")
         let groups = groups
@@ -372,6 +412,9 @@ struct WorktreeListView: View {
                             .accessibilityLabel("Finding worktrees")
                     } else if !model.worktrees.isEmpty {
                         WorktreeCleanupEntry(model: model)
+                    }
+                    if !model.loadingWorktrees || !model.worktrees.isEmpty {
+                        AddRepositoryEntry(model: model)
                     }
                     ForEach(groups, id: \.repo) { group in
                         Section {
@@ -393,7 +436,13 @@ struct WorktreeListView: View {
                                 count: group.rows.count,
                                 prefs: prefs,
                                 allNames: groups.map(\.repo),
-                                path: (group.rows.first { $0.isMain } ?? group.rows.first)?.path
+                                path: (group.rows.first { $0.isMain } ?? group.rows.first)?.path,
+                                remove: addedRepo(of: group.rows).map { added in
+                                    {
+                                        WorktreeDiscovery.removeRepo(added)
+                                        model.worktrees.removeAll { $0.commonDir == group.rows.first?.commonDir }
+                                    }
+                                }
                             )
                         }
                     }
@@ -689,5 +738,43 @@ struct WorktreeSessionsList: View {
     private func open(_ session: HubSession) {
         close()
         model.openSession(session)
+    }
+}
+
+/// "Add repository…": a folder picker for a repository no listed session worked in. The choice is kept
+/// (`WorktreeDiscovery.addedRepos`) and its worktrees join the list at once; the repository header's hide button drops it.
+struct AddRepositoryEntry: View {
+    var model: HubModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "plus")
+                .font(.system(size: 11))
+                .foregroundColor(ReviewPalette.dim)
+                .frame(width: 16)
+            Text("Add repository…")
+                .font(.system(size: 12.5))
+                .foregroundColor(ReviewPalette.dim)
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+        .rowButton { pick() }
+        .instantTooltip("List a repository's worktrees here although no recent session worked in it")
+    }
+
+    @MainActor
+    private func pick() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Add"
+        panel.message = "A folder inside a git repository"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        WorktreeDiscovery.addRepo(url.path)
+        model.addWorktreesIfMissing(url.path, intoEmptyList: true)
     }
 }

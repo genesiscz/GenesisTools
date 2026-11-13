@@ -4,8 +4,8 @@ import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import { readTmuxTerminal } from "@genesiscz/utils/tmux/caller-enricher";
+import { tmuxSendKeys } from "@genesiscz/utils/tmux/send-keys";
 import type { Command } from "commander";
 
 export type SelfTarget = { kind: "tmux"; pane: string } | { kind: "cmux"; workspaceId?: string; surfaceId: string };
@@ -31,26 +31,23 @@ export function resolveSelfTarget(
     return null;
 }
 
-/** One `tmux send-keys`, off the event loop, with stderr captured for the failure message. */
-async function runTmuxSendKeys(argv: string[], label: string): Promise<void> {
-    const proc = Bun.spawn(argv, { stdio: ["ignore", "ignore", "pipe"] });
-    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-
-    if (exitCode !== 0) {
-        throw new Error(`${label} failed: ${stderr.trim() || `exit ${exitCode}`}`);
-    }
-}
-
 async function sendTmux(pane: string, text: string, enter: boolean, enterDelayMs: number): Promise<void> {
-    const tmux = resolveTmuxBin();
-    await runTmuxSendKeys([tmux, "send-keys", "-t", pane, "-l", "--", text], "tmux send-keys");
+    const typed = await tmuxSendKeys(pane, ["-l", "--", text]);
+
+    if (!typed.ok) {
+        throw new Error(typed.detail);
+    }
 
     if (!enter) {
         return;
     }
 
     await Bun.sleep(enterDelayMs);
-    await runTmuxSendKeys([tmux, "send-keys", "-t", pane, "Enter"], "tmux send-keys Enter");
+    const entered = await tmuxSendKeys(pane, ["Enter"]);
+
+    if (!entered.ok) {
+        throw new Error(entered.detail);
+    }
 }
 
 /**

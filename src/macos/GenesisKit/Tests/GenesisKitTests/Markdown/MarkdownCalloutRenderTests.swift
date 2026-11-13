@@ -43,6 +43,28 @@ final class MarkdownCalloutRenderTests: XCTestCase {
         try await web.evaluateJavaScript(js)
     }
 
+    func testExtractionFixtureRenderedHTML() async throws {
+        let note = "# Fixture\n\n> [!warning] Read this\n> A **callout** with [[Other#Heading|a link]].\n\n- [ ] First task\n- [x] Second task\n\n## Repeated\n\n## Repeated\n\n\u{60}\u{60}\u{60}text\ncode <value>\n\u{60}\u{60}\u{60}\n"
+        _ = try await eval("window.gnRender(\(MarkdownWebView.jsString(note)))")
+        let rendered = try await eval("document.getElementById('gn-article').innerHTML") as? String
+        let html = try XCTUnwrap(rendered)
+        // Captured from the inline page before C52; compare the complete rendered article byte for byte.
+        let expected = #"""
+<h1 data-line="0" data-line-end="1" id="fixture">Fixture<button type="button" class="gn-anchor" aria-label="Copy link to this heading"></button></h1>
+<div class="markdown-alert markdown-alert-warning" data-callout="warning" data-line="2" data-line-end="3"><p class="markdown-alert-title"><svg class="markdown-alert-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4M12 17h.01"></path></svg><span>Read this</span></p><div class="markdown-alert-body"><p data-line="0" data-line-end="1">A <strong>callout</strong> with <a href="#" class="dd-wikilink" data-wikilink="Other#Heading">a link</a>.</p>
+</div></div>
+<ul data-line="5" data-line-end="8">
+<li class="gn-task-item" data-line="5" data-line-end="6"><label class="gn-task-hit"><input type="checkbox" class="gn-task" data-task-line="5" data-task-text="First task" disabled="" aria-label="Mark done: First task"></label><span class="gn-task-text">First task</span></li>
+<li class="gn-task-item gn-task-done" data-line="6" data-line-end="8"><label class="gn-task-hit"><input type="checkbox" class="gn-task" data-task-line="6" data-task-text="Second task" checked="" disabled="" aria-label="Mark done: Second task"></label><span class="gn-task-text">Second task</span></li>
+</ul>
+<h2 data-line="8" data-line-end="9" id="repeated">Repeated<button type="button" class="gn-anchor" aria-label="Copy link to this heading"></button></h2>
+<h2 data-line="10" data-line-end="11" id="repeated-1">Repeated<button type="button" class="gn-anchor" aria-label="Copy link to this heading"></button></h2>
+<pre data-line="12" data-line-end="15"><code class="hljs language-text">code &lt;value&gt;
+</code></pre>
+"""#
+        XCTAssertEqual(Data(html.utf8), Data(expected.utf8))
+    }
+
     /// Observed 2026-09-15 14:15: a note rendered "@@GNCALLOUT0@@" and
     /// "@@GNCALLOUT1@@" as plain text. The source-line sync had started
     /// stamping `data-line` on every paragraph, so the placeholder paragraph

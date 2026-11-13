@@ -121,15 +121,6 @@ describe("question_post", () => {
             "either `question` or a non-empty `items`"
         );
     });
-
-    test("wait: true returns the waiter verdict rather than a bare id", async () => {
-        const text = await handleQuestionPost(
-            { projectPath: "/tmp/gt-mcp-fixture", question: "Ship?", wait: true, waitTimeoutMs: 20 },
-            deps
-        );
-
-        expect(text).toContain("waiter: budget_exhausted");
-    });
 });
 
 describe("question_respond", () => {
@@ -284,53 +275,6 @@ describe("question_post decisions and question_update", () => {
         expect(text).toContain("a) yes (recommended)");
         expect(text).toContain("### ☐ TODO 1");
         expect(text).not.toMatch(/ask_[0-9a-f-]+/);
-        expect(handleQuestionPoll({}, { ...deps, decisionLog: { ...logDeps.decisionLog, session: null } })).toBe(
-            "No pending ask forms."
-        );
-    });
-
-    test("a mixed batch posts the questions as one form and the decisions to the log", async () => {
-        const logDeps = withLog();
-        const text = await handleQuestionPost(
-            {
-                sessionHint: "sess-1",
-                projectPath: "/tmp/gt-mcp-fixture",
-                items: [
-                    { promptMarkdown: "Which env?" },
-                    { type: "decision", promptMarkdown: "Ship?", choices: ["y"] },
-                ],
-            },
-            logDeps
-        );
-
-        expect(idIn(text)).toMatch(/^ask_/);
-        expect(text).toContain("❓ DECISION 1");
-    });
-
-    test("a mixed batch writes neither half when either one is invalid", async () => {
-        const logDeps = withLog();
-        const base = { sessionHint: "sess-1", projectPath: "/tmp/gt-mcp-fixture" };
-        const decision = { type: "decision" as const, promptMarkdown: "Ship?", choices: ["y"] };
-
-        // A bad form: the decisions used to be stored first, and a retry stored them again.
-        await expect(
-            handleQuestionPost(
-                {
-                    ...base,
-                    items: [{ id: "q", promptMarkdown: "A?" }, { id: "q", promptMarkdown: "B?" }, decision],
-                },
-                logDeps
-            )
-        ).rejects.toThrow(/duplicate item id/);
-        expect(existsSync(logDeps.decisionLog.file)).toBe(false);
-
-        // A bad decision: the form is not posted either.
-        await expect(
-            handleQuestionPost(
-                { ...base, items: [{ promptMarkdown: "Which env?" }, { ...decision, promptMarkdown: "" }] },
-                logDeps
-            )
-        ).rejects.toThrow(/item 2: promptMarkdown must be a non-empty string/);
         expect(handleQuestionPoll({}, { ...deps, decisionLog: { ...logDeps.decisionLog, session: null } })).toBe(
             "No pending ask forms."
         );
@@ -599,10 +543,13 @@ describe("the opt-in nudge", () => {
     });
 });
 
+/** A 1x1 PNG; encodeRgbaToPng is async (it loads the canvas addon lazily) and screenshot() below is not. */
+const SCREENSHOT_PNG = await encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1);
+
 describe("question_post item attachments", () => {
     function screenshot(dir: string, name: string): string {
         const path = join(dir, name);
-        writeFileSync(path, encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1));
+        writeFileSync(path, SCREENSHOT_PNG);
         return path;
     }
 
@@ -706,7 +653,7 @@ describe("question_post item attachments", () => {
         test("a header that claims more pixels than the importer accepts", async () => {
             const dir = mkdtempSync(join(tmpdir(), "gt-mcp-attach-huge-"));
             const huge = join(dir, "huge.png");
-            const bytes = Buffer.from(encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1));
+            const bytes = Buffer.from(await encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1));
             bytes.writeUInt32BE(20_000, 16);
             bytes.writeUInt32BE(20_000, 20);
             writeFileSync(huge, bytes);

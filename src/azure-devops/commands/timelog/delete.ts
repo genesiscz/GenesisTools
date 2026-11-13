@@ -3,10 +3,10 @@ import { deleteTimeLogEntryWithEffort, printDeleteResult } from "@app/azure-devo
 import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
 import { formatMinutes } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 
 export function registerDeleteSubcommand(parent: Command): void {
@@ -77,6 +77,7 @@ export function registerDeleteSubcommand(parent: Command): void {
                             value: e.timeLogId,
                             label: `${e.date} | ${formatMinutes(e.minutes)} | ${e.timeTypeDescription} | ${e.userName}${e.comment ? ` | ${e.comment}` : ""}`,
                         })),
+                        cancel: "back",
                     });
 
                     if (p.isCancel(selected)) {
@@ -123,6 +124,7 @@ export function registerDeleteSubcommand(parent: Command): void {
                             : async () => {
                                   const ok = await p.confirm({
                                       message: `Delete time log entry ${id.substring(0, 8)}...?`,
+                                      cancel: "back",
                                   });
                                   return !p.isCancel(ok) && !!ok;
                               },

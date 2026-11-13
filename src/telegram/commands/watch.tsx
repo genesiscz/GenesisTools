@@ -1,8 +1,8 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import "@genesiscz/utils/ink/react-production";
 import { ReadStream } from "node:tty";
-import * as p from "@clack/prompts";
 import { requireInteractiveTty } from "@genesiscz/utils/ink/lib/tty-guard";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import { render } from "ink";
 import type { NewMessageEvent } from "telegram/events";
@@ -80,6 +80,7 @@ export function registerWatchCommand(program: Command): void {
                     const selected = await p.select({
                         message: "Which conversation to watch?",
                         options: choices,
+                        cancel: "back",
                     });
 
                     if (p.isCancel(selected)) {

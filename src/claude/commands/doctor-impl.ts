@@ -11,8 +11,9 @@ import {
     UNCERTAINTY_TEXT,
 } from "@app/claude/lib/doctor";
 import { peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import {
     type FingerprintResult,
     findDuplicateAccounts,
@@ -26,9 +27,9 @@ import {
 } from "@genesiscz/utils/claude/keychain";
 import { probeLongLivedToken, type TokenVerdict } from "@genesiscz/utils/claude/token-verify";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
 import { findProcesses, readProcess, readProcessEnvironment } from "@genesiscz/utils/process/processes";
+import { resolveSecret } from "@genesiscz/utils/security";
 import pc from "picocolors";
 
 export function readPinnedCandidates(): ReturnType<typeof parsePinnedProcesses> {
@@ -98,7 +99,23 @@ function describeGroup(diag: Diagnosis, keychainLabel: string | undefined): void
  * someone else. Only the server can settle it, and it costs one 1-token
  * completion per account — hence opt-in.
  */
-async function reportIdentities(accounts: AIAccountEntry[]): Promise<number> {
+/** An account with its long-lived token resolved: the checks below compare or probe the token itself. */
+interface TokenAccount {
+    name: string;
+    tokens: { longLivedToken?: string };
+}
+
+/** Resolved here, where the doctor compares or probes them, and only for accounts that hold one. */
+async function withLongLivedTokens(accounts: AccountEntry[]): Promise<TokenAccount[]> {
+    return Promise.all(
+        accounts.map(async (a) => ({
+            name: a.name,
+            tokens: { longLivedToken: await resolveSecret(a.credentials.longLivedToken) },
+        }))
+    );
+}
+
+async function reportIdentities(accounts: TokenAccount[]): Promise<number> {
     const withToken = accounts.filter((a) => a.tokens.longLivedToken);
 
     if (withToken.length === 0) {
@@ -159,8 +176,8 @@ async function reportIdentities(accounts: AIAccountEntry[]): Promise<number> {
  * `--identity` pass is the one exception, and it must be asked for.
  */
 export async function doctorCommand(opts: { identity?: boolean } = {}): Promise<void> {
-    const config = await AIConfig.load();
-    const accounts = config.getAccountsByProvider("anthropic-sub");
+    // A diagnostic: the read-only snapshot never runs a migration, and no secret is read until a check needs one.
+    const accounts = (await AiConfigStore.readOnly()).accounts({ provider: "anthropic-sub" });
     const cached = await peekSharedUsage().catch((error) => {
         logger.debug({ error }, "[doctor] usage cache unreadable");
         return null;
@@ -174,7 +191,11 @@ export async function doctorCommand(opts: { identity?: boolean } = {}): Promise<
     });
 
     // An unmanaged login still absorbs fallbacks — attribute by UUID then.
-    const keychainLabel = accountOwningKeychain(accounts, keychainUuid) ?? keychainUuid;
+    const keychainLabel =
+        accountOwningKeychain(
+            accounts.map((a) => ({ name: a.name, secondary: a.credentials.secondary })),
+            keychainUuid
+        ) ?? keychainUuid;
     out.printlnErr(
         pc.dim(
             keychainLabel
@@ -191,7 +212,7 @@ export async function doctorCommand(opts: { identity?: boolean } = {}): Promise<
         // The identity pass is about the CONFIG, not about running sessions, so
         // "nothing is running" must not skip it.
         if (opts.identity) {
-            await reportIdentities(accounts);
+            await reportIdentities(await withLongLivedTokens(accounts));
         }
 
         return;
@@ -208,9 +229,10 @@ export async function doctorCommand(opts: { identity?: boolean } = {}): Promise<
 
     let sick = 0;
     let inconclusive = 0;
+    const tokenAccounts = await withLongLivedTokens(accounts);
 
     for (const group of groups.sort((a, b) => a.account.localeCompare(b.account))) {
-        const diag = diagnoseGroup(group, accounts, cached, verdicts.get(group.token) ?? "unreachable");
+        const diag = diagnoseGroup(group, tokenAccounts, cached, verdicts.get(group.token) ?? "unreachable");
 
         if (diag.problems.length > 0) {
             sick++;
@@ -242,7 +264,7 @@ export async function doctorCommand(opts: { identity?: boolean } = {}): Promise<
     // "Billing the account they claim" above is a claim about the PIN, not about
     // the token's real owner — say so unless the identity pass actually ran.
     if (opts.identity) {
-        await reportIdentities(accounts);
+        await reportIdentities(await withLongLivedTokens(accounts));
     } else {
         out.printlnErr(
             pc.dim(

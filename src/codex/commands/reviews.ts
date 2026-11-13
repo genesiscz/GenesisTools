@@ -1,4 +1,3 @@
-import { sessionCostSummary } from "@app/ai-spend/lib/workers/ledger";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration, formatTokens } from "@genesiscz/utils/format";
@@ -11,6 +10,7 @@ import {
     REVIEW_EFFORTS,
     type ReviewEffort,
 } from "@genesiscz/utils/worker/contract";
+import { sessionCostSummary } from "@genesiscz/utils/worker/spend-ledger";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { checkReview, type ReviewGateChecks } from "../lib/review/gate";
@@ -73,6 +73,7 @@ async function enumFilter(flag: string, raw: string | true | undefined, values: 
         const picked = await p.select({
             message: `${flag}`,
             options: values.map((value) => ({ value, label: value })),
+            cancel: "back",
         });
 
         if (!p.isCancel(picked) && typeof picked === "string") {

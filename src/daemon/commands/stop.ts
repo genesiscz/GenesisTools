@@ -2,8 +2,8 @@ import { getSignalableDaemonPid } from "@app/daemon/daemon";
 import { getDaemonStatus, uninstallLaunchd } from "@app/daemon/lib/launchd";
 import type { EscalationStep } from "@app/daemon/lib/wait-for-restart";
 import { stopWithEscalation, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 

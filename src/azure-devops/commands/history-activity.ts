@@ -33,9 +33,9 @@ import { stripCommentHtml } from "@app/azure-devops/lib/mentions";
 import type { Comment, IdentityRef, WorkItemUpdate } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import { escapeWiqlValue } from "@app/azure-devops/wiql-builder";
-import * as p from "@clack/prompts";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 // ============= Types =============

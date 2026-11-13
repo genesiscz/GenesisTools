@@ -3,8 +3,6 @@
  * reader (the cached session list) can bring the clocks up to date without loading the listing code.
  */
 export const CACHE_TTL_MS = 60 * 60 * 1000; // Claude Code 1-hour prompt-cache TTL
-export const CODEX_CACHE_TTL_MS = 30 * 60 * 1000; // GPT-5.6+ / Codex subscription documented minimum
-export const GROK_CACHE_TTL_MS = 30 * 60 * 1000; // warning clock; xAI publishes no TTL (eviction anytime)
 export const COOLING_REMAINING_MS = 10 * 60 * 1000;
 export const CRITICAL_REMAINING_MS = 5 * 60 * 1000;
 export const COOLING_THRESHOLD_MS = CACHE_TTL_MS - COOLING_REMAINING_MS; // 50 min idle = 10 min left

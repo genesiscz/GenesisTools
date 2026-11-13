@@ -1,7 +1,3 @@
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-
-setupStorageSandbox();
-
 import { describe, expect, test } from "bun:test";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { AccountUsage, ExtraUsageBucket } from "./api";

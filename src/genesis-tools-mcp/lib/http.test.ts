@@ -86,7 +86,7 @@ describe("genesis-tools MCP over HTTP (resident, per-request caller)", () => {
     it("returns durable image metadata across the actual tools/call boundary", async () => {
         const client = await connect("a", "question_answer");
         const path = join(cwdA, "screenshot.png");
-        writeFileSync(path, encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1));
+        writeFileSync(path, await encodeRgbaToPng(new Uint8ClampedArray([10, 20, 30, 255]), 1, 1));
         try {
             const response = await client.callTool({
                 name: "question_answer",

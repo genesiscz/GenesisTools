@@ -72,11 +72,11 @@ function makeMcpManagerBackend(): PromptBackend {
         select: async () => {
             checkErrors(["selectedProvider", "choice", "inputType"]);
             const r = getResponses();
-            return (r.selectedProvider ?? r.choice ?? r.inputType ?? "") as SelectValue;
+            return (r.selectedProvider ?? r.choice ?? r.inputType ?? "") as never;
         },
         multiselect: async () => {
             checkErrors(["selectedProviders"]);
-            return ((getResponses().selectedProviders as SelectValue[]) ?? []) as SelectValue[];
+            return ((getResponses().selectedProviders as SelectValue[]) ?? []) as never;
         },
         password: async () => {
             checkErrors(["password"]);

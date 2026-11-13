@@ -172,3 +172,31 @@ export interface TmuxHubSession {
     cmuxSurfaces: Array<{ workspaceId: string; surfaceId: string; title: string }>;
     inCmux: boolean;
 }
+
+export type {
+    HandoffActionInput,
+    HandoffActionResponse,
+    HandoffEventsResponse,
+    HandoffGetResponse,
+    HandoffListResponse,
+    HandoffPostResponse,
+    HandoffTarget,
+    HandoffTaskInput,
+    PublicHandoff,
+} from "@app/dev-dashboard/lib/handoff-types";
+
+/** The cmux pane `POST /api/cmux/focus-session` focused. Re-declared (NOT imported from `lib/session-focus`, which
+ * runs `tools`) so the contract stays runtime-free; keep it structurally identical to that lib's `FocusedPane`. */
+export interface FocusedPaneDto {
+    workspaceId: string;
+    workspaceName: string;
+    paneId: string;
+    surfaceId?: string;
+    cwd?: string;
+    sessionIds?: string[];
+}
+
+/** The answer of `POST /api/cmux/focus-session`: a miss is a 409 with the same shape (`lib/session-focus`). */
+export type FocusSessionResultDto =
+    | { ok: true; focused: FocusedPaneDto; activated: boolean }
+    | { ok: false; error: string; remedy: string };

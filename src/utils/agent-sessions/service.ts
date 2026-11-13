@@ -202,6 +202,23 @@ function resultFromMetadata(metadata: CachedHistoryMetadata, kind: string): Hist
     };
 }
 
+/** When a catalog read refreshes the index first (see `HistoryService.catalog`). */
+export interface CatalogRefreshOptions {
+    maxDiscoveryAgeMs?: number;
+    refresh?: boolean;
+}
+
+/** SQL's `COALESCE(first_timestamp, '') DESC`, as the repository sorts an unlimited listing. */
+function byFirstTimestampDesc(a: CachedHistoryMetadata, b: CachedHistoryMetadata): number {
+    const left = a.firstTimestamp ?? "";
+    const right = b.firstTimestamp ?? "";
+    if (left === right) {
+        return 0;
+    }
+
+    return left < right ? 1 : -1;
+}
+
 /** One provider-independent query path. The owner supplies an initialized canonical repository. */
 /**
  * The listing refreshes of the default index (the services with a `freshness` marker) running in this process, by
@@ -239,7 +256,7 @@ export class HistoryService {
         const issues = [...synchronized.report.issues];
         const metadata = repository.metadata.getMetadataBySessionId({ providerId, sessionId });
 
-        if (!metadata || !reader.scan) {
+        if (!metadata) {
             return { results: [], issues };
         }
 
@@ -309,10 +326,6 @@ export class HistoryService {
         filters.signal?.throwIfAborted();
 
         try {
-            if (!reader.readRecords) {
-                throw new Error(`${reader.kind} does not implement original record hydration`);
-            }
-
             const locators = [...new Set([...candidate.match.matchedLocators, ...candidate.match.contextLocators])];
             const selected = new Map(candidate.match.selectedRecords.map((record) => [record.locator, record]));
             const canReuse = locators.every((locator) => selected.has(locator));
@@ -418,7 +431,31 @@ export class HistoryService {
      * long; a brand-new session appears once the next refresh runs. `refresh: false` never refreshes,
      * for a diagnostic, which must not write the index.
      */
-    async catalog(filters: AgentSearchFilters = {}, options: { maxDiscoveryAgeMs?: number; refresh?: boolean } = {}) {
+    async catalog(filters: AgentSearchFilters = {}, options: CatalogRefreshOptions = {}) {
+        const { scope, synchronized } = await this.refreshCatalog(filters, options);
+        return { metadata: this.readCatalog(scope), report: synchronized.report, reindexed: synchronized.reindexed };
+    }
+
+    /**
+     * How many sessions the catalog scope holds, sub-agents included, so a caller that prints counts does not read
+     * every row to count them. The same scope as `catalog`, without the agent flags and without the limit; the
+     * options are `catalog`'s too, so a caller that has just listed passes `refresh: false` and reads the index the
+     * listing refreshed.
+     */
+    async catalogCounts(
+        filters: AgentSearchFilters = {},
+        options: CatalogRefreshOptions = {}
+    ): Promise<{ total: number; subagents: number }> {
+        const unbounded = { ...filters, excludeAgents: undefined, agentsOnly: undefined, limit: undefined };
+        const { scope } = await this.refreshCatalog(unbounded, options);
+        const rows = this.readCatalog(scope);
+        return { total: rows.length, subagents: rows.filter((row) => row.isSubagent).length };
+    }
+
+    private async refreshCatalog(
+        filters: AgentSearchFilters,
+        options: CatalogRefreshOptions
+    ): Promise<{ scope: AgentSearchFilters; synchronized: { report: NativeIndexChanges; reindexed: boolean } }> {
         const logicalPaths = filters.filePaths;
         if (filters.filePaths !== undefined) {
             filters = { ...filters, filePaths: filters.filePaths.map(canonicalRoot) };
@@ -488,12 +525,15 @@ export class HistoryService {
             }
         }
 
-        const scoped = {
-            ...filters,
-            sourceRoots: (filters.sourceRoots ?? this.options.roots).map(canonicalRoot),
-            excludeAgents: false,
-            agentsOnly: false,
-        };
+        return { scope: filters, synchronized };
+    }
+
+    /**
+     * The indexed rows of a catalog scope, newest first by `firstTimestamp`: the agent flags and the project, date
+     * and root filters apply to each row, and `limit` cuts after the sort.
+     */
+    private readCatalog(filters: AgentSearchFilters): CachedHistoryMetadata[] {
+        const scoped = { ...filters, sourceRoots: (filters.sourceRoots ?? this.options.roots).map(canonicalRoot) };
         const { repository, providerId } = this.options;
         const inScope = (entry: CachedHistoryMetadata) => metadataInScope(entry, scoped);
         const metadata = repository.metadata
@@ -521,9 +561,10 @@ export class HistoryService {
                 .filter((entry) => inScope(entry) && !seen.has(entry.sourceKey))
                 .slice(0, filters.newest);
             metadata.push(...newest);
+            metadata.sort(byFirstTimestampDesc);
         }
 
-        return { metadata, report: synchronized.report, reindexed: synchronized.reindexed };
+        return filters.limit == null ? metadata : metadata.slice(0, Math.max(0, filters.limit));
     }
 
     /** How many indexed sessions still carry the pre-index identity the migration synthesized. */
@@ -738,7 +779,7 @@ export class HistoryService {
                     ? sources[0]
                     : sources.find((candidate) => candidate.metadata?.sessionId === cached.nativeId);
 
-            if (!source || !reader.readMetadata) {
+            if (!source) {
                 continue;
             }
 

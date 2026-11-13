@@ -26,7 +26,7 @@ const { log } = logger.scoped("agent-cmux");
  */
 
 /** This agent's sessions in the shape the pane matcher wants. */
-async function lookupAgentSession(
+export async function lookupAgentSession(
     alias: AccountProviderAlias,
     query: string
 ): Promise<{ aliases: string[]; sessionId: string | null; cwd: string | null }> {
