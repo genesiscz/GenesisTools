@@ -341,6 +341,7 @@ private struct PeopleList: View {
                     }
                     .instantTooltip("Remove this person, or every pairing one calendar entry made")
                 }
+                .liveRow()
             }
             FromMeetingsList(model: model, project: project)
         }
@@ -918,13 +919,17 @@ private struct ProjectPersonDetailsEditor: View {
     let model: MeetingsSettingsModel
     let project: String
     let person: PairedPerson
+    @Environment(\.rowLive) private var rowLive
     @State private var editing = false
     @State private var role = ""
     @State private var aliases = ""
     var body: some View {
-        Button("Role: \(person.role ?? "unknown") · Aliases: \((person.aliases ?? []).joined(separator: ", "))") {
+        LiveButton(live: editing || rowLive, tooltip: nil, pressable: true) {
             role = person.role ?? ""; aliases = (person.aliases ?? []).joined(separator: ", "); editing = true
-        }.buttonStyle(.link)
+        } label: {
+            Text("Role: \(person.role ?? "unknown") · Aliases: \((person.aliases ?? []).joined(separator: ", "))")
+                .foregroundStyle(.tint)
+        }
         .accessibilityIdentifier("meetings.projects.person.details.\(person.id)")
         .popover(isPresented: $editing) {
             Form {
