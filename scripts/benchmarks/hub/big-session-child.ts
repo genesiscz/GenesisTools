@@ -45,6 +45,8 @@ const CALLS: Array<{ key: string; argv: string[] }> = [
     { key: "usage", argv: ["ai", "usage", "sessions", "--json", "--hours", "72"] },
 ];
 const TICK_MS = 20;
+/** One door call that runs longer than this is stuck, not slow: its signal aborts it and the sample fails. */
+const CALL_DEADLINE_MS = 5 * 60_000;
 // The server always holds a listening socket; this timer stands in for it, so the loop of this process waits as the
 // server's does while a worker thread has the work.
 const keepAlive = setInterval(() => undefined, 1000);
@@ -65,7 +67,7 @@ async function answer(argv: string[]): Promise<{ exit: number; bytes: number }> 
             continue;
         }
 
-        const result = await door.run(parsed, { signal: new AbortController().signal });
+        const result = await door.run(parsed, { signal: AbortSignal.timeout(CALL_DEADLINE_MS) });
         if (result.exit !== 0) {
             throw new Error(`${argv.slice(0, 3).join(" ")} exited ${result.exit}: ${result.stderr.trim().slice(-300)}`);
         }
@@ -77,10 +79,6 @@ async function answer(argv: string[]): Promise<{ exit: number; bytes: number }> 
 }
 
 const metrics: Record<string, number> = {};
-let peakRss = process.memoryUsage.rss();
-const noteRss = () => {
-    peakRss = Math.max(peakRss, process.memoryUsage.rss());
-};
 
 if (mode === "each") {
     for (const call of CALLS) {
@@ -97,8 +95,6 @@ if (mode === "each") {
             if (pass === "cold") {
                 metrics[`${call.key}.bytes`] = result.bytes;
             }
-
-            noteRss();
         }
     }
 } else {
@@ -116,8 +112,6 @@ if (mode === "each") {
                 metrics["together.failed"] += 1;
                 process.stderr.write(`${call.key}: ${error instanceof Error ? error.message : String(error)}\n`);
             }
-
-            noteRss();
         })
     );
     metrics["together.wallMs"] = performance.now() - started;
@@ -126,7 +120,9 @@ if (mode === "each") {
     metrics["together.maxStallMs"] = monitor.stop().maxStallMs;
 }
 
-metrics[`${mode}.peakRssMb`] = Math.round(peakRss / 1024 / 1024);
+// The kernel's high-water mark of the whole process (worker threads included), in KB: a sample taken after each
+// answer missed the transient peak of a call whose buffers were already freed.
+metrics[`${mode}.peakRssMb`] = Math.round(process.resourceUsage().maxRSS / 1024);
 process.stdout.write(`${SafeJSON.stringify(metrics, { strict: true })}\n`);
 clearInterval(keepAlive);
 // A door may leave a watcher or a database handle open; the numbers are out, so the process ends here.

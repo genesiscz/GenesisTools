@@ -24,6 +24,7 @@ import { readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
 import { finishBench, parseBenchArgs } from "../fs/shared";
 
@@ -85,25 +86,34 @@ const arms: Array<{ name: string; checkout: string }> = [
     ...(before ? [{ name: "before", checkout: before }] : []),
 ];
 
-async function sample(checkout: string, mode: "each" | "together"): Promise<Record<string, number>> {
-    const proc = Bun.spawn(["bun", "run", CHILD, checkout, session as string, mode], {
-        cwd: REPO,
-        stdout: "pipe",
-        stderr: "pipe",
-    });
-    const [stdout, stderr, code] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
+/**
+ * One sample's deadline: twelve calls of the largest session (749 MB) took under two minutes on 2026-11-10, so a child
+ * still running after 15 minutes is stuck; it is killed with its process group and the run fails, naming the arm.
+ */
+const SAMPLE_DEADLINE_MS = 15 * 60_000;
 
-    if (code !== 0) {
+async function sample(checkout: string, mode: "each" | "together"): Promise<Record<string, number>> {
+    const result = await boundedCommand({
+        command: [process.execPath, "run", CHILD, checkout, session as string, mode],
+        timeoutMs: SAMPLE_DEADLINE_MS,
+        cwd: REPO,
+    });
+
+    if (result.error?.code === "ETIMEDOUT") {
         throw new Error(
-            `big-session-child ${mode} failed (exit ${code}) for ${checkout}: ${stderr.trim().slice(-600)}`
+            `big-session-child ${mode} for ${checkout} passed its ${SAMPLE_DEADLINE_MS / 60_000}-minute deadline and was killed: ${result.stderr.trim().slice(-600)}`
         );
     }
 
-    const metrics: Record<string, number> = SafeJSON.parse(stdout.trim().split("\n").pop() ?? "{}", { strict: true });
+    if (result.error || result.status !== 0) {
+        throw new Error(
+            `big-session-child ${mode} failed (${result.error?.message ?? `exit ${result.status}`}) for ${checkout}: ${result.stderr.trim().slice(-600)}`
+        );
+    }
+
+    const metrics: Record<string, number> = SafeJSON.parse(result.stdout.trim().split("\n").pop() ?? "{}", {
+        strict: true,
+    });
     return metrics;
 }
 
