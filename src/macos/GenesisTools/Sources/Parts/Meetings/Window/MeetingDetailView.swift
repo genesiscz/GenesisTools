@@ -159,6 +159,9 @@ struct MeetingDetailView: View {
                 }
                 projectPicker(record)
                 labelsPicker(record)
+                MeetingSeatsButton(detail: detail)
+                Text("Suggested agent findings: not applied").font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("meetings.detail.suggestedApplication")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if record?.project == nil && projectDictionaryExists {

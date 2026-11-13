@@ -1,5 +1,12 @@
 import type { EchoMetric } from "@genesiscz/utils/meetings/echo";
+/**
+ * The facts of a meeting for an agent to reason over (the polishing session's three-pass mode, decision 33 a): who
+ * was in the call, and per line what was said, under which label, on which channel, and what the platform showed.
+ * No rule, no weight, no confidence: the agent decides, and writes items with its own reasons.
+ */
+import type { PairedPerson } from "@genesiscz/utils/meetings/people";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import { type MeetingSeats, personForAlias } from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
@@ -11,15 +18,12 @@ import { type LocalSpeech, localSpeechLines } from "./local-speech";
 import { rosterPresence } from "./person-stays";
 import { assessIndicator } from "./speaker-indicator";
 
-/**
- * The facts of a meeting for an agent to reason over (the polishing session's three-pass mode, decision 33 a): who
- * was in the call, and per line what was said, under which label, on which channel, and what the platform showed.
- * No rule, no weight, no confidence: the agent decides, and writes items with its own reasons.
- */
 export interface RawMeeting {
     indicator?: { knownLines: number; unknownLines: number };
     meeting: {
         id: string;
+        seats?: MeetingSeats;
+        indicator?: { signal: "no-signal"; dominant: { name: string; share: number } };
         title: string;
         start: string;
         end?: string;
@@ -36,6 +40,8 @@ export interface RawMeeting {
     people: Array<{
         name: string;
         origin?: string;
+        role?: string;
+        aliases?: string[];
         self?: boolean;
         firstSeenSec?: number;
         stays: Array<{ fromSec: number; toSec: number; source?: string; confidence?: number }>;
@@ -58,6 +64,8 @@ export interface RawMeeting {
         speakingUnknown?: boolean;
         indicatorIgnored?: "meeting-dominance" | "stretch-stuck";
         indicatorReason?: "meeting-dominance" | "stretch-stuck";
+        speakingSignal?: "no-signal";
+        speakingSignalReason?: "meeting-dominance" | "stretch-stuck";
         muted: string[];
         localSpeechOutput?: true;
         present: string[];
@@ -91,6 +99,7 @@ export function rawMeeting(options: {
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
     callSilent?: Array<{ fromSec: number; toSec: number }>;
     points: SummaryPoint[];
+    people?: PairedPerson[];
     terms?: RawTermEvidence;
 }): RawMeeting {
     const { record, meeting, evidence } = options;
@@ -122,20 +131,24 @@ export function rawMeeting(options: {
         ...new Set([
             ...(presence?.map((person) => person.name) ?? []),
             ...record.participants.map((person) => person.name),
+            ...(record.seats?.room ?? []),
+            ...(record.seats?.remote.map((person) => person.name) ?? []),
             ...meeting.speakers.map((speaker) => speaker.name),
             ...facts.people.filter(
                 (name) =>
                     !record.participants.some((person) => sameName(person.name, name)) &&
                     !meeting.speakers.some((speaker) => sameName(speaker.name, name))
             ),
-            ...(record.seats?.room ?? []),
-            ...(record.seats?.remote.map((seat) => seat.name) ?? []),
         ]),
     ];
 
     return {
         meeting: {
             id: record.id,
+            ...(record.seats ? { seats: record.seats } : {}),
+            ...(assessment.dominant
+                ? { indicator: { signal: "no-signal" as const, dominant: assessment.dominant } }
+                : {}),
             title: record.title,
             start: meeting.start,
             ...(meeting.end ? { end: meeting.end } : {}),
@@ -156,9 +169,12 @@ export function rawMeeting(options: {
                 ? "platform-roster"
                 : (originOf(name) ?? (facts.people.some((person) => sameName(person, name)) ? "indicator" : undefined));
             const person = record.participants.find((one) => sameName(one.name, name));
+            const details = personForAlias(options.people ?? [], name);
             return {
                 name,
                 ...(person?.firstSeenSec === undefined ? {} : { firstSeenSec: person.firstSeenSec }),
+                ...(details?.role ? { role: details.role } : {}),
+                ...(details?.aliases ? { aliases: details.aliases } : {}),
                 ...(origin ? { origin } : {}),
                 ...(selfName && sameName(name, selfName) ? { self: true } : {}),
                 stays: (presence ?? [])
@@ -183,6 +199,9 @@ export function rawMeeting(options: {
             return {
                 index: line.index,
                 ...(local.has(line.index) ? { localSpeechOutput: true as const } : {}),
+                ...(assessment.ignored.has(line.index)
+                    ? { speakingSignal: "no-signal" as const, speakingSignalReason: assessment.reasons.get(line.index) }
+                    : {}),
                 fromSec: line.startSec,
                 toSec: line.endSec,
                 label: line.label,

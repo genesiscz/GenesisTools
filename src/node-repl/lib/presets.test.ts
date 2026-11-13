@@ -168,3 +168,11 @@ describe("running a preset in the REPL's scope", () => {
         expect(meta.runs).toBe(1);
     });
 });
+
+test("the shipped microphone attribution preset lists parameters and delegates to byChannel", () => {
+    const preset = readPreset("meetings-attribute-by-mic");
+    expect(listPresets().some((one) => one.name === preset.meta.name)).toBe(true);
+    expect(Object.keys(preset.meta.params)).toEqual(["meeting", "label", "room", "remote", "dryRun"]);
+    expect(preset.script).toContain("items.byChannel");
+    expect(preset.meta.params.dryRun?.default).toBe(true);
+});

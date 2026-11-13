@@ -6,9 +6,11 @@ import { out } from "@genesiscz/utils/logger";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { labelIdentityTable, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
+import { parseClock } from "@genesiscz/utils/transcribe/render";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { channelEvidence } from "../lib/channel-operation";
 import { localSpeechDuring } from "../lib/local-speech";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { compactEvidence, rawMeeting } from "../lib/raw";
@@ -33,6 +35,9 @@ async function evidence(
         json?: boolean;
         files?: boolean;
         raw?: boolean;
+        table?: boolean;
+        from?: string;
+        to?: string;
         wordCheck?: string;
     }
 ): Promise<void> {
@@ -65,6 +70,18 @@ async function evidence(
 
         // A meeting without a transcript source fails in linked() with [no-transcript-source], as every command does.
         const opened = OpenedMeeting.of(store, record);
+        if (opts.table) {
+            const raw = await channelEvidence(opened);
+            const from = opts.from === undefined ? 0 : (parseClock(opts.from) ?? NaN);
+            const to = opts.to === undefined ? Infinity : (parseClock(opts.to) ?? NaN);
+            if (!Number.isFinite(from) || Number.isNaN(to) || from < 0 || to < from) {
+                throw new Error("--from/--to need ordered, nonnegative seconds");
+            }
+            out.print(
+                `${compactEvidence({ ...raw, lines: raw.lines.filter((line) => line.fromSec >= from && line.fromSec <= to) })}\n`
+            );
+            return;
+        }
         const { source } = await opened.linked();
         const meeting = await opened.meeting();
         const found = await opened.evidence();
@@ -110,6 +127,7 @@ async function evidence(
                     callSilent: await opened.silentCallSpans(),
                     points: await opened.summaryPoints(),
                     terms,
+                    people: (await opened.config()).projects[current.project ?? ""]?.match?.people,
                 });
                 out.result(format === "lines" ? compactEvidence(raw) : SafeJSON.stringify(raw, null, 2));
             } finally {
@@ -236,6 +254,9 @@ export function registerEvidenceCommand(program: Command): void {
             "who was in the call and when: a platform (teams) or its export file (teams:<file>)"
         )
         .option("--files", "also list the evidence files and their sizes")
+        .option("--table", "compact per-line evidence table")
+        .option("--from <seconds>", "table start time")
+        .option("--to <seconds>", "table end time")
         .option(
             "--raw",
             "the facts per line as JSON, with no rule or confidence: who, channel, platform, present, terms, summary"

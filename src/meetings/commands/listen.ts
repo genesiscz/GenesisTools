@@ -384,7 +384,7 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
     const roundRunning = runningRound(readAnswerEvents(path)).length > 0;
 
     // A listener for comments waits for them even with no question open.
-    if (!roundRunning && !opts.fromStart && !opts.withComments && openQuestions(meeting).length === 0) {
+    if (!opts.follow && !roundRunning && !opts.fromStart && !opts.withComments && openQuestions(meeting).length === 0) {
         process.stderr.write(`No open questions in ${meeting.id} and no listen round running.\n`);
         return;
     }

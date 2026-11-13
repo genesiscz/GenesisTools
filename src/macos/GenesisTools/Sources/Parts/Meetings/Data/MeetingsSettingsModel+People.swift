@@ -4,6 +4,15 @@ import Foundation
 /// `projects.pairFromMeetings`). Opening the page only reads; a click pairs, and its notice has an Undo that unpairs
 /// exactly the people it paired.
 extension MeetingsSettingsModel {
+    func setPersonDetails(project: String, person: PairedPerson, role: String, aliases: [String]) {
+        let path = ["projects", project, "match", "people"]
+        guard var people = settingsRaw?.at(path).foundation as? [[String: Any]],
+              let index = people.firstIndex(where: { ($0["name"] as? String) == person.name }) else { return }
+        people[index]["role"] = role.trimmingCharacters(in: .whitespaces).isEmpty ? nil : role
+        people[index]["aliases"] = aliases
+        set(path, people, done: "Updated role and aliases for \(person.name)")
+    }
+
     typealias MeetingPerson = MeetingsAPI.ProjectsMeetingPeople.Person
 
     static let meetingPeopleUnavailable =

@@ -42,6 +42,81 @@ const answered = (item: string, answer: string): AnswerEvent => ({
 });
 
 describe("answer log", () => {
+    test("follow survives an empty round and reports its timeout", async () => {
+        const path = logFile([{ event: "round-start", at, pid: process.pid, open: 1 }]);
+        const events: string[] = [];
+        const diagnostics: string[] = [];
+        const result = subscribeAnswers({
+            path,
+            fromStart: false,
+            timeoutMs: 150,
+            follow: true,
+            diagnostic: (line) => diagnostics.push(line),
+            write: (line) => events.push(SafeJSON.parse(line).event),
+        });
+        appendAnswerEvent(path, { event: "questions-rejected", at, items: ["i1"], open: 0 });
+        expect(await result).toBe(2);
+        expect(events).toContain("round-ended");
+        expect(diagnostics.join(" ")).toContain("timeout");
+    });
+
+    test("journal rejection of every question emits round-ended and follow observes the next round", async () => {
+        const storage = new Storage(`reject-follow-${process.pid}`);
+        const store = new MeetingStore(storage);
+        const record = await store.create(
+            {
+                title: "Follow fixture",
+                start: at,
+                createdBy: "new",
+                items: [
+                    {
+                        id: "i1",
+                        kind: "question",
+                        status: "suggested",
+                        about: "speaker",
+                        fromSec: 0,
+                        toSec: 10,
+                        question: "Who?",
+                        choices: ["Alice", "Bob"],
+                        decides: [],
+                        rules: [],
+                        suggestedAt: at,
+                    },
+                ],
+            },
+            { command: "test", change: "fixture" }
+        );
+        const path = join(store.folder(record.id), ANSWER_LOG_FILE);
+        appendAnswerEvent(path, { event: "round-start", at, pid: process.pid, open: 1 });
+        const events: string[] = [];
+        const done = subscribeAnswers({
+            path,
+            fromStart: false,
+            timeoutMs: 500,
+            follow: true,
+            diagnostic: () => undefined,
+            write: (line) => {
+                const event = SafeJSON.parse(line).event;
+                events.push(event);
+                if (event === "round-ended") {
+                    appendAnswerEvent(path, { event: "round-start", at, pid: process.pid, open: 1 });
+                    appendAnswerEvent(path, answered("i2", "Alice"));
+                    appendAnswerEvent(path, { event: "round-end", at, reason: "done", asked: 1, open: 0 });
+                }
+            },
+        });
+        await new DecisionJournal({ store, ledger: () => undefined }).apply({
+            meeting: record.id,
+            action: { kind: "reject", items: ["i1"] },
+            actor: { kind: "agent", harness: "fixture", session: null },
+        });
+        expect(await done).toBe(2);
+        expect(events).toContain("questions-rejected");
+        expect(events).toContain("round-ended");
+        expect(events.indexOf("answered")).toBeGreaterThan(events.indexOf("round-ended"));
+        expect(new MeetingStore(storage).read(record.id)?.items[0]?.status).toBe("rejected");
+    });
+
     test("the running round is the events from the last round-start without a round-end after it", () => {
         const events: AnswerEvent[] = [
             { event: "round-start", at, pid: 1, open: 2 },
@@ -110,7 +185,7 @@ describe("answer log", () => {
         expect(SafeJSON.parse(lines.at(-1)!, { jsonl: true })).toMatchObject({ event: "round-end", reason: "aborted" });
     });
 
-    test("--follow stays up across one-question rounds and ends when a round leaves no open question", async () => {
+    test("--follow stays up across empty rounds until the timeout", async () => {
         const path = logFile([{ event: "round-start", at, pid: process.pid, open: 1 }]);
         const events: string[] = [];
         const next: AnswerEvent[][] = [
@@ -121,7 +196,7 @@ describe("answer log", () => {
         const code = await subscribeAnswers({
             path,
             fromStart: false,
-            timeoutMs: 5000,
+            timeoutMs: 1500,
             follow: true,
             write: (line) => {
                 const event = SafeJSON.parse(line, { jsonl: true }).event;
@@ -134,7 +209,7 @@ describe("answer log", () => {
             },
         });
 
-        expect(code).toBe(0);
+        expect(code).toBe(2);
         expect(events).toEqual(["round-start", "answered", "round-end", "round-start", "answered", "round-end"]);
     });
 

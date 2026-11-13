@@ -772,3 +772,17 @@ its own meeting model; `--tab` and `--no-focus` are preserved. Helpers transform
 processes while retaining the signed identity needed for TCC. AppleScript can select the real window process with
 `first application process whose bundle identifier is "com.genesiscz.genesistools" and background only is false`.
 A desktop check after the parent installs the reconciled app must verify two independent windows and that process selection.
+
+### Seats, project roles and channel attribution
+
+Store confirmed seating with `tools meetings set <meeting> --seats '<json>'` or `meeting.set({seats})`. The shared shape is `{room: string[], remote: {name, label?, fromSec?, toSec?}[], microphones?: {id, label?, people: string[], deviceId?}[]}`. A microphone group contains only room people or only remote people. ID `self` is the owner's microphone; `deviceId` identifies the device owner. Join is inclusive, leave exclusive. Old remote strings load as named remote seats without changing the source file.
+
+`tools meetings projects people <project> --person <name> --role <role> --alias <names...>` edits explicit project details. The role column and `evidence --raw` show them. Unknown roles stay unknown. Notes never become roles.
+
+`tools meetings items by-channel <meeting> --label <label> --dry-run` plans ranges from channel shares, using saved seats unless `--room` and JSON `--remote` override them. `--mic-max` defaults to 0.2, `--mic-min` to 0.85, `--min-chars` to 25. The REPL equivalent is `meeting.items.byChannel({label,dryRun:true})`. Inspect the plan, then apply explicitly. `replace:{kinds:["speaker-range","question"],by:"agent"}` rejects old suggested agent items in the same journal transaction. Shared room voices remain unresolved; `askRoom:{minSec:8,max:6}` makes bounded questions. The shipped `meetings-attribute-by-mic` preset is a worked example. CLI calls without `--dry-run` apply; REPL calls default to a dry run.
+
+A known manual annotation stays separate from channel inference. Supply it through `meeting.items.add({findings:[{kind:"speaker-range",from:60,to:62,label:"Room",speaker:"Alice",confidence:0.7,reason:"Manual annotation: confirmed screen or listening evidence"}]})`, or `items add --from-file`. Keep its actual provenance in `reason`. Do not describe manual ranges as inferred from microphone share.
+
+`tools meetings reject <meeting> --kind speaker-range --where 'confidence<0.6'` selects suggested items with a numeric confidence/priority comparison. It does not evaluate JavaScript. `tools meetings evidence <meeting> --table --from 60 --to 120` and `meeting.evidence({table:true,from:60,to:120})` return bounded per-line evidence. When a line refers to the screen, read `screen --at` before attributing the idea.
+
+`listen --subscribe-answers --follow` keeps following empty rounds until its deadline. Rejected questions emit `questions-rejected` and a subscriber `round-ended` event. Existing `round-end` log events remain supported. Deadline exit 2 prints an explicit timeout diagnostic on stderr.

@@ -88,6 +88,7 @@ struct DecisionAction: Codable, Equatable, Hashable {
     var title: String?
     var labels: [String]?
     var unlabel: [String]?
+    var seats: MeetingSeats?
     /// revert: the entry it undoes.
     var token: String?
     /// assign (b-people): the person a stretch or lines are given to, their address, and what is given.

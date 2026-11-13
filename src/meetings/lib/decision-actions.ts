@@ -19,6 +19,8 @@ import { linePointSchema } from "./moment-schema";
 /** The file in a meeting's folder that keeps its decision journal: one entry per line, oldest first, append-only. */
 export const JOURNAL_FILE = "decisions.ndjson";
 
+import { meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
+
 const itemRef = z.string().min(1);
 
 /** One decision a person, an agent or a rule makes on a meeting. Item references take an id (`i42`) or `Q12`. */
@@ -105,6 +107,12 @@ export const DECISION_ACTION_OPTIONS = [
         findings: z.array(findingSchema).min(1),
         allowDuplicates: z.boolean().optional(),
         force: z.boolean().optional(),
+        replace: z
+            .object({
+                kinds: z.array(z.enum(["speaker-range", "question", "label", "join", "term"])),
+                by: z.literal("agent"),
+            })
+            .optional(),
     }),
     /**
      * The meeting's own fields (`set`): its project (a known name: the caller resolves it first), its title, labels
@@ -112,6 +120,7 @@ export const DECISION_ACTION_OPTIONS = [
      */
     z.object({
         kind: z.literal("set"),
+        seats: meetingSeatsSchema.optional(),
         project: z.string().min(1).optional(),
         title: z.string().min(1).optional(),
         labels: z.array(z.string().min(1)).optional(),
@@ -194,13 +203,13 @@ export const assignmentChangeSchema = z.object({
 export type AssignmentChange = z.infer<typeof assignmentChangeSchema>;
 
 /** The meeting fields a `set` changes; each is one value of the record, put back whole by an Undo. */
-export const MEETING_FIELDS = ["project", "title", "labels"] as const;
+export const MEETING_FIELDS = ["project", "title", "labels", "seats"] as const;
 
 /** One meeting field a decision changed, before and after (absent: no value). */
 export const fieldChangeSchema = z.object({
     field: z.enum(MEETING_FIELDS),
-    before: z.union([z.string(), z.array(z.string())]).optional(),
-    after: z.union([z.string(), z.array(z.string())]).optional(),
+    before: z.union([z.string(), z.array(z.string()), meetingSeatsSchema]).optional(),
+    after: z.union([z.string(), z.array(z.string()), meetingSeatsSchema]).optional(),
 });
 export type FieldChange = z.infer<typeof fieldChangeSchema>;
 

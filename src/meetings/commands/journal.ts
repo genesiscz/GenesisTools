@@ -31,12 +31,12 @@ function named(record: MeetingRecord, ids: string[]): string {
 }
 
 /** A meeting field's value in a journal line: a label list joined, an absent value as "none". */
-function fieldText(value: string | string[] | undefined): string {
+function fieldText(value: unknown): string {
     if (Array.isArray(value)) {
         return value.length > 0 ? value.join(", ") : "none";
     }
 
-    return value ?? "none";
+    return typeof value === "string" ? value : value === undefined ? "none" : SafeJSON.stringify(value);
 }
 
 /** What an entry did, in a few words: "confirm i1 i2", "Q3 → Alice Example (settled Q4)", "undo of 1b2c3d4e: i1". */

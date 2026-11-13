@@ -18,6 +18,20 @@ private enum LibraryFixture {
 }
 
 final class MeetingsLibraryAPITests: XCTestCase {
+    func testSeatDecisionAndProjectRoleRoundTrip() throws {
+        let seats = MeetingSeats(room: ["Alice"], remote: [.init(name: "Carol", label: "Call", fromSec: 10, toSec: 20)], microphones: [.init(id: "self", people: ["Alice"])])
+        var action = DecisionAction(kind: "set")
+        action.seats = seats
+        let encoded = try JSONEncoder().encode(action)
+        XCTAssertEqual(try JSONDecoder().decode(DecisionAction.self, from: encoded).seats, seats)
+        let person = try JSONDecoder().decode(PairedPerson.self, from: Data(#"{"name":"Alice","role":"Engineer","aliases":["Al"],"pairedBy":[]}"#.utf8))
+        XCTAssertEqual(person.role, "Engineer")
+        XCTAssertEqual(person.aliases, ["Al"])
+        let old = try JSONDecoder().decode(PairedPerson.self, from: Data(#"{"name":"Bob","pairedBy":[]}"#.utf8))
+        XCTAssertNil(old.role)
+        XCTAssertNil(old.aliases)
+    }
+
     private static let review = "2026-11-03-1000-design-review"
 
     /// The params decode as the Swift type and encode back to the same object.

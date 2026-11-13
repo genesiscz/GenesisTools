@@ -162,6 +162,7 @@ struct MeetingRecordView: Decodable, Equatable {
 
     let id: String
     var title: String
+    var seats: MeetingSeats? = nil
     var project: String?
     var labels: [String]
     let start: String
@@ -427,6 +428,8 @@ struct PairedBy: Codable, Equatable, Hashable {
 }
 
 struct PairedPerson: Decodable, Equatable, Hashable, Identifiable {
+    var role: String? = nil
+    var aliases: [String]? = nil
     let name: String
     let email: String?
     let pairedBy: [PairedBy]
@@ -792,4 +795,22 @@ enum MeetingsFormat {
     static func cpu(_ seconds: Double) -> String {
         seconds < 10 ? String(format: "%.1f s CPU per minute", seconds) : String(format: "%.0f s CPU per minute", seconds)
     }
+}
+
+struct MeetingSeats: Codable, Equatable, Hashable {
+    struct Remote: Codable, Equatable, Hashable {
+        var name: String = ""
+        var label: String? = nil
+        var fromSec: Double? = nil
+        var toSec: Double? = nil
+    }
+    struct Microphone: Codable, Equatable, Hashable {
+        var id: String = "self"
+        var label: String? = nil
+        var people: [String] = []
+        var deviceId: String? = nil
+    }
+    var room: [String] = []
+    var remote: [Remote] = []
+    var microphones: [Microphone]? = nil
 }
