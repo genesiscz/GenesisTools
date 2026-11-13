@@ -405,6 +405,10 @@ test("resume guard: a compaction clears the agent's remembered size, and the mod
     expect(loopModelOf("scout")).toBe("fixture-meta");
     expect(loopModelOf("main")).toBe("fixture-main");
     expect(loopModelOf("nobody")).toBeNull();
+
+    // Once the agent answered, its response's model wins over the one it was started on.
+    noteLoopModel("scout", "fixture-answered");
+    expect(loopModelOf("scout")).toBe("fixture-answered");
 });
 
 test("resume guard: another session, a structured message, a subscription and a teammate with teammates off pass", async () => {

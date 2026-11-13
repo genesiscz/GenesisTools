@@ -1,7 +1,7 @@
 // The model each loop of the session runs on, for the `tools metrics` dims of the hook ledger and the resume guard.
-// A subagent's comes first from the agents band's bookkeeping: the model `agent.spawn` answered (`spawned`), else the
-// one its `agent-<id>.meta.json` names (`metas`, read while the band refreshes). Then, for any loop, the model of its
-// last response as the API reported it (`noteLoopModel`, from a step's or a turn's usage); the main loop has only this.
+// For any loop, the model of its last response as the API reported it comes first (`noteLoopModel`, from a step's or a
+// turn's usage); the main loop has only this. Until a subagent has answered, the agents band's bookkeeping names it:
+// the model `agent.spawn` answered (`spawned`), else the one its `agent-<id>.meta.json` names (`metas`).
 // Unknown stays null: a setting such as the default subagent model is never read as the answer.
 import { metas, spawned } from "./agents-band";
 import type { Host } from "./shared";
@@ -16,17 +16,23 @@ export function noteLoopModel(agent: string, model: string | undefined): void {
     }
 }
 
-/** The model of the loop `agent` (`main` or an agent id), or null while the plugin has not seen it. */
+/**
+ * The model of the loop `agent` (`main` or an agent id), or null while the plugin has not seen it. A response the
+ * loop gave wins: the spawn and the meta file name the model the agent started on, which a later response can differ
+ * from, so they only answer until a response was seen.
+ */
 export function loopModelOf(agent: string): string | null {
-    if (agent !== "main") {
-        const known = spawned[agent]?.model ?? metas.get(agent)?.model;
+    const seen = answered.get(agent);
 
-        if (known) {
-            return known;
-        }
+    if (seen) {
+        return seen;
     }
 
-    return answered.get(agent) ?? null;
+    if (agent === "main") {
+        return null;
+    }
+
+    return spawned[agent]?.model ?? metas.get(agent)?.model ?? null;
 }
 
 /**
