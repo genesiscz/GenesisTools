@@ -22,11 +22,11 @@ import {
     capturePart,
     DEFAULT_SETUP,
     describeMiss,
-    frameArea,
     type PageSetup,
     type Resolution,
     resolveLocators,
     SHOT_OVERLAY_ID,
+    shotFrameArea,
     textRects,
 } from "@genesiscz/utils/chrome-devtools/shots/page";
 import { parseShotPart } from "@genesiscz/utils/chrome-devtools/shots/part";
@@ -430,7 +430,7 @@ describe("what a shot's overlay paints and exports", () => {
             radius: 0,
             fill: "",
         };
-        const areas = frameArea(frame);
+        const areas = shotFrameArea(frame);
         const covered = (x: number, y: number) =>
             areas.some((area) => x >= area.x && x <= area.x + area.w && y >= area.y && y <= area.y + area.h);
 

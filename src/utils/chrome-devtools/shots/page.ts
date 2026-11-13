@@ -253,7 +253,7 @@ function ellipseStrokeArea(frame: ShotFramePaint): DocBox[] {
  * The areas a frame draws on: its four stroke bands plus its corners (a rounded corner's stroke curves in past the
  * straight bands), an ellipse's curved stroke, or the whole box when it is filled.
  */
-export function frameArea(frame: ShotFramePaint): DocBox[] {
+export function shotFrameArea(frame: ShotFramePaint): DocBox[] {
     if (frame.fill) {
         return [grow(frame.box, 1)];
     }
@@ -533,7 +533,7 @@ export async function capturePart(
         const size = checkImageDimensions({ data: raw, maxPixels: 400_000_000 });
         const scale = size.width / clip.w;
         const areas = [
-            ...placed.flatMap((entry) => frameArea(entry.frame)),
+            ...placed.flatMap((entry) => shotFrameArea(entry.frame)),
             ...placed.flatMap((entry) => (entry.chip ? [grow(entry.chip.placed.chip, 1)] : [])),
             ...leaders.map(leaderArea),
         ]
