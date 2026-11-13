@@ -1000,4 +1000,25 @@ describe("the service host (service-host.ts)", () => {
         expect(order).toEqual(["stopping test", "stopped test"]);
         expect(connectionsAtStopping).toBe(1);
     });
+
+    test("an onStopping or onStopped hook that throws still ends the connections, removes the files and settles stopped", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "rpc-host-"));
+        const service = await started(dir, {
+            onStopping: () => {
+                throw new Error("the stopping hook broke");
+            },
+            onStopped: () => {
+                throw new Error("the stopped hook broke");
+            },
+        });
+        const client = await connect(serviceSocketPath(dir));
+        await client.call("hello", { role: "client" });
+
+        service.stop("test");
+
+        expect(await outcome(service.stopped, 1_000)).toBe("test");
+        expect(service.connections.filter((connection) => !connection.closed)).toHaveLength(0);
+        expect(existsSync(serviceEntryPath(dir))).toBe(false);
+        expect(existsSync(serviceSocketPath(dir))).toBe(false);
+    });
 });
