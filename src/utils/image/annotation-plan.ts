@@ -143,10 +143,10 @@ export const ANNOTATION_PRESETS = {
         labelChip: { bg: "#ff4d4f", fg: "#ffffff", fontSize: 14 },
         blurStrength: 12,
     },
-    /** The amber twin of review-dashed. White on amber keeps the web shots' existing look. */
+    /** The amber twin of review-dashed. Dark text on amber, as callout-amber: white on #ffb020 is 1.8:1. */
     "callout-amber-dashed": {
         shape: { stroke: "#ffb020", strokeWidth: 3, radius: 8, fill: "", dash: [9, 6] },
-        labelChip: { bg: "#ffb020", fg: "#ffffff", fontSize: 14 },
+        labelChip: { bg: "#ffb020", fg: "#111111", fontSize: 14 },
         blurStrength: 12,
     },
     "info-blue": {
@@ -184,8 +184,9 @@ export const GRID_DEFAULTS: Required<GridStyle> = {
     fontSize: 12,
 };
 
+/** An own preset name only: `toString`, `constructor` and `__proto__` are inherited, not presets. */
 export function isPresetName(value: string): value is PresetName {
-    return value in ANNOTATION_PRESETS;
+    return Object.hasOwn(ANNOTATION_PRESETS, value);
 }
 
 export function parseRect(rect: RectInput): AnnotationRect {

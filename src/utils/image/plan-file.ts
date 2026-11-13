@@ -9,7 +9,13 @@
  */
 import { resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { ANNOTATION_PRESETS, type Annotation, type AnnotationPlanFile, validateAnnotations } from "./annotation-plan";
+import {
+    ANNOTATION_PRESETS,
+    type Annotation,
+    type AnnotationPlanFile,
+    isPresetName,
+    validateAnnotations,
+} from "./annotation-plan";
 
 /** The module a `.ts` plan imports `defineAnnotations` from. */
 export const ANNOTATE_MODULE = "@genesis-tools/annotate";
@@ -88,7 +94,7 @@ export async function loadAnnotationPlanValue(value: string): Promise<Annotation
         : (parsed as AnnotationPlanFile);
     validateAnnotations(plan.annotations);
 
-    if (plan.preset !== undefined && !(plan.preset in ANNOTATION_PRESETS)) {
+    if (plan.preset !== undefined && !(typeof plan.preset === "string" && isPresetName(plan.preset))) {
         throw new Error(
             `unknown preset "${plan.preset}" — valid presets: ${Object.keys(ANNOTATION_PRESETS).join(", ")}`
         );
