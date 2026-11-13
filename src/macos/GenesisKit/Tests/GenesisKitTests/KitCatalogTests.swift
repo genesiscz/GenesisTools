@@ -55,6 +55,26 @@ final class KitCatalogTests: XCTestCase {
         }
     }
 
+    /// A flag that takes a value refuses to go without one: a trailing `--only` drew the whole catalog and rewrote the
+    /// manifest and the board, which `--only` promises never to write.
+    func testTheCatalogToolRefusesAFlagWithoutItsValue() throws {
+        XCTAssertEqual(try KitCatalogArguments.parse(["--out", "/tmp/catalog", "--only", "hues", "--only", "badges"]),
+                       KitCatalogArguments(out: "/tmp/catalog", only: ["hues", "badges"]))
+        let refused: [([String], KitCatalogArguments.Failure)] = [
+            (["--out", "/tmp/catalog", "--only"], .missingValue("--only")),
+            (["--only", "--out", "/tmp/catalog"], .missingValue("--only")),
+            (["--out"], .missingValue("--out")),
+            (["--probe"], .missingValue("--probe")),
+            (["--draw"], .unknown("--draw")),
+        ]
+        for (arguments, failure) in refused {
+            XCTAssertThrowsError(try KitCatalogArguments.parse(arguments), "\(arguments)") { error in
+                XCTAssertEqual(error as? KitCatalogArguments.Failure, failure, "\(arguments)")
+            }
+        }
+        XCTAssertTrue(try KitCatalogArguments.parse(["--help", "--draw"]).help, "--help ends the reading")
+    }
+
     func testDisabledAgentFieldRejectsAccessibilityWrites() throws {
         var value = "Original"
         let root = NSHostingView(rootView: AgentTextField("Name", text: Binding(get: { value }, set: { value = $0 }))
