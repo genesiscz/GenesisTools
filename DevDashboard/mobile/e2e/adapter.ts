@@ -4,6 +4,24 @@ import type { MobileRoute } from "../../../src/utils/mobile/route";
 
 export const SCHEME = "devdashboard";
 
+/**
+ * What a Release build bundles into its JavaScript, as globs relative to the app folder: `tools mobile` rebuilds a
+ * Release app when one of these files changed since the build. Metro also bundles sources from outside the app folder
+ * (metro.config.js aliases them): the shared contract, the dev-dashboard modules the app imports at runtime, and the
+ * pure utils it names one by one. `src/lib/__tests__/release-fingerprint.test.ts` fails when a new outside import or
+ * alias is not covered here.
+ */
+export const RELEASE_JS_INPUTS = [
+    "src/**/*.{ts,tsx,js,json,css}",
+    "assets/**/*",
+    "tailwind.config.js",
+    "babel.config.js",
+    "metro.config.js",
+    "../../src/dev-dashboard/contract/**/*.ts",
+    "../../src/dev-dashboard/lib/{daemon-view,timeline}/**/*.ts",
+    "../../src/utils/{cli/tool-command,logger/client,notifications/phone-wire,obsidian/vault-filter}.ts",
+];
+
 /** The expo-router screens of one route group, `_layout` and `+not-found` style files left out. */
 function screensIn(dir: string): string[] {
     return readdirSync(dir)

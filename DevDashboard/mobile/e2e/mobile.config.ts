@@ -1,5 +1,5 @@
 import type { MobileProjectConfig } from "../../../src/utils/mobile/project";
-import { devDashboardRoutes, SCHEME } from "./adapter";
+import { devDashboardRoutes, RELEASE_JS_INPUTS, SCHEME } from "./adapter";
 import { getDevDashboardBundleId } from "./bundle-id";
 
 /** The DevDashboard mobile app for `tools mobile` and `tools e2e`: its build, its screens and its first-run grants. */
@@ -32,7 +32,7 @@ export default {
                     "ios/DevDashboard/**/*.{swift,m,mm,h,plist,entitlements}",
                     "ios/DevDashboard.xcodeproj/project.pbxproj",
                 ],
-                js: ["src/**/*.{ts,tsx,js,json}", "assets/**/*", "tailwind.config.js", "babel.config.js", "metro.config.js"],
+                js: RELEASE_JS_INPUTS,
             },
             // An iPhone 17 / 18 Pro: the width the screens are designed at.
             defaultWidth: 402,
