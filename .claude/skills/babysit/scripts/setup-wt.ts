@@ -21,13 +21,18 @@ import { ensureConfigHooks, HOOKS_OFF, unpickedCommits } from "./versions";
 
 const run = loadRun();
 const pr = flag("--pr") ?? "";
+/** A `gh pr view`, a status or a rev-parse. */
+const QUICK_DEADLINE_MS = 60_000;
+/** A fetch, a worktree add or a `bun install` into a fresh worktree; ten minutes stops only a stuck one. */
+const STEP_DEADLINE_MS = 10 * 60_000;
+
 const branch =
     flag("--branch") ??
     (
         SafeJSON.parse(
-            Bun.spawnSync(["gh", "pr", "view", pr, "--repo", run.repo, "--json", "headRefName"], {
-                stdout: "pipe",
-            }).stdout.toString(),
+            launch(["gh", "pr", "view", pr, "--repo", run.repo, "--json", "headRefName"], {
+                timeoutMs: QUICK_DEADLINE_MS,
+            }).stdout,
             { strict: true }
         ) as { headRefName: string }
     ).headRefName;
@@ -35,9 +40,6 @@ const wt = worktreeFor(run, pr);
 const logs = join(run.dir, "logs");
 mkdirSync(logs, { recursive: true });
 const log: string[] = [];
-
-/** A fetch, a worktree add or a `bun install` into a fresh worktree; ten minutes stops only a stuck one. */
-const STEP_DEADLINE_MS = 10 * 60_000;
 
 function step(cmd: string[], cwd: string, label: string): void {
     const p = launch(cmd, { cwd, timeoutMs: STEP_DEADLINE_MS });
@@ -58,9 +60,12 @@ if (!pr || !branch) {
 step(["git", "fetch", "-q", "origin", branch], run.main, "fetch");
 // The repo's hooks would lock or index the throwaway worktree; it gets none.
 if (existsSync(wt)) {
-    const dirty = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=no"], { cwd: wt, stdout: "pipe" });
+    const dirty = launch(["git", "status", "--porcelain", "--untracked-files=no"], {
+        cwd: wt,
+        timeoutMs: QUICK_DEADLINE_MS,
+    });
 
-    if (dirty.exitCode !== 0 || dirty.stdout.toString().trim() !== "") {
+    if (dirty.code !== 0 || dirty.stdout.trim() !== "") {
         console.error(`✖ ${wt} has tracked changes (or is no worktree): commit or move them, then run again`);
         process.exit(1);
     }
@@ -128,7 +133,5 @@ for (const nested of ["apps/eve"]) {
 }
 
 writeFileSync(join(logs, `setup-${pr}.log`), log.join("\n"));
-const head = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: wt, stdout: "pipe" })
-    .stdout.toString()
-    .trim();
+const head = launch(["git", "rev-parse", "--short", "HEAD"], { cwd: wt, timeoutMs: QUICK_DEADLINE_MS }).stdout.trim();
 console.log(`ready bs-${pr} at ${head} (${branch}); native files linked ${native.linked}, differ ${native.differ}`);
