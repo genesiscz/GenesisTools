@@ -1,6 +1,6 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
+import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "@genesiscz/utils/rpc/errors";
 import { readLiveServiceEntry, type ServiceEntry } from "@genesiscz/utils/rpc/service-entry";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -178,6 +178,11 @@ export class InProcessMeetingsClient implements MeetingsClient {
         params: MeetingsParams<M>,
         options: MeetingsCallOptions = {}
     ): Promise<MeetingsResult<M>> {
+        // A cancelled call stops before any handler runs, as `RpcPeer.request` stops it on a socket.
+        if (options.signal?.aborted) {
+            throw clientError(new RpcError(RPC_CANCELLED, `${method}: cancelled`));
+        }
+
         const context: MeetingsCallContext = {
             ...(this.caller ? { caller: this.caller } : {}),
             ...(options.signal ? { signal: options.signal } : {}),
