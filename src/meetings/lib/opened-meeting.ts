@@ -213,6 +213,9 @@ export class OpenedMeeting {
             ignoredIndicator: assessIndicator({ lines, selfName }).ignored,
         });
         return presence.map((stay) => {
+            if (stay.leftAtExact === true) {
+                return stay;
+            }
             const departure = departures.find(
                 (event) => event.name === stay.name && event.atSec >= stay.fromSec && event.atSec < stay.toSec
             );
