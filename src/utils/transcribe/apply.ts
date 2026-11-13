@@ -6,7 +6,11 @@ import type { TranscriptEntry } from "./types";
 
 /** Corrections a person confirmed, in the shape a transcript needs. Labels are the source's own labels. */
 export interface TranscriptCorrections {
-    removals?: Array<{ item: string; fromSec: number; toSec: number; heard: string }>;
+    /**
+     * Local speech to hide: the source line at `line` when that address still holds the heard text, else the one line
+     * in the range that is exactly the heard text. Two such lines are reported ambiguous, never both removed.
+     */
+    removals?: Array<{ item: string; fromSec: number; toSec: number; heard: string; line?: number }>;
     /** Renames for the whole meeting: source label → name. */
     labels?: Record<string, string>;
     /** Lines of `label` from `fromSec` to `toSec` (inclusive) belong to `speaker`. */
@@ -112,6 +116,8 @@ export type CorrectionOutcome = { item: string } & (
 
 export interface CorrectionsApplied {
     entries: TranscriptEntry[];
+    /** Local speech lines a confirmed removal hid. */
+    removed: number;
     /** One per correction that names its item, in the order the corrections were given. */
     outcomes: CorrectionOutcome[];
     labels: number;
@@ -225,6 +231,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     const indexOf = new Map(all.map((line, index) => [line, index]));
     const outcomes: CorrectionOutcome[] = [];
     const counts = {
+        removed: 0,
         labels: 0,
         ranges: 0,
         joins: 0,
@@ -248,6 +255,34 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         lines: found.indexes.flatMap((index) => source.address(index) ?? []),
         reason: `${found.indexes.length} lines start at ${at(sec)}${what}`,
     });
+
+    // Local speech goes first, by its source line: a join after it would move its first word into the line before, and
+    // the dictionary replaces the line objects a later match would look for. A removed line is emptied, so every
+    // later stage skips it and the filter after the joins drops it.
+    const removed = new Set<TranscriptEntry>();
+
+    for (const removal of corrections.removals ?? []) {
+        const found = removalLine(source, removal);
+
+        if (found.kind !== "found") {
+            outcomes.push(
+                found.kind === "ambiguous"
+                    ? ambiguous(removal.item, found, ` with "${removal.heard}"`, removal.fromSec)
+                    : { item: removal.item, status: "not-found", reason: "no matching local speech line" }
+            );
+            continue;
+        }
+
+        const line = all[found.index]!;
+
+        if (!removed.has(line)) {
+            removed.add(line);
+            line.text = "";
+            counts.removed += 1;
+        }
+
+        outcomes.push({ item: removal.item, status: "applied", lines: addressOf(line) });
+    }
 
     // Ranges name the source's labels: each line is matched by the label it came with, so a line a range moved to a
     // name that is also a label ("Alice Example") is not moved again by that label's ranges. A join that names the
@@ -281,6 +316,19 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         }
 
         const line = all[found.index]!;
+
+        if (removed.has(line)) {
+            if (join.item) {
+                outcomes.push({
+                    item: join.item,
+                    status: "not-found",
+                    reason: "the line after the cut is removed local speech",
+                });
+            }
+
+            continue;
+        }
+
         const before = lineBeforeCut(all, found.index, join.joined);
 
         if (!before) {
@@ -581,19 +629,26 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         }
     }
 
-    const removed = new Set<TranscriptEntry>();
-    for (const removal of corrections.removals ?? []) {
-        const matching = source.entries.flatMap((entry, index) =>
-            inRange(entry, removal) && entry.text === removal.heard && lines.includes(all[index]!) ? [all[index]!] : []
-        );
-        for (const line of matching) {
-            removed.add(line);
-        }
-        outcomes.push(
-            matching.length
-                ? { item: removal.item, status: "applied", lines: matching.flatMap(addressOf) }
-                : { item: removal.item, status: "not-found", reason: "no matching local speech line" }
-        );
+    return { entries: lines, outcomes, ...counts };
+}
+
+/** The source line a removal names: its address when that line still holds the heard text, else the one in its range. */
+function removalLine(
+    source: TranscriptLines,
+    removal: { fromSec: number; toSec: number; heard: string; line?: number }
+): LineLookup {
+    const holds = (entry: TranscriptEntry | undefined): boolean =>
+        entry !== undefined && entry.text === removal.heard && inRange(entry, removal);
+
+    if (removal.line !== undefined && holds(source.entries[removal.line])) {
+        return { kind: "found", index: removal.line };
     }
-    return { entries: lines.filter((line) => !removed.has(line)), outcomes, ...counts };
+
+    const indexes = source.entries.flatMap((entry, index) => (holds(entry) ? [index] : []));
+
+    if (indexes.length === 0) {
+        return { kind: "none" };
+    }
+
+    return indexes.length === 1 ? { kind: "found", index: indexes[0]! } : { kind: "ambiguous", indexes };
 }

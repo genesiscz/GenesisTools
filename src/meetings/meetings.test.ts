@@ -1074,6 +1074,7 @@ test("in a column, a long quote is shortened inside its quotes and keeps its sou
 
 describe("appliedLine", () => {
     const none = {
+        removed: 0,
         labels: 0,
         ranges: 0,
         joins: 0,
@@ -1090,6 +1091,7 @@ describe("appliedLine", () => {
     test("names only what changed the transcript, and says so when nothing did (R2-MC3)", () => {
         expect(appliedLine({ ...none, fixes: 4, unclear: 10 })).toBe("applied: 4 dictionary fixes, 10 unclear marks");
         expect(appliedLine({ ...none, labels: 1 })).toBe("applied: 1 renamed line");
+        expect(appliedLine({ ...none, removed: 1 })).toBe("applied: 1 removed local speech line");
         expect(appliedLine(none)).toBe(
             "applied: nothing; no confirmed item, rename or dictionary entry changed a line"
         );
