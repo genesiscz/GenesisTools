@@ -28,7 +28,15 @@ import { JudgePromptVersion, SimulatorPromptVersion } from "./harness-models";
 import { DefaultMaxErrorRate, DefaultPassRate, planRun, type RunPlan, selectByIds, selectScenarios } from "./plan";
 import { type RunStopped, type RunSummary, summarizeRun } from "./report";
 import { type Clock, createLimiter, type ProgressEvent, runPlan, SystemClock, semaphore } from "./schedule";
-import { createRun, type HarnessSettings, loadRun, makeRunId, openRun, type RunManifest, type RunStore } from "./store";
+import {
+    createRun,
+    type HarnessSettings,
+    loadRun,
+    makeEvalRunId,
+    openRun,
+    type RunManifest,
+    type RunStore,
+} from "./store";
 import {
     asSystemError,
     type CleanupItem,
@@ -552,7 +560,7 @@ export async function sayEval<TSetup, TSignals, TTool extends string, THandle, T
     const concurrency = Math.max(1, Math.floor(options.concurrency ?? project.concurrency ?? DefaultConcurrency));
     const limiter = createLimiter({ max: concurrency, clock, signal });
     const open = semaphore(concurrency);
-    const runId = `say-${makeRunId(new Date(clock.now()), "say")}`;
+    const runId = `say-${makeEvalRunId(new Date(clock.now()), "say")}`;
     const repeats = Array.from({ length: Math.max(1, request.repeats ?? 1) }, (_, i) => i + 1);
     const conversations = await Promise.all(
         repeats.map(async (repeat): Promise<SayResult["conversations"][number]> => {

@@ -22,7 +22,7 @@ import {
     sayEval,
     selectProjectScenarios,
 } from "./project";
-import { compareRuns, ExitCode, renderTranscript, summarizeRun } from "./report";
+import { compareEvalRuns, ExitCode, renderEvalTranscript, summarizeRun } from "./report";
 import { type Clock, type ProgressEvent, SystemClock } from "./schedule";
 import { listRuns, loadRun, readConversation } from "./store";
 import { EvalSystemError } from "./system";
@@ -481,7 +481,7 @@ export function createEvalCommand<TSetup, TSignals, TTool extends string, THandl
                 if (key) {
                     const record = await readConversation(view, key);
                     return opts.text
-                        ? { text: renderTranscript(record) }
+                        ? { text: renderEvalTranscript(record) }
                         : { document: record, exitCode: ExitCode.Passed };
                 }
                 if (opts.text) {
@@ -523,7 +523,7 @@ export function createEvalCommand<TSetup, TSignals, TTool extends string, THandl
                     }
                     pair = [first, second];
                 }
-                const comparison = compareRuns(await loadRun(pair[0], runsDir), await loadRun(pair[1], runsDir));
+                const comparison = compareEvalRuns(await loadRun(pair[0], runsDir), await loadRun(pair[1], runsDir));
                 return { document: comparison, exitCode: comparison.exitCode };
             })
         );

@@ -411,7 +411,7 @@ function changeOf(a: CellStats, b: CellStats): CellChange | null {
  * out with its reason. A changed judge model or judge prompt version leaves out only the expectations that contain a
  * judge. A cell is "fixed" or "regressed" only when its verdict flips; a moved rate is "rate-changed", never better.
  */
-export function compareRuns(a: RunView, b: RunView): Comparison {
+export function compareEvalRuns(a: RunView, b: RunView): Comparison {
     const excluded: Comparison["excluded"] = [];
     const excludedExpectations: Comparison["excludedExpectations"] = [];
     const notes: string[] = [];
@@ -572,7 +572,7 @@ function verdictLines(verdicts: readonly ExpectationVerdict[], indent: string): 
 }
 
 /** A transcript for a person (`show --text`): turns, tool calls with input and output, verdicts and reasons. */
-export function renderTranscript(record: ConversationRecord): string {
+export function renderEvalTranscript(record: ConversationRecord): string {
     const lines = [
         `${record.key}: ${record.outcome.toUpperCase()}${record.safetyMiss ? " (safety miss)" : ""}${record.completed ? "" : " (stopped early)"}`,
         `scenario ${record.cell.scenario} (${record.cell.scenarioHash}) · model ${record.cell.model} · variant ${record.cell.variant} · repeat ${record.repeat}`,

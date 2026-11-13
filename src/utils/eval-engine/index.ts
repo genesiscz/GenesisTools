@@ -32,7 +32,7 @@ export {
 } from "./document";
 export type { ExpectationVerdict, Outcome } from "./evaluate";
 export { defineEvalProject, type EvalProject, type RunEvalOptions, type RunEvalRequest, runEval } from "./project";
-export { type CellStats, type Comparison, compareRuns, ExitCode, type RunSummary } from "./report";
+export { type CellStats, type Comparison, compareEvalRuns, ExitCode, type RunSummary } from "./report";
 export { loadRun, type RunView } from "./store";
 export {
     type CleanupItem,

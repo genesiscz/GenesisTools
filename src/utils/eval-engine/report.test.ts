@@ -5,7 +5,7 @@ import type { ConversationRecord } from "./conversation";
 import { parseScenarios, type Scenario, toJson } from "./document";
 import type { ExpectationVerdict, Outcome } from "./evaluate";
 import { planRun } from "./plan";
-import { cellStats, compareRuns, ExitCode, runVerdict, summarizeRun } from "./report";
+import { cellStats, compareEvalRuns, ExitCode, runVerdict, summarizeRun } from "./report";
 import type { RunManifest, RunView } from "./store";
 
 function scenarios(...inputs: unknown[]): Scenario[] {
@@ -261,7 +261,7 @@ describe("summarizeRun and exit codes", () => {
     });
 });
 
-describe("compareRuns", () => {
+describe("compareEvalRuns", () => {
     it("calls a cell fixed or regressed only when its verdict flips", () => {
         const a = view(
             [tooth, book],
@@ -278,7 +278,7 @@ describe("compareRuns", () => {
             ],
             { run: "b" }
         );
-        const comparison = compareRuns(a, b);
+        const comparison = compareEvalRuns(a, b);
         assert.deepEqual(
             comparison.cells.map((c) => [c.scenario, c.change]),
             [
@@ -309,7 +309,7 @@ describe("compareRuns", () => {
             ],
             { repeats: 3, run: "b" }
         );
-        const comparison = compareRuns(a, b);
+        const comparison = compareEvalRuns(a, b);
         assert.equal(comparison.cells[0].change, "rate-changed");
         assert.equal(comparison.verdict, "same");
     });
@@ -317,7 +317,7 @@ describe("compareRuns", () => {
     it("a new safety miss exits with 3", () => {
         const a = view([tooth], [{ key: key("tooth"), outcome: "passed" }]);
         const b = view([tooth], [{ key: key("tooth"), outcome: "failed", safetyMiss: true }], { run: "b" });
-        assert.equal(compareRuns(a, b).exitCode, ExitCode.SafetyFailed);
+        assert.equal(compareEvalRuns(a, b).exitCode, ExitCode.SafetyFailed);
     });
 
     it("excludes a changed scenario per scenario and compares the rest", () => {
@@ -337,7 +337,7 @@ describe("compareRuns", () => {
             ],
             { run: "b" }
         );
-        const comparison = compareRuns(a, b);
+        const comparison = compareEvalRuns(a, b);
         assert.deepEqual(
             comparison.excluded.map((e) => [e.scenario, e.reason]),
             [["book", "scenario-changed"]]
@@ -350,7 +350,7 @@ describe("compareRuns", () => {
     it("a changed signals version excludes every scenario: nothing comparable is exit 2", () => {
         const a = view([book], [{ key: key("book"), outcome: "passed" }]);
         const b = view([book], [{ key: key("book"), outcome: "passed" }], { run: "b", signalsVersion: 2 });
-        const comparison = compareRuns(a, b);
+        const comparison = compareEvalRuns(a, b);
         assert.deepEqual(
             comparison.excluded.map((e) => e.reason),
             ["signals-changed"]
@@ -381,7 +381,7 @@ describe("compareRuns", () => {
             ],
             { run: "b", judge: "j2" }
         );
-        const comparison = compareRuns(a, b);
+        const comparison = compareEvalRuns(a, b);
         assert.deepEqual(comparison.excludedExpectations, [
             {
                 scenario: "tooth",
@@ -397,12 +397,12 @@ describe("compareRuns", () => {
     it("lists cells whose system prompt changed with both prompt files", () => {
         const a = view([book], [{ key: key("book"), outcome: "passed", promptHash: "p1" }]);
         const b = view([book], [{ key: key("book"), outcome: "passed", promptHash: "p2" }], { run: "b" });
-        assert.deepEqual(compareRuns(a, b).prompt[0].files, ["/runs/a/prompts/p1.txt", "/runs/b/prompts/p2.txt"]);
+        assert.deepEqual(compareEvalRuns(a, b).prompt[0].files, ["/runs/a/prompts/p1.txt", "/runs/b/prompts/p2.txt"]);
     });
 });
 
 it("does not pass comparison when a previously passed cell loses its verdict", () => {
     const a = view([book], [{ key: key("book"), outcome: "passed" }]);
     const b = view([book], [], { run: "b" });
-    assert.equal(compareRuns(a, b).exitCode, ExitCode.NoVerdict);
+    assert.equal(compareEvalRuns(a, b).exitCode, ExitCode.NoVerdict);
 });

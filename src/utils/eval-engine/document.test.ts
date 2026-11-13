@@ -8,7 +8,7 @@ import {
     EvalConfigError,
     evalKit,
     fillCheck,
-    fillText,
+    fillScenarioText,
     parseMatrix,
     parseScenarios,
     resolveBindings,
@@ -436,7 +436,7 @@ describe("bindings and templates", () => {
 
     it("fills texts and checks; a whole template keeps the value's type", () => {
         const bindings = { pick: signals.offered[1], n: 2 };
-        assert.equal(fillText("Take {{pick.label}} ({{ n }})", bindings), "Take Po 9:00 (2)");
+        assert.equal(fillScenarioText("Take {{pick.label}} ({{ n }})", bindings), "Take Po 9:00 (2)");
         assert.deepEqual(
             fillCheck(
                 { tool: "book_appointment", args: { starts_at: { instant: "{{pick.startsAt}}" }, count: "{{n}}" } },
