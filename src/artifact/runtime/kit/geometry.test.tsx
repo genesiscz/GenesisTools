@@ -3,7 +3,7 @@ import { contrastRatio } from "./color";
 import { type DiagramLayer, LayerDiagram, layoutLayerDiagram } from "./layer-diagram";
 import { ModelBrowser } from "./model-browser";
 import { PropertyGrid } from "./property-grid";
-import { mountDom } from "./test-dom";
+import { type DomHarness, mountDom } from "./test-dom";
 import {
     borderPoint,
     connectorPoints,
@@ -71,6 +71,27 @@ const MODEL: UmlDiagramModel = {
         },
     ],
 };
+
+/** Two-tab strip, second tab selected: one tab stop, and Left/Right/Home/End select and focus with wrapping. */
+async function expectTabKeyboard(dom: DomHarness, contents: [string, string]): Promise<void> {
+    const tabs = () => [...dom.container.querySelectorAll('[role="tab"]')];
+    const selected = () => tabs().findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+    const stops = () => tabs().filter((tab) => tab.getAttribute("tabindex") === "0");
+    expect(stops()).toEqual([tabs()[1]]);
+    await dom.press(tabs()[1], "ArrowRight");
+    expect(selected()).toBe(0);
+    expect(dom.window.document.activeElement).toBe(tabs()[0]);
+    expect(stops()).toEqual([tabs()[0]]);
+    expect(dom.container.textContent).toContain(contents[0]);
+    await dom.press(tabs()[0], "ArrowLeft");
+    expect(selected()).toBe(1);
+    expect(dom.container.textContent).toContain(contents[1]);
+    await dom.press(tabs()[1], "Home");
+    expect(selected()).toBe(0);
+    await dom.press(tabs()[0], "End");
+    expect(selected()).toBe(1);
+    expect(dom.window.document.activeElement).toBe(tabs()[1]);
+}
 
 describe("diagram geometry", () => {
     test("four-band direct edges cross boxes before routing and clear them afterward", () => {
@@ -342,6 +363,7 @@ describe("diagram geometry", () => {
             await dom.click(dom.container.querySelectorAll('[role="tab"]')[1]);
             expect(dom.container.textContent).toContain("Overview");
             expect(dom.container.textContent).not.toContain("Models");
+            await expectTabKeyboard(dom, ["Models", "Overview"]);
         } finally {
             await dom.unmount();
         }
@@ -366,6 +388,7 @@ describe("diagram geometry", () => {
             expect(dom.container.textContent).toContain("version");
             expect(dom.container.textContent).not.toContain("Typed manually");
             expect(dom.container.textContent).toContain("Review complete");
+            await expectTabKeyboard(dom, ["Typed manually", "version"]);
         } finally {
             await dom.unmount();
         }

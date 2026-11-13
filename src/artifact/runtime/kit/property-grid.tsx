@@ -1,4 +1,5 @@
-import { type ReactNode, useId, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useId, useState } from "react";
+import { tabKeyTarget } from "./data";
 import { UML_MARK, type UmlMark } from "./uml-diagram";
 
 export interface PropertyGridRow {
@@ -34,6 +35,18 @@ export function PropertyGrid({
     const uid = useId();
     const [active, setActive] = useState(initialTab ?? tabs[0]);
     const current = tabGroups?.[active] ?? groups;
+    const activeIndex = Math.max(0, tabs.indexOf(active));
+    const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
+        const target = tabKeyTarget(event.key, activeIndex, tabs.length);
+
+        if (target === undefined) {
+            return;
+        }
+
+        event.preventDefault();
+        setActive(tabs[target]);
+        document.getElementById(`${uid}-tab-${target}`)?.focus();
+    };
     return (
         <div className="border border-line bg-panel font-sans text-xs text-ink">
             <div className="bg-panel-2 px-2 py-1 text-[17px]">{title}</div>
@@ -51,7 +64,10 @@ export function PropertyGrid({
                             type="button"
                             aria-selected={active === tab}
                             aria-controls={`${uid}-panel`}
+                            // Roving tabIndex: the strip is one tab stop and the arrow keys move within it.
+                            tabIndex={i === activeIndex ? 0 : -1}
                             onClick={() => setActive(tab)}
+                            onKeyDown={onTabKeyDown}
                             className={active === tab ? "border-b-2 border-info text-ink" : "text-dim"}
                         >
                             {tab}

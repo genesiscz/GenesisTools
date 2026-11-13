@@ -59,6 +59,21 @@ export function tabIdFromHash(hash: string): string {
 }
 
 /**
+ * The ARIA tabs keyboard model shared by every tab strip in the kit: Left/Right
+ * wrap, Home/End jump. Returns the index to select, or undefined for any other key.
+ */
+export function tabKeyTarget(key: string, current: number, count: number): number | undefined {
+    const moves: Record<string, number> = { ArrowRight: current + 1, ArrowLeft: current - 1, Home: 0, End: count - 1 };
+    const target = moves[key];
+
+    if (target === undefined || count === 0) {
+        return undefined;
+    }
+
+    return (target + count) % count;
+}
+
+/**
  * DOM ids tying a tab button to its panel. Tab ids are arbitrary strings, so
  * they are encoded rather than interpolated raw: a space or a "#" would make an
  * invalid id and break the aria-controls / aria-labelledby pairing.
@@ -109,13 +124,7 @@ export function Tabs({ tabs, initial, sticky = true, scroll = false }: TabsProps
 
     /** The ARIA tabs keyboard model: arrows wrap, Home/End jump, focus follows. */
     const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
-        const moves: Record<string, number> = {
-            ArrowRight: currentIndex + 1,
-            ArrowLeft: currentIndex - 1,
-            Home: 0,
-            End: tabs.length - 1,
-        };
-        const target = moves[event.key];
+        const target = tabKeyTarget(event.key, currentIndex, tabs.length);
 
         if (target === undefined) {
             return;
