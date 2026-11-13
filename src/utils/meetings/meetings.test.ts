@@ -25,7 +25,7 @@ import {
     TONE_PRESETS,
 } from "./config";
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
-import { MEETING_UNCHANGED, MeetingStore, nextId, titleSlug } from "./record";
+import { MEETING_UNCHANGED, MeetingStore, meetingRecordSchema, nextId, titleSlug } from "./record";
 
 let stores = 0;
 
@@ -698,6 +698,62 @@ describe("a GENESIS_TOOLS_HOME one level too deep", () => {
 });
 
 describe("meeting records", () => {
+    test("preserved source-audio metadata survives creation, reopening and unrelated edits", async () => {
+        stores += 1;
+        const store = new MeetingStore(new Storage(`meetings-source-audio-${stores}`));
+        const audio = {
+            sources: {
+                wisprflow: {
+                    sourceMeetingId: "source-one",
+                    path: "/private/fixture/source-audio/one.ogg",
+                    sha256: "a".repeat(64),
+                    bytes: 18,
+                    savedAt: "2026-11-13T00:00:00.000Z",
+                },
+            },
+        };
+        const fields = {
+            title: "Planning",
+            start: "2026-11-12T14:00:00.000Z",
+            createdBy: "new" as const,
+            sources: { wisprflow: { meetingId: "source-one" } },
+            audio,
+        };
+        const created = await store.create(fields, { command: "test", change: "preserved audio" });
+        const reopened = new MeetingStore(store.storage);
+        expect(reopened.read(created.id)).toHaveProperty("audio", audio);
+        expect(SafeJSON.parse(fs.readFileSync(store.path(created.id), "utf8"))).toHaveProperty("audio", audio);
+        await reopened.update(created.id, { command: "test", change: "rename" }, (record) => {
+            record.title = "Planning again";
+        });
+        expect(new MeetingStore(store.storage).read(created.id)).toHaveProperty("audio", audio);
+        expect(new MeetingStore(store.storage).read(created.id)?.sources).toEqual(fields.sources);
+    });
+
+    test("preserved source-audio metadata validates its source identity, digest and size", () => {
+        const base = {
+            id: "fixture",
+            title: "Planning",
+            start: "2026-11-12T14:00:00.000Z",
+            createdAt: "2026-11-12T14:00:00.000Z",
+            createdBy: "new",
+        };
+        expect(meetingRecordSchema.parse(base)).not.toHaveProperty("audio");
+        const held = {
+            sourceMeetingId: "source-one",
+            path: "/private/fixture/source-audio/one.ogg",
+            sha256: "a".repeat(64),
+            bytes: 18,
+            savedAt: "2026-11-13T00:00:00.000Z",
+        };
+        for (const invalid of [{ sha256: "not-a-digest" }, { bytes: -1 }, { sourceMeetingId: "" }]) {
+            expect(
+                meetingRecordSchema.safeParse({ ...base, audio: { sources: { wisprflow: { ...held, ...invalid } } } })
+                    .success
+            ).toBe(false);
+        }
+    });
+
     test("creation publishes its record only after companion files are prepared", async () => {
         const meetings = records();
         const order: string[] = [];
