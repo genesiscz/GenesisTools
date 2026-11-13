@@ -43,4 +43,14 @@ final class HubPRSignalsTests: XCTestCase {
         XCTAssertTrue(ref.isMergeRequest)
         XCTAssertEqual(status.daemonTask, false)
     }
+
+    /// A push under a resting pointer restarts the row's checks probe: the task's identity carries the head, so a row
+    /// whose liveness stays true still asks for the new head's failed checks (hub UX C9).
+    func testTheRowChecksProbeRestartsWhenTheHeadMovesWhileLive() {
+        let old = PRRowChecksProbe.Trigger(live: true, key: PRsModel.checksKey("gh:org/app#7", head: "aaa111"))
+        let moved = PRRowChecksProbe.Trigger(live: true, key: PRsModel.checksKey("gh:org/app#7", head: "bbb222"))
+        let same = PRRowChecksProbe.Trigger(live: true, key: PRsModel.checksKey("gh:org/app#7", head: "aaa111"))
+        XCTAssertNotEqual(old, moved)
+        XCTAssertEqual(old, same)
+    }
 }

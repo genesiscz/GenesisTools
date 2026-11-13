@@ -2257,13 +2257,22 @@ struct PRListView: View {
 
 /// Asks for a failed PR row's checks once the pointer has rested on it for 0.35 s (`HubPRRowHoverChecks`); a pointer
 /// that only passes over the list starts nothing. A selected row is live too, and its detail load answers first.
-private struct PRRowChecksProbe: View {
+/// The task restarts when the row's head moves (`checksKey`), so a push under a resting pointer asks for the new head.
+struct PRRowChecksProbe: View {
+    /// `PRsModel.checksKey` of the row's PR and head.
+    let key: String
     let load: () -> Void
     @Environment(\.rowLive) private var live
 
+    /// What restarts the wait: the row's liveness and the head it shows.
+    struct Trigger: Hashable {
+        let live: Bool
+        let key: String
+    }
+
     var body: some View {
         Color.clear
-            .task(id: live) {
+            .task(id: Trigger(live: live, key: key)) {
                 guard live else { return }
                 try? await Task.sleep(for: .milliseconds(350))
                 if !Task.isCancelled { load() }
@@ -2397,7 +2406,7 @@ struct PRRow: View, Equatable {
         // Inside `liveRow`, so it reads the row's liveness: the pointer resting on a failed row loads its checks.
         .background {
             if let loadChecks {
-                PRRowChecksProbe(load: loadChecks)
+                PRRowChecksProbe(key: PRsModel.checksKey(pr.id, head: pr.headSha), load: loadChecks)
             }
         }
         .liveRow(selected: selected)
