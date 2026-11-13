@@ -53,6 +53,9 @@ The stored decmpfs type is checked before replacement; a writer producing anothe
 Oversized files remain untouched and appear in `skips.too-big` and `tooBigBytes`. Transcripts are never split.
 
 The plan uses the native `tools du` walker for size, allocation, flags, link count, inode, exact mtime and clone ID.
+The walker gets the size floor and the extensions, so it returns only files that can be candidates plus every
+`.cold-*` transaction remnant (any size); the result's `discoveryFiltered` counts the regular files it left out.
+A clone partner below the floor or of another type is not in that listing, so it comes from the clone index alone.
 It skips young files, files below the minimum, hard links, sparse and compressed files, placeholders and open files.
 A failed or empty `lsof` pass, or one that writes to stderr, stops apply. Apply skips battery power unless `--on-battery` is explicit.
 

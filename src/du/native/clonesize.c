@@ -2289,6 +2289,32 @@ static uint64_t g_big_cloud_pruned = 0;
 // --dusize: the mounted volumes inside the root the walk does not cross, where du would.
 static uint64_t g_big_mounts_skipped = 0;
 static uint64_t g_big_dataless_skipped = 0;   // dataless files left out of a --bigfiles listing
+// --ext / --keep-prefix / --compressed-only (`tools compress transparent`): bound the listing at discovery, so a
+// broad root returns only the files a caller can use instead of every regular file for it to filter afterwards.
+#define MAX_BIG_NAMES 64
+static const char *g_big_exts[MAX_BIG_NAMES];   // listed extensions, case-insensitive; none = every extension
+static int g_big_nexts = 0;
+static const char *g_big_keep[MAX_BIG_NAMES];   // a name with one of these prefixes is listed whatever its size or type
+static int g_big_nkeep = 0;
+static int g_big_compressed_only = 0;           // list only UF_COMPRESSED files
+
+// The extension as `tools compress` reads it: after the last dot, or the whole name when there is none.
+static int big_ext_ok(const char *name) {
+    if (!g_big_nexts) return 1;
+    const char *dot = strrchr(name, '.');
+    const char *ext = dot ? dot + 1 : name;
+    for (int i = 0; i < g_big_nexts; i++) {
+        if (strcasecmp(ext, g_big_exts[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static int big_kept(const char *name) {
+    for (int i = 0; i < g_big_nkeep; i++) {
+        if (strncmp(name, g_big_keep[i], strlen(g_big_keep[i])) == 0) return 1;
+    }
+    return 0;
+}
 
 static void big_setup_attrlist(void) {
     memset(&g_big_al, 0, sizeof g_big_al);
@@ -2444,7 +2470,9 @@ static void big_process_dir(BigOut *o, const char *dirpath, int dircloud) {
                     __atomic_add_fetch(&g_big_dataless_skipped, 1, __ATOMIC_RELAXED);
                     continue;
                 }
-                if ((uint64_t)dlen < g_big_min) continue;
+                if (!big_kept(name) &&
+                    ((uint64_t)dlen < g_big_min || !big_ext_ok(name) ||
+                     (g_big_compressed_only && !(fflags & UF_COMPRESSED)))) continue;
             }
 
             char *full = idx_child_path(dirpath, name);
@@ -3514,6 +3542,9 @@ static void usage(const char *me) {
         "  --volume             print the volume's authoritative used/free bytes\n"
         "  --bigfiles           list every regular file >= --min-bytes under ALL given dirs (JSON)\n"
         "  --prune-name NAME    with --bigfiles: never enter a directory with this name (repeatable)\n"
+        "  --ext EXT            with --bigfiles: list only files with this extension (repeatable, any case)\n"
+        "  --keep-prefix P      with --bigfiles: list a file whose name starts with P whatever its size or extension\n"
+        "  --compressed-only    with --bigfiles: list only UF_COMPRESSED (decmpfs) files\n"
         "  --cache-dir DIR      extent-cache directory (omit to disable the cache)\n"
         "  --no-cache           ignore the cache when reading (still writes it)\n"
         "  --include-cloud      walk ~/Library/CloudStorage and iCloud Drive, and open cloud-backed files\n"
@@ -3571,6 +3602,13 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--big-file-limit") && i + 1 < argc) g_idx_big_limit = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(a, "--no-private"))             g_idx_private = 0;
         else if (!strcmp(a, "--stall-seconds") && i + 1 < argc) g_idx_stall_s = atof(argv[++i]);
+        else if (!strcmp(a, "--compressed-only"))       g_big_compressed_only = 1;
+        else if ((!strcmp(a, "--ext") || !strcmp(a, "--keep-prefix")) && i + 1 < argc) {
+            int ext = !strcmp(a, "--ext");
+            int *count = ext ? &g_big_nexts : &g_big_nkeep;
+            if (*count == MAX_BIG_NAMES) { fprintf(stderr, "clonesize: more than %d %s values\n", MAX_BIG_NAMES, a); free(roots); return 2; }
+            (ext ? g_big_exts : g_big_keep)[(*count)++] = argv[++i];
+        }
         else if (!strcmp(a, "--prune-name") && i + 1 < argc) {
             // Refused, never dropped: an unread name is a folder the listing silently enters.
             if (nprune == MAX_PRUNE_NAMES) { fprintf(stderr, "clonesize: more than %d --prune-name names\n", MAX_PRUNE_NAMES); free(roots); return 2; }

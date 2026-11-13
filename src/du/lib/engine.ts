@@ -483,6 +483,12 @@ export interface ListBigFilesOptions {
     minBytes: number;
     /** Directory names never entered (`.git`). */
     pruneNames?: string[];
+    /** List only files with one of these extensions (after the last dot, any case). Empty or absent: every one. */
+    exts?: string[];
+    /** A file whose name starts with one of these is listed whatever its size, extension or flags. */
+    keepPrefixes?: string[];
+    /** List only UF_COMPRESSED (decmpfs) files. */
+    compressedOnly?: boolean;
     threads?: number;
     /** Kills the subprocess; the returned promise then rejects with `signal.reason`. */
     signal?: AbortSignal;
@@ -507,6 +513,15 @@ export async function listBigFiles(opts: ListBigFilesOptions): Promise<BigFilesR
     }
     for (const name of opts.pruneNames ?? []) {
         args.push("--prune-name", name);
+    }
+    for (const ext of opts.exts ?? []) {
+        args.push("--ext", ext);
+    }
+    for (const prefix of opts.keepPrefixes ?? []) {
+        args.push("--keep-prefix", prefix);
+    }
+    if (opts.compressedOnly) {
+        args.push("--compressed-only");
     }
     args.push(...opts.roots);
 
@@ -603,14 +618,43 @@ export interface CompressionFileEntry {
     cloneId: string;
 }
 
-export async function listCompressionFiles(root: string): Promise<CompressionFileEntry[]> {
-    const result = await listBigFiles({ roots: [root], minBytes: 0 });
+/** What the walker may leave out at discovery, so a broad root never returns every regular file. */
+export interface CompressionListBounds {
+    /** Smaller files are walked but not returned. */
+    minBytes?: number;
+    /** Only these extensions are returned (any case). */
+    exts?: string[];
+    /** Names with these prefixes are returned whatever their size or extension (transaction remnants). */
+    keepPrefixes?: string[];
+    /** Only UF_COMPRESSED files are returned. */
+    compressedOnly?: boolean;
+}
+
+export async function listCompressionFiles(
+    root: string,
+    bounds: CompressionListBounds = {}
+): Promise<CompressionFileEntry[]> {
+    return (await listCompressionListing(root, bounds)).entries;
+}
+
+/** The bounded listing plus how many regular files the walk saw, so a caller can report what discovery left out. */
+export async function listCompressionListing(
+    root: string,
+    bounds: CompressionListBounds = {}
+): Promise<{ entries: CompressionFileEntry[]; walked: number }> {
+    const result = await listBigFiles({
+        roots: [root],
+        minBytes: bounds.minBytes ?? 0,
+        exts: bounds.exts,
+        keepPrefixes: bounds.keepPrefixes,
+        compressedOnly: bounds.compressedOnly,
+    });
 
     if (result.deniedDirs > 0 || result.readErrors > 0) {
         throw new Error("Compression listing is incomplete: unreadable directories");
     }
 
-    return result.files.map((file) => ({
+    const entries = result.files.map((file) => ({
         path: file.path,
         size: file.size,
         allocated: file.alloc,
@@ -621,4 +665,6 @@ export async function listCompressionFiles(root: string): Promise<CompressionFil
         nlink: file.nlink,
         cloneId: file.cloneId === "0" ? "" : file.cloneId,
     }));
+
+    return { entries, walked: result.filesListed };
 }

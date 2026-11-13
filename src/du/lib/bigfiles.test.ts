@@ -1,5 +1,6 @@
 import { CString, dlopen, FFIType, ptr } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { execFileSync } from "node:child_process";
 import {
     chmodSync,
     existsSync,
@@ -49,6 +50,44 @@ describe.skipIf(skip.onWindows || process.platform !== "darwin")("listBigFiles (
             expect(r.dirs).toBe(3);
         } finally {
             rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("bounds the listing at discovery: listed types above the floor, prefixed remnants of any size", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-bigfiles-bounds-"));
+        try {
+            mkdirSync(join(root, "sub"));
+            writeFileSync(join(root, "keep.jsonl"), Buffer.alloc(8192, 1));
+            writeFileSync(join(root, "sub", "UPPER.JSONL"), Buffer.alloc(8192, 2));
+            writeFileSync(join(root, "tiny.jsonl"), Buffer.alloc(10, 3));
+            writeFileSync(join(root, "photo.png"), Buffer.alloc(8192, 4));
+            writeFileSync(join(root, "sub", ".cold-remnant"), Buffer.alloc(1, 5));
+            const names = (r: Awaited<ReturnType<typeof listBigFiles>>) =>
+                r.files.map((f) => f.path.slice(root.length + 1)).sort();
+
+            const bounded = await listBigFiles({
+                roots: [root],
+                minBytes: 4096,
+                exts: ["jsonl"],
+                keepPrefixes: [".cold-"],
+            });
+            expect(names(bounded)).toEqual(["keep.jsonl", "sub/.cold-remnant", "sub/UPPER.JSONL"]);
+            expect(bounded.filesListed).toBe(5);
+
+            const remnantsOnly = await listBigFiles({
+                roots: [root],
+                minBytes: Number.MAX_SAFE_INTEGER,
+                keepPrefixes: [".cold-"],
+            });
+            expect(names(remnantsOnly)).toEqual(["sub/.cold-remnant"]);
+
+            const plain = join(root, "plain.txt");
+            writeFileSync(plain, "a".repeat(64 * 1024));
+            execFileSync("ditto", ["--noclone", "--hfsCompression", plain, join(root, "sub", "packed.txt")]);
+            const compressed = await listBigFiles({ roots: [root], minBytes: 0, compressedOnly: true });
+            expect(names(compressed)).toEqual(["sub/packed.txt"]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
         }
     });
 
