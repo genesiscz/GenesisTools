@@ -82,6 +82,8 @@ function formatAuthStatus(auth: DoctorReport["auth"]): string {
             return formatDotStatus("warn", "chat list fails, tokens renew");
         case "other-sign-in":
             return formatDotStatus("warn", `sign-in wanted: ${auth.needsSignIn.join(", ")}`);
+        case "no-chat-renew":
+            return formatDotStatus("dim", "no chat-token renew logged yet");
         case "no-log":
             return formatDotStatus("dim", "no web-client log");
     }
