@@ -27,7 +27,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `people merge <a> <b> [--name <name>] [--yes]`, `people unmerge <token>` | Show two people as one. Without `--yes` it prints the meetings that name either of them and the speaker labels renamed to them, and writes nothing; with `--yes` it writes the merge and prints its token, which `unmerge` takes. No meeting record changes |
 | `people assign <meeting> <person> --from <time> [--to <time>] [--label <label>] [--line <time>]… [--plan]`, `people unassign <meeting> <token>` | Give lines of one meeting to a person without renaming the whole label: a stretch (one label's lines with `--label`, every voice's without it) or single lines by their start. The corrected transcript, `show` and `speakers stats` show them as that person. `--plan` prints what it would give and the other stretches it may reach, and saves nothing. `unassign` undoes it by the token it printed |
 | `evidence <meeting> [--attendance <platform>\|<file>] [--files] [--json]` | Which voice each label's lines are: audio channel and the platform's speaking indicator, plus the volume check (`--format json`, or its short form `--json`: one row per line) |
-| `suggest <meeting> [--rules speakers,evidence,terms] [--attendance <platform>\|<file>]` | Run the rules and add what they find as suggested items. A second run adds no item it already made and no question while the meeting has `questionCap` open. It first retires (rejects, with `evidence.retired`) the suggested words that a dictionary entry or the slang rule settles now, and the questions that decided only them |
+| `suggest <meeting> [--rules speakers,evidence,terms] [--attendance <platform>\|<file>] [--attendance-id <threadId>]` | Run the rules and add what they find as suggested items. A second run adds no item it already made and no question while the meeting has `questionCap` open. It first retires (rejects, with `evidence.retired`) the suggested words that a dictionary entry or the slang rule settles now, and the questions that decided only them |
 | `items <meeting> [--status …] [--kind …]` | The items with status, confidence and rules |
 | `rows <meeting> [--all] [--json]` | The review rows, as the Meetings window shows them: questions first in the order `listen` asks (priority, then time), then the other items by time; a decided row keeps its place. Each row has its question as parts (who, what was said, when, what it asks, what it settles, the reason), its choices with their role (suggested, presumed, candidate, heard, earlier answer, none of these, several voices, skip) and the engine's confidence where it has one, its edit kind, what it needs, its sources and who decided it last. Open questions below `playback.listen.minPriority` are counted, and `--all` shows them. `--json` prints `{ meeting, rows, hidden }` (REPL: `meetings.open(id).items.rows()`; the Meetings service: `meeting.rows`) |
 | `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>] [--reason <text>] [--json]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker`. An item confirmed already is left as it is (`needs: "nothing"` in `--json`, exit 0), so its first Undo token still works; a skip that needs a value or an answer exits 1. `--reason` is kept in the decision journal and on each item it decided. `--json` prints `{ decided, token, skipped, entry }`; `entry` is the journal entry, with who decided (the actor), the reason and every item before and after |
@@ -252,7 +252,16 @@ people) on each look until the record has an end, for up to 10 min.
 A rule's finding is an item with a confidence and the rules that produced it. A person confirms or rejects it; only
 confirmed items change a transcript. `--with-suggested` previews the rest: it applies a suggested item at
 `global.suggest.applyAbove` (0.5) or more, and one with no confidence (a person's own); a lower one is marked unclear,
-as an open question is.
+as an open question is. A range owned by an open speaker question stays a guess at every confidence until
+answered or confirmed.
+
+Suggest uses the linked source's title and transcript clock when it looks up attendance, including for a renamed
+copy. Unavailable platform attendance produces a warning, skips E2 and saves the other suggestions. A missing or
+ambiguous Teams chat lists cached candidate titles and IDs, ordered by last-message proximity rather than call
+start. These candidates do not prove which chat belongs to the call. Select a known chat with
+`tools meetings suggest <meeting> --attendance teams --attendance-id <threadId>` or the REPL's
+`meeting.items.suggest({ attendance: 'teams', attendanceId: '<threadId>' })`. Invalid input and unreadable or
+malformed attendance files still fail.
 
 - `speaker-range`: lines of a label that belong to someone else. RA (Teams attendance) names the people in the call
   as candidates, or the one person left; R1 and R5 mark a goodbye the label keeps talking after, R13 when another
