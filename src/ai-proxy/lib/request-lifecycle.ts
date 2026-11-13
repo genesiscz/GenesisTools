@@ -193,6 +193,26 @@ export function parseModelBody(raw: unknown): ModelRequestBody {
     };
 }
 
+/** The answer to a request whose body stream failed before it ended: the client's side broke, so it is a 400. */
+export const BODY_UNREADABLE_MESSAGE = "Could not read the request body";
+
+/** A request body stream that failed while it was read (the client hung up, or its stream errored). */
+export class BodyReadError extends Error {
+    constructor(cause: unknown) {
+        super(BODY_UNREADABLE_MESSAGE, { cause });
+        this.name = "BodyReadError";
+    }
+}
+
+/** The request body as text; a stream that fails throws `BodyReadError`, which the error mapper answers as a 400. */
+export async function readRequestText(req: Request): Promise<string> {
+    try {
+        return await req.text();
+    } catch (err) {
+        throw new BodyReadError(err);
+    }
+}
+
 /** Read a model-bearing POST body once, with the size guard, and hand the parsed JSON to the door. */
 async function readDoorBody<Body extends DoorBody>(
     req: Request,
@@ -208,7 +228,7 @@ async function readDoorBody<Body extends DoorBody>(
         }
     }
 
-    const bodyText = await req.text();
+    const bodyText = await readRequestText(req);
 
     if (Buffer.byteLength(bodyText, "utf8") > MAX_REQUEST_BODY_BYTES) {
         throw new DoorRequestError(413, "Request body too large");
@@ -356,10 +376,15 @@ export function logRequestFailure(input: {
 }
 
 /**
- * A model id that does not resolve is the client's mistake (400 with the reason); anything else that threw is a 502.
+ * A model id that does not resolve and a body stream that failed are the client's side (400 with the reason); anything
+ * else that threw is a 502.
  * A provider's expired login is not mapped here: each forward answers it itself through `exchange()` (http-relay.ts).
  */
 function mapProxyRequestError(err: unknown): { status: number; message: string } {
+    if (err instanceof BodyReadError) {
+        return { status: 400, message: err.message };
+    }
+
     const message = err instanceof Error ? err.message : String(err);
 
     if (
@@ -410,12 +435,54 @@ function trackExchange(input: {
     scheduleBillingSync(input.route.account, input.deps.providers);
 }
 
-/** Serve one model request through a door. Every error the request meets answers in the door's envelope. */
+/** What the error mapper logs for a request that failed: when it started, and its model once the body named one. */
+interface DoorRequestFacts {
+    startedAt: number;
+    model?: string;
+}
+
+/**
+ * Serve one model request through a door. Every error the request meets answers in the door's envelope, from the
+ * client resolution and the body read on: a refusal with its own status, a client that hung up as a 499 in the log, and
+ * anything else through the error mapper.
+ */
 export async function serveModelDoor<Body extends DoorBody>(
     request: Request,
     door: ModelDoor<Body>,
     deps: LifecycleDeps
 ): Promise<Response> {
+    const facts: DoorRequestFacts = { startedAt: performance.now() };
+
+    try {
+        return await runModelDoor({ request, door, deps, facts });
+    } catch (err) {
+        if (err instanceof DoorRequestError) {
+            return door.envelope(err.status, err.message, err.detail);
+        }
+
+        const mapped = mapProxyRequestError(err);
+        logRequestFailure({
+            req: request,
+            err,
+            status: mapped.status,
+            fields: {
+                path: deps.path,
+                model: facts.model,
+                elapsedMs: Math.round(performance.now() - facts.startedAt),
+            },
+        });
+
+        return door.envelope(mapped.status, mapped.message);
+    }
+}
+
+async function runModelDoor<Body extends DoorBody>(input: {
+    request: Request;
+    door: ModelDoor<Body>;
+    deps: LifecycleDeps;
+    facts: DoorRequestFacts;
+}): Promise<Response> {
+    const { request, door, deps, facts } = input;
     const client = await resolveClient(request, deps.config);
 
     if (!client) {
@@ -423,95 +490,73 @@ export async function serveModelDoor<Body extends DoorBody>(
     }
 
     const startedAt = performance.now();
-    let read: { bodyText: string; body: Body };
-
-    try {
-        read = await readDoorBody(request, door);
-    } catch (err) {
-        if (err instanceof DoorRequestError) {
-            return door.envelope(err.status, err.message, err.detail);
-        }
-
-        throw err;
-    }
-
-    const { bodyText, body } = read;
+    facts.startedAt = startedAt;
+    const { bodyText, body } = await readDoorBody(request, door);
+    facts.model = body.model;
     const session = client.session ? noteSessionRequest(client.session, body.claudeSessionId) : undefined;
     const tags = requestTagsFor(request.headers, session, body.conversationId);
 
-    try {
-        const gated = await gateModelRoute({
-            client,
-            config: deps.config,
-            model: body.model,
-            providers: deps.providers,
-        });
+    const gated = await gateModelRoute({
+        client,
+        config: deps.config,
+        model: body.model,
+        providers: deps.providers,
+    });
 
-        if ("refusal" in gated) {
-            return refusalResponse(door.envelope, gated.refusal);
-        }
-
-        const { route, provider } = gated;
-        const recorded: { exchange?: DoorExchange } = {};
-        const response = await door.run({
-            req: request,
-            path: deps.path,
-            config: deps.config,
-            body,
-            bodyText,
-            client,
-            session,
-            tags,
-            route,
-            provider,
-            startedAt,
-            record: (exchange) => {
-                recorded.exchange = exchange;
-            },
-        });
-        const { exchange } = recorded;
-
-        if (!exchange) {
-            return response;
-        }
-
-        const elapsedMs = Math.round(performance.now() - startedAt);
-
-        trackExchange({
-            deps,
-            route,
-            client: client.name,
-            proxyModel: body.model,
-            status: response.status,
-            elapsedMs,
-            tags,
-            exchange,
-        });
-
-        logger.info(
-            {
-                path: deps.path,
-                model: body.model,
-                upstreamModel: route.upstreamId,
-                status: response.status,
-                ...exchange.logFields,
-                elapsedMs,
-                ...tags,
-                userAgent: request.headers.get("User-Agent") ?? undefined,
-            },
-            "ai-proxy: request"
-        );
-
-        return response;
-    } catch (err) {
-        const mapped = mapProxyRequestError(err);
-        logRequestFailure({
-            req: request,
-            err,
-            status: mapped.status,
-            fields: { path: deps.path, model: body.model, elapsedMs: Math.round(performance.now() - startedAt) },
-        });
-
-        return door.envelope(mapped.status, mapped.message);
+    if ("refusal" in gated) {
+        return refusalResponse(door.envelope, gated.refusal);
     }
+
+    const { route, provider } = gated;
+    const recorded: { exchange?: DoorExchange } = {};
+    const response = await door.run({
+        req: request,
+        path: deps.path,
+        config: deps.config,
+        body,
+        bodyText,
+        client,
+        session,
+        tags,
+        route,
+        provider,
+        startedAt,
+        record: (exchange) => {
+            recorded.exchange = exchange;
+        },
+    });
+    const { exchange } = recorded;
+
+    if (!exchange) {
+        return response;
+    }
+
+    const elapsedMs = Math.round(performance.now() - startedAt);
+
+    trackExchange({
+        deps,
+        route,
+        client: client.name,
+        proxyModel: body.model,
+        status: response.status,
+        elapsedMs,
+        tags,
+        exchange,
+    });
+
+    logger.info(
+        {
+            path: deps.path,
+            model: body.model,
+            upstreamModel: route.upstreamId,
+            status: response.status,
+            ...exchange.logFields,
+            elapsedMs,
+            ...tags,
+            userAgent: request.headers.get("User-Agent") ?? undefined,
+        },
+        "ai-proxy: request"
+    );
+
+    return response;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -10,6 +10,7 @@ import {
     changeLogPath,
     parseChangeLogRow,
     readChangeLog,
+    WALK_CHUNK_BYTES,
     walkChangeLogs,
 } from "./change-log";
 
@@ -100,6 +101,46 @@ describe("the change log read side", () => {
                 ["new", ["/w/n1.ts", "/w/n2.ts"]],
                 ["mid", ["/w/m1.ts"]],
             ]);
+        });
+    });
+
+    test("reads a log in chunks: a row across a chunk edge comes back whole, and the rest is read only while rows are due", async () => {
+        await inTempRoot(() => {
+            const rows = Math.ceil((3 * WALK_CHUNK_BYTES) / 200);
+
+            for (let index = 0; index < rows; index++) {
+                append("big", `/w/f${String(index).padStart(5, "0")}.ts`, "edit", "2026-11-01T10:00:00.000Z");
+            }
+
+            append("big", "/w/late-a.ts", "edit", "2026-11-01T11:00:00.000Z");
+            const path = changeLogPath("big");
+            const body = readFileSync(path, "utf8");
+            expect(body.length).toBeGreaterThan(2 * WALK_CHUNK_BYTES);
+
+            const all = [...walkChangeLogs()].flatMap((entry) => entry.rows.map((row) => row.path));
+            expect(all).toHaveLength(rows + 1);
+            expect(all.slice(0, 2)).toEqual(["/w/f00000.ts", "/w/f00001.ts"]);
+            expect(all.at(-1)).toBe("/w/late-a.ts");
+
+            const capped = [...walkChangeLogs({ maxRows: 5 })].flatMap((entry) => entry.rows.map((row) => row.path));
+            expect(capped).toEqual(["/w/f00000.ts", "/w/f00001.ts", "/w/f00002.ts", "/w/f00003.ts", "/w/f00004.ts"]);
+
+            // The log is not loaded up front: the tail is rewritten while the walk gates its first line, and the walk
+            // returns the rewritten row. A walk that read the whole log first would still return the old one.
+            let rewritten = false;
+            const late = [
+                ...walkChangeLogs({
+                    keepLine: (line) => {
+                        if (!rewritten) {
+                            rewritten = true;
+                            writeFileSync(path, body.replace("/w/late-a.ts", "/w/late-b.ts"));
+                        }
+
+                        return line.includes("/w/late-");
+                    },
+                }),
+            ].flatMap((entry) => entry.rows.map((row) => row.path));
+            expect(late).toEqual(["/w/late-b.ts"]);
         });
     });
 

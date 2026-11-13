@@ -12,39 +12,13 @@ import { grokDriver } from "../drivers/grok";
 import { num } from "../drivers/parse-helpers";
 import type { AgentId, DriverRoot, DriverUsageEvent, MonitorDriver, SpendLayout } from "../drivers/types";
 import { findRecentTranscripts } from "../monitor";
-import { claudeServiceTier } from "../parse";
+import { claudeCacheWrites, claudeServiceTier } from "../parse";
 import { prof } from "../prof";
 import { asRecord, asString, parseJsonValue } from "./jsonl";
 import type { SourceId, SpendEvent } from "./types";
 import { readBytes, readText } from "./walk";
 
 const MIN_MTIME = 0;
-
-interface ClaudeUsage {
-    input_tokens?: number;
-    output_tokens?: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-    cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
-    iterations?: Array<{
-        type?: string;
-        model?: string;
-        input_tokens?: number;
-        output_tokens?: number;
-        cache_creation_input_tokens?: number;
-        cache_read_input_tokens?: number;
-    }>;
-}
-
-function cacheCreationTokens(usage: ClaudeUsage): number {
-    const nested = usage.cache_creation;
-
-    if (nested) {
-        return num(nested.ephemeral_5m_input_tokens) + num(nested.ephemeral_1h_input_tokens);
-    }
-
-    return num(usage.cache_creation_input_tokens);
-}
 
 function unwrapClaudeRecord(raw: Record<string, unknown>): Record<string, unknown> {
     const nested = asRecord(asRecord(asRecord(raw.data)?.message)?.message);
@@ -98,8 +72,7 @@ function parseClaudeLine(line: string, file: string): SpendEvent[] {
     const recorded = typeof entry.costUSD === "number" ? num(entry.costUSD) : undefined;
     const inputTokens = num(usage.input_tokens as number | undefined);
     const outputTokens = num(usage.output_tokens as number | undefined);
-    const cacheCreation = cacheCreationTokens(usage as ClaudeUsage);
-    const cacheCreation1h = num((usage as ClaudeUsage).cache_creation?.ephemeral_1h_input_tokens);
+    const { total: cacheCreation, oneHour: cacheCreation1h } = claudeCacheWrites(usage);
     const cacheRead = num(usage.cache_read_input_tokens as number | undefined);
 
     if (inputTokens || outputTokens || cacheCreation || cacheRead) {
@@ -113,7 +86,7 @@ function parseClaudeLine(line: string, file: string): SpendEvent[] {
             inputTokens,
             outputTokens,
             cacheCreationTokens: cacheCreation,
-            ...(cacheCreation1h > 0 ? { cacheCreation1hTokens: Math.min(cacheCreation1h, cacheCreation) } : {}),
+            ...(cacheCreation1h > 0 ? { cacheCreation1hTokens: cacheCreation1h } : {}),
             cacheReadTokens: cacheRead,
             recordedCostUsd: recorded,
             isSidechain,

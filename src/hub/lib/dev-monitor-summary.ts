@@ -5,7 +5,13 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { type devMonitorSources, isCrashReportName, isHangCaptureName, readMonitorState } from "./dev-monitor";
+import {
+    type devMonitorSources,
+    hangCaptureTime,
+    isCrashReportName,
+    isStoredHangCaptureName,
+    readMonitorState,
+} from "./dev-monitor";
 
 const log = logger.child({ component: "hub:dev-monitor" });
 
@@ -49,9 +55,22 @@ function daysBetween(since: Date, until: Date): string[] {
 
 /**
  * The files of a folder that pass `accept`, carry a day of the window in their name (`hang-2026-11-10-…`,
- * `GenesisTools-2026-11-10-….ips`), and were written inside it. Only those names are stat'ed.
+ * `GenesisTools-2026-11-10-….ips`), and were written inside it: at `timeOf(name)` when it gives a time, else at the
+ * file's mtime. Only the names without a time of their own are stat'ed.
  */
-function filesInWindow(dir: string, accept: (name: string) => boolean, since: Date, until: Date): string[] {
+function filesInWindow({
+    dir,
+    accept,
+    since,
+    until,
+    timeOf = () => null,
+}: {
+    dir: string;
+    accept: (name: string) => boolean;
+    since: Date;
+    until: Date;
+    timeOf?: (name: string) => number | null;
+}): string[] {
     if (!existsSync(dir)) {
         return [];
     }
@@ -70,7 +89,7 @@ function filesInWindow(dir: string, accept: (name: string) => boolean, since: Da
         .filter((name) => accept(name) && days.some((day) => name.includes(day)))
         .filter((name) => {
             try {
-                const written = statSync(join(dir, name)).mtimeMs;
+                const written = timeOf(name) ?? statSync(join(dir, name)).mtimeMs;
                 return written >= since.getTime() && written <= until.getTime();
             } catch (error) {
                 log.debug({ dir, name, error }, "dev monitor: a file went away before the summary read it");
@@ -114,12 +133,17 @@ export function summarizeWindow({
         }
     }
 
+    // A past window counts the `.txt.zst` the daily pass made of an older capture, at the capture's own time.
     const hangsPerFolder = [sources.hangs, sources.genesisHangs].map(
-        (dir) => [dir, filesInWindow(dir, isHangCaptureName, since, until).length] as const
+        (dir) =>
+            [
+                dir,
+                filesInWindow({ dir, accept: isStoredHangCaptureName, since, until, timeOf: hangCaptureTime }).length,
+            ] as const
     );
     const hangFolders = hangsPerFolder.filter(([, count]) => count > 0).map(([dir]) => dir);
     counts.hangs = hangsPerFolder.reduce((sum, [, count]) => sum + count, 0);
-    counts.crashes = filesInWindow(sources.crashes, isCrashReportName, since, until).length;
+    counts.crashes = filesInWindow({ dir: sources.crashes, accept: isCrashReportName, since, until }).length;
 
     const from = sinceArgument(since);
     const commands: DevSummary["commands"] = {};

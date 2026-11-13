@@ -3,6 +3,14 @@ import XCTest
 @testable import GenesisKit
 
 final class SessionTranscriptClientTests: XCTestCase {
+    func testConversationFoldingKeepsThinkingOutsideMinimal() {
+        let thinking = TranscriptRow(id: "reasoning", kind: .thinking(text: "Inspect the result"), searchText: "inspect")
+        let reply = TranscriptRow(id: "reply", kind: .reply(text: "Done", usage: nil, model: nil), searchText: "done")
+        let section = TranscriptSection(id: "section", number: 1, toolCount: 0, errorCount: 0, rows: [thinking, reply])
+        XCTAssertEqual(TranscriptDocument.folded([section], keepsThinking: true).first?.rows.map(\.id), ["reasoning", "reply"])
+        XCTAssertEqual(TranscriptDocument.folded([section]).first?.rows.map(\.id), ["reply"])
+    }
+
     func testDecodePairsToolNameAndPreview() throws {
         let json = """
         {"provider":"claude","sessionId":"abc","filePath":"/tmp/abc.jsonl","byteSize":12,"truncated":false,"nextOffset":2,"turns":[{"id":"a1","role":"assistant","at":null,"text":"reading","tools":[{"id":"toolu_01","name":"Read","inputPreview":"SessionDetailsPane.swift","result":"struct Pane","isError":false}]}]}

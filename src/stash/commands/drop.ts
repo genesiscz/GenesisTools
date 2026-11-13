@@ -49,6 +49,7 @@ export async function dropCommand(opts: {
         const { confirm } = await import("@genesiscz/utils/prompts/p");
         const ok = await confirm({
             message: `delete stash "${opts.name}"${opts.allVersions ? " (all versions)" : opts.version ? ` v${opts.version}` : " (latest)"}?`,
+            cancel: "back",
         });
         if (ok !== true) {
             ui.warn("cancelled");

@@ -62,6 +62,7 @@ export {
     type MermaidRenderResult,
     type MermaidSource,
     renderMermaidSvg,
+    resolveCssColorValue,
 } from "./mermaid-core";
 export {
     Badge,
@@ -77,6 +78,9 @@ export {
     Chips,
     type ChipsProps,
     Claim,
+    type ClaimFact,
+    ClaimList,
+    type ClaimListProps,
     type ClaimProps,
     CodeBlock,
     type CodeBlockProps,
@@ -194,6 +198,17 @@ export {
 export { SERIES_COLOR } from "./charts";
 export { contrastRatio, parseCssColor, type Rgb, readableTextOn, relativeLuminance } from "./color";
 export {
+    DecisionBoard,
+    type DecisionBoardApi,
+    type DecisionBoardProps,
+    type DecisionChoices,
+    type DecisionOption,
+    type DecisionPoint,
+    type DecisionPreset,
+    decisionChoicesFromHash,
+    decisionChoicesHash,
+} from "./decision-board";
+export {
     type EditableChange,
     type EditableColumn,
     type EditableRow,
@@ -278,6 +293,7 @@ export {
     ledgerCounts,
 } from "./ledger";
 export { HUE, type HueName, type PageLook, PageLookContext, usePageLook } from "./look";
+export { ModelBrowser, type ModelBrowserIcon, type ModelBrowserNode, type ModelBrowserProps } from "./model-browser";
 export { TopNav, type TopNavLink, type TopNavProps } from "./nav";
 export {
     type CardField,
@@ -292,6 +308,7 @@ export {
     statDeltaTone,
     TONE_VAR,
 } from "./primitives";
+export { PropertyGrid, type PropertyGridGroup, type PropertyGridProps, type PropertyGridRow } from "./property-grid";
 export {
     moveItem,
     type SortableItem,
@@ -300,6 +317,7 @@ export {
     type SortableMove,
     sortableMoveBlocked,
 } from "./sortable";
+export { StickyControls, type StickyControlsProps } from "./sticky-controls";
 export {
     type AsciiTreeRow,
     asciiTreeRows,
@@ -335,6 +353,33 @@ export {
     type TooltipTargetProps,
     useTooltip,
 } from "./tooltip";
+
+export {
+    attributeText,
+    borderPoint,
+    elementHeight,
+    orthogonal,
+    UML_MARK,
+    type UmlAttribute,
+    type UmlConnector,
+    type UmlConnectorHead,
+    type UmlConnectorKind,
+    UmlDiagram,
+    type UmlDiagramModel,
+    type UmlDiagramProps,
+    type UmlElement,
+    type UmlElementKind,
+    UmlInspector,
+    type UmlInspectorProps,
+    type UmlMark,
+    type UmlPoint,
+    type UmlTag,
+    type UmlThemeName,
+    UmlWorkbench,
+    type UmlWorkbenchProps,
+    type UmlWorkbenchState,
+    umlConnectorHead,
+} from "./uml-diagram";
 export {
     CapacityGrid,
     type CapacityGridProps,

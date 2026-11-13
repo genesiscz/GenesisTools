@@ -13,7 +13,12 @@ import {
 import { type InboxDeliveryView, type InboxRef, fromRecord as inboxDecisionOf } from "@app/question/lib/inbox/build";
 import { cachingReadDeps, shownExcerpts } from "@app/question/lib/inbox/excerpts";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
-import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
+import {
+    listFormsSnapshot,
+    listPendingFormHeadsSnapshot,
+    PENDING_MIGRATIONS,
+    type PendingFormHead,
+} from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
 import {
     type QaRow,
@@ -241,7 +246,13 @@ export function widgetTitle(text: string | null | undefined): string | undefined
 export interface WidgetSources {
     sessions(refresh: boolean): Promise<AgentSessionRow[]>;
     decisions(): DecisionRecord[] | { rows: DecisionRecord[]; complete: boolean; missing?: boolean };
+    /** Without a session: the newest {@link WIDGET_FORMS_LIMIT} pending forms, for their cards. */
     forms(session?: string): AskForm[];
+    /**
+     * Every pending form's head, with no limit: the badge counts each one, also past the cards' limit. Without it the
+     * badge counts the forms `forms()` read.
+     */
+    formHeads?(): PendingFormHead[];
     dialogs?(provider: DialogProvider, session: string): OpenQuestion[];
     /** The sessions of `provider` that have dialog records; `dialogs` is read only for them. Without it, for all. */
     dialogSessions?(provider: DialogProvider): Set<string>;
@@ -631,6 +642,8 @@ async function widgetResult(node: AgentNode): Promise<string> {
     resultCache.set(node.filePath, { mtime: stat.mtimeMs, text });
     return text;
 }
+/** The newest pending forms the roster reads in full, for their cards. The badge counts every pending form. */
+export const WIDGET_FORMS_LIMIT = 250;
 /**
  * Pending forms for the roster, or one session's form timeline. An unhinted form is its own session, keyed by its
  * form id, so selecting that session must find the form by id as well as by session hint.
@@ -638,7 +651,9 @@ async function widgetResult(node: AgentNode): Promise<string> {
 export function widgetForms({ dbPath, sessionHint }: { dbPath: string; sessionHint?: string }): AskForm[] {
     return listFormsSnapshot({
         dbPath,
-        opts: sessionHint ? { sessionHint, includeUnhintedFormId: true, limit: 80 } : { status: "pending", limit: 250 },
+        opts: sessionHint
+            ? { sessionHint, includeUnhintedFormId: true, limit: 80 }
+            : { status: "pending", limit: WIDGET_FORMS_LIMIT },
     });
 }
 /** The widget's excerpt reads: a cited file is read again only when it changed (`cachingReadDeps`). */
@@ -661,6 +676,7 @@ export const realWidgetSources: WidgetSources = {
     dialogs: (provider, session) => openQuestions(provider, session),
     dialogSessions: (provider) => sessionsWithDialogRecords(provider),
     forms: (sessionHint) => widgetForms({ dbPath: toolDataDir("question", "qa.db"), sessionHint }),
+    formHeads: () => listPendingFormHeadsSnapshot({ dbPath: toolDataDir("question", "qa.db") }),
     answers: (sessionId) =>
         queryEntriesSnapshot({
             dbPath: toolDataDir("question", "qa.db"),
@@ -928,10 +944,12 @@ export async function widgetSnapshot({
             stop?.();
         }
     }
-    const [rows, decisionRead, waitingForms, agents, answerRoster] = await Promise.all([
+    const formHeadsSource = sources.formHeads;
+    const [rows, decisionRead, waitingForms, formHeads, agents, answerRoster] = await Promise.all([
         read("sessions", () => sources.sessions(refresh), []),
         read("decisions", sources.decisions, []),
         read("questions", () => sources.forms(), []),
+        formHeadsSource ? read<PendingFormHead[] | null>("question count", formHeadsSource, null) : null,
         read("agents", () => sources.agents(refresh), { generatedAt: "", parents: [], orphans: [] }),
         read("answer sessions", () => sources.answers(), []),
     ]);
@@ -1299,10 +1317,11 @@ export async function widgetSnapshot({
     }
     // The badge and every session's count are the waiting set's, the rule the hub inbox and the phone queue ask: per
     // session by its newest ask, a running agent's old items count, nothing asked at or before "Mark all read" counts.
-    // Todos are not cards here, so only decision rows go in, as the phone queue lists only decisions.
+    // Todos are not cards here, so only decision rows go in, as the phone queue lists only decisions. Every pending
+    // form counts, also one past the cards' limit (`formHeads`).
     const waiting = waitingSet({
         rows: decisions.filter((row) => kindOf(row) === "decision"),
-        forms: waitingForms,
+        forms: formHeads ?? waitingForms,
         dialogs: [...dialogBySession.values()].flat(),
         activityAt: (id) => rosterActivity.get(id),
         live: liveIds,
@@ -1534,11 +1553,15 @@ export async function widgetSnapshot({
             1
         );
     }
+    // A full read of the cards' forms can have left older ones out: their cards are missing, and without the heads
+    // their count is missing too.
+    const formsCut =
+        waitingForms.length >= WIDGET_FORMS_LIMIT && (formHeads === null || formHeads.length > waitingForms.length);
     const notifications: WidgetInboxSummary = {
         unread: unreadAnswers + unreadResults,
         needsAnswer: waiting.total,
         complete: inboxData.complete && errors.length === 0,
-        truncated: inboxData.truncated || inboxSessions.size > 512,
+        truncated: inboxData.truncated || inboxSessions.size > 512 || formsCut,
         sessions: [...inboxSessions.values()]
             .sort((a, b) => b.needsAnswer - a.needsAnswer || b.unread - a.unread)
             .slice(0, 512)
