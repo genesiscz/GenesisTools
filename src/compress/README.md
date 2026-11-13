@@ -54,7 +54,7 @@ Oversized files remain untouched and appear in `skips.too-big` and `tooBigBytes`
 
 The plan uses the native `tools du` walker for size, allocation, flags, link count, inode, exact mtime and clone ID.
 It skips young files, files below the minimum, hard links, sparse and compressed files, placeholders and open files.
-A failed or empty `lsof` pass stops apply. Apply skips battery power unless `--on-battery` is explicit.
+A failed or empty `lsof` pass, or one that writes to stderr, stops apply. Apply skips battery power unless `--on-battery` is explicit.
 
 Clone partners come from the existing clone metadata index, the current native listing, and explicit mirror hints.
 Every partner is byte-compared before a compressed clone replaces it. Partners with different permissions, owner,

@@ -644,7 +644,10 @@ export async function openInodes(): Promise<Set<number>> {
     return set;
 }
 
-/** The paths any process has open, from one lsof pass. A failed pass throws: without it nothing may be replaced. */
+/**
+ * Every path any process has open or mapped (lsof's `mem` rows too), from one lsof pass. A pass that fails, writes to
+ * stderr or lists no path throws: a deletion guard that read "nothing is open" from it would remove files in use.
+ */
 export async function openPaths(options: { timeoutMs?: number } = {}): Promise<Set<string>> {
     const out = await readLsof(["-Fn"], options.timeoutMs);
     const set = new Set<string>();
@@ -656,7 +659,7 @@ export async function openPaths(options: { timeoutMs?: number } = {}): Promise<S
     }
 
     if (set.size === 0) {
-        throw new Error("lsof listed no open file; refusing to replace files without the open-file check");
+        throw new Error("lsof listing incomplete (no open path listed): refusing to judge what is open");
     }
 
     return set;
@@ -677,9 +680,10 @@ export const DITTO_WRITER: TransparentWriter = {
     write: ({ source, target }) => exec(["/usr/bin/ditto", "--noclone", "--hfsCompression", source, target]),
 };
 
+/** One whole-system lsof pass. `-w` hides lsof's warnings, so anything left on stderr is an error: the pass throws. */
 async function readLsof(fields: string[], timeoutMs = 60_000): Promise<string> {
-    // lint-rules-ignore: settlement needs every held inode including renamed asides; process.openFiles exposes only selected paths.
-    const p = Bun.spawn(["/usr/sbin/lsof", "-nP", ...fields], { stdout: "pipe", stderr: "pipe" });
+    // lint-rules-ignore: a deletion guard needs every held inode or open and mapped path (renamed asides, mem rows); process.openFiles answers only for selected paths.
+    const p = Bun.spawn(["/usr/sbin/lsof", "-nP", "-w", ...fields], { stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => p.kill(), timeoutMs);
     try {
         const [out, error, code] = await Promise.all([
@@ -687,8 +691,11 @@ async function readLsof(fields: string[], timeoutMs = 60_000): Promise<string> {
             new Response(p.stderr).text(),
             p.exited,
         ]);
-        if (code !== 0 || out.trim() === "") {
-            throw new Error(`lsof failed (${code}): ${error.trim()}; originals retained`);
+        const complaint = error.trim();
+        if (code !== 0 || complaint !== "" || out.trim() === "") {
+            throw new Error(
+                `lsof listing incomplete (exit ${code})${complaint ? `: ${complaint}` : ""}; refusing to judge what is open`
+            );
         }
 
         return out;
