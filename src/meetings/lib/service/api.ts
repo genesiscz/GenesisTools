@@ -110,6 +110,7 @@ export const meetingListRowSchema = z.object({
     labels: z.array(z.string()),
     sources: z.array(z.string()),
     context: z.number().int().nonnegative(),
+    sourceAudio: z.object({ sources: z.array(z.string()), bytes: z.number().int().nonnegative() }).optional(),
     items: z.object({
         suggested: z.number().int().nonnegative(),
         confirmed: z.number().int().nonnegative(),

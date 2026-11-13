@@ -12,6 +12,7 @@ import { type SummaryPoint, summaryPoints } from "@genesiscz/utils/transcribe/su
 import { CallTimeline } from "./call-timeline";
 import { callSilentSpans, energyMicShareFor, type MicEnergy, storeCalibration } from "./energy";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./platforms";
+import { withPreservedSourceAudio } from "./source-audio";
 import { type LinkedSource, linkedSource, type SourceRef, sourceRefOf } from "./sources";
 import { configuredWordChecks, type WordCheckChoice, wordCheckFor } from "./word-check";
 
@@ -82,7 +83,9 @@ export class OpenedMeeting {
 
     /** The source's speaker evidence as it keeps it, every reading included. */
     sourceEvidence(): Promise<MeetingEvidence | null> {
-        this.evidenceOnce ??= this.linked().then(({ source, sourceMeetingId }) => source.evidence(sourceMeetingId));
+        this.evidenceOnce ??= this.linked().then(async ({ source, sourceMeetingId }) =>
+            withPreservedSourceAudio(this.current, await source.evidence(sourceMeetingId))
+        );
         return this.evidenceOnce;
     }
 
