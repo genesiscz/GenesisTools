@@ -11,7 +11,7 @@ import { SurfaceInputError } from "@genesiscz/utils/cmux/surface-input";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ProcessEntry } from "@genesiscz/utils/process/processes";
 import { fleetEntryOf, readFleetView } from "./fleet";
-import { liveSurfacesNow, type SessionInputDeps, sendToSession } from "./input";
+import { agentSessionsOf, liveSurfacesNow, type SessionInputDeps, sendToSession } from "./input";
 import {
     joinLiveSessions,
     type LiveAgentProcess,
@@ -278,6 +278,29 @@ describe("a session that waits on a question", () => {
     });
 });
 
+describe("agentSessionsOf: agent sessions on one tty", () => {
+    it("counts a worker started from another Claude's tool shell as a second session", () => {
+        const processes = [
+            psEntry(10, "-zsh"),
+            psEntry(11, "claude", { ppid: 10 }),
+            psEntry(12, "/bin/zsh -c claude -p hello", { ppid: 11 }),
+            psEntry(13, "claude -p hello", { ppid: 12 }),
+        ];
+
+        expect(agentSessionsOf(processes)).toEqual(["claude", "claude"]);
+    });
+
+    it("NEGATIVE CONTROL: a launcher and the agent it starts are one session", () => {
+        const processes = [
+            psEntry(20, "-zsh"),
+            psEntry(21, "node /opt/bin/codex", { ppid: 20 }),
+            psEntry(22, "/opt/lib/codex/vendor/codex", { ppid: 21 }),
+        ];
+
+        expect(agentSessionsOf(processes)).toEqual(["codex"]);
+    });
+});
+
 describe("sendToSession: the one guarded session input", () => {
     const TMUX_JOIN = {
         pane: "%41",
@@ -354,6 +377,16 @@ describe("sendToSession: the one guarded session input", () => {
             detail: expect.stringContaining("it also runs codex"),
         });
         expect([...other.calls, ...both.calls]).toEqual([]);
+    });
+
+    it("tty-shared: a second session of the same agent in the tab refuses the write", async () => {
+        const twoClaudes = edges({ agentsOnTty: () => ["claude", "claude"] });
+
+        expect(await sendToSession({ sessionId: SESSION_A, text: "hi" }, twoClaudes.deps)).toMatchObject({
+            reason: "tty-shared",
+            detail: expect.stringContaining("it runs 2 claude sessions"),
+        });
+        expect(twoClaudes.calls).toEqual([]);
     });
 
     it("tmux-hidden: the surface shows another tmux pane, checked again right before the write", async () => {
