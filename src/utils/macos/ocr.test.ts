@@ -215,6 +215,28 @@ describe("region tiles", () => {
         expect(merged.text).toBe("seam  line\nSeam line");
         expect(mergeRegionOcrResults([])).toEqual({ text: "", blocks: [] });
     });
+
+    it("folds each block's text once, and a replaced block's longer text is what later pieces are compared with", () => {
+        const at = { x: 0.1, y: 0.5, width: 0.3, height: 0.02 };
+        const blocks = Array.from({ length: 40 }, (_, index) => ({
+            text: `Line ${index}`,
+            confidence: 0.9,
+            bounds: { ...at, y: index / 50 },
+        }));
+        const normalize = spyOn(String.prototype, "normalize");
+
+        try {
+            mergeRegionOcrResults([{ text: "", blocks }]);
+            expect(normalize).toHaveBeenCalledTimes(blocks.length);
+        } finally {
+            normalize.mockRestore();
+        }
+
+        const short = { text: "Seam", confidence: 0.9, bounds: at };
+        const whole = { ...short, text: "Seam line here" };
+        const tail = { ...short, text: "line here" };
+        expect(mergeRegionOcrResults([{ text: "", blocks: [short, whole, tail] }]).blocks).toEqual([whole]);
+    });
 });
 
 describe("mergeTiledOcrResults", () => {
