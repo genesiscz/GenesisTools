@@ -49,9 +49,35 @@ describe("authStorageSessionStore", () => {
 
         expect(await authStorageSessionStore.read("https://other.example.com")).toBeNull();
         expect((await authStorageSessionStore.read("https://clarity.example.com/ppm"))?.authToken).toBe("fresh");
+    });
 
-        // An item written before the item named its server (a copy that does not bind it) is no server's session.
-        await setAuthSecret(ClaritySessionKey, SafeJSON.stringify({ authToken: "old", sessionId: "test" }) ?? "");
+    test("an item saved before the item named its server is the configured server's, and the next sign-in binds it", async () => {
+        await saveConfig(Base);
+        const legacy = SafeJSON.stringify({ authToken: "old", sessionId: "test" }) ?? "";
+        await setAuthSecret(ClaritySessionKey, legacy);
+
+        expect((await authStorageSessionStore.read("https://clarity.example.com"))?.authToken).toBe("old");
+        // The read accepted the old shape without writing it.
+        expect(await getAuthSecret(ClaritySessionKey)).toBe(legacy);
+
+        await authStorageSessionStore.write(
+            { authToken: "fresh", sessionId: "test" },
+            "https://clarity.example.com/ppm"
+        );
+        expect(SafeJSON.parse((await getAuthSecret(ClaritySessionKey)) ?? "", { strict: true })).toMatchObject({
+            authToken: "fresh",
+            origin: "https://clarity.example.com",
+        });
+        expect(await authStorageSessionStore.read("https://other.example.com")).toBeNull();
+    });
+
+    test("an item whose origin names another server is refused", async () => {
+        await saveConfig(Base);
+        await setAuthSecret(
+            ClaritySessionKey,
+            SafeJSON.stringify({ authToken: "elsewhere", sessionId: "test", origin: "https://other.example.com" }) ?? ""
+        );
+
         expect(await authStorageSessionStore.read("https://clarity.example.com")).toBeNull();
     });
 

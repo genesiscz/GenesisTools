@@ -35,8 +35,13 @@ function parse(raw: string | null, baseUrl: string): ClaritySession | null {
         const item = SafeJSON.parse(raw, { strict: true }) as Partial<StoredSession>;
         const origin = clarityOrigin(baseUrl);
 
-        // An item saved for another server, or before the item named its server, is not this server's session.
-        return item.authToken && item.sessionId && origin !== null && item.origin === origin
+        // An item saved for another server is not this server's session. An item saved before the item named its
+        // server (no `origin`) is the configured server's: readers accept the old shape, and the next sign-in
+        // writes the origin (a read never writes).
+        return item.authToken &&
+            item.sessionId &&
+            origin !== null &&
+            (item.origin === undefined || item.origin === origin)
             ? { authToken: item.authToken, sessionId: item.sessionId, cookies: item.cookies }
             : null;
     } catch {
