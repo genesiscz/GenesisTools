@@ -218,6 +218,34 @@ final class HubInboxTimelineTests: XCTestCase {
         XCTAssertEqual(raw, "cmux: no socket")
     }
 
+    /// A push takes the commits its head reaches through their parents down to its old tip: a commit of a parallel
+    /// branch that sits between them by time stays with its author, a second push of the same head makes no empty
+    /// group, and a commit with no parents on record (an older CLI) gives the push only its head.
+    func testAPushTakesTheCommitsItsHeadReachesNotTheOnesNearItInTime() throws {
+        let json = """
+        [
+          { "id": "push:a", "kind": "push", "at": "2026-03-02T10:00:00Z", "title": "Pushed feat/a", "project": "app", "sha": "c3", "fromSha": "c1" },
+          { "id": "push:copy", "kind": "push", "at": "2026-03-02T09:30:00Z", "title": "Pushed copy", "project": "app", "sha": "c3", "fromSha": "c1" },
+          { "id": "commit:c3", "kind": "commit", "at": "2026-03-02T09:00:00Z", "title": "third", "project": "app", "sha": "c3", "parents": ["c2"], "author": "Alice" },
+          { "id": "commit:x1", "kind": "commit", "at": "2026-03-02T08:30:00Z", "title": "other branch", "project": "app", "sha": "x1", "parents": ["x0"], "author": "Bob" },
+          { "id": "commit:c2", "kind": "commit", "at": "2026-03-02T08:00:00Z", "title": "second", "project": "app", "sha": "c2", "parents": ["c1"], "author": "Alice" },
+          { "id": "commit:c1", "kind": "commit", "at": "2026-03-02T05:00:00Z", "title": "first", "project": "app", "sha": "c1", "parents": [], "author": "Alice" },
+          { "id": "push:old", "kind": "push", "at": "2026-03-02T04:00:00Z", "title": "Pushed old", "project": "app", "sha": "z1", "fromSha": "z0" },
+          { "id": "commit:z1", "kind": "commit", "at": "2026-03-02T03:00:00Z", "title": "old cli", "project": "app", "sha": "z1", "author": "Alice" },
+          { "id": "commit:z0", "kind": "commit", "at": "2026-03-02T02:00:00Z", "title": "older", "project": "app", "sha": "z0", "author": "Alice" }
+        ]
+        """
+        let events = try JSONDecoder().decode([TimelineEvent].self, from: Data(json.utf8))
+        let digest = try XCTUnwrap(ListsSketchB.digests(events).first)
+        let byPush = Dictionary(uniqueKeysWithValues: digest.commitGroups.compactMap { group in group.push.map { ($0.id, group.commits.map(\.id)) } })
+        XCTAssertEqual(byPush["push:a"], ["commit:c3", "commit:c2"])
+        XCTAssertEqual(byPush["push:old"], ["commit:z1"])
+        XCTAssertNil(byPush["push:copy"], "a push whose head another push took makes no empty group")
+        XCTAssertTrue(digest.events.contains { $0.id == "push:copy" }, "it stays in the feed as a push")
+        let loose = digest.commitGroups.filter { $0.push == nil }.flatMap { $0.commits.map(\.id) }
+        XCTAssertEqual(Set(loose), ["commit:x1", "commit:c1", "commit:z0"])
+    }
+
     func testTimelineDecodesEveryKind() throws {
         let json = """
         {

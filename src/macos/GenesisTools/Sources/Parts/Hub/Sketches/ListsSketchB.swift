@@ -917,26 +917,14 @@ extension ListsSketchB {
             let commits = sorted.filter { $0.timelineKind == .commit }
             let pushes = sorted.filter { $0.timelineKind == .push }
             let others = sorted.filter { $0.timelineKind != .commit && $0.timelineKind != .push }
-            // A push takes the commits from its head down to the next older push's head (or the end of the page).
-            var groups: [CommitGroup] = []
-            var taken = Set<String>()
-            let pushHeads = Set(pushes.compactMap(\.sha))
-            for push in pushes {
-                guard let head = push.sha, let start = commits.firstIndex(where: { $0.sha == head }) else { continue }
-                var run: [TimelineEvent] = []
-                for commit in commits[start...] {
-                    if taken.contains(commit.id) { break }
-                    if commit.id != commits[start].id, let sha = commit.sha, pushHeads.contains(sha) { break }
-                    run.append(commit)
-                    taken.insert(commit.id)
-                }
-                groups.append(CommitGroup(key: push.id, push: push, author: run.first?.author, commits: run))
-            }
+            var groups = ListsSketchB.pushGroups(pushes: pushes, commits: commits)
+            let taken = Set(groups.flatMap { $0.commits.map(\.id) })
             let loose = Dictionary(grouping: commits.filter { !taken.contains($0.id) }) { $0.author ?? "" }
             for (author, run) in loose {
                 groups.append(CommitGroup(key: "\(name)|\(author)", push: nil, author: author.isEmpty ? nil : author, commits: run))
             }
-            let unmatchedPushes = pushes.filter { push in !groups.contains { $0.push?.id == push.id } }
+            let grouped = Set(groups.compactMap { $0.push?.id })
+            let unmatchedPushes = pushes.filter { !grouped.contains($0.id) }
             let needs = others.filter(\.waitsForMe)
             let rest = (others.filter { !$0.waitsForMe } + unmatchedPushes)
                 .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
@@ -952,6 +940,52 @@ extension ListsSketchB {
         return digests.sorted { ($0.newest ?? .distantPast) > ($1.newest ?? .distantPast) }
     }
 
+    /// The commits each push sent, by ancestry: from the push's head through the commits' parents down to its old tip
+    /// (`fromSha`), never past another push's head or a commit an earlier push took. A commit with no parents on record
+    /// (an older CLI) belongs to the push only as its head. The suffix of the commits sorted by time used to go to the
+    /// push, so a parallel branch's commit read as pushed. A push whose head another push took makes no group (it was a
+    /// "Pushed x · 0 commits" row); it stays in the feed as a push.
+    static func pushGroups(pushes: [TimelineEvent], commits: [TimelineEvent]) -> [CommitGroup] {
+        var bySha: [String: TimelineEvent] = [:]
+        for commit in commits {
+            if let sha = commit.sha, bySha[sha] == nil { bySha[sha] = commit }
+        }
+        let pushHeads = Set(pushes.compactMap(\.sha))
+        var taken = Set<String>()
+        var groups: [CommitGroup] = []
+        for push in pushes {
+            guard let head = push.sha, let first = bySha[head], !taken.contains(first.id) else { continue }
+            var run: [TimelineEvent] = []
+            var next = [head]
+            var seen = Set<String>()
+            while let sha = next.popLast() {
+                guard seen.insert(sha).inserted, sha != push.fromSha, let commit = bySha[sha], !taken.contains(commit.id),
+                      sha == head || !pushHeads.contains(sha) else { continue }
+                run.append(commit)
+                taken.insert(commit.id)
+                next.append(contentsOf: commit.parents ?? [])
+            }
+            let ordered = run.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+            groups.append(CommitGroup(key: push.id, push: push, author: first.author, commits: ordered))
+        }
+        return groups
+    }
+
+    /// The digests of the last feed the page drew: opening a commit group or "Show all" draws the page again without
+    /// grouping every event again (`digests` sorts and groups the whole page).
+    @MainActor
+    final class DigestCache {
+        private var events: [TimelineEvent]?
+        private var value: [ProjectDigest] = []
+
+        func digests(for events: [TimelineEvent]) -> [ProjectDigest] {
+            if let known = self.events, known == events { return value }
+            value = HubPerf.measure("lists.b.digests", "\(events.count) events") { ListsSketchB.digests(events) }
+            self.events = events
+            return value
+        }
+    }
+
     /// The Activity page by project. The filter rail is today's; its project filter narrows to one section.
     struct ActivityByProject: View {
         var model: HubModel
@@ -961,6 +995,7 @@ extension ListsSketchB {
         @State private var find = PanelFindModel(scope: "timeline", title: "Activity")
         @State private var searching = false
         @State private var openGroups: Set<String> = []
+        @State private var digestCache = DigestCache()
         @GenReduceMotion private var reduceMotion
         @AppStorage(HubActivityRows.allActionsKey, store: HubDefaults.store) private var allActions = false
         @AppStorage(HubActivityRows.commitPrefixKey, store: HubDefaults.store) private var commitPrefix = false
@@ -969,7 +1004,7 @@ extension ListsSketchB {
 
         var body: some View {
             let events = timeline.shown(filter: model.filter)
-            let digests = ListsSketchB.digests(events)
+            let digests = digestCache.digests(for: events)
             VStack(spacing: 0) {
                 header(events: events.count, projects: digests.count)
                 PanelFindBar(find: find)

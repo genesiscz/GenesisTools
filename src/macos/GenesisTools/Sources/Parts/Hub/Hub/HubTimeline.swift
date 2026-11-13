@@ -37,6 +37,8 @@ struct TimelineEvent: Decodable, Identifiable, Hashable {
     let needsMe: Bool?
     /// A push's old tip (all zeros for a new branch).
     let fromSha: String?
+    /// A commit's parents; nil from a CLI older than the field.
+    let parents: [String]?
     /// A session's folder.
     let cwd: String?
     /// PR: OPEN, MERGED, CLOSED. CI: failed, success. Decision: its state. Thread: open, resolved.

@@ -82,6 +82,8 @@ export interface TimelineEvent {
     needsMe?: boolean;
     /** A push's old tip (all zeros for a new branch). */
     fromSha?: string;
+    /** A commit's parents, so a reader can tell which commits a push sent by ancestry, not by commit time. */
+    parents?: string[];
     /** A session's folder. */
     cwd?: string;
     /** PR: OPEN, MERGED, CLOSED. CI: failed, success. Decision: its state. Thread: open, resolved. */
@@ -868,6 +870,7 @@ async function repoEvents(
                 project,
                 repo: repo.root,
                 sha: commit.sha,
+                parents: commit.parents,
                 author: commit.author.name,
                 ...(me ? { mine: commit.author.email.toLowerCase() === me } : {}),
             },
