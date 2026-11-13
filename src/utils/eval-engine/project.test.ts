@@ -235,6 +235,44 @@ it("say bounds simultaneous open handles", async () => {
     assert.equal(live, 0);
 });
 
+it("say fails when a conversation breaks after a reply, when one repeat fails, and when a close fails", async () => {
+    const broken = fakeSystem({
+        tools: ["t"],
+        setup: Setup,
+        signals: Signals,
+        defaultSignals: { ok: true },
+        reply: (c) =>
+            c.turn === 2 && c.key === "say~r2" ? { error: new EvalSystemError("transient", "502") } : { reply: "ok" },
+    });
+    const mixed = await sayEval(
+        defineEvalProject({ system: broken, scenarios: [], matrices: [] }),
+        { texts: ["hi", "again"], model: "fake", repeats: 2 },
+        { concurrency: 1 }
+    );
+    assert.deepEqual(
+        mixed.conversations.map((c) => c.error?.message ?? null),
+        [null, "502"]
+    );
+    assert.equal(mixed.exitCode, 4);
+
+    const fake = system();
+    const connect = fake.connect;
+    fake.connect = (target) => ({
+        ...connect(target),
+        close: async () => {
+            throw new Error("the session was not deleted");
+        },
+    });
+    const closed = await sayEval(defineEvalProject({ system: fake, scenarios: [], matrices: [] }), {
+        texts: ["hi"],
+        model: "fake",
+    });
+    assert.equal(closed.conversations[0].error, null);
+    assert.equal(closed.conversations[0].turns.length, 1);
+    assert.equal(closed.conversations[0].closeError, "the session was not deleted");
+    assert.equal(closed.exitCode, 4);
+});
+
 it("refuses to invent the unknown default variant during offline matrix check", () => {
     const project = defineEvalProject({ system: system(), scenarios: [], matrices: [] });
     assert.throws(

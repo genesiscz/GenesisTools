@@ -240,7 +240,7 @@ Progress goes to stderr as JSON lines, only with `--progress`.
 | Command | Flags | Prints |
 |---|---|---|
 | `run [scenarios...]` | `--matrix <id>`, `--tag <tag...>`, `--model <id...>`, `--variant <name...>`, `--repeats <n>`, `--stdin`, `--resume <run>`, `--concurrency <n>`, `--max-cost-usd <usd>`, `--target <t>`, `--label <label>`, `--all-cells`, `--keep-going`, `--failures <n>`, `--progress` | `eval-run/1` |
-| `say <text...>` | `--model <id>` (required), `--variant <name>`, `--repeats <n>`, `--setup <json>`, `--target <t>`, `--concurrency <n>` | `eval-say/1`: each reply, its tool names and signals; no expectations, no run folder |
+| `say <text...>` | `--model <id>` (required), `--variant <name>`, `--repeats <n>`, `--setup <json>`, `--target <t>`, `--concurrency <n>` | `eval-say/1`: each reply, its tool names and signals, and each conversation's `error` and `closeError`; exit 4 when any conversation broke or did not close; no expectations, no run folder |
 | `check [scenarios...]` | `--print`, `--stdin`, `--matrix <id>`, `--tag <tag...>` | `eval-check/1`: ids, hashes, resolved setups (and documents with `--print`); contacts nothing |
 | `list` | `--live`, `--target <t>` | `eval-list/1`: scenarios, matrices (and the system's models and variants with `--live`) |
 | `runs` | `--limit <n>` | `eval-runs/1`: run folders, newest first, with their verdicts |

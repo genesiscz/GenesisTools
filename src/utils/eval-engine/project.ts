@@ -525,8 +525,11 @@ export interface SayResult {
     conversations: {
         repeat: number;
         error: { kind: SystemErrorKind; message: string } | null;
+        /** Why the conversation's cleanup (`close`) failed; the system may still hold it. */
+        closeError: string | null;
         turns: { user: string; reply: string; tools: string[]; signals: Json; promptHash: string | null }[];
     }[];
+    /** 0 when every conversation played every turn and closed; 4 when one broke, never opened or did not close. */
     exitCode: 0 | 4;
 }
 
@@ -564,7 +567,7 @@ export async function sayEval<TSetup, TSignals, TTool extends string, THandle, T
     const conversations = await Promise.all(
         repeats.map(async (repeat): Promise<SayResult["conversations"][number]> => {
             if (!(await open.acquire(signal))) {
-                return { repeat, error: { kind: "blocked", message: "run aborted" }, turns: [] };
+                return { repeat, error: { kind: "blocked", message: "run aborted" }, closeError: null, turns: [] };
             }
             try {
                 if (signal.aborted) {
@@ -595,6 +598,7 @@ export async function sayEval<TSetup, TSignals, TTool extends string, THandle, T
                 return {
                     repeat,
                     error: record.brokenBy,
+                    closeError: record.closeError,
                     turns: record.turns.map((t) => ({
                         user: t.user.text,
                         reply: t.reply,
@@ -605,7 +609,7 @@ export async function sayEval<TSetup, TSignals, TTool extends string, THandle, T
                 };
             } catch (thrown) {
                 const error = asSystemError(thrown);
-                return { repeat, error: { kind: error.kind, message: error.message }, turns: [] };
+                return { repeat, error: { kind: error.kind, message: error.message }, closeError: null, turns: [] };
             } finally {
                 open.release();
             }
@@ -616,7 +620,7 @@ export async function sayEval<TSetup, TSignals, TTool extends string, THandle, T
         model: model.id,
         variant,
         conversations,
-        exitCode: conversations.some((c) => c.turns.length) ? 0 : 4,
+        exitCode: conversations.every((c) => c.error === null && c.closeError === null) ? 0 : 4,
     };
 }
 
