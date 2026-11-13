@@ -267,9 +267,12 @@ async function duplicateLocked(request: DuplicateRequest): Promise<DuplicateResu
     return { from: original.id, id: copy.id, title };
 }
 
-/** Rewrites every string of the record that starts in `from` to start in `to`. False when none does. */
+/** Repoints record paths from `from` to `to`, preserving history and opaque context revision content. */
 export function repointPaths(record: MeetingRecord, from: string, to: string): boolean {
     const { history, ...rest } = record;
+    const revisions = new Set<object>(
+        record.context.flatMap((entry) => (entry.file?.revision ? [entry.file.revision] : []))
+    );
     let changed = false;
     const repoint = (value: unknown): unknown => {
         if (typeof value === "string") {
@@ -286,6 +289,10 @@ export function repointPaths(record: MeetingRecord, from: string, to: string): b
         }
 
         if (value !== null && typeof value === "object") {
+            if (revisions.has(value)) {
+                return value;
+            }
+
             return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, repoint(child)]));
         }
 

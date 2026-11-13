@@ -3,7 +3,7 @@ import { languageSettings, type MeetingsConfig } from "@genesiscz/utils/meetings
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { isEnglishWord } from "@genesiscz/utils/transcribe/terms";
-import { contextFileText, contextMoment } from "./context-file";
+import { contextEntryText } from "./context-file";
 import { OpenedMeeting } from "./opened-meeting";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
 import { type SuggestRule, settledTermItems, suggestItems } from "./suggest";
@@ -134,7 +134,7 @@ export function contextWarnings(record: MeetingRecord): string[] {
             return [];
         }
 
-        const file = contextFileText(entry.ref, contextMoment(record));
+        const file = contextEntryText(entry, record);
 
         if (!file) {
             return [
@@ -145,7 +145,7 @@ export function contextWarnings(record: MeetingRecord): string[] {
         if (file.from === "git") {
             logger.debug(
                 { ref: entry.ref, commit: file.commit },
-                "meetings: context file read at its commit before the meeting"
+                "meetings: context file read at its saved or historical Git revision"
             );
         }
 

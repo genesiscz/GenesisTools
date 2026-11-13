@@ -75,8 +75,14 @@ export const CONTEXT_KINDS = ["file", "url", "note"] as const;
 const contextSchema = z.object({
     id: z.string().regex(/^c\d+$/),
     kind: z.enum(CONTEXT_KINDS),
-    /** An absolute path, a URL, or the note text itself. A file is referenced, never copied. */
+    /** An absolute path, a URL, or the note text itself. */
     ref: z.string().min(1),
+    /** Explicit file revision selection. Absent on legacy and ordinary path references. */
+    file: z
+        .object({
+            revision: z.object({ commit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/), text: z.string() }),
+        })
+        .optional(),
     title: z.string().optional(),
     note: z.string().optional(),
     addedAt: isoTime,

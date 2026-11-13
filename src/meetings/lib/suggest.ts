@@ -36,7 +36,7 @@ import {
     type VocabTerm,
 } from "@genesiscz/utils/transcribe/terms";
 import { arrivalItems } from "./arrival";
-import { contextFileText, contextMoment } from "./context-file";
+import { contextEntryText } from "./context-file";
 import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
 import {
@@ -382,7 +382,7 @@ function contextDocuments(record: MeetingRecord): { name: string; text: string }
             return [{ name: entry.title ?? entry.id, text: entry.ref }];
         }
 
-        const file = entry.kind === "file" ? contextFileText(entry.ref, contextMoment(record)) : undefined;
+        const file = entry.kind === "file" ? contextEntryText(entry, record) : undefined;
         return file ? [{ name: entry.title ?? basename(entry.ref, extname(entry.ref)), text: file.text }] : [];
     });
 }
@@ -462,7 +462,7 @@ function termVocabulary(options: TermSources): VocabTerm[] {
             return termsFromText(entry.ref, "context");
         }
 
-        const file = entry.kind === "file" ? contextFileText(entry.ref, contextMoment(record)) : undefined;
+        const file = entry.kind === "file" ? contextEntryText(entry, record) : undefined;
         return file ? termsFromText(file.text, "context") : [];
     });
     const dictionaryTerms = dictionary.entries.flatMap((entry) => {
