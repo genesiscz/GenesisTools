@@ -149,6 +149,8 @@ export async function runSuggest(options: {
               {
                   acoustic: (fromSec: number, toSec: number) => echoForRange(echo, fromSec, toSec),
                   raw: energy.share?.raw ?? energy.share,
+                  // The echo wrapper keeps the cached voice matches, or no line of a calibrated meeting has a voice.
+                  voice: energy.share?.voice,
               }
           )
         : energy.share;

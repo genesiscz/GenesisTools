@@ -623,6 +623,62 @@ test("a failed automatic collection is a warning of the suggest result, and a te
     }
 });
 
+test("suggest keeps the cached voice matches when the echo cache wraps the energy share", async () => {
+    const echoModule = await import("@genesiscz/utils/meetings/echo");
+    const { runSuggest } = await import("./suggest-run");
+    const { store, record } = await newRecord();
+    const source = fakeSource();
+    const meeting = await source.load("abc");
+    const load = spyOn(source, "load").mockResolvedValue({
+        ...meeting,
+        speakers: [{ speakerId: 1, name: "Bob Example", origin: "platform" }],
+        transcript: [{ speaker: "Bob Example", startSec: 10, text: "The harbor plan is ready." }],
+    });
+    const opened = OpenedMeeting.of(store, record, { source, sourceMeetingId: "abc" });
+    const of = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
+    const collect = spyOn(opened, "collect").mockResolvedValue({ record, notes: [] });
+    const evidence = spyOn(opened, "evidence").mockResolvedValue({
+        selfName: "Alice Example",
+        segments: [{ startSec: 0, endSec: 60, channel: "system" }],
+        speaking: [],
+        files: [],
+        audioPath: join(tmpdir(), "missing-fixture-recording.wav"),
+    });
+    const share = Object.assign((_fromSec: number, _toSec: number): number | undefined => 0.1, {
+        voice: () => ({
+            model: "fixture:v1",
+            quality: "matched" as const,
+            person: "Carol Example",
+            candidates: [{ person: "Carol Example", score: 0.9 }],
+            reason: "threshold and margin met",
+        }),
+    });
+    const energy = spyOn(opened, "energy").mockResolvedValue({
+        share,
+        calibration: { layout: "left-mic", segments: { mic: 0, system: 1 } },
+    });
+    const echo = spyOn(echoModule, "collectEcho").mockResolvedValue({ ranges: [] } as never);
+    const range = spyOn(echoModule, "echoForRange").mockReturnValue(undefined);
+    try {
+        const result = await runSuggest({ store, record, rules: ["evidence"] });
+
+        expect(
+            result.fresh.some(
+                (item) =>
+                    item.kind === "speaker-range" && item.speaker === "Carol Example" && item.rules.includes("voice")
+            )
+        ).toBe(true);
+    } finally {
+        range.mockRestore();
+        echo.mockRestore();
+        energy.mockRestore();
+        evidence.mockRestore();
+        collect.mockRestore();
+        of.mockRestore();
+        load.mockRestore();
+    }
+});
+
 test("suggest attendance recovery preserves validation and source failures", async () => {
     const { store, record } = await newRecord();
     const source = fakeSource();
