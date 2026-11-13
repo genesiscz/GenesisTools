@@ -57,6 +57,7 @@ import {
     skipQuestion,
     splitQuestion,
 } from "./questions";
+import { type RejectFilter, rejectFilterIds } from "./reject-filter";
 import type { ReviewRow } from "./review-row-schema";
 import { TOOL } from "./shared";
 import {
@@ -345,7 +346,14 @@ function openQuestion(record: MeetingRecord, ref: string): { question?: Question
 function decideItems(
     record: MeetingRecord,
     status: "confirmed" | "rejected",
-    action: { items: string[]; minConfidence?: number; speaker?: string; proposed?: string; reach?: SpellingReach },
+    action: {
+        items: string[];
+        minConfidence?: number;
+        speaker?: string;
+        proposed?: string;
+        reach?: SpellingReach;
+        filter?: RejectFilter;
+    },
     now: string
 ): ActionOutcome {
     const { minConfidence, speaker, proposed, reach } = action;
@@ -379,6 +387,17 @@ function decideItems(
 
         if (item.status === status && !changes) {
             skipped.push({ id: item.id, reason: `it is ${status} already`, needs: "nothing" });
+        }
+    }
+
+    if (action.filter) {
+        // The ids were picked by a filter before the lock: an item that no longer matches it (confirmed, or its
+        // confidence changed, in between) keeps its newer state.
+        const matching = new Set(rejectFilterIds(record.items, action.filter));
+        for (const item of picked.filter((one) => !skipped.some((skip) => skip.id === one.id))) {
+            if (!matching.has(item.id)) {
+                skipped.push({ id: item.id, reason: "it no longer matches the filter", needs: "nothing" });
+            }
         }
     }
 

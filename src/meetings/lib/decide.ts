@@ -1,6 +1,7 @@
 import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { DecisionAction } from "./decision-actions";
 import { callerActor, type Decided, DecisionJournal, type DecisionSkip } from "./decision-journal";
+import type { RejectFilter } from "./reject-filter";
 
 /**
  * What a confirm or reject did: the items it decided, and each one it left with the reason and how to decide it.
@@ -57,6 +58,8 @@ type DecideOptions = {
     ids: string[];
     /** The ids came from a filter (`reject --kind/--where`): none matching decides nothing, which is no failure. */
     filtered?: boolean;
+    /** That filter: the journal checks it again under its lock, so an item decided since it was picked is skipped. */
+    filter?: RejectFilter;
     minConfidence?: number;
     speaker?: string;
     proposed?: string;
@@ -105,8 +108,9 @@ export function decisionOf(options: {
     minConfidence?: number;
     speaker?: string;
     proposed?: string;
+    filter?: RejectFilter;
 }): DecisionAction {
-    const { status, ids, minConfidence, speaker, proposed } = options;
+    const { status, ids, minConfidence, speaker, proposed, filter } = options;
     return status === "confirmed"
         ? {
               kind: "confirm",
@@ -115,7 +119,12 @@ export function decisionOf(options: {
               ...(speaker !== undefined ? { speaker } : {}),
               ...(proposed !== undefined ? { proposed } : {}),
           }
-        : { kind: "reject", items: ids, ...(minConfidence !== undefined ? { minConfidence } : {}) };
+        : {
+              kind: "reject",
+              items: ids,
+              ...(minConfidence !== undefined ? { minConfidence } : {}),
+              ...(filter ? { filter } : {}),
+          };
 }
 
 /**

@@ -39,6 +39,7 @@ import {
 } from "./listen-quality";
 import { meetingFieldsChange } from "./meeting-fields";
 import { personStays, rosterPresence } from "./person-stays";
+import { rejectFilterIds } from "./reject-filter";
 import { reviewRow } from "./review-rows";
 import { assignmentReach } from "./speaker-assign";
 import { correctTranscript } from "./transcript-corrections";
@@ -241,6 +242,27 @@ describe("decision journal", () => {
         ).rejects.toMatchObject({ code: "item-changed" });
         expect(fx.item("i3")).toMatchObject({ status: "confirmed", answer: "ADO" });
         expect(fx.item("i2")).toMatchObject({ status: "rejected" });
+    });
+
+    test("a filtered reject skips an item confirmed after the filter picked it", async () => {
+        const fx = await fixture([
+            term("i1", 10, { proposed: "ADA", confidence: 0.4 }),
+            term("i2", 20, { proposed: "ADA", confidence: 0.3 }),
+        ]);
+        const filter = { kind: "term" as const, where: "confidence<0.5" };
+        const picked = rejectFilterIds(fx.store.read(fx.meeting.id)!.items, filter);
+        expect(picked).toEqual(["i1", "i2"]);
+        await fx.journal.apply({ meeting: fx.meeting.id, action: { kind: "confirm", items: ["i1"] }, actor: person });
+
+        const { skipped } = await fx.journal.apply({
+            meeting: fx.meeting.id,
+            action: { kind: "reject", items: picked, filter },
+            actor: { kind: "cli" },
+        });
+
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed" });
+        expect(fx.item("i2")).toMatchObject({ status: "rejected" });
+        expect(skipped).toEqual([{ id: "i1", reason: "it no longer matches the filter", needs: "nothing" }]);
     });
 
     test("plan answers the entry an apply would make and writes nothing", async () => {
