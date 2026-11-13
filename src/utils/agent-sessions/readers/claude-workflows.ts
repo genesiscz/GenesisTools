@@ -51,9 +51,15 @@ function finite(value: unknown): number | null {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+/** An epoch past what a Date holds (1e20) is no time either: toISOString would throw and end the whole listing. */
 function isoFromEpochMs(value: unknown): string | null {
     const ms = finite(value);
-    return ms === null ? null : new Date(ms).toISOString();
+    if (ms === null) {
+        return null;
+    }
+
+    const date = new Date(ms);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function parseRow(line: string): Row | null {
