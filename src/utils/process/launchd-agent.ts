@@ -18,8 +18,8 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
-import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { boundedCommand } from "./bounded-command";
 
 const realLaunchAgentsDir = (): string => join(homedir(), "Library", "LaunchAgents");
 let launchAgentsDir: () => string = realLaunchAgentsDir;
@@ -427,49 +427,40 @@ export interface LaunchctlResult {
     exitCode: number;
     stdout: string;
     stderr: string;
-    /** launchctl passed its deadline and was killed; `exitCode` is 124 and `stderr` says so. */
-    timedOut?: boolean;
 }
 
 export type LaunchctlRunner = (args: readonly string[]) => Promise<LaunchctlResult>;
 
-/** launchctl answers in well under a second; a call still running after this is stuck (a wedged launchd). */
-export const LAUNCHCTL_TIMEOUT_MS = 30_000;
+/** A launchctl verb answers in well under a second; a stalled one must not block install, rollback or status. */
+const LAUNCHCTL_TIMEOUT_MS = 30_000;
+
+/** The exit code of a command that hit its deadline (the `timeout(1)` convention). */
+export const LAUNCHCTL_TIMEOUT_EXIT_CODE = 124;
 
 /**
- * Runs launchctl (or `binary`, for a test) with a deadline. A stuck call is killed and comes back as a failed result
- * (exit 124, `timedOut`), so install, rollback and shutdown go on to their recovery instead of waiting forever.
+ * Run one launchctl command under a deadline. At the deadline the whole process group is terminated and reaped, and the
+ * result is exit code 124 with a stderr that says so, so every caller takes its ordinary failure path.
  */
-export async function runLaunchctlBounded(
-    args: readonly string[],
-    options: { timeoutMs?: number; binary?: string } = {}
-): Promise<LaunchctlResult> {
-    const timeoutMs = options.timeoutMs ?? LAUNCHCTL_TIMEOUT_MS;
-    const binary = options.binary ?? "launchctl";
-    const result = await boundedCommand({ command: [binary, ...args], timeoutMs });
+export async function runLaunchctlCommand(command: string[], timeoutMs: number): Promise<LaunchctlResult> {
+    const result = await boundedCommand({ command, timeoutMs });
 
     if (result.error?.code === "ETIMEDOUT") {
-        logger.warn({ args, timeoutMs }, "launchctl passed its deadline and was killed");
+        logger.warn({ command, timeoutMs }, "launchctl passed its deadline and was killed");
         return {
-            exitCode: 124,
+            exitCode: LAUNCHCTL_TIMEOUT_EXIT_CODE,
             stdout: result.stdout,
-            stderr: `${result.stderr}${binary} ${args.join(" ")} did not finish within ${timeoutMs} ms and was killed`,
-            timedOut: true,
+            stderr: `${command.join(" ")} timed out after ${timeoutMs} ms`,
         };
     }
 
     if (result.error) {
-        return {
-            exitCode: result.status ?? 1,
-            stdout: result.stdout,
-            stderr: `${result.stderr}${result.error.message}`,
-        };
+        return { exitCode: 1, stdout: result.stdout, stderr: result.error.message };
     }
 
     return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
 }
 
-const spawnLaunchctl: LaunchctlRunner = (args) => runLaunchctlBounded(args);
+const spawnLaunchctl: LaunchctlRunner = (args) => runLaunchctlCommand(["launchctl", ...args], LAUNCHCTL_TIMEOUT_MS);
 
 let launchctlRunner: LaunchctlRunner = spawnLaunchctl;
 

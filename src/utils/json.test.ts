@@ -1,14 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { jsonSha256 } from "./hash";
+import { sha256Json } from "./hash";
 import { parseConcatenatedJson, parseJSON, SafeJSON } from "./json";
 
 describe("SafeJSON", () => {
     it("retains persisted JSON hash bytes for recorder and timing-cache keys", () => {
-        expect(jsonSha256({ kind: "fixture", n: 1 })).toBe(
+        expect(sha256Json({ kind: "fixture", n: 1 })).toBe(
             "84ade938e4b306d06ec07c4d7f7d90a54684e399b28de07914b1490e1b50d065"
         );
-        expect(jsonSha256("žluťoučký")).toBe("b14e48b3e12a9e2c7ebbd08388ee873a316710e187b12e7176b519ac86648e05");
-        expect(jsonSha256([1, 2])).toBe("49a64717d5d4cb19952e6eac2946415cf6879adacf9908e7d872332d32c6e684");
+        expect(sha256Json("žluťoučký")).toBe("b14e48b3e12a9e2c7ebbd08388ee873a316710e187b12e7176b519ac86648e05");
+        expect(sha256Json([1, 2])).toBe("49a64717d5d4cb19952e6eac2946415cf6879adacf9908e7d872332d32c6e684");
     });
 
     it("parses standard JSON", () => {

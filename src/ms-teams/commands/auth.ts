@@ -1,6 +1,11 @@
 import { cpSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { type AuthVerdict, readAuthHealth, type TeamsAuthHealth } from "@app/ms-teams/lib/auth-health";
+import {
+    type AuthVerdict,
+    newestRenewFailed,
+    readAuthHealth,
+    type TeamsAuthHealth,
+} from "@app/ms-teams/lib/auth-health";
 import { liveWebLogRoot } from "@app/ms-teams/lib/paths";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { formatClock } from "@genesiscz/utils/format";
@@ -16,6 +21,14 @@ const VERDICT_TEXT: Record<AuthVerdict, { status: "ok" | "warn" | "err" | "dim";
         status: "err",
         text: "Teams cannot renew a chat token silently: Entra ID wants an interactive sign-in. A restart and `repair idb` do not fix this. Sign in again inside the Teams app (the browser can be blocked by the organization's access policy).",
     },
+    "renew-errors": {
+        status: "warn",
+        text: "The newest renew of a chat token failed without a sign-in error code (a network or service error). Run this again in a few minutes; if it still fails, sign in again inside the Teams app.",
+    },
+    "no-evidence": {
+        status: "dim",
+        text: "The log has no completed chat-token renew, so it cannot show whether the sign-in works. Keep Teams open for a few minutes, then run this again.",
+    },
     "chat-errors": {
         status: "warn",
         text: "The chat tokens renew, but the chat-list query fails. This is not a sign-in problem: check the live store with `repair probe`, then consider `repair idb`.",
@@ -24,13 +37,13 @@ const VERDICT_TEXT: Record<AuthVerdict, { status: "ok" | "warn" | "err" | "dim";
         status: "warn",
         text: "The chat tokens renew. Another resource wants a sign-in, so only that feature is affected.",
     },
-    "no-chat-renew": {
-        status: "dim",
-        text: "The log holds no completed chat-token renew yet, so it cannot tell whether the chat tokens renew. Keep Teams open for about an hour, then run this again.",
-    },
     "no-log": {
         status: "dim",
         text: "No web-client log was found. Start Teams and wait a minute, then run this again.",
+    },
+    unreadable: {
+        status: "warn",
+        text: "The web-client log exists but cannot be read. Give your terminal Full Disk Access (System Settings, Privacy & Security), restart it, then run this again.",
     },
 };
 
@@ -84,7 +97,7 @@ function renderAuthHealth(health: TeamsAuthHealth, all: boolean): void {
                 truncateDisplay(r.label ?? "", 34),
                 r.needsSignIn
                     ? formatDotStatus("err", "needs sign-in")
-                    : r.lastFailureAt !== null && r.lastFailureAt > (r.lastSuccessAt ?? 0)
+                    : newestRenewFailed(r)
                       ? formatDotStatus("warn", "failing")
                       : formatDotStatus("ok", `${r.successes} ok`),
                 r.lastSuccessAt === null ? "" : formatClock(r.lastSuccessAt, { seconds: true }),

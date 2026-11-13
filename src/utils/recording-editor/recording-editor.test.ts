@@ -108,6 +108,7 @@ import { redactionBoxAt } from "./private-data";
 import * as projectOps from "./project";
 import { locateSource } from "./source";
 import { formatSubtitles, subtitleCues } from "./subtitles";
+import { layoutText } from "./text-metrics";
 import textCases from "./text-metrics.cases.json";
 import { cutRanges, fillerCuts, fillerList, transcriptSegmentSchema, wordCuts, wordSpans } from "./transcript-cuts";
 import { voiceoverSchema } from "./voiceovers";
@@ -1871,6 +1872,15 @@ describe("edit project (edit.json)", () => {
         expect(nearRight.plate.right).toBeGreaterThan(canvas.width);
     });
 
+    // layoutText takes named options, so its two pixel numbers cannot swap unnoticed; align defaults to center.
+    test("layoutText reads text, px, wrapPx and align by name and centres by default", () => {
+        const text = "Send, track and get paid on time";
+        const centred = layoutText({ text, px: 40, wrapPx: 400 });
+        expect(centred).toEqual(layoutText({ text, px: 40, wrapPx: 400, align: "center" }));
+        // Wrapped at 400 px the text takes more lines than at 4000 px.
+        expect(centred.height).toBeGreaterThan(layoutText({ text, px: 40, wrapPx: 4000 }).height);
+    });
+
     // 2026-11-08: check() said a title and its subtitle overlap while the export showed them apart. At 0.58 em a
     // character the 26-letter title was wider than its block, so the estimate wrapped it into two lines that reached
     // the subtitle; the renderer draws it on one line. The pixel sizes below are the renderer's (TextPlates at 1080p).
@@ -2317,6 +2327,38 @@ describe("edit project (edit.json)", () => {
         let slow = applyOp(wholeProject(source), { op: "speed", from: 2, to: 4, factor: 0.25 });
         slow = applyOp(slow, { op: "text", from: 2, to: 2.2, text: "Saved" });
         expect(checkProject(slow, facts).filter((found) => found.kind === "too-short")).toEqual([]);
+    });
+
+    // Regression test: review of PR 748, round 2. Lengthen walked the clips one after the other, while the check counts
+    // every clip that plays the text: over two clips of the same second it offered 0.5 s, which then played 1 s.
+    test("Lengthen reaches 1.5 s of played time over clips that repeat or reorder the source", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const lengthenedOver = (clips: Array<{ id: string; fromUs: number; toUs: number }>) => {
+            const project = applyOp(editProjectSchema.parse({ ...wholeProject(source), clips }), {
+                op: "text",
+                from: 0,
+                to: 0.1,
+                text: "Saved",
+            });
+            const [issue] = checkProject(project, facts).filter((found) => found.kind === "too-short");
+            const lengthened = (issue?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), project);
+            const tooShort = checkProject(lengthened, facts).filter((found) => found.kind === "too-short");
+            return { span: [lengthened.texts?.[0]?.startUs, lengthened.texts?.[0]?.endUs], tooShort };
+        };
+        // The same second twice: 0 to 0.75 s plays 1.5 s.
+        expect(
+            lengthenedOver([
+                { id: "c1", fromUs: 0, toUs: 1_000_000 },
+                { id: "c2", fromUs: 0, toUs: 1_000_000 },
+            ])
+        ).toEqual({ span: [0, 750_000], tooShort: [] });
+        // Source 2 to 3 s plays before 0 to 1 s: 0 to 2.5 s plays 1 s and 0.5 s.
+        expect(
+            lengthenedOver([
+                { id: "c1", fromUs: 2_000_000, toUs: 3_000_000 },
+                { id: "c2", fromUs: 0, toUs: 1_000_000 },
+            ])
+        ).toEqual({ span: [0, 2_500_000], tooShort: [] });
     });
 
     // Regression test: unified review 2026-11-08 ED-voiceover-false-in-cut.
@@ -2803,6 +2845,26 @@ describe("edit project (edit.json)", () => {
             ["c2", 8_000_000, 9_000_000],
         ]);
         expect(outputDurationUs(part)).toBe(2_000_000);
+    });
+
+    // Regression test: review of PR 748, round 1. The shortest clip was measured in OUTPUT time, so a whole 0.1 s
+    // clip at 16x (6.25 ms played) was dropped from a part, and a part of only such clips threw "nothing plays".
+    test("a part keeps a whole short clip at a high speed; the shortest piece is measured in source time", () => {
+        const project = editProjectSchema.parse({
+            ...wholeProject(source),
+            clips: [
+                { id: "fast", fromUs: 1_000_000, toUs: 1_100_000, speed: 16 },
+                { id: "slow", fromUs: 2_000_000, toUs: 4_000_000 },
+            ],
+        });
+        expect(partOf(project, 0, 6_250).clips.map((clip) => [clip.id, clip.fromUs, clip.toUs])).toEqual([
+            ["fast", 1_000_000, 1_100_000],
+        ]);
+        // 2 ms of output at 16x is 32 ms of source: a frame and more, so it stays too.
+        expect(partOf(project, 4_250, 1_000_000).clips.map((clip) => [clip.id, clip.fromUs])).toEqual([
+            ["fast", 1_068_000],
+            ["slow", 2_000_000],
+        ]);
     });
 
     test("a picture background needs a file that exists and sets the kind by itself", () => {

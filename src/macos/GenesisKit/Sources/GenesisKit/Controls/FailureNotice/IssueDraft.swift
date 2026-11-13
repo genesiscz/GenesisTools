@@ -156,12 +156,25 @@ public final class IssueDraftModel: ObservableObject {
     @Published public private(set) var browserName: String?
     @Published var copied = false
     let poster: IssuePosting
+    /// The draft as the window opened it, so an edit can be told apart from it.
+    private let opened: IssueDraft
 
     public init(draft: IssueDraft, poster: IssuePosting, state: State = .editing, browserName: String? = nil) {
         self.draft = draft
         self.poster = poster
         self.state = state
         self.browserName = browserName
+        opened = draft
+    }
+
+    /// The window holds work a new draft must not replace: a post in flight (its link or error would be lost, and a
+    /// second copy could be posted), or text the person changed and has not posted.
+    public var holdsWork: Bool {
+        switch state {
+        case .posting: true
+        case .posted: false
+        case .editing, .failed: draft != opened
+        }
     }
 
     /// Only a draft being edited or one whose post failed can be posted: a posted draft is done, and posting it again

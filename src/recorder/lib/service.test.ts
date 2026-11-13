@@ -11,7 +11,7 @@ import {
     utimesSync,
     writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -52,7 +52,7 @@ import { EditSession, EditSessions, type ProjectChanged, withEditSession } from 
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS, editorWindowKeyOf, shortRecordingId } from "./library";
 import { chaptersOfPart } from "./moments";
-import { applyEdit, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
+import { applyEdit, callerParams, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { editorGolden, helloMethods, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
 import * as serviceClient from "./service-client";
@@ -1588,6 +1588,7 @@ describe("the REPL's and the CLI's way to the service", () => {
             await movie.frame({ background: { kind: "image", image: "bg.png" } });
             await movie.apply([{ op: "introCard", logo: "" }]);
             await applyEdit(path, [{ op: "introCard", title: "Demo", logo: "logo.png" }], { dir });
+            await movie.apply([{ op: "exportSettings", output: "demo.mp4" }]);
         } finally {
             process.chdir(before);
         }
@@ -1602,6 +1603,7 @@ describe("the REPL's and the CLI's way to the service", () => {
             "movie.frame",
             "movie.apply",
             "edit.apply",
+            "movie.apply",
         ]);
         expect(sent[0].params).toMatchObject({ to: join(cwd, "cut-copy") });
         expect(sent[1].params).toMatchObject({ title: "Demo", logo: join(cwd, "logo.png") });
@@ -1609,6 +1611,66 @@ describe("the REPL's and the CLI's way to the service", () => {
         // "" removes the logo: it stays "".
         expect(sent[3].params).toMatchObject({ ops: [{ op: "introCard", logo: "" }] });
         expect(sent[4].params).toMatchObject({ ops: [{ op: "introCard", logo: join(cwd, "logo.png") }] });
+        // The export file an edit keeps: a relative one would be found later in the renderer's own folder.
+        expect(sent[5].params).toMatchObject({ ops: [{ op: "exportSettings", output: join(cwd, "demo.mp4") }] });
+        // A bare ~ is the home folder, as a shell reads it.
+        expect(callerParams("duplicate", { to: "~" })).toEqual({ to: homedir() });
+        expect(callerParams("duplicate", { to: "~/copy" })).toEqual({ to: join(homedir(), "copy") });
+    });
+
+    // Regression test: every `file` was resolved against the caller's cwd, so a bare camera name sent
+    // through the service was stored as "<cwd>/camera.mov" and no bubble could load, while the same call without a
+    // service stored "camera.mov", which the camera schema reads beside the source movie.
+    test("a bare camera file name reaches the service as the caller wrote it, so it stays beside the movie", async () => {
+        const { dir } = await serviceFixture();
+        const methods = moviesApi.handles.find((handle) => handle.name === "Movie")?.methods ?? [];
+        const viaMovie = editFixture("rs-camera-");
+        const viaApply = editFixture("rs-camera-apply-");
+        const viaCli = editFixture("rs-camera-cli-");
+        const local = editFixture("rs-camera-local-");
+
+        for (const path of [viaMovie, viaApply, viaCli, local]) {
+            writeFileSync(join(dirname(path), "camera.mov"), "");
+        }
+
+        const cwd = realpathSync(mkdtempSync(join(tmpdir(), "rs-caller-cwd-")));
+        writeFileSync(join(cwd, "song.mp3"), "");
+        const before = process.cwd();
+        const spy = spyOn(RpcSocketClient.prototype, "call");
+        process.chdir(cwd);
+
+        try {
+            await serviceRoutedMovie(new Movie(viaMovie), methods, { dir }).camera({ file: "camera.mov" });
+            await serviceRoutedMovie(new Movie(viaApply), methods, { dir }).apply([
+                { op: "camera", file: "camera.mov" },
+            ]);
+            await applyEdit(viaCli, [{ op: "camera", file: "camera.mov" }], { dir });
+            // music resolves its file against the cwd in the caller's process too, so it still goes resolved.
+            await serviceRoutedMovie(new Movie(viaMovie), methods, { dir }).music({ file: "song.mp3" });
+            await applyEdit(local, [{ op: "camera", file: "camera.mov" }], {
+                dir: mkdtempSync(join(tmpdir(), "rs-none-")),
+            });
+        } finally {
+            process.chdir(before);
+        }
+
+        const sent = spy.mock.calls
+            .filter(([method]) => method.startsWith("movie.") || method === "edit.apply")
+            .map(([method, params]) => ({ method, params }));
+        spy.mockRestore();
+        expect(sent.map((call) => call.method)).toEqual(["movie.camera", "movie.apply", "edit.apply", "movie.music"]);
+        expect(sent[0].params).toMatchObject({ file: "camera.mov" });
+        expect(sent[1].params).toMatchObject({ ops: [{ op: "camera", file: "camera.mov" }] });
+        expect(sent[2].params).toMatchObject({ ops: [{ op: "camera", file: "camera.mov" }] });
+        expect(sent[3].params).toMatchObject({ file: join(cwd, "song.mp3") });
+
+        for (const path of [viaMovie, viaApply, viaCli, local]) {
+            const project = readProject(path);
+            expect(project.camera?.file).toBe("camera.mov");
+            const movie = cameraMoviePath({ file: project.camera?.file ?? "" }, project.source.video);
+            expect(movie).toBe(join(dirname(path), "camera.mov"));
+            expect(existsSync(movie)).toBe(true);
+        }
     });
 
     // Regression test: every `file` was resolved against the caller's cwd, so a bare camera name sent

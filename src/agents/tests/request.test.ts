@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
-import { withPositionalBody } from "../commands/message";
+import { absentRecipients, withPositionalBody } from "../commands/message";
 import { appendFeed, appendMessage, FeedLogCursor, readFeed } from "../lib/feed";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import { sendRequest } from "../lib/request";
+import type { AgentRecord, FeedEvent } from "../lib/types";
 
 describe("agents request", () => {
     test("feed cursors parse only appended records after the initial catch-up", async () => {
@@ -162,5 +163,39 @@ describe("agents message body", () => {
         expect(withPositionalBody([], { body: "kept" }).body).toBe("kept");
         expect(() => withPositionalBody(["twice"], { body: "already" })).toThrow("given twice");
         expect(() => withPositionalBody(["twice"], { bodyFile: "/tmp/x" })).toThrow("given twice");
+    });
+
+    test("the receipt never lists the sender, whose own login would never deliver its own message", () => {
+        const left = (seq: number, agentId: string, name: string, loginId: string): FeedEvent[] =>
+            [
+                {
+                    seq,
+                    ts: "2026-01-01T00:00:01Z",
+                    type: "logged_in",
+                    agent_id: agentId,
+                    agent_name: name,
+                    mode: "stream",
+                    login_id: loginId,
+                },
+                {
+                    seq: seq + 1,
+                    ts: "2026-01-01T00:00:02Z",
+                    type: "agent_left",
+                    agent_id: agentId,
+                    agent_name: name,
+                    reason: "leave",
+                    remaining: [],
+                    login_id: loginId,
+                },
+            ] as FeedEvent[];
+        const events = [...left(1, "agt_alpha", "alpha", "alpha-1"), ...left(3, "agt_beta", "beta", "beta-1")];
+        const registry = [
+            { agent_id: "agt_alpha", agent_name: "alpha" },
+            { agent_id: "agt_beta", agent_name: "beta" },
+        ] as AgentRecord[];
+
+        const absent = absentRecipients({ events, registry, toIds: ["agt_alpha", "agt_beta"], senderId: "agt_alpha" });
+
+        expect(absent).toMatchObject([{ agent_id: "agt_beta", name: "beta", state: "left", reason: "leave" }]);
     });
 });

@@ -1,7 +1,8 @@
+import { formatLocalDate } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { checkEvent } from "@genesiscz/utils/metrics/dims";
-import { appendSpoolLines, localDay, spoolDir, spoolFileName, spoolLine } from "@genesiscz/utils/metrics/spool";
+import { appendSpoolLines, spoolDir, spoolFileName, spoolLine } from "@genesiscz/utils/metrics/spool";
 import type { Dims } from "@genesiscz/utils/metrics/types";
 import type { Command } from "commander";
 import { collect, dimValueOf, FlagError } from "../lib/filters";
@@ -67,7 +68,7 @@ async function record(project: string, metric: string, valueText: string, flags:
 
     appendSpoolLines({ writer: WRITER, lines: [spoolLine(event)], now });
     out.printlnErr(`Spooled ${project} / ${metric} = ${value}; the metrics service takes it in at its next drain.`);
-    out.result({ spooled: `${spoolDir()}/${spoolFileName(WRITER, localDay(now))}`, event });
+    out.result({ spooled: `${spoolDir()}/${spoolFileName(WRITER, formatLocalDate(new Date(now)))}`, event });
 }
 
 export function registerRecordCommand(program: Command): void {

@@ -2794,12 +2794,22 @@ describe.skipIf(process.platform !== "darwin")("transparent APFS compression", (
     it("fails closed on a nonzero lsof pass and skips mutation on battery at the shared apply boundary", async () => {
         const c = fixture("battery-guard");
         const originalSpawn = Bun.spawn.bind(Bun);
-        const failed = spyOn(Bun, "spawn").mockImplementationOnce(() =>
-            originalSpawn(["/usr/bin/false"], { env: process.env, stdout: "pipe", stderr: "pipe" })
-        );
+        const failed = spyOn(Bun, "spawn")
+            .mockImplementationOnce(() =>
+                originalSpawn(["/usr/bin/false"], { env: process.env, stdout: "pipe", stderr: "pipe" })
+            )
+            .mockImplementationOnce(() =>
+                originalSpawn(["/bin/sh", "-c", "printf 'p1\\nn/fixture/open\\n'; printf 'fixture error' >&2"], {
+                    env: process.env,
+                    stdout: "pipe",
+                    stderr: "pipe",
+                })
+            );
         try {
             const { openPaths } = await import("./transparent");
-            await expect(openPaths()).rejects.toThrow("lsof failed");
+            await expect(openPaths()).rejects.toThrow("listing incomplete (exit 1)");
+            // A pass that exits 0 but complains on stderr (lsof -w hides its warnings) may have missed open files.
+            await expect(openPaths()).rejects.toThrow("listing incomplete (exit 0): fixture error");
         } finally {
             failed.mockRestore();
         }

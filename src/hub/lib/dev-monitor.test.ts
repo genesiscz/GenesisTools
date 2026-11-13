@@ -17,6 +17,8 @@ import {
     describeCrash,
     EventBatcher,
     formatEvent,
+    isHangCaptureName,
+    isStoredHangCaptureName,
     readMonitorState,
     runDevMonitor,
     shortCommand,
@@ -407,6 +409,11 @@ test("a logged hang in one app cannot suppress the other app's same-named unanno
     }
 });
 
+/** `hang-<local yyyy-MM-dd-HHmmss>.txt`, the name HangWatch.swift gives a capture taken at `at`. */
+function hangCaptureName(at: Date, extension = ".txt"): string {
+    return `hang-${formatLocalDate(at)}-${at.toTimeString().slice(0, 8).replaceAll(":", "")}${extension}`;
+}
+
 function monitorFixtureSources(dir: string) {
     const sources = {
         perfLog: join(dir, "app-perf.log"),
@@ -537,19 +544,15 @@ describe("the summary of what happened while no monitor ran", () => {
             appendFailure(failureRecord({ at: inside, kind: "error", child: undefined }), sources.failuresDir);
             appendFailure(failureRecord({ at: inside, kind: "usage", child: undefined }), sources.failuresDir);
             const day = formatLocalDate(until);
-            writeFileSync(join(sources.hangs, `hang-${day}-100000.txt`), "sample");
+            // A hang capture counts at the stamp in its name, a crash report at its mtime.
+            writeFileSync(join(sources.hangs, hangCaptureName(new Date(inside))), "sample");
             writeFileSync(join(sources.crashes, `GenesisTools-${day}-100000.ips`), "{}");
             writeFileSync(join(sources.crashes, `Other-${day}-100000.ips`), "{}");
-            writeFileSync(join(sources.genesisHangs, `hang-${day}-090000.txt`), "an older sample");
+            writeFileSync(join(sources.genesisHangs, hangCaptureName(new Date(outside))), "an older sample");
             const written = new Date(inside);
-            for (const file of [`hang-${day}-100000.txt`]) {
-                utimesSync(join(sources.hangs, file), written, written);
-            }
             for (const file of [`GenesisTools-${day}-100000.ips`, `Other-${day}-100000.ips`]) {
                 utimesSync(join(sources.crashes, file), written, written);
             }
-            const older = new Date(outside);
-            utimesSync(join(sources.genesisHangs, `hang-${day}-090000.txt`), older, older);
 
             const summary = summarizeWindow({ since, until, sources });
             const from = `${formatLocalDate(since)}T${since.toTimeString().slice(0, 5)}`;
@@ -561,6 +564,41 @@ describe("the summary of what happened while no monitor ran", () => {
                 hangs: sources.hangs,
                 crashes: `tools genesis-tools logs crashes --since ${from}`,
             });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test("a window of several days counts the .txt.zst the daily pass made of a capture, at the capture's own time", () => {
+        const dir = mkdtempSync(join(tmpdir(), "monitor-summary-zst-"));
+        const sources = monitorFixtureSources(dir);
+        const hour = 3_600_000;
+        const until = new Date();
+        const since = new Date(until.getTime() - 4 * 24 * hour);
+
+        try {
+            // Compressed today, captured three and two days ago: the mtime is the compression's, the name the capture's.
+            writeFileSync(
+                join(sources.hangs, hangCaptureName(new Date(until.getTime() - 3 * 24 * hour), ".txt.zst")),
+                ""
+            );
+            writeFileSync(
+                join(sources.genesisHangs, hangCaptureName(new Date(until.getTime() - 2 * 24 * hour), ".txt.zst")),
+                ""
+            );
+            writeFileSync(join(sources.hangs, hangCaptureName(new Date(until.getTime() - hour))), "a plain one");
+            // Captured before the window and compressed inside it: not a hang of the window.
+            writeFileSync(join(sources.hangs, hangCaptureName(new Date(since.getTime() - 600_000), ".txt.zst")), "");
+            // A main-thread stack sample is no hang capture, in either form.
+            writeFileSync(join(sources.hangs, `stack-${formatLocalDate(until)}-100000.txt.zst`), "");
+
+            const summary = summarizeWindow({ since, until, sources });
+
+            expect(summary.counts.hangs).toBe(3);
+            expect(summary.commands.hangs).toBe(`${sources.hangs}, ${sources.genesisHangs}`);
+            // The live watcher still takes a new .zst for a compression, not a new hang.
+            expect(isHangCaptureName("hang-2026-11-01-100000.txt.zst")).toBe(false);
+            expect(isStoredHangCaptureName("hang-2026-11-01-100000.txt.zst")).toBe(true);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }

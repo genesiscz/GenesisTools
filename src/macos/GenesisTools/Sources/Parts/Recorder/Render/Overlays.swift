@@ -4,8 +4,9 @@ import Foundation
 
 // R4 6 animated captions and texts (agent fx-overlay): the karaoke caption's words said so far and a text's way in.
 
-/// How far a text's `animate` has come `sinceUs` after its start: a fade's opacity over its `ms`, the letters a
-/// typewriter has typed, and a slide-up's fade and how far below its place it still is (a share of its height).
+/// How far a text's `animate` has come `sinceUs` after its start: nothing for a fade (its `ms` is the opacity
+/// envelope's, ZoomState.textFadeInUs), the letters a typewriter has typed, and a slide-up's fade and how far below its
+/// place it still is (a share of its height).
 enum TextMotion {
     struct State: Equatable {
         var characters: Int
@@ -19,8 +20,8 @@ enum TextMotion {
         let progress = min(1, max(0, Double(sinceUs) / Double(max(1, animate.ms) * 1000)))
         switch animate.kind {
         case .fade:
-            // A fade given its own ms ramps in over it; the 0.2 s envelope of ZoomState.texts still fades it out.
-            return State(characters: note.text.count, opacity: progress, drop: 0)
+            // The fade is the text's opacity envelope, over `animate.ms` (ZoomState.textFadeInUs), not a second one here.
+            return full
         case .typewriter:
             return State(characters: Int((Double(note.text.count) * progress).rounded(.up)), opacity: 1, drop: 0)
         case .slideUp:

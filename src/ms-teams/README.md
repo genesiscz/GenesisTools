@@ -42,9 +42,13 @@ Root options: `-v, --verbose` (debug logging), `--readme` (print this file), `-V
 - `auth [--all] [--copy-to <dir>] [--json]`: read-only check of the Teams sign-in. It reads the web-client log and
   shows, for each token resource, how many silent renews worked, the last success, the last failure and its error
   codes (`invalid_grant`, `token_expired`, `InteractionRequired`). It also counts failures of the chat-list query
-  (`SimpleCollabLeftRailQuery`) and `REDUCED_CAPABILITIES_*` reports. The verdict is `healthy`, `needs-sign-in` (a
-  chat token cannot renew without an interactive sign-in), `chat-errors` (tokens renew, the chat list still fails),
-  `other-sign-in` (only a non-chat resource wants a sign-in) or `no-log`. Without `--all` it lists the chat
+  (`SimpleCollabLeftRailQuery`) and `REDUCED_CAPABILITIES_*` reports. The verdict is `healthy` (a chat token
+  renewed and none failed last), `needs-sign-in` (the newest failure of a chat token carries a sign-in error code, so
+  it cannot renew without an interactive sign-in), `renew-errors` (the newest renew of a chat token failed without a
+  sign-in code), `no-evidence` (the log has no completed chat-token renew, so it proves nothing), `chat-errors`
+  (tokens renew, the chat list still fails), `other-sign-in` (only a non-chat resource wants a sign-in), `no-log`, or
+  `unreadable` (the log folder exists but cannot be listed: give the terminal Full Disk Access). An unreadable log
+  folder never stops `doctor`: its other rows still print. Without `--all` it lists the chat
   resources and the failing ones. `--copy-to <dir>` first copies the whole log folder into
   `<dir>/teams-web-log-<ms>/`, because Teams deletes the log within one to two hours.
 
@@ -379,8 +383,9 @@ There is no config file and no account setup: the tool reads the Teams profile o
 - **A chat shows in `conversations` but Teams lost it.** The store keeps what it saw. Ask the live Teams store with
   `repair probe "<title>"`.
 - **`repair probe` finds nothing.** It is a raw byte search of the LevelDB files, in UTF-8 and UTF-16LE, and it is
-  case-sensitive. LevelDB can compress what it stores, so a miss does not prove the chat is gone. The proof is
-  `sync --force`, then `conversations --topic "<title>"`.
+  case-sensitive. LevelDB can compress what it stores, so a miss does not prove the chat is gone. Search for the
+  chat in the Teams app itself. `sync --force` and `conversations --topic "<title>"` cannot prove it, because the
+  store keeps every chat it saw before, also after Teams lost it.
 - **"ABORT: New Teams is still running".** Run `tools ms-teams repair quit` first. The Core Audio driver
   `MSTeamsAudioDevice.driver` contains "MSTeams" too, but it is not the app: `repair quit` ignores it, and you must not
   kill it. If Teams stays up after 20 seconds, quit it from the Dock.

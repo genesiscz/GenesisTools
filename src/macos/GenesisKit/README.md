@@ -685,6 +685,7 @@ The main-actor observable model for the whole feature. It saves `preferences` an
 - `observeSystemEvents: Bool = true`: when false, the model does not watch app activation, sleep and wake, app termination or the notification permission.
 - `notificationClient: NativeNotificationClient? = nil`: nil uses the system notification center.
 - `presentPermission: (@MainActor (PermissionNeed) -> Void)? = nil`: how a permission request is shown. Nil uses `PermissionCenter.shared.require`.
+- `permissionAccess: PermissionAccess = .live`: where the system event tap reads the Input Monitoring and Accessibility grants, and what `openInputSettings()` opens a System Settings pane through. Tests pass a `PermissionAccess` over a fake `PermissionSystem`.
 
 Properties:
 
@@ -696,6 +697,7 @@ Properties:
 - `isPaused: Bool`: true during system sleep, quiet hours, a snooze, or while a muted app is in front.
 - `sleepingUntil: Date?`: when a snooze ends, or nil.
 - `hasInputPermission: Bool`: whether Input Monitoring is allowed.
+- `inputPermissionPane: PermissionKind?`: the System Settings pane that lists the key-press grant, nil while it is missing. It is `.accessibility` when the app is trusted for Accessibility, which lets it read key presses with no Input Monitoring row.
 - `statistics: ClickyStatistics`: the current statistics (read-only).
 - `statisticsLoadError: String?`: set when the saved history could not be decoded. Collection is then paused until the history is restored or reset.
 - `analytics: ClickyAnalyticsStore`: the store that the statistics views read.
@@ -720,7 +722,7 @@ Methods:
 - `func resetStatistics()`: starts a new history. If the old history was unreadable, a numbered recovery copy of it stays in the defaults.
 - `func setActivationNotifications(_ enabled: Bool)`: sets `preferences.notifications` and asks for permission if it was never requested.
 - `func requestNotifications()`, `func performNotificationAction() async` and `func refreshNotificationPermission() async`: ask for notification permission or open its System Settings page, and read the current permission.
-- `func openInputSettings()`: shows the permission dialog while Input Monitoring is missing, and opens its System Settings pane once it is allowed.
+- `func openInputSettings()`: shows the permission dialog while Input Monitoring is missing, and opens the System Settings pane that lists the grant (`inputPermissionPane`) once it is allowed.
 - `func excludeApplication()`: opens a panel to pick an app from `/Applications` and adds its bundle id to `preferences.excludedApplications`.
 
 ```swift
@@ -951,6 +953,7 @@ ScrollView {
 The protocol for the source of key events. The model uses the system listen-only event tap by default. Pass another conformance to `ClickyModel(inputMonitor:)` in tests and previews. All requirements are main-actor, and none has a default implementation.
 
 - `var hasPermission: Bool { get }`: whether Input Monitoring is allowed. Asking for it is the permission dialog's job, not this type's.
+- `var grantPane: PermissionKind? { get }`: the System Settings pane that lists the grant: `.accessibility` when Accessibility allows the key presses, `.inputMonitoring` otherwise, nil while it is missing.
 - `func start(handler: @escaping @MainActor (CGEventType, CGEvent) -> Void) -> ClickyInputStartResult`: starts delivering events to `handler`.
 - `func reenable()`: turns a running tap back on after macOS disabled it for a slow callback.
 - `func stop()`: stops delivering events.
@@ -965,6 +968,7 @@ The protocol for the source of key events. The model uses the system listen-only
 @MainActor
 final class FakeMonitor: ClickyInputMonitoring {
     var hasPermission = true
+    var grantPane: PermissionKind? { hasPermission ? .inputMonitoring : nil }
     func start(handler: @escaping @MainActor (CGEventType, CGEvent) -> Void) -> ClickyInputStartResult { .started }
     func reenable() {}
     func stop() {}
@@ -3579,6 +3583,7 @@ The privacy settings of the recorder, as a value type. `FocusSettings.from(appCo
 - `retentionDays: Int = 365`: how long activity is kept. The valid range is `FocusSettings.retentionRange` (`1...36_500`). A larger stored value is clamped to the top.
 - `interruptionThresholdSec: Int = 45`: seconds away from the app a flow started in before it counts as an interruption.
 - `menuBarStyle: String = "time"`: `time` shows the countdown, `dot` shows only the phase dot, `off` removes the item.
+- `timerWindow: TimerWindow = .automatic`: when the timer window shows (`app.focus.timerWindow`). `automatic` comes back as it was left and shows itself when a phase starts or a nudge fires; `on-request` shows only when opened from the menu bar, a shortcut or `genesis focus hud`; `off` never shows it, and the menu bar offers no "Show timer window".
 - `excludedBundles: Set<String> = FocusSettings.defaultExcludedBundles`: apps that are never recorded. The default holds four bundle ids (two 1Password versions, Bitwarden and Keychain Access). Reading the config always adds them back.
 - `excludedHosts: Set<String> = []`: sites that are never recorded, with their subdomains.
 - `projects: [ProjectRule] = []`: rules that name the project for an activity.
@@ -3926,6 +3931,7 @@ The menu-bar item. Its title is a phase dot, and the remaining time in monospace
 
 - `init(engine: PomodoroEngine, recorder: ActivityRecorder, store: ActivityStore, onOpenStudio: @escaping () -> Void, onToggleHUD: @escaping () -> Void)`
 - `isHUDVisible: () -> Bool = { false }`: read when the popover opens, so it can say "Hide timer window" when the window is already up.
+- `canShowHUD: () -> Bool = { true }`: false while the Timer window setting is Off, so the popover offers no "Show timer window".
 - `install(style: String)`: adds the item. `style` is `"time"` (countdown), `"dot"` (dot only) or `"off"` (adds nothing). Calling it again while installed does nothing.
 - `remove()`: removes the item.
 

@@ -182,16 +182,22 @@ private struct ClickySettingsPageContent: View {
                 ).labelsHidden().toggleStyle(.switch).accessibilityIdentifier("clicky.enabled")
             }
             NativeSettingsDisclosure("Input permission and privacy", identifier: "clicky.inputPrivacy") {
+                let pane = model.inputPermissionPane
                 VStack(alignment: .leading, spacing: 12) {
-                    Label(model.hasInputPermission ? "Input Monitoring is allowed" : "Input Monitoring is required",
-                          systemImage: model.hasInputPermission ? "checkmark.shield" : "hand.raised")
+                    Label(ClickyModel.inputPermissionTitle(pane), systemImage: pane == nil ? "hand.raised" : "checkmark.shield")
                         .font(.system(size: 11, weight: .medium))
+                    if pane == .accessibility {
+                        Text(
+                            "macOS lets an app with Accessibility read key presses, so \(model.applicationName) has no row under Input Monitoring."
+                        )
+                        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                     Text(
                         "Enable Clicky to request Input Monitoring. Only physical key positions are used for sounds. Typed text and passwords are never read or saved. Secure Input automatically silences Clicky."
                     )
                     .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Button(
-                        model.hasInputPermission ? "Open Input Monitoring settings" : "Allow Input Monitoring…",
+                        pane.map { "Open \($0.title) settings" } ?? "Allow Input Monitoring…",
                         action: model.openInputSettings
                     ).buttonStyle(.genHoverPlain())
                     Text("Clicky starts off each time you open it.").font(.system(size: 11)).foregroundStyle(.secondary)

@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { collectAuthHealth } from "./auth-health";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { collectAuthHealth, readAuthHealth } from "./auth-health";
 import { parseWebLogFile, type WebLogLine } from "./web-log";
 
 const ACCOUNT = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const FAILED_RENEW = "11111111-2222-4333-8444-555555555555";
 const LATER_RENEW = "66666666-7777-4888-9999-000000000000";
+const TRANSIENT_RENEW = "77777777-8888-4999-aaaa-bbbbbbbbbbbb";
+const UNFINISHED_RENEW = "cccccccc-dddd-4eee-8fff-000000000000";
 const SPACES = "https://api.spaces.skype.com";
 const T0 = Date.parse("2026-03-02T10:00:00.000Z");
 
@@ -38,13 +44,19 @@ function laterSuccess(at: number): WebLogLine[] {
     }));
 }
 
-/** A renew that failed on a network error, no sign-in error among its codes. */
+/** A chat-token renew that failed with a network error, not a sign-in error. */
 function transientFailure(at: number): WebLogLine[] {
     const head = `{"accountId":"${ACCOUNT}","isSilent":true,"endpointUrl":"${SPACES}"`;
-    return [`[stop][incomplete] [e]${head},"errorCode":"network_timeout","status":"incomplete"}`].map((chunk, i) => ({
-        message: telemetry("abababab-cdcd-4efe-8f0f-101010101010", "acquire_token_in_token_warming", chunk),
-        at: at + i,
-    }));
+    return [
+        {
+            message: telemetry(
+                TRANSIENT_RENEW,
+                "acquire_token_in_token_warming",
+                `[stop][failure] [e]${head},"errorCode":"network_error","status":"failure"}`
+            ),
+            at,
+        },
+    ];
 }
 
 const leftRailError = (at: number): WebLogLine => ({
@@ -90,14 +102,14 @@ describe("collectAuthHealth", () => {
         ]);
         const spaces = health.resources.find((r) => r.resource === SPACES);
 
-        expect(spaces?.errors).toEqual(expect.arrayContaining(["InteractionRequired", "network_timeout"]));
+        expect(spaces?.errors).toEqual(expect.arrayContaining(["InteractionRequired", "network_error"]));
         expect(spaces?.needsSignIn).toBe(false);
         expect(health.verdict).not.toBe("needs-sign-in");
     });
 
     test("lines with no completed chat-token renew are no evidence, never healthy", () => {
         const unrelated: WebLogLine = { message: "TelemetryService: flushed 12 events", at: T0 };
-        expect(collectAuthHealth([unrelated]).verdict).toBe("no-chat-renew");
+        expect(collectAuthHealth([unrelated]).verdict).toBe("no-evidence");
     });
 
     test("an old chat-list error is history, a recent one is a chat error with working tokens", () => {
@@ -112,6 +124,73 @@ describe("collectAuthHealth", () => {
     test("no lines is no log, not healthy", () => {
         expect(collectAuthHealth([]).verdict).toBe("no-log");
     });
+
+    test("a sign-in failure, a success, then a network failure: the newest failure decides, so no sign-in", () => {
+        const health = collectAuthHealth([
+            ...failedRenew(T0),
+            ...laterSuccess(T0 + 10 * 60_000),
+            ...transientFailure(T0 + 20 * 60_000),
+        ]);
+        const spaces = health.resources.find((r) => r.resource === SPACES);
+
+        expect(spaces?.errors).toEqual(expect.arrayContaining(["InteractionRequired", "network_error"]));
+        expect(spaces?.lastFailureErrors).toEqual(["network_error"]);
+        expect(spaces?.needsSignIn).toBe(false);
+        expect(health.verdict).toBe("renew-errors");
+    });
+
+    test("a log with no completed chat-token renew proves nothing, so it is not healthy", () => {
+        const unfinished: WebLogLine = {
+            message: telemetry(UNFINISHED_RENEW, "acquire_token_in_token_warming", "[start] - provider created"),
+            at: T0 + 1,
+        };
+        const health = collectAuthHealth([{ message: "unrelated startup line", at: T0 }, unfinished]);
+
+        expect(health.resources).toEqual([]);
+        expect(health.verdict).toBe("no-evidence");
+    });
+
+    test("a chat-token renew that failed last without a sign-in code is a renew error, not healthy", () => {
+        expect(collectAuthHealth(transientFailure(T0)).verdict).toBe("renew-errors");
+    });
+});
+
+describe("readAuthHealth", () => {
+    // chmod 000 does not stop root, so the folders would stay readable.
+    test.skipIf(process.getuid?.() === 0)(
+        "a folder it cannot list is skipped, and a log root it cannot list is unreadable, never a throw",
+        () => {
+            const root = mkdtempSync(join(tmpdir(), "ms-teams-auth-"));
+            const locked = join(root, "locked");
+
+            try {
+                mkdirSync(join(root, "logs"));
+                mkdirSync(locked);
+                const logsArray = laterSuccess(T0).map((line) => ({
+                    message: line.message,
+                    timeStamp: new Date(line.at).toISOString(),
+                }));
+                writeFileSync(join(root, "logs", "0001"), SafeJSON.stringify({ logsArray }));
+                chmodSync(locked, 0o000);
+
+                const health = readAuthHealth(root);
+                expect(health.files).toBe(1);
+                expect(health.verdict).toBe("healthy");
+
+                chmodSync(root, 0o000);
+                expect(readAuthHealth(root).verdict).toBe("unreadable");
+                // A parent that cannot be searched: existsSync(child) answers false, and it must still read as
+                // unreadable (Full Disk Access advice), never as a missing log.
+                expect(readAuthHealth(join(root, "logs")).verdict).toBe("unreadable");
+                chmodSync(root, 0o700);
+                expect(readAuthHealth(join(root, "absent")).verdict).toBe("no-log");
+            } finally {
+                chmodSync(root, 0o700);
+                chmodSync(locked, 0o700);
+                rmSync(root, { recursive: true, force: true });
+            }
+        }
+    );
 
     test("the file parser reads the logsArray body the renew lines come from", () => {
         const body = `{"logsArray":[{"message":"x","level":3,"levelName":"Info","timeStamp":"2026-03-02T10:00:00.000Z"},{"message":"y","timeStamp":"bad"}]}`;

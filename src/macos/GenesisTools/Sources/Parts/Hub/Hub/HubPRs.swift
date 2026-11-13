@@ -1519,7 +1519,8 @@ final class PRsModel: ObservableObject {
     /// The PR on screen at a new head (a push, a force push, a rebase): the same review and its page follow it, so the
     /// diff is not built again from nothing. A review of the whole PR moves to the new head and base, and the page
     /// parses again only the files whose text changed (`ReviewModel.follow`). A commit, a range or a compare on screen
-    /// stays, since its diff does not depend on the head, and a pending link picks its own (`pickPendingCommit`).
+    /// stays, since its diff does not depend on the head, and a pending link picks its own (`pickPendingCommit`). A link
+    /// whose checkout lookup ran against the old head is pending again (`dropLocalLookup`).
     private func moveHead(of current: ReviewModel, to pr: HubPR, fetch: HubPRFetch?) {
         dropLocalLookup(movingTo: pr)
         let whole = Self.showsWholePR(current.scope, pr: pr, head: current.remoteHead?.sha ?? reviewHeadSha ?? "HEAD")

@@ -1,6 +1,7 @@
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { safeSessionId } from "@genesiscz/utils/agents/session-id";
+import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
@@ -230,7 +231,7 @@ export interface WalkChangeLogsOptions {
     since?: number;
     /** At most this many logs, the most recently written first. */
     maxSessions?: number;
-    /** Stop after this many rows in total. */
+    /** Stop after this many rows in total. A log is read in chunks, and no chunk past the last row it needs. */
     maxRows?: number;
     /**
      * A cheap gate on the raw line before it is parsed; a line it refuses is not a row. Most lines of most logs are
@@ -241,9 +242,13 @@ export interface WalkChangeLogsOptions {
     dir?: string;
 }
 
+/** How much of a change log `walkChangeLogs` reads at a time; the next chunk is read only while rows are still due. */
+export const WALK_CHUNK_BYTES = 64 * 1024;
+
 /**
  * Capped walk over every session folder. A folder with no change log is skipped; a "_" prefix is not a filter.
- * Logs come most recently written first; an unreadable folder or log is logged and walks nothing.
+ * Logs come most recently written first; an unreadable folder or log is logged and walks nothing. A log is read in
+ * chunks of `WALK_CHUNK_BYTES` and never held whole, so `maxRows` bounds the bytes read as well as the rows.
  */
 export function* walkChangeLogs(
     options: WalkChangeLogsOptions = {}
@@ -284,33 +289,30 @@ export function* walkChangeLogs(
             return;
         }
 
-        let body: string;
+        const rows: ChangeLogRow[] = [];
 
         try {
-            body = readFileSync(path, "utf8");
+            // Leaving the loop early closes the file: no chunk after the one that held the last row due is read.
+            for (const line of readLinesSync(path, { chunkBytes: WALK_CHUNK_BYTES })) {
+                if (options.keepLine && !options.keepLine(line)) {
+                    continue;
+                }
+
+                const row = parseLine(line);
+
+                if (row) {
+                    rows.push(row);
+
+                    if (rows.length >= left) {
+                        break;
+                    }
+                } else if (line.trim().length > 0) {
+                    log.debug({ path }, "change log: a line that is not a row");
+                }
+            }
         } catch (error) {
             log.debug({ error, path }, "change log: unreadable");
             continue;
-        }
-
-        const rows: ChangeLogRow[] = [];
-
-        for (const line of body.split("\n")) {
-            if (rows.length >= left) {
-                break;
-            }
-
-            if (options.keepLine && !options.keepLine(line)) {
-                continue;
-            }
-
-            const row = parseLine(line);
-
-            if (row) {
-                rows.push(row);
-            } else if (line.trim().length > 0) {
-                log.debug({ path }, "change log: a line that is not a row");
-            }
         }
 
         left -= rows.length;

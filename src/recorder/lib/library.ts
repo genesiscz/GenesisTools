@@ -106,24 +106,42 @@ export interface LiveRecordingRef {
     movie?: string;
 }
 
+/** The movies an unwritten `<name>.edit.json` can name beside it, the preferred kind first. */
+const PLAIN_MOVIE_EXTENSIONS = [".mp4", ".mov", ".m4v", ".webm", ".mkv"];
+
 /** The shortest prefix of a library id that names one recording (a short id is far longer). */
 const SHORT_ID_MIN_LENGTH = 12;
 
 /**
  * The running recording an id names: its live id or the end of it (`list --live`), or its library id, whole or a
- * prefix such as the short id (`start`'s started event and `list` print those).
+ * prefix such as the short id (`start`'s started event and `list` print those). A whole id wins; an end or a prefix
+ * that fits several running recordings is refused, as resolveRecording refuses a short id of two, because a stop
+ * of the wrong one cannot be undone.
  */
 export function findLiveEntry<T extends { id: string; folder?: string }>(entries: T[], id: string): T | undefined {
-    return entries.find((entry) => {
-        if (entry.id === id || entry.id.endsWith(id)) {
-            return true;
-        }
+    const exact = entries.find(
+        (entry) => entry.id === id || (entry.folder !== undefined && basename(entry.folder) === id)
+    );
 
+    if (exact) {
+        return exact;
+    }
+
+    const matches = entries.filter((entry) => {
         const library = entry.folder ? basename(entry.folder) : undefined;
         return (
-            library !== undefined && (library === id || (id.length >= SHORT_ID_MIN_LENGTH && library.startsWith(id)))
+            entry.id.endsWith(id) ||
+            (library !== undefined && id.length >= SHORT_ID_MIN_LENGTH && library.startsWith(id))
         );
     });
+
+    if (matches.length > 1) {
+        throw new Error(
+            `"${id}" names ${matches.length} running recordings: ${describeLiveEntries(matches)}. Give more of the id.`
+        );
+    }
+
+    return matches[0];
 }
 
 /** The running recordings for an error: each live id, with its short library id when it has one. */
@@ -261,10 +279,12 @@ function recordingOfUnwrittenEdit(path: string): string | undefined {
         return undefined;
     }
 
+    // Only a movie of that name: "talk.gif" or "talk.srt" sorts before "talk.mp4". The first kind listed wins.
     const name = file.slice(0, -".edit.json".length);
-    const movie = readdirSync(folder).find(
-        (entry) => !entry.endsWith(".json") && basename(entry, extname(entry)) === name
-    );
+    const rank = (entry: string) => PLAIN_MOVIE_EXTENSIONS.indexOf(extname(entry).toLowerCase());
+    const movie = readdirSync(folder)
+        .filter((entry) => basename(entry, extname(entry)) === name && rank(entry) >= 0)
+        .sort((a, b) => rank(a) - rank(b))[0];
     return movie ? join(folder, movie) : undefined;
 }
 

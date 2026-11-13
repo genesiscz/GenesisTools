@@ -50,6 +50,8 @@ test("a source that opens with a parenthesis is called only when its value is a 
     expect(run("(a = (1)) => a + 1")).toBe(2);
     expect(run("() => 7")).toBe(7);
     expect(await run("async () => 6")).toBe(6);
+    expect(runInNewContext(evaluationExpression("(function () { return value; })"), { value: "page" })).toBe("page");
+    expect(run("(1, 2)")).toBe(2);
 });
 
 describe("a page-agent target named by its label", () => {

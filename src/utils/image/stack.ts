@@ -8,7 +8,7 @@ import { loadCanvas } from "./canvas";
 /**
  * The final annotated image: the raw screenshot everywhere, and the annotated screenshot only inside `painted` (the
  * frames, chips and leader lines). So the pair differs only under the overlay, also when the page changed a pixel
- * between the two screenshots.
+ * between the two screenshots. That holds for this PNG; encodeImage's WebP is lossy and re-encodes every pixel.
  */
 export async function composeOverlay(input: {
     raw: Buffer;
@@ -73,7 +73,7 @@ export async function encodeImage(png: Buffer, format: "png" | "webp", options: 
     const image = await loadImage(png);
     const maxWidth = options.maxWidth ?? 0;
     const scale = maxWidth > 0 && image.width > maxWidth ? maxWidth / image.width : 1;
-    const width = Math.round(image.width * scale);
+    const width = Math.max(1, Math.round(image.width * scale));
     const height = Math.max(1, Math.round(image.height * scale));
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext("2d");

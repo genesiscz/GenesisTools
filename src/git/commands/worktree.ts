@@ -397,6 +397,7 @@ function printPlan(plan: WorktreeBackupPlan): void {
         KEY_WIDTH
     );
     ui.kv("changed", `${plan.changed.length} tracked file(s)`, KEY_WIDTH);
+    ui.kv("staged", `${plan.staged.length} tracked file(s) in the index`, KEY_WIDTH);
     ui.kv("untracked", `${plan.untracked.length} file(s) or folder(s)`, KEY_WIDTH);
     ui.kv(
         "ignored",
@@ -449,7 +450,12 @@ function printResult(result: WorktreeBackupResult): void {
 
     const tree =
         result.proof.treeMatches === null ? "" : result.proof.treeMatches ? ", tree matches HEAD" : ", tree DIFFERS";
-    ui.kv("proof", `uncommitted ${result.proof.uncommitted}; commits ${result.proof.commits}${tree}`, KEY_WIDTH);
+    const { uncommitted, staged, commits, copies } = result.proof;
+    ui.kv(
+        "proof",
+        `uncommitted ${uncommitted}; staged ${staged}; commits ${commits}${tree}; copies ${copies}`,
+        KEY_WIDTH
+    );
 
     if (result.skipped.length > 0) {
         ui.warn(`Not copied (sockets, fifos, devices): ${result.skipped.join(", ")}`);

@@ -43,11 +43,17 @@ final class RecorderFailureNoticeTests: XCTestCase {
                        "The camera was asked for, but it did not start: the camera needs GenesisTools.app's recorder face connected to the recorder service as its host")
     }
 
-    func testAStartThatStoppedAtOnceReadsAsItsErrorWithWhatRanAndWhere() {
+    func testAStartThatStoppedAtOnceReadsAsItsErrorWithWhatRanAndWhere() throws {
         let failure = ToolsRunner.EarlyFailure(argv: ["recorder", "start", "--window", "101344", "--camera"], status: 1,
                                                output: Self.output, logFile: "/Users/alice/.genesis-tools/logs/recorder-start.log",
                                                logLine: 812)
-        let report = RecorderNotice.startReport(failure, time: Date(timeIntervalSince1970: 0), app: nil, home: "/Users/alice")
+        // The day log is named by the local date, so the zone is fixed here and never the Mac's own.
+        let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let noon = Date(timeIntervalSince1970: 43_200)
+        let report = RecorderNotice.startReport(failure, time: noon, app: nil, home: "/Users/alice", timeZone: utc)
+        let auckland = try XCTUnwrap(TimeZone(identifier: "Pacific/Auckland"))
+        XCTAssertEqual(RecorderNotice.startReport(failure, time: noon, app: nil, home: "/Users/alice", timeZone: auckland).dayLog,
+                       "/Users/alice/.genesis-tools/logs/1970-01-02.log", "noon UTC is already the next day in UTC+12")
         XCTAssertEqual(report.title, "Recording failed")
         XCTAssertEqual(report.headline,
                        "The camera was asked for, but it did not start: the camera needs GenesisTools.app's recorder face connected to the recorder service as its host.")
@@ -63,6 +69,23 @@ final class RecorderFailureNoticeTests: XCTestCase {
         XCTAssertEqual(report.log, Self.output)
         XCTAssertEqual(report.area, "recorder", "the bug form's Affected tool")
         XCTAssertEqual(report.expected, "The recording starts, and its controls and the red menu bar item appear.")
+    }
+
+    /// The shared log is never rotated, so its line is counted in chunks: the answer is the same for every chunk size,
+    /// across chunk edges, at the start, and past the end of a file that is shorter than the offset.
+    func testTheLogLineIsCountedInChunksWithTheSameAnswer() throws {
+        let log = FileManager.default.temporaryDirectory.appendingPathComponent("recorder-start-\(UUID().uuidString).log")
+        defer { try? FileManager.default.removeItem(at: log) }
+        let text = (1...40).map { "run \($0) output line" }.joined(separator: "\n") + "\n"
+        try Data(text.utf8).write(to: log)
+        let offset = UInt64(text.utf8.count)
+        for chunk in [1, 3, 7, 64 * 1024] {
+            XCTAssertEqual(ToolsRunner.line(of: log, at: 0, chunk: chunk), 1)
+            XCTAssertEqual(ToolsRunner.line(of: log, at: offset, chunk: chunk), 41, "chunk \(chunk)")
+            XCTAssertEqual(ToolsRunner.line(of: log, at: offset + 500, chunk: chunk), 41, "past the end, chunk \(chunk)")
+        }
+        let thirdLine = UInt64("run 1 output line\nrun 2 output line\n".utf8.count)
+        XCTAssertEqual(ToolsRunner.line(of: log, at: thirdLine, chunk: 5), 3)
     }
 
     func testAStartWithNoOutputSaysWhereTheLogIs() {

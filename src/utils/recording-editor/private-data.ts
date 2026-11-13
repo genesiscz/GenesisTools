@@ -443,18 +443,85 @@ export function privateMatcher(names: readonly string[] = []): LineMatcher {
     const wanted = names.map((name) => name.trim()).filter(Boolean);
     // A name matches with the spaces OCR leaves out or reads in, as textMatcher does, so a name that the "no screen text
     // matches" warning counts as read is also hidden.
-    const namePattern = wanted.length ? new RegExp(wanted.map(literalSource).join("|"), "giu") : undefined;
+    // Each name is its own pattern (literalSource: escaped, so a name never adds regex syntax, and without accents): one
+    // alternation returned the first name that matched, so "Ann A" took "Anna" of "Annabelle Johnson" and the longer
+    // name stayed visible.
+    const namePatterns = wanted.map((name) => new RegExp(literalSource(name), "giu"));
     return compacting((text) => {
-        const found: TextMatch[] = findPrivateText(text).map((match) => ({ ...match, label: labelOf(match.kind) }));
+        const privates: TextMatch[] = findPrivateText(text).map((match) => ({ ...match, label: labelOf(match.kind) }));
+        const found = [...privates];
 
-        for (const [start, end] of namePattern ? foldedMatches(text, [namePattern]) : []) {
-            if (!found.some((other) => start < other.end && end > other.start)) {
-                found.push({ kind: "name", label: "Name", value: text.slice(start, end).toLowerCase(), start, end });
+        // A joined name span can hold an email or a token: that part stays the private match, and the rest of the span
+        // is still a name. Dropping the whole span left "Smith Jones" of "alice@example.com Smith Jones" visible.
+        for (const span of nameSpans(text, namePatterns)) {
+            for (const [start, end] of uncoveredParts(text, span, privates)) {
+                // Without spaces, as textMatcher keeps a value: "Bob Builder" and "BobBuilder" are one track.
+                const value = text.slice(start, end).replace(/\s+/g, "").toLowerCase();
+                found.push({ kind: "name", label: "Name", value, start, end });
             }
         }
 
         return found.sort((a, b) => a.start - b.start);
     });
+}
+
+/** The parts of `span` that no match of `covered` (in text order) takes, without the spaces at their ends. */
+function uncoveredParts(
+    text: string,
+    [start, end]: [number, number],
+    covered: readonly TextMatch[]
+): Array<[number, number]> {
+    const parts: Array<[number, number]> = [];
+    let at = start;
+
+    for (const other of covered) {
+        if (other.end > at && other.start < end) {
+            if (other.start > at) {
+                parts.push([at, other.start]);
+            }
+
+            at = Math.max(at, other.end);
+        }
+    }
+
+    if (at < end) {
+        parts.push([at, end]);
+    }
+
+    return parts
+        .map(([from, to]): [number, number] => {
+            while (from < to && /\s/.test(text[from] ?? "")) {
+                from++;
+            }
+
+            while (to > from && /\s/.test(text[to - 1] ?? "")) {
+                to--;
+            }
+
+            return [from, to];
+        })
+        .filter(([from, to]) => to > from);
+}
+
+/**
+ * Where any of `patterns` matches in `text` without diacritics (foldedMatches), each found on its own and overlapping
+ * spans joined into one.
+ */
+function nameSpans(text: string, patterns: readonly RegExp[]): Array<[number, number]> {
+    const spans = foldedMatches(text, patterns).sort((a, b) => a[0] - b[0]);
+    const joined: Array<[number, number]> = [];
+
+    for (const span of spans) {
+        const last = joined.at(-1);
+
+        if (last && span[0] < last[1]) {
+            last[1] = Math.max(last[1], span[1]);
+        } else {
+            joined.push([...span]);
+        }
+    }
+
+    return joined;
 }
 
 /** What a hideText hides of an OCR line that holds a match: the match only, or the whole line (a name and its number). */

@@ -78,7 +78,10 @@ let kitTargets: [Target] = [
     .target(name: "GenesisKitTestHooks", path: "Sources/GenesisKitTestHooks", linkerSettings: [.linkedFramework("AppKit")]),
     // No app links these two: the catalog is the kit's own picture book, drawn by `bun run kit:catalog`.
     .target(name: "GenesisKitCatalog", dependencies: ["GenesisKit"], path: "Sources/GenesisKitCatalog"),
-    .executableTarget(name: "GenesisKitCatalogTool", dependencies: ["GenesisKit", "GenesisKitCatalog"], path: "Sources/GenesisKitCatalogTool"),
+    .executableTarget(
+        name: "GenesisKitCatalogTool", dependencies: ["GenesisKit", "GenesisKitCatalog"], path: "Sources/GenesisKitCatalogTool",
+        resources: [.copy("Board")]
+    ),
     .testTarget(
         name: "GenesisKitTests",
         dependencies: [

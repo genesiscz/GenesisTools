@@ -422,7 +422,9 @@ on the code, never on the message text.
   exits 1 when it refused a file. `check` exits 1 for `stale`, `hand-edited`, `unsupported`, a missing output, or a
   `.md` whose stamp names no generator, or a module from which `@genesiscz/utils` does not resolve (`build` counts
   that as a refusal); `clean` and `unstamped` exit 0.
-- `tools json2md check --quiet <modules...>` is a CI gate: silent and 0 when every document is clean.
+- `tools json2md check --quiet <modules...>` is a CI gate: silent and 0 when no document fails. An `unstamped` output
+  also exits 0, so a 0 does not prove every document is clean, and the gate cannot catch an unstamped output that is
+  stale.
 - Never hand-assemble a markdown table with string concatenation; call the library or the CLI.
 - Plugin skills: `gt:json2md` (this tool) and `gt:markdown` (the `{{kind …}}` tokens).
 

@@ -186,10 +186,12 @@ It prints new orders, new items, matched items and auto-added favorites per acco
 on (set on the dashboard's providers page) adds each matched item to the watchlist with a 10% drop and a 24 hour
 cooldown, unless the account's watchlist defaults say otherwise.
 
+Run `provider-connect rohlik.cz` in a terminal without `--password` and type the password at its hidden prompt. A
+password on the command line stays in your shell history and shows in the process list. Pass `--password` only from
+a script that reads it from a secret store.
+
 ```bash
-tools shops provider-connect rohlik.cz \
-    --email alice@example.com \
-    --password 'example-password'
+tools shops provider-connect rohlik.cz --email alice@example.com   # then type the password at the prompt
 tools shops orders-sync --shop rohlik.cz --limit 50
 ```
 

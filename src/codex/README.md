@@ -11,9 +11,10 @@ tools codex login work                               # log a ChatGPT subscriptio
 tools codex run work --model sol                     # open the native Codex terminal as that account
 tools codex resume "invoice parser" --account work   # resume a conversation by id, title or content
 tools codex history "invoice parser" --all           # search every Codex conversation on this Mac
-# start a headless, read-only worker
+# start a headless, read-only worker as that account
 tools codex spawn \
   --name explain \
+  --account work \
   --no-agents \
   --prompt "Explain what src/app.ts does"
 tools codex tail --name explain --follow             # watch the worker until its session closes

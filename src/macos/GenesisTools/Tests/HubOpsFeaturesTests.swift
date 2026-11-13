@@ -222,6 +222,27 @@ final class HubOpsFeaturesTests: XCTestCase {
         XCTAssertFalse(system.verticalScroller is GenScroller)
     }
 
+    /// System gives a scroll view the system's style even when it never had GenesisKit's bars: a new file tree under
+    /// System starts as overlay, and with "Always" set in System Settings it must show the legacy bar (eve on #764).
+    @MainActor
+    func testSystemScrollBarsSetThePreferredStyleOnAViewNeverAdopted() {
+        let fresh = NSScrollView()
+        fresh.hasVerticalScroller = true
+        fresh.scrollerStyle = .overlay
+        GenScrollBars.apply(.system, to: fresh, preferred: .legacy)
+        XCTAssertEqual(fresh.scrollerStyle, .legacy)
+        XCTAssertFalse(fresh.verticalScroller is GenScroller)
+
+        let adopted = NSScrollView()
+        adopted.hasVerticalScroller = true
+        GenScrollBars.apply(.genesis, to: adopted, preferred: .legacy)
+        XCTAssertEqual(adopted.scrollerStyle, .overlay)
+        XCTAssertTrue(adopted.verticalScroller is GenScroller)
+        GenScrollBars.apply(.system, to: adopted, preferred: .legacy)
+        XCTAssertEqual(adopted.scrollerStyle, .legacy)
+        XCTAssertFalse(adopted.verticalScroller is GenScroller)
+    }
+
     /// The PR row's meta line: the author is whole, then truncated to at least 48 pt, then hidden with its dot.
     func testMetaLineAuthorGivesWayFirst() {
         let ideal: [CGFloat] = [40, 80, 4, 30, 50]

@@ -2,7 +2,7 @@
 
 > **Convert a time across timezones from natural language.**
 
-You know the meeting is at 3pm Pacific. You need it in Prague. `tools tz '3pm PST in Prague'` does that in one line,
+You know the meeting is at 3pm Pacific. You need it in Prague. `tools tz '3pm America/Los_Angeles in Prague'` does that in one line,
 without opening a converter site. One call can also fan a single moment out across a whole team's zones.
 
 `tools tz` comes with GenesisTools (`bun install && ./install.sh` puts `tools` on your PATH). It needs only Bun: no
@@ -11,12 +11,12 @@ account, no network, and no data or config of its own (only the shared logs, see
 ## Quick start
 
 ```bash
-tools tz '3pm PST in Prague'                        # one time, one target zone
+tools tz '3pm America/Los_Angeles in Prague'        # one time, one target zone (follows summer time)
 tools tz 9am CET in New York                        # quoting is optional
 tools tz 'tomorrow 08:30 in Tokyo'                  # 08:30 tomorrow on your clock, shown in Tokyo
 tools tz now                                        # now, in your zone and five common zones
 tools tz now --to America/New_York,Asia/Tokyo,UTC   # now, in the zones you list
-tools tz '3pm PST in Prague' --json                 # the same answer as a JSON array
+tools tz '3pm America/Los_Angeles in Prague' --json # the same answer as a JSON array
 ```
 
 ## Command and options

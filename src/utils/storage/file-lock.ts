@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type ArbitrationResult, tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import {
@@ -11,6 +12,7 @@ import {
     serializePidRecord,
     takeOverStaleClaimAsync,
 } from "@genesiscz/utils/process/pidfile";
+import { isProcessAliveSince } from "@genesiscz/utils/process-identity";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 50;
@@ -191,5 +193,134 @@ export async function withFileLock<T>(
         return await fn();
     } finally {
         await releaseLock(lockPath);
+    }
+}
+
+/** How often a queued caller looks whether its turn came; the work it waits behind takes far longer. */
+const QUEUE_POLL_MS = 100;
+/** A ticket this long past its own deadline belongs to a caller that gave up without removing it. */
+const QUEUE_TICKET_GRACE_MS = 60_000;
+let queueTickets = 0;
+
+/** A queue ticket: the waiting process, when it wrote the ticket, and the moment it stops waiting (its timeout). */
+function parseTicket(raw: string): { pid: number; at: number; until: number } | null {
+    try {
+        const parsed: unknown = SafeJSON.parse(raw, { strict: true });
+
+        if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            "pid" in parsed &&
+            "at" in parsed &&
+            "until" in parsed &&
+            typeof parsed.pid === "number" &&
+            typeof parsed.at === "number" &&
+            typeof parsed.until === "number"
+        ) {
+            return { pid: parsed.pid, at: parsed.at, until: parsed.until };
+        }
+    } catch (error) {
+        logger.debug({ error }, "file-lock queue: a ticket does not parse");
+    }
+
+    return null;
+}
+
+/**
+ * Whether `own` is the oldest ticket of `queue` that still waits. A ticket of a dead process, one past its own
+ * deadline and one that does not parse are removed on sight, so an abandoned waiter never holds up the queue.
+ */
+function firstInQueue(queue: string, own: string): boolean {
+    for (const name of readdirSync(queue).sort()) {
+        if (name >= own) {
+            return true;
+        }
+
+        if (name.startsWith(".")) {
+            continue;
+        }
+
+        const path = join(queue, name);
+        let raw: string;
+
+        try {
+            raw = readFileSync(path, "utf-8");
+        } catch (error) {
+            // Gone meanwhile: its owner finished.
+            if (isEnoent(error)) {
+                continue;
+            }
+
+            throw error;
+        }
+
+        const ticket = parseTicket(raw);
+
+        // A process that started after its ticket was written is another program on a recycled pid.
+        if (
+            ticket &&
+            isProcessAliveSince(ticket.pid, ticket.at) &&
+            Date.now() <= ticket.until + QUEUE_TICKET_GRACE_MS
+        ) {
+            return false;
+        }
+
+        logger.debug({ queue, ticket: name }, "file-lock queue: an abandoned ticket is removed");
+
+        try {
+            unlinkSync(path);
+        } catch (error) {
+            if (!isEnoent(error)) {
+                throw error;
+            }
+        }
+    }
+
+    return true;
+}
+
+/**
+ * {@link withFileLock}, served in arrival order across processes. Each caller puts a ticket into `<lockPath>.queue/`
+ * (named by its arrival time) and takes the lock only when no older ticket still waits, so a process that releases
+ * the lock and takes it again in a loop (a scan of hundreds of frames) cannot keep a waiting caller from its turn.
+ * `timeout` covers the queue and the lock together; on expiry it throws {@link LockTimeoutError}.
+ */
+export async function withQueuedFileLock<T>(
+    lockPath: string,
+    fn: () => Promise<T>,
+    timeout: number = DEFAULT_TIMEOUT_MS
+): Promise<T> {
+    const started = Date.now();
+    const deadline = started + timeout;
+    const queue = `${lockPath}.queue`;
+    mkdirSync(queue, { recursive: true });
+    queueTickets += 1;
+    const name = `${String(started).padStart(15, "0")}-${String(queueTickets).padStart(9, "0")}-${process.pid}`;
+    const ticket = join(queue, name);
+    // Written whole under a hidden name first, so a reader never meets half a ticket.
+    const draft = join(queue, `.${name}`);
+    writeFileSync(draft, SafeJSON.stringify({ pid: process.pid, at: started, until: deadline }));
+    renameSync(draft, ticket);
+
+    try {
+        while (!firstInQueue(queue, name)) {
+            const left = deadline - Date.now();
+
+            if (left <= 0) {
+                throw new LockTimeoutError(lockPath, timeout);
+            }
+
+            await sleep(Math.min(QUEUE_POLL_MS, left));
+        }
+
+        return await withFileLock(lockPath, fn, Math.max(0, deadline - Date.now()));
+    } finally {
+        try {
+            unlinkSync(ticket);
+        } catch (error) {
+            if (!isEnoent(error)) {
+                logger.warn({ err: error, ticket }, "file-lock queue: the ticket could not be removed");
+            }
+        }
     }
 }

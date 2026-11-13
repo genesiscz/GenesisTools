@@ -7,6 +7,7 @@
 import {
     isPresetName,
     LABEL_POSITIONS,
+    type LabelChipStyle,
     type LabelPosition,
     type PresetName,
     type ShapeLabel,
@@ -17,7 +18,8 @@ import { type Locator, type LocatorSource, parseLocator } from "./locator.ts";
 /** The first script's label sides. */
 export type ScriptSide = "above" | "below" | "left" | "right" | "inside";
 export type ScriptColor = "red" | "amber";
-export type MarkKind = "highlight" | "box" | "ellipse";
+export const MARK_KINDS = ["highlight", "box", "ellipse"] as const;
+export type MarkKind = (typeof MARK_KINDS)[number];
 
 export interface MarkInput {
     target: LocatorSource;
@@ -74,7 +76,8 @@ export interface Mark {
 export type Step = { click: Locator } | { scroll: Locator } | { until: Locator } | { wait: number };
 
 export interface Clip {
-    around: Locator;
+    /** Absent only for a part with no marks and `viewport`: the clip is then the whole viewport. */
+    around?: Locator;
     pad: [top: number, right: number, bottom: number, left: number];
     wide: boolean;
     viewport: boolean;
@@ -137,8 +140,92 @@ function sideOf(at: MarkInput["at"], path: string): LabelPosition | undefined {
     return position;
 }
 
+function kindOf(kind: unknown, path: string): MarkKind {
+    if (kind === undefined) {
+        return "highlight";
+    }
+
+    const known = MARK_KINDS.find((candidate) => candidate === kind);
+    if (!known) {
+        throw new ShotPartError(`${path}.kind: expected ${MARK_KINDS.join(", ")}, got ${String(kind)}`);
+    }
+
+    return known;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function chipStyleOf(style: unknown, path: string): LabelChipStyle {
+    if (
+        !isRecord(style) ||
+        (style.bg !== undefined && typeof style.bg !== "string") ||
+        (style.fg !== undefined && typeof style.fg !== "string") ||
+        (style.fontSize !== undefined && !(typeof style.fontSize === "number" && style.fontSize > 0))
+    ) {
+        throw new ShotPartError(`${path}: expected { bg?: color, fg?: color, fontSize?: pixels }`);
+    }
+
+    return {
+        ...(typeof style.bg === "string" ? { bg: style.bg } : {}),
+        ...(typeof style.fg === "string" ? { fg: style.fg } : {}),
+        ...(typeof style.fontSize === "number" ? { fontSize: style.fontSize } : {}),
+    };
+}
+
+/** A book is JSON or a `.ts` file, so a label is checked field by field here, never trusted to be a ShapeLabel. */
+function labelOf(label: unknown, path: string): ShapeLabel | undefined {
+    if (label === undefined) {
+        return undefined;
+    }
+
+    if (typeof label === "string") {
+        return { text: label };
+    }
+
+    if (!isRecord(label) || typeof label.text !== "string") {
+        throw new ShotPartError(`${path}.label: expected a string or { text, position?, style?, offset?, leader? }`);
+    }
+
+    const parsed: ShapeLabel = { text: label.text };
+    if (label.position !== undefined) {
+        const position = LABEL_POSITIONS.find((known) => known === label.position);
+        if (!position) {
+            throw new ShotPartError(
+                `${path}.label.position: expected ${LABEL_POSITIONS.join(", ")}, got ${String(label.position)}`
+            );
+        }
+
+        parsed.position = position;
+    }
+
+    if (label.style !== undefined) {
+        parsed.style = chipStyleOf(label.style, `${path}.label.style`);
+    }
+
+    const offset = label.offset;
+    if (offset !== undefined) {
+        if (!isRecord(offset) || !Number.isFinite(offset.x) || !Number.isFinite(offset.y)) {
+            throw new ShotPartError(`${path}.label.offset: expected { x, y } in pixels`);
+        }
+
+        parsed.offset = { x: Number(offset.x), y: Number(offset.y) };
+    }
+
+    if (label.leader !== undefined) {
+        if (typeof label.leader !== "boolean") {
+            throw new ShotPartError(`${path}.label.leader: expected true or false`);
+        }
+
+        parsed.leader = label.leader;
+    }
+
+    return parsed;
+}
+
 function parseMark(input: MarkInput, defaults: PartDefaults, path: string): Mark {
-    const label: ShapeLabel | undefined = typeof input.label === "string" ? { text: input.label } : input.label;
+    const label = labelOf(input.label, path);
     const position = sideOf(input.at, path) ?? label?.position;
     const nudged = input.dx !== undefined || input.dy !== undefined;
     const preset = input.preset ?? (input.color === "amber" ? defaults.amberPreset : undefined);
@@ -146,7 +233,7 @@ function parseMark(input: MarkInput, defaults: PartDefaults, path: string): Mark
         throw new ShotPartError(`${path}.preset: unknown preset "${preset}"`);
     }
 
-    const mark: Mark = { kind: input.kind ?? "highlight", target: parseLocator(input.target) };
+    const mark: Mark = { kind: kindOf(input.kind, path), target: parseLocator(input.target) };
     if (label) {
         mark.label = {
             ...label,
@@ -204,20 +291,24 @@ function padOf(pad: ClipInput["pad"], fallback: number, path: string): Clip["pad
 export function parseShotPart(input: PartInput, defaults: PartDefaults = PART_DEFAULTS, path = "part"): ShotPart {
     const marks = (input.marks ?? []).map((mark, index) => parseMark(mark, defaults, `${path}.marks[${index}]`));
     const around = input.clip?.around;
-    if (around === undefined && marks.length === 0) {
-        throw new ShotPartError(`${path}.clip.around: a part with no marks needs a clip`);
+    const viewport = input.clip?.viewport ?? input.viewportOnly ?? false;
+    if (around === undefined && marks.length === 0 && !viewport) {
+        throw new ShotPartError(
+            `${path}.clip.around: a part with no marks needs a clip (an around, or viewport: true)`
+        );
     }
 
     const clip: Clip = {
-        around:
-            around === undefined
-                ? parseLocator(marks.flatMap((mark) => mark.target.chains.map((chain) => chain.source)))
-                : parseLocator(around),
         pad: padOf(input.clip?.pad, defaults.pad, `${path}.clip`),
         wide: input.clip?.wide ?? false,
-        viewport: input.clip?.viewport ?? input.viewportOnly ?? false,
+        viewport,
         fitLabels: input.clip?.fit === "labels",
     };
+    if (around !== undefined) {
+        clip.around = parseLocator(around);
+    } else if (marks.length > 0) {
+        clip.around = parseLocator(marks.flatMap((mark) => mark.target.chains.map((chain) => chain.source)));
+    }
     const part: ShotPart = {
         steps: (input.steps ?? []).map((step, index) => parseStep(step, `${path}.steps[${index}]`)),
         clip,

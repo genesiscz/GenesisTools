@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -72,6 +72,41 @@ describe("HostedSupervisor", () => {
 
         expect(next.version).toBe(2);
         expect(next.pid).not.toBe(first.pid);
+    }, 20_000);
+
+    test("awaits the child's shutdown callback before it exits for changed code", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-hosted-"));
+        const module = join(dir, "handler.ts");
+        writeFileSync(module, handlerSource(1));
+        const marker = join(dir, "closed");
+        const entry = join(dir, "entry.ts");
+        writeFileSync(
+            entry,
+            `import { writeFileSync } from "node:fs";\nimport { runHostedChild } from ${SafeJSON.stringify(CHILD_LIBRARY)};\nimport { serve } from "./handler.ts";\nawait runHostedChild(serve, async () => {\n    await Bun.sleep(100);\n    writeFileSync(${SafeJSON.stringify(marker)}, "closed");\n});\n`
+        );
+        const supervisor = new HostedSupervisor(
+            "fixture",
+            { entry, sourceRoot: dir },
+            { socketDir: dir, checkMs: 100 }
+        );
+        started.push(supervisor);
+        const response = await supervisor.forward(
+            new Request("http://127.0.0.1:8318/mcp/fixture", { method: "POST", body: "{}" }),
+            { clientPort: 50_001, serverPort: 8318 }
+        );
+        const { pid } = (await response.json()) as { pid: number };
+
+        writeFileSync(module, handlerSource(2));
+        const later = new Date(Date.now() + 2_000);
+        utimesSync(module, later, later);
+        const deadline = Date.now() + 10_000;
+
+        while (isProcessAlive(pid) && Date.now() < deadline) {
+            await Bun.sleep(100);
+        }
+
+        expect(isProcessAlive(pid)).toBe(false);
+        expect(existsSync(marker)).toBe(true);
     }, 20_000);
 });
 

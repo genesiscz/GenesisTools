@@ -117,10 +117,11 @@ declare global {
 }
 
 /**
- * One entry of the turn's text. A turn that streams sends it to the parent as well, console lines and nodeRepl.write
- * alike: the streamed lines must be one run in the text, or the caller cannot take them out and prints them twice.
+ * One line of the turn text. While a turn streams, the line also goes to the engine at once, so every line reaches a
+ * streaming caller in the order of the text; a `nodeRepl.write` line that did not stream sat between two console lines
+ * that did, and the CLI printed both console lines twice.
  */
-function pushOutput(text: string): void {
+function writeLine(text: string): void {
     if (!fromCurrentTurn()) {
         noteLateOutput(text);
         return;
@@ -135,7 +136,7 @@ function pushOutput(text: string): void {
 
 const replApi = {
     write(value: unknown): void {
-        pushOutput(typeof value === "string" ? value : Bun.inspect(value));
+        writeLine(typeof value === "string" ? value : Bun.inspect(value));
     },
     /**
      * One image's bytes (or base64), checked as show() checks them: the bytes decide the type. Unchecked bytes went to
@@ -454,8 +455,8 @@ const turnStream = new Writable({
     write(chunk: Buffer | string, _encoding, done): void {
         const text = String(chunk).replace(/\n$/, "");
 
+        writeLine(text);
         process.stderr.write(`${text}\n`);
-        pushOutput(text);
         done();
     },
 });
@@ -490,7 +491,7 @@ async function runTurn(code: string, generation: number): Promise<Response["text
             try {
                 return await import(decision.resolved ?? specifier);
             } catch (error) {
-                throw importError(specifier, error);
+                throw importError({ specifier, imported: decision.resolved ?? specifier, error });
             }
         }) as never,
     });
@@ -515,8 +516,21 @@ async function runTurn(code: string, generation: number): Promise<Response["text
  * A failed import as the turn's author reads it: what is missing and how to get it. Bun's own message names the file the
  * import ran from, which is this kernel, and says nothing about js_add_node_module_dir (NR31).
  */
-function importError(specifier: string, error: unknown): unknown {
-    if (!/^Cannot find (package|module)/.test(describeError(error).message)) {
+function importError({
+    specifier,
+    imported,
+    error,
+}: {
+    specifier: string;
+    /** The name the kernel passed to `import()`: the authorized resolved path, or the specifier itself. */
+    imported: string;
+    error: unknown;
+}): unknown {
+    const missing = describeError(error).message.match(/^Cannot find (?:package|module) '([^']+)'/)?.[1];
+
+    // A dependency the imported file lacks is that file's problem: Bun's message names the dependency, and stays as it
+    // is. Rewriting it said "no file is there" about a file that was there, and dropped the missing name.
+    if (missing === undefined || (missing !== specifier && missing !== imported)) {
         return error;
     }
 
@@ -611,8 +625,14 @@ async function handle(request: Request): Promise<Response> {
     output = [];
     images = [];
 
+    // Set first: the late-error note is the first line of the turn text, so it streams first too. The turn's generation
+    // is active from here, so both notes below count as this turn's own lines.
+    streaming = request.stream === true;
+    const generation = ++lastGeneration;
+    activeGeneration = generation;
+
     if (lateErrors.length > 0) {
-        output.push(
+        writeLine(
             `note: an error no turn caught (a timer, a callback or a promise nobody awaited):\n${lateErrors
                 .splice(0)
                 .map((entry) => entry.text)
@@ -622,15 +642,11 @@ async function handle(request: Request): Promise<Response> {
 
     if (lateOutput.length > 0) {
         const dropped = lateOutputDropped > 0 ? ` (the first ${lateOutputDropped} lines are not kept)` : "";
-        output.push(
+        writeLine(
             `note: output of an earlier turn that kept running after it answered${dropped}:\n${lateOutput.splice(0).join("\n")}`
         );
         lateOutputDropped = 0;
     }
-
-    streaming = request.stream === true;
-    const generation = ++lastGeneration;
-    activeGeneration = generation;
 
     try {
         const thrown = new Promise<never>((_resolve, reject) => {

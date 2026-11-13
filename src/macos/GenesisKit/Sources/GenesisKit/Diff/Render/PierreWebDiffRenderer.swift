@@ -244,6 +244,11 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
         call("threadDone", BridgeThreadDone(id: id, ok: ok))
     }
 
+    /// Not replayed after a page reload: the reloaded page has no ask open.
+    public func largeFileFailed(id: String, reason: String) {
+        evaluateOnce("largeFailed", BridgeLargeFailed(fileId: id, reason: reason))
+    }
+
     public func setThreadSelection(_ ids: [String]) {
         call("setSelection", ids)
     }
@@ -470,6 +475,16 @@ public struct BridgeThreadDone: Encodable {
     public init(id: String, ok: Bool) {
         self.id = id
         self.ok = ok
+    }
+}
+
+public struct BridgeLargeFailed: Encodable {
+    public let fileId: String
+    public let reason: String
+
+    public init(fileId: String, reason: String) {
+        self.fileId = fileId
+        self.reason = reason
     }
 }
 

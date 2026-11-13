@@ -1,3 +1,4 @@
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import {
@@ -12,16 +13,6 @@ import {
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
 
-/** Local time, minute or second precision: `2026-11-11 09:30`. */
-export function localTime(at: number, seconds = false): string {
-    const date = new Date(at);
-    const pad = (value: number) => String(value).padStart(2, "0");
-    const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-    const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}${seconds ? `:${pad(date.getSeconds())}` : ""}`;
-
-    return `${day} ${clock}`;
-}
-
 function number(value: number | null | undefined): string {
     if (value === null || value === undefined) {
         return pc.dim("-");
@@ -32,7 +23,7 @@ function number(value: number | null | undefined): string {
 
 function groupCell(name: string, value: DimValue): string {
     if (name.startsWith("time:") && typeof value === "number") {
-        return localTime(value);
+        return formatLocalDateTimeStamp(value, { seconds: false });
     }
 
     return value === null ? pc.dim("null") : String(value);
@@ -66,8 +57,8 @@ export function printQuery(result: MetricQueryResult): void {
             ...result.groupBy.map((name) => groupCell(name, row.group[name] ?? null)),
             ...(spans
                 ? [
-                      row.span ? localTime(row.span.from) : "",
-                      row.span ? localTime(row.span.to) : "",
+                      row.span ? formatLocalDateTimeStamp(row.span.from, { seconds: false }) : "",
+                      row.span ? formatLocalDateTimeStamp(row.span.to, { seconds: false }) : "",
                       row.span ? row.span.days.toFixed(2) : "",
                   ]
                 : []),
@@ -96,7 +87,7 @@ export function eventLine(row: {
     checkpoint?: string;
 }) {
     const checkpoint = row.checkpoint === undefined ? "" : `${pc.cyan(`[${row.checkpoint}]`)}  `;
-    return `${pc.dim(localTime(row.at, true))}  ${pc.white(number(row.value).padStart(8))}  ${checkpoint}${dimsText(row.dims)}`;
+    return `${pc.dim(formatLocalDateTimeStamp(row.at))}  ${pc.white(number(row.value).padStart(8))}  ${checkpoint}${dimsText(row.dims)}`;
 }
 
 export function printEvents(result: MetricEventsResult): void {
@@ -127,8 +118,8 @@ export function printCatalog(entries: readonly MetricCatalogEntry[], note: strin
             pc.white(entry.metric),
             entry.unit ?? "",
             number(entry.count),
-            entry.first ? localTime(entry.first) : "",
-            entry.last ? localTime(entry.last) : "",
+            entry.first ? formatLocalDateTimeStamp(entry.first, { seconds: false }) : "",
+            entry.last ? formatLocalDateTimeStamp(entry.last, { seconds: false }) : "",
             entry.dims.join(", "),
         ]);
     }
@@ -144,7 +135,7 @@ export function printCheckpoints(checkpoints: readonly MetricCheckpoint[], note:
         table.push([
             checkpoint.project,
             pc.white(checkpoint.name),
-            localTime(checkpoint.at),
+            formatLocalDateTimeStamp(checkpoint.at, { seconds: false }),
             checkpoint.commit ? truncateDisplay(checkpoint.commit, 12) : "",
             checkpoint.repo ? truncateDisplay(checkpoint.repo, 30) : "",
             checkpoint.note ? truncateDisplay(checkpoint.note, 50) : "",

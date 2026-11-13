@@ -116,10 +116,17 @@ describe("a recording named by an edit file the editor has not written yet", () 
         writeFileSync(join(recording, "recording.json"), "{}");
         writeFileSync(join(recording, "screen.mp4"), "");
         const movies = mkdtempSync(join(tmpdir(), "rc9-movies-"));
+        // Files of the same name that are no movie sort first ("talk.gif" < "talk.mov"); the movie is still the one.
+        writeFileSync(join(movies, "talk.gif"), "");
+        writeFileSync(join(movies, "talk.srt"), "");
         writeFileSync(join(movies, "talk.mov"), "");
 
         expect(resolveRecording(join(recording, "edit.json"))).toBe(recording);
         expect(resolveRecording(join(movies, "talk.edit.json"))).toBe(join(movies, "talk.mov"));
+        writeFileSync(join(movies, "talk.mp4"), "");
+        expect(resolveRecording(join(movies, "talk.edit.json"))).toBe(join(movies, "talk.mp4"));
+        writeFileSync(join(movies, "notes.vtt"), "");
+        expect(() => resolveRecording(join(movies, "notes.edit.json"))).toThrow("not a path and not a library id");
         expect(() => resolveRecording(join(movies, "other.edit.json"))).toThrow("not a path and not a library id");
         expect(() => resolveRecording(join(movies, "edit.json"))).toThrow("not a path and not a library id");
     });
@@ -1075,6 +1082,13 @@ it("a live command finds the running recording by its live id, the end of it, or
     expect(findLiveEntry(entries, "video-2026-11-07_00-20-20")).toBe(entries[1]);
     expect(findLiveEntry(entries, "video")).toBeUndefined();
     expect(findLiveEntry(entries, "video-2026-11-07_00-20-21")).toBeUndefined();
+
+    // Two running recordings whose ids end alike: a short end is refused, never a stop of whichever is listed first.
+    const two = [...entries, { id: "recorder-15530-9aa72b4a", folder: join("/lib", `${library}-twin`) }];
+    expect(() => findLiveEntry(two, "a72b4a")).toThrow(/"a72b4a" names 2 running recordings: .*Give more of the id/);
+    expect(findLiveEntry(two, "faa72b4a")).toBe(two[1]);
+    expect(() => findLiveEntry(two, shortRecordingId(library))).toThrow(/names 2 running recordings/);
+    expect(findLiveEntry(two, library)).toBe(two[1]);
     expect(describeLiveEntries(entries)).toBe(
         "meeting-2026-11-07_09-00-planning, recorder-14429-faa72b4a (video-2026-11-07_00-20-20-da0341a9)"
     );
@@ -1287,6 +1301,29 @@ it("several recordings go through the removal policy in one call: one request, a
         ]);
     } finally {
         run.mockRestore();
+    }
+});
+
+it("a dry run that fails is its own error, and one that prints no JSON moves nothing", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "recording-trash-plan-"));
+    let plan = { success: false, exitCode: 124, stdout: "", stderr: "tools rm timed out" };
+    const calls: string[][] = [];
+    const run = spyOn(cli, "execTool").mockImplementation(async (args: readonly string[]) => {
+        calls.push([...args]);
+        return args.includes("--dry-run") ? plan : { success: true, exitCode: 0, stdout: "", stderr: "" };
+    });
+    try {
+        await expect(trashRecordings([folder])).rejects.toThrow(
+            "the removal policy could not plan the trash (tools rm timed out); nothing was moved and no one was asked"
+        );
+        plan = { success: true, exitCode: 0, stdout: "a stray line, not JSON", stderr: "" };
+        await expect(trashRecordings([folder])).rejects.toThrow(
+            `${folder} needs the user's confirmation to remove (its removal plan did not read as a plan)`
+        );
+        expect(calls.every((args) => args.includes("--dry-run"))).toBe(true);
+    } finally {
+        run.mockRestore();
+        rmSync(folder, { recursive: true, force: true });
     }
 });
 

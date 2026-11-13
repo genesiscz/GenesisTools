@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -19,7 +19,7 @@ import {
     snapTimeUs,
     type Tap,
 } from "@genesiscz/utils/recording-editor/events";
-import { gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
+import { gridRead, readGridPictures } from "@genesiscz/utils/recording-editor/frame-grid";
 import {
     MOTION_FPS,
     MOVING_SHARE,
@@ -45,6 +45,7 @@ import {
 } from "@genesiscz/utils/recording-editor/private-data";
 import {
     boundaryWindows,
+    clipOutputUs,
     type EditOp,
     type EditProject,
     exportToOutputUs,
@@ -75,7 +76,6 @@ import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library"
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { probeVideo } from "@genesiscz/utils/video/probe";
-import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { exportAs, exportProgressPrinter, openProject, readTranscriptSegments } from "./edit";
 import { boxInProxy, proxyCanvas, readDisplayPlan } from "./proxy";
@@ -214,13 +214,13 @@ export function exportFrameCache(movie: string): FrameCache & { flush(): void } 
     const path = toolDataDir("recorder", "verify-ocr", `${movieContentKey(movie)}.json`);
     let lines: Record<string, ScreenTextFrame["lines"]> = {};
 
+    // A file that does not parse (cut short by a crash before writes were atomic) is a miss: its frames are read again.
     if (existsSync(path)) {
-        // CLI-F5: a file torn by a killed run or a full disk starts the cache empty, as a cache that is not there.
         try {
             const parsed = frameLinesSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
             lines = parsed.success ? parsed.data : {};
         } catch (error) {
-            log.debug({ error, path }, "verifyHidden: the kept frame reads could not be read; they are read again");
+            log.debug({ error, path }, "verifyHidden: its kept frame reads do not parse; they are read again");
         }
     }
 
@@ -264,14 +264,8 @@ export async function ocrVideo(options: {
     /** R8 5: lines read before, by frame time (a frame found there is not read again), and where each new read goes. */
     cache?: FrameCache;
 }): Promise<ScreenTextFrame[]> {
-    // A rate of 0, below 0 or not a number made the frame step 0 or NaN: the grid loop never ended, or read one frame.
-    if (!(Number.isFinite(options.fps) && options.fps > 0)) {
-        throw new RangeError(`ocrVideo: fps is a positive number of frames a second, not ${options.fps}`);
-    }
-
     const fromUs = options.fromUs ?? 0;
     const stepUs = 1_000_000 / options.fps;
-    const folder = mkdtempSync(join(tmpdir(), "gt-screen-text-"));
     // R8 2: the frame the editor shows at each time, picked by its own presentation time; an input seek or ffmpeg's
     // own clock put a simulator recording's frames up to 2 s off.
     const plan = gridRead({
@@ -280,69 +274,47 @@ export async function ocrVideo(options: {
         toUs: Math.max(fromUs + 50_000, options.toUs),
         fps: options.fps,
     });
+    const folder = mkdtempSync(join(tmpdir(), "gt-screen-text-"));
 
     try {
         const frames: ScreenTextFrame[] = [];
         let previousDigest = "";
         let previousLines: ScreenTextFrame["lines"] = [];
-        let written = 0;
         let index = 0;
-        let missing = false;
 
-        // CLI-F9: one read's frame pictures at a time are on disk: they are read and removed before the next read
-        // writes its own, so a long export never needs GBs of temp space at once. The slots take the frames in order.
-        for (const read of plan.reads) {
-            if (missing) {
-                break;
-            }
-
-            await runVideoCommand({
-                command: [
-                    "ffmpeg",
-                    "-nostdin",
-                    "-v",
-                    "error",
-                    ...read.args,
-                    "-start_number",
-                    String(written),
-                    join(folder, "%06d.png"),
-                ],
-                timeoutMs: 20 * 60_000,
-            });
-            written += read.frames;
-            const files = new Set(readdirSync(folder).filter((file) => file.endsWith(".png")));
-
-            for (; index < plan.slots.length && plan.slots[index].frame < written; index++) {
-                const slot = plan.slots[index];
-                const file = `${String(slot.frame).padStart(6, "0")}.png`;
-
-                if (!files.has(file)) {
-                    missing = true;
-                    break;
-                }
-
-                const path = join(folder, file);
-                const digest = createHash("sha1").update(readFileSync(path)).digest("hex");
-                const atUs = slot.atUs;
-
+        // CLI-F9: the frames come one at a time from one decoder per read (readGridPictures), and only the picture Vision
+        // reads is on disk, removed after the read: a long export never needs GBs of temp space, and a dense stretch is
+        // decoded once. The slots take the frames in order.
+        for await (const picture of readGridPictures(plan, { video: options.video, timeoutMs: 20 * 60_000 })) {
+            for (; index < plan.slots.length && plan.slots[index].frame === picture.frame; index++) {
+                const atUs = plan.slots[index].atUs;
+                const digest = createHash("sha1").update(picture.png).digest("hex");
                 const known = options.cache?.get(atUs);
 
                 if (known) {
                     previousLines = known;
                     previousDigest = digest;
                 } else if (digest !== previousDigest) {
-                    // R6 4: one Vision read at a time on this Mac, retried once with a longer deadline.
-                    const ocr = await recognizeTextBoxesQueued(path, {
-                        fastFallback: false,
-                        what: `the frame at ${(atUs / 1_000_000).toFixed(2)} s of ${basename(options.video)}`,
-                    });
-                    previousLines = ocr.lines.map((line) => ({
-                        text: line.text,
-                        x: line.x / ocr.width,
-                        y: line.y / ocr.height,
-                        width: line.width / ocr.width,
-                        height: line.height / ocr.height,
-                    }));
+                    const path = join(folder, `${String(picture.frame).padStart(6, "0")}.png`);
+                    writeFileSync(path, picture.png);
+
+                    try {
+                        // R6 4: one Vision read at a time on this Mac, retried once with a longer deadline.
+                        const ocr = await recognizeTextBoxesQueued(path, {
+                            fastFallback: false,
+                            what: `the frame at ${(atUs / 1_000_000).toFixed(2)} s of ${basename(options.video)}`,
+                        });
+                        previousLines = ocr.lines.map((line) => ({
+                            text: line.text,
+                            x: line.x / ocr.width,
+                            y: line.y / ocr.height,
+                            width: line.width / ocr.width,
+                            height: line.height / ocr.height,
+                        }));
+                    } finally {
+                        rmSync(path, { force: true });
+                    }
+
                     previousDigest = digest;
                     options.cache?.set(atUs, previousLines);
                 } else {
@@ -351,10 +323,6 @@ export async function ocrVideo(options: {
 
                 frames.push({ atUs, untilUs: Math.min(options.toUs, Math.round(atUs + stepUs)), lines: previousLines });
                 options.onFrame?.(index + 1, plan.slots.length);
-            }
-
-            for (const file of files) {
-                rmSync(join(folder, file), { force: true });
             }
         }
 
@@ -955,11 +923,15 @@ export interface HitsAnswer {
 }
 
 /** R8 7: the warning of each text, pattern or name of a request that no line read matched. */
-function unmatchedWarnings(
-    read: readonly ScreenTextFrame[],
-    query: Omit<TextQuery, "unit">,
-    scan: TrackOptions["scan"]
-): string[] {
+function unmatchedWarnings({
+    read,
+    query,
+    scan,
+}: {
+    read: readonly ScreenTextFrame[];
+    query: Omit<TextQuery, "unit">;
+    scan: TrackOptions["scan"];
+}): string[] {
     return unmatchedQueries(read, query).map(
         (said) =>
             `no screen text ${scan ? "of the range read" : "of the whole movie"} matches ${said}: each OCR line is matched on its own, without case, and a text without accents; \\w and \\b take letters of any language, \\p{L} is any letter`
@@ -980,7 +952,7 @@ export async function privateHitsOf(
         },
     });
     const names = (options.names ?? []).map((name) => name.trim()).filter(Boolean);
-    const warnings = names.length > 0 ? unmatchedWarnings(read, { texts: names }, options.scan) : [];
+    const warnings = names.length > 0 ? unmatchedWarnings({ read, query: { texts: names }, scan: options.scan }) : [];
     log.debug({ hits: hits.length, warnings }, "private hits");
     return { hits, warnings };
 }
@@ -998,7 +970,10 @@ export async function privateData(
  */
 export type TextQuery = TextMatcherOptions;
 
-/** Every place of a text (or a pattern) on the screen, the input of the `hideText` op; a request never read is a warning. */
+/**
+ * Every place of a text (or a pattern) on the screen, the input of the `hideText` op, and one warning per text or
+ * pattern that no screen text matched: a caller returns them, because a log line never reaches a REPL script.
+ */
 export async function textHitsOf(project: EditProject, options: TrackOptions & TextQuery): Promise<HitsAnswer> {
     let read: readonly ScreenTextFrame[] = [];
     const hits = await trackedHits(project, textMatcher(options), {
@@ -1009,15 +984,22 @@ export async function textHitsOf(project: EditProject, options: TrackOptions & T
         },
     });
     // R8 7: a pattern that never matched is said, not silently dropped (a \w that did not take Czech letters did).
-    const warnings = unmatchedWarnings(read, options, options.scan);
-    log.debug({ hits: hits.length, warnings }, "text hits");
+    const warnings = unmatchedWarnings({ read, query: options, scan: options.scan });
+
+    for (const warning of warnings) {
+        log.out.warn(warning);
+    }
+
     return { hits, warnings };
 }
+
+/** findText's answer: the hits, and `warnings` naming each text or pattern no screen text matched (absent: none). */
+export type FoundText = PrivateHitOut[] & { warnings?: string[] };
 
 export async function findText(
     project: EditProject,
     options: TrackOptions & TextQuery & { from?: TimeValue; to?: TimeValue }
-): Promise<{ hits: PrivateHitOut[]; warnings?: string[] }> {
+): Promise<FoundText> {
     // R7 6: from/to (source seconds) as hideText takes them; a place that shows at any moment between them counts.
     const fromUs = options.from === undefined ? 0 : timeToUs(options.from);
     const toUs = options.to === undefined ? Number.POSITIVE_INFINITY : timeToUs(options.to);
@@ -1025,13 +1007,17 @@ export async function findText(
         ...options,
         scan: options.scan ?? scanOf(options.from, options.to),
     });
-    return {
-        hits: hitsOut(
-            project,
-            hits.filter((hit) => hit.toUs > fromUs && hit.fromUs < toUs)
-        ),
-        ...(warnings.length > 0 ? { warnings } : {}),
-    };
+    const found: FoundText = hitsOut(
+        project,
+        hits.filter((hit) => hit.toUs > fromUs && hit.fromUs < toUs)
+    );
+
+    // The answer stays the array of hits it always was; a miss rides on it, so a script reads it as found.warnings.
+    if (warnings.length > 0) {
+        found.warnings = warnings;
+    }
+
+    return found;
 }
 
 /**
@@ -1091,9 +1077,11 @@ export function exportRangeOf(
 
 /**
  * The part of the SOURCE a verifyHidden from/to covers, for its source reads (scanOf, with its margin each side):
- * source seconds as they are; output seconds through the clips. Undefined without from and to: the whole movie.
+ * source seconds as they are; output seconds through every clip that plays in that range, so clips that jump back or
+ * forward in the source (0–10, then 80–90, then 20–30) are all read, not only the source at the two ends. Undefined
+ * without from and to: the whole movie.
  */
-function sourceScanOf(
+export function sourceScanOf(
     project: EditProject,
     options: { from?: TimeValue; to?: TimeValue; timeBase?: "source" | "output" }
 ): { fromUs: number; toUs: number } | undefined {
@@ -1110,7 +1098,28 @@ function sourceScanOf(
         time === undefined ? fallback : Math.min(endUs, Math.max(0, timeToUs(time)));
     const fromUs = outputUs(options.from, 0);
     const toUs = Math.max(fromUs, outputUs(options.to, endUs) - 1);
-    const sourceUs = [sourceTimeOf(project, fromUs), sourceTimeOf(project, toUs)];
+    const sourceUs: number[] = [];
+    let startUs = 0;
+
+    for (const clip of project.clips) {
+        const clipEndUs = startUs + clipOutputUs(clip);
+        const overlapFromUs = Math.max(fromUs, startUs);
+        const overlapToUs = Math.min(toUs, clipEndUs);
+
+        if (overlapToUs >= overlapFromUs && clipEndUs > startUs) {
+            sourceUs.push(
+                clip.fromUs + Math.round((overlapFromUs - startUs) * clip.speed),
+                Math.min(clip.toUs, clip.fromUs + Math.round((overlapToUs - startUs) * clip.speed))
+            );
+        }
+
+        startUs = clipEndUs;
+    }
+
+    if (sourceUs.length === 0) {
+        sourceUs.push(sourceTimeOf(project, fromUs), sourceTimeOf(project, toUs));
+    }
+
     return scanOf(Math.min(...sourceUs) / 1_000_000, Math.max(...sourceUs) / 1_000_000);
 }
 
@@ -1152,19 +1161,17 @@ export async function verifyHidden(
     value: string,
     options: VerifyHiddenOptions
 ): Promise<VerifyHiddenAnswer & { exportRemoved?: true }> {
+    // The REPL's bounds: 0 or NaN would never advance the frame grid, and a minute between reads checks nothing.
     const everySeconds = options.everySeconds ?? 0.25;
 
-    // CLI-F1: checked before the export, as the REPL schema bounds it; 0 hung the read and "0,5" (NaN) read one frame.
-    if (!(everySeconds >= 0.1 && everySeconds <= 5)) {
-        throw new RangeError(
-            `verifyHidden: everySeconds takes 0.1 to 5 seconds between the frames read, not ${everySeconds}`
-        );
+    if (!Number.isFinite(everySeconds) || everySeconds < 0.1 || everySeconds > 5) {
+        throw new Error(`verifyHidden reads a frame every 0.1 to 5 seconds, not every ${options.everySeconds}`);
     }
 
     verifyMatcherOf(options);
 
     if (options.movie) {
-        return verifyExport(value, options, options.movie);
+        return verifyExport(value, { ...options, movie: options.movie });
     }
 
     // CLI-F8: the export made for the check is removed after it (a 5-minute demo is hundreds of MB, and macOS clears
@@ -1183,7 +1190,7 @@ export async function verifyHidden(
             throw new Error(`the export to check failed: ${answer.error ?? "no file"}`);
         }
 
-        const checked = await verifyExport(value, options, answer.path);
+        const checked = await verifyExport(value, { ...options, movie: answer.path });
         return options.keepExport ? checked : { ...checked, exportRemoved: true };
     } finally {
         if (!options.keepExport) {
@@ -1240,7 +1247,11 @@ export function verifyMatcherOf(options: VerifyHiddenOptions): LineMatcher {
 }
 
 /** verifyHidden over `movie`, an export of the edit `value`. */
-async function verifyExport(value: string, options: VerifyHiddenOptions, movie: string): Promise<VerifyHiddenAnswer> {
+async function verifyExport(
+    value: string,
+    options: VerifyHiddenOptions & { movie: string }
+): Promise<VerifyHiddenAnswer> {
+    const { movie } = options;
     const everySeconds = options.everySeconds ?? 0.25;
     const matcher = verifyMatcherOf(options);
     const { project } = await openProject(value);
@@ -1420,7 +1431,7 @@ async function sceneChangesOf(project: EditProject): Promise<number[]> {
     try {
         return (await eventsOf(project)).filter((event) => event.kind === "scene").map((event) => event.fromUs);
     } catch (error) {
-        logger.debug({ error }, "verifyHidden: no change steps, so no scene changes to read around");
+        log.debug({ error }, "verifyHidden: no change steps, so no scene changes to read around");
         return [];
     }
 }

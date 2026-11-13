@@ -17,6 +17,7 @@ import { WorkerPoolManager } from "@pierre/diffs/worker";
 import { fenceCloses, fencedParts, fenceLanguage, fenceMarker } from "./code-lang";
 import { keepOnlyFiles, parseFileDiff } from "./file-diff";
 import { createGlide } from "./glide";
+import { createLargeAsks } from "./large-asks";
 import { installOverlayScrollbar, type ScrollBarStyle } from "./overlay-scrollbar";
 import { installReviewState } from "./review-state";
 
@@ -203,6 +204,8 @@ interface BridgeApi {
     setComments(comments: BridgeComment[]): void;
     /** Swift ran (or refused) a thread action: `ok` closes the card's box, else it stays for another try. */
     threadDone(result: { id: string; ok: boolean }): void;
+    /** Swift could not bring a large file the page asked for (`showLarge`): its button offers the file again. */
+    largeFailed(result: { fileId: string; reason: string }): void;
     setOptions(next: Partial<BridgeOptions>): void;
     reveal(id: string): void;
     /** ⌘F from Swift (the header button, or ⌘F while the diff has the keyboard): open the find bar. */
@@ -356,8 +359,25 @@ const largeFiles = new Set<string>();
 /** The same files by path, for their header's button (pierre names a header by its file's path). */
 const largeByPath = new Map<string, string>();
 
-/** Large files asked for and not here yet: their button reads "Loading…" and a second click asks nothing. */
-const largeAsked = new Set<string>();
+/**
+ * Large files asked for and not here yet: their button reads "Loading…" and a second click asks nothing. Every ask
+ * ends: the file arrives, Swift answers `largeFailed`, or the deadline passes, and the button offers the file again.
+ */
+const largeAsks = createLargeAsks({
+    log: (message) => post({ type: "log", message }),
+    setTimeout: (callback, ms) => window.setTimeout(callback, ms),
+    clearTimeout: (id) => window.clearTimeout(id),
+    onEnd: redrawLargeButton,
+});
+
+/** Draws a file's header again, so its large-file button shows the ask's state. */
+function redrawLargeButton(fileId: string): void {
+    const item = viewer.getItem(fileId);
+
+    if (item) {
+        viewer.updateItem({ ...item, version: nextVersion(fileId) });
+    }
+}
 
 /**
  * Asks Swift for a large file whole, once, from its header button, its note line or that line's "+". The button turns
@@ -365,18 +385,13 @@ const largeAsked = new Set<string>();
  * like nothing happened). Every ask is logged, so a click that did reach the page can be told from one that did not.
  */
 function askLarge(fileId: string, from: string): void {
-    if (largeAsked.has(fileId)) {
+    if (!largeAsks.ask(fileId)) {
         return;
     }
 
-    largeAsked.add(fileId);
     post({ type: "log", message: `diff.large asked for ${fileId} from its ${from}` });
     post({ type: "showLarge", fileId });
-    const item = viewer.getItem(fileId);
-
-    if (item) {
-        viewer.updateItem({ ...item, version: nextVersion(fileId) });
-    }
+    redrawLargeButton(fileId);
 }
 
 /** A large file's "Show whole file" button after its name; "Loading…" once asked. Nothing for other files. */
@@ -387,7 +402,8 @@ function largeFileButton(path: string): HTMLElement | undefined {
         return undefined;
     }
 
-    const asked = largeAsked.has(fileId);
+    const asked = largeAsks.isAsked(fileId);
+    const failure = largeAsks.lastFailure(fileId);
     const button = element(
         "button",
         "margin-left:8px;font:11px -apple-system,sans-serif;color:rgba(255,255,255,.85);background:transparent;border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:1px 8px;cursor:pointer;-webkit-user-select:none;user-select:none",
@@ -395,7 +411,9 @@ function largeFileButton(path: string): HTMLElement | undefined {
     );
     button.title = asked
         ? "Reading the whole file; it replaces the note when it arrives"
-        : "This file is over 1 MB, so the diff skipped it: read it whole (up to 20 MB)";
+        : failure
+          ? `The last read did not bring the file (${failure}): click to try again`
+          : "This file is over 1 MB, so the diff skipped it: read it whole (up to 20 MB)";
     button.disabled = asked;
     button.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -3535,7 +3553,7 @@ function addFiles(batch: FilesBatch): void {
             largeByPath.set(file.path, file.id);
         } else {
             largeFiles.delete(file.id);
-            largeAsked.delete(file.id);
+            largeAsks.arrived(file.id);
 
             if (largeByPath.get(file.path) === file.id) {
                 largeByPath.delete(file.path);
@@ -3690,6 +3708,9 @@ window.genesisDiff = {
         refreshAnnotations([...touched].filter((id) => shown.has(id)));
         reviewState.afterComments();
         applyPendingFocus();
+    },
+    largeFailed({ fileId, reason }) {
+        largeAsks.failed(fileId, reason);
     },
     threadDone({ id, ok }) {
         busyThreads.delete(id);

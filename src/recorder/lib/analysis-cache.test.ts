@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -14,6 +14,21 @@ import { releaseLock, tryAcquireLock } from "@genesiscz/utils/storage/file-lock"
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { changeStepsOf } from "./fx-analysis";
+
+const made: string[] = [];
+
+/** A scratch folder removed after each test: a run writes about 60 MB of fake movies. */
+function tempFolder(prefix: string): string {
+    const folder = mkdtempSync(join(tmpdir(), prefix));
+    made.push(folder);
+    return folder;
+}
+
+afterEach(() => {
+    for (const folder of made.splice(0)) {
+        rmSync(folder, { recursive: true, force: true });
+    }
+});
 
 /** A fake movie: bytes that differ per seed, big enough that the start, middle and end slices all differ. */
 function fakeMovie(folder: string, name: string, seed: number, size = 9 * 1024 * 1024): string {
@@ -34,7 +49,7 @@ const numbers = z.array(z.number());
 // and Vision queued for an hour.
 describe("one analysis per movie content, shared by its copies", () => {
     test("a byte copy has the movie's content key; a changed byte or size does not", () => {
-        const folder = mkdtempSync(join(tmpdir(), "gt-analysis-key-"));
+        const folder = tempFolder("gt-analysis-key-");
         const movie = fakeMovie(folder, "a.mp4", 1);
         const copy = join(folder, "copy.mp4");
         copyFileSync(movie, copy);
@@ -48,7 +63,7 @@ describe("one analysis per movie content, shared by its copies", () => {
     });
 
     test("the copy reads the first movie's analysis, nothing is computed twice", async () => {
-        const folder = mkdtempSync(join(tmpdir(), "gt-analysis-copy-"));
+        const folder = tempFolder("gt-analysis-copy-");
         const movie = fakeMovie(folder, "a.mp4", 3);
         const copy = join(folder, "copy.mp4");
         copyFileSync(movie, copy);
@@ -71,7 +86,7 @@ describe("one analysis per movie content, shared by its copies", () => {
     });
 
     test("two calls at once compute once; an incremental cache is extended, not replaced", async () => {
-        const folder = mkdtempSync(join(tmpdir(), "gt-analysis-once-"));
+        const folder = tempFolder("gt-analysis-once-");
         const movie = fakeMovie(folder, "a.mp4", 4);
         let computed = 0;
         const compute = async (cached: number[] | undefined) => {
@@ -90,7 +105,7 @@ describe("one analysis per movie content, shared by its copies", () => {
     });
 
     test("a caller that finds another process's lock waits and reads its answer", async () => {
-        const folder = mkdtempSync(join(tmpdir(), "gt-analysis-lock-"));
+        const folder = tempFolder("gt-analysis-lock-");
         const movie = fakeMovie(folder, "a.mp4", 5);
         const path = analysisCachePath(movie, "screen-text");
         expect(await tryAcquireLock(`${path}.lock`)).toBe(true);
@@ -115,7 +130,7 @@ describe("one analysis per movie content, shared by its copies", () => {
     });
 
     test("an old cache beside the movie is read without a write, and the first cached call moves it over", async () => {
-        const folder = mkdtempSync(join(tmpdir(), "gt-analysis-legacy-"));
+        const folder = tempFolder("gt-analysis-legacy-");
         const movie = fakeMovie(folder, "a.mp4", 6);
         const legacyPath = join(folder, "a.waits.json");
         writeFileSync(legacyPath, SafeJSON.stringify({ key: "old-key", data: [9] }));
@@ -141,7 +156,7 @@ const hasFfmpeg = Boolean(Bun.which("ffmpeg"));
 
 describe.skipIf(!hasFfmpeg)("changeStepsOf on a copy of a movie", () => {
     test("reads the change steps the first copy measured, and writes nothing beside the copy", async () => {
-        const folder = mkdtempSync(join(tmpdir(), "gt-analysis-steps-"));
+        const folder = tempFolder("gt-analysis-steps-");
         const movie = join(folder, "first.mp4");
         await runVideoCommand({
             command: [
@@ -160,7 +175,7 @@ describe.skipIf(!hasFfmpeg)("changeStepsOf on a copy of a movie", () => {
                 movie,
             ],
         });
-        const copyFolder = mkdtempSync(join(tmpdir(), "gt-analysis-steps-copy-"));
+        const copyFolder = tempFolder("gt-analysis-steps-copy-");
         const copy = join(copyFolder, "second.mp4");
         copyFileSync(movie, copy);
         const size = { durationUs: 1_000_000, width: 96, height: 64 };

@@ -2,11 +2,18 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { withSpawnCounter } from "@app/benchmark/lib/spawn-counter";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { movieContentKey } from "@genesiscz/utils/recording-editor/analysis-cache";
-import { framePresentationUs, gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
+import { framePresentationUs, gridRead, readGridPictures } from "@genesiscz/utils/recording-editor/frame-grid";
 import { type FractionBox, type PrivateHit, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
-import { applyOp, editOpSchema, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import {
+    applyOp,
+    editOpSchema,
+    editProjectSchema,
+    wholeProject,
+    writeProject,
+} from "@genesiscz/utils/recording-editor/project";
 import type { ChangeStep } from "@genesiscz/utils/recording-editor/waits";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
@@ -19,6 +26,7 @@ import {
     leaveFixedVisible,
     ocrVideo,
     scanOf,
+    sourceScanOf,
     textHitsOf,
     verifyHidden,
     verifyMatcherOf,
@@ -238,13 +246,15 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         });
         const project = wholeProject({ video: movie, durationUs: 8_000_000, width: W, height: H });
         const read: number[] = [];
-        const texts = ["Orla Fictive", "Nobody Example"];
+        // "Nobody Fictional" is invented, and on no screen: its miss comes back to the caller, not only to a log line.
+        const texts = ["Orla Fictive", "Nobody Fictional"];
         const { hits, warnings } = await textHitsOf(project, {
             texts,
             scan: scanOf(4, 5),
             onRead: (frames) => read.push(...frames.map((frame) => frame.atUs)),
         });
         expect(hits.length).toBeGreaterThan(0);
+        expect(warnings).toEqual([expect.stringContaining('matches "Nobody Fictional"')]);
         expect(read.length).toBeGreaterThan(0);
         // One second each side of 4 to 5 s, nothing else.
         expect(Math.min(...read)).toBeGreaterThanOrEqual(3_000_000);
@@ -252,10 +262,9 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
 
         // Review CLI-F4: a text the screen never shows is in the answer, not only on stderr, which a REPL over MCP or
         // the service never shows: findText's warnings, and hideText's edit warnings.
-        const miss = [expect.stringContaining('"Nobody Example"')];
-        expect(warnings).toEqual(miss);
+        const miss = [expect.stringContaining('"Nobody Fictional"')];
         const found = await findText(project, { texts, from: 4, to: 5 });
-        expect(found.hits.length).toBeGreaterThan(0);
+        expect(found.length).toBeGreaterThan(0);
         expect(found.warnings).toEqual(miss);
         const edit = await computeEdit({
             project,
@@ -265,7 +274,9 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         expect(edit.warnings).toEqual(expect.arrayContaining(miss));
     }, 120_000);
 
-    test("ocrVideo keeps one read's frame pictures on disk at a time, not the whole range's (review CLI-F9)", async () => {
+    // Review CLI-F9, and review of PR 748 round 2: capping a read's frames split a dense stretch into reads that each
+    // decoded the movie from its start again. A read streams its pictures instead, so one decoder reads it once.
+    test("ocrVideo streams one read's pictures through one decoder and keeps at most one on disk (review CLI-F9)", async () => {
         const folder = mkdtempSync(join(tmpdir(), "gt-ocr-stream-"));
         const movie = join(folder, "stream.mp4");
         await runVideoCommand({
@@ -277,32 +288,52 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
                 "-f",
                 "lavfi",
                 "-i",
-                "testsrc=s=160x120:r=10:d=8",
+                "testsrc=s=160x120:r=10:d=13",
                 "-pix_fmt",
                 "yuv420p",
                 movie,
             ],
         });
-        // 5 a second of a 10 fps movie is every other frame: 40 runs of one frame, so two reads (32 and 8 frames).
         const lines = [{ text: "Orla Fictive", x: 0.1, y: 0.1, width: 0.3, height: 0.05 }];
         const cache = { get: () => lines, set: () => undefined };
         const before = new Set(readdirSync(tmpdir()));
         const onDisk: number[] = [];
-        const frames = await ocrVideo({
-            video: movie,
-            toUs: 8_000_000,
-            fps: 5,
-            cache,
-            onFrame: () => {
-                const folders = readdirSync(tmpdir()).filter(
-                    (name) => name.startsWith("gt-screen-text-") && !before.has(name)
-                );
-                onDisk.push(folders.reduce((all, name) => all + readdirSync(join(tmpdir(), name)).length, 0));
-            },
-        });
-        expect(frames).toHaveLength(40);
-        expect(onDisk).toHaveLength(40);
-        expect(Math.max(...onDisk)).toBeLessThanOrEqual(32);
+        const countOnDisk = () => {
+            const folders = readdirSync(tmpdir()).filter(
+                (name) => name.startsWith("gt-screen-text-") && !before.has(name)
+            );
+            onDisk.push(folders.reduce((all, name) => all + readdirSync(join(tmpdir(), name)).length, 0));
+        };
+        const ffmpegRuns = (spawns: Array<{ cmd: string[] }>) => spawns.filter(({ cmd }) => cmd[0] === "ffmpeg").length;
+        // 5 a second of a 10 fps movie is every other frame: 65 runs of one frame, three reads of 32, 32 and 1 terms.
+        const sparse = await withSpawnCounter(() =>
+            ocrVideo({ video: movie, toUs: 13_000_000, fps: 5, cache, onFrame: countOnDisk })
+        );
+        expect(sparse.result).toHaveLength(65);
+        expect(ffmpegRuns(sparse.spawns)).toBe(3);
+        expect(onDisk).toHaveLength(65);
+        expect(Math.max(...onDisk)).toBeLessThanOrEqual(1);
+
+        // Every frame of the movie is one run of 130 neighbouring frames: one term, one read, one decoder.
+        const every = gridRead({ video: movie, fromUs: 0, toUs: 13_000_000, fps: 10 });
+        expect(every.reads.map((read) => [read.frames, ...read.args.slice(-2)])).toEqual([[130, "-frames:v", "130"]]);
+        expect(every.slots.map((slot) => slot.frame)).toEqual([...Array(130).keys()]);
+        const pictures: number[] = [];
+
+        for await (const picture of readGridPictures(every, { video: movie, timeoutMs: 60_000 })) {
+            expect([...picture.png.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+            expect(new TextDecoder().decode(picture.png.subarray(-8, -4))).toBe("IEND");
+            pictures.push(picture.frame);
+        }
+
+        expect(pictures).toEqual([...Array(130).keys()]);
+        onDisk.length = 0;
+        const dense = await withSpawnCounter(() =>
+            ocrVideo({ video: movie, toUs: 13_000_000, fps: 10, cache, onFrame: countOnDisk })
+        );
+        expect(dense.result).toHaveLength(130);
+        expect(ffmpegRuns(dense.spawns)).toBe(1);
+        expect(Math.max(...onDisk)).toBeLessThanOrEqual(1);
     }, 60_000);
 
     test("verifyHidden with from and to reads the source of that range only (review CLI-F7)", async () => {
@@ -366,6 +397,18 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         expect(frames.map((frame) => frame.atUs)).toEqual([0, 500_000, 1_000_000, 1_500_000]);
         expect(frames.every((frame) => frame.lines[0]?.text === "Orla Fictive")).toBe(true);
 
+        // A kept file cut short (a run killed while it wrote) is a miss, never an error out of verifyHidden.
+        const cut = join(folder, "cut.mp4");
+        writeFileSync(cut, "bytes of their own, so the kept file is their own too");
+        const keptPath = toolDataDir("recorder", "verify-ocr", `${movieContentKey(cut)}.json`);
+        mkdirSync(dirname(keptPath), { recursive: true });
+        writeFileSync(keptPath, '{"0":[{"text":"Orla');
+        const fresh = exportFrameCache(cut);
+        expect(fresh.get(0)).toBeUndefined();
+        fresh.set(0, lines);
+        fresh.flush();
+        expect(exportFrameCache(cut).get(0)).toEqual(lines);
+
         // from/to in source seconds, a cut moment taken as the next or last kept one; the intro card leads.
         const project = applyOp(
             wholeProject({ video: movie, durationUs: 10_000_000, width: 320, height: 180 }),
@@ -379,6 +422,50 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         });
         expect(exportRangeOf(project, {})).toBeUndefined();
     }, 60_000);
+
+    test("a movie written again under the same path is listed again, never read on its old frame times", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-grid-identity-"));
+        const movie = join(folder, "export.mp4");
+        const make = (seconds: number) =>
+            runVideoCommand({
+                command: [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    `testsrc=s=160x120:r=10:d=${seconds}`,
+                    "-pix_fmt",
+                    "yuv420p",
+                    movie,
+                ],
+            });
+        await make(1);
+        expect(framePresentationUs(movie)).toHaveLength(10);
+        await make(2);
+        expect(framePresentationUs(movie)).toHaveLength(20);
+    }, 60_000);
+
+    // Regression test: review of PR 748, round 1. An output range's source read took only the source at its two ends,
+    // so a clip that jumps forward and back (0–10, 80–90, 20–30) left the middle clip unread.
+    test("an output range's source read covers every clip that plays in it, not only the two ends", () => {
+        const project = editProjectSchema.parse({
+            ...wholeProject({ video: "/movies/jumps.mp4", durationUs: 100_000_000, width: W, height: H }),
+            clips: [
+                { id: "c1", fromUs: 0, toUs: 10_000_000 },
+                { id: "c2", fromUs: 80_000_000, toUs: 90_000_000 },
+                { id: "c3", fromUs: 20_000_000, toUs: 30_000_000 },
+            ],
+        });
+        expect(sourceScanOf(project, { from: 9, to: 21, timeBase: "output" })).toEqual({
+            fromUs: 8_000_000,
+            toUs: 91_000_000,
+        });
+        expect(sourceScanOf(project, { from: 2, to: 4 })).toEqual(scanOf(2, 4));
+    });
 
     test("a stretch is read by the frames' own times, never after an input seek, a gap keeping the frame before it (round 8)", async () => {
         const folder = mkdtempSync(join(tmpdir(), "gt-grid-read-"));
@@ -444,18 +531,27 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
     }, 60_000);
 });
 
-describe("verifyHidden refuses a read rate it cannot use (review CLI-F1)", () => {
-    // `--every 0` made the frame step 0 and the grid loop never ended; "0,5" (a decimal comma) read one frame only and
-    // said "Nothing readable". Both are refused before anything is exported or read.
-    test.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 0.05, 6])("everySeconds %p is refused", async (every) => {
-        await expect(verifyHidden("/nonexistent/verify.edit.json", { everySeconds: every })).rejects.toThrow(
-            /everySeconds takes 0\.1 to 5/
-        );
+describe("frame reads refuse a rate that never advances", () => {
+    test("gridRead and verifyHidden name the bad interval instead of looping", async () => {
+        for (const fps of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
+            expect(() => gridRead({ video: "/nowhere/movie.mp4", fromUs: 0, toUs: 1_000_000, fps })).toThrow(
+                "a positive number of times a second"
+            );
+        }
+
+        // "0,5" (a decimal comma) parses as NaN; 0.05 and 6 are just outside the REPL schema's bounds.
+        for (const everySeconds of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 0.05, 6, 30]) {
+            await expect(verifyHidden("/nowhere/edit.json", { everySeconds })).rejects.toThrow(
+                "every 0.1 to 5 seconds"
+            );
+        }
     });
 
+    // Review CLI-F1: `--every 0` made the frame step 0 and the grid loop never ended. ocrVideo is refused before it
+    // reads anything, through its gridRead.
     test.each([0, -2, Number.NaN, Number.POSITIVE_INFINITY])("ocrVideo fps %p is refused", async (fps) => {
         await expect(ocrVideo({ video: "/nonexistent/movie.mp4", toUs: 1_000_000, fps })).rejects.toThrow(
-            /a positive number of frames a second/
+            "a positive number of times a second"
         );
     });
 });

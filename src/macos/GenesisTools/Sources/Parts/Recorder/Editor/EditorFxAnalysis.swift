@@ -97,6 +97,11 @@ struct PrivateDataSection: View {
     /// it visible is the reader's explicit choice, never the default.
     @State private var keepFixedAreas = false
 
+    /// The op the Hide button sends. Fixed areas stay hidden unless the person chose to leave them visible.
+    static func hideTextOp(_ text: String, leaveFixed: Bool) -> EditOp {
+        .hideText(EditOp.HideText(text: text, excludeFixed: leaveFixed ? true : nil))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionLabel(text: "Hide a text everywhere")
@@ -108,7 +113,7 @@ struct PrivateDataSection: View {
                 Button("Hide") { hideText() }
                     .disabled(busy || phrase.trimmingCharacters(in: .whitespaces).isEmpty)
                     .buttonStyle(.genHoverPlain())
-                    .instantTooltip("Finds every place the words show (OCR on this Mac) and blurs each one while it shows; the blur follows a scroll and leaves a toast over it visible")
+                    .instantTooltip("Finds every place the words show (OCR on this Mac) and blurs each one while it shows; the blur follows a scroll")
                     .accessibilityIdentifier("recorder.hide.textButton")
             }
             Toggle("Leave fixed areas visible", isOn: $keepFixedAreas)
@@ -195,7 +200,7 @@ struct PrivateDataSection: View {
         guard !text.isEmpty, !busy else { return }
         busy = true
         let leaveFixed = keepFixedAreas
-        model.applyOps(EditOp.json([.hideText(EditOp.HideText(text: text, excludeFixed: leaveFixed))])) { result in
+        model.applyOps(EditOp.json([Self.hideTextOp(text, leaveFixed: leaveFixed)])) { result in
             busy = false
             switch result {
             case .success:

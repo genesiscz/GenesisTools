@@ -56,7 +56,7 @@ tools github issue 123 --save                     # write ./.claude/github/owner
 ```
 
 `issue` works on a PR number too: GitHub serves a PR's conversation as an issue. Use it for a PR's comments,
-because `pr` does not fetch them yet.
+because `pr` does not fetch them yet. `issues` is an alias of `issue`.
 
 - Comments: `--no-comments`, `-L, --limit <n>`, `--all`, `--first <n>`, `--last <n>`, `--since <id|url>`,
   `--after <date>`, `--before <date>`, `--author <user>`, `--no-bots` (no effect at the moment, see below).
@@ -90,21 +90,22 @@ A comment counts as a bot's (`isBot` in `-f json`) when its author is a GitHub `
 `[bot]`, or a login that contains a known bot name (dependabot, renovate, github-actions, codecov, stale, mergify
 and a few more).
 
-
 ### `issue post`: open a new issue
 
 ```bash
-tools github issue post --repo owner/repo --title "Crash on start" --body-file body.md
-tools github issue post --repo owner/repo --title "Crash on start" --body-file body.md --redact --label bug --dry-run
+tools github issue post --repo owner/repo --title "Crash on start" --body-file report.md   # open it
+tools github issue post -r owner/repo -t "Crash on start" --body-file report.md --redact --dry-run   # check it first
 ```
 
-- `--redact` replaces personal data (the local placeholder-check list) and secrets before posting, and says how many.
-- `--label` repeats. `--dry-run` prints what would be posted. `--json` prints `{ posted, number, url, … }`.
+`issue post` opens an issue from a title and a body: `--body-file <file>` (`-` reads stdin) or `--body <text>`.
+`--redact` replaces personal data (the local placeholder-check list) and secrets in the title and the body before it
+posts, and says how many it replaced. `-l, --label <name>` repeats. `--dry-run` prints what would be posted and sends
+nothing to GitHub. `--json` prints `{ posted, number, url, title, body, replaced }`.
 
 ### `media upload`: images and videos for a PR or an issue
 
 ```bash
-tools github media upload shot.png demo.mp4 --repo owner/repo            # prints one markdown line per file
+tools github media upload shot.png demo.mp4 --repo owner/repo            # prints the markdown, a blank line between files
 tools github media upload "shot.png#Login page" --repo owner/repo        # alt text after the first #
 tools github media upload shot.png --repo owner/repo --dry-run           # repo id, write access, a verdict per file
 tools github media upload shot.png --repo owner/repo --pr 42 --append    # also add the lines to the PR body
@@ -123,9 +124,12 @@ because GitHub plays it inline only when the URL stands alone in its paragraph.
 - **An upload cannot be undone.** The asset stays on GitHub even when nothing uses it. `--dry-run` uploads nothing: it
   prints the repo id, whether you can push, and the type, size and verdict of each file.
 - `--pr <n>` or `--issue <n>` labels the output. With `--append` the command also writes the lines into that body
-  (a blank line, then each line separated by a blank line). Without `--append` the body stays as it is.
+  (a blank line, then each line separated by a blank line). It reads that body before the first upload, so a wrong
+  number fails before anything is uploaded. Without `--append` the body stays as it is.
 - Errors: 404 means no write access, 422 means GitHub refused the file (its message is printed), 429 means rate
   limited (the `Retry-After` seconds are printed). GitHub Enterprise Server is not supported.
+- When a later file or the `--append` write fails, the command still prints the markdown (or the `--json` rows) of
+  the files it already uploaded, then the error, and exits 1. Retry only the files that are not printed.
 - Observed 2026-11-09: a fresh asset answers 404 to a request without a token and 302 (to a signed S3 URL) with one,
   until something references it. Two assets that public repositories already reference answered an anonymous
   request with 302 the same day, so a referenced asset on a public repository is readable without a token. On a

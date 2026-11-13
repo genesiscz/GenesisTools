@@ -264,7 +264,9 @@ export class AppServerClient {
         const code = await this.process.exited;
         const wasClosed = this.closed;
         this.closed = true;
-        this.peer.close(`Codex app-server exited with code ${code}`);
+        // The stdio adapter reads the rest of stdout before it closes the peer with the exit reason, so a reply the
+        // server wrote just before it exited still resolves its call, and `onExit` hears of the exit after it.
+        await this.connection.ended;
 
         if (!wasClosed) {
             await this.options.onExit?.(code);

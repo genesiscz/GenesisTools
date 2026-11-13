@@ -111,12 +111,17 @@ const NO_BREAK_AFTER = new Set([
  * whatever the alignment, so a blank line in a centred or right-aligned text widens the box to the left (TextPlates
  * draws that wide plate); the empty line after a final "\n" adds its height only.
  */
-export function layoutText(
-    text: string,
-    px: number,
-    wrapPx: number,
-    align: (typeof TEXT_ALIGNS)[number] = "center"
-): TextLayout {
+export function layoutText({
+    text,
+    px,
+    wrapPx,
+    align = "center",
+}: {
+    text: string;
+    px: number;
+    wrapPx: number;
+    align?: (typeof TEXT_ALIGNS)[number];
+}): TextLayout {
     const widths = advances(px);
     const outside = widths.length - 1;
     const lines: Array<{ letters: number; spaces: number }> = [];

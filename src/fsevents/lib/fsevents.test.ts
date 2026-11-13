@@ -274,8 +274,10 @@ describe("tools fsevents entrypoint", () => {
             });
             const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
             const logDir = join(home, ".genesis-tools", "logs");
-            const log = readdirSync(logDir)
-                .map((name) => readFileSync(join(logDir, name), "utf-8"))
+            // The logs folder also holds the failure-contexts folder: read the files only.
+            const log = readdirSync(logDir, { withFileTypes: true })
+                .filter((entry) => entry.isFile())
+                .map((entry) => readFileSync(join(logDir, entry.name), "utf-8"))
                 .join("\n");
 
             expect(exitCode).toBe(1);

@@ -391,7 +391,8 @@ tools ask -p openai -m gpt-4o-mini -f json "..." | jq -r .content   # no @file, 
 ```
 
 - Piped or prompt text that holds an `@` word with a dot (`react@18.2.0`) hangs the command. Put a space after the `@`,
-  or write the text to a file and pass that file as a plain path.
+  or write the text to an existing file and attach it as `@file.txt`: ask reads its content and never scans it for
+  `@` words. A plain path without the `@` is sent as prompt text, not as the file's content.
 - Pass `-p` and `-m` (or set a default). Without a terminal ask never opens a picker: a missing or ambiguous model
   exits 1 with suggestions on stderr.
 - `--raw` prints the answer text on stdout, with a trailing newline. An `@file` attachment still adds an

@@ -4,27 +4,14 @@ import type { EmbeddingModel, ImageModel, LanguageModel, SpeechModel, Transcript
 import type { CatalogEntry } from "../catalog/types";
 import type { AccountEntry } from "../config/schema";
 import type { AccountFeatures } from "./account-features";
+import type { Capability, ProviderKind } from "./capabilities";
 
 /**
  * A provider plugin is the extension point of the AI layer: adding a provider is
  * one folder plus one registry line, with no core edits.
  */
 
-export type ProviderKind = "api-key" | "subscription" | "local" | "gateway";
-
-export type Capability =
-    | "chat"
-    | "embed"
-    | "transcribe"
-    | "tts"
-    | "translate"
-    | "summarize"
-    | "classify"
-    | "sentiment"
-    | "image"
-    | "video"
-    | "realtime"
-    | "rerank";
+export type { Capability, ProviderKind } from "./capabilities";
 
 export interface CredentialSpec {
     /** Fields this provider needs from `account.credentials`. */

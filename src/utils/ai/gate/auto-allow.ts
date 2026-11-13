@@ -9,10 +9,11 @@
  * of GenesisTools' own daemons of the installed checkout gets the key with no window, with an audit line and a
  * notification"). A daemon passes whoever starts it, when bun runs that script of the checkout the app was built from.
  */
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
+import { isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { gateDir } from "./grants";
 
@@ -44,6 +45,7 @@ export const VAULT_AUTO_ALLOW_DEFAULTS: VaultAutoAllowSettings = {
     daemonNotifyHours: 24,
 };
 
+/** `~/.genesis-tools/ai/gate/vault-auto-allow.json`, beside the vault grants. */
 export function vaultAutoAllowPath(): string {
     return join(gateDir(), "vault-auto-allow.json");
 }
@@ -69,7 +71,7 @@ export function autoAllowCommandEntry(words: readonly string[]): string {
     const parts = command.split(" ");
     if (parts.length !== 2 || parts.some((part) => part.startsWith("-"))) {
         throw new Error(
-            `"${command}" is not <tool> <subcommand>; the app matches a tool and its first argument only, so "claude warmup" covers every "tools claude warmup ..." call`
+            `"${command}" is not <tool> <subcommand>; the app matches a tool and its first argument only, so "claude warmup" covers every call of that subcommand, whatever follows it`
         );
     }
 
@@ -100,79 +102,105 @@ function defaultSettings(): VaultAutoAllowSettings {
     };
 }
 
-function isBoolean(value: unknown): value is boolean {
-    return typeof value === "boolean";
-}
-
-function isFiniteNumber(value: unknown): value is number {
-    return typeof value === "number" && Number.isFinite(value);
-}
-
 /**
- * The settings on disk, read as the app decodes them: a missing (or null) key takes its default, and a key of the
- * wrong type makes the whole file invalid. Such a file, or one that is not a JSON object, throws with its path: the
- * app turns the feature off for it, so the CLI must neither show the defaults as if they applied nor save them over it.
+ * One key of the file, read the way the app's decoder reads it (`decodeIfPresent`): absent or null takes the default,
+ * a value of another type throws, because the app turns the whole feature off for such a file.
  */
-export function loadVaultAutoAllow(path = vaultAutoAllowPath()): VaultAutoAllowSettings {
-    const read = readJsonFileForUpdateSync<Record<string, unknown>>(path, { accepts: isJsonObject });
-    if (read.state === "missing") {
-        return defaultSettings();
+function settingsField<T>(
+    value: Record<string, unknown>,
+    key: keyof VaultAutoAllowSettings,
+    accepts: (field: unknown) => field is T,
+    fallback: T,
+    path: string
+): T {
+    const field = value[key];
+    if (field === undefined || field === null) {
+        return fallback;
     }
 
-    if (read.state !== "ok") {
-        throw new Error(`${path} is not a JSON object; the vault window asks for every command until it is fixed`);
-    }
-
-    const value = read.value;
-    const defaults = defaultSettings();
-    const wrong: string[] = [];
-    const field = <K extends Exclude<keyof VaultAutoAllowSettings, "version">>(
-        key: K,
-        accepts: (raw: unknown) => raw is VaultAutoAllowSettings[K]
-    ): VaultAutoAllowSettings[K] => {
-        const raw = value[key];
-        if (raw === undefined || raw === null) {
-            return defaults[key];
-        }
-
-        if (!accepts(raw)) {
-            wrong.push(key);
-            return defaults[key];
-        }
-
-        return raw;
-    };
-
-    const settings: VaultAutoAllowSettings = {
-        version: 1,
-        enabled: field("enabled", isBoolean),
-        notify: field("notify", isBoolean),
-        commands: field("commands", isStringArray),
-        agentApps: field("agentApps", isStringArray),
-        daemons: field("daemons", isStringArray),
-        daemonNotifyHours: Math.max(0, field("daemonNotifyHours", isFiniteNumber)),
-    };
-
-    if (wrong.length > 0) {
+    if (!accepts(field)) {
         throw new Error(
-            `${path} has a value of the wrong type in ${wrong.join(", ")}; the vault window asks for every command until it is fixed`
+            `${path}: "${key}" has the wrong type; the app turns auto-allow off until the file is fixed or removed`
         );
     }
 
-    return settings;
+    return field;
 }
 
+const isBoolean = (field: unknown): field is boolean => typeof field === "boolean";
+
+const isFiniteNumber = (field: unknown): field is number => typeof field === "number" && Number.isFinite(field);
+
+/**
+ * The settings on disk, a missing key taking its default. A file the app cannot decode (not JSON, not an object, or a
+ * key of the wrong type) throws with its path: the app turns the feature off for such a file, so the CLI must not show
+ * the defaults as if they applied, and must not write over it. A plain read: showing the settings never writes a file.
+ * A missing file hands out arrays of its own, so a change made in place never reaches VAULT_AUTO_ALLOW_DEFAULTS.
+ */
+export function loadVaultAutoAllow(path = vaultAutoAllowPath()): VaultAutoAllowSettings {
+    let text: string;
+    try {
+        text = readFileSync(path, "utf8");
+    } catch (err) {
+        if (isMissingFileError(err)) {
+            return defaultSettings();
+        }
+
+        throw err;
+    }
+
+    let value: unknown;
+    try {
+        value = SafeJSON.parse(text, { strict: true });
+    } catch {
+        value = undefined;
+    }
+
+    if (!isJsonObject(value)) {
+        throw new Error(
+            `${path} is not a JSON object; the app turns auto-allow off until the file is fixed or removed`
+        );
+    }
+
+    const defaults = defaultSettings();
+
+    return {
+        version: 1,
+        enabled: settingsField(value, "enabled", isBoolean, defaults.enabled, path),
+        notify: settingsField(value, "notify", isBoolean, defaults.notify, path),
+        commands: settingsField(value, "commands", isStringArray, defaults.commands, path),
+        agentApps: settingsField(value, "agentApps", isStringArray, defaults.agentApps, path),
+        daemons: settingsField(value, "daemons", isStringArray, defaults.daemons, path),
+        daemonNotifyHours: Math.max(
+            0,
+            settingsField(value, "daemonNotifyHours", isFiniteNumber, defaults.daemonNotifyHours, path)
+        ),
+    };
+}
+
+/** Writes the settings atomically, private to the user. Callers that change one key use `updateVaultAutoAllow`. */
 export function saveVaultAutoAllow(settings: VaultAutoAllowSettings, path = vaultAutoAllowPath()): void {
     mkdirSync(dirname(path), { recursive: true });
     atomicWriteFileSync(path, `${SafeJSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
 }
 
-/** Loads, applies `change`, saves, and returns the saved settings. */
-export function updateVaultAutoAllow(
+/**
+ * Loads, applies `change`, saves, and returns the saved settings, all under the file's lock: two commands at once (a
+ * `disable` and a `notify off`) each see the other's write, so neither puts back what the other changed. A file that
+ * does not load throws before anything is written.
+ */
+export async function updateVaultAutoAllow(
     change: (settings: VaultAutoAllowSettings) => VaultAutoAllowSettings,
     path = vaultAutoAllowPath()
-): VaultAutoAllowSettings {
-    const next = change(loadVaultAutoAllow(path));
-    saveVaultAutoAllow(next, path);
-    return next;
+): Promise<VaultAutoAllowSettings> {
+    mkdirSync(dirname(path), { recursive: true });
+    return withFileLock(
+        `${path}.lock`,
+        async () => {
+            const next = change(loadVaultAutoAllow(path));
+            saveVaultAutoAllow(next, path);
+            return next;
+        },
+        10_000
+    );
 }

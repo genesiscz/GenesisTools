@@ -260,6 +260,21 @@ describe("hard deny", () => {
         expect(vmDataReason(`${home}/.android/avd/old.avd/userdata-qemu.img.qcow2`, home)).toBeNull();
         expect(vmDataReason(`${home}/Movies/export.mov`, home)).toBeNull();
     });
+
+    test("the VM and Photos denials also match a path written with Windows separators", () => {
+        const home = "C:\\Users\\fixture";
+
+        for (const path of [
+            "C:\\Users\\fixture\\Pictures\\Archive.photoslibrary\\database",
+            "C:\\Users\\fixture\\.colima\\default\\data",
+            "D:\\VMs\\build.vmwarevm\\disk",
+            "C:\\Users\\fixture\\Downloads\\Docker.raw",
+        ]) {
+            expect(vmDataReason(path, home)).not.toBeNull();
+        }
+
+        expect(vmDataReason("C:\\Users\\fixture\\Movies\\export.mov", home)).toBeNull();
+    });
 });
 
 describe("presets", () => {

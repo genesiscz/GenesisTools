@@ -168,6 +168,16 @@ export async function trashRecording(
     return { trashed: folder, ...batch };
 }
 
+/** The dry run's JSON, or null when its stdout is not JSON (a stray line): a plan that does not parse allows nothing. */
+function parsedPlan(stdout: string): unknown {
+    try {
+        return SafeJSON.parse(stdout, { strict: true });
+    } catch (error) {
+        log.debug({ error, stdout: stdout.slice(0, 500) }, "trash: the removal plan is not JSON");
+        return null;
+    }
+}
+
 /**
  * Moves several library recordings through the removal policy in ONE `tools rm` call, so what needs the user is one
  * request, never one per recording (RC24: 20 recordings made 20 requests). `aside: false` keeps the folders in the
@@ -211,12 +221,20 @@ export async function trashRecordings(
         assertReach("user", "ask the user to confirm a removal");
     } else {
         const plan = await execTool(["rm", "--dry-run", "--json", ...unique], { timeout: 30_000 });
-        const verdicts = removalPlanSchema.safeParse(
-            plan.success ? SafeJSON.parse(plan.stdout, { strict: true }) : null
-        );
+
+        // A dry run that failed (a timeout, no tools) planned nothing: that is its own error, not a request to ask.
+        if (!plan.success) {
+            const output = plan.stderr.trim() || plan.stdout.trim() || `exit ${plan.exitCode}`;
+            log.debug({ folders: unique, exitCode: plan.exitCode }, "trash: the removal plan failed");
+            throw new Error(
+                `the removal policy could not plan the trash (${output.slice(-300)}); nothing was moved and no one was asked`
+            );
+        }
+
+        const verdicts = removalPlanSchema.safeParse(parsedPlan(plan.stdout));
         const refused = verdicts.success
             ? verdicts.data.filter((entry) => entry.verdict !== "allow")
-            : unique.map((path) => ({ path, reason: undefined }));
+            : unique.map((path) => ({ path, reason: "its removal plan did not read as a plan" }));
 
         if (refused.length > 0) {
             log.debug(
@@ -245,7 +263,7 @@ export async function trashRecordings(
     try {
         raw = SafeJSON.parse(result.stdout, { strict: true });
     } catch {
-        log.debug({ stdout: result.stdout.slice(0, 200) }, `${toolCommand("rm --json")} answered no JSON`);
+        log.debug({ stdout: result.stdout.slice(0, 200) }, `${toolCommand("rm", "--json")} answered no JSON`);
     }
 
     const answer = removalResultSchema.safeParse(raw);

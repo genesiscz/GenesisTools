@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CdpLike } from "@genesiscz/utils/chrome-devtools/cdp-like";
@@ -38,6 +38,7 @@ import { attach, type Page } from "../cdp";
 import { cdpLikeOf } from "../cdp-like-adapter";
 import { type HeadlessChrome, launchHeadlessChrome } from "../headless";
 import { loadShotBook, parseShotBook, selectShots } from "./book";
+import { BROWSER_SOURCES, cookiesFromCommand } from "./browsers";
 import { imageFormatOf, loadWebPlan, shotFilesFor, takeQuickShot } from "./quick";
 import { rehearseShots, runShots } from "./run";
 
@@ -90,7 +91,7 @@ describe("the locator grammar", () => {
             style: { strokeWidth: 0, fill: "" },
         });
         // no clip: the union of every mark's target, 20 px around it
-        expect(part.clip.around.chains.map((chain) => chain.source)).toEqual(["testid=x", "testid=a", "testid=b"]);
+        expect(part.clip.around?.chains.map((chain) => chain.source)).toEqual(["testid=x", "testid=a", "testid=b"]);
         expect(part.clip.pad).toEqual([20, 20, 20, 20]);
         expect(() => parseShotPart({ marks: [{ target: id("x"), at: "under" as "below" }] })).toThrow(/unknown side/);
     });
@@ -101,6 +102,37 @@ describe("the locator grammar", () => {
         expect(splitChain("text=/a >> [/] b/ >> nth=1")).toEqual(["text=/a >> [/] b/", "nth=1"]);
         expect(splitChain("text=Don't >> nth=1")).toEqual(["text=Don't", "nth=1"]);
         expect(parseLocator('role=button[name="Next >> page"]').chains[0]?.steps).toHaveLength(1);
+    });
+
+    test("a mark's kind and label are checked at the boundary, so shots check catches them", () => {
+        const book = (mark: Record<string, unknown>) => ({
+            shots: [{ id: "1", stem: "one", marks: [{ target: "testid=x", ...mark }] }],
+        });
+
+        expect(() => parseShotBook(book({ kind: "typo" }), "book.json")).toThrow(
+            /marks\[0\]\.kind: expected highlight, box, ellipse, got typo/
+        );
+        expect(() => parseShotBook(book({ label: { text: "x", position: "middle" } }), "book.json")).toThrow(
+            /marks\[0\]\.label\.position: expected .*got middle/
+        );
+        expect(() => parseShotBook(book({ label: 5 }), "book.json")).toThrow(/marks\[0\]\.label: expected a string/);
+        expect(() => parseShotBook(book({ label: { text: "x", leader: "yes" } }), "book.json")).toThrow(
+            /label\.leader: expected true or false/
+        );
+        const parsed = parseShotBook(
+            book({ kind: "ellipse", label: { text: "x", position: "right", style: { fg: "#111111" } } }),
+            "book.json"
+        );
+        expect(parsed.shots[0].parts[0].marks[0]).toMatchObject({
+            kind: "ellipse",
+            label: { text: "x", position: "right", style: { fg: "#111111" } },
+        });
+    });
+
+    test("a part with no marks needs a clip: an around, or the viewport", () => {
+        expect(parseShotPart({ clip: { viewport: true } }).clip.around).toBeUndefined();
+        expect(() => parseShotPart({})).toThrow(/a part with no marks needs a clip/);
+        expect(() => parseShotPart({ clip: { pad: 4 } })).toThrow(/a part with no marks needs a clip/);
     });
 
     test("a malformed locator fails at the boundary and names itself", () => {
@@ -127,6 +159,7 @@ body { margin: 0; font: 16px Helvetica, Arial, sans-serif; }
 <label for="name" class="abs" style="left:400px;top:300px">Název *</label>
 <input id="name" class="abs" style="left:400px;top:330px;width:200px;height:24px">
 <div data-testid="hidden-thing" style="display:none">skryté</div>
+<div data-testid="invisible-thing" class="abs" style="left:700px;top:200px;width:60px;height:20px;visibility:hidden">neviditelné</div>
 <div id="host" class="abs" style="left:700px;top:20px;width:100px;height:50px"></div>
 <div data-testid="invisible" class="abs" style="left:900px;top:20px;width:40px;height:40px;visibility:hidden"><span data-testid="invisible-child" style="display:block;width:20px;height:20px"></span></div>
 <div data-testid="mixed" class="abs" style="left:900px;top:100px;width:40px;height:40px"></div>
@@ -240,6 +273,27 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
         expect(box(inHost)).toEqual({ x: 700, y: 20, w: 60, h: 20, count: 1 });
     });
 
+    test("a css step scoped to a shadow host searches the host's own shadow root", async () => {
+        const [scoped] = await resolve(within(css("#host"), css("span")));
+
+        expect(box(scoped)).toEqual({ x: 700, y: 20, w: 60, h: 20, count: 1 });
+    });
+
+    test("visibility:hidden keeps a box but is not boxed, alone or as one member of a union", async () => {
+        const [invisible, member] = await resolve(id("invisible-thing"), union(id("panel"), id("invisible-thing")));
+
+        expect(invisible).toEqual({ ok: false, source: "testid=invisible-thing", reason: "zero-size" });
+        expect(member).toEqual({
+            ok: false,
+            source: "testid=panel | testid=invisible-thing",
+            reason: "zero-size",
+            member: "testid=invisible-thing",
+        });
+        expect(member?.ok === false && describeMiss(member)).toBe(
+            "testid=panel | testid=invisible-thing (member testid=invisible-thing) matched only hidden or empty elements"
+        );
+    });
+
     test("text boxes inside a clip are the obstacles, and the overlay's own text is not one", async () => {
         await evaluateExpression(
             cdp,
@@ -339,6 +393,44 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
         expect(await evaluateExpression(cdp, `!!document.getElementById("${SHOT_OVERLAY_ID}")`)).toBe(false);
     }, 30_000);
 
+    test("an ellipse's curved stroke lies in the painted areas, so the composed image keeps all of it", async () => {
+        // the dialog holds no form control: a native button's corners can differ between two screenshots by themselves
+        const part = parseShotPart({
+            clip: { around: role("dialog"), pad: 10 },
+            marks: [{ target: role("dialog"), kind: "ellipse" }],
+        });
+        const capture = await capturePart(cdp, part, SETUP);
+        if (!capture.ok) {
+            throw new Error(capture.problems.join("; "));
+        }
+
+        const { images } = capture;
+        const direct = await differences(images.raw, images.annotated, images.painted);
+        expect(direct.outsideAt).toEqual([]);
+        expect(direct.inside).toBeGreaterThan(500);
+        const composed = await composeOverlay(images);
+        expect((await differences(composed, images.annotated, [])).outside).toBe(0);
+    }, 30_000);
+
+    test("a nudged label keeps its nudge in the exported marks, in image pixels", async () => {
+        const part = parseShotPart({
+            clip: { around: id("panel"), pad: 10, fit: "labels" },
+            marks: [{ target: id("usages-button"), at: "below", dx: 3, dy: 6, label: "posun" }],
+        });
+        const capture = await capturePart(cdp, part, SETUP);
+        if (!capture.ok) {
+            throw new Error(capture.problems.join("; "));
+        }
+
+        const [mark] = capture.images.annotations;
+        expect(capture.images.scale).toBe(1);
+        expect(mark.kind === "highlight" && mark.label).toMatchObject({
+            text: "posun",
+            position: "bottom-left",
+            offset: { x: 3, y: 6 },
+        });
+    }, 30_000);
+
     test("a label with no free spot inside the clip fails the part and names the label", async () => {
         const part = parseShotPart({
             clip: { around: id("usages-button"), pad: 0 },
@@ -401,6 +493,26 @@ describe.skipIf(!HAS_CHROME)("locators in a real page", () => {
             marks && typeof marks === "object" && "annotations" in marks ? marks.annotations : undefined;
         validateAnnotations(annotations);
         expect(annotations.map((annotation) => annotation.kind)).toEqual(["highlight", "arrow"]);
+    }, 30_000);
+
+    test("a plan of pixel items only (a control draw plan) draws on the visible viewport", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "quick-pixels-"));
+        const plan = await loadWebPlan(
+            SafeJSON.stringify([{ kind: "box", rect: { x: 10, y: 10, w: 50, h: 30 } }], { strict: true })
+        );
+        expect([plan.marks.length, plan.pixels.length, plan.clip]).toEqual([0, 1, undefined]);
+
+        const result = await takeQuickShot({ cdp, plan, out: join(dir, "pixels.png"), setup: SETUP });
+        if (!result.ok) {
+            throw new Error(result.problems.join("; "));
+        }
+
+        const image = await loadImage(readFileSync(result.files.annotated));
+        const viewport = await evaluateExpression(
+            cdp,
+            "[document.documentElement.clientWidth, document.documentElement.clientHeight]"
+        );
+        expect(viewport).toEqual([image.width, image.height]);
     }, 30_000);
 
     test("a .ts web plan imports the locator helpers from @genesis-tools/shots", async () => {
@@ -507,6 +619,8 @@ describe("the quick shot's output names", () => {
         expect(await sizeOf(await encodeImage(png, "webp", { maxWidth: 1200, quality: 60 }))).toEqual([1200, 80]);
         expect(await sizeOf(await encodeImage(png, "webp", { maxWidth: 2000 }))).toEqual([1500, 100]);
         expect(await encodeImage(png, "png", { maxWidth: 1200 })).toBe(png);
+        // a width limit under one pixel still gives a valid image, never a zero-width canvas
+        expect(await sizeOf(await encodeImage(png, "webp", { maxWidth: 0.4 }))).toEqual([1, 1]);
     });
 });
 
@@ -556,6 +670,36 @@ describe("a shot book", () => {
         ).toThrow(/locator "tesid=x": unknown step/);
     });
 
+    test("browser.attach.tab is new or current, and output.webp.maxWidth is a whole number of pixels", () => {
+        expect(parseShotBook({ ...BOOK, browser: { attach: { tab: "current" } } }, "book.json").browser.attach).toEqual(
+            { tab: "current" }
+        );
+        expect(() => parseShotBook({ ...BOOK, browser: { attach: { tab: "New" } } }, "book.json")).toThrow(
+            /browser\.attach\.tab: expected "new" or "current", got New/
+        );
+        expect(parseShotBook({ ...BOOK, output: { webp: { maxWidth: 0 } } }, "book.json").output.webp.maxWidth).toBe(0);
+        expect(() => parseShotBook({ ...BOOK, output: { webp: { maxWidth: 0.1 } } }, "book.json")).toThrow(
+            /output\.webp\.maxWidth: expected a whole number of pixels, got 0\.1/
+        );
+    });
+
+    test("a cookie command still running at its deadline is killed and named", async () => {
+        await expect(cookiesFromCommand(["sleep", "5"], 200)).rejects.toThrow(
+            "the cookie command sleep did not finish within 200 ms"
+        );
+        const cookie = {
+            name: "session",
+            value: "x",
+            domain: "example.com",
+            path: "/",
+            expires: -1,
+            httpOnly: true,
+            secure: true,
+        };
+        expect(await cookiesFromCommand(["echo", SafeJSON.stringify([cookie], { strict: true })])).toEqual([cookie]);
+        await expect(cookiesFromCommand(["false"])).rejects.toThrow("the cookie command false failed");
+    });
+
     test("a .ts book uses defineShots and the script's helpers, with no node_modules beside it", async () => {
         const dir = mkdtempSync(join(tmpdir(), "shot-book-"));
         const path = join(dir, "proposal.shots.ts");
@@ -596,12 +740,22 @@ describe.skipIf(!HAS_CHROME)("running a shot book in headless Chrome", () => {
         server = Bun.serve({
             port: 0,
             fetch: (request) =>
-                new Response(
-                    `<!doctype html><html><body style="margin:0">${pages[new URL(request.url).pathname] ?? ""}</body></html>`,
-                    {
-                        headers: { "content-type": "text/html; charset=utf-8" },
-                    }
-                ),
+                new URL(request.url).pathname === "/slow"
+                    ? // a page that never finishes loading: the body starts and never ends
+                      new Response(
+                          new ReadableStream({
+                              start(controller) {
+                                  controller.enqueue(new TextEncoder().encode("<!doctype html><html><body>"));
+                              },
+                          }),
+                          { headers: { "content-type": "text/html; charset=utf-8" } }
+                      )
+                    : new Response(
+                          `<!doctype html><html><body style="margin:0">${pages[new URL(request.url).pathname] ?? ""}</body></html>`,
+                          {
+                              headers: { "content-type": "text/html; charset=utf-8" },
+                          }
+                      ),
         });
     });
 
@@ -689,6 +843,59 @@ describe.skipIf(!HAS_CHROME)("running a shot book in headless Chrome", () => {
             ".shots/1110/08-names.marks.json",
         ]);
         expect(existsSync(join(out, "png/08-names.1110.original.png"))).toBe(false);
+    }, 60_000);
+
+    test("a failed navigation and a page that never loads fail their shot with the URL, not as a later miss", async () => {
+        // a port nobody listens on any more (port 1 is one Chrome refuses as unsafe, before it connects)
+        const closed = Bun.serve({ port: 0, fetch: () => new Response("") });
+        const refused = closed.port;
+        closed.stop(true);
+        const book = parseShotBook(
+            {
+                base: `http://127.0.0.1:${server.port}`,
+                browser: { headless: { cookies: { from: "none" } } },
+                page: { settleMs: 0, readyTimeoutMs: 1_000 },
+                shots: [
+                    { id: "slow", stem: "slow", url: "/slow", marks: [{ target: "testid=title" }] },
+                    {
+                        id: "refused",
+                        stem: "refused",
+                        url: `http://127.0.0.1:${refused}/x`,
+                        marks: [{ target: "testid=title" }],
+                    },
+                ],
+            },
+            "fixture-book.json"
+        );
+        const results = await rehearseShots(book, {});
+
+        expect(results.map((result) => (result.status === "failed" ? result.problems : result.status))).toEqual([
+            [`navigate http://127.0.0.1:${server.port}/slow: the page did not finish loading within 1000 ms`],
+            [`navigate http://127.0.0.1:${refused}/x: net::ERR_CONNECTION_REFUSED`],
+        ]);
+    }, 60_000);
+
+    test("a headless browser whose cookie import fails is closed, and its profile goes with it", async () => {
+        const profiles = () => readdirSync(tmpdir()).filter((name) => name.startsWith("gt-headless-chrome-"));
+        const before = new Set(profiles());
+        // Storage.setCookies refuses a field of the wrong type as invalid parameters
+        const bad = { name: "session", value: "x", domain: "127.0.0.1", path: "/", expires: "never" };
+        const outcome = await BROWSER_SOURCES.headless
+            .open(
+                { cookies: { from: "command", argv: ["echo", SafeJSON.stringify([bad], { strict: true })] } },
+                { base: `http://127.0.0.1:${server.port}` }
+            )
+            .then(
+                async (opened) => {
+                    // never leave a Chrome behind, also when this test fails
+                    await opened.close();
+                    return "opened";
+                },
+                (error: unknown) => (error instanceof Error ? error.message : String(error))
+            );
+
+        expect(outcome).not.toBe("opened");
+        expect(profiles().filter((name) => !before.has(name))).toEqual([]);
     }, 60_000);
 
     test("rehearse names a target that matches nothing, and writes nothing", async () => {

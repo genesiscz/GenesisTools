@@ -84,15 +84,7 @@ final class RecorderFxTests: XCTestCase {
         let item = EditProject.LensItem(id: "l1", startUs: 1_000_000, endUs: 3_000_000, follow: false)
         var lensed = plain
         lensed.lens = EditProject.Lens(items: [item])
-        XCTAssertEqual(EditOpDiff.ops(from: plain, to: lensed),
-                       [.lens(EditOp.Lens(id: "l1", from: 1, to: 3, radius: 0.12, magnification: 2, follow: false,
-                                          at: EditOp.Point(x: 0.5, y: 0.5), ring: "#FFFFFF"))])
-        // The window's id goes with the new lens, so a setLens sent before the service answers names a lens it has.
-        let added = try XCTUnwrap(EditOpDiff.ops(from: plain, to: lensed)?.first)
-        let wire = try XCTUnwrap(String(data: JSONEncoder().encode(added), encoding: .utf8))
-        XCTAssertTrue(wire.contains("\"id\":\"l1\""), wire)
-        XCTAssertFalse(try XCTUnwrap(String(data: JSONEncoder().encode(EditOp.lens(EditOp.Lens(from: 1, to: 2))), encoding: .utf8))
-            .contains("\"id\""), "no id: the service makes one, as for an old client")
+        XCTAssertNil(EditOpDiff.ops(from: plain, to: lensed), "a new lens is its own op: the service names it")
         var bigger = lensed
         bigger.lens?.items[0].magnification = 3
         bigger.lens?.items[0].radius = 0.2
@@ -100,7 +92,15 @@ final class RecorderFxTests: XCTestCase {
         var following = lensed
         following.lens?.items[0].follow = true
         XCTAssertEqual(EditOpDiff.ops(from: lensed, to: following), [.setLens(EditOp.SetLens(id: "l1", follow: true))])
-        XCTAssertEqual(EditOpDiff.ops(from: lensed, to: plain), [.unlens(EditOp.Unlens(id: "l1"))])
+        XCTAssertNil(EditOpDiff.ops(from: lensed, to: plain), "a deleted lens is its own unlens op")
+    }
+
+    /// A lens op may name the window's id for the new lens; without one the service makes the id, as for an old client.
+    func testALensOpCarriesItsIdOnlyWhenItNamesOne() throws {
+        let named = try XCTUnwrap(String(data: JSONEncoder().encode(EditOp.lens(EditOp.Lens(id: "l1", from: 1, to: 3))), encoding: .utf8))
+        XCTAssertTrue(named.contains("\"id\":\"l1\""), named)
+        let plain = try XCTUnwrap(String(data: JSONEncoder().encode(EditOp.lens(EditOp.Lens(from: 1, to: 2))), encoding: .utf8))
+        XCTAssertFalse(plain.contains("\"id\""), "no id: the service makes one, as for an old client")
     }
 
     /// R7 5: a blended frame hides what the other side's still shows, by the parts as they are drawn there. A part that
@@ -221,6 +221,71 @@ final class RecorderFxTests: XCTestCase {
             XCTAssertEqual(gray(whole, x, y), gray(joined, x, y), "pixel \(x),\(y)")
         }
         XCTAssertEqual(layers.picture.extent, layers.rect)
+    }
+
+    /// The Style tab's controls reach the recorder service: a transition, the tilt and a lens's fields as the ops
+    /// EditOpDiff names, adding and deleting a lens as their own ops. Before, they changed only the window's copy, the
+    /// service's answer put the old edit back, and nothing was saved.
+    @MainActor
+    func testTheStyleControlsSendTransitionsTiltAndLensesToTheService() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("render-fx-ops-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let project = EditProject.whole(video: folder.appendingPathComponent("none.mp4").path, durationUs: 10_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        let service = FakeServiceLink(project: project, rules: FakeRules.basic)
+        let model = EditorModel.on(service, store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
+
+        model.setTransitionKind(.crossfade)
+        model.setTransitionLength(600)
+        model.finishGesture()
+        XCTAssertEqual(service.project.transitions?.default, EditProject.Transition(kind: .crossfade, ms: 600))
+        model.setTilt(true)
+        model.finishGesture()
+        model.changeTilt { $0.strength = 0.8 }
+        model.finishGesture()
+        XCTAssertEqual(service.project.tilt?.strength, 0.8)
+        model.addLensAtPlayhead()
+        let lens = try XCTUnwrap(service.project.lens?.items.first, "the service makes the lens and names it")
+        XCTAssertEqual(model.project.lens?.items.map(\.id), [lens.id], "the window draws the service's lens")
+        XCTAssertEqual(lens.startUs, 0)
+        XCTAssertEqual(lens.endUs, 2_000_000)
+        XCTAssertFalse(lens.follow, "no cursor track: the lens stays put")
+        model.changeLens(lens.id) { $0.magnification = 3 }
+        model.finishGesture()
+        XCTAssertEqual(service.project.lens?.items.first?.magnification, 3)
+        model.removeLens(lens.id)
+        XCTAssertNil(service.project.lens)
+        XCTAssertEqual(service.sentTags, ["transition", "tilt", "tilt", "lens", "setLens", "unlens"])
+        XCTAssertEqual(model.project.transitions, service.project.transitions, "the window keeps what the service saved")
+        XCTAssertEqual(model.project.tilt, service.project.tilt)
+        XCTAssertNil(model.project.lens)
+    }
+
+    func testTheDiffNamesAJoinsTransitionTheTiltAndAMovedLens() throws {
+        var before = cutProject(EditProject.Transitions(default: .init(kind: .crossfade, ms: 400), joins: ["c2": .init(kind: .blur, ms: 600)]))
+        before.lens = EditProject.Lens(items: [EditProject.LensItem(id: "l1", startUs: 1_000_000, endUs: 3_000_000)])
+        var after = before
+        after.transitions?.joins = nil
+        after.transitions?.default.kind = .zoom
+        after.lens?.items[0].x = 0.2
+        after.lens?.items[0].y = 0.8
+        after.lens?.items[0].endUs = 3_500_000
+        XCTAssertEqual(EditOpDiff.ops(from: before, to: after), [
+            .transition(EditOp.Transition(kind: .zoom, ms: 400)),
+            .transition(EditOp.Transition(kind: .default, clip: "c2")),
+            // `at` alone would stop the lens following the cursor on the service, so `follow` goes with it.
+            .setLens(EditOp.SetLens(id: "l1", to: 3.5, follow: true, at: EditOp.Point(x: 0.2, y: 0.8))),
+        ])
+        var tilted = before
+        tilted.tilt = EditProject.Tilt(strength: 0.7)
+        XCTAssertEqual(EditOpDiff.ops(from: before, to: tilted), [
+            .tilt(EditOp.Tilt(enabled: true, strength: 0.7, drift: true, tiltIn: true, tiltOut: true, inMs: 1200, outMs: 1200)),
+        ])
+        XCTAssertEqual(EditOpDiff.ops(from: tilted, to: before), [.tilt(EditOp.Tilt(enabled: false))])
+        var added = before
+        added.lens?.items.append(EditProject.LensItem(id: "l2", startUs: 0, endUs: 1_000_000))
+        XCTAssertNil(EditOpDiff.ops(from: before, to: added), "a new lens is its own op: the service names it")
     }
 }
 

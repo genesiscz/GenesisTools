@@ -10,6 +10,7 @@ import { DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { ReplEngine } from "@app/node-repl/lib/engine";
+import { BrowserToolset } from "@app/node-repl/lib/toolsets/browser";
 import { MeetingsToolset } from "@app/node-repl/lib/toolsets/meetings";
 import { missingCameraWarning } from "@app/recorder/lib/camera-recorder";
 import { defaultExportName, editProject, inItsFolder, transcriptWords, undoDepth } from "@app/recorder/lib/edit";
@@ -226,6 +227,79 @@ const ctx: ToolsetContext = {
     },
     write: () => undefined,
 };
+
+/** One opened meeting, as the meetings tests call it. */
+interface MeetingHandle {
+    readonly id: string;
+    readonly title: string;
+    readonly record: { items: Array<{ id: string; status: string }> };
+    items: {
+        add(input: unknown): Promise<unknown>;
+        confirm(input: unknown): Promise<{ decided: string[]; token?: string }>;
+        reopen(input: unknown): Promise<{ reopened: string[] }>;
+        reject(input: unknown): Promise<{ decided: string[] }>;
+        list(input?: unknown): unknown[];
+    };
+    set(input: unknown): Promise<{ project: string | null; labels: string[] }>;
+    settings(): Promise<SettingsAnswer>;
+    setSettings(patch: unknown): Promise<SettingsAnswer>;
+    mark(label: string): Promise<RecordingMarker>;
+}
+
+/** The meetings toolset's global, as the meetings tests call it. */
+interface MeetingsHandle {
+    list(): Array<{ id: string; seconds: number | null }>;
+    open(ref: string): MeetingHandle;
+    config: { get(path?: string): Promise<unknown> };
+    projects: {
+        labels(input: unknown): Promise<string[]>;
+        pair(input: unknown): Promise<unknown>;
+        unpair(input: unknown): Promise<unknown>;
+        people(input?: unknown): Promise<Array<{ project: string; name: string }>>;
+    };
+}
+
+/** Loads the meetings toolset and gives its global the one shape the tests share. */
+async function loadMeetings(): Promise<MeetingsHandle> {
+    const { meetings } = (await new MeetingsToolset().load(ctx)) as { meetings: MeetingsHandle };
+    return meetings;
+}
+
+/** The browser toolset's global, as its test calls it. */
+interface BrowserHandle {
+    open(input: { port: number; url: string }): Promise<{ id: string; url: string; title: string }>;
+}
+
+/** A browser toolset whose CDP port is a fake driver: the tab opens and loads, and the tab list then fails. */
+class TabsFailBrowser extends BrowserToolset {
+    constructor(port: number) {
+        super();
+        this.drivers.set(port, {
+            tabs: async () => {
+                throw new Error("the browser dropped the connection");
+            },
+            evaluate: async () => undefined,
+            navigate: async () => true,
+            open: async () => ({ id: "tab-1", url: "about:blank", title: "" }),
+            waitForRequest: async () => {
+                throw new Error("not used");
+            },
+            close: () => undefined,
+        });
+    }
+}
+
+describe("browser toolset", () => {
+    // An open tab whose details could not be read was refused, so the caller never got the id to close it with.
+    test("open still answers the tab's id when the tab list fails after the load", async () => {
+        const { browser } = (await new TabsFailBrowser(9555).load(ctx)) as { browser: BrowserHandle };
+        expect(await browser.open({ port: 9555, url: "https://example.com/" })).toEqual({
+            id: "tab-1",
+            url: "https://example.com/",
+            title: "",
+        });
+    });
+});
 
 describe("toolset method names", () => {
     test("a missing method names the real ones, while inspection and await still read missing names", async () => {
@@ -542,6 +616,11 @@ test("editor.open of a video recording's folder opens its movie, a frames folder
     );
     writeFileSync(join(folder, "screen.mp4"), "not really a movie");
     expect(editSourceOf(folder)).toEqual({ file: join(folder, "screen.mp4") });
+    mkdirSync(join(folder, "frames"));
+    expect(editSourceOf(join(folder, "frames"))).toEqual({ file: join(folder, "screen.mp4") });
+    // A folder of its own inside the recording is edited as the frames it holds.
+    mkdirSync(join(folder, "picked"));
+    expect(editSourceOf(join(folder, "picked"))).toEqual({ file: join(folder, "picked") });
 
     const frames = mkdtempSync(join(tmpdir(), "gt-frames-folder-"));
     expect(editSourceOf(frames)).toEqual({ file: frames });
@@ -1848,14 +1927,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Findings", start: "2026-11-02T16:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: {
-                open(ref: string): {
-                    readonly record: { items: unknown[] };
-                    items: { add(input: unknown): Promise<unknown> };
-                };
-            };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         const answer = await meeting.items.add({
             findings: [{ kind: "question", from: 0, to: 5, question: "Who spoke first?" }],
@@ -1916,9 +1988,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Running", start: "2026-11-02T19:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: { list(): Array<{ id: string; seconds: number | null }> };
-        };
+        const meetings = await loadMeetings();
         const rows = meetings.list();
         expect(rows.find((row) => row.id === ended.id)?.seconds).toBe(1500);
         expect(rows.find((row) => row.id === running.id)?.seconds).toBeNull();
@@ -1929,21 +1999,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Undo", start: "2026-11-02T17:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: {
-                open(ref: string): {
-                    readonly id: string;
-                    readonly title: string;
-                    readonly record: { items: Array<{ id: string; status: string }> };
-                    items: {
-                        add(input: unknown): Promise<unknown>;
-                        confirm(input: unknown): Promise<{ decided: string[]; token?: string }>;
-                        reopen(input: unknown): Promise<{ reopened: string[] }>;
-                    };
-                };
-                config: { get(path?: string): Promise<unknown> };
-            };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         expect(meeting.id).toBe(record.id);
         expect(meeting.title).toBe("Undo");
@@ -2010,9 +2066,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Labels", start: "2026-11-02T14:00:00.000Z", createdBy: "new", labels: ["kickoff"] },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: { open(ref: string): { set(input: unknown): Promise<{ labels: string[] }> } };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         await expect(meeting.set({ unlabel: ["nosuch"] })).rejects.toThrow(
             `${record.id} has no label "nosuch". Its labels: kickoff`
@@ -2023,9 +2077,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
 
     // R2-MC10: an unknown project answered [] here, while the CLI refused it.
     test("meetings: projects.labels refuses a project nobody knows, and adding a label makes one", async () => {
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: { projects: { labels(input: unknown): Promise<string[]> } };
-        };
+        const meetings = await loadMeetings();
         await expect(meetings.projects.labels({ project: "r2-mc10-nosuch" })).rejects.toThrow(
             "No project r2-mc10-nosuch. The known ones:"
         );
@@ -2039,9 +2091,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Kinds", start: "2026-11-02T13:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: { open(ref: string): { items: { list(input?: unknown): unknown[] } } };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         expect(() => meeting.items.list({ kind: "bogus" })).toThrow(
             'expected one of "speaker-range"|"label"|"join"|"term"|"question"'
@@ -2055,17 +2105,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Reject", start: "2026-11-02T12:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: {
-                open(ref: string): {
-                    readonly record: { items: Array<{ id: string; status: string }> };
-                    items: {
-                        add(input: unknown): Promise<unknown>;
-                        reject(input: unknown): Promise<{ decided: string[] }>;
-                    };
-                };
-            };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         await meeting.items.add({
             findings: [{ kind: "term", at: 1, heard: "jason", proposed: "JSON", confidence: 0.9, reason: "a fixture" }],
@@ -2083,15 +2123,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Planning", start: "2026-11-02T15:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: {
-                open(ref: string): {
-                    settings(): Promise<SettingsAnswer>;
-                    setSettings(patch: unknown): Promise<SettingsAnswer>;
-                    mark(label: string): Promise<RecordingMarker>;
-                };
-            };
-        };
+        const meetings = await loadMeetings();
         const meeting = meetings.open(record.id);
         await expect(meeting.settings()).rejects.toThrow("not being recorded");
         await expect(meeting.mark("demo starts")).rejects.toThrow("not being recorded");
@@ -2126,18 +2158,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             { title: "Offers review", start: "2026-11-03T15:00:00.000Z", createdBy: "new" },
             { command: "new", change: "test" }
         );
-        type Meeting = { set(input: unknown): Promise<{ project: string | null; labels: string[] }> };
-        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
-            meetings: {
-                open(ref: string): Meeting;
-                projects: {
-                    labels(input: unknown): Promise<string[]>;
-                    pair(input: unknown): Promise<unknown>;
-                    unpair(input: unknown): Promise<unknown>;
-                    people(input?: unknown): Promise<Array<{ project: string; name: string }>>;
-                };
-            };
-        };
+        const meetings = await loadMeetings();
         const set = await meetings.open(record.id).set({ project: "repl-offers", labels: ["Offers 2.0"] });
 
         expect(set).toMatchObject({ project: "repl-offers", labels: ["Offers 2.0"] });

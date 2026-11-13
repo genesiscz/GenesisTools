@@ -61,14 +61,19 @@ final class CaptionTrack: @unchecked Sendable {
 }
 
 /// White text on a dark rounded plate, made once per text and size because every frame that shows it draws it.
-/// Captions and the keys overlay use it; the render runs on Core Image's threads, so the cache has a lock.
-/// Karaoke makes one plate per word said and a typewriter one per letter, so only the plates used last are kept.
+/// Captions and the keys overlay use it; the render runs on Core Image's threads, so the cache has a lock. It keeps
+/// the `limit` plates used last: a karaoke line makes one per word said and a typewriter text one per letter, so a
+/// long export kept thousands of full bitmaps before the bound (each frame still needs only the few it shows).
 final class TextPlates: @unchecked Sendable {
     static let kept = 64
     private let lock = NSLock()
-    private var images = RecentCache<String, CIImage>(limit: TextPlates.kept)
+    private var images: RecentCache<String, CIImage>
 
-    /// How many plates the cache holds now.
+    init(limit: Int = TextPlates.kept) {
+        images = RecentCache(limit: limit)
+    }
+
+    /// The plates kept now (a test reads it).
     var count: Int {
         lock.lock()
         defer { lock.unlock() }

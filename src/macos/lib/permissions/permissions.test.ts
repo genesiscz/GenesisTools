@@ -366,6 +366,25 @@ describe("the codesign keychain notice", () => {
             await probeCodesignKey({ sign: "ABCDEF0123", dialogOpen: () => true, runCommand: async () => signed })
         ).toMatchObject({ ok: true, dialog: true });
     });
+
+    it("a test file it cannot write is a failed probe with the reason, never a throw, and codesign never runs", async () => {
+        const blocker = join(mkdtempSync(join(tmpdir(), "gt-codesign-probe-")), "a-file");
+        writeFileSync(blocker, "");
+        let ran = false;
+        const probe = await probeCodesignKey({
+            sign: "ABCDEF0123",
+            dialogOpen: () => false,
+            file: join(blocker, "codesign-trust-probe.txt"),
+            runCommand: async () => {
+                ran = true;
+                return signed;
+            },
+        });
+
+        expect(probe).toMatchObject({ ok: false, dialog: false });
+        expect(probe.detail).toContain("could not write the test file");
+        expect(ran).toBe(false);
+    });
 });
 
 describe("signByHashes", () => {

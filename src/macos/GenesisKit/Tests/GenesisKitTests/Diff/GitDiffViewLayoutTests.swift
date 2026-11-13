@@ -150,8 +150,12 @@ final class GitDiffViewLayoutTests: XCTestCase {
         XCTAssertEqual(after, "Loading…|true", "the click shows at once, before the file arrives")
 
         _ = try await query(web, "\(find)?.click(); return '';")
-        try await Task.sleep(nanoseconds: 400_000_000)
-        XCTAssertEqual(asks, ["board.tsx"], "one ask reaches the host, a second click asks nothing")
+        // An absence needs a window, not one fixed wait: the count stays at one through five page round trips.
+        for _ in 0..<5 {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            _ = try await query(web, "return '';")
+            XCTAssertEqual(asks, ["board.tsx"], "one ask reaches the host, a second click asks nothing")
+        }
     }
 
     func testTheLayoutChoiceReachesThePage() async throws {

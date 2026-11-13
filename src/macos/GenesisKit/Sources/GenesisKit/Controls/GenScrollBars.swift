@@ -84,7 +84,9 @@ public enum GenScrollBars {
     private static let adopted = NSHashTable<NSScrollView>.weakObjects()
     private static var observer: NSObjectProtocol?
 
-    public static func apply(_ style: GenScrollBarStyle, to scrollView: NSScrollView) {
+    /// `preferred` is the system's style (System Settings → Appearance, or a mouse attached) when nil; tests pass one.
+    public static func apply(_ style: GenScrollBarStyle, to scrollView: NSScrollView, preferred: NSScroller.Style? = nil) {
+        let preferred = preferred ?? NSScroller.preferredScrollerStyle
         switch style {
         case .genesis:
             adopted.add(scrollView)
@@ -97,11 +99,14 @@ public enum GenScrollBars {
             }
             if scrollView.scrollerStyle != .overlay { scrollView.scrollerStyle = .overlay }
         case .system:
-            guard adopted.contains(scrollView) else { return }
-            adopted.remove(scrollView)
-            if scrollView.verticalScroller is GenScroller { scrollView.verticalScroller = NSScroller() }
-            if scrollView.horizontalScroller is GenScroller { scrollView.horizontalScroller = NSScroller() }
-            scrollView.scrollerStyle = NSScroller.preferredScrollerStyle
+            // A view that never had GenesisKit's bars can still start as overlay (a table that sets it before this
+            // call), so the system's style is set on every view; only taking our scrollers off needs the adoption.
+            if adopted.contains(scrollView) {
+                adopted.remove(scrollView)
+                if scrollView.verticalScroller is GenScroller { scrollView.verticalScroller = NSScroller() }
+                if scrollView.horizontalScroller is GenScroller { scrollView.horizontalScroller = NSScroller() }
+            }
+            if scrollView.scrollerStyle != preferred { scrollView.scrollerStyle = preferred }
         }
     }
 

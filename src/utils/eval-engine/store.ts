@@ -243,7 +243,7 @@ async function exists(path: string): Promise<boolean> {
 }
 
 /** "2026-11-10T19-42-07-<label>" in the local time of this computer. */
-export function makeRunId(now: Date, label: string): string {
+export function makeEvalRunId(now: Date, label: string): string {
     const pad = (n: number) => String(n).padStart(2, "0");
     const time = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
     return `${time}-${slug(label) || "run"}`;
@@ -259,7 +259,7 @@ export async function createRun(
 ): Promise<RunStore> {
     const base = resolve(runsDir);
     await mkdir(base, { recursive: true });
-    const id = makeRunId(options.now, options.label);
+    const id = makeEvalRunId(options.now, options.label);
     for (let n = 1; ; n++) {
         const run = n === 1 ? id : `${id}-${n}`;
         const dir = join(base, run);

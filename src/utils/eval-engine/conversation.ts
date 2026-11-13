@@ -8,7 +8,7 @@ import {
     EvalConfigError,
     type Expectation,
     fillCheck,
-    fillText,
+    fillScenarioText,
     type OtherwiseBranch,
     resolveBindings,
     type Scenario,
@@ -335,7 +335,7 @@ export async function runConversation<TResolved, TSignals, THandle>(
         choice: string | null
     ) => {
         bind(step.bind);
-        await playTurn(fillText(step.user, bindings), "script", index, choice, step.expect ?? []);
+        await playTurn(fillScenarioText(step.user, bindings), "script", index, choice, step.expect ?? []);
     };
 
     const playSimulated = async (step: SimulatedStep, index: number) => {

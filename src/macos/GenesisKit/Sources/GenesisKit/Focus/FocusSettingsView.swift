@@ -183,6 +183,16 @@ public struct FocusSettingsView: View {
                 save()
             }
             Divider()
+            NativeSettingsRow("Show timer window", detail: timerWindowDetail) {
+                Picker("Show timer window", selection: Binding(get: { settings.timerWindow }, set: { settings.timerWindow = $0; save() })) {
+                    Text("Automatic").tag(FocusSettings.TimerWindow.automatic)
+                    Text("When opened").tag(FocusSettings.TimerWindow.onRequest)
+                    Text("Off").tag(FocusSettings.TimerWindow.off)
+                }
+                .labelsHidden().pickerStyle(.segmented).fixedSize()
+                .accessibilityIdentifier("focus.timerWindow")
+            }
+            Divider()
             NativeSettingsRow("Timer window", detail: "Compact is the small pill: phase, clock and one button. Double-click either shape to open Focus Studio.") {
                 Picker("Timer window", selection: Binding(get: { hudStyle }, set: { style in
                     hudStyle = style
@@ -194,6 +204,14 @@ public struct FocusSettingsView: View {
                 .labelsHidden().pickerStyle(.segmented).fixedSize()
                 .accessibilityIdentifier("focus.hudStyle")
             }
+        }
+    }
+
+    private var timerWindowDetail: String {
+        switch settings.timerWindow {
+        case .automatic: return "Shows itself when a flow or break starts and when a nudge fires."
+        case .onRequest: return "Shows only when you open it from the menu bar. The timer keeps running either way."
+        case .off: return "Never shows. The timer, the chime and the menu bar keep working."
         }
     }
 

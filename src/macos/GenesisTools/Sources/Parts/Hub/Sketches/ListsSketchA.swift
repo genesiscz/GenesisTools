@@ -223,7 +223,7 @@ extension ListsSketchA {
         }
 
         var body: some View {
-            Text(verbatim: (kind == "gitlab" ? "!" : "#") + "\(pr.number)")
+            Text(verbatim: Forge(kind: kind)?.label(pr.number) ?? "#\(pr.number)")
                 .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                 .foregroundColor(color)
                 .instantTooltip(pr.label(kind: kind))

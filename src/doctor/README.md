@@ -90,8 +90,9 @@ tools doctor cpu --window 5000 --threshold 50
 | `--threshold <pct>` | `25` | Report at or above this share of one core |
 | `--json` | off | Print the findings document |
 
-It reads `ps -o cputime` twice, `--window` milliseconds apart, and lists every process that used at least
-`--threshold` percent of one core in between. Two readings of accumulated CPU time are exact, where `pcpu` is a
+It reads `ps -o cputime` twice, `--window` milliseconds apart, and lists every process in both readings that used at
+least `--threshold` percent of one core in between. A process that starts inside the window has no first reading and
+is not judged, however much CPU it uses. Two readings of accumulated CPU time are exact, where `pcpu` is a
 decaying average that smears an old spin and hides a fresh one. GenesisTools.app faces and `tools` processes are
 named as such, with the fix (`bun run app` rebuilds the app and reaps a stale face; a `tools` process points at
 today's log). Each row offers a yes/no kill unless the process is on the never-kill list.

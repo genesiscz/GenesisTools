@@ -35,7 +35,6 @@ public struct FailureAppFacts: Codable, Equatable, Sendable {
         return facts
     }
 
-
     /// "GenesisTools 1.4, feat/x @ d9695acca149 (uncommitted changes), checkout `/…`".
     var line: String {
         var parts = [[name, version].compactMap { $0 }.joined(separator: " ")]

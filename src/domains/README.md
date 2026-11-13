@@ -4,7 +4,7 @@
 > real price (registry premiums included), spot names parked for sale, catch names that are rude in another language,
 > and watch names over time.
 
-It exists because "is genesis.tech free?" is the wrong question. The right one is "which good name for Genesis Tech
+It exists because "is acme.tech free?" is the wrong question. The right one is "which good name for Acme Tech
 can I register today for a normal price?", and the answer needs generation, checking, pricing and vetting in one pass.
 No account or API key is needed. Only the optional AI suggestor (`--ai`) uses an AI account.
 
@@ -13,15 +13,13 @@ No account or API key is needed. Only the optional AI suggestor (`--ai`) uses an
 ## Quick start
 
 ```bash
-tools domains search "Genesis Tech s.r.o."     # generate, check and rank the names you can buy
-tools domains check genesiste.ch genesis.inc   # free / premium / taken / for sale, with prices
-tools domains info genesis.io                  # registrar, expiry, parking, history, vibe
-tools domains hack genesis tech                # domain hacks only: genesiste.ch, genes.is
+tools domains search "Acme Tech s.r.o."        # generate, check and rank the names you can buy
+tools domains check acmete.ch acme.inc         # free / premium / taken / for sale, with prices
+tools domains info acme.io                     # registrar, expiry, parking, history, vibe
+tools domains hack acme tech                   # domain hacks only: acmete.ch, ac.me
 tools domains vibe bereshit                    # ⚠ "shit": the reason this check exists
-tools domains watch add genesis.tech && tools domains watch refresh  # watch a name, then re-check it and report news
+tools domains watch add acme.tech && tools domains watch refresh  # watch a name, then re-check it and report news
 ```
-
-On 2026-10-19, when the tool shipped, the first `search` above put `genesiste.ch` on top.
 
 ## Commands
 
@@ -43,10 +41,10 @@ Every command takes `--json`. Global flags: `-v, --verbose` (verbose logging), `
 Runs the suggestors, checks the best candidates, and ranks the names you can buy.
 
 ```bash
-tools domains search "Genesis Tech s.r.o."
-tools domains search "Genesis Tech" --ai --rounds 2 --about "developer tools for the Mac"
-tools domains search genesis --tlds com,io,dev,ch,sh --max-price 30
-tools domains search genesis --all --limit 100 --json
+tools domains search "Acme Tech s.r.o."
+tools domains search "Acme Tech" --ai --rounds 2 --about "developer tools for the Mac"
+tools domains search acme --tlds com,io,dev,ch,sh --max-price 30
+tools domains search acme --all --limit 100 --json
 ```
 
 | Flag | Default | What it does |
@@ -88,8 +86,8 @@ Generates candidates and ranks them, with no availability checks. With no seed (
 suggestors.
 
 ```bash
-tools domains suggest "Genesis Tech"
-tools domains suggest genesis --suggestors hacks,short --limit 100
+tools domains suggest "Acme Tech"
+tools domains suggest acme --suggestors hacks,short --limit 100
 tools domains suggest --list
 ```
 
@@ -104,9 +102,9 @@ SCORE, DOMAIN, FROM (the suggestors) and WHY.
 Finds domain hacks across every delegated TLD (the TLD finishes the word), then checks them.
 
 ```bash
-tools domains hack genesis tech           # genesiste.ch, genes.is, checked
+tools domains hack acme tech              # acmete.ch, ac.me, checked
 tools domains hack delicious --no-check   # list only
-tools domains hack genesis --free         # only names you can register
+tools domains hack acme --free            # only names you can register
 ```
 
 | Flag | Default | What it does |
@@ -124,10 +122,10 @@ It tries the joined words, each word and each adjacent pair, and skips strings s
 Status and price for names from the arguments, `--file`, or piped stdin.
 
 ```bash
-tools domains check genesiste.ch genesis.inc
+tools domains check acmete.ch acme.inc
 tools domains check --file names.txt --details
 cat names.txt | tools domains check --json
-tools domains check genesis.io --provider rdap,whois
+tools domains check acme.io --provider rdap,whois
 ```
 
 | Flag | Default | What it does |
@@ -146,7 +144,7 @@ Arguments may be separated by spaces or commas. Stdin is read only when no argum
 The per-name quote next to the TLD list price, and the cost of holding the name.
 
 ```bash
-tools domains price genesiste.ch genesis.dev --years 10
+tools domains price acmete.ch acme.dev --years 10
 ```
 
 | Flag | Default | What it does |
@@ -165,8 +163,8 @@ names you can register. With no names, `price` prints an empty table.
 Everything about one name, always checked live.
 
 ```bash
-tools domains info genesis.io
-tools domains whois genesis.io --no-history --json
+tools domains info acme.io
+tools domains whois acme.io --no-history --json
 ```
 
 It shows the status, the quote, the TLD list price, the TLD's registration rule, for-sale signals, the registration
@@ -212,7 +210,7 @@ Checks labels or domains for rude words in 16 Latin-script languages. The exit c
 
 ```bash
 tools domains vibe bereshit
-tools domains vibe genesiste.ch gnss.io --lang en,cs,de
+tools domains vibe acmete.ch acm.io --lang en,cs,de
 ```
 
 `-l, --lang <list>` sets the languages. The default is `en,cs,de,es,fr,it,nl,pl,pt,sv,da,fi,hu,no,tr,eo`. Each hit
@@ -224,10 +222,10 @@ sound, so say the name out loud too.
 #### `watch add [domains...]`, `watch ls`, `watch rm <domains...>`, `watch refresh`
 
 ```bash
-tools domains watch add genesis.tech genesis.io --note "wait for the drop"
+tools domains watch add acme.tech acme.io --note "wait for the drop"
 tools domains watch ls                      # the last known state, no network
 tools domains watch refresh --changed       # re-check and show only the news
-tools domains watch rm genesis.io
+tools domains watch rm acme.io
 ```
 
 | Command | Flags | What it does |
@@ -325,8 +323,8 @@ a warning.
 
 | Id | Default | What it makes |
 |----|---------|---------------|
-| `exact` | on | the seed on every TLD (`genesistech.cz`, `genesis-tech.com`, `genesis.io`) |
-| `hacks` | on | the TLD finishes the word (`genesiste.ch`, `genes.is`) across all ~1,400 TLDs |
+| `exact` | on | the seed on every TLD (`acmetech.cz`, `acme-tech.com`, `acme.io`) |
+| `hacks` | on | the TLD finishes the word (`acmete.ch`, `ac.me`) across all ~1,400 TLDs |
 | `short` | on | prefixes and vowel drops (`gentech`, `gnss`) on the first 5 TLDs |
 | `affixes` | on | `get-`, `try-`, `-hq`, `-labs` ... on the first 4 TLDs |
 | `synonyms` | on (online) | related words from Datamuse (`emergence.cz`) on the first 4 TLDs |

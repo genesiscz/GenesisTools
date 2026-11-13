@@ -259,7 +259,7 @@ export function registerHideTextCommands(program: Command): void {
                 }
             ) => {
                 try {
-                    const answer = await findText((await openProject(value)).project, {
+                    const hits = await findText((await openProject(value)).project, {
                         texts,
                         patterns: flags.pattern,
                         excludeFixed: flags.excludeFixed,
@@ -269,19 +269,15 @@ export function registerHideTextCommands(program: Command): void {
                     });
 
                     if (flags.json) {
-                        out.result(answer);
+                        out.result(hits);
                         return;
                     }
 
-                    for (const hit of answer.hits) {
+                    for (const hit of hits) {
                         out.println(hitLine(hit));
                     }
 
-                    for (const warning of answer.warnings ?? []) {
-                        out.printlnErr(warning);
-                    }
-
-                    if (answer.hits.length === 0) {
+                    if (hits.length === 0) {
                         out.printlnErr("The screen never shows it.");
                     }
                 } catch (error) {

@@ -335,9 +335,9 @@ await presets.remove("settings-demo");                 // { trash }
 
 - A name is 1 to 64 letters, digits, dots, dashes or underscores, and starts with a letter or a digit.
 - Each param is `{ type?, description?, default? }`. `type` is `string` (the default), `number`, `boolean` or `json`.
-  A missing required value is refused with its `description` (up to 300 characters). A param without a default is required at every
-  run,
-  and an unknown name or a value of the wrong type is refused before anything runs. On the command line,
+  A missing required value is refused with its `description` (up to 300 characters). A param without a default is
+  required at every run, and an unknown name or a value of the wrong type is refused before anything runs. A default
+  of another type is refused at save, and at run when an older `preset.json` holds one. On the command line,
   `--param` reads the text as the param's type: a boolean takes `true`, `false`, `1`, `0`, `yes`, `no`, `on` or
   `off`, and a `json` param takes JSON.
 - `toolsets` defaults to the toolsets the script names (`movies.`, `computer.`). A run in the REPL needs them loaded

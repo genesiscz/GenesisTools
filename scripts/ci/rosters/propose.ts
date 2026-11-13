@@ -25,7 +25,8 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
+import { loadFiles } from "@app/ts/lib/load";
+import { resolveAnalysers, runRefactors } from "@app/ts/lib/refactors";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { census } from "./propose-census";
 import { collectPairs, ownerOfShape, rankPairs } from "./propose-pairs";
@@ -86,14 +87,16 @@ export function collectShapes(diff: string, skip: (file: string) => boolean): Ma
     };
 
     for (const line of diff.split("\n")) {
-        if (line.startsWith("+++ ")) {
-            file = line.slice(4).replace(/^b\//, "");
+        if (line.startsWith("--- ")) {
+            const old = line.slice(4).replace(/^a\//, "");
+            file = old === "/dev/null" ? "" : old;
             continue;
         }
 
-        if (line.startsWith("--- ")) {
-            const old = line.slice(4).replace(/^a\//, "");
-            file = old === "/dev/null" ? file : old;
+        if (line.startsWith("+++ ")) {
+            const next = line.slice(4).replace(/^b\//, "");
+            // A deleted file's new side is /dev/null: its removed lines still belong to the old path.
+            file = next === "/dev/null" ? file : next;
             continue;
         }
 
@@ -167,7 +170,10 @@ interface ShadowedReport {
     recommendations?: { title: string; sites?: ShadowedSite[] }[];
 }
 
-/** The private copies of an exported helper, as roster candidates (from `tools ts refactors --include shadowed`). Pure. */
+/**
+ * The private copies of an exported helper, as roster candidates (from the `shadowed` refactor analyser), most copies
+ * first: the analyser ranks by saved lines, and the caller cuts the list at `--limit`. Pure.
+ */
 export function shadowedCandidates(report: ShadowedReport): Candidate[] {
     const candidates: Candidate[] = [];
 
@@ -194,54 +200,56 @@ export function shadowedCandidates(report: ShadowedReport): Candidate[] {
         });
     }
 
-    return candidates;
+    return candidates.sort((a, b) => b.score - a.score);
 }
 
-/** A whole-tree refactor scan took about a minute on 2026-11-12; five is its deadline. */
-const SHADOWED_TIMEOUT_MS = 5 * 60_000;
+/**
+ * The `shadowed` analyser of `tools ts refactors`, run in this process on this checkout's `src/` (a spawned `tools`
+ * would be the main checkout's from PATH). Every recommendation, with the CLI's defaults otherwise.
+ */
+async function readShadowed(): Promise<ShadowedReport> {
+    const loaded = await loadFiles(["src"], { tests: false, hash: true, imports: true });
 
-function readShadowed(): ShadowedReport {
-    // This checkout's own `tools`: a bare `tools` resolves off PATH to the main checkout, so a worktree would scan
-    // with the main branch's code.
-    const run = proposerSpawn(
-        [toolsEntrypoint(), "ts", "refactors", "src", "--include", "shadowed", "--format", "json"],
-        SHADOWED_TIMEOUT_MS
-    );
-
-    if (run.exitCode !== 0) {
-        throw new Error(`tools ts refactors failed: ${run.stderr.toString().slice(-400)}`);
+    if (loaded.empty.length > 0) {
+        fail(`no TypeScript source in ${loaded.empty.join(", ")}`);
     }
 
-    const value: unknown = SafeJSON.parse(run.stdout.toString(), { strict: true });
-    return typeof value === "object" && value !== null ? (value as ShadowedReport) : {};
+    return runRefactors(resolveAnalysers("shadowed"), {
+        entries: loaded.entries,
+        modules: loaded.modules,
+        options: { minLines: 3, similarity: 0.8, limit: Number.POSITIVE_INFINITY },
+    });
 }
 
 /** The matcher source of a scaffolded definition, for one shape. Pure. */
 export function matcherSource(shape: Shape): string {
     const escaped = shape.value.replace(/[.*+?^${}()|[\]\\]/g, "\\\\$&");
+    const literalText = shape.value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+    const exact = `/^${literalText}$/`;
 
     switch (shape.kind) {
         case "call":
             return `callTo([${SafeJSON.stringify(shape.value.split(".").at(-1))}])`;
         case "import":
-            return `{ rule: { kind: "import_statement", has: { kind: "string", regex: "${escaped}" } } }`;
+            // The package and its subpaths (`zod/v4`): the census counts a package, not one specifier.
+            return `importFrom(/^${literalText}(?:\\/|$)/)`;
         case "new":
             return `{ rule: { kind: "new_expression", has: { field: "constructor", regex: "^${escaped}$" } } }`;
         case "argv":
             return `{ rule: { kind: "array", has: { kind: "string", regex: "^[\\"'\`]${escaped}[\\"'\`]$" } } }`;
         case "declare":
-            return `{ rule: { kind: "function_declaration", has: { field: "name", regex: "^${escaped}$" } } }`;
+            return `declaration(${exact})`;
         case "literal":
-            return `literal(/^${shape.value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}$/)`;
+            return `literal(${exact})`;
     }
 }
 
 const SCAFFOLD_IMPORTS: Record<ShapeKind, string> = {
     call: "callTo, defineRoster",
-    import: "defineRoster",
+    import: "defineRoster, importFrom",
     new: "defineRoster",
     argv: "defineRoster",
-    declare: "defineRoster",
+    declare: "declaration, defineRoster",
     literal: "defineRoster, literal",
 };
 
@@ -350,7 +358,7 @@ function isCommand(name: string): boolean {
 /** Skips files outside src/ and tests: the diff and pairs sources only count product code. */
 const skipFile = (file: string): boolean => !file.startsWith("src/") || isTestPath(file);
 
-function runScaffold(scaffoldArg: string, range: string | undefined): never {
+async function runScaffold(scaffoldArg: string, range: string | undefined): Promise<never> {
     const shape = parseShape(scaffoldArg);
     const name = argValue("--name");
 
@@ -367,7 +375,7 @@ function runScaffold(scaffoldArg: string, range: string | undefined): never {
     let allowedIn: string | null = null;
 
     if (shape.kind === "declare") {
-        allowedIn = shadowedCandidates(readShadowed()).find((c) => c.value === shape.value)?.addedIn[0] ?? null;
+        allowedIn = shadowedCandidates(await readShadowed()).find((c) => c.value === shape.value)?.addedIn[0] ?? null;
     } else if (range) {
         const added = collectShapes(readDiff(range), skipFile).get(shapeKey(shape));
         allowedIn = added ? ([...added.addedFiles.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null) : null;
@@ -398,7 +406,7 @@ if (import.meta.main) {
     const scaffoldArg = argValue("--scaffold");
 
     if (scaffoldArg) {
-        runScaffold(scaffoldArg, range);
+        await runScaffold(scaffoldArg, range);
     }
 
     const wants = (s: Source) => source === s || source === "all";
@@ -409,22 +417,22 @@ if (import.meta.main) {
 
     const diff = range && (wants("diff") || wants("pairs")) ? readDiff(range) : "";
     const timings: string[] = [];
-    const timed = <T>(label: string, work: () => T): T => {
+    const timed = async <T>(label: string, work: () => T | Promise<T>): Promise<T> => {
         const started = performance.now();
-        const result = work();
+        const result = await work();
         timings.push(`${label} ${((performance.now() - started) / 1000).toFixed(1)} s`);
         return result;
     };
 
     const diffRows =
         range && wants("diff")
-            ? timed("diff", () =>
+            ? await timed("diff", () =>
                   rankCandidates(collectShapes(diff, skipFile), { minFiles, remaining: countInTree }).slice(0, limit)
               )
             : [];
     const pairRows =
         range && wants("pairs")
-            ? timed("pairs", () =>
+            ? await timed("pairs", () =>
                   rankPairs(collectPairs(diff, skipFile), {
                       minFiles,
                       remaining: treeUsage,
@@ -434,12 +442,12 @@ if (import.meta.main) {
               )
             : [];
     const censusRows = wants("census")
-        ? timed("census", () =>
+        ? await timed("census", () =>
               census(readSourceTree(), { minFiles, packages: rootPackages(), isCommand }).slice(0, limit)
           )
         : [];
     const shadowedRows = wants("shadowed")
-        ? timed("shadowed", () => shadowedCandidates(readShadowed()).slice(0, limit))
+        ? await timed("shadowed", async () => shadowedCandidates(await readShadowed()).slice(0, limit))
         : [];
 
     if (process.argv.includes("--json")) {

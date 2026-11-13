@@ -135,10 +135,10 @@ export interface StartupReport {
     recurring: RecurringModule[];
 }
 
-/** `pkg:@scope/name/sub/path.js` and `pkg:name` both belong to their package. */
-export function moduleKey(module: Pick<AnalyzedModule, "kind" | "label">): string {
+/** `pkg:@scope/name/sub/path.js` and `pkg:name` both belong to their package. Undefined for a non-package. */
+function packageOf(module: Pick<AnalyzedModule, "kind" | "label">): string | undefined {
     if (module.kind !== "package" || !module.label.startsWith("pkg:")) {
-        return module.label;
+        return undefined;
     }
 
     const parts = module.label.slice("pkg:".length).split("/");
@@ -146,21 +146,46 @@ export function moduleKey(module: Pick<AnalyzedModule, "kind" | "label">): strin
     return `pkg:${name}`;
 }
 
+/**
+ * Which module a sample belongs to across entries. A package is its name, so its entry files add up
+ * in every project. A source file is its absolute path: each entry labels files relative to its own
+ * project root, so two projects' `src/config.ts` are two files, and one shared file is one.
+ */
+export function moduleKey(module: Pick<AnalyzedModule, "id" | "kind" | "label">): string {
+    return packageOf(module) ?? module.id;
+}
+
 function round(ms: number): number {
     return Math.round(ms * 10) / 10;
 }
 
-/** Self time per module key in one measured entry. A package's entry files add up. */
-export function selfTimesOf(result: AnalysisResult): Map<string, number> {
-    const times = new Map<string, number>();
+/** A module whose import never settled: its time is the per-module deadline, not a measurement. */
+function hung(module: AnalyzedModule): boolean {
+    return module.importError?.startsWith("hang:") === true;
+}
+
+export interface ModuleSelfTime {
+    /** What the report shows: `pkg:<name>`, or the path relative to the entry's project root. */
+    label: string;
+    ms: number;
+}
+
+/**
+ * Self time per module key in one measured entry. A package's entry files add up. A hung module is
+ * left out: its deadline is a lower bound, and it must not rank as the heaviest or a recurring cost.
+ */
+export function selfTimesOf(result: AnalysisResult): Map<string, ModuleSelfTime> {
+    const times = new Map<string, ModuleSelfTime>();
 
     for (const module of result.modules) {
-        if (!module.measured) {
+        if (!module.measured || hung(module)) {
             continue;
         }
 
         const key = moduleKey(module);
-        times.set(key, (times.get(key) ?? 0) + module.selfMs);
+        const cost = times.get(key) ?? { label: packageOf(module) ?? module.label, ms: 0 };
+        cost.ms += module.selfMs;
+        times.set(key, cost);
     }
 
     return times;
@@ -214,29 +239,29 @@ export function summarizeStartup(
         }
 
         const times = selfTimesOf(outcome.result);
-        const ranked = [...times.entries()].sort((a, b) => b[1] - a[1]);
+        const ranked = [...times.entries()].sort((a, b) => b[1].ms - a[1].ms);
 
         entries.push({
             entry: outcome.entry,
             coldMs: round(outcome.result.coldMs),
             modules: outcome.result.modules.filter((module) => module.measured).length,
-            top: ranked.slice(0, options.top).map(([module, selfMs]) => ({ module, selfMs: round(selfMs) })),
+            top: ranked.slice(0, options.top).map(([, cost]) => ({ module: cost.label, selfMs: round(cost.ms) })),
             timedOut: outcome.result.timedOut,
             unmeasured: outcome.result.unmeasured,
             error: importFailureOf(outcome.result),
         });
 
-        for (const [module, selfMs] of ranked) {
-            if (selfMs < options.minMs) {
+        for (const [key, cost] of ranked) {
+            if (cost.ms < options.minMs) {
                 break;
             }
 
-            const row = recurring.get(module) ?? { module, entries: 0, totalMs: 0, maxMs: 0, paidBy: [] };
+            const row = recurring.get(key) ?? { module: cost.label, entries: 0, totalMs: 0, maxMs: 0, paidBy: [] };
             row.entries++;
-            row.totalMs += selfMs;
-            row.maxMs = Math.max(row.maxMs, selfMs);
+            row.totalMs += cost.ms;
+            row.maxMs = Math.max(row.maxMs, cost.ms);
             row.paidBy.push(outcome.entry);
-            recurring.set(module, row);
+            recurring.set(key, row);
         }
     }
 

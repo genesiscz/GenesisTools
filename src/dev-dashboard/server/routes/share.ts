@@ -4,6 +4,7 @@ import { offlineShareAssets } from "@app/dev-dashboard/lib/obsidian/offline-asse
 import { findPublishedBySlug, listPublished } from "@app/dev-dashboard/lib/obsidian/publish";
 import { readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import {
+    assetPanelQuery,
     buildShareAssetIndex,
     buildShareBundle,
     buildShareEmbed,
@@ -12,16 +13,20 @@ import {
     fencedCode,
     hashAsset,
     isMediaKind,
+    isSharedNote,
     lineRangeOf,
     linkedImageResolver,
+    linkedNoteKey,
     readShareAsset,
     renderShareAssetFragment,
     renderTransclusionHtml,
     SHARE_ASSET_HASH_RE,
+    SHARE_NOTE_KEY_RE,
     type ShareAsset,
     type ShareAssetIndex,
     type ShareEmbed,
     shareAssetUrl,
+    shareAttachments,
 } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { renderSharePage } from "@app/dev-dashboard/lib/obsidian/share-template";
 import { publicBaseUrl } from "@app/dev-dashboard/lib/public-base";
@@ -200,8 +205,14 @@ export function shareRoutes(): RouteDef[] {
 
                 try {
                     const requestedHash = ctx.query.get("asset");
+                    // Which linked note a panel shows, when two notes have the same bytes (`assetPanelQuery`).
+                    const requestedNote = ctx.query.get("note");
 
                     if (requestedHash !== null && !SHARE_ASSET_HASH_RE.test(requestedHash)) {
+                        return NOT_FOUND;
+                    }
+
+                    if (requestedNote !== null && !SHARE_NOTE_KEY_RE.test(requestedNote)) {
                         return NOT_FOUND;
                     }
 
@@ -267,7 +278,7 @@ export function shareRoutes(): RouteDef[] {
                         embed = await buildShareEmbed({
                             vaultRoot: obsidianVault,
                             index: assets,
-                            panelBase: (hash) => `?asset=${hash}`,
+                            panelBase: (asset) => `?${assetPanelQuery(assets, asset)}`,
                             sourceBytes: Buffer.byteLength(source, "utf8"),
                         });
 
@@ -298,7 +309,12 @@ export function shareRoutes(): RouteDef[] {
                         }
 
                         const { asset, body } = found;
-                        const url = shareAssetUrl(slug, asset.hash);
+                        // A deep link without `note=` (one saved before notes had keys) is the note the hash finds.
+                        const noteKey = requestedNote ?? linkedNoteKey(asset);
+                        const query = requestedNote
+                            ? `asset=${asset.hash}&note=${requestedNote}`
+                            : assetPanelQuery(assets, asset);
+                        const url = `/share/${encodeURIComponent(slug)}?${query}`;
 
                         const view = ctx.query.get("view");
 
@@ -312,9 +328,11 @@ export function shareRoutes(): RouteDef[] {
                                     asset,
                                     text: body.toString("utf8"),
                                     lines: parseLinesParam(ctx.query.get("lines")),
-                                    resolveImage: linkedImageResolver(assets, asset.hash, (image) =>
-                                        shareAssetUrl(slug, image.hash)
-                                    ),
+                                    resolveImage: linkedImageResolver({
+                                        index: assets,
+                                        noteKey,
+                                        url: (image) => shareAssetUrl(slug, image.hash),
+                                    }),
                                 }),
                             };
                         }
@@ -328,7 +346,7 @@ export function shareRoutes(): RouteDef[] {
 
                     // Every note the page may embed, read once and masked like any text asset.
                     const linkedNotes = [...assets.byHash.values()].filter(
-                        (asset) => asset.kind === "markdown" && asset.vaultPath !== note.vaultPath
+                        (asset) => asset.kind === "markdown" && !isSharedNote(assets, asset)
                     );
                     const noteTexts = new Map<string, string>();
 
@@ -360,9 +378,15 @@ export function shareRoutes(): RouteDef[] {
                     const selfName = (selfPath.split("/").pop() ?? selfPath).replace(/\.md$/, "");
                     const rendered = renderMarkdown(markdown, {
                         pageBaseUrl: pageBase,
-                        isCurrentNote: (target) =>
-                            target.normalize("NFC") === selfName ||
-                            assets.byTarget.get(target)?.vaultPath.normalize("NFC") === selfPath,
+                        // The index holds the note part of `[[Notes/Run#Summary]]` as its own target, resolved
+                        // from this note's folder, so a qualified or `.md` self-link is found by its file.
+                        isCurrentNote: (target) => {
+                            const asset = assets.byTarget.get(target);
+
+                            return (
+                                target.normalize("NFC") === selfName || (asset ? isSharedNote(assets, asset) : false)
+                            );
+                        },
                         resolveWikilink: (name) => {
                             const match = published.find((publishedNote) => {
                                 const base = publishedNote.vaultPath.split("/").pop() ?? publishedNote.vaultPath;
@@ -392,11 +416,14 @@ export function shareRoutes(): RouteDef[] {
                                                   text: noteText,
                                                   fragment: decodeFragment(section),
                                                   idPrefix: `:transclusion-${++transclusionIndex}-`,
-                                                  resolveImage: linkedImageResolver(assets, asset.hash, (image) =>
-                                                      embed
-                                                          ? (embed.media.get(image.hash) ?? null)
-                                                          : shareAssetUrl(slug, image.hash)
-                                                  ),
+                                                  resolveImage: linkedImageResolver({
+                                                      index: assets,
+                                                      noteKey: linkedNoteKey(asset),
+                                                      url: (image) =>
+                                                          embed
+                                                              ? (embed.media.get(image.hash) ?? null)
+                                                              : shareAssetUrl(slug, image.hash),
+                                                  }),
                                               }),
                                       };
                             const publishedSlug =
@@ -421,7 +448,8 @@ export function shareRoutes(): RouteDef[] {
                                 return inline ? { url: inline, kind: asset.kind, name: asset.name } : null;
                             }
 
-                            const url = embed ? `?asset=${asset.hash}` : shareAssetUrl(slug, asset.hash);
+                            const query = assetPanelQuery(assets, asset);
+                            const url = embed ? `?${query}` : `/share/${encodeURIComponent(slug)}?${query}`;
                             // `doc.pdf#page=3&height=400` keeps its fragment for the PDF viewer and the frame height.
                             const pdfFragment = asset.kind === "pdf" ? (/#.*$/.exec(target)?.[0] ?? "") : "";
 
@@ -441,9 +469,7 @@ export function shareRoutes(): RouteDef[] {
                         source,
                         sourcePath: note.vaultPath,
                         openAssetUrl,
-                        attachmentCount: [...assets.byHash.values()].filter(
-                            (asset) => asset.vaultPath !== note.vaultPath
-                        ).length,
+                        attachmentCount: shareAttachments(assets).length,
                         downloads: embed
                             ? undefined
                             : {

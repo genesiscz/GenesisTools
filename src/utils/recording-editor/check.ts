@@ -4,6 +4,7 @@ import { isPictureFile } from "./overlays";
 import {
     applyOp,
     canvasShape,
+    clipEdgesOf,
     cutEdgesOf,
     type EditOp,
     type EditProject,
@@ -101,7 +102,7 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
         const played = playedUs(project, entry.startUs, entry.endUs);
 
         if (entry.kind !== "hidden part" && played < shortest) {
-            const longer = lengthened(project, entry, shortest);
+            const longer = lengthened({ project, item: entry, shortest });
             const sourceUs = keptUs(project, entry.startUs, entry.endUs);
             const speedNote =
                 Math.abs(played - sourceUs) >= 50_000
@@ -399,15 +400,19 @@ const LENGTHENED_US = 1_500_000;
  * The length is played time, so the clips' speeds set how far in source time the item reaches. Times in seconds to
  * the millisecond, the end rounded down so it never passes the source's end. Undefined when the movie has no room.
  */
-function lengthened(
-    project: EditProject,
-    item: { startUs: number; endUs: number },
-    shortest: number
-): { from?: number; to: number } | undefined {
-    const toUs = sourceAfterPlayed(project, item.startUs, LENGTHENED_US);
+function lengthened({
+    project,
+    item,
+    shortest,
+}: {
+    project: EditProject;
+    item: { startUs: number; endUs: number };
+    shortest: number;
+}): { from?: number; to: number } | undefined {
+    const toUs = sourceAfterPlayed({ project, startUs: item.startUs, playUs: LENGTHENED_US });
     const fromUs =
         playedUs(project, item.startUs, toUs) < shortest
-            ? sourceBeforePlayed(project, toUs, LENGTHENED_US)
+            ? sourceBeforePlayed({ project, endUs: toUs, playUs: LENGTHENED_US })
             : item.startUs;
 
     if (playedUs(project, fromUs, toUs) <= playedUs(project, item.startUs, item.endUs)) {
@@ -542,7 +547,8 @@ function captionLiftIssue(project: EditProject, canvas: TextCanvas, facts: EditF
     const unit = canvas.shortSidePx ?? DEFAULT_SHORT_SIDE_PX;
     const font = Math.max(8, Math.round(captions.size * unit));
     // One line of the caption's plate: the line and the plate's inset above and below (0.38 of the font each).
-    const plateHeight = (layoutText("Ag", font, unit * 10, "center").height + 2 * 0.38 * font) / unit;
+    const plateHeight =
+        (layoutText({ text: "Ag", px: font, wrapPx: unit * 10, align: "center" }).height + 2 * 0.38 * font) / unit;
     const margin = 0.05;
     const gap = 0.015;
     const band =
@@ -635,7 +641,7 @@ export function textBoxes(note: TextBoxNote, canvas: TextCanvas): { plate: Canva
     const canvasHeight = canvas.height * unit;
     const block = canvasWidth * Math.min(0.95, Math.max(0.15, note.block?.width ?? 0.8));
     const align = note.block?.align ?? "center";
-    const set = layoutText(note.text, font, Math.max(font * 4, block - 2 * insetX), align);
+    const set = layoutText({ text: note.text, px: font, wrapPx: Math.max(font * 4, block - 2 * insetX), align });
     const width = Math.ceil(set.width + 2 * insetX);
     const height = Math.ceil(set.height + 2 * insetY);
     // The plate's leftmost left edge: a plain text keeps its letters inside the canvas, and its plate may reach past the
@@ -689,20 +695,33 @@ const SHORT_HIDING_US = 150_000;
 /** Holes around hiding parts up to this long are worth a look; longer ones are taken as meant. */
 const HIDING_HOLE_US = 1_000_000;
 
-/** The source time from which `playUs` of output plays up to `endUs`, through the clips at their speeds. */
-function sourceBeforePlayed(project: EditProject, endUs: number, playUs: number): number {
+/**
+ * The source time from which that time..`endUs` plays `playUs` of output, by playedUs's own measure, as
+ * sourceAfterPlayed (project.ts) walks it.
+ */
+function sourceBeforePlayed({
+    project,
+    endUs,
+    playUs,
+}: {
+    project: EditProject;
+    endUs: number;
+    playUs: number;
+}): number {
     let leftUs = playUs;
+    let atUs = endUs;
 
-    for (const clip of [...project.clips].reverse()) {
-        const toUs = Math.min(clip.toUs, endUs);
-        const speed = clip.speed || 1;
-        const availableUs = Math.max(0, toUs - clip.fromUs) / speed;
+    for (const edgeUs of clipEdgesOf(project)
+        .filter((us) => us < endUs)
+        .reverse()) {
+        const stretchUs = playedUs(project, edgeUs, atUs);
 
-        if (availableUs >= leftUs) {
-            return Math.max(0, Math.round(toUs - leftUs * speed));
+        if (stretchUs > 0 && stretchUs >= leftUs) {
+            return Math.max(0, Math.round(atUs - (leftUs * (atUs - edgeUs)) / stretchUs));
         }
 
-        leftUs -= availableUs;
+        leftUs -= stretchUs;
+        atUs = edgeUs;
     }
 
     return 0;
@@ -964,7 +983,7 @@ export function cutIssues(
         ) {
             // A text that runs on past a cut (a step title from titleMarkers) still plays long enough to read; only
             // one the cut leaves under the lengthened time is worth a word, and the lengthen retime repairs it.
-            const longer = lengthened(project, entry, SHORTEST_READABLE_US);
+            const longer = lengthened({ project, item: entry, shortest: SHORTEST_READABLE_US });
             issues.push({
                 severity: "check",
                 kind: "cut-shortens-text",

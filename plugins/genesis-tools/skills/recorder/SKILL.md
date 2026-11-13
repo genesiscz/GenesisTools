@@ -22,15 +22,16 @@ the order to use them in.
 `references/editing-playbook.md` in full: work on a copy, survey first, place effects on screen events, hide text and
 not boxes of the screen, check every effect boundary (on `sheet({ source: true, effects: true })`, which draws source
 seconds through the edit and marks cut ones), read `check()`'s `summary` lines, and score the cut before you hand it
-over. Run an edit script with `tools node-repl run --toolset movies --file edit.js`: its `console.log` lines print as
-they happen. Write that output to a file (`> edit.log 2>&1`) or run it as a background task; never pipe it into
-`head` or `tail`, which hold it until the end. Its section 2 is the
+over. Run an edit script with `tools node-repl run --toolset movies --timeout 600000 --file edit.js > edit.log 2>&1`
+(or as a background task) and read `edit.log`; never pipe it into `head` or `tail`, which hold the output until the
+end or stop the run early. Its section 2 is the
 table of the calls that exist today, one example each; section 3 is the recipe for a privacy-safe cut.
 
 ## Editing at a glance
 
-- Run an edit as a script: `tools node-repl run --toolset movies --file edit.js` (10 minutes by default with
-  `movies`; `--timeout <ms>` for more). `help("movies")` lists the methods, `describe("movies.Movie.<name>")` prints
+- Run an edit as a script: `tools node-repl run --toolset movies --timeout 600000 --file edit.js`. Always pass
+  `--timeout` (milliseconds; 600000 is 10 minutes, `1800000` is 30): a run without it gets the REPL's short default and
+  is killed in the middle of the edit. `help("movies")` lists the methods, `describe("movies.Movie.<name>")` prints
   one in full.
 - One time base: ops take SOURCE seconds. Survey with `m.sheet({ source: true, every: 0.5, from, to })`,
   `m.still({ at, source: true, full: true })`, `m.events()` and `m.findText()`, never with ffmpeg frame numbers.

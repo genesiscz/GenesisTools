@@ -1,6 +1,6 @@
-import { GROK_STATIC_CATALOG } from "../grok/models";
-import { OPENAI_SUB_STATIC_CATALOG, type WhamModelRecord } from "../openai/sub-models";
-import type { Capability } from "../providers/plugin-types";
+import { GROK_STATIC_CATALOG } from "../grok/models-static";
+import { OPENAI_SUB_STATIC_CATALOG, type WhamModelRecord } from "../openai/sub-models-static";
+import type { Capability } from "../providers/capabilities";
 import { withCacheRateDefaults } from "./cache-rates";
 import type { CatalogEntry, CatalogSource, ModelFamily, ModelPricing, PricingRule } from "./types";
 

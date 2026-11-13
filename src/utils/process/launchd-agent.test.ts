@@ -7,13 +7,14 @@ import {
     _setLaunchAgentsDirForTests,
     _setLaunchctlRunnerForTests,
     installLaunchd,
+    LAUNCHCTL_TIMEOUT_EXIT_CODE,
     type LaunchctlResult,
     type LaunchdInstallOptions,
     launchdStatus,
     parseLaunchdPid,
     plistPath,
     renderLaunchdPlist,
-    runLaunchctlBounded,
+    runLaunchctlCommand,
 } from "@genesiscz/utils/process/launchd-agent";
 import { skip } from "@genesiscz/utils/test/skip";
 
@@ -67,16 +68,15 @@ describe("renderLaunchdPlist", () => {
     });
 });
 
-describe("runLaunchctlBounded", () => {
+describe("runLaunchctlCommand deadline", () => {
     test("a call past its deadline is killed and comes back as a failed result", async () => {
-        const result = await runLaunchctlBounded(["5"], { binary: "/bin/sleep", timeoutMs: 200 });
-        expect(result.timedOut).toBe(true);
+        const result = await runLaunchctlCommand(["/bin/sleep", "5"], 200);
         expect(result.exitCode).toBe(124);
-        expect(result.stderr).toContain("did not finish within 200 ms");
+        expect(result.stderr).toContain("timed out after 200 ms");
     });
 
     test("a call that ends in time keeps its own exit code", async () => {
-        expect(await runLaunchctlBounded([], { binary: "/usr/bin/false", timeoutMs: 10_000 })).toMatchObject({
+        expect(await runLaunchctlCommand(["/usr/bin/false"], 10_000)).toMatchObject({
             exitCode: 1,
         });
     });
@@ -186,5 +186,22 @@ describe.skipIf(skip.unlessMac)("launchd agent through the fake runner", () => {
 
         await expect(installLaunchd(baseOptions())).rejects.toThrow("nope");
         expect(calls.map((call) => call[0])).toEqual(["unload", "load"]);
+    });
+});
+
+describe("runLaunchctlCommand", () => {
+    test("ends a command that outlives its deadline with the timeout exit code and says so", async () => {
+        const started = Date.now();
+        const result = await runLaunchctlCommand(["sleep", "30"], 300);
+
+        expect(result.exitCode).toBe(LAUNCHCTL_TIMEOUT_EXIT_CODE);
+        expect(result.stderr).toContain("timed out after 300 ms");
+        expect(Date.now() - started).toBeLessThan(10_000);
+    });
+
+    test("returns the output and exit code of a command that finishes in time", async () => {
+        const result = await runLaunchctlCommand(["sh", "-c", "echo out; echo err >&2; exit 3"], 5_000);
+
+        expect(result).toEqual({ exitCode: 3, stdout: "out\n", stderr: "err\n" });
     });
 });

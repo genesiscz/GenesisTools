@@ -76,6 +76,7 @@ import { renderLedger } from "./log-view";
 import { type NotifyDeps, notifyDrainFailure, notifyNewRequest, type RequestNotice } from "./notify";
 import {
     buildRequestViews,
+    PICKER_GUTTER,
     renderPickerLegend,
     renderPickerRow,
     renderRequestDetail,
@@ -1419,8 +1420,9 @@ describe("the requests listing", () => {
             { path: deep, kind: "file", rule: "git-untracked", reason: "1 untracked file" },
         ]);
         const [view] = buildRequestViews([long], { present: () => true, sizeOf: () => 2048 });
-        const wide = view ? stripAnsi(renderPickerRow(view, NOW, 200)) : "";
-        const narrow = view ? stripAnsi(renderPickerRow(view, NOW, 90)) : "";
+        const wide = view ? stripAnsi(renderPickerRow({ view, now: NOW, columns: 200 })) : "";
+        const narrow = view ? stripAnsi(renderPickerRow({ view, now: NOW, columns: 90 })) : "";
+        const eighty = view ? stripAnsi(renderPickerRow({ view, now: NOW, columns: 80 })) : "";
         const listed = view ? renderRequestList([view], { now: NOW, caller: PERSON }).map(stripAnsi).join("\n") : "";
 
         expect(wide).toContain("49m ago");
@@ -1431,7 +1433,10 @@ describe("the requests listing", () => {
         // Narrow: the path keeps its room, whole leading folders go first so the tail stays, and the note goes.
         expect(narrow).toContain("/…/checkout/screens/summary/banner.webp");
         expect(narrow).not.toContain("git-untracked");
-        expect(narrow.length).toBeLessThanOrEqual(90);
+        expect(narrow.length).toBeLessThanOrEqual(90 - PICKER_GUTTER);
+        // 80 columns leave the path less than the list's 40: it takes only that room, so the row stays one line.
+        expect(eighty.length).toBeLessThanOrEqual(80 - PICKER_GUTTER);
+        expect(eighty).toContain("banner.webp");
     });
 
     test("the picker legend names the columns and only the states its rows show", () => {

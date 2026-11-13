@@ -725,8 +725,10 @@ the owner key.
 - The ledger books cost at write time from `lib/billing/pricing.ts`, a static table that is the invoicing source of
   truth. A later rate edit never rewrites a past invoice; readers print the stored `cost_usd`.
 - ⚠️ **Pricing does not auto-discover.** A new model has no row in `lib/billing/pricing.ts`, and that table matches ids
-  exactly (never by prefix: a prefix match once billed grok-4.5 at grok-4's 7.5x rate). An unpriced model records its
-  tokens, books **$0**, and is marked in the CLI. That fails safe rather than mis-billing. Listing an unpriced model is
+  exactly (never by prefix: a prefix match once billed grok-4.5 at grok-4's 7.5x rate). One fallback exists: an id
+  with no row of its own that ends in `-YYYYMMDD` or `-latest` is looked up again without that suffix, so
+  `<model>-20260115` and `<model>-latest` book at `<model>`'s rate, not $0. An unpriced model (no row for the id or
+  for its base) records its tokens, books **$0**, and is marked in the CLI. That fails safe rather than mis-billing. Listing an unpriced model is
   silent; the warning that names the id and the file is logged from `recordClientUsage`, once per unpriced call that
   is recorded. So an unpriced id is noticed when it costs money, not when it appears in a model list.
 - The `verify-*-live.ts` scripts in `scripts/` call real upstreams.

@@ -54,7 +54,10 @@ final class CursorTrack: @unchecked Sendable {
 
     /// The tracks without jitter, one per threshold (the smooth cursor); built once, read by every frame.
     private let smoothLock = NSLock()
-    private var smoothTracks: [Int: CursorTrack] = [:]
+    /// The tracks without jitter by their rounded settings, at most `smoothTracksKept` (a dragged slider makes one per
+    /// step, each a full copy of the samples).
+    private var smoothTracks: [SmoothKey: CursorTrack] = [:]
+    private var smoothOrder: [SmoothKey] = []
 
     /// The movie has no system cursor in it, so the editor draws one.
     var drawsCursor: Bool { !shapeChanges.isEmpty && !shapes.isEmpty }
@@ -296,6 +299,12 @@ final class CursorTrack: @unchecked Sendable {
 
 // fx B (round 4): the smooth cursor (EditProject.CursorSmooth, src/utils/recording-editor/cursor-smooth.ts).
 extension CursorTrack {
+    /// Both rounded settings of a track without jitter; one packed Int mapped different pairs to one entry.
+    struct SmoothKey: Hashable {
+        let points: Int
+        let aspect: Int
+    }
+
     /// The widest average the smooth cursor uses, at strength 1.
     static let smoothMaxHalfMs = 400.0
 
@@ -304,7 +313,7 @@ extension CursorTrack {
     /// `aspect` is the picture's height over its width, so a step up counts as much as the same step across.
     func dejittered(points: Double, aspect: Double) -> CursorTrack {
         guard points > 0, !samples.isEmpty else { return self }
-        let key = Int((points * 100).rounded()) &* 31 &+ Int((aspect * 1000).rounded())
+        let key = SmoothKey(points: Int((points * 100).rounded()), aspect: Int((aspect * 1000).rounded()))
         smoothLock.lock()
         if let cached = smoothTracks[key] {
             smoothLock.unlock()
@@ -323,9 +332,20 @@ extension CursorTrack {
         }
         let track = CursorTrack(samples: kept, shapes: shapes, pointWidths: pointWidths)
         smoothLock.lock()
-        smoothTracks[key] = track
+        if smoothTracks.updateValue(track, forKey: key) == nil { smoothOrder.append(key) }
+        while smoothOrder.count > Self.smoothTracksKept { smoothTracks[smoothOrder.removeFirst()] = nil }
         smoothLock.unlock()
         return track
+    }
+
+    /// How many tracks without jitter one track keeps; the oldest goes first.
+    static let smoothTracksKept = 4
+
+    /// The tracks kept now (a test reads it).
+    var smoothTracksCount: Int {
+        smoothLock.lock()
+        defer { smoothLock.unlock() }
+        return smoothTracks.count
     }
 
     /// Where the smooth cursor is drawn and how visible it is: on the track without jitter, averaged over up to

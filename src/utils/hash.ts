@@ -1,9 +1,5 @@
+import { createHash } from "node:crypto";
 import { SafeJSON } from "@genesiscz/utils/json";
-
-/** SHA-256 of the default SafeJSON representation, preserving insertion order for existing persisted keys. */
-export function jsonSha256(value: unknown): string {
-    return new Bun.CryptoHasher("sha256").update(SafeJSON.stringify(value)).digest("hex");
-}
 
 /**
  * Fast non-cryptographic hash using Bun's built-in xxHash64.
@@ -11,6 +7,11 @@ export function jsonSha256(value: unknown): string {
  */
 export function xxhash(content: string): string {
     return Bun.hash.xxHash64(content).toString(16);
+}
+
+/** The SHA-256 hex digest of a value's JSON text: a stable file or cache key for plain data. */
+export function sha256Json(value: unknown): string {
+    return createHash("sha256").update(SafeJSON.stringify(value)).digest("hex");
 }
 
 export type IntegrityVerification =

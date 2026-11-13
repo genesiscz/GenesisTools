@@ -17,6 +17,7 @@ import {
     presentAgents,
     REARM_GRACE_MS,
     remainingAgentNames,
+    trackRearm,
 } from "../lib/leave";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import type { AgentRecord, FeedEvent } from "../lib/types";
@@ -142,7 +143,7 @@ describe("filter.isVisibleToAgent", () => {
         };
         expect(isVisibleToAgent(loggedInStream, main)).toBe(false);
         expect(isVisibleToAgent(loggedInOnce, main)).toBe(false);
-        expect(isVisibleToAgent(loggedInStream, main, { debug: true })).toBe(true);
+        expect(isVisibleToAgent(loggedInStream, main, { meta: { debug: true } })).toBe(true);
     });
 
     test("main agent sees real-failure peer logged_out, not a re-arm (no debug needed)", () => {
@@ -212,8 +213,8 @@ describe("filter.isVisibleToAgent", () => {
             agent_id: "agt_beta",
             reason: "dead_pid",
         };
-        expect(isVisibleToAgent(loggedIn, agentAlpha, { debug: true })).toBe(true);
-        expect(isVisibleToAgent(loggedOutDead, agentAlpha, { debug: true })).toBe(true);
+        expect(isVisibleToAgent(loggedIn, agentAlpha, { meta: { debug: true } })).toBe(true);
+        expect(isVisibleToAgent(loggedOutDead, agentAlpha, { meta: { debug: true } })).toBe(true);
     });
 
     test("never shows own lifecycle events even with debug on", () => {
@@ -225,7 +226,7 @@ describe("filter.isVisibleToAgent", () => {
             agent_name: "alpha",
             mode: "stream",
         };
-        expect(isVisibleToAgent(loggedIn, agentAlpha, { debug: true })).toBe(false);
+        expect(isVisibleToAgent(loggedIn, agentAlpha, { meta: { debug: true } })).toBe(false);
     });
 
     test("hides peer --once login/logout churn even when session debug is on", () => {
@@ -245,12 +246,12 @@ describe("filter.isVisibleToAgent", () => {
             reason: "clean_exit",
             mode: "once",
         };
-        expect(isVisibleToAgent(onceLoggedIn, agentAlpha, { debug: true })).toBe(false);
-        expect(isVisibleToAgent(onceLoggedOut, agentAlpha, { debug: true })).toBe(false);
+        expect(isVisibleToAgent(onceLoggedIn, agentAlpha, { meta: { debug: true } })).toBe(false);
+        expect(isVisibleToAgent(onceLoggedOut, agentAlpha, { meta: { debug: true } })).toBe(false);
 
         const main: AgentRecord = { ...agentAlpha, agent_id: "main_x", agent_name: "lead", is_main: true };
-        expect(isVisibleToAgent(onceLoggedIn, main, { debug: true })).toBe(false);
-        expect(isVisibleToAgent(onceLoggedOut, main, { debug: true })).toBe(false);
+        expect(isVisibleToAgent(onceLoggedIn, main, { meta: { debug: true } })).toBe(false);
+        expect(isVisibleToAgent(onceLoggedOut, main, { meta: { debug: true } })).toBe(false);
     });
 });
 
@@ -305,20 +306,18 @@ describe("agent_left", () => {
         expect(isVisibleToAgent(left(5, "agt_beta", "beta"), main)).toBe(true);
         // A child gets no presence by default: 28% of the child turns in the 2026-11-08 swarm woke only on it.
         expect(isVisibleToAgent(left(5, "agt_beta", "beta"), agentAlpha)).toBe(false);
-        expect(isVisibleToAgent(left(5, "agt_beta", "beta"), agentAlpha, undefined, { presence: "changes" })).toBe(
-            true
-        );
-        expect(isVisibleToAgent(left(5, "agt_alpha", "alpha"), agentAlpha, undefined, { presence: "all" })).toBe(false);
-        expect(isVisibleToAgent(left(5, "agt_beta", "beta"), main, undefined, { presence: "none" })).toBe(false);
+        expect(isVisibleToAgent(left(5, "agt_beta", "beta"), agentAlpha, { presence: "changes" })).toBe(true);
+        expect(isVisibleToAgent(left(5, "agt_alpha", "alpha"), agentAlpha, { presence: "all" })).toBe(false);
+        expect(isVisibleToAgent(left(5, "agt_beta", "beta"), main, { presence: "none" })).toBe(false);
     });
 
     test("presence defaults: debug session all, main changes, others none; an explicit mode wins", () => {
         const main: AgentRecord = { ...agentAlpha, is_main: true };
 
-        expect(presenceModeFor(agentAlpha)).toBe("none");
-        expect(presenceModeFor(main)).toBe("changes");
-        expect(presenceModeFor(agentAlpha, { debug: true })).toBe("all");
-        expect(presenceModeFor(main, { debug: true }, "none")).toBe("none");
+        expect(presenceModeFor({ agent: agentAlpha })).toBe("none");
+        expect(presenceModeFor({ agent: main })).toBe("changes");
+        expect(presenceModeFor({ agent: agentAlpha, meta: { debug: true } })).toBe("all");
+        expect(presenceModeFor({ agent: main, meta: { debug: true }, explicit: "none" })).toBe("none");
     });
 
     test("changes hides the re-arm leaves an older writer posted; all shows them", () => {
@@ -326,9 +325,9 @@ describe("agent_left", () => {
         const lapsed: FeedEvent = { ...left(6, "agt_beta", "beta"), reason: "lapsed" } as FeedEvent;
         const changes = { presence: "changes" as const };
 
-        expect(isVisibleToAgent(rearmLeave, agentAlpha, undefined, changes)).toBe(false);
-        expect(isVisibleToAgent(lapsed, agentAlpha, undefined, changes)).toBe(true);
-        expect(isVisibleToAgent(rearmLeave, agentAlpha, undefined, { presence: "all" })).toBe(true);
+        expect(isVisibleToAgent(rearmLeave, agentAlpha, changes)).toBe(false);
+        expect(isVisibleToAgent(lapsed, agentAlpha, changes)).toBe(true);
+        expect(isVisibleToAgent(rearmLeave, agentAlpha, { presence: "all" })).toBe(true);
     });
 
     test("presence is ordered by feed seq: a peer event in the registration's millisecond but after it is news", () => {
@@ -680,6 +679,133 @@ describe("agent_left", () => {
             ]);
             expect([...fold.pending.keys()].sort()).toEqual(["agt_delta", "agt_gamma"]);
             expect(fold.pending.get("agt_delta")).toBe(replaced);
+        });
+    });
+
+    test("a replaced login's late logged_out does not overwrite its replacement's grace", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-rearm-fence-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("rearm-fence");
+            ensureSessionDir(paths);
+            const now = Date.now();
+            const login = (loginId: string) =>
+                logInAndAnnounceJoin(paths, {
+                    agent_id: "agt_beta",
+                    agent_name: "beta",
+                    mode: "stream",
+                    login_id: loginId,
+                });
+            const killed = (loginId: string, until: number) =>
+                appendFeed(paths, {
+                    type: "logged_out",
+                    agent_id: "agt_beta",
+                    reason: "signal",
+                    mode: "stream",
+                    login_id: loginId,
+                    rearm_until: new Date(until).toISOString(),
+                });
+
+            // beta-1 released its slot, beta-2 logged in and was killed, and only then beta-1's logout landed.
+            await login("beta-1");
+            await login("beta-2");
+            const replacementEnd = await killed("beta-2", now + REARM_GRACE_MS);
+            await killed("beta-1", now + REARM_GRACE_MS * 2);
+
+            const feed = await readFeed(paths);
+            expect(pendingRearms(feed).get("agt_beta")).toMatchObject({ loginId: "beta-2", since: replacementEnd.ts });
+
+            // A watching login folds the same events one by one, after seeding from the feed before them.
+            const tracker = foldRearms(feed.slice(0, 2));
+            for (const event of feed.slice(2)) {
+                trackRearm(tracker, event);
+            }
+            expect(tracker.pending.get("agt_beta")?.loginId).toBe("beta-2");
+            // Folding the tail again, as a login whose cursor starts before the end of its seed does, changes nothing.
+            for (const event of feed.slice(2)) {
+                trackRearm(tracker, event);
+            }
+            expect(tracker.pending.get("agt_beta")?.loginId).toBe("beta-2");
+
+            expect(await announceLapses(paths, now + REARM_GRACE_MS)).toMatchObject([
+                { type: "agent_left", agent_id: "agt_beta", reason: "lapsed", login_id: "beta-2" },
+            ]);
+        });
+    });
+
+    test("a login that ended after its replacement logged in starts no grace", () => {
+        const tracker = foldRearms([
+            {
+                seq: 1,
+                ts: "2026-01-01T00:00:01Z",
+                type: "logged_in",
+                agent_id: "agt_beta",
+                agent_name: "beta",
+                mode: "stream",
+                login_id: "beta-1",
+            },
+            {
+                seq: 2,
+                ts: "2026-01-01T00:00:02Z",
+                type: "logged_in",
+                agent_id: "agt_beta",
+                agent_name: "beta",
+                mode: "stream",
+                login_id: "beta-2",
+            },
+        ] as FeedEvent[]);
+        trackRearm(tracker, {
+            seq: 3,
+            ts: "2026-01-01T00:00:03Z",
+            type: "logged_out",
+            agent_id: "agt_beta",
+            reason: "signal",
+            mode: "stream",
+            login_id: "beta-1",
+            rearm_until: "2026-01-01T00:01:33Z",
+        } as FeedEvent);
+
+        expect(tracker.pending.size).toBe(0);
+    });
+
+    test("a lapse check drops only the re-arms due at its own cutoff", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-lapse-cutoff-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const paths = sessionPaths("lapse-cutoff");
+            ensureSessionDir(paths);
+            // The cutoff lies in the past, as when the check waited for the feed lock: gamma fell due during the wait.
+            const cutoff = Date.now() - 60_000;
+
+            for (const [agentId, name, until] of [
+                ["agt_beta", "beta", cutoff],
+                ["agt_gamma", "gamma", cutoff + 1],
+            ] as const) {
+                await logInAndAnnounceJoin(paths, {
+                    agent_id: agentId,
+                    agent_name: name,
+                    mode: "stream",
+                    login_id: `${name}-1`,
+                });
+                await appendFeed(paths, {
+                    type: "logged_out",
+                    agent_id: agentId,
+                    reason: "signal",
+                    mode: "stream",
+                    login_id: `${name}-1`,
+                    rearm_until: new Date(until).toISOString(),
+                });
+            }
+
+            const fold = foldRearms(await readFeed(paths));
+            const lapsed = await announceDueLapses(paths, fold, cutoff);
+
+            expect(lapsed).toMatchObject([{ type: "agent_left", agent_id: "agt_beta", reason: "lapsed" }]);
+            expect([...fold.pending.keys()]).toEqual(["agt_gamma"]);
+            expect(await announceDueLapses(paths, fold)).toMatchObject([
+                { type: "agent_left", agent_id: "agt_gamma", reason: "lapsed" },
+            ]);
+            expect(fold.pending.size).toBe(0);
         });
     });
 });

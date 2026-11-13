@@ -63,7 +63,8 @@ final class ZoomState: @unchecked Sendable {
         lock.unlock()
     }
 
-    private func redactions(for project: EditProject) -> [EditProject.Redaction] {
+    /// The hidden parts as drawn for `project` (RedactionEdges).
+    func redactions(for project: EditProject) -> [EditProject.Redaction] {
         lock.lock()
         let cached = drawnRedactions
         let frames = sourceFrames
@@ -307,16 +308,26 @@ final class ZoomState: @unchecked Sendable {
     /// How long a text that plays for `lengthUs` fades in and out: 0.2 s, less for a short one.
     static func textFadeUs(lengthUs: Int64) -> Int64 { min(200_000, max(1, lengthUs / 3)) }
 
-    /// The texts showing at a source time, each fading in and out over `textFadeUs` of the time it plays, with how long
-    /// it has played since its first shown frame (`sinceUs`, which drives its `animate`). All of it runs in the movie as
-    /// it plays (TimelineMap.Shown): a 600 ms typewriter types for 600 ms in a part sped up 4x too.
+    /// How long a text fades in: `animate: { kind: "fade", ms }` names its way in (TextAnimate); every other text
+    /// fades in over `textFadeUs` of the `playedUs` it plays, as it fades out.
+    static func textFadeInUs(_ note: EditProject.TextNote, playedUs: Int64) -> Int64 {
+        if let animate = note.animate, animate.kind == .fade { return max(1, Int64(animate.ms) * 1000) }
+        return textFadeUs(lengthUs: playedUs)
+    }
+
+    /// The texts showing at a source time, each fading in over `textFadeInUs` and out over `textFadeUs` of the time it
+    /// plays, with how long it has played since its first shown frame (`sinceUs`, which drives its `animate`). All of it
+    /// runs in the movie as it plays (TimelineMap.Shown): a 600 ms typewriter types for 600 ms in a part sped up 4x too.
     static func texts(atSourceUs us: Int64, project: EditProject) -> [(note: EditProject.TextNote, opacity: Double, sinceUs: Int64)] {
         let placed = TimelineMap.placed(project)
         guard let outUs = TimelineMap.outputTime(ofSource: us, placed: placed) else { return [] }
         return (project.texts ?? []).compactMap { note in
             guard us >= note.startUs, us < note.endUs,
                   let shown = TimelineMap.shown(fromUs: note.startUs, toUs: note.endUs, placed: placed) else { return nil }
-            return (note, shown.fade(atOutput: outUs, overUs: textFadeUs(lengthUs: shown.playedUs)), outUs - shown.startOut)
+            let fadeIn = Double(textFadeInUs(note, playedUs: shown.playedUs))
+            let fadeOut = Double(textFadeUs(lengthUs: shown.playedUs))
+            let opacity = min(1, Double(outUs - shown.startOut) / fadeIn, Double(shown.endOut - outUs) / fadeOut)
+            return (note, max(0, opacity), outUs - shown.startOut)
         }
     }
 
@@ -580,6 +591,16 @@ enum MusicMix {
             .map { ($0, gain(atUs: $0, music: music, speech: speech, lengthUs: endUs, duck: duck)) }
     }
 
+    /// Where the music's fade-out ends, on the whole export's clock for a part (`music.inWhole`): the whole's end for
+    /// music that loops, and for music played once the end of its file (`laidEndUs`, where its last pass ends on the
+    /// part's clock) when that comes first. The part's own end is never it: a part in the middle of the whole fades
+    /// only where the whole does, so its music stays at the level of that stretch of the whole.
+    static func fadeEndUs(music: EditProject.Music, lengthUs: Int64, laidEndUs: Int64) -> Int64 {
+        let wholeUs = music.inWhole?.lengthUs ?? lengthUs
+        guard music.loop == false else { return wholeUs }
+        return min(wholeUs, laidEndUs + (music.inWhole?.atUs ?? 0))
+    }
+
     /// Lays the music under the movie and returns its mix parameters; nil (logged) when the file has no sound.
     /// `offsetUs`: where the movie starts in the composition (after an intro card); the speech moves by it.
     /// `lines`: the transcript the captions are drawn from (the render's ZoomState), so the preview ducks under the
@@ -617,9 +638,10 @@ enum MusicMix {
             range = available
         }
         // Played once, the music fades out at its own end (on the whole's clock for a part).
-        let playedUs = min(lengthUs, Int64((at.seconds * 1_000_000).rounded()))
+        let laidEndUs = Int64((at.seconds * 1_000_000).rounded())
+        let playedUs = min(lengthUs, laidEndUs)
         guard playedUs > 0 else { return nil }
-        let fadeEndUs = min(music.inWhole?.lengthUs ?? lengthUs, playedUs + shiftUs)
+        let fadeEndUs = fadeEndUs(music: music, lengthUs: lengthUs, laidEndUs: laidEndUs)
         var speech = speech(lines: lines, project: project)
             .map { (fromUs: $0.fromUs + offsetUs, toUs: $0.toUs + offsetUs) }
         // Round 3 (2026-11-08): a card's voiceover ducks the music over its card too (in the file's time already).
@@ -791,12 +813,12 @@ struct EditRenderer {
         guard natural.width.isFinite, natural.height.isFinite, natural.width >= 1, natural.height >= 1 else {
             throw RenderError.badComposition("the movie's picture is \(natural.width)×\(natural.height)")
         }
-        // R5 5 redaction edges: a hidden part stays on while a frame from its time stays on screen. Set even when the
-        // edit hides nothing yet: the preview keeps this ZoomState when a part is added later, and SourceFrames reads
-        // nothing until a part asks.
-        if (try? await video.load(.canProvideSampleCursors)) == true {
-            zoom.setSourceFrames(SourceFrames(track: video, durationUs: project.source.durationUs))
-        }
+        // R5 5 redaction edges: a hidden part stays on while a frame from its time stays on screen. Every movie that
+        // can give its frame times gets them, with or without hidden parts: a part added later reaches the preview by
+        // `ZoomState.update` alone (no rebuild), and it must still cover the frame that stays on screen after its end.
+        // SourceFrames reads nothing until a hidden part asks.
+        let readsFrames = (try? await video.load(.canProvideSampleCursors)) == true
+        zoom.setSourceFrames(readsFrames ? SourceFrames(track: video, durationUs: project.source.durationUs) : nil)
         let composition = AVMutableComposition()
         guard let videoOut = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw RenderError.emptyEdit

@@ -241,7 +241,8 @@ const PLAIN_ARROW = /^\([^()]*\)\s*=>/;
  *
  * A source that opens with `(` is only sometimes a function: `(1 + 2) * 3`, `(el).textContent` and an
  * immediately called `(async () => …)()` are values, and calling them threw "9 is not a function"
- * (NR3, 2026-11-06). Such a source is evaluated first and called only when its value is a function.
+ * (NR3, 2026-11-06). Such a source is evaluated first and called only when its value is a function. It is evaluated
+ * as the argument, outside the helper's own `value` binding, so a page variable named `value` stays visible to it.
  */
 export function evaluationExpression(source: string): string {
     const body = source.replace(LEADING_COMMENTS, "").replace(/;\s*$/, "");
@@ -251,7 +252,7 @@ export function evaluationExpression(source: string): string {
     }
 
     if (body.startsWith("(")) {
-        return `(() => { const value = (${body}); return typeof value === "function" ? value() : value; })()`;
+        return `((value) => (typeof value === "function" ? value() : value))((${body}))`;
     }
 
     return source;

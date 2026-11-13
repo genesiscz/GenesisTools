@@ -3,7 +3,8 @@ import Foundation
 /// The ops that take an edit from `old` to `new` when they differ only in settings and in the fields of items that
 /// exist: the window's controls change a copy of the project (a slider sets `frame.padding`, a drag moves a text),
 /// and this names that change as ops for the recorder service, which owns every rule (ranges, clamps, defaults).
-/// A change it cannot name (clips, an added or deleted item) returns nil: those actions send their own op.
+/// A change it cannot name (clips, an added or deleted item, a lens among them) returns nil: those actions send their
+/// own op.
 enum EditOpDiff {
     static func ops(from old: EditProject, to new: EditProject) -> [EditOp]? {
         // Items are matched by id, never by place: the service sorts some lists (a hidden part moved past another), so
@@ -12,7 +13,11 @@ enum EditOpDiff {
               sameItems(old.zooms, new.zooms, \.id), sameItems(old.redactions ?? [], new.redactions ?? [], \.id),
               sameItems(old.texts ?? [], new.texts ?? [], \.id), sameItems(old.shapes ?? [], new.shapes ?? [], \.id),
               sameItems(old.camera?.hidden ?? [], new.camera?.hidden ?? [], \.id),
-              (old.camera == nil) == (new.camera == nil) || new.camera == nil else { return nil }
+              (old.camera == nil) == (new.camera == nil) || new.camera == nil,
+              // A voiceover clip added here has no file length yet; the window adds one with its own op.
+              Set(ids(new.audio.voiceovers)).isSubset(of: ids(old.audio.voiceovers)),
+              // A lens added or deleted sends its own `lens` or `unlens` op (the service names a new lens).
+              ids(old.lens?.items) == ids(new.lens?.items) else { return nil }
         var ops: [EditOp] = []
         for (a, b) in pairs(old.zooms, new.zooms, \.id) where a != b { ops += zoom(a, b) }
         for (a, b) in pairs(old.redactions ?? [], new.redactions ?? [], \.id) where a != b { ops += redaction(a, b) }
@@ -68,77 +73,16 @@ enum EditOpDiff {
         if old.redactionJoins != new.redactionJoins {
             ops.append(.redactionJoins(EditOp.RedactionJoins(snapMs: (new.redactionJoins ?? .init()).snapMs)))
         }
-        // Round 4 fx-render: the Style tab's transitions, 3D tilt and lenses.
+        // Round 4 fx-render: the transitions at cuts, the 3D tilt and the fields of each lens that stays.
         if old.transitions != new.transitions { ops += transitions(old.transitions, new.transitions) }
         if old.tilt != new.tilt { ops.append(.tilt(tilt(new.tilt))) }
-        if old.lens != new.lens { ops += lenses(old.lens?.items ?? [], new.lens?.items ?? []) }
-        return ops
-    }
-
-    /// The edit-wide transition, then each join's own; a join that lost its own entry goes back to the default.
-    private static func transitions(_ a: EditProject.Transitions?, _ b: EditProject.Transitions?) -> [EditOp] {
-        let before = a ?? EditProject.Transitions(), after = b ?? EditProject.Transitions()
-        var ops: [EditOp] = []
-        if before.default != after.default {
-            ops.append(.transition(EditOp.Transition(kind: choice(after.default.kind), ms: after.default.ms)))
-        }
-        let own = before.joins ?? [:], next = after.joins ?? [:]
-        for clip in Set(own.keys).union(next.keys).sorted() where own[clip] != next[clip] {
-            if let join = next[clip] {
-                ops.append(.transition(EditOp.Transition(kind: choice(join.kind), ms: join.ms, clip: clip)))
-            } else {
-                ops.append(.transition(EditOp.Transition(kind: .default, clip: clip)))
-            }
-        }
-        return ops
-    }
-
-    private static func choice(_ kind: EditProject.TransitionKind) -> EditOp.TransitionChoice {
-        switch kind {
-        case .none: .none
-        case .crossfade: .crossfade
-        case .zoom: .zoom
-        case .blur: .blur
-        }
-    }
-
-    /// Every field, so the service's tilt is the window's; nil removes it.
-    private static func tilt(_ tilt: EditProject.Tilt?) -> EditOp.Tilt {
-        guard let tilt else { return EditOp.Tilt(enabled: false) }
-        return EditOp.Tilt(enabled: true, strength: tilt.strength, drift: tilt.drift, tiltIn: tilt.tiltIn, tiltOut: tilt.tiltOut,
-                           inMs: tilt.inMs, outMs: tilt.outMs)
-    }
-
-    /// The lenses by id: one removed is `unlens`, one added is `lens` with the window's id (so a `setLens` sent before
-    /// the service answers names a lens it has), one changed is `setLens` with the fields that changed.
-    private static func lenses(_ a: [EditProject.LensItem], _ b: [EditProject.LensItem]) -> [EditOp] {
-        var ops: [EditOp] = a.filter { lens in !b.contains { $0.id == lens.id } }.map { .unlens(EditOp.Unlens(id: $0.id)) }
-        for lens in b {
-            guard let old = a.first(where: { $0.id == lens.id }) else {
-                ops.append(.lens(EditOp.Lens(id: lens.id, from: seconds(lens.startUs), to: seconds(lens.endUs), radius: lens.radius,
-                                             magnification: lens.magnification, follow: lens.follow,
-                                             at: EditOp.Point(x: lens.x, y: lens.y), ring: lens.ring)))
-                continue
-            }
-            guard old != lens else { continue }
-            var op = EditOp.SetLens(id: lens.id)
-            if old.startUs != lens.startUs { op.from = seconds(lens.startUs) }
-            if old.endUs != lens.endUs { op.to = seconds(lens.endUs) }
-            if old.radius != lens.radius { op.radius = lens.radius }
-            if old.magnification != lens.magnification { op.magnification = lens.magnification }
-            // `at` alone also stops the lens following the cursor, so a moved lens names its follow too.
-            if (old.x, old.y) != (lens.x, lens.y) {
-                op.at = EditOp.Point(x: lens.x, y: lens.y)
-                op.follow = lens.follow
-            }
-            if old.follow != lens.follow { op.follow = lens.follow }
-            if old.ring != lens.ring { op.ring = lens.ring }
-            ops.append(.setLens(op))
-        }
+        for (a, b) in zip(old.lens?.items ?? [], new.lens?.items ?? []) where a != b { ops += lens(a, b) }
         return ops
     }
 
     static func seconds(_ us: Int64) -> Double { Double(us) / 1_000_000 }
+
+    private static func ids<T: Identifiable>(_ list: [T]?) -> [T.ID] { (list ?? []).map(\.id) }
 
     /// The two lists hold the same ids, each once, in any order.
     private static func sameItems<T, ID: Hashable>(_ old: [T], _ new: [T], _ id: KeyPath<T, ID>) -> Bool {
@@ -237,9 +181,14 @@ enum EditOpDiff {
                 ops.append(.music(EditOp.Music(enabled: false)))
             }
         }
-        // R4 voiceover clips: the window moves a clip or changes its volume; adding or removing one sends its own op.
+        // R4 voiceover clips: the window moves a clip or changes its volume; a removed clip is an unvoiceover, so a
+        // change that drops one never leaves it in the service's edit (an added one returns nil above).
         if a.voiceovers != b.voiceovers {
             let before = a.voiceovers ?? []
+            let kept = Set(ids(b.voiceovers))
+            for clip in before where !kept.contains(clip.id) {
+                ops.append(.unvoiceover(EditOp.Unvoiceover(id: clip.id)))
+            }
             for clip in b.voiceovers ?? [] {
                 guard let old = before.first(where: { $0.id == clip.id }), old != clip else { continue }
                 var op = EditOp.Voiceover(id: clip.id)
@@ -329,6 +278,57 @@ enum EditOpDiff {
         if a.mirror != b.mirror { op.mirror = b.mirror }
         if a.offsetMs != b.offsetMs { op.offsetMs = b.offsetMs }
         return op == EditOp.Camera() ? nil : op
+    }
+
+    /// The edit-wide transition when it changed, and one op per join whose own transition changed; a join that lost
+    /// its own takes the default back. No settings are a hard cut everywhere, as the service reads them.
+    private static func transitions(_ a: EditProject.Transitions?, _ b: EditProject.Transitions?) -> [EditOp] {
+        let before = a ?? EditProject.Transitions(), after = b ?? EditProject.Transitions()
+        var ops: [EditOp] = []
+        if before.default != after.default {
+            ops.append(.transition(EditOp.Transition(kind: choice(after.default.kind), ms: after.default.ms)))
+        }
+        let old = before.joins ?? [:], new = after.joins ?? [:]
+        for clip in Set(old.keys).union(new.keys).sorted() where old[clip] != new[clip] {
+            if let join = new[clip] {
+                ops.append(.transition(EditOp.Transition(kind: choice(join.kind), ms: join.ms, clip: clip)))
+            } else {
+                ops.append(.transition(EditOp.Transition(kind: .default, clip: clip)))
+            }
+        }
+        return ops
+    }
+
+    private static func choice(_ kind: EditProject.TransitionKind) -> EditOp.TransitionChoice {
+        switch kind {
+        case .none: .none
+        case .crossfade: .crossfade
+        case .zoom: .zoom
+        case .blur: .blur
+        }
+    }
+
+    /// Every field, so the service's tilt is the window's; nil turns it off.
+    private static func tilt(_ tilt: EditProject.Tilt?) -> EditOp.Tilt {
+        guard let tilt else { return EditOp.Tilt(enabled: false) }
+        return EditOp.Tilt(enabled: true, strength: tilt.strength, drift: tilt.drift, tiltIn: tilt.tiltIn, tiltOut: tilt.tiltOut,
+                           inMs: tilt.inMs, outMs: tilt.outMs)
+    }
+
+    private static func lens(_ a: EditProject.LensItem, _ b: EditProject.LensItem) -> [EditOp] {
+        var op = EditOp.SetLens(id: b.id)
+        if a.startUs != b.startUs { op.from = seconds(b.startUs) }
+        if a.endUs != b.endUs { op.to = seconds(b.endUs) }
+        if a.radius != b.radius { op.radius = b.radius }
+        if a.magnification != b.magnification { op.magnification = b.magnification }
+        // `at` also stops the lens following the cursor unless `follow` says, so a moved lens sends both.
+        if (a.x, a.y) != (b.x, b.y) {
+            op.at = EditOp.Point(x: b.x, y: b.y)
+            op.follow = b.follow
+        }
+        if a.follow != b.follow { op.follow = b.follow }
+        if a.ring != b.ring { op.ring = b.ring }
+        return op == EditOp.SetLens(id: b.id) ? [] : [.setLens(op)]
     }
 
     private static func fixes(_ a: [String: String], _ b: [String: String]) -> [EditOp] {

@@ -225,4 +225,5 @@ final class HubPreferencesTests: XCTestCase {
         let order = store.sections.map(\.id)
         XCTAssertEqual(order.firstIndex(of: "hub"), order.firstIndex(of: "widgets").map { $0 + 1 })
     }
+
 }

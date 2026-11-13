@@ -346,7 +346,7 @@ function claimSlot({
 }
 
 function isDeliverable(event: FeedEvent, active: ActiveLogin): boolean {
-    if (!active.observer && !isVisibleToAgent(event, active.record, active.meta, { presence: active.presence })) {
+    if (!active.observer && !isVisibleToAgent(event, active.record, { meta: active.meta, presence: active.presence })) {
         return false;
     }
 

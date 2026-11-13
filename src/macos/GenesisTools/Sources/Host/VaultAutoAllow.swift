@@ -5,11 +5,11 @@
 //
 // The list lives in `~/.genesis-tools/ai/gate/vault-auto-allow.json`, written by `tools ai gate auto-allow`
 // (src/utils/ai/gate/auto-allow.ts holds the same defaults). A request passes only when the script is a tool of the
-// GenesisTools checkout this app was built from, the command is on the list, an agent started it, and NODE_PATH is the
-// only variable that loads extra code, with every entry inside the bundle of a listed agent app in /Applications (the
-// value Grok Bot gives it; any other module folder could load code the script path does not name). Anything else
-// still gets the window. Every pass writes an audit line, and a
-// notification when `notify` is on.
+// GenesisTools checkout this app was built from, run by Bun or a `gt-<tool>` launcher, the command is on the list, an
+// agent process is among the caller's ancestors, and NODE_PATH is the only variable that loads extra code, with every
+// entry inside the bundle of a listed agent app in /Applications (the value Grok Bot gives it; any other module folder
+// could load code the script path does not name). Anything else still gets the window. Every pass writes an audit
+// line, and a notification when `notify` is on.
 //
 // The file also lists GenesisTools' own background programs (`daemons`, decision 61 b of 2026-11-10: "A built-in list
 // of GenesisTools' own daemons of the installed checkout gets the key with no window, with an audit line and a
@@ -78,10 +78,14 @@ struct VaultAutoAllowSettings: Decodable, Equatable {
 }
 
 struct VaultAutoAllowMatch: Equatable {
-    /// `claude warmup`, as typed after `tools`.
+    /// `claude warmup`, as typed after `tools`: a list entry, never the caller's own arguments.
     var command: String
-    /// Who started it: "Grok Bot", "my-session (Claude Code)", "codex exec (pid 80)".
+    /// Who started it, with no argument of any process: "Grok Bot" (a listed app), "codex (pid 80)" (a CLI's executable
+    /// name and pid). A process label also carries its first argument, which can be a prompt, so it never goes here.
     var agent: String
+
+    /// The `detail` of the `auto-allowed` audit line.
+    var auditDetail: String { "command: tools \(command); agent: \(agent)" }
 }
 
 enum VaultAutoAllow {
@@ -111,16 +115,22 @@ enum VaultAutoAllow {
         }
     }
 
-    static func match(caller: VaultCaller, session: VaultSessionInfo, settings: VaultAutoAllowSettings,
-                      trustedRoot: String?) -> VaultAutoAllowMatch? {
-        guard settings.enabled, let trustedRoot, let script = caller.script, caller.args != nil,
+    /// The listed command and the agent behind it, or nil for the window. The executable must be Bun or a `gt-<tool>`
+    /// launcher at their known paths (`VaultGrants.runtime`): the script path is only an argument, and any other program
+    /// can pass it without running it. The subcommand must be the first argument after the script: with an option
+    /// before it, the first bare word may be that option's value (`say --model voices`), so the command is unknown.
+    static func match(caller: VaultCaller, settings: VaultAutoAllowSettings, trustedRoot: String?,
+                      home: String = genesisHome()) -> VaultAutoAllowMatch? {
+        guard settings.enabled, let trustedRoot, let executable = caller.executable,
+              VaultGrants.runtime(of: executable, home: home) == "bun",
+              let script = caller.script, caller.args != nil,
               loadsOnlyTrustedCode(caller, apps: settings.agentApps),
               let tool = tool(of: script, root: trustedRoot),
-              let subcommand = caller.scriptArguments.first(where: { !$0.hasPrefix("-") }) else { return nil }
+              let subcommand = caller.scriptArguments.first, !subcommand.hasPrefix("-") else { return nil }
 
         let command = "\(tool) \(subcommand)"
         guard settings.commands.contains(command),
-              let agent = agent(caller: caller, session: session, apps: settings.agentApps) else { return nil }
+              let agent = agent(caller: caller, apps: settings.agentApps) else { return nil }
         return VaultAutoAllowMatch(command: command, agent: agent)
     }
 
@@ -147,10 +157,16 @@ enum VaultAutoAllow {
         return String(parts[0])
     }
 
-    /// A Claude Code session, a Claude, Codex or Grok CLI ancestor, or an ancestor process named like a listed app.
-    static func agent(caller: VaultCaller, session: VaultSessionInfo, apps: [String]) -> String? {
-        if let summary = session.summary { return summary }
+    /// The agent among the caller's ancestors, from the kernel's process chain: a Claude, Codex or Grok CLI process, or
+    /// a process named like a listed app. `CLAUDE_CODE_SESSION_ID` (any process can set it) proves nothing, and a session
+    /// title is no label either: Claude Code generates it from the prompt. The label is the executable's name and pid.
+    static func agent(caller: VaultCaller, apps: [String]) -> String? {
         for ancestor in caller.ancestors {
+            if let name = ancestor.command.split(separator: " ").first.map(String.init),
+               Harness.allCases.contains(where: { $0.binary == name }) {
+                return "\(name) (pid \(ancestor.pid))"
+            }
+
             if let app = apps.first(where: { ancestor.command == $0 || ancestor.command.hasPrefix($0 + " ") }) {
                 return app
             }
@@ -181,11 +197,17 @@ enum VaultAutoAllow {
         return (String(gitdir[..<range.lowerBound]) as NSString).standardizingPath
     }
 
+    /// The notification's words: the listed command and the agent label, so no argument of any process appears.
+    static func notificationText(_ match: VaultAutoAllowMatch) -> (title: String, body: String) {
+        ("Vault key given to “tools \(match.command)”",
+         "Started by \(match.agent). No window: the command is on the vault's auto-allow list (tools ai gate auto-allow).")
+    }
+
     /// One notification per pass, no sound and no arguments (a command line can carry private values). Waits at most
     /// 2 s for Notification Center, because the process ends right after it hands the key on.
     static func notify(_ match: VaultAutoAllowMatch) {
-        post(title: "Vault key given to “tools \(match.command)”",
-             body: "Started by \(match.agent). No window: the command is on the vault's auto-allow list (tools ai gate auto-allow).")
+        let text = notificationText(match)
+        post(title: text.title, body: text.body)
     }
 
     /// A daemon's notification, at most once in `everyHours`: it reads the key about once a minute. A stamp that

@@ -5,6 +5,7 @@ import {
     gatherEnvironment,
     issueEnvironmentValues,
     parseIssueTemplate,
+    readBugTemplate,
 } from "./environment";
 import { gatherTriage, processLabel, type TriageSources, triageDocument, triageMarkdown } from "./triage";
 
@@ -154,6 +155,17 @@ body:
         expect(values["app-build"]).toContain("built 2026-11-09 10:32 UTC (1 h 27 min ago)");
         expect(values["app-build"]).toContain("tools checkout aaaabbbbcccc on feat/x differs from the app's build");
         expect(values["app-build"]).toContain("recorder: face pid 61240, service pid 5120");
+    });
+
+    test("every environment answer names a field of the checkout's real bug form", () => {
+        const template = readBugTemplate();
+        const ids = new Set(template.fields.map((field) => field.id));
+
+        const keys = Object.keys(issueEnvironmentValues(gatherEnvironment(sources())));
+
+        expect(template.path).not.toBeNull();
+        expect(keys.length).toBeGreaterThan(0);
+        expect(keys.filter((key) => !ids.has(key))).toEqual([]);
     });
 });
 

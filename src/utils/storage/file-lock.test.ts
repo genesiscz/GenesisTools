@@ -1,10 +1,10 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EMPTY_HOLDER_GRACE_MS, serializePidRecord } from "@genesiscz/utils/process/pidfile";
-import { LockTimeoutError, withFileLock } from "./file-lock";
+import { LockTimeoutError, withFileLock, withQueuedFileLock } from "./file-lock";
 
 // The race cases (N racers, a fresh claim during arbitration, a steal that finds new bytes) are in
 // src/utils/process/claim-takeover.test.ts, with every other caller of the shared takeover.
@@ -132,5 +132,74 @@ describe("file-lock: stale/orphaned lock handling", () => {
         });
 
         expect(result).toBe("committed");
+    });
+});
+
+describe("file-lock: the arrival-order queue", () => {
+    let dir: string;
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "file-lock-queue-"));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("a caller that takes the lock again at once cannot keep a waiting caller from its turn", async () => {
+        const lockPath = join(dir, "vision.lock");
+        const order: string[] = [];
+        let firstTurn: () => void = () => undefined;
+        const holding = new Promise<void>((resolve) => {
+            firstTurn = resolve;
+        });
+        const scan = (async () => {
+            for (let frame = 0; frame < 30; frame++) {
+                await withQueuedFileLock(
+                    lockPath,
+                    async () => {
+                        order.push("scan");
+                        firstTurn();
+                        await Bun.sleep(10);
+                    },
+                    5000
+                );
+            }
+        })();
+        await holding;
+        await withQueuedFileLock(lockPath, async () => order.push("read"), 5000);
+        await scan;
+
+        expect(order.indexOf("read")).toBeLessThanOrEqual(2);
+        expect(readdirSync(`${lockPath}.queue`)).toEqual([]);
+    });
+
+    it("a ticket of a dead process or one past its deadline does not hold up the queue", async () => {
+        const lockPath = join(dir, "vision.lock");
+        mkdirSync(`${lockPath}.queue`, { recursive: true });
+        writeFileSync(
+            join(`${lockPath}.queue`, "000000000000001-000000001-2147483000"),
+            `{"pid":2147483000,"at":${Date.now()},"until":9e15}`
+        );
+        writeFileSync(
+            join(`${lockPath}.queue`, "000000000000002-000000001-1"),
+            `{"pid":${process.pid},"at":${Date.now()},"until":${Date.now() - 120_000}}`
+        );
+        writeFileSync(join(`${lockPath}.queue`, "000000000000003-000000001-1"), "not a ticket");
+
+        expect(await withQueuedFileLock(lockPath, async () => "served", 1000)).toBe("served");
+        expect(readdirSync(`${lockPath}.queue`)).toEqual([]);
+    });
+
+    it("a live older ticket makes a caller wait, and its timeout is a LockTimeoutError", async () => {
+        const lockPath = join(dir, "vision.lock");
+        mkdirSync(`${lockPath}.queue`, { recursive: true });
+        writeFileSync(
+            join(`${lockPath}.queue`, "000000000000001-000000001-1"),
+            `{"pid":${process.pid},"at":${Date.now()},"until":${Date.now() + 60_000}}`
+        );
+
+        await expect(withQueuedFileLock(lockPath, async () => "never", 300)).rejects.toBeInstanceOf(LockTimeoutError);
+        expect(readdirSync(`${lockPath}.queue`)).toEqual(["000000000000001-000000001-1"]);
     });
 });

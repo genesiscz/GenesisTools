@@ -112,6 +112,7 @@ A standalone stream with nobody consuming its terminal output can advance its cu
 <!-- added 2026-10-08 19:25: a peer could not tell whether anyone still read its mail -->
 
 <!-- updated 2026-11-10: presence goes to main by default, a re-arm is silent, a failed one is `lapsed` -->
+<!-- updated 2026-11-11 02:38: a hard-killed login, the registered-recipient and filter limits of the send receipt (#769 review) -->
 
 The bus announces presence by itself. **The login's `--presence` mode decides who receives it:**
 
@@ -124,13 +125,15 @@ The bus announces presence by itself. **The login's `--presence` mode decides wh
 - `agent_joined` (`present: [...]`): an agent's first login, or its first after a leave or a lapse. A Monitor re-arm and later `--once` cycles are not joins.
 - `agent_left` (`reason`, `remaining: [...]`): `leave` (the agent ran `tools agents leave`, with its note), `lapsed` (its login was killed or timed out, or died, and no new login came within 90 s), `ended` (a stream login stopped on its own), `cap` (a `--once` receiver waited the whole cap).
 
-An agent without presence events still learns that a peer is away when it matters: `tools agents message` adds `not_listening` and a `note` to its result when a recipient is re-arming, has left, or never logged in. The message is stored and delivered at the recipient's next login.
+An agent without presence events still learns that a peer is away when it matters: `tools agents message` adds `not_listening` and a `note` to its result when a recipient is re-arming, has left, or is registered but never logged in (an unknown name fails the send and stores nothing). The message is stored and reaches the recipient at its next login whose `--kinds`, `--exclude-kinds` and `--filter` let it through; a login that filters it out moves its cursor past it for good. You are never in `not_listening` yourself: your own login never shows your own message.
 
 **🛑 A presence event needs no reply.** If your login receives one (you asked for it with `--presence`), act on it only when it changes your work, for example the peer you wait for lapsed. Never write a sentence about a join or a leave: in T3 the last sentence of every child turn goes to the lead as a notice, and on 2026-11-08 38 of the 61 notices a lead received were a child saying that a peer joined or left.
 
 When you stop on purpose, say why in the same event:
 
-    tools agents leave --agent-name <me> --session <s> --note "<one-line status>"
+```bash
+tools agents leave --agent-name <me> --session <s> --note "<one-line status>"
+```
 
 Starting the receiver again after a leave or a lapse is a new `agent_joined`; it needs no message.
 

@@ -251,11 +251,12 @@ export function registerGateCommands(program: Command): void {
         });
 }
 
+/** What the switch means: off stops only this bypass, and a remembered allow still skips the window. */
+const AUTO_ALLOW_OFF = `off: no command skips the window on this list (a remembered allow still does; \`${toolCommand("ai gate revoke")}\` drops it)`;
+
+/** The human view of the settings: the switch, the list, the agent apps, the notification and the file. */
 function printAutoAllow(settings: VaultAutoAllowSettings): void {
-    renderCliHeader(
-        "Vault key without a window",
-        settings.enabled ? pc.green("on") : pc.yellow("off: every command asks in the window")
-    );
+    renderCliHeader("Vault key without a window", settings.enabled ? pc.green("on") : pc.yellow(AUTO_ALLOW_OFF));
     out.println(
         "  Commands on this list get the vault key with no window when an agent starts them; each one is logged."
     );
@@ -264,7 +265,7 @@ function printAutoAllow(settings: VaultAutoAllowSettings): void {
         out.println(`  tools ${command}`);
     }
 
-    renderCliSection("Agent apps (besides Claude Code, Codex and Grok sessions)");
+    renderCliSection("Agent apps (besides Claude Code, Codex and Grok CLI processes)");
     for (const app of settings.agentApps) {
         out.println(`  ${app}`);
     }
@@ -288,10 +289,33 @@ function printAutoAllow(settings: VaultAutoAllowSettings): void {
     out.println(`  ${pc.dim(vaultAutoAllowPath())}`);
 }
 
-function changeAutoAllow(change: (settings: VaultAutoAllowSettings) => VaultAutoAllowSettings): void {
-    printAutoAllow(updateVaultAutoAllow(change));
+/** A settings file the app cannot decode (or a lock that stays held) is an error line and exit code 1, not a trace. */
+function reportAutoAllowError(err: unknown): void {
+    out.log.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
 }
 
+/** An argument that names nothing is refused before the file is touched. */
+function refuseEmpty(value: string, what: string): boolean {
+    if (value) {
+        return false;
+    }
+
+    out.log.error(`Pass ${what}; an empty one would match nothing.`);
+    process.exitCode = 1;
+    return true;
+}
+
+/** Applies one change under the file's lock and prints the saved settings, or the error. */
+async function changeAutoAllow(change: (settings: VaultAutoAllowSettings) => VaultAutoAllowSettings): Promise<void> {
+    try {
+        printAutoAllow(await updateVaultAutoAllow(change));
+    } catch (err) {
+        reportAutoAllowError(err);
+    }
+}
+
+/** `tools ai gate auto-allow` and its subcommands; GenesisTools.app reads the file they write. */
 function registerAutoAllowCommands(gate: Command): void {
     const autoAllow = gate
         .command("auto-allow")
@@ -300,7 +324,14 @@ function registerAutoAllowCommands(gate: Command): void {
         )
         .option("--json", "Machine-readable output")
         .action((opts: { json?: boolean }) => {
-            const settings = loadVaultAutoAllow();
+            let settings: VaultAutoAllowSettings;
+            try {
+                settings = loadVaultAutoAllow();
+            } catch (err) {
+                reportAutoAllowError(err);
+                return;
+            }
+
             if (opts.json) {
                 out.result({ ...settings, path: vaultAutoAllowPath() });
                 return;
@@ -312,9 +343,9 @@ function registerAutoAllowCommands(gate: Command): void {
     autoAllow
         .command("add <command...>")
         .description(`Put a command on the list: \`add claude warmup\` lets "${toolCommand("claude warmup")}" through`)
-        .action((words: string[]) => {
+        .action(async (words: string[]) => {
             const command = autoAllowCommandEntry(words);
-            changeAutoAllow((settings) => ({
+            await changeAutoAllow((settings) => ({
                 ...settings,
                 commands: settings.commands.includes(command) ? settings.commands : [...settings.commands, command],
             }));
@@ -322,10 +353,16 @@ function registerAutoAllowCommands(gate: Command): void {
 
     autoAllow
         .command("remove <command...>")
-        .description("Take a command off the list; it asks in the window again")
-        .action((words: string[]) => {
+        .description(
+            `Take a command off the list; it then asks in the window unless an allow is remembered (\`${toolCommand("ai gate revoke")}\`)`
+        )
+        .action(async (words: string[]) => {
             const command = autoAllowCommand(words);
-            changeAutoAllow((settings) => ({
+            if (refuseEmpty(command, "a command")) {
+                return;
+            }
+
+            await changeAutoAllow((settings) => ({
                 ...settings,
                 commands: settings.commands.filter((known) => known !== command),
             }));
@@ -334,8 +371,13 @@ function registerAutoAllowCommands(gate: Command): void {
     autoAllow
         .command("add-agent <app>")
         .description('Count the processes an app starts as an agent\'s (its process name, e.g. "Grok Bot")')
-        .action((app: string) => {
-            changeAutoAllow((settings) => ({
+        .action(async (raw: string) => {
+            const app = raw.trim();
+            if (refuseEmpty(app, "an app name")) {
+                return;
+            }
+
+            await changeAutoAllow((settings) => ({
                 ...settings,
                 agentApps: settings.agentApps.includes(app) ? settings.agentApps : [...settings.agentApps, app],
             }));
@@ -344,8 +386,13 @@ function registerAutoAllowCommands(gate: Command): void {
     autoAllow
         .command("remove-agent <app>")
         .description("Stop counting an app's processes as an agent's")
-        .action((app: string) => {
-            changeAutoAllow((settings) => ({
+        .action(async (raw: string) => {
+            const app = raw.trim();
+            if (refuseEmpty(app, "an app name")) {
+                return;
+            }
+
+            await changeAutoAllow((settings) => ({
                 ...settings,
                 agentApps: settings.agentApps.filter((known) => known !== app),
             }));
@@ -356,9 +403,9 @@ function registerAutoAllowCommands(gate: Command): void {
         .description(
             "Give a background program of the installed checkout the key with no window: its script's path from the checkout's root (src/codex/daemon.ts)"
         )
-        .action((script: string) => {
+        .action(async (script: string) => {
             const daemon = autoAllowDaemon(script);
-            changeAutoAllow((settings) => ({
+            await changeAutoAllow((settings) => ({
                 ...settings,
                 daemons: settings.daemons.includes(daemon) ? settings.daemons : [...settings.daemons, daemon],
             }));
@@ -367,9 +414,9 @@ function registerAutoAllowCommands(gate: Command): void {
     autoAllow
         .command("remove-daemon <script>")
         .description("Take a background program off the list; it asks in the window again")
-        .action((script: string) => {
+        .action(async (script: string) => {
             const daemon = autoAllowDaemon(script);
-            changeAutoAllow((settings) => ({
+            await changeAutoAllow((settings) => ({
                 ...settings,
                 daemons: settings.daemons.filter((known) => known !== daemon),
             }));
@@ -380,7 +427,7 @@ function registerAutoAllowCommands(gate: Command): void {
         .description(
             "Hours between two notifications for one daemon (24 by default; 0 is one for every pass); the audit line is written for every pass"
         )
-        .action((value: string) => {
+        .action(async (value: string) => {
             const hours = Number(value);
 
             if (!Number.isFinite(hours) || hours < 0 || value.trim() === "") {
@@ -389,7 +436,7 @@ function registerAutoAllowCommands(gate: Command): void {
                 return;
             }
 
-            changeAutoAllow((settings) => ({ ...settings, daemonNotifyHours: hours }));
+            await changeAutoAllow((settings) => ({ ...settings, daemonNotifyHours: hours }));
         });
 
     autoAllow
@@ -397,14 +444,14 @@ function registerAutoAllowCommands(gate: Command): void {
         .description(
             "on or off: a notification for every auto-allow (on by default); the audit line is written either way"
         )
-        .action((value: string) => {
+        .action(async (value: string) => {
             if (value !== "on" && value !== "off") {
                 out.log.error(`Expected on or off, got "${value}".`);
                 process.exitCode = 1;
                 return;
             }
 
-            changeAutoAllow((settings) => ({ ...settings, notify: value === "on" }));
+            await changeAutoAllow((settings) => ({ ...settings, notify: value === "on" }));
         });
 
     autoAllow
@@ -414,6 +461,8 @@ function registerAutoAllowCommands(gate: Command): void {
 
     autoAllow
         .command("disable")
-        .description("Ask in the window for every command again (the list is kept)")
+        .description(
+            `Stop this bypass (the list is kept); a remembered allow still skips the window, \`${toolCommand("ai gate revoke")}\` drops it`
+        )
         .action(() => changeAutoAllow((settings) => ({ ...settings, enabled: false })));
 }

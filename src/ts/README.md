@@ -1,8 +1,9 @@
 # tools ts
 
 TypeScript analysis for people and agents who need numbers instead of guesses. It prints a file's API without its
-bodies, finds code written twice and ranks what to refactor, measures where an entry point's startup time and CPU
-time go, measures what type-checking a program costs, and maps a deployed minified position back to its source line.
+bodies, finds code written twice and ranks what to refactor, draws the import graph between folders, finds shallow
+modules, measures where an entry point's startup time and CPU time go, measures what type-checking a program costs,
+and maps a deployed minified position back to its source line.
 
 Nine command groups answer nine questions:
 
@@ -10,21 +11,22 @@ Nine command groups answer nine questions:
 - `duplicates`: what is written more than once?
 - `copies`: which helpers of `src/utils` are written again, under their name, a copy's name or with their body?
 - `refactors`: what should I change first?
-- `areas`: which folders import which, and which import each other?
-- `depth`: which modules are shallow, with an interface as big as their code?
-- `imports`: where does the startup time of an entry point go, and why? (`imports startup` asks it for many entry
-  points at once.)
+- `areas`: how do the folders import each other, and which direction must not exist?
+- `depth`: which modules are shallow, with an interface nearly as big as their code?
+- `imports`: where does the startup time of an entry point go, and why? `imports startup` answers it for many
+  entries at once.
 - `profile`: where does the CPU time of a whole run go, function by function?
 - `program`: why does type-checking need gigabytes, and which code makes the checker work hardest?
 - `sourcemaps`: which source line is `chunk.js:95812`, when the deployment publishes no maps?
+
+Nothing here is tied to one repository: no root, alias table or folder name is built in. The scanned paths and the
+cwd decide the areas, and imports resolve through Bun's resolver, which reads the nearest `tsconfig.json` `paths`.
 
 ## Quick start
 
 `tools ts` ships with GenesisTools: run `bun install && ./install.sh` once in the checkout and `tools` is on your
 `PATH`. Paths are relative to the current folder, and the examples use paths of the GenesisTools checkout; every
-command works on any other TypeScript project too. Nothing is tied to one repository: no root, alias table or folder
-name is built in. The scanned paths and the current folder decide the areas, and imports resolve through Bun's
-resolver, which reads the nearest `tsconfig.json` `paths`.
+command works on any other TypeScript project too.
 
 ```bash
 # The public API of a folder: one line per exported declaration, no bodies
@@ -89,7 +91,7 @@ tools ts sourcemaps resolve https://app.example.com/static/js/710.f9e49e56.chunk
 
 These six take `--format text|md|json|json-compact|toon`, with `--md`, `--json`, `--json-compact` and `--toon` as
 shorthands. Asking for two different formats is a usage error (`Pick one output format; got md and json`);
-repeating the same one (`--format json --json`) is fine. The other groups (the other `imports` subcommands,
+repeating the same one (`--format json --json`) is fine. The other commands (`imports analyze|lazy|barrels|cycles`,
 `profile`, `program`, `sourcemaps`) take only `--json` and do not take `--format`.
 
 | Format | For |
@@ -333,10 +335,12 @@ the **cross-area edges** heaviest first, and one block per `--forbid` rule.
   `src/utils/ai` but not `src/utilsX`, and a trailing `/` changes nothing. An edge that stays inside `<from>` is
   exempt, so `"src/utils->src"` lists every utils area importing a tool, with each site's `file:line`. When `<to>` is
   itself inside `<from>` (`"src/utils->src/utils/ai"`), the rule forbids exactly those edges and only the edges
-  inside `<to>` are exempt. The command exits 1 when a rule is broken, so it can guard CI.
+  inside `<to>` are exempt. The command exits 1 when a rule is broken, so it can guard CI. It also exits 1 when a
+  scanned file could not be read or parsed: that file can hold the forbidden import, so the rule reads `not proven`
+  instead of `kept`, and `--json` lists the files under `failed`.
 
 | Flag | Effect |
-|---|---|
+|------|--------|
 | `--split <dir>` | Group one level deeper inside this folder; repeatable, the deepest one wins; a folder that does not exist is a usage error |
 | `--depth <n>` | Folder levels below a scanned path (or a `--split` folder) that make one area (default 1) |
 | `--forbid <rule>` | A direction that must not exist; repeatable |
@@ -370,7 +374,7 @@ tools ts depth src/utils/ai --by file --limit 40
 ```
 
 | Column | Meaning |
-|---|---|
+|--------|---------|
 | `EXPORTS` | Exported names; a re-export statement counts one per name it lists, `export *` counts one, `export {}` none; `export { helper }` counts the declaration `helper` as if it were marked `export` |
 | `IFACE` | **Characters** of every exported signature, whitespace collapsed, plus the non-private members of an exported class, interface, enum, namespace or object API |
 | `CODE` | Characters of the module's text with comments removed and whitespace collapsed |
@@ -550,7 +554,7 @@ cycle is where "X is not a function" at import time comes from: whichever member
 exports as `undefined` until they finish. Deferred `import()` is not an edge here, even with `--include-dynamic`; it
 never cycles at load time.
 
-#### `startup`: which dependency taxes every tool?
+#### `imports startup`: which dependency taxes every tool?
 
 `tools ts imports startup <entries...>` measures each entry the way `analyze` does and prints one row per entry:
 the cold import, the module count, and the `--top` (default 3) heaviest modules by self time. An entry is a file or a
@@ -559,8 +563,10 @@ inside `<dir>`.
 
 The second table is the point: a module or package whose self time is at least `--min-ms` (default 20) in two or more
 entries, with how many entries pay it, the summed and the largest ms, and which entries. A package is one row
-(`pkg:<name>`) however many of its files are imported. That table shows a dependency whose cost leaks across many
-tools; one fix to it pays back in each of them.
+(`pkg:<name>`) however many of its files are imported, and a source file is one row per absolute path, so two
+projects' `src/config.ts` stay apart. A module whose import never settled is left out of both tables: its time is
+the deadline, not a measurement. That table shows a dependency whose cost leaks across many tools; one fix to it
+pays back in each of them.
 
 Entries are measured one after another by default, because parallel measurements slow each other down and inflate
 every number; `--concurrency <n>` trades that accuracy for time. `--runs`, `--timeout`, `--walk-packages` and
@@ -920,8 +926,9 @@ fetches the deployed files and their maps, and with `--sentry` or `--sentry-mcp`
 
 | Command group | What it runs |
 |---|---|
-| `skeleton`, `duplicates`, `refactors`, `areas`, `depth` | The TypeScript parser (syntax only) and ast-grep; `areas` and `depth` also resolve imports with Bun's resolver; nothing runs |
-| `imports` (also `startup`) | Fresh `bun` worker processes (`lib/measure-worker.ts`) that import the graph and time it |
+| `skeleton`, `duplicates`, `refactors` | The TypeScript parser (syntax only) and ast-grep; nothing runs |
+| `areas`, `depth` | ast-grep over every scanned file and Bun's resolver for each import; nothing runs |
+| `imports` | Fresh `bun` worker processes (`lib/measure-worker.ts`) that import the graph and time it |
 | `profile` | `bun --cpu-prof` on the entry in the current folder; `/usr/bin/sample` with `--threads` |
 | `program` | `node --expose-gc --max-old-space-size=<heap>` on `lib/program/check-worker.ts`, or `bun --smol` |
 | `program trace` | The project's own `tsc` under node, with `--max-old-space-size=<heap>` |
@@ -972,15 +979,17 @@ that the token lacks permission for the project.
 - **Reading code:** `tools ts skeleton <file>` before you open a file, `--exported --top-level` to orient in a
   folder, `--types` when a signature names a type you do not know. The `cmd` inline token of the markdown skill
   allows `tools ts skeleton` as a read-only command.
-- **Machine output:** `skeleton`, `duplicates`, `refactors`, `areas`, `depth` and `imports startup` print the result on stdout in the chosen format and
-  their closing line on stderr. `--json` is the readable object form; a parser that wants `cols` and positional rows
-  asks for `--json-compact`. Every other group takes `--json`. `imports --json` is always an array of sessions, one
-  per entry, each with `timedOut`, `planned` and `unmeasured`.
+- **Machine output:** `skeleton`, `duplicates`, `refactors`, `areas`, `depth` and `imports startup` print the result
+  on stdout in the chosen format and their closing line on stderr. `--json` is the readable object form; a parser
+  that wants `cols` and positional rows asks for `--json-compact`. Every other command takes `--json`. The other
+  `imports` commands' `--json` is always an array of sessions, one per entry, each with `timedOut`, `planned` and
+  `unmeasured`.
 - **Exit codes:**
   - 0: the command finished.
   - 1: a usage error (an unknown flag, a number out of range, two output formats, an unknown analyser or kind), a
-    path with no TypeScript source, an `areas` run that breaks a `--forbid` rule, an `imports startup` run with a
-    failed or partial entry, an `imports` entry that resolves to nothing, a `program` check that ran out of
+    path with no TypeScript source, an `imports` entry that resolves to nothing, an `areas --forbid` rule that is
+    broken or not proven (a scanned file could not be read or parsed), an `imports startup` entry that failed or
+    timed out, a `program` check that ran out of
     heap or time, a `sourcemaps resolve` position that stayed unresolved, or a `cache prune` that failed for a
     project.
   - 130: a `sourcemaps` command that can build (`resolve`, `build`, `rank`, `find-commit`, `check`, `carry`)
@@ -1036,8 +1045,8 @@ src/ts/
 ├── index.ts                 commander entry (`tools ts`)
 ├── commands/
 │   ├── options.ts           the --format and scan flags, checked number flags, usage errors
-│   ├── skeleton.ts  duplicates.ts  refactors.ts  areas.ts  depth.ts  imports.ts  startup.ts  profile.ts
-│   │   program.ts  sourcemaps.ts
+│   ├── skeleton.ts  duplicates.ts  refactors.ts  areas.ts  depth.ts  imports.ts  startup.ts  profile.ts  program.ts
+│   │   sourcemaps.ts
 └── lib/
     ├── collect.ts           walk paths to source files, honouring --tests, --ignore and quoted globs
     ├── load.ts              one read of every file, shared by skeleton/duplicates/refactors
@@ -1082,8 +1091,8 @@ The `sourcemaps` library is `src/utils/ts/sourcemaps/`.
   types, so two helpers with the same signature over different types read as alike.
 - `unused-exports` cannot see a consumer outside the scanned paths, a name reached through `export *`, or a name
   reached by a string key. It is evidence, never a verdict.
-- `areas` and `depth` read top-level import statements and every `import()` / `require()` call. An import inside a
-  `declare module` block is not an edge, and a specifier built at run time (`import(name)`) cannot be resolved.
+- `areas` and `depth` read top-level import statements and every `import()` / `require()` call. An import inside
+  a `declare module` block is not an edge, and a specifier built at run time (`import(name)`) cannot be resolved.
 - `depth` strips comments with a regular expression that keeps string literals; a comment marker inside a regular
   expression literal or a nested template can be misread. The scores rank modules; they are not a gate.
 - When `skeleton --rank` and the other static commands walk a directory, they read TypeScript only, not JavaScript.

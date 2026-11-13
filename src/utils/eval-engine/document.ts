@@ -435,7 +435,7 @@ function lookupTemplate(path: string, bindings: Bindings): Json | undefined {
 }
 
 /** Fills every `{{name.path}}` in a text. A value that is not a string is written as JSON. */
-export function fillText(text: string, bindings: Bindings): string {
+export function fillScenarioText(text: string, bindings: Bindings): string {
     return text.replace(TemplatePattern, (_whole, path: string) => {
         const value = lookupTemplate(path, bindings);
         if (value === undefined) {
@@ -455,7 +455,7 @@ function fillJson(value: Json, bindings: Bindings): Json {
                 return bound;
             }
         }
-        return fillText(value, bindings);
+        return fillScenarioText(value, bindings);
     }
     if (Array.isArray(value)) {
         return value.map((item) => fillJson(item, bindings));
@@ -478,10 +478,10 @@ function fillMatch(match: ValueMatch, bindings: Bindings): ValueMatch {
         return { oneOf: match.oneOf.map((item) => fillJson(item, bindings)) };
     }
     if ("matches" in match) {
-        return { matches: fillText(match.matches, bindings), flags: match.flags };
+        return { matches: fillScenarioText(match.matches, bindings), flags: match.flags };
     }
     if ("instant" in match) {
-        return { instant: fillText(match.instant, bindings) };
+        return { instant: fillScenarioText(match.instant, bindings) };
     }
     return match;
 }
@@ -502,7 +502,7 @@ export function fillCheck(check: Check, bindings: Bindings): Check {
         return { not: fillCheck(check.not, bindings) };
     }
     if ("judge" in check) {
-        return { judge: fillText(check.judge, bindings) };
+        return { judge: fillScenarioText(check.judge, bindings) };
     }
     if ("signal" in check) {
         const { signal, ...match } = check;
@@ -512,11 +512,11 @@ export function fillCheck(check: Check, bindings: Bindings): Check {
         const text = check.text;
         if ("contains" in text) {
             const contains = Array.isArray(text.contains)
-                ? text.contains.map((needle) => fillText(needle, bindings))
-                : fillText(text.contains, bindings);
+                ? text.contains.map((needle) => fillScenarioText(needle, bindings))
+                : fillScenarioText(text.contains, bindings);
             return { text: { contains, caseSensitive: text.caseSensitive } };
         }
-        return { text: { matches: fillText(text.matches, bindings), flags: text.flags } };
+        return { text: { matches: fillScenarioText(text.matches, bindings), flags: text.flags } };
     }
     if ("tool" in check && check.args) {
         const args: ArgsMatch = {};

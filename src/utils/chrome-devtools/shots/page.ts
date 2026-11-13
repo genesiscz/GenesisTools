@@ -99,7 +99,10 @@ export interface PartImages {
     raw: Buffer;
     /** PNG, the same clip with the overlay; compose it with `painted` (image/stack.ts) for the final image. */
     annotated: Buffer;
-    /** Image-pixel areas the overlay drew on; outside them the final annotated image takes the raw pixels. */
+    /**
+     * Image-pixel areas the overlay drew on; outside them the composed image takes the raw pixels. That holds for the
+     * composed PNG (and a .png output, written as it is); a WebP output is lossy and re-encodes every pixel.
+     */
     painted: AnnotationRect[];
     /** The marks in image pixels with the label positions used: an annotate_image / control draw plan. */
     annotations: Annotation[];
@@ -136,14 +139,19 @@ async function act(cdp: CdpLike, locator: Locator, action: "click" | "scroll"): 
     return resolution;
 }
 
-async function untilLoaded(cdp: CdpLike, timeoutMs: number): Promise<void> {
+/** True once the document is past "loading"; false when `timeoutMs` ran out first. */
+async function untilLoaded(cdp: CdpLike, timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
+    for (;;) {
         if ((await evaluateExpression(cdp, "document.readyState").catch(() => "loading")) !== "loading") {
-            return;
+            return true;
         }
 
-        await sleep(POLL_MS);
+        if (Date.now() >= deadline) {
+            return false;
+        }
+
+        await sleep(Math.min(POLL_MS, Math.max(0, deadline - Date.now())));
     }
 }
 
@@ -172,11 +180,16 @@ function snap(box: DocBox): DocBox {
     return { x, y, w: Math.ceil(box.x + box.w) - x, h: Math.ceil(box.y + box.h) - y };
 }
 
-function clipOf(part: ShotPart, around: DocBox, metrics: ShotPageMetrics): DocBox {
+/** The part's crop; with no `around` (a part with no marks and `clip.viewport`), the whole viewport. */
+function clipOf(part: ShotPart, around: DocBox | undefined, metrics: ShotPageMetrics): DocBox {
     const [top, right, bottom, left] = part.clip.pad;
     const page = part.clip.viewport
         ? { x: metrics.scrollX, y: metrics.scrollY, w: metrics.viewport.w, h: metrics.viewport.h }
         : { x: 0, y: 0, w: metrics.document.w, h: metrics.document.h };
+    if (!around) {
+        return snap(page);
+    }
+
     const padded = { x: around.x - left, y: around.y - top, w: around.w + left + right, h: around.h + top + bottom };
     const wide = part.clip.wide ? { ...padded, x: page.x, w: page.w } : padded;
 
@@ -330,8 +343,19 @@ async function prepare(cdp: CdpLike, part: ShotPart, setup: PageSetup): Promise<
 
     if (part.url !== undefined) {
         const url = setup.base ? new URL(part.url, setup.base).toString() : part.url;
-        await cdp.send("Page.navigate", { url });
-        await untilLoaded(cdp, setup.readyTimeoutMs);
+        // a failed navigation resolves with errorText (net::ERR_CONNECTION_REFUSED), it does not reject
+        const reply = await cdp.send("Page.navigate", { url });
+        const errorText =
+            reply && typeof reply === "object" && "errorText" in reply && typeof reply.errorText === "string"
+                ? reply.errorText
+                : "";
+        if (errorText) {
+            return [`navigate ${url}: ${errorText}`];
+        }
+
+        if (!(await untilLoaded(cdp, setup.readyTimeoutMs))) {
+            return [`navigate ${url}: the page did not finish loading within ${setup.readyTimeoutMs} ms`];
+        }
     }
 
     if (part.ready) {
@@ -396,20 +420,20 @@ async function planPart(cdp: CdpLike, part: ShotPart, setup: PageSetup): Promise
         return { ok: false, problems };
     }
 
-    const [aroundHit, ...markHits] = await resolveLocators(cdp, [
-        part.clip.around,
-        ...part.marks.map((mark) => mark.target),
-    ]);
+    const around = part.clip.around;
+    const hits = await resolveLocators(cdp, [...(around ? [around] : []), ...part.marks.map((mark) => mark.target)]);
+    const aroundHit = around ? hits[0] : undefined;
+    const markHits = around ? hits.slice(1) : hits;
     const misses = [
-        ...(aroundHit.ok ? [] : [`clip: ${describeMiss(aroundHit)}`]),
+        ...(aroundHit && !aroundHit.ok ? [`clip: ${describeMiss(aroundHit)}`] : []),
         ...markHits.flatMap((hit, index) => (hit.ok ? [] : [`mark ${index}: ${describeMiss(hit)}`])),
     ];
-    if (!aroundHit.ok || misses.length > 0) {
+    if (misses.length > 0) {
         return { ok: false, problems: misses };
     }
 
     const metrics = await callInPage(cdp, readShotPageMetrics, undefined);
-    let clip = clipOf(part, aroundHit.box, metrics);
+    let clip = clipOf(part, aroundHit?.ok ? aroundHit.box : undefined, metrics);
     // every hit is ok here (a miss returned above), so `boxes` lines up with `part.marks`
     const boxes = markHits.flatMap((hit) => (hit.ok ? [grow(hit.box, FRAME_PAD)] : []));
     const labelled = part.marks.flatMap((mark, index) => (mark.label?.text ? [{ mark, index }] : []));

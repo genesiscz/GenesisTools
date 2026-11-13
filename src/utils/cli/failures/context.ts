@@ -70,11 +70,11 @@ function prepared(failure: ToolFailure, facts: RuntimeFacts | null): FailureCont
         ? { state: "captured", facts }
         : { state: "unavailable", reason: "No machine snapshot is available for this failure." };
     const caller = failure.caller;
-    const localTime = (value: string) => `${new Date(value).toLocaleString()} (${value})`;
+    const timeWithIso = (value: string) => `${new Date(value).toLocaleString()} (${value})`;
     const markdown = [
         `# ${failure.operation ? `${failure.operation.server}: ${failure.operation.name}` : (failure.command ?? failure.tool)} failed`,
-        `Failure time: ${localTime(failure.at)}`,
-        `Context captured: ${facts ? localTime(facts.capturedAt) : "unavailable"}`,
+        `Failure time: ${timeWithIso(failure.at)}`,
+        `Context captured: ${facts ? timeWithIso(facts.capturedAt) : "unavailable"}`,
         `Failure id: ${failure.id}; process ${failure.pid}; exit ${failure.exitCode ?? "handled in the live process"}.`,
         `Checkout: ${failure.toolsRoot}; working directory: ${failure.cwd}.`,
         caller

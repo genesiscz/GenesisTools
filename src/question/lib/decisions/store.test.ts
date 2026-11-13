@@ -854,6 +854,11 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(decisionsMarkdown([{ ...row, option: undefined, recommended: "b" }])).toContain(
             "- a) run it now\n- b) build the tool first, then run it for today (recommended)"
         );
+        // A recommendation of several letters marks each of them, and only them.
+        const several = decisionsMarkdown([
+            { ...row, options: ["now", "later", "never"], option: undefined, recommended: "ac" },
+        ]);
+        expect(several).toContain("- a) now (recommended)\n- b) later\n- c) never (recommended)");
     });
 
     test("indented lettered options are not lettered twice, while literal labels stay intact", () => {
@@ -2189,6 +2194,44 @@ describe("chatAnswers", () => {
         expect(read("D46: b) not e)", false).forAgent).toEqual([["b", "e", "not e)"]]);
     });
 
+    test("keeps a ruled-out letter when a later answer repeats the letters without it", () => {
+        const six = ["a", "b", "c", "d", "e", "f"];
+        const read = (...answers: string[]) => {
+            const found = chatAnswers(
+                [
+                    entry("assistant", "❓ DECISION 46 — Which steps?", 1),
+                    ...answers.map((answer, index) => entry("user", answer, index + 2)),
+                ],
+                [{ number: 46, letters: six, several: true, askedAt: at(1) }]
+            );
+
+            return {
+                unambiguous: found.unambiguous.map((answer) => answer.option ?? null),
+                forAgent: found.forAgent.map((answer) => [
+                    answer.option ?? null,
+                    answer.excluded,
+                    answer.evidence.line,
+                ]),
+                ambiguous: found.ambiguous.map((item) => item.reason),
+            };
+        };
+
+        // The repeat agrees on the letters, so the answer stands, and so does `not e)`: the agent records it, never the hook.
+        expect(read("D46: a) b) not e)", "D46: a) b)")).toEqual({
+            unambiguous: [],
+            forAgent: [["ab", "e", 2]],
+            ambiguous: [],
+        });
+        expect(read("D46: a) b)", "D46: a) b) not e)").forAgent).toEqual([["ab", "e", 3]]);
+        // Two answers ruling out different letters disagree.
+        expect(read("D46: a) b) not e)", "D46: a) b) not d)")).toEqual({
+            unambiguous: [],
+            forAgent: [],
+            ambiguous: ["several answers"],
+        });
+        expect(read("D46: a) b) not e)", "D46: a) b) not e)").forAgent).toEqual([["ab", "e", 3]]);
+    });
+
     test("reads a word as words on a decision that takes one letter, never as a set of its letters", () => {
         const five = ["a", "b", "c", "d", "e"];
         const answerTo = (text: string) =>
@@ -2606,6 +2649,31 @@ describe("chat answers read from where the last read stopped", () => {
             (await backfillChatAnswers({ session: "abc", file, events, apply: true, transcript, read })).open
         ).toEqual([]);
         expect(reads).toHaveLength(2);
+    });
+
+    test("the backfill reports an answer that rules a letter out for the agent and never records it, even with apply", async () => {
+        const { file, events } = scratch();
+        const [row] = await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [{ prompt: "Which step?", options: ["lint", "test", "build"] }],
+        });
+        const later = new Date(Date.parse(row.createdTs ?? "") + 60_000).toISOString();
+        const read = async () => ({
+            found: true,
+            issues: [],
+            entries: [
+                { line: -1, role: "user" as const, text: "D1 b) not c)", paths: [], commits: [], timestamp: later },
+            ],
+        });
+        const transcript = { kind: "claude", path: "/fixture/abc.jsonl" };
+
+        const applied = await backfillChatAnswers({ session: "abc", file, events, apply: true, transcript, read });
+        expect(applied).toMatchObject({
+            unambiguous: [],
+            forAgent: [{ number: 1, option: "b", excluded: "c" }],
+            recorded: [],
+        });
+        expect(readDecisions(file)[0]).toMatchObject({ id: row.id, state: "open" });
     });
 });
 

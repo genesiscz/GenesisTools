@@ -300,6 +300,32 @@ export function isHangCaptureName(name: string): boolean {
     return name.startsWith("hang-") && name.endsWith(".txt");
 }
 
+/**
+ * A hang capture of a past window in either form: `hang-<stamp>.txt`, or the `hang-<stamp>.txt.zst` the daily pass
+ * makes of one older than yesterday (`HANGS_PLAIN_DAYS`). Only for a summary: the live watcher keeps
+ * {@link isHangCaptureName}, since a new `.zst` there is a compression, not a new hang.
+ */
+export function isStoredHangCaptureName(name: string): boolean {
+    return isHangCaptureName(name) || (name.startsWith("hang-") && name.endsWith(".txt.zst"));
+}
+
+/** `hang-2026-11-10-210512.txt`: HangWatch.swift's local `yyyy-MM-dd-HHmmss` stamp, plain or `.zst`. */
+const HANG_CAPTURE_STAMP = /^hang-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})\.txt(?:\.zst)?$/;
+
+/**
+ * When a hang was captured, in ms: the local stamp in its name, or null for a name without one. The file's mtime
+ * cannot say it for a `.zst`, which the daily pass writes days after the capture.
+ */
+export function hangCaptureTime(name: string): number | null {
+    const stamp = HANG_CAPTURE_STAMP.exec(name);
+    if (!stamp) {
+        return null;
+    }
+
+    const [year, month, day, hour, minute, second] = stamp.slice(1).map(Number);
+    return new Date(year, month - 1, day, hour, minute, second).getTime();
+}
+
 /** A macOS crash report of a Genesis app. */
 export function isCrashReportName(name: string): boolean {
     return /^Genesis/.test(name) && /\.(ips|crash)$/.test(name);

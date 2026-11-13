@@ -242,11 +242,12 @@ function tallyFile(tally: Tally, entry: LoadedFile): void {
     }
 
     // The declarations an `export { … }` list can name. A destructuring declaration is named by its
-    // pattern (`{ a, b }`), so each identifier in it maps to it.
+    // pattern (`{ a, b }`), so each identifier in it maps to it. An exported declaration is one too:
+    // `export { helper as alias }` after `export function helper` is a second exported function.
     const locals = new Map<string, Declared>();
 
     for (const item of declared) {
-        if (item.symbol.exported || item.symbol.kind === "call" || item.symbol.kind === "re-export") {
+        if (item.symbol.kind === "call" || item.symbol.kind === "re-export") {
             continue;
         }
 

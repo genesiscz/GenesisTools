@@ -67,12 +67,25 @@ enum ToolsRunner {
         try process.run()
     }
 
-    /// The 1-based line of `log` that starts at byte `offset`.
-    private static func line(of log: URL, at offset: UInt64) -> Int? {
+    /// The 1-based line of `log` that starts at byte `offset`. The log keeps every earlier run and is never rotated, so
+    /// it is counted `chunk` bytes at a time: memory stays bounded however long the history grows.
+    static func line(of log: URL, at offset: UInt64, chunk: Int = 64 * 1024) -> Int? {
         guard let reader = try? FileHandle(forReadingFrom: log) else { return nil }
         defer { try? reader.close() }
-        guard let data = try? reader.read(upToCount: Int(offset)) else { return nil }
-        return data.reduce(1) { $1 == 0x0A ? $0 + 1 : $0 }
+        var line = 1
+        var remaining = offset
+        while remaining > 0 {
+            let data: Data?
+            do {
+                data = try reader.read(upToCount: Int(min(UInt64(chunk), remaining)))
+            } catch {
+                return nil
+            }
+            guard let data, !data.isEmpty else { break }
+            line += data.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 }
+            remaining -= UInt64(data.count)
+        }
+        return line
     }
 
     /// One run's output in the shared log, from its offset, at most the last 120 lines.

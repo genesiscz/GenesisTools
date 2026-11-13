@@ -74,9 +74,9 @@ enum RecorderNotice {
     }
 
     /// The report of a start that stopped at once: the error its output names, what was being recorded, the recording
-    /// folder it named, and where this run's output sits in the log.
+    /// folder it named, and where this run's output sits in the log. The day log is named by the date in `timeZone`.
     nonisolated static func startReport(_ failure: ToolsRunner.EarlyFailure, time: Date, app: FailureAppFacts?,
-                                        home: String = genesisHome()) -> FailureReport {
+                                        home: String = genesisHome(), timeZone: TimeZone = .current) -> FailureReport {
         let printed = !failure.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let events = FailureLog.events(in: failure.output)
         let folder = events.flatMap(\.fields).last { $0.name == "folder" }.map { FailureReport.unquoted($0.value) }
@@ -92,7 +92,7 @@ enum RecorderNotice {
             folder: folder,
             logFile: failure.logFile,
             logLine: failure.logLine,
-            dayLog: FailureReport.dayLogPath(home: home, time: time),
+            dayLog: FailureReport.dayLogPath(home: home, time: time, timeZone: timeZone),
             log: printed ? failure.output : "",
             time: time,
             app: app,

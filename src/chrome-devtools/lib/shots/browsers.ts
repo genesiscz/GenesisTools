@@ -99,6 +99,28 @@ function cookieArray(stdout: string): CdpCookie[] {
     return parsed;
 }
 
+/** A cookie command that waits on a prompt (a keychain dialog, a password) must not hold the run forever. */
+export const COOKIE_COMMAND_TIMEOUT_MS = 30_000;
+
+/** Runs a cookie command and reads its cookie array; a command still running at `timeoutMs` is killed. */
+export async function cookiesFromCommand(
+    argv: readonly string[],
+    timeoutMs = COOKIE_COMMAND_TIMEOUT_MS
+): Promise<CdpCookie[]> {
+    const child = Bun.spawn([...argv], { stdout: "pipe", stderr: "pipe", timeout: timeoutMs });
+    const [stdout, stderr] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    const code = await child.exited;
+    if (child.signalCode !== null) {
+        throw new Error(`the cookie command ${argv[0]} did not finish within ${timeoutMs} ms`);
+    }
+
+    if (code !== 0) {
+        throw new Error(`the cookie command ${argv[0]} failed: ${stderr.trim().split("\n").at(-1) ?? ""}`);
+    }
+
+    return cookieArray(stdout);
+}
+
 /** Login cookies for the headless browser, never written to disk or to the log. */
 async function loginCookies(source: CookieSource, context: OpenContext): Promise<CdpCookie[]> {
     if (source.from === "none" || !context.base) {
@@ -106,17 +128,7 @@ async function loginCookies(source: CookieSource, context: OpenContext): Promise
     }
 
     if (source.from === "command") {
-        const argv = source.argv.map((arg) => arg.replaceAll("{base}", context.base ?? ""));
-        const child = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
-        const [stdout, stderr] = await Promise.all([
-            new Response(child.stdout).text(),
-            new Response(child.stderr).text(),
-        ]);
-        if ((await child.exited) !== 0) {
-            throw new Error(`the cookie command ${argv[0]} failed: ${stderr.trim().split("\n").at(-1) ?? ""}`);
-        }
-
-        return cookieArray(stdout);
+        return cookiesFromCommand(source.argv.map((arg) => arg.replaceAll("{base}", context.base ?? "")));
     }
 
     let port: number;
@@ -141,11 +153,17 @@ const headlessSource: ShotBrowserSource<"headless"> = {
         const cookies = await loginCookies(settings.cookies, context);
         const chrome = await launchHeadlessChrome(settings.binary ? { binary: settings.binary } : {});
         if (cookies.length > 0) {
-            const root = await browser(chrome.port);
+            // no ShotBrowser exists yet, so nobody else would close this Chrome and its profile on a failure here
             try {
-                await root.setCookies(cookies);
-            } finally {
-                root.close();
+                const root = await browser(chrome.port);
+                try {
+                    await root.setCookies(cookies);
+                } finally {
+                    root.close();
+                }
+            } catch (error) {
+                await chrome.close();
+                throw error;
             }
         }
 

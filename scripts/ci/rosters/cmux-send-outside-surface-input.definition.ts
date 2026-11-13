@@ -1,4 +1,4 @@
-import { defineRoster } from "./define";
+import { argvFor, defineRoster } from "./define";
 
 /** C17: typing into a session's tab was written four times, each with its own escaping and Enter handling. */
 export default defineRoster({
@@ -10,14 +10,15 @@ export default defineRoster({
     matcher: {
         rule: { kind: "array", has: { kind: "string", regex: "^[\"'`]send(?:-key)?[\"'`]$" } },
     },
-    // The argv of a cmux call: the array's first element is the verb, and the call it is passed to names cmux.
+    // The argv of a cmux call: the array's first element is the verb, and the array is passed to a call that names
+    // cmux, or kept in a variable or an object in a file that runs cmux.
     test: (node) =>
         /^["'`]send(?:-key)?["'`]$/.test(
             node
                 .children()
                 .find((child) => child.isNamed())
                 ?.text() ?? ""
-        ) && /cmux/i.test(node.parent()?.parent()?.field("function")?.text() ?? ""),
+        ) && argvFor(node, /cmux/i),
     onlyIn: /^src\//,
     allowedIn: /^src\/utils\/cmux\/surface-input\.ts$/,
 });

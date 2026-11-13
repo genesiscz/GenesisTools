@@ -2,15 +2,15 @@ import XCTest
 @testable import GenesisToolsRecorder
 
 /// A text's `animate { kind: fade, ms }` fades it in over its ms, as the API, the toolset doc and the editor's "Takes"
-/// slider say. A text with no animate keeps the 0.2 s fade of ZoomState.texts alone.
+/// slider say: the opacity envelope of ZoomState.texts takes the ms (textFadeInUs), and TextMotion adds no second
+/// fade. A text with no animate keeps the 0.2 s fade of ZoomState.texts alone.
 final class RecorderHuntTextFadeMsTests: XCTestCase {
     func testAFadeWithALengthFadesInOverIt() {
         var note = EditProject.TextNote(id: "t", startUs: 0, endUs: 6_000_000, text: "Slow title")
         note.animate = EditProject.TextAnimate(kind: .fade, ms: 2000)
-        XCTAssertEqual(TextMotion.at(sinceUs: 0, note: note).opacity, 0, accuracy: 0.001)
-        XCTAssertEqual(TextMotion.at(sinceUs: 1_000_000, note: note).opacity, 0.5, accuracy: 0.001, "halfway into a 2 s fade")
-        XCTAssertEqual(TextMotion.at(sinceUs: 2_000_000, note: note).opacity, 1, accuracy: 0.001)
-        XCTAssertEqual(TextMotion.at(sinceUs: 2_500_000, note: note).opacity, 1, accuracy: 0.001)
+        XCTAssertEqual(ZoomState.textFadeInUs(note, playedUs: 6_000_000), 2_000_000, "the envelope fades in over the ms")
+        XCTAssertEqual(TextMotion.at(sinceUs: 0, note: note).opacity, 1, accuracy: 0.001, "no second fade on top of it")
+        XCTAssertEqual(TextMotion.at(sinceUs: 1_000_000, note: note).opacity, 1, accuracy: 0.001)
         let half = TextMotion.at(sinceUs: 1_000_000, note: note)
         XCTAssertEqual(half.characters, 10, "a fade shows every letter")
         XCTAssertEqual(half.drop, 0, "a fade does not move")

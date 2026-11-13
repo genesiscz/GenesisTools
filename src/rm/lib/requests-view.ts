@@ -207,7 +207,7 @@ function sessionKey(request: RmRequest): string {
 function requestRow(view: RequestView, now: Date, withSession: boolean): string {
     const { request } = view;
     const first = request.targets[0];
-    const path = first ? shortRmPath(first.path, displayContext(request.caller), PATH_MAX) : "-";
+    const path = first ? shortRmPath(first.path, displayContext(request.caller), { max: PATH_MAX }) : "-";
     const more = request.targets.length > 1 ? ` +${request.targets.length - 1}` : "";
     const why = whyCell(view);
     const session = withSession ? `${sessionKey(request).slice(0, 8).padEnd(8)}  ` : "";
@@ -218,7 +218,17 @@ function requestRow(view: RequestView, now: Date, withSession: boolean): string 
 }
 
 /** The `tools rm approve` picker's own columns before a row: clack's bar, the checkbox and their spaces. */
-const PICKER_GUTTER = 6;
+export const PICKER_GUTTER = 6;
+
+/** The narrowest a picker row's path gets when the terminal leaves less: the file name stays readable. */
+const PICKER_PATH_MIN = 12;
+
+export interface PickerRowOptions {
+    view: RequestView;
+    now: Date;
+    /** The terminal's width: the row fits in it with the picker's own gutter. */
+    columns: number;
+}
 
 /**
  * One request as a line of the `tools rm approve` picker, fitted to `columns`: id, how long ago it was asked, size,
@@ -226,7 +236,7 @@ const PICKER_GUTTER = 6;
  * (2026-11-09: a 25 MB request read `~/Tresors/Projects/LEFTEQ/vitr…/vitrinka` with half the row empty); the note
  * gets what is left after it.
  */
-export function renderPickerRow(view: RequestView, now: Date, columns: number): string {
+export function renderPickerRow({ view, now, columns }: PickerRowOptions): string {
     const { request } = view;
     const first = request.targets[0];
     const age = formatAgeCell(request.createdAt, now);
@@ -236,7 +246,10 @@ export function renderPickerRow(view: RequestView, now: Date, columns: number): 
     const more = request.targets.length > 1 ? `  +${request.targets.length - 1} more` : "";
     const room = columns - PICKER_GUTTER - stripAnsi(head).length - more.length;
     const path = first
-        ? shortRmPath(first.path, displayContext(request.caller), Math.max(PATH_MAX, room), tailCut)
+        ? shortRmPath(first.path, displayContext(request.caller), {
+              max: Math.max(PICKER_PATH_MIN, room),
+              cut: tailCut,
+          })
         : "-";
     const note = whyText(view);
     const left = room - path.length - 2;
@@ -259,7 +272,7 @@ function pathRows(view: RequestView, now: Date): string[] {
         const rule = target.rule === "default" ? "" : `  ${pc.dim(target.rule)}`;
         return (
             `    ${pc.bold(request.id)}  ${ageCell(request.createdAt, now)}  ${sizeCell(view.sizes[index])}  ` +
-            `${targetStateCell(view, index)}  ${shortRmPath(target.path, displayContext(request.caller), PATH_MAX)}${rule}`
+            `${targetStateCell(view, index)}  ${shortRmPath(target.path, displayContext(request.caller), { max: PATH_MAX })}${rule}`
         );
     });
 }

@@ -232,15 +232,14 @@ it("keeps the options disabled until the queue shows the staged set, so the next
         release = resolve;
     });
     await fireEvent.press(option("a"));
-    await act(async () => {
-        await Bun.sleep(5);
+    // The stage settles while the refetch waits on the gate: the options stay disabled until it shows the set.
+    await waitFor(() => {
+        expect(picks).toEqual(["a"]);
+        expect(option("c").props.disabled).toBe(true);
     });
-    expect(picks).toEqual(["a"]);
-    expect(option("c").props.disabled).toBe(true);
 
     await act(async () => {
         release();
-        await Bun.sleep(5);
     });
     await waitFor(() => expect(option("c").props.disabled).toBe(false));
     expect(option("a").props.accessibilityState.checked).toBe(true);

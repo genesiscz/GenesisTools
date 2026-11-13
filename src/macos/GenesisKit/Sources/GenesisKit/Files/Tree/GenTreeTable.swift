@@ -98,7 +98,7 @@ public struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresen
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = false
         scroll.autohidesScrollers = true
-        scroll.scrollerStyle = .overlay
+        // Sets the scroller style too: overlay for GenesisKit's bars, the system's own for System.
         GenScrollBars.apply(GenScrollBarStyle(stored: scrollBars), to: scroll)
         scroll.automaticallyAdjustsContentInsets = false
         scroll.contentInsets = insets

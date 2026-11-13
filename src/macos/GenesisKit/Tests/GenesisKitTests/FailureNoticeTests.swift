@@ -93,6 +93,18 @@ final class FailureNoticeTests: XCTestCase {
         XCTAssertFalse(text.contains("startRecordingCamera"), "the full stack starts folded")
     }
 
+    func testRemoteEvidenceSurvivesTheCompatibleReportAdapter() {
+        let stack = "RpcError: refused\n    at first (service.ts:1:2)\n    at second (caller.ts:3:4)"
+        let report = FailureReport(headline: "Refused", command: "tools meetings decide", stack: stack,
+                                   issue: FailureIssue(tool: "meetings", title: "Decision failed"))
+        XCTAssertTrue(report.hasLog)
+        XCTAssertTrue(report.detailsMarkdown().contains("Stack: 2 frames, from `first` at `service.ts:1:2`"))
+        XCTAssertTrue(report.rawText().contains(stack))
+        XCTAssertTrue(report.agentContext().contains(stack))
+        XCTAssertTrue(report.agentContext().contains("tool: meetings (issue: Decision failed)"))
+        XCTAssertTrue(report.agentContext().contains("command: tools meetings decide"))
+    }
+
     // MARK: - Headline
 
     /// The defect: the notice's title read "The recording stopped at once (exit 1): {." because the first line that
@@ -445,6 +457,25 @@ final class IssueDraftTests: XCTestCase {
         XCTAssertEqual(failing.posts, 2)
     }
 
+    /// The defect: a second "Draft an issue" replaced a window whose post was in flight (its link or error was lost,
+    /// and a second copy could be posted) and dropped an edited draft without a word.
+    func testAWindowWithAPostInFlightOrAnEditedDraftIsNeverReplaced() {
+        let ok = IssuePostResult(posted: true, number: 7, url: "https://github.com/shop/storefront/issues/7", replaced: 0)
+        let draft = IssueDraft(repo: "shop/storefront", title: "T", body: "B")
+        let poster = FakePoster(result: .success(ok))
+
+        XCTAssertFalse(IssueDraftModel(draft: draft, poster: poster).holdsWork, "an untouched draft can be replaced")
+        XCTAssertTrue(IssueDraftModel(draft: draft, poster: poster, state: .posting).holdsWork)
+        XCTAssertFalse(IssueDraftModel(draft: draft, poster: poster, state: .posted(ok)).holdsWork)
+
+        let edited = IssueDraftModel(draft: draft, poster: poster)
+        edited.draft.body = "B, with the private path removed"
+        XCTAssertTrue(edited.holdsWork)
+        let failed = IssueDraftModel(draft: draft, poster: poster, state: .failed("Not Found"))
+        XCTAssertFalse(failed.holdsWork)
+        failed.draft.title = "T2"
+        XCTAssertTrue(failed.holdsWork)
+    }
 }
 
 /// A failed `tools` call as a report (`FailureReport.toolsCall`), the call ledger, the details' log and the inline view.

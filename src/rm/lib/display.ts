@@ -23,16 +23,19 @@ export function displayContext(caller: RmCaller | null): ShortPathContext {
     return { home: homedir(), tmpdir: tmpdir().replace(/\/+$/, ""), sessionId: caller?.sessionId ?? null };
 }
 
+export interface ShortRmPathOptions {
+    /** The widest the path may be, in characters (default 48). */
+    max?: number;
+    /** How a path wider than `max` is cut (default `middleCut`). */
+    cut?: (text: string, max: number) => string;
+}
+
 /**
  * A path as a list row shows it: ~ for home, /tmp for /private/tmp, $TMPDIR for the per-user temp folder,
  * <scratch> for the asker's own scratch, <project>/<session8> for another session's, cut in the middle.
  */
-export function shortRmPath(
-    path: string,
-    ctx: ShortPathContext,
-    max = 48,
-    cut: (text: string, max: number) => string = middleCut
-): string {
+export function shortRmPath(path: string, ctx: ShortPathContext, options: ShortRmPathOptions = {}): string {
+    const { max = 48, cut = middleCut } = options;
     let p = path.startsWith("/private/tmp/") || path === "/private/tmp" ? path.slice("/private".length) : path;
     const tmp = ctx.tmpdir.replace(/^\/private/, "");
 

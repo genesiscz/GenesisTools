@@ -7,7 +7,7 @@ import { after, describe, it } from "node:test";
 import type { ConversationRecord } from "./conversation";
 import { EvalConfigError, parseScenarios } from "./document";
 import { planRun } from "./plan";
-import { createRun, listRuns, loadRun, makeRunId, openRun, type RunManifest } from "./store";
+import { createRun, listRuns, loadRun, makeEvalRunId, openRun, type RunManifest } from "./store";
 
 const dirs: string[] = [];
 after(async () => {
@@ -91,7 +91,7 @@ describe("the run folder", () => {
 
     it("names runs by local time and label, and a second run in the same second gets -2", async () => {
         const base = await runsDir();
-        assert.equal(makeRunId(now, "toothache / regression"), "2026-11-10T19-42-07-toothache-regression");
+        assert.equal(makeEvalRunId(now, "toothache / regression"), "2026-11-10T19-42-07-toothache-regression");
         const first = await createRun(base, { now, label: "a" }, manifest);
         const second = await createRun(base, { now, label: "a" }, manifest);
         assert.equal(first.manifest.run, "2026-11-10T19-42-07-a");

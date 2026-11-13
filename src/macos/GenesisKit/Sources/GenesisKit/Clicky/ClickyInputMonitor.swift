@@ -9,6 +9,8 @@ public enum ClickyInputStartResult: Equatable {
 public protocol ClickyInputMonitoring: AnyObject {
     /// Input Monitoring as this process reads it. Asking for it is the permission dialog's job (PermissionCenter).
     var hasPermission: Bool { get }
+    /// The System Settings pane that lists the grant, nil while it is missing.
+    var grantPane: PermissionKind? { get }
     func start(handler: @escaping @MainActor (CGEventType, CGEvent) -> Void) -> ClickyInputStartResult
     /// Turns a running tap back on after macOS disabled it for a slow callback.
     func reenable()
@@ -20,7 +22,19 @@ final class SystemClickyInputMonitor: ClickyInputMonitoring {
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var handler: (@MainActor (CGEventType, CGEvent) -> Void)?
-    var hasPermission: Bool { PermissionAccess.live.isGranted(.inputMonitoring) }
+    private let access: PermissionAccess
+    var hasPermission: Bool { access.isGranted(.inputMonitoring) }
+    /// macOS lets a process trusted for Accessibility listen to keys, and lists it under Accessibility only: the
+    /// Input Monitoring pane has no row for it (2026-11-10, Clicky said "Input Monitoring is allowed" and that pane
+    /// listed only Discord).
+    var grantPane: PermissionKind? {
+        guard hasPermission else { return nil }
+        return access.isGranted(.accessibility) ? .accessibility : .inputMonitoring
+    }
+
+    init(access: PermissionAccess = .live) {
+        self.access = access
+    }
 
     func start(handler: @escaping @MainActor (CGEventType, CGEvent) -> Void) -> ClickyInputStartResult {
         guard hasPermission else { return .permissionRequired }

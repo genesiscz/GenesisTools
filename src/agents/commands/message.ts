@@ -12,7 +12,7 @@ import { resolveMany, resolveOne } from "../lib/resolve-token";
 import { resolveSession } from "../lib/session-resolve";
 import { runStaleSweep } from "../lib/slot-lock";
 import { assertOwnerThread } from "../lib/thread-owner";
-import type { AgentRecord, MessageEvent } from "../lib/types";
+import type { AgentRecord, FeedEvent, MessageEvent } from "../lib/types";
 
 const log = logger.child({ component: "agents:message" });
 
@@ -136,12 +136,9 @@ async function runMessageImpl(opts: MessageOpts): Promise<void> {
         };
 
         // Read before the append, under the same lock: the receipt names who will not read this message now.
-        const absentRecipients = notListening(events, toIds).map((entry) => ({
-            ...entry,
-            name: registry.find((record) => record.agent_id === entry.agent_id)?.agent_name ?? entry.agent_id,
-        }));
+        const absent = absentRecipients({ events, registry, toIds, senderId: sender.agent_id });
 
-        return { event: appendMessageEvent(messageInput), absent: absentRecipients };
+        return { event: appendMessageEvent(messageInput), absent };
     });
 
     const isBroadcast = !opts.reply && event.to_agent_ids.length === 0;
@@ -162,6 +159,30 @@ async function runMessageImpl(opts: MessageOpts): Promise<void> {
 }
 
 /**
+ * The recipients that will not read a message now, for the send receipt. The sender is left out: its own login never
+ * shows its own message, so a promise to deliver it at the next login would be false, and the warning about a
+ * self-addressed message already covers that case.
+ */
+export function absentRecipients({
+    events,
+    registry,
+    toIds,
+    senderId,
+}: {
+    events: readonly FeedEvent[];
+    registry: readonly AgentRecord[];
+    toIds: readonly string[];
+    senderId: string;
+}): (NotListening & { name: string })[] {
+    const recipients = toIds.filter((agentId) => agentId !== senderId);
+
+    return notListening(events, recipients).map((entry) => ({
+        ...entry,
+        name: registry.find((record) => record.agent_id === entry.agent_id)?.agent_name ?? entry.agent_id,
+    }));
+}
+
+/**
  * One sentence for the sender. Agents that do not get presence events (every agent but main, by default) learn here
  * that the peer they wrote to is away, at the moment it matters.
  */
@@ -178,7 +199,7 @@ function notListeningNote(absent: (NotListening & { name: string })[]): string {
         return `${entry.name} never logged in`;
     });
 
-    return `${parts.join("; ")}. The message is stored and is delivered at the next login.`;
+    return `${parts.join("; ")}. The message is stored and reaches them at their next login, unless that login's filters skip it.`;
 }
 
 function findOriginalSenderInEvents(

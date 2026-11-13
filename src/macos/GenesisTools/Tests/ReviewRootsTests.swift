@@ -273,6 +273,28 @@ final class ReviewRootsTests: XCTestCase {
         XCTAssertEqual(model.files.map(\.path), ["tools/README.md"])
     }
 
+    /// A large-file ask ends with the load that read it whole: a failed load refuses it (the page's button offers the
+    /// file again), a load that started before the ask answers nothing, and a successful one ends it quietly.
+    func testALargeFileAskEndsWithTheLoadThatReadItWhole() {
+        struct ReadFailed: Error, CustomStringConvertible { var description: String { "git show failed" } }
+        let empty = GitWorkingTreeSource.Snapshot(branch: "main", base: nil, files: [])
+        var asks = ReviewLargeAsks()
+        asks.add(fileID: "app/huge.txt", path: "huge.txt", folder: "/repo/app")
+        asks.add(fileID: "lib/big.json", path: "big.json", folder: "/repo/lib")
+
+        // Started before the ask: its fullFiles did not hold the path, so its failure is not this ask's answer.
+        XCTAssertEqual(asks.answer(["/repo/app": .failure(ReadFailed())], readWith: [:]), [])
+        // Another root's answer leaves this one waiting.
+        XCTAssertEqual(asks.answer(["/repo/lib": .success(empty)], readWith: ["/repo/lib": ["big.json"]]), [])
+        XCTAssertEqual(
+            asks.answer(["/repo/app": .failure(ReadFailed())], readWith: ["/repo/app": ["huge.txt"]]),
+            [ReviewLargeAsks.Refused(fileID: "app/huge.txt", reason: "git show failed")]
+        )
+        // Both asks are answered: a second failure of either root refuses nothing.
+        XCTAssertEqual(asks.answer(["/repo/app": .failure(ReadFailed()), "/repo/lib": .failure(ReadFailed())],
+                                   readWith: ["/repo/app": ["huge.txt"], "/repo/lib": ["big.json"]]), [])
+    }
+
     func testNestedFolderUsesRepositoryRootAndSkipsOversizedHistoricalBlobs() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("nested-review-\(UUID())").resolvingSymlinksInPath()
         let nested = root.appendingPathComponent("packages/app")
@@ -445,6 +467,7 @@ final class NullRenderer: DiffRenderer {
     func find() {}
     func showComments(_ comments: [RenderedComment]) {}
     func threadActionFinished(id: String, ok: Bool) {}
+    func largeFileFailed(id: String, reason: String) {}
     func setThreadSelection(_ ids: [String]) {}
     func focusThread(cardID: String?, reply: Bool) {}
     func showKeys(_ show: Bool) {}

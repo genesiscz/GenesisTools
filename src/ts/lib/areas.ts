@@ -164,11 +164,15 @@ export interface AreaReport {
         /** Import sites whose target is a source file outside the scanned paths. */
         outside: number;
         unresolved: number;
+        /** Files that could not be read or parsed. Above zero, the scan is incomplete and no rule is proven kept. */
+        failed: number;
     };
     areas: AreaStats[];
     edges: AreaEdge[];
     mutual: MutualPair[];
     violations: Violation[];
+    /** The unreadable files, with the error each one gave. Their imports are missing from every table. */
+    failed: Array<{ file: string; error: string }>;
 }
 
 /** Forward slashes, no leading `./`, no trailing `/`: `src/utils/` and `./src/utils` name the same folder. */
@@ -360,11 +364,13 @@ export function buildAreaReport(
             dynamicEdges,
             outside,
             unresolved: index.unresolved.length,
+            failed: index.failed.length,
         },
         areas: areaList,
         edges: edgeList,
         mutual,
         violations: violationList,
+        failed: index.failed,
     };
 }
 

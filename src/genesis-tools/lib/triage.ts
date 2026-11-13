@@ -1,6 +1,7 @@
 import { existsSync, statfsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename } from "node:path";
+// lint-rules-ignore: the triage report asks the resident hub server for its health, and the hub's socket client is the one door to that server
 import { askHubServer } from "@app/hub/server/client";
 import { runtimeLoad, runtimeMemory, runtimeProcesses } from "@genesiscz/utils/diagnostics/runtime";
 import { readLastLines } from "@genesiscz/utils/fs/read-lines";

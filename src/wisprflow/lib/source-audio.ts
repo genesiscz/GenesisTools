@@ -2,8 +2,8 @@ import { Database } from "bun:sqlite";
 import type { Dirent } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { LocalAudioFile, LocalAudioMeeting, LocalSourceAudio } from "@app/meetings/lib/source-audio-discovery";
 import { logger } from "@genesiscz/utils/logger";
+import type { LocalAudioFile, LocalAudioMeeting, LocalSourceAudio } from "@genesiscz/utils/meetings/sources";
 import { toIso, WISPR_DIR } from "./local";
 
 const { log } = logger.scoped("wisprflow-source-audio");

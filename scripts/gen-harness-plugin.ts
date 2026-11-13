@@ -128,7 +128,7 @@ export function renderHarnessPlugin(): string {
         "",
         "/** A value for every harness, so a plugin file that needs a table per harness names none. */",
         "export function byHarness<T>(pick: (harness: Harness) => T): Readonly<Record<Harness, T>> {",
-        `    return { ${drivers.map((driver) => `${driver.id}: pick(${quoted(driver.id)})`).join(", ")} };`,
+        `    return { ${drivers.map((driver) => `${driver.id}: pick(${SafeJSON.stringify(driver.id)})`).join(", ")} };`,
         "}",
         "",
         "/** The harness whose journal lines (pins, cmux records) omit `provider`: a line without one is its. */",

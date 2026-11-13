@@ -675,47 +675,56 @@ final class VaultUnlockTests: XCTestCase {
 
     private func warmupCaller(script: String = "/repo/src/claude/index.ts", subcommand: String = "warmup",
                               environment: [String] = ["NODE_PATH=/Applications/Grok Bot.app/Contents/Resources/app.asar/dist/deps"],
-                              ancestors: [(pid_t, String)]? = nil) -> VaultCaller {
-        caller(arguments: ["gt-claude", script, subcommand, "--all", "--json"], environment: environment,
-               ancestors: ancestors ?? grokBot)
+                              ancestors: [(pid_t, String)]? = nil,
+                              executable: String = "/Users/alice/.genesis-tools/bin/gt-claude",
+                              arguments: [String]? = nil) -> VaultCaller {
+        caller(executable, arguments: ["gt-claude", script] + (arguments ?? [subcommand, "--all", "--json"]),
+               environment: environment, ancestors: ancestors ?? grokBot)
+    }
+
+    /// The fixture home: `/Users/alice/.genesis-tools/bin/gt-claude` is a launcher there, so the runtime is Bun.
+    private func match(_ caller: VaultCaller, settings: VaultAutoAllowSettings = VaultAutoAllowSettings(),
+                       trustedRoot: String? = "/repo") -> VaultAutoAllowMatch? {
+        VaultAutoAllow.match(caller: caller, settings: settings, trustedRoot: trustedRoot, home: "/Users/alice")
     }
 
     func testAListedCommandThatGrokBotStartsPassesDespiteItsNodePath() {
-        let match = VaultAutoAllow.match(caller: warmupCaller(), session: VaultSessionInfo(),
-                                         settings: VaultAutoAllowSettings(), trustedRoot: "/repo")
-        XCTAssertEqual(match, VaultAutoAllowMatch(command: "claude warmup", agent: "Grok Bot"))
+        XCTAssertEqual(match(warmupCaller()), VaultAutoAllowMatch(command: "claude warmup", agent: "Grok Bot"))
+        XCTAssertEqual(match(warmupCaller(executable: "/Users/alice/.bun/bin/bun")),
+                       VaultAutoAllowMatch(command: "claude warmup", agent: "Grok Bot"))
     }
 
-    func testAClaudeCodeSessionCountsAsAnAgent() {
-        let match = VaultAutoAllow.match(caller: warmupCaller(subcommand: "usage", environment: [], ancestors: []),
-                                         session: VaultSessionInfo(sessionId: "1b4001ba-x", title: "fixes"),
-                                         settings: VaultAutoAllowSettings(), trustedRoot: "/repo")
-        XCTAssertEqual(match, VaultAutoAllowMatch(command: "claude usage", agent: "fixes (Claude Code)"))
+    func testAClaudeCodeProcessAmongTheAncestorsCountsAsAnAgent() {
+        XCTAssertEqual(match(warmupCaller(subcommand: "usage", environment: ["CLAUDE_CODE_SESSION_ID=1b4001ba-x"],
+                                          ancestors: [(9, "zsh -c"), (8, "claude")])),
+                       VaultAutoAllowMatch(command: "claude usage", agent: "claude (pid 8)"))
+    }
+
+    func testACodexOrGrokCliProcessCountsAsAnAgentWithNoSession() {
+        XCTAssertEqual(match(warmupCaller(environment: [], ancestors: [(81, "zsh -lc"), (80, "codex exec"), (70, "zsh")])),
+                       VaultAutoAllowMatch(command: "claude warmup", agent: "codex (pid 80)"))
+        XCTAssertEqual(match(warmupCaller(environment: [], ancestors: [(61, "bash"), (60, "grok")])),
+                       VaultAutoAllowMatch(command: "claude warmup", agent: "grok (pid 60)"))
     }
 
     func testEverythingElseStillGetsTheWindow() {
-        let settings = VaultAutoAllowSettings()
-        let session = VaultSessionInfo()
         // not on the list
-        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(subcommand: "login"), session: session, settings: settings, trustedRoot: "/repo"))
+        XCTAssertNil(match(warmupCaller(subcommand: "login")))
         // a script outside the checkout the app was built from, even with a tool's path shape
-        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(script: "/tmp/x/src/claude/index.ts"), session: session,
-                                          settings: settings, trustedRoot: "/repo"))
-        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(script: "/repo/src/claude/lib/x.ts"), session: session,
-                                          settings: settings, trustedRoot: "/repo"))
+        XCTAssertNil(match(warmupCaller(script: "/tmp/x/src/claude/index.ts")))
+        XCTAssertNil(match(warmupCaller(script: "/repo/src/claude/lib/x.ts")))
         // started by a person in a terminal, not by an agent
-        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(ancestors: [(5, "zsh"), (4, "Terminal")]), session: session,
-                                          settings: settings, trustedRoot: "/repo"))
+        XCTAssertNil(match(warmupCaller(ancestors: [(5, "zsh"), (4, "Terminal")])))
+        // a session id in the environment alone: any process can set CLAUDE_CODE_SESSION_ID
+        XCTAssertNil(match(warmupCaller(environment: ["CLAUDE_CODE_SESSION_ID=1b4001ba-x"], ancestors: [(5, "zsh"), (4, "Terminal")])))
         // another code-loading variable besides NODE_PATH
-        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(environment: ["NODE_PATH=/x", "DYLD_INSERT_LIBRARIES=/x.dylib"]),
-                                          session: session, settings: settings, trustedRoot: "/repo"))
+        XCTAssertNil(match(warmupCaller(environment: ["NODE_PATH=/x", "DYLD_INSERT_LIBRARIES=/x.dylib"])))
         // NODE_PATH whose value is not inside a listed agent app's bundle
         for value in ["/tmp/evil/node_modules", "/Applications/Grok Bot.app/Contents/../../../tmp/evil",
                       "/Applications/Grok Bot.app/Contents/Resources:/tmp/evil", "/Applications/Grok Bot.app/Contents/Resources:",
                       "", "Resources/deps", "/Applications/Other.app/Contents/Resources", "/Applications/Grok Bot.app.evil/Contents/x",
                       "/Users/alice/Applications/Grok Bot.app/Contents/Resources"] {
-            XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(environment: ["NODE_PATH=\(value)"]), session: session,
-                                              settings: settings, trustedRoot: "/repo"), "NODE_PATH=\(value)")
+            XCTAssertNil(match(warmupCaller(environment: ["NODE_PATH=\(value)"])), "NODE_PATH=\(value)")
         }
         let grokDeps = "/Applications/Grok Bot.app/Contents/Resources/app.asar/dist/deps"
         XCTAssertTrue(VaultAutoAllow.nodePath(grokDeps, isInsideBundlesOf: ["Grok Bot"]))
@@ -723,8 +732,42 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertFalse(VaultAutoAllow.nodePath("/Applications/.app/Contents/x", isInsideBundlesOf: ["", "..", "a/b"]),
                        "an app name that is no plain bundle name lists nothing")
         // switched off, or no known checkout
-        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(), session: session, settings: .disabled, trustedRoot: "/repo"))
-        XCTAssertNil(VaultAutoAllow.match(caller: warmupCaller(), session: session, settings: settings, trustedRoot: nil))
+        XCTAssertNil(match(warmupCaller(), settings: .disabled))
+        XCTAssertNil(match(warmupCaller(), trustedRoot: nil))
+    }
+
+    /// A process label is its name and first argument, and a CLI's first argument can be the prompt. The notification
+    /// and the audit detail carry the executable's name and pid only.
+    func testAnAncestorsArgumentNeverReachesTheNotificationOrTheAuditLine() throws {
+        let secret = "sk-ant-api03-SECRETPROMPT"
+        for (name, pid) in [("claude", 8), ("codex", 80), ("grok", 60)] {
+            let found = try XCTUnwrap(match(warmupCaller(environment: [], ancestors: [(9, "zsh -c"), (pid_t(pid), "\(name) \(secret)")])))
+            XCTAssertEqual(found.agent, "\(name) (pid \(pid))")
+            let text = VaultAutoAllow.notificationText(found)
+            for shown in [text.title, text.body, found.auditDetail] {
+                XCTAssertFalse(shown.contains("SECRETPROMPT"), shown)
+            }
+        }
+    }
+
+    /// The script path is only an argument: another program can pass it, with a listed subcommand, and run nothing of it.
+    func testAProgramThatIsNotBunOrALauncherGetsTheWindowWhateverItsArguments() {
+        XCTAssertNil(match(warmupCaller(executable: "/tmp/evil/gt-claude")))
+        XCTAssertNil(match(warmupCaller(executable: "/Users/alice/.genesis-tools/bin/sub/gt-claude")))
+        XCTAssertNil(match(warmupCaller(executable: "/Users/alice/Downloads/bun")))
+        var noExecutable = warmupCaller()
+        noExecutable.executable = nil
+        XCTAssertNil(match(noExecutable))
+    }
+
+    /// With an option before it, the first bare word may be that option's value: the command is unknown, so the window.
+    func testTheSubcommandMustBeTheFirstArgumentAfterTheScript() {
+        XCTAssertNil(match(warmupCaller(arguments: ["--verbose", "warmup"])))
+        let say = VaultAutoAllowSettings(commands: ["say voices"])
+        XCTAssertNil(match(warmupCaller(script: "/repo/src/say/index.ts", arguments: ["--model", "voices", "--account", "work", "hello"]),
+                           settings: say))
+        XCTAssertEqual(match(warmupCaller(script: "/repo/src/say/index.ts", arguments: ["voices", "--json"]), settings: say),
+                       VaultAutoAllowMatch(command: "say voices", agent: "Grok Bot"))
     }
 
     func testAListedDaemonOfTheInstalledCheckoutPassesWhoeverStartsIt() {

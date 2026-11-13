@@ -7,7 +7,7 @@ import { env } from "@genesiscz/utils/env";
 import { TemporaryArtifacts } from "@genesiscz/utils/fs/temporary-artifacts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { descendantPids } from "@genesiscz/utils/process/processes";
+import { signalProcessTree } from "@genesiscz/utils/process/processes";
 import { displayRefusal, recorderStartSchema } from "@genesiscz/utils/repl/toolsets/recorder";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { type LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
@@ -68,25 +68,12 @@ type ReplWorker = ReturnType<typeof spawnWorker>;
  * build went on after a timeout kill, holding the app build lock (R2-NR7). Returns the pids it signalled.
  */
 function stopDescendants(pid: number): number[] {
-    let pids: number[];
-
     try {
-        pids = descendantPids(pid);
+        return signalProcessTree(pid);
     } catch (error) {
         logger.debug({ pid, error }, "node-repl could not list the worker's child processes");
         return [];
     }
-
-    for (const child of pids.reverse()) {
-        try {
-            // pid-verified: read from the kernel in this call, below our own worker.
-            process.kill(child, "SIGTERM");
-        } catch (error) {
-            logger.debug({ pid: child, error }, "node-repl worker child already ended");
-        }
-    }
-
-    return pids;
 }
 
 async function* streamChunks(stream: ReadableStream<Uint8Array>): AsyncGenerator<Uint8Array> {
@@ -108,6 +95,8 @@ async function* streamChunks(stream: ReadableStream<Uint8Array>): AsyncGenerator
 /** How many of a worker's last stderr lines an error quotes, and the length of one quoted line. */
 const STDERR_TAIL_LINES = 8;
 const STDERR_LINE_CHARS = 300;
+/** The unfinished line keeps this many raw characters (room for colour codes); the rest is dropped as it arrives. */
+const STDERR_PARTIAL_CHARS = STDERR_LINE_CHARS * 4;
 /** How long a dead worker's exit code and last stderr bytes are awaited before its error is sent anyway. */
 const EXIT_READ_TIMEOUT_MS = 1000;
 
@@ -116,7 +105,7 @@ const EXIT_READ_TIMEOUT_MS = 1000;
  * level) and a turn that overruns (a native helper that compiles on first use) say why only on stderr, so their errors
  * quote it (NR6, NR39).
  */
-class StderrTail {
+export class StderrTail {
     private readonly lines: Array<{ seq: number; text: string }> = [];
     private partial = "";
     private seq = 0;
@@ -128,12 +117,26 @@ class StderrTail {
         return this.seq;
     }
 
+    /** How many characters of the unfinished line are held; never more than `STDERR_PARTIAL_CHARS`. */
+    get pendingChars(): number {
+        return this.partial.length;
+    }
+
+    /**
+     * Only the new chunk is split, and the unfinished line keeps a bounded prefix: a turn that writes megabytes without a
+     * newline grew the parent's memory with every chunk, and each chunk re-split everything held so far.
+     */
     push(chunk: string): void {
-        const parts = (this.partial + chunk).split("\n");
-        this.partial = parts.pop() ?? "";
+        const parts = chunk.split("\n");
+        const rest = parts.pop() ?? "";
 
         for (const part of parts) {
-            this.add(part);
+            this.add(`${this.partial}${part.slice(0, STDERR_PARTIAL_CHARS)}`);
+            this.partial = "";
+        }
+
+        if (this.partial.length < STDERR_PARTIAL_CHARS) {
+            this.partial = `${this.partial}${rest.slice(0, STDERR_PARTIAL_CHARS - this.partial.length)}`;
         }
     }
 
@@ -194,7 +197,10 @@ export interface ReplEngineOptions {
     preloadTimeoutMs?: number;
     /** The budget of a recording's startup in the parent; `preloadTimeoutMs` when absent. */
     recordingStartupTimeoutMs?: number;
-    /** The most characters a turn's text returns (`DEFAULT_MAX_OUTPUT_CHARS`); the rest goes to a file. 0 is no limit. */
+    /**
+     * The most characters a turn's text returns (`DEFAULT_MAX_OUTPUT_CHARS`), and a failed turn's error and stack each;
+     * the rest goes to a file. 0 is no limit.
+     */
     maxOutputChars?: number;
     /**
      * How the caller gives a turn more time, added to a turn's timeout error: `run` names --timeout and --file, the MCP
@@ -203,8 +209,9 @@ export interface ReplEngineOptions {
     timeoutHint?: (timeoutMs: number) => string;
     // R6 11 streamed output
     /**
-     * Each console line of a turn, as the turn writes it (a long edit printed nothing for minutes). The turn's text
-     * still holds every line; `withoutStreamed` takes out what a caller already printed.
+     * Each line of a turn, in the order of the turn text, as the turn writes it (a long edit printed nothing for
+     * minutes): the preload note, a late error, `console.*` and `nodeRepl.write`. The turn's text still holds every
+     * line; `withoutStreamed` takes out what a caller already printed.
      */
     onOutput?: (line: string) => void;
 }
@@ -261,8 +268,11 @@ export function capOutput({
 /** How long `shutdown` and `reset` give the toolsets to release what they started before the worker is killed. */
 // R6 11 streamed output
 /**
- * A turn's text without the console lines a caller already printed as they came: the lines are one run in the text
- * (after a preload note, before the result), so that run is taken out. Text that does not hold them stays whole.
+ * A turn's text without the lines a caller already printed as they came. Every line a turn writes streams in order (the
+ * preload note, a late error, `console.*` and `nodeRepl.write`), and `streamPrinter` prints an unbroken first run of
+ * them, so the printed lines are the start of the text and only that start is taken out. Text that does not start with
+ * them stays whole. A search for the run anywhere in the text failed when a `nodeRepl.write` line fell between two
+ * console lines, and the CLI printed every line twice.
  */
 export function withoutStreamed(text: string, streamed: readonly string[]): string {
     if (streamed.length === 0) {
@@ -270,15 +280,48 @@ export function withoutStreamed(text: string, streamed: readonly string[]): stri
     }
 
     const run = streamed.join("\n");
-    const at = text.indexOf(run);
 
-    if (at < 0) {
-        return text;
+    if (text === run) {
+        return "";
     }
 
-    const before = text.slice(0, at).replace(/\n$/, "");
-    const after = text.slice(at + run.length).replace(/^\n/, "");
-    return [before, after].filter(Boolean).join("\n");
+    return text.startsWith(`${run}\n`) ? text.slice(run.length + 1) : text;
+}
+
+/**
+ * The lines a caller prints while a turn runs, up to `max` characters (0: no limit). Once one line does not fit, no
+ * later line prints, so the printed lines stay the unbroken start of the turn text that `withoutStreamed` takes out, and
+ * they fit inside the cut `capOutput` makes. `stop()` ends printing when the turn answers.
+ */
+export function streamPrinter({ max, print }: { max: number; print: (line: string) => void }): {
+    printed: readonly string[];
+    onOutput: (line: string) => void;
+    stop: () => void;
+} {
+    const printed: string[] = [];
+    let chars = 0;
+    let open = true;
+
+    return {
+        printed,
+        onOutput(line) {
+            if (!open) {
+                return;
+            }
+
+            if (max > 0 && chars + line.length > max) {
+                open = false;
+                return;
+            }
+
+            printed.push(line);
+            chars += line.length + 1;
+            print(line);
+        },
+        stop() {
+            open = false;
+        },
+    };
 }
 
 const DISPOSE_TIMEOUT_MS = 10_000;
@@ -308,9 +351,9 @@ export class ReplEngine {
     readonly recordingStartupTimeoutMs: number;
     readonly toolsets: readonly string[];
     readonly maxOutputChars: number;
-    /** Where cut turns keep their whole output; made at the first cut, kept after the engine stops. */
+    /** Where cut turns keep their whole text, error or stack; made at the first cut, kept after the engine stops. */
     private outputDir?: string;
-    private cutTurns = 0;
+    private cuts = 0;
     private readonly stderrTails = new WeakMap<ReplWorker, StderrTail>();
     /** What the last stop of the owned recordings left behind; reset() answers it. */
     private readonly stopNotes: string[] = [];
@@ -326,13 +369,34 @@ export class ReplEngine {
         this.maxOutputChars = options.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS;
     }
 
-    private writeWholeOutput(whole: string): string {
-        this.outputDir ??= mkdtempSync(join(tmpdir(), "node-repl-output-"));
-        this.cutTurns += 1;
-        const path = join(this.outputDir, `turn-${this.cutTurns}.txt`);
-        writeFileSync(path, whole);
-        logger.debug({ path, chars: whole.length, max: this.maxOutputChars }, "node-repl turn output cut");
-        return path;
+    /** One part of a turn cut at `maxOutputChars`; the file named in its note holds all of it. */
+    private capPart(value: string, part: "text" | "error" | "stack"): string {
+        return capOutput({
+            text: value,
+            max: this.maxOutputChars,
+            writeRest: (whole) => {
+                this.outputDir ??= mkdtempSync(join(tmpdir(), "node-repl-output-"));
+                this.cuts += 1;
+                const path = join(this.outputDir, `cut-${this.cuts}-${part}.txt`);
+                writeFileSync(path, whole);
+                logger.debug(
+                    { path, part, chars: whole.length, max: this.maxOutputChars },
+                    "node-repl turn output cut"
+                );
+                return path;
+            },
+        });
+    }
+
+    /**
+     * A failure's error and stack, each cut as the text is. Both callers print `stack ?? error`, and the limit cut only
+     * the text, so `throw new Error("x".repeat(300_000))` returned the whole message past a 20,000 character limit.
+     */
+    private capFailure(failure: { error?: string; stack?: string }): { error?: string; stack?: string } {
+        return {
+            ...(failure.error === undefined ? {} : { error: this.capPart(failure.error, "error") }),
+            ...(failure.stack === undefined ? {} : { stack: this.capPart(failure.stack, "stack") }),
+        };
     }
 
     /**
@@ -685,14 +749,25 @@ export class ReplEngine {
                 ok: false,
                 text: ready.text,
                 images: ready.images,
-                // Without toolsets the round trip only waits for the start, so its failure is the worker's own.
-                error:
-                    this.toolsets.length > 0
-                        ? `toolset preload failed: ${ready.error ?? "the worker exited"}`
-                        : (ready.error ?? "the worker exited before it started"),
-                stack: ready.stack,
+                ...this.capFailure({
+                    // Without toolsets the round trip only waits for the start, so its failure is the worker's own.
+                    error:
+                        this.toolsets.length > 0
+                            ? `toolset preload failed: ${ready.error ?? "the worker exited"}`
+                            : (ready.error ?? "the worker exited before it started"),
+                    stack: ready.stack,
+                }),
                 durationMs: Math.round(performance.now() - started),
             };
+        }
+
+        // The first turn of a worker says which toolsets it runs without, once. It streams first, as the start of the
+        // turn text, so a caller that prints lines as they come prints it once and in its place.
+        const note = this.preloadNote;
+        this.preloadNote = undefined;
+
+        if (note) {
+            this.options.onOutput?.(note);
         }
 
         const turnStarted = performance.now();
@@ -713,15 +788,13 @@ export class ReplEngine {
             logger.debug({ error: answer.error, stack: fullStack }, "node-repl turn failed (every frame)");
         }
 
-        // The first turn of a worker says which toolsets it runs without, once.
-        const note = this.preloadNote;
-        this.preloadNote = undefined;
-        const text = capOutput({
-            text: note ? [note, answer.text].filter(Boolean).join("\n") : answer.text,
-            max: this.maxOutputChars,
-            writeRest: (whole) => this.writeWholeOutput(whole),
-        });
-        return { ...answer, text, durationMs: Math.round(performance.now() - turnStarted) };
+        const text = this.capPart(note ? [note, answer.text].filter(Boolean).join("\n") : answer.text, "text");
+        return {
+            ...answer,
+            text,
+            ...this.capFailure(answer),
+            durationMs: Math.round(performance.now() - turnStarted),
+        };
     }
 
     /** Same wall clock as a turn: a registration nobody answers must not hang the caller forever. */

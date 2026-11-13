@@ -305,7 +305,7 @@ export interface ComputedEdit {
     /** False when the ops left the project as it was (a second annotateClicks); nothing is saved then. */
     changed: boolean;
     /** The facts each op was applied with, in order, so the same ops can be applied again without measuring. */
-    facts: MeasuredFacts[];
+    facts: OpFacts[];
     removedIdleUs: Array<[number, number]>;
     loudness?: { measuredLufs: number | null; volume: number };
     warnings: string[];
@@ -326,13 +326,13 @@ export async function computeEdit({
     ops: readonly EditOp[];
     /** The project has no file yet: it changes, and is saved, even when the ops change nothing. */
     fresh: boolean;
-    facts?: readonly MeasuredFacts[];
+    facts?: readonly OpFacts[];
     /** The markers set while it recorded (recordedMarkersOf), so a cut that hides one says so. */
     recordedMarkers?: ReadonlyArray<{ atMs: number; label: string }>;
 }): Promise<ComputedEdit> {
     let next = project;
     const removedIdleUs: Array<[number, number]> = [];
-    const facts: MeasuredFacts[] = [];
+    const facts: OpFacts[] = [];
     let loudness: { measuredLufs: number | null; volume: number } | undefined;
     const clamped = ops.flatMap((op) => opTimeWarnings(op, project.source.durationUs));
     const warnings = [...clamped];
@@ -342,7 +342,10 @@ export async function computeEdit({
             const measured = known?.[index] ?? (await probeFacts(next, op));
             const before = next;
             next = applyOp(next, op, measured);
-            warnings.push(...(measured.warnings ?? []), ...opPlacementWarnings(op, before, next));
+            warnings.push(...opPlacementWarnings(op, before, next));
+            // A text or pattern of a hideText, or a name of a hidePrivate, that no screen text matched hid nothing:
+            // said in the answer, not a log.
+            warnings.push(...(measured.textMisses ?? []).map((miss) => `${op.op}: ${miss}`));
             facts.push(measured);
             removedIdleUs.push(...(measured.idleUs ?? []).map(([from, to]): [number, number] => [from, to]));
 
@@ -633,11 +636,8 @@ export async function transcriptWords(value: string, options: { at?: TimeValue }
     });
 }
 
-/** An op's facts and what measuring them found that the caller must hear (a hideText text the screen never shows). */
-type MeasuredFacts = OpFacts & { warnings?: readonly string[] };
-
 /** What an op needs measured on the movie before it applies: idle stretches, the loudness, or the transcript. */
-async function probeFacts(project: EditProject, op: EditOp): Promise<MeasuredFacts> {
+async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     if (op.op === "removeIdle") {
         return {
             idleUs: await findIdle({
@@ -700,7 +700,7 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<MeasuredFac
             exclude: op.exclude,
             excludeFixed: op.excludeFixed,
         });
-        return { privateHits: hits, ...(warnings.length > 0 ? { warnings } : {}) };
+        return { privateHits: hits, ...(warnings.length > 0 ? { textMisses: warnings } : {}) };
     }
 
     if (op.op === "hideText") {
@@ -715,7 +715,7 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<MeasuredFac
             // R8 6: from/to read only that part of the screen.
             scan: scanOf(op.from, op.to),
         });
-        return { textHits: hits, ...(warnings.length > 0 ? { warnings } : {}) };
+        return { textHits: hits, ...(warnings.length > 0 ? { textMisses: warnings } : {}) };
     }
 
     if (op.op === "speedUpWaits") {

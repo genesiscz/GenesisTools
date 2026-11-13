@@ -238,12 +238,15 @@ describe("monitor report", () => {
         // file is dropped rather than reported under a guessed account.
         buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
         const written = SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) as { version: number };
-        expect(written.version).toBe(10);
+        expect(written.version).toBe(11);
 
-        writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version: 5 }, { strict: true }));
-        const afterDowngrade = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
-        expect(afterDowngrade.parsedFiles).toBe(3);
-        expect(afterDowngrade.today.cost).toBeCloseTo(3.48, 5);
+        // 10 is the last version before Claude's fast-tier rates: its rows hold standard-rate costs.
+        for (const version of [5, 10]) {
+            writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version }, { strict: true }));
+            const afterDowngrade = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+            expect(afterDowngrade.parsedFiles).toBe(3);
+            expect(afterDowngrade.today.cost).toBeCloseTo(3.48, 5);
+        }
 
         // Negative control: the v4 cache it just wrote IS reused.
         const afterV4 = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });

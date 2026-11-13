@@ -47,13 +47,19 @@ final class Filmstrip {
                 // The strip fills in as tiles arrive instead of all at the end.
                 if made.count % 12 == 0 {
                     let partial = made.sorted { $0.sourceUs < $1.sourceUs }
-                    await MainActor.run { self?.tiles = partial }
+                    await MainActor.run {
+                        guard !Task.isCancelled else { return }
+                        self?.tiles = partial
+                    }
                 }
             }
             made.sort { $0.sourceUs < $1.sourceUs }
             span.end()
             let tiles = made
+            // A load that a newer one replaced publishes nothing: its tiles are the old movie's, and `loaded` belongs
+            // to the newer load. The check runs on the main actor, where `load` cancels, so no publish slips past it.
             await MainActor.run {
+                guard !Task.isCancelled else { return }
                 self?.tiles = tiles
                 self?.loaded = true
             }
@@ -95,7 +101,10 @@ final class Waveform {
             guard let tracks = try? await asset.loadTracks(withMediaType: .audio), !tracks.isEmpty,
                   let duration = try? await asset.load(.duration), duration.seconds > 0,
                   let reader = try? AVAssetReader(asset: asset) else {
-                await MainActor.run { self?.publish([]) }
+                await MainActor.run {
+                    guard !Task.isCancelled else { return }
+                    self?.publish([])
+                }
                 return
             }
             let outputs = tracks.map { track in
@@ -109,12 +118,18 @@ final class Waveform {
             }
             // A reader that cannot start still ends the load: the lane waits for `loaded`, and stayed blank for good.
             guard outputs.allSatisfy({ reader.canAdd($0) }) else {
-                await MainActor.run { self?.publish([]) }
+                await MainActor.run {
+                    guard !Task.isCancelled else { return }
+                    self?.publish([])
+                }
                 return
             }
             outputs.forEach { reader.add($0) }
             guard reader.startReading() else {
-                await MainActor.run { self?.publish([]) }
+                await MainActor.run {
+                    guard !Task.isCancelled else { return }
+                    self?.publish([])
+                }
                 return
             }
             let total = max(1, Int(duration.seconds * 8000))
@@ -130,6 +145,11 @@ final class Waveform {
                         open[index] = false
                         continue
                     }
+                    // A buffer's samples start at its time in the movie: a microphone track that starts after the
+                    // video, or has a gap, is drawn where the preview plays it (EditRenderer inserts each track at its
+                    // own time range), not packed from 0.
+                    let at = CMSampleBufferGetPresentationTimeStamp(buffer)
+                    if at.isNumeric { positions[index] = max(0, Int((at.seconds * 8000).rounded())) }
                     var length = 0
                     var pointer: UnsafeMutablePointer<Int8>?
                     guard let block = CMSampleBufferGetDataBuffer(buffer),
@@ -142,7 +162,11 @@ final class Waveform {
                 }
             }
             let read = peaks
-            await MainActor.run { self?.publish(read) }
+            // A replaced read stops early with partial peaks: publish nothing, as the filmstrip does.
+            await MainActor.run {
+                guard !Task.isCancelled else { return }
+                self?.publish(read)
+            }
         }
     }
 

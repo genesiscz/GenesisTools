@@ -79,4 +79,31 @@ final class RecorderHuntR2LibraryCardLengthFramesTests: XCTestCase {
         XCTAssertTrue(items.allSatisfy { $0.durationMs == nil })
         XCTAssertNil(RecordingMovie.lengthMs(broken.appendingPathComponent("proxy.mp4")))
     }
+
+    /// PR #752 review: every library refresh (an edit or a comment on any recording) loaded each proxy's length again,
+    /// up to 3 s a movie. The length is kept per version of the file: the same file is not read again, a changed one is.
+    func testAKeptLengthIsReusedUntilTheMovieChanges() async throws {
+        let dir = try folder("frames-2026-11-09_10-00-00-aaaa0005",
+                             manifest: #"{"title":"Kept","startedAt":"2026-11-09T09:00:00.000Z","frames":[],"settings":{}}"#)
+        let proxy = dir.appendingPathComponent("proxy.mp4")
+        try await makeMovie(at: proxy)
+        // A whole-second date: setting it again after the rewrite gives back the same date (the file system keeps
+        // nanoseconds, setAttributes writes fewer).
+        let written = Date(timeIntervalSince1970: 1_800_000_000)
+        try FileManager.default.setAttributes([.modificationDate: written], ofItemAtPath: proxy.path)
+        XCTAssertEqual(try XCTUnwrap(RecordingMovie.lengthMs(proxy)), 2000, accuracy: 50)
+
+        // The same bytes count and modification date, in place: an asset load would now read no movie at all.
+        let size = try XCTUnwrap((FileManager.default.attributesOfItem(atPath: proxy.path)[.size] as? NSNumber)?.intValue)
+        let handle = try FileHandle(forWritingTo: proxy)
+        try handle.write(contentsOf: Data(count: size))
+        try handle.close()
+        try FileManager.default.setAttributes([.modificationDate: written], ofItemAtPath: proxy.path)
+        XCTAssertEqual(try XCTUnwrap(RecordingMovie.lengthMs(proxy), "the kept length, no second read"), 2000, accuracy: 50)
+        XCTAssertEqual(try XCTUnwrap(RecorderMenu.readRecents(library).first?.durationMs), 2000, accuracy: 50)
+
+        // A newer modification date is a new version of the file: it is read again.
+        try FileManager.default.setAttributes([.modificationDate: written.addingTimeInterval(60)], ofItemAtPath: proxy.path)
+        XCTAssertNil(RecordingMovie.lengthMs(proxy))
+    }
 }

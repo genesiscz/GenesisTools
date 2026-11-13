@@ -46,9 +46,9 @@ const PATH_PARAMS: ReadonlyMap<string, readonly string[]> = new Map([
 ]);
 const DEFAULT_PATH_PARAMS: readonly string[] = ["file"];
 
-/** A file path as the caller means it: `~/` is the home folder, a relative path is against this cwd; "" stays "". */
+/** A file path as the caller means it: `~` and `~/` are the home folder, a relative path is against this cwd; "" stays "". */
 function callerFile(value: string): string {
-    return value === "" ? value : resolve(value.replace(/^~(?=[/\\])/, homedir()));
+    return value === "" ? value : resolve(value.replace(/^~(?=[/\\]|$)/, homedir()));
 }
 
 /**

@@ -2,9 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { formatLocalDate } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createMetricsRecorder } from "./client";
-import { checkpointSpoolLine, drainSpool, localDay, spoolLine } from "./spool";
+import { checkpointSpoolLine, drainSpool, spoolLine } from "./spool";
 import { MetricsStore } from "./store";
 
 const NOW = Date.UTC(2026, 10, 11, 12, 0, 0);
@@ -33,7 +34,7 @@ describe("metrics spool", () => {
         const define = (dims: string[]) =>
             `${SafeJSON.stringify({ v: 1, define: { project: "shop", metric: "cart.items", unit: "count", dims } })}\n`;
         writeFileSync(
-            join(dir, `writer-${localDay(NOW)}.jsonl`),
+            join(dir, `writer-${formatLocalDate(new Date(NOW))}.jsonl`),
             `${define(["kind"])}${line(4)}${define(["no good"])}`
         );
 
@@ -44,7 +45,7 @@ describe("metrics spool", () => {
     test("a checkpoint line marks a checkpoint, a repeat updates it, and a bad one is one bad line", () => {
         const { dir, store } = setup();
         writeFileSync(
-            join(dir, `writer-${localDay(NOW)}.jsonl`),
+            join(dir, `writer-${formatLocalDate(new Date(NOW))}.jsonl`),
             `${checkpointSpoolLine({ project: "shop", name: "v1", at: NOW - 1_000, commit: "abc1234" })}${line(4)}${checkpointSpoolLine({ project: "shop", name: "v1", note: "cache on" })}${checkpointSpoolLine({ project: "shop", name: "no good" })}`
         );
 
@@ -58,7 +59,7 @@ describe("metrics spool", () => {
 
     test("a partial last line waits for its end, and a second drain adds nothing", () => {
         const { dir, store } = setup();
-        const path = join(dir, `writer-${localDay(NOW)}.jsonl`);
+        const path = join(dir, `writer-${formatLocalDate(new Date(NOW))}.jsonl`);
         const third = line(3);
         writeFileSync(path, `${line(1)}${line(2)}${third.slice(0, 20)}`);
 
@@ -78,7 +79,7 @@ describe("metrics spool", () => {
         const wrongVersion = `${SafeJSON.stringify({ v: 9, project: "shop", metric: "cart.items", value: 1 }, { strict: true })}\n`;
         const badDim = spoolLine({ project: "shop", metric: "cart.items", value: 1, dims: { "no way": 1 } });
         writeFileSync(
-            join(dir, `writer-${localDay(NOW)}.jsonl`),
+            join(dir, `writer-${formatLocalDate(new Date(NOW))}.jsonl`),
             `${line(1)}{not json\n${wrongVersion}${badDim}\n${line(4)}`
         );
 
@@ -88,7 +89,7 @@ describe("metrics spool", () => {
 
     test("a finished file of an earlier day is removed, an unfinished one stays until its tail is stale", () => {
         const { dir, store } = setup();
-        const yesterday = localDay(NOW - 86_400_000);
+        const yesterday = formatLocalDate(new Date(NOW - 86_400_000));
         const done = join(dir, `writer-${yesterday}.jsonl`);
         const torn = join(dir, `other-${yesterday}.jsonl`);
         writeFileSync(done, line(1));

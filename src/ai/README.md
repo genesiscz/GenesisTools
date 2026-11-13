@@ -36,8 +36,12 @@ tools ai image "a red bicycle in the rain" -o bike.png
 
 - `translate [text]`: `--to <lang>` (required), `--from <lang>` (detected when omitted),
   `--provider <id>`, `--model <id>`, `-c, --clipboard` (copy the result).
-- `summarize [file]`: `--max-length <n>`, `--provider <id>`, `--model <id>`, `-c, --clipboard`. The file `-` reads stdin. With no file
-  it reads piped stdin, or the clipboard when stdin is a terminal.
+- `summarize [file]`: `--max-length <n>`, `--provider <id>`, `--model <id>`, `-c, --clipboard`. The file `-` reads
+  stdin. With no file it reads piped stdin, or the clipboard when stdin is a terminal.
+- `translate` and `summarize` call the AI task facade (`ai.translate`, `ai.summarize`). `--provider` and `--model`
+  choose for that call only and are never saved; a lone `--provider` uses that provider's default model for the task.
+  Change the saved default with `tools ai config default set <task> <model-ref>`. A transient failure is retried up
+  to three times.
 - `classify [text]`: `--categories <list>` (required, comma-separated, at least two; fewer exits 1), `--provider`.
 - `image <prompt>`: `-o, --output <path>` (required), `--model <id>`.
 - `translate` and `classify` read stdin when no text is given.
@@ -46,13 +50,9 @@ tools ai image "a red bicycle in the rain" -o bike.png
 - `classify` uses the macOS classification helper (semantic similarity against your categories).
 - `image` defaults to `stabilityai/stable-diffusion-xl-base-1.0` and installs `@huggingface/inference` on first use.
 
-- `translate` and `summarize` call the AI task facade (`ai.translate`, `ai.summarize`). `--provider` and `--model`
-  choose for that call only and are never saved; a lone `--provider` uses that provider's default model for the task.
-  Change the saved default with `tools ai config default set <task> <model-ref>`. A transient failure is retried up
-  to three times.
-
 ⚠️ **`classify` registers `--provider`, but ignores it.** It calls `classifyText(input, categories)`, which does not
-receive the flag. Passing it silently gets you the default implementation.
+receive the flag. Passing it silently gets you the default implementation. It is documented here rather than omitted
+so nobody assumes the flag works.
 
 ### Local models
 
@@ -205,23 +205,34 @@ logged (event `auto-allowed` in `~/.genesis-tools/ai/gate/audit.jsonl`) and post
 ```bash
 tools ai gate auto-allow [--json]                  # the list, the agent apps, the notification switch (read-only)
 tools ai gate auto-allow add claude warmup         # let "tools claude warmup" through
-tools ai gate auto-allow remove claude warmup      # it asks in the window again
+tools ai gate auto-allow remove claude warmup      # it no longer skips the window on this list
 tools ai gate auto-allow add-agent "Grok Bot"      # count an app's processes as an agent's
 tools ai gate auto-allow remove-agent "Grok Bot"
 tools ai gate auto-allow add-daemon src/codex/daemon.ts     # a background program of the checkout, whoever starts it
 tools ai gate auto-allow remove-daemon src/codex/daemon.ts  # it asks in the window again
 tools ai gate auto-allow daemon-notify 24          # hours between two notifications for one daemon; 0: every pass
 tools ai gate auto-allow notify on|off             # the audit line is written either way
-tools ai gate auto-allow enable|disable            # disable: every command asks again; the list is kept
+tools ai gate auto-allow enable|disable            # disable: this bypass stops; the list is kept
+tools ai gate revoke <tool>                        # forget remembered "Always" allows too
 ```
 
+- `disable` and `remove` stop only this list. A command that was allowed with "Always" in the window is remembered
+  separately (`tools ai gate grants`) and still skips the window; `tools ai gate revoke <tool>` (or `--all`) forgets it.
 - Defaults: `claude warmup`, `claude usage`, `ai warmup`, `ai usage`; agent apps `Grok Bot`; notification on. The file
-  is `~/.genesis-tools/ai/gate/vault-auto-allow.json`; a missing file is the defaults, and a file that does not parse
-  turns the list off.
-- A request passes only when all of these hold: the script is `src/<tool>/index.ts` of the GenesisTools checkout the
-  app was built from (a worktree build counts as its main checkout); `<tool> <first argument>` is on the list; a Claude
-  Code session, a Claude, Codex or Grok CLI process, or a listed app started it; and the only variable that loads extra
-  code is `NODE_PATH` (Grok Bot, an Electron app, sets it in every shell it opens). Anything else gets the window.
+  is `~/.genesis-tools/ai/gate/vault-auto-allow.json`; a missing file, or a missing or null key, is the defaults. A
+  file the app cannot decode (not JSON, not an object, or a key of the wrong type such as `"enabled": "false"`) turns
+  the list off in the app. The CLI then prints the error with the file's path, exits 1, and changes nothing until the
+  file is fixed or removed. Showing the settings only reads the file.
+- `add` takes a tool and its subcommand (`claude warmup`); an empty or other-shaped command is refused.
+- A request passes only when all of these hold: the program is Bun or a `gt-<tool>` launcher at their known paths
+  (`~/.bun/bin/bun`, Homebrew's, `~/.genesis-tools/bin/gt-*`); the script is `src/<tool>/index.ts` of the GenesisTools
+  checkout the app was built from (a worktree build counts as its main checkout); the first argument after the script
+  is the subcommand (no option before it) and `<tool> <subcommand>` is on the list; a process named `claude`, `codex`
+  or `grok`, or a process of a listed app, is among the caller's parent processes (a `CLAUDE_CODE_SESSION_ID` in the
+  environment proves nothing); and the only variable that loads extra code is `NODE_PATH` (Grok Bot, an Electron app,
+  sets it in every shell it opens). Anything else gets the window.
+- The notification and the audit line's `detail` name the agent as the listed app, or the CLI's executable name and
+  pid (`codex (pid 80)`), never with an argument: a CLI's first argument can be the prompt.
 - GenesisTools' own daemons are a second list in the same file (`daemons`, decision 61 b of 2026-11-10). Defaults: the
   usage daemon `src/ai/commands/usage/poll-daemon.ts` and the Codex daemon `src/codex/daemon.ts`. A daemon passes
   whoever starts it, when all of these hold: its script is that file of the checkout the app was built from; bun
@@ -489,7 +500,7 @@ tools ai sessions report <session-id> [--provider claude|codex|grok] [--top 10] 
   calls with their tags (`cold-cache`, `partial-cold`, `large-cache-write`, `high-output`, `subagent`), the cache
   losses with their cause, and the longest gaps. A fact a harness does not record is listed under `unsupported` with
   its reason. `--json` prints `{ schema: "sessions.report@1", session, report }`.
-- The calls of `report` are the session's own and those of every agent transcript it has (the agents it and its agents started, and the agents of its Workflow tool runs), each call once by its id across the files (`sessionCallsWithAgents`). The cost line names how many agent transcripts were read. The cache losses and the gaps read the main loop only. Read from the lead's transcript alone, a Claude session with agents printed sub-agents $0, because Claude Code writes each agent's calls into the agent's own file. `--json` adds `agentTranscripts` and `unreadable`.
+- The report's calls are the session's own and those of every agent transcript it has (the agents it and its agents started, and the agents of its Workflow tool runs), each call once by its id across the files (`sessionCallsWithAgents`). The cost line names how many agent transcripts were read. The cache losses and the gaps read the main loop only. Read from the lead's transcript alone, a Claude session with agents printed sub-agents $0, because Claude Code writes each agent's calls into the agent's own file.
 
 #### `ai sessions subagents` and `ai sessions workflows`: a session's agents and its Workflow tool runs
 
@@ -581,7 +592,10 @@ failing line carries the vendor's message and the re-login command.
 
 Nothing sensitive is in the config file. Accounts hold **references** into an AES-256-GCM vault at
 `~/.genesis-tools/security/vault.json`, with a per-entry key derived by HKDF. The master key is resolved from a
-ladder: the `GENESIS_TOOLS_MASTER_KEY` environment variable, then the OS keychain, then an opt-in key file.
+ladder, first hit wins: the `GENESIS_TOOLS_MASTER_KEY` environment variable, then GenesisTools.app's approval window
+(when the app is installed), then the OS keychain, then an opt-in key file. With the app installed, a vault read can
+show the app's approval window. A deny there stops the read: it does not fall through to a keychain key on the same
+Mac. When the app cannot answer, the keychain rung answers instead.
 
 Config itself lives at `~/.genesis-tools/ai/config.json`. It is re-read when its mtime changes, so a long-running
 proxy notices a login performed in another terminal.
@@ -608,7 +622,7 @@ here.
 |------|------|
 | `~/.genesis-tools/ai/config.json` | accounts, defaults, aliases |
 | `~/.genesis-tools/security/vault.json` | the encrypted credential vault |
-| `~/.genesis-tools/ai/gate/` | `grants.json`, `vault-grants.json`, `audit.jsonl` |
+| `~/.genesis-tools/ai/gate/` | `grants.json`, `vault-grants.json`, `vault-auto-allow.json`, `audit.jsonl` |
 | `~/.genesis-tools/ai/statusline/` | `config.json` and the installed `run.ts` |
 | `~/.genesis-tools/ai/usage-sessions.json` | the cached `usage sessions --json` answer |
 | `~/.genesis-tools/ai-usage/cache/` | the last poll's snapshots, poll gates, daemon heartbeat |
@@ -707,8 +721,7 @@ site. `doctor --live` and `account test --live` add the plugin's health probe, w
 
 ## Troubleshooting
 
-- **`--provider` on `summarize` or `classify` changes nothing.** The flag is ignored (see Text verbs). For
-  `summarize`, set a task default with `tools ai config default set summarize <model-ref>` instead. `classify` has no
+- **`--provider` on `classify` changes nothing.** The flag is ignored (see Text verbs). `classify` has no
   workaround: it always runs the macOS classification helper, and it reads no task default, account or model.
 - **`image` says "Hugging Face token required".** Export `HUGGINGFACE_TOKEN` (or `HF_TOKEN`).
 - **`tokens --method claude-api` fails at once.** It needs `ANTHROPIC_API_KEY`; it never borrows a subscription

@@ -701,10 +701,6 @@ extension EditProject {
     /// so an op this window sends for an edit not saved yet names the clip the recorder service made for it too.
     static let wholeClipID = "c00000000"
 
-    static func newID(_ prefix: String) -> String {
-        prefix + String(UUID().uuidString.prefix(8)).lowercased()
-    }
-
     var outputDurationUs: Int64 { clips.reduce(0) { $0 + $1.outputDurationUs } }
 
     /// Where a project of this movie lives: `<folder>/edit.json` for a recording folder's movie, `<name>.edit.json`

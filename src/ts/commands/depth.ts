@@ -1,9 +1,10 @@
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import type { Block } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
-import { type Command, Option } from "commander";
+import type { Command } from "commander";
 import pc from "picocolors";
 import { createAreaGrouping } from "../lib/areas";
 import {
@@ -27,7 +28,8 @@ import {
 } from "./options";
 
 interface DepthCliOptions extends FormatCliFlags, ScanCliFlags {
-    by?: DepthUnit;
+    /** `--by [unit]`: true when the flag is given without a value. */
+    by?: string | true;
     within?: string[];
     split?: string[];
     minExports?: number;
@@ -217,7 +219,20 @@ function compactOf(report: DepthReport): unknown {
 
 async function runDepthCommand(paths: string[], options: DepthCliOptions): Promise<void> {
     const format = resolveFormat(options);
-    const by = options.by ?? "folder";
+    const by = await pickEnumFlag({
+        tool: toolCommand("ts depth"),
+        subcommand: ["depth"],
+        flag: "--by",
+        given: options.by,
+        values: DEPTH_UNITS,
+        fallback: "folder",
+        accepts: (value): value is DepthUnit => (DEPTH_UNITS as readonly string[]).includes(value),
+    });
+
+    if (by === null) {
+        return;
+    }
+
     const within = options.within && options.within.length > 0 ? options.within : paths;
     const scan = { tests: options.tests === true, ignore: options.ignore };
     // Before any parse: a mistyped --split is refused without reading the tree first.
@@ -262,10 +277,9 @@ export function registerDepthCommands(program: Command): void {
             "Shallow-module finder: interface size against implementation, pass-through exports, and importers per module"
         )
         .argument("<paths...>", "Files or directories whose modules are measured")
-        .addOption(
-            new Option("--by <unit>", "A module is a folder (the first folder under each path) or one file")
-                .choices(DEPTH_UNITS)
-                .default("folder")
+        .option(
+            "--by [unit]",
+            "A module is a folder (the default: the first folder under each path) or one file; omit the value for the choices"
         )
         .option(
             "--within <path>",

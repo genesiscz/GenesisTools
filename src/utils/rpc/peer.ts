@@ -262,6 +262,20 @@ export interface RpcPeerOptions {
     supersedes?: (method: string) => string | undefined;
 }
 
+/**
+ * How loud a failed call is logged here. A refusal of a request is the caller's answer, which it gets, so it stays at
+ * debug. A notification gets no reply, so its refusal is logged at info or nobody hears of it. An internal error (an
+ * `RpcError` with the internal code, like a failed live microphone change, or any other throw) is this side's
+ * failure and is a warning.
+ */
+export function failedCallLevel(error: unknown, notification: boolean): "debug" | "info" | "warn" {
+    if (!(error instanceof RpcError) || error.code === JSON_RPC_ERRORS.internal) {
+        return "warn";
+    }
+
+    return notification ? "info" : "debug";
+}
+
 function parseOrNull(text: string, log: RpcLog, label: string): unknown {
     try {
         return SafeJSON.parse(text, { strict: true });
@@ -283,10 +297,10 @@ export class RpcPeer {
     private readonly outbox: Outbox;
     private readonly outgoing = new Map<number, Outgoing>();
     private readonly running = new Map<string | number, Running>();
-    private readonly dialect: RpcDialect;
-    private readonly schemas: (typeof schemas)[keyof typeof schemas];
     /** The requests of each supersede lane that run or wait, so a newer one cancels them. */
     private readonly lanes = new Map<string, Set<Running>>();
+    private readonly dialect: RpcDialect;
+    private readonly schemas: (typeof schemas)[keyof typeof schemas];
     private nextId = 1;
     private closedReason?: string;
     /** The other side's requests, answered one after another in the order they came (an in-order dialect). */
@@ -613,12 +627,8 @@ export class RpcPeer {
             log.debug({ ...logFields, method }, `${label} call`);
             reply({ result: result ?? null });
         } catch (error) {
-            // A refusal (an RpcError) is the caller's answer, which it gets; only an unexpected throw is this side's.
-            if (error instanceof RpcError) {
-                log.debug({ ...logFields, method, error }, `${label} call refused`);
-            } else {
-                log.warn({ ...logFields, method, error }, `${label} call failed`);
-            }
+            const level = failedCallLevel(error, id === undefined);
+            log[level]({ ...logFields, method, error }, `${label} call ${level === "warn" ? "failed" : "refused"}`);
 
             reply({ error: rpcErrorBody(error, this.options.tool ?? currentToolName()) });
         }

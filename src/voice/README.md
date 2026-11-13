@@ -216,13 +216,18 @@ resolves no credentials, refreshes no token and sends no request. The output is 
 
 Rewrites one text with one chat model, for example to fix punctuation in a dictated note.
 
+The input holds your text, so keep it in a private file and remove it afterwards. `mktemp` creates the file readable
+by you only, and the last line runs whether the transform succeeded or not.
+
 ```sh
-cat > /tmp/transform.json <<'EOF'
+input=$(mktemp)
+cat > "$input" <<'EOF'
 { "systemPrompt": "Fix punctuation. Keep the wording.", "text": "hello there how are you" }
 EOF
 tools voice transforms run \
-    --input /tmp/transform.json \
+    --input "$input" \
     --model-ref "@account/acc_work:<model id>"
+rm -f "$input"
 ```
 
 - `--input <file>` (required): JSON with `systemPrompt` and `text`. The file may be at most 300,000 bytes, the

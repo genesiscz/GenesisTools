@@ -18,7 +18,9 @@ Loaded by Claude Code when you read, write or edit a model list, a price table o
 
 ## One source of truth
 
-`src/utils/ai/catalog/static.ts` (`STATIC_CATALOG`) holds every model fact: id, family, display name, context window, thinking mode, aliases, release date, and pricing. Pricing carries `rules` for a context band (`ctxFrom`), a service tier (`serviceTier: "priority"` or `"fast"`) and a date window (`from` / `to`, inclusive UTC dates). `effectivePricing()` applies the rules in order, and a rule overrides only the fields it names.
+`src/utils/ai/catalog/static.ts` (`STATIC_CATALOG`) holds every model fact: id, family, display name, context window, thinking mode, aliases, release date, and pricing. Pricing carries `rules` for a context band (`ctxFrom`), a service tier (`serviceTier: "priority"` or `"fast"`) and a date window (`from` / `to`, inclusive UTC dates). `effectivePricing()` (`catalog/pricing-rules.ts`) applies the rules in order, and a rule overrides only the fields it names.
+
+🛑 **Keep the catalog's data files import-free.** `catalog/static.ts`, `catalog/types.ts`, `catalog/pricing-rules.ts`, `catalog/efforts.ts`, `catalog/decimal.ts`, `providers/capabilities.ts`, `grok/models-static.ts`, `grok/types.ts`, `openai/sub-models-static.ts`, `usage/types.ts` and `ask/usage-tokens.ts` import only each other (relative paths) and types from `ai`. Kalendora vendors them verbatim into `src/lib/genesis-tools/ai-catalog/` and reconciles with three-way merges, so a new import of a logger, `node:fs`, a fetch or an `@genesiscz/utils` alias breaks that copy. Put such code in the sibling module (`grok/models.ts`, `openai/sub-models.ts`, `catalog/pricing.ts`), which re-exports the data.
 
 A model picked for a fixed job (the cheap account probe, the token-count model, grok's default, a tool's default chat
 model) is a role in `MODEL_ROLES` (`src/utils/ai/catalog/roles.ts`), nested by provider. A default that should move
@@ -32,9 +34,9 @@ These read the catalog and need no edit of their own:
 
 ## Lists that are not derived from the catalog
 
-- **Codex subscription (WHAM) slugs and the `astra` / `sol` / `luna` / `terra` aliases**: `src/utils/ai/openai/sub-models.ts`. The catalog derives its `openai-sub` entries from this list. Direct OpenAI API prices still go in `static.ts` under `openai`.
+- **Codex subscription (WHAM) slugs and the `astra` / `sol` / `luna` / `terra` aliases**: `src/utils/ai/openai/sub-models-static.ts` (`OPENAI_SUB_STATIC_CATALOG`; `sub-models.ts` re-exports it and holds the live fetch and alias resolution). The catalog derives its `openai-sub` entries from this list. Direct OpenAI API prices still go in `static.ts` under `openai`.
 - **`tools claude codex`**: its `-m` names (`SESSION_MODEL_ALIASES` in `src/claude/lib/codex-session/launch.ts`) and the subagents every session gets (`CODEX_AGENTS` in `src/claude/lib/codex-session/agents.ts`). A new Codex family needs an entry in both; GPT-6.1 Terra first shipped without them (2026-10-27).
-- **Grok**: `src/utils/ai/grok/models.ts` (`GROK_STATIC_CATALOG`, windows, probe seeds). The catalog derives its `xai` entries from it; `static.ts` adds windows, vision, thinking and the prices that LiteLLM and OpenRouter do not have (`XAI_PRICING`).
+- **Grok**: `src/utils/ai/grok/models-static.ts` (`GROK_STATIC_CATALOG`) and `src/utils/ai/grok/models.ts` (windows, probe seeds, the live cache). The catalog derives its `xai` entries from it; `static.ts` adds windows, vision, thinking and the prices that LiteLLM and OpenRouter do not have (`XAI_PRICING`).
 - **The proxy invoice ledger**: `src/ai-proxy/lib/billing/pricing.ts` (`RATE_GROUPS`). It is separate on purpose: cost is booked at write time, so an edit never rewrites a past invoice. Input and output only, with `contextFrom` for a long-context band. A new model needs a row here, or the ledger records $0. `pricing.test.ts` fails when an advertised Claude or Grok model has no row; nothing checks the Codex and OpenAI rows, so add those by hand.
 - **Claude request rules**: `anthropicRequestRules()` in `src/utils/ai/anthropic/models.ts` decides per model version whether a request may carry budget or adaptive thinking, `temperature` / `top_p`, a forced `tool_choice`, an assistant prefill, and which effort ceiling applies. The proxy translator (`src/ai-proxy/lib/translators/formats/anthropic/`) asks it before it emits a field, because the API answers a forbidden field with HTTP 400. A new Claude version needs its row checked against the vendor's migration guide.
 - **xAI reasoning effort**: `src/ai-proxy/lib/reasoning-effort-vocab.ts` lists which effort values each grok family accepts.
@@ -53,7 +55,7 @@ provider is `effortRange(from, to)` or a filter of `REASONING_EFFORTS` (`src/uti
 1. Read the vendor's own page, not a blog: the model page (`platform.claude.com/docs/en/models/<model>`, `developers.openai.com/api/docs/models/<id>`, `docs.x.ai/developers/<model>`) and the vendor pricing page. Note the date you read it in the code comment.
 2. Add or change the `static.ts` entry: window, thinking mode, every price field (input, output, cache read, cache write), each context band, each fast or priority tier, and any dated rule. Move a family alias (`opus`, `sonnet`, `haiku`, `fable`, `sol`, `luna`) to the new model; exactly one entry may carry an alias.
 3. Add the ledger row in `billing/pricing.ts`.
-4. For Claude, check `anthropicRequestRules()` against the migration guide. For grok, check the effort vocabulary. For Codex, add the slug to `sub-models.ts`, move its alias, and add a new family to `tools claude codex` (`launch.ts` and `agents.ts`).
+4. For Claude, check `anthropicRequestRules()` against the migration guide. For grok, check the effort vocabulary. For Codex, add the slug to `sub-models-static.ts`, move its alias, and add a new family to `tools claude codex` (`launch.ts` and `agents.ts`).
 5. Refresh the OpenRouter snapshot and read the price diff.
 6. Update the handoff-to rankings when the model is one an agent should pick.
 7. Run `bun scripts/test.ts src/utils/ai/catalog src/ai-proxy/lib/billing src/ai-proxy/lib/translators src/claude/lib/models.test.ts`, then one live call through the real account (`./tools ask -p <provider> -m <id> "..."` from the worktree).

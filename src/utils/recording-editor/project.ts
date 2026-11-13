@@ -986,20 +986,40 @@ export function playedUs(project: EditProject, startUs: number, endUs: number): 
     );
 }
 
-/** The source time where `playUs` of output has played from `startUs` on, through the clips at their speeds. */
-export function sourceAfterPlayed(project: EditProject, startUs: number, playUs: number): number {
+/**
+ * The source times where a clip starts or ends, in order: between two of them playedUs grows at one rate, so
+ * sourceAfterPlayed below and check.ts's sourceBeforePlayed solve it one stretch at a time.
+ */
+export function clipEdgesOf(project: EditProject): number[] {
+    return [...new Set(project.clips.flatMap((clip) => [clip.fromUs, clip.toUs]))].sort((a, b) => a - b);
+}
+
+/**
+ * The source time where `startUs`..that time has played `playUs` of output, by playedUs's own measure: every clip that
+ * plays a piece of it counts, so clips that repeat or reorder the source give what the check then measures. Walking the
+ * clips one after the other ended a text over two 1x clips of the same second at 0.5 s, and it then played 1 s.
+ */
+export function sourceAfterPlayed({
+    project,
+    startUs,
+    playUs,
+}: {
+    project: EditProject;
+    startUs: number;
+    playUs: number;
+}): number {
     let leftUs = playUs;
+    let atUs = startUs;
 
-    for (const clip of project.clips) {
-        const fromUs = Math.max(clip.fromUs, startUs);
-        const speed = clip.speed || 1;
-        const availableUs = Math.max(0, clip.toUs - fromUs) / speed;
+    for (const edgeUs of clipEdgesOf(project).filter((us) => us > startUs)) {
+        const stretchUs = playedUs(project, atUs, edgeUs);
 
-        if (availableUs >= leftUs) {
-            return Math.min(project.source.durationUs, Math.round(fromUs + leftUs * speed));
+        if (stretchUs > 0 && stretchUs >= leftUs) {
+            return Math.min(project.source.durationUs, Math.round(atUs + (leftUs * (edgeUs - atUs)) / stretchUs));
         }
 
-        leftUs -= availableUs;
+        leftUs -= stretchUs;
+        atUs = edgeUs;
     }
 
     return project.source.durationUs;
@@ -1033,7 +1053,11 @@ export function markerTitleOps(
         }
 
         const nextUs = starts.find((us) => us > startUs) ?? project.source.durationUs;
-        const endUs = Math.min(sourceAfterPlayed(project, startUs, lengthUs), nextUs, project.source.durationUs);
+        const endUs = Math.min(
+            sourceAfterPlayed({ project, startUs, playUs: lengthUs }),
+            nextUs,
+            project.source.durationUs
+        );
         const text = options.numbered === false ? mark.label : `${index + 1}. ${mark.label}`;
         return [
             {
@@ -1617,13 +1641,17 @@ function keptRangeOf(project: EditProject, fromOutUs: number, toOutUs: number): 
         const outEndUs = outStartUs + clipOutputUs(clip);
         const startUs = Math.max(fromOutUs, outStartUs);
         const endUs = Math.min(toOutUs, outEndUs);
+        const piece = {
+            ...clip,
+            fromUs: clip.fromUs + Math.round((startUs - outStartUs) * clip.speed),
+            toUs: Math.min(clip.toUs, clip.fromUs + Math.round((endUs - outStartUs) * clip.speed)),
+        };
+        // The shortest clip is SOURCE time, as split and cut measure it; a whole clip inside the part always stays (a
+        // 0.1 s clip at 16x plays 6 ms and was dropped by an output-time minimum).
+        const whole = startUs === outStartUs && endUs === outEndUs;
 
-        if (endUs - startUs >= MINIMUM_CLIP_US) {
-            clips.push({
-                ...clip,
-                fromUs: clip.fromUs + Math.round((startUs - outStartUs) * clip.speed),
-                toUs: Math.min(clip.toUs, clip.fromUs + Math.round((endUs - outStartUs) * clip.speed)),
-            });
+        if (endUs > startUs && (whole || piece.toUs - piece.fromUs >= MINIMUM_CLIP_US)) {
+            clips.push(piece);
         }
 
         outStartUs = outEndUs;
@@ -3065,6 +3093,8 @@ export interface OpFacts {
     privateHits?: readonly PrivateHit[];
     /** The places of a text on the screen (`hideText`), tracked over time. */
     textHits?: readonly PrivateHit[];
+    /** One sentence per text or pattern of a `hideText`, or name of a `hidePrivate`, that no screen text matched (it hid nothing). */
+    textMisses?: readonly string[];
     /** The typing and waiting stretches (`speedUpWaits`), from the picture's change steps. */
     waits?: readonly WaitStretch[];
 }

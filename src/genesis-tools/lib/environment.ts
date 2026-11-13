@@ -6,7 +6,7 @@ import { agentSessionIds } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { captureSync } from "@genesiscz/utils/process/capture";
+import { findProcesses } from "@genesiscz/utils/process/processes";
 import { readLiveService } from "@genesiscz/utils/screen-recorder/service-link";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
@@ -109,11 +109,11 @@ export function gatherEnvironment(sources: EnvironmentSources = realSources()): 
             commit: manifest.sourceCommit,
             shortCommit: manifest.sourceCommit.slice(0, 12),
             commitDate,
-            commitAge: commitDate ? `${age(now, commitDate, false)} old` : null,
+            commitAge: commitDate ? `${age({ now, iso: commitDate, minutes: false })} old` : null,
             branch: manifest.sourceBranch ?? null,
             dirty: manifest.sourceDirty === true,
             builtAt: manifest.builtAt ?? null,
-            builtAge: manifest.builtAt ? `${age(now, manifest.builtAt, true)} ago` : null,
+            builtAge: manifest.builtAt ? `${age({ now, iso: manifest.builtAt, minutes: true })} ago` : null,
             checkout: manifest.sourceRoot ?? null,
         };
     }
@@ -147,6 +147,7 @@ export function environmentMarkdown(report: EnvironmentReport): string {
         const branch = app.branch ? ` on \`${app.branch}\`` : "";
         const committed = app.commitDate ? `, committed ${time(app.commitDate)} (${app.commitAge})` : "";
         lines.push(`- **GenesisTools build:** ${build}${branch}${committed}`);
+
         if (app.builtAt) {
             lines.push(`- **Built:** ${time(app.builtAt)} (${app.builtAge})`);
         }
@@ -264,6 +265,7 @@ export function issueEnvironmentValues(report: EnvironmentReport): Record<string
         build.push(
             `commit ${app.shortCommit}${app.dirty ? " with uncommitted Swift changes (+dirty)" : ""} on ${app.branch ?? "?"}`
         );
+
         if (app.builtAt) {
             build.push(`built ${time(app.builtAt)} (${app.builtAge})`);
         }
@@ -299,7 +301,7 @@ export function issueEnvironmentValues(report: EnvironmentReport): Record<string
 }
 
 /** "3 h", "2 d", "12 min"; with `minutes`, "1 h 27 min". */
-function age(now: Date, iso: string, minutes: boolean): string {
+function age({ now, iso, minutes }: { now: Date; iso: string; minutes: boolean }): string {
     const ms = Math.max(0, now.getTime() - new Date(iso).getTime());
     const totalMinutes = Math.floor(ms / 60_000);
     const hours = Math.floor(totalMinutes / 60);
@@ -434,14 +436,8 @@ export function realSources(): EnvironmentSources {
             };
         },
         recorder: () => {
-            // lint-rules-ignore: the recorder faces are found by their command line, which only ps lists (registered in scripts/benchmarks/process/call-sites.ts)
-            const ps = captureSync("ps", ["-Ao", "pid=,command="], { timeoutMs: 3_000 }).stdout;
-            const facePids = ps
-                .split("\n")
-                .map((line) => line.trim())
-                .filter((line) => /MacOS\/GenesisTools --recorder(\s|$)/.test(line))
-                .map((line) => Number.parseInt(line, 10))
-                .filter((pid) => Number.isFinite(pid));
+            // The kernel's process table through the shared process layer (lint rule no-process-tool-spawn).
+            const facePids = findProcesses({ command: /MacOS\/GenesisTools --recorder(\s|$)/ }).map((face) => face.pid);
             const entry = readLiveService();
             return { facePids, service: entry ? { pid: entry.pid, startedAt: entry.startedAt } : null };
         },

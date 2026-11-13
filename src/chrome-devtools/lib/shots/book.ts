@@ -133,6 +133,16 @@ function positive(value: unknown, fallback: number, path: string, max = Number.P
     return value;
 }
 
+/** `positive`, in whole pixels: a fractional width would round a scaled image down to nothing. */
+function wholePixels(value: unknown, fallback: number, path: string): number {
+    const pixels = positive(value, fallback, path);
+    if (!Number.isInteger(pixels)) {
+        fail(path, `expected a whole number of pixels, got ${pixels}`);
+    }
+
+    return pixels;
+}
+
 /** Parses a book value (already read) into a ShotBook; `file` names it in errors. */
 export function parseShotBook(value: unknown, file: string, overrides: { base?: string } = {}): ShotBook {
     if (!isRecord(value) || !Array.isArray(value.shots) || value.shots.length === 0) {
@@ -191,6 +201,11 @@ export function parseShotBook(value: unknown, file: string, overrides: { base?: 
         fail(`${file}: browser.use`, `expected ${BROWSER_KINDS.join(" or ")}`);
     }
 
+    const tab = input.browser?.attach?.tab ?? "new";
+    if (tab !== "new" && tab !== "current") {
+        fail(`${file}: browser.attach.tab`, `expected "new" or "current", got ${String(tab)}`);
+    }
+
     const page = input.page ?? {};
     const viewport = input.viewport ?? { width: 1440, height: 900 };
     const formats = input.output?.formats ?? ["webp"];
@@ -212,7 +227,7 @@ export function parseShotBook(value: unknown, file: string, overrides: { base?: 
             },
             attach: {
                 ...(input.browser?.attach?.port !== undefined ? { port: input.browser.attach.port } : {}),
-                tab: input.browser?.attach?.tab ?? "new",
+                tab,
             },
         },
         setup: {
@@ -229,7 +244,11 @@ export function parseShotBook(value: unknown, file: string, overrides: { base?: 
             formats,
             raw: input.output?.raw === true,
             webp: {
-                maxWidth: positive(input.output?.webp?.maxWidth, WEBP_OUTPUT.maxWidth, `${file}: output.webp.maxWidth`),
+                maxWidth: wholePixels(
+                    input.output?.webp?.maxWidth,
+                    WEBP_OUTPUT.maxWidth,
+                    `${file}: output.webp.maxWidth`
+                ),
                 quality: positive(
                     input.output?.webp?.quality,
                     WEBP_OUTPUT.quality,
