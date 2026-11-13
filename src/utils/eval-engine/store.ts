@@ -298,6 +298,7 @@ function holderIsAlive(holder: LockHolder): boolean {
         return true;
     }
 
+    // lint-rules-ignore: the engine imports only node built-ins (boundary.test.ts), and this runs once per claim that finds a held lock
     const ps = spawnSync("ps", ["-o", "etime=", "-p", String(holder.pid)], { encoding: "utf8", timeout: 5_000 });
     if (ps.error) {
         return true;
