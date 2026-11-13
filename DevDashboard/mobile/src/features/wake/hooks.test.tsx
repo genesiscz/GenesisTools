@@ -11,6 +11,10 @@ mock.module("@/api/client-provider", () => ({
     useDashboardConnectionId: () => null,
     useIsMockClient: () => false,
 }));
+// The real store loads expo-sqlite, which needs the app runtime.
+mock.module("@/state/connection-store", () => ({
+    useConnectionStore: (select: (state: { activeId: string | null }) => unknown) => select({ activeId: null }),
+}));
 
 const { cleanup, renderHook, waitFor } = await import("@testing-library/react-native/pure");
 const { useWakeDeadline } = await import("./hooks");
