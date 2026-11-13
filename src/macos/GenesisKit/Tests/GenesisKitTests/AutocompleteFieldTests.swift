@@ -104,9 +104,12 @@ final class AutocompleteFieldTests: XCTestCase {
         let low = AutocompletePlacement.frame(field: CGRect(x: 10, y: 100, width: 300, height: 22), visible: small,
                                               size: CGSize(width: 0, height: 250))
         XCTAssertEqual(low.minY, 126, "174 pt above against 96 below")
+        XCTAssertEqual(low.height, 174, "and only as tall as the room above, so no row is off the screen")
         let high = AutocompletePlacement.frame(field: CGRect(x: 10, y: 200, width: 300, height: 22), visible: small,
                                                size: CGSize(width: 0, height: 250))
         XCTAssertEqual(high.maxY, 196, "196 pt below against 74 above")
+        XCTAssertEqual(high.minY, 0, "and its bottom stays on the screen")
+        XCTAssertTrue(small.contains(low) && small.contains(high))
     }
 
     func testAFieldScrolledEvenPartlyOutOfItsScrollViewHasNoList() {

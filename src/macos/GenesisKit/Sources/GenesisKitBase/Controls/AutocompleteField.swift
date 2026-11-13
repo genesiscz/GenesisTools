@@ -591,8 +591,10 @@ public struct AutocompleteField<Item: AutocompleteItem>: View {
                 }
                 .padding(4)
             }
-            .scrollIndicators(rows.count > maxRows ? .automatic : .never)
-            .frame(height: height)
+            .scrollIndicators(rows.count > maxRows || usesPanel ? .automatic : .never)
+            // In the floating panel the list may be given less than its height (the panel is only as tall as the room
+            // the screen has beside the field); it then scrolls.
+            .frame(minHeight: usesPanel ? 0 : height, idealHeight: height, maxHeight: height)
             // The marked row as a value: in the floating panel this view does not observe the model.
             .onChange(of: marked) { _, index in
                 guard let index else { return }

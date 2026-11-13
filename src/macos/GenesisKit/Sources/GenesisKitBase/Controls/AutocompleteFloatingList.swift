@@ -24,15 +24,17 @@ public enum AutocompletePlacement {
     }
 
     /// The panel's frame for a list of `size` under (or above) `field`. When neither side has room for the whole
-    /// list, it opens on the side with more room.
+    /// list, it opens on the side with more room and is as tall as that room: the list scrolls inside it, and no row
+    /// sits past the screen's edge out of the pointer's reach.
     public static func frame(field: CGRect, visible: CGRect, size: CGSize) -> CGRect {
         let width = width(field: field, visible: visible)
         let below = field.minY - gap - visible.minY
         let above = visible.maxY - field.maxY - gap
         let opensAbove = size.height > below && (size.height <= above || above > below)
-        let y = opensAbove ? field.maxY + gap : field.minY - gap - size.height
+        let height = max(0, min(size.height, opensAbove ? above : below))
+        let y = opensAbove ? field.maxY + gap : field.minY - gap - height
         let x = min(max(field.minX, visible.minX), visible.maxX - width)
-        return CGRect(x: x, y: y, width: width, height: size.height)
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 
     /// Whether the field shows in full inside every clip view around it (all in window coordinates). A field scrolled
