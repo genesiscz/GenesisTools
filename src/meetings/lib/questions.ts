@@ -276,11 +276,22 @@ export function inputNeeded(item: MeetingItem): "speaker" | "proposed" | undefin
     return undefined;
 }
 
-/** The open questions, the most valuable first (priority), then in transcript order. */
+/** Order timed speaker questions by uncertain words and distinct answer targets; old questions retain their priority. */
+export function questionRank(question: NewQuestion): number {
+    const words = question.evidence?.words;
+
+    if (question.about !== "speaker" || typeof words !== "number" || !Number.isFinite(words) || words <= 0) {
+        return question.priority ?? 0;
+    }
+
+    return (1 - (question.confidence ?? 0.5)) * words * Math.max(1, new Set(question.decides).size);
+}
+
+/** The open questions, the most valuable first, then in transcript order. */
 export function openQuestions(record: MeetingRecord): QuestionItem[] {
     return record.items
         .filter((item): item is QuestionItem => item.kind === "question" && item.status === "suggested")
-        .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.fromSec - b.fromSec);
+        .sort((a, b) => questionRank(b) - questionRank(a) || a.fromSec - b.fromSec);
 }
 
 /** An answer raises compatible questions for the same labelled passage by this much, up to `PROPAGATED_MAX`. */

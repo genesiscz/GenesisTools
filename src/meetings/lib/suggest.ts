@@ -41,7 +41,7 @@ import { identifiedDepartures } from "./departure";
 import { indicatorFacts } from "./indicator-facts";
 import { uncertainSharedCallRanges } from "./listen-quality";
 import { selectQuestions } from "./question-select";
-import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
+import { DEFAULT_LISTEN_BELOW, questionFor, questionKey, questionRank } from "./questions";
 import { assessIndicator } from "./speaker-indicator";
 import {
     addPolish,
@@ -2057,7 +2057,7 @@ export function suggestItems(options: {
     const wordLines = new Set<number>();
     const worth = selectQuestions(candidates, taken)
         .filter((question) => (question.priority ?? 0) >= (options.minPriority ?? 0))
-        .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+        .sort((a, b) => questionRank(b) - questionRank(a))
         .filter((question) => {
             // One unknown word asked per line: four words of one line are one listen, not four.
             if (question.about !== "term" || !question.rules.includes(MeetingRule.UnknownWord)) {
