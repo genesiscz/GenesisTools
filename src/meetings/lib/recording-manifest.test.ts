@@ -255,6 +255,12 @@ describe("the frame index and the OCR worker (two phases)", () => {
                 "frames/b-d2.jpg",
             ]);
             expect(ocrBacklog(dir).map((row) => row.file)).toEqual(["frames/c-d1.jpg"]);
+
+            // A row cut after its file name (a crash, a full disk) is no OCR of that frame, and neither is the
+            // cut row the next append ran onto.
+            const ocr = join(dir, "ocr.jsonl");
+            writeFileSync(ocr, `${readFileSync(ocr, "utf8")}{"file":"frames/c-d1.jpg","results":[{"te`);
+            expect(ocrBacklog(dir).map((row) => row.file)).toEqual(["frames/c-d1.jpg"]);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
