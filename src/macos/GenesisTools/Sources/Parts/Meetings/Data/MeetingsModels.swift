@@ -16,6 +16,11 @@ struct MeetingBadges: Decodable, Equatable, Hashable {
     let suggested: Int
 }
 
+struct MeetingSourceAudioSummary: Decodable, Equatable, Hashable {
+    let sources: [String]
+    let bytes: Int64
+}
+
 struct OverviewMeeting: Decodable, Equatable, Hashable, Identifiable {
     let id: String
     let title: String
@@ -27,6 +32,7 @@ struct OverviewMeeting: Decodable, Equatable, Hashable, Identifiable {
     let labels: [String]
     let hasTranscript: Bool
     let hasRecording: Bool
+    let sourceAudio: MeetingSourceAudioSummary?
     let live: Bool
     let frames: Int
     let contextCount: Int
@@ -419,6 +425,7 @@ struct MeetingsSettings: Decodable, Equatable {
         }
         let match: [String: Folders]
         let autoRecord: AutoRecord
+        let preserveAudio: Bool?
     }
     struct Language: Decodable, Equatable {
         struct Fillers: Decodable, Equatable {

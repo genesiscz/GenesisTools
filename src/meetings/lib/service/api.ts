@@ -46,6 +46,7 @@ import {
 } from "../moment-schema";
 import type { MeetingsOverview } from "../overview";
 import { reviewRowSchema, reviewRowsPatchSchema, reviewRowsSchema } from "../review-row-schema";
+import { sourceAudioPlanSchema } from "../source-audio-discovery";
 import { wordTimingModelIdSchema } from "../word-timing-worker";
 
 /**
@@ -663,6 +664,23 @@ const meetingWaveform = defineMethod({
     effect: "read",
 });
 
+const audioPlan = defineMethod({
+    name: "sourceAudio.plan",
+    params: z.object({}).strict(),
+    result: sourceAudioPlanSchema,
+    effect: "read",
+    doc: "Read-only local provider/legacy/owned source audio reconciliation. Never fetches remote media.",
+});
+const audioApply = defineMethod({
+    name: "sourceAudio.apply",
+    params: z.object({ plan: sourceAudioPlanSchema }).strict(),
+    result: z.array(
+        z.object({ sourceId: z.string(), sourceMeetingId: z.string(), recordId: z.string(), status: z.string() })
+    ),
+    effect: "reversible",
+    doc: "Explicitly apply a revalidated source audio preservation plan.",
+});
+
 const overview = defineMethod({
     name: "meetings.overview",
     params: z.object({ days: z.number().positive().optional() }).strict(),
@@ -1213,6 +1231,8 @@ export const meetingsApi = defineApi({
         meetingTimeline,
         meetingWaveform,
         overview,
+        audioPlan,
+        audioApply,
         configRead,
         configSet,
         configUnset,

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { constants, lstatSync } from "node:fs";
 import { chmod, copyFile, link, mkdir, stat, unlink } from "node:fs/promises";
-import { dirname, extname, join } from "node:path";
+import { extname, join } from "node:path";
 import { cloneOrCopy, type Placement } from "@genesiscz/utils/fs/clone";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { logger } from "@genesiscz/utils/logger";
@@ -11,12 +11,14 @@ import {
     type MeetingStore,
     type PreservedSourceAudio,
 } from "@genesiscz/utils/meetings/record";
-import type { MeetingEvidence, MeetingSourceId, TranscriptSource } from "@genesiscz/utils/meetings/sources";
-import { type SourceRef, sourceRefOf } from "./sources";
+import { SOURCE_AUDIO_FOLDER } from "@genesiscz/utils/meetings/source-audio-paths";
+import type { MeetingEvidence, TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import { localSourceAudio, type SourceRef, sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-source-audio");
-/** Source media is permanent; capture retention owns the separate audio folder. */
-export const SOURCE_AUDIO_FOLDER = "source-audio";
+
+export { SOURCE_AUDIO_FOLDER } from "@genesiscz/utils/meetings/source-audio-paths";
+
 const fingerprints = new Map<string, { source: string; saved: string; sha256: string }>();
 const MAX_FINGERPRINTS = 128;
 
@@ -193,11 +195,6 @@ export async function preserveSourceAudio(options: {
     }
 }
 
-/** Legacy stopgap locations belong to their source; future sources must define their own lookup. */
-const LEGACY_AUDIO: Record<MeetingSourceId, (root: string, sourceMeetingId: string) => string[]> = {
-    wisprflow: (root, id) => [join(dirname(root), "meetings-audio-archive", encodeURIComponent(id), "upload.ogg")],
-};
-
 /** Keeps the rest of the source evidence and prefers the owned media, even after the provider removes its file. */
 export function withPreservedSourceAudio(
     record: MeetingRecord,
@@ -221,10 +218,19 @@ export async function syncSourceAudio(options: {
 }): Promise<SourceAudioSync> {
     const { store, record, source, sourceMeetingId } = options;
     const ref = { sourceId: source.id, sourceMeetingId };
+    if (preservedSourceAudio(record, ref)) {
+        return { record, status: "already-preserved" };
+    }
+    const live = await source.liveRecording();
+    if (live?.sourceMeetingId === sourceMeetingId) {
+        return { record, status: "missing" };
+    }
     const evidence = await source.evidence(sourceMeetingId);
     const candidates = [
         ...(evidence?.audioPath ? [evidence.audioPath] : []),
-        ...LEGACY_AUDIO[source.id](store.root, sourceMeetingId),
+        ...(await (await localSourceAudio(source.id)).legacyFiles(store.root))
+            .filter((file) => file.sourceMeetingId === sourceMeetingId)
+            .map((file) => file.path),
     ];
     let sourcePath: string | undefined;
     for (const candidate of candidates) {

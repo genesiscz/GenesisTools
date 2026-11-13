@@ -12,7 +12,9 @@ import { ensureOcrWorkers } from "./ocr-worker";
 import { interruptedRecording } from "./recorder-adapters";
 import { lastRecordingActivity, readRecorderState } from "./recorder-shared";
 import { pruneCapturesDaily } from "./retention";
-import { meetingSource } from "./sources";
+import { preservedSourceAudio } from "./source-audio";
+import { discoverSourceAudio } from "./source-audio-discovery";
+import { localSourceAudio, meetingSource, sourceRefOf } from "./sources";
 import {
     type AutoRecording,
     clearAuto,
@@ -51,6 +53,8 @@ export interface WatchNote {
 }
 
 export interface WatchDeps {
+    /** Archives local completed media and keeps discovery alive independently of capture. */
+    archiveAudio: () => Promise<boolean>;
     /** The source the watcher follows (`watchedSourceId`), with the label its notifications use. */
     source: () => Promise<{ id: MeetingSourceId; label: string }>;
     /** That source's `sources.<id>.autoRecord`. */
@@ -83,6 +87,7 @@ function defaultDeps(store: MeetingStore): WatchDeps {
             const { id } = await current();
             return { id, label: (await meetingSource(id)).label };
         },
+        archiveAudio: () => archiveAvailableSourceAudio(store),
         settings: async () => (await current()).settings,
         liveRecording: async () => (await meetingSource((await current()).id)).liveRecording(),
         recorder: () => readRecorderState(store),
@@ -273,6 +278,27 @@ async function refreshEnded(options: {
     return false;
 }
 
+/** Missing linked source media needs the watcher even when automatic screen capture is off. No provider I/O. */
+export function hasSourceAudioToWatch(store: MeetingStore): boolean {
+    return store.list().some((record) => sourceRefOf(record) !== undefined && !preservedSourceAudio(record));
+}
+
+/** Discover only local files. Missing historical files never trigger evidence parsing or warning spam. */
+export async function archiveAvailableSourceAudio(store: MeetingStore): Promise<boolean> {
+    const config = await new MeetingsConfigStore().read();
+    const enabled = MEETING_SOURCE_IDS.filter((id) => config.sources[id].preserveAudio);
+    for (const id of enabled) {
+        try {
+            const source = await localSourceAudio(id);
+            const live = await (await meetingSource(id)).liveRecording();
+            await discoverSourceAudio({ store, source, liveSourceMeetingId: live?.sourceMeetingId });
+        } catch (error) {
+            log.debug({ error, source: id }, "local audio discovery unavailable; next tick retries");
+        }
+    }
+    return enabled.length > 0;
+}
+
 /**
  * One look: the watched source records and nothing else is recording, so start (and post a notification); the meeting of the
  * recording the watcher started has ended, so stop it. Silence never stops it: a listener who stays quiet is still in the
@@ -286,6 +312,7 @@ export async function watchOnce(
     const deps: WatchDeps = { ...defaultDeps(store), ...options.deps };
     const now = options.now ?? Date.now();
     const settings = await deps.settings();
+    const audioPending = await deps.archiveAudio();
 
     if (!settings.enabled) {
         const recorder = deps.recorder();
@@ -317,7 +344,7 @@ export async function watchOnce(
         }
 
         const resumed = await resumeInterrupted({ store, deps, live: null, autoRecordEnabled: false, now });
-        return resumed ?? "disabled";
+        return resumed ?? (audioPending ? "idle" : "disabled");
     }
 
     const source = await deps.source();
@@ -524,7 +551,7 @@ async function pruneOldCaptures(store: MeetingStore): Promise<void> {
 /**
  * The watcher loop: one look every 15 s until a signal, then the "ask each time" sweep (a question for each ended
  * meeting without a project, and the answers applied), and the capture retention pass once a day. With autoRecord
- * off it still runs while a project question or a folder step waits, since only the sweep reads those back.
+ * off it still runs while linked source audio is missing or a project question or a folder step waits.
  */
 export async function watchLoop(store: MeetingStore): Promise<void> {
     let stopped = false;

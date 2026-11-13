@@ -9,6 +9,19 @@ import XCTest
 /// and states of the panes (the deep manual test of 2026-11-06, findings MU1 to MU19).
 @MainActor
 final class MeetingsUXTests: XCTestCase {
+    func testSourceAudioStatusDecodesAlongsideOlderServiceReplies() throws {
+        let old = try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON())
+        XCTAssertNil(old.meetings[0].sourceAudio)
+        var document = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.overviewJSON()) as? [String: Any])
+        var rows = try XCTUnwrap(document["meetings"] as? [[String: Any]])
+        rows[0]["sourceAudio"] = ["sources": ["wisprflow"], "bytes": 42]
+        document["meetings"] = rows
+        let current = try JSONDecoder().decode(MeetingsOverview.self, from: JSONSerialization.data(withJSONObject: document))
+        XCTAssertEqual(current.meetings[0].sourceAudio?.bytes, 42)
+        XCTAssertEqual(current.meetings[0].sourceAudio?.sources, ["wisprflow"])
+        XCTAssertNil(current.meetings[1].sourceAudio)
+    }
+
     // MARK: Fixtures
 
     static func overviewJSON() -> Data {

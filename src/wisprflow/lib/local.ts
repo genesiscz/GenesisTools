@@ -68,7 +68,7 @@ function withDb<T>(fn: (db: Database) => T): T {
 }
 
 /** Sequelize stores `2026-09-30 14:06:54.482 +00:00`; everything else in this tool speaks ISO. */
-function toIso(value: string): string {
+export function toIso(value: string): string {
     const parsed = new Date(value.replace(" +00:00", "Z").replace(" ", "T"));
     return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
 }

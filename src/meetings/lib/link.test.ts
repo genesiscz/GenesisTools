@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
@@ -17,11 +18,13 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
+import { wisprAudioAccess } from "@app/wisprflow/lib/source-audio";
 import type { LinkGate } from "@genesiscz/utils/browser-router/link-gate";
 import { env } from "@genesiscz/utils/env";
 import * as cloneFiles from "@genesiscz/utils/fs/clone";
 import * as hashFiles from "@genesiscz/utils/fs/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
@@ -31,6 +34,7 @@ import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { ANSWER_LOG_FILE, appendAnswerEvent, readAnswerEvents, roundRunning } from "./answer-log";
 import type { AssignInbox } from "./assign-inbox";
+import { meetingAudioPath } from "./audio";
 import { COMMENTS_FILE, MeetingComments } from "./comments";
 import { DecisionJournal, JOURNAL_FILE } from "./decision-journal";
 import { copyTitle, duplicateMeeting } from "./duplicate";
@@ -47,6 +51,12 @@ import {
     syncSourceAudio,
     withPreservedSourceAudio,
 } from "./source-audio";
+import {
+    applySourceAudioPlan,
+    discoverSourceAudio,
+    type LocalSourceAudio,
+    planSourceAudio,
+} from "./source-audio-discovery";
 
 function gate(enabled: boolean, linkHost: string | null = "links.example"): LinkGate {
     return {
@@ -1154,6 +1164,31 @@ describe("permanent source audio", () => {
         expect(readFileSync(preservedSourceAudio(reopened)!.path, "utf8")).toBe("source audio bytes");
     });
 
+    test("linking live source audio waits for completion rather than freezing an upload snapshot", async () => {
+        const f = await fixture();
+        const evidence = async () => {
+            throw new Error("Live audio must not load evidence");
+        };
+        const source = {
+            ...wisprflowSource,
+            evidence,
+            liveRecording: async () => ({
+                sourceMeetingId: "source-one",
+                title: "Planning",
+                startedAt: f.record.start,
+                liveChangedAt: f.record.start,
+            }),
+        };
+        const result = await syncSourceAudio({
+            store: f.store,
+            record: f.record,
+            source,
+            sourceMeetingId: "source-one",
+        });
+        expect(result.status).toBe("missing");
+        expect(new MeetingStore(f.store.storage).read(f.record.id)?.audio).toBeUndefined();
+    });
+
     test("a volume that cannot clone uses a private complete copy", async () => {
         const f = await fixture();
         const clone = spyOn(cloneFiles, "cloneOrCopy").mockReturnValue("declined");
@@ -1364,4 +1399,181 @@ test("an already linked source warns with the duplicate command instead of claim
         warning.mockRestore();
         ok.mockRestore();
     }
+});
+
+describe("local source audio reconciliation", () => {
+    let sequence = 0;
+    async function fixture(count = 15) {
+        const storage = new Storage(`audio-reconcile-${process.pid}-${++sequence}`);
+        const store = new MeetingStore(storage);
+        const provider = join(store.root, "provider");
+        const legacy = join(store.root, "legacy");
+        mkdirSync(provider, { recursive: true });
+        mkdirSync(legacy, { recursive: true });
+        const ids = Array.from({ length: count }, (_, index) => `source-${index}`);
+        const catalog = ids.map((sourceMeetingId) => ({
+            sourceMeetingId,
+            title: "Planning",
+            start: "2026-11-01T10:00:00Z",
+            end: "2026-11-01T11:00:00Z",
+        }));
+        for (const id of ids) {
+            writeFileSync(join(provider, `${id}.ogg`), `audio-${id}`);
+            writeFileSync(join(legacy, `${id}.ogg`), `audio-${id}`);
+        }
+        const source: LocalSourceAudio = {
+            id: "wisprflow",
+            files: async () =>
+                ids.map((sourceMeetingId) => ({ sourceMeetingId, path: join(provider, `${sourceMeetingId}.ogg`) })),
+            legacyFiles: async () =>
+                ids.map((sourceMeetingId) => ({ sourceMeetingId, path: join(legacy, `${sourceMeetingId}.ogg`) })),
+            catalog: async () => catalog,
+            load: async (id) => {
+                const meeting = catalog.find((row) => row.sourceMeetingId === id);
+                return meeting ? { ...meeting, participants: [], speakers: [], transcript: [], folders: [] } : null;
+            },
+        };
+        return { store, source, ids, provider, legacy };
+    }
+
+    test("read-only plan reconciles all 15 provider and legacy pairs; explicit apply survives source disappearance and reopens", async () => {
+        const f = await fixture();
+        const before = readdirSync(f.store.root).sort();
+        const original = statSync(join(f.provider, "source-0.ogg"));
+        const plan = await planSourceAudio({ store: f.store, sources: [f.source] });
+        expect(readdirSync(f.store.root).sort()).toEqual(before);
+        expect(f.store.list()).toHaveLength(0);
+        expect(plan.entries).toHaveLength(15);
+        expect(plan.entries.every((entry) => entry.status === "create" && entry.files.length === 2)).toBe(true);
+        const applied = await applySourceAudioPlan({ store: f.store, sources: [f.source], plan });
+        expect(applied).toHaveLength(15);
+        renameSync(f.provider, `${f.provider}-gone`);
+        renameSync(f.legacy, `${f.legacy}-gone`);
+        const reopened = new MeetingStore(f.store.storage);
+        expect(reopened.list()).toHaveLength(15);
+        for (const record of reopened.list()) {
+            const audio = preservedSourceAudio(record)!;
+            expect(audio.sha256).toBe(createHash("sha256").update(readFileSync(audio.path)).digest("hex"));
+            expect(await meetingAudioPath(record)).toBe(audio.path);
+            expect(meetingListRow(record).sourceAudio?.sources).toEqual(["wisprflow"]);
+            expect(showText(record)).toContain(audio.sha256);
+        }
+        expect(statSync(join(`${f.provider}-gone`, "source-0.ogg")).mtimeMs).toBe(original.mtimeMs);
+        f.source.files = async () => [];
+        f.source.legacyFiles = async () => [];
+        const again = await planSourceAudio({ store: reopened, sources: [f.source] });
+        expect(again.entries.every((entry) => entry.status === "preserved")).toBe(true);
+        expect(
+            (await applySourceAudioPlan({ store: reopened, sources: [f.source], plan: again })).every(
+                (row) => row.status === "already-preserved"
+            )
+        ).toBe(true);
+    });
+
+    test("a resumed source publishes a new complete version while keeping the previous archive", async () => {
+        const f = await fixture(1);
+        await discoverSourceAudio({ store: f.store, source: f.source });
+        const first = preservedSourceAudio(f.store.list()[0])!;
+        appendFileSync(join(f.provider, "source-0.ogg"), " resumed audio");
+        await discoverSourceAudio({ store: f.store, source: f.source, liveSourceMeetingId: "source-0" });
+        expect(preservedSourceAudio(f.store.list()[0])?.sha256).toBe(first.sha256);
+        await discoverSourceAudio({ store: f.store, source: f.source });
+        const second = preservedSourceAudio(new MeetingStore(f.store.storage).list()[0])!;
+        expect(second.sha256).not.toBe(first.sha256);
+        expect(readFileSync(first.path, "utf8")).toBe("audio-source-0");
+        expect(readFileSync(second.path, "utf8")).toBe("audio-source-0 resumed audio");
+    });
+
+    test("apply rechecks owned media after planning, including same-size corruption", async () => {
+        const f = await fixture(1);
+        await discoverSourceAudio({ store: f.store, source: f.source });
+        const plan = await planSourceAudio({ store: f.store, sources: [f.source] });
+        const owned = preservedSourceAudio(f.store.list()[0])!;
+        writeFileSync(owned.path, "x".repeat(owned.bytes));
+        await expect(applySourceAudioPlan({ store: f.store, sources: [f.source], plan })).rejects.toThrow(
+            "Owned audio changed"
+        );
+    });
+
+    test("changed plans and different stores are rejected before creating records", async () => {
+        const f = await fixture(1);
+        const plan = await planSourceAudio({ store: f.store, sources: [f.source] });
+        writeFileSync(join(f.provider, "source-0.ogg"), "changed");
+        await expect(applySourceAudioPlan({ store: f.store, sources: [f.source], plan })).rejects.toThrow("changed");
+        expect(f.store.list()).toHaveLength(0);
+        await expect(
+            applySourceAudioPlan({ store: f.store, sources: [f.source], plan: { ...plan, meetingsRoot: "/other" } })
+        ).rejects.toThrow("different meetings store");
+    });
+
+    test("reports live, conflict, unmatched and missing without writes or provider evidence", async () => {
+        const f = await fixture(4);
+        writeFileSync(join(f.legacy, "source-1.ogg"), "different");
+        f.source.files = async () =>
+            f.ids
+                .slice(0, 3)
+                .map((sourceMeetingId) => ({ sourceMeetingId, path: join(f.provider, `${sourceMeetingId}.ogg`) }));
+        f.source.legacyFiles = async () => [
+            { sourceMeetingId: "source-1", path: join(f.legacy, "source-1.ogg") },
+            { sourceMeetingId: "orphan", path: join(f.legacy, "source-2.ogg") },
+        ];
+        const plan = await planSourceAudio({ store: f.store, sources: [f.source], live: { wisprflow: "source-0" } });
+        expect(Object.fromEntries(plan.entries.map((row) => [row.sourceMeetingId, row.status]))).toMatchObject({
+            "source-0": "live",
+            "source-1": "conflict",
+            orphan: "unmatched",
+            "source-3": "missing",
+        });
+        const result = await applySourceAudioPlan({
+            store: f.store,
+            sources: [f.source],
+            plan,
+            live: { wisprflow: "source-0" },
+        });
+        expect(result).toHaveLength(1);
+        expect(f.store.list()).toHaveLength(1);
+    });
+
+    test("parallel discovery creates one record, skips live uploads and performs no metadata load after archiving", async () => {
+        const f = await fixture(1);
+        const load = spyOn(f.source, "load");
+        expect(
+            await discoverSourceAudio({ store: f.store, source: f.source, liveSourceMeetingId: "source-0" })
+        ).toEqual({ preserved: 0, pending: 1 });
+        expect(load).not.toHaveBeenCalled();
+        await Promise.all([
+            discoverSourceAudio({ store: f.store, source: f.source }),
+            discoverSourceAudio({ store: f.store, source: f.source }),
+        ]);
+        expect(new MeetingStore(f.store.storage).list()).toHaveLength(1);
+        const reads = load.mock.calls.length;
+        await discoverSourceAudio({ store: f.store, source: f.source });
+        expect(load).toHaveBeenCalledTimes(reads);
+        expect(meetingsConfigSchema.parse({}).sources.wisprflow.preserveAudio).toBe(true);
+        load.mockRestore();
+    });
+
+    test("Wispr adapter scans files, legacy files and only local metadata; missing databases never fall back remotely", async () => {
+        const f = await fixture(0);
+        const dir = join(f.store.root, "wispr");
+        const media = join(dir, "meetings", "source-local");
+        mkdirSync(media, { recursive: true });
+        writeFileSync(join(media, "upload.ogg"), "local audio");
+        const db = new Database(join(dir, "flow.sqlite"));
+        db.run("CREATE TABLE Meetings (id TEXT, title TEXT, createdAt TEXT, endedAt INTEGER, isDeleted INTEGER)");
+        db.run("INSERT INTO Meetings VALUES (?, ?, ?, ?, 0)", [
+            "source-local",
+            "Planning",
+            "2026-11-01T10:00:00Z",
+            Date.parse("2026-11-01T11:00:00Z"),
+        ]);
+        db.close();
+        const adapter = wisprAudioAccess(dir);
+        const before = statSync(join(dir, "flow.sqlite")).mtimeMs;
+        expect(await adapter.files()).toHaveLength(1);
+        expect(await adapter.catalog()).toHaveLength(1);
+        expect((await adapter.load("source-local"))?.transcript).toEqual([]);
+        expect(statSync(join(dir, "flow.sqlite")).mtimeMs).toBe(before);
+        expect(await wisprAudioAccess(join(dir, "absent")).catalog()).toEqual([]);
+    });
 });

@@ -88,6 +88,23 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `window [meeting] [--place needs\|all\|<project>] [--tab transcript\|screen\|items\|speakers\|context] [--no-focus] [--no-build]` | Open the Meetings window of GenesisTools.app (the `meetings` app part); Settings → Meetings holds its pages. When the installed app lacks the Meetings part, the command builds it first; `--no-build` fails instead and says how to build it |
 | `config show [path] [--json]` (alias `config get`), `config set <path> <json>`, `config unset <path>`, `config edit '[{"path": …, "value": …, "expect": …}, {"path": …, "unset": true}]'` | Read and write one setting; the path is dotted (`global.capture.activeFps`) or a JSON array of keys (`["projects","a.b","labels"]`); a write that would make the config invalid writes nothing. A path that names no setting (`global.capture.activFps`) is refused by `show` and `set` with the closest setting; `unset` still removes such a key. `config edit` makes several changes in one write: all of them, or none when one is refused |
 
+## Permanent source audio
+
+`source-audio/` inside each meeting record holds verified, content-addressed source media. The record stores its source ID, source meeting ID, SHA256, byte count, saved time and path under `audio.sources`. `show` prints the hash, `list` marks preserved audio, and the native list shows Audio preserved. These files are independent of screen recordings. Capture retention and automatic cleanup presets keep them. Explicit deletion of a meeting remains a separate user action.
+
+`sources.wisprflow.preserveAudio` defaults to `true`, with a toggle in Meetings settings under Recording → Source audio. The login daemon starts the watcher, which checks local files every 15 seconds even when screen capture autostart is off. It skips the current live upload and retries delayed publications. A completed local file is normally archived on the next tick, within one minute when the watcher is running and a copy can finish in that time. If the app is stopped, disk writes fail or the provider has not published audio, the next successful look retries. Nothing downloads from a remote provider for discovery or backfill.
+
+Historical backfill is explicit. Save and inspect the read-only plan, then apply that exact file:
+
+```bash
+./tools meetings audio plan > /absolute/private/audio-plan.json
+./tools meetings audio apply /absolute/private/audio-plan.json
+```
+
+The plan reconciles every local provider file, the legacy `meetings-audio-archive/` files and owned media. It reports missing, conflicting, live and unmatched sources, including orphan files whose metadata disappeared. Apply revalidates file hashes, sizes, availability, live state, store root and record links. It creates records only for sources with local metadata, never changes originals, and supports retry after partial progress. Files whose provider and legacy digests disagree are left for investigation. Once provider files are gone, the owned copy still serves playback, listen clips and evidence audio. Audio reads do not archive or mutate records.
+
+The shared service exposes `sourceAudio.plan` and `sourceAudio.apply({ plan })`. The REPL exposes `meetings.audio.plan()` and `meetings.audio.apply(plan)` through the same implementation. Apply is an explicit write operation. Plan performs local reads only.
+
 ## The meeting record
 
 One folder per meeting, `~/.genesis-tools/meetings/<YYYY-MM-DD_HH-MM>-<title>/meeting.json`. A meeting is named by its

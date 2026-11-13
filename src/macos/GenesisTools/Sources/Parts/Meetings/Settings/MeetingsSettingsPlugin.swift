@@ -133,6 +133,13 @@ struct MeetingsRecordingPage: View {
             let auto = settings.wispr?.autoRecord
             let capture = settings.global.capture
             let cost = model.cost.value
+            NativeSettingsCard("Source audio") {
+                NativeSettingsToggle("Preserve Wispr Flow audio",
+                                     detail: "Keep a verified permanent copy when a meeting ends, even with screen recording off. Capture retention keeps these files.",
+                                     identifier: "meetings.sourceAudio.preserve",
+                                     isOn: Binding(get: { settings.wispr?.preserveAudio ?? true },
+                                                   set: { model.set(["sources", "wisprflow", "preserveAudio"], $0) }))
+            }
             NativeSettingsCard("Autostart") {
                 NativeSettingsToggle("Record the screen with Wispr Flow",
                                      detail: "When Wispr Flow records a meeting, the screen is recorded too: frames when it changes, with OCR.",
