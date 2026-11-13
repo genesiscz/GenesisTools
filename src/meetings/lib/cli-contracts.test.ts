@@ -1215,6 +1215,7 @@ describe("listen answers without a service", () => {
 
 test("terminal listen stops its in-process playback before search and comment prompts, then restarts", async () => {
     const cli = await import("@genesiscz/utils/cli");
+    // lint-rules-ignore: listen.ts still calls @clack/prompts itself (RAW_CLACK_RATCHET), and this test spies on that module
     const clack = await import("@clack/prompts");
     const choices = await import("@genesiscz/utils/prompts/clack/choice-select");
     const search = await import("@genesiscz/utils/prompts/clack/search-select");
