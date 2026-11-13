@@ -1,9 +1,9 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import { isAppBloatCacheName } from "@app/doctor/lib/claims";
+import { removeForDoctor } from "@app/doctor/lib/remove";
 import { classifyCachePath } from "@app/doctor/lib/safety";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
 import type { Action, AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
@@ -165,7 +165,11 @@ function deleteCacheAction(path: string, bytes: number): Action {
         method: "delete",
         execute: async (_ctx: ExecutorContext, finding) => {
             try {
-                await rm(path, { recursive: true, force: true });
+                const removal = await removeForDoctor(path, { analyzerId: "system-caches" });
+
+                if (removal.refusal) {
+                    throw new Error(`Refusing removal: ${removal.refusal}`);
+                }
 
                 return {
                     findingId: finding.id,

@@ -1,10 +1,10 @@
 import type { AIAccountEntry, AIConfigData as V3ConfigData } from "@genesiscz/utils/config/ai.types";
-import type { ConfigMigration } from "@genesiscz/utils/config/migration";
+import { mayPersistMigration } from "@genesiscz/utils/config/real-home-write";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { slugify } from "@genesiscz/utils/string";
 import { readDefaultsSnapshot, writeDefaultsSnapshot } from "../defaults-snapshot";
-import { migrationAllowedHere } from "../migration-guard";
+import type { ConfigMigration } from "../migrate";
 import { accountRef, isAccountRef, refToId } from "../refs";
 import {
     type AccountEntry,
@@ -243,7 +243,7 @@ export function convertConfig(v3: V3ConfigData): AiConfigData {
 
         const id = slugifyAccountId(account.name, taken);
 
-        // First wins, because v3 `getAccount(name)` was a `find()` (AIConfig.ts).
+        // First wins, because v3 `getAccount(name)` was a `find()` (the retired v3 facade).
         // An unconditional set made a migrated default point at the LAST account
         // sharing a name, silently moving which account pays.
         if (idByName.has(account.name)) {
@@ -352,7 +352,7 @@ export const migrateConfigV4: ConfigMigration = {
             return false;
         }
 
-        if (!migrationAllowedHere()) {
+        if (!mayPersistMigration().allowed) {
             return false;
         }
 

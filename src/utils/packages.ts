@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
@@ -13,6 +12,7 @@ import {
     preparePackageStore,
     STORE_PACKAGES,
 } from "@genesiscz/utils/package-store";
+import * as p from "@genesiscz/utils/prompts/p";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -112,6 +112,7 @@ async function promptInstall(
     const result = await p.confirm({
         message: `Install ${opts.label}? (${toPrompt.length} package${toPrompt.length > 1 ? "s" : ""})${reasonText}`,
         initialValue: true,
+        cancel: "back",
     });
 
     if (p.isCancel(result) || !result) {

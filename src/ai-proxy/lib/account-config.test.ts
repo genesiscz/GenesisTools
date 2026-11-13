@@ -8,10 +8,9 @@ import {
     accountBindingFingerprint,
     accountConfigFingerprint,
     migrateAccountConfig,
-    resolveGithubCopilotDataDir,
-    resolveGrokAuthPath,
 } from "@app/ai-proxy/lib/account-config";
 import { parseConfigJson } from "@app/ai-proxy/lib/config-store";
+import { resolveGithubCopilotDataDir, resolveGrokAuthPath } from "@app/ai-proxy/lib/providers/account-paths";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";

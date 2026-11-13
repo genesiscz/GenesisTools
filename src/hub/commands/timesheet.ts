@@ -85,6 +85,7 @@ export function registerTimesheetCommand(program: Command): void {
                 const ok = await p.confirm({
                     message: `Write ${hours(week.totalMinutes)} h into Clarity?`,
                     initialValue: false,
+                    cancel: "back",
                 });
 
                 if (p.isCancel(ok) || !ok) {

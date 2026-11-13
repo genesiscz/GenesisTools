@@ -1,7 +1,5 @@
 import { closeSync, existsSync, openSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { formatCostLine } from "@app/ai-spend/lib/workers/cost";
-import { recordWorkerTurnCost } from "@app/ai-spend/lib/workers/ledger";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { assignedSessionId } from "@genesiscz/utils/agent/host";
 import { grokAuthPath } from "@genesiscz/utils/ai/grok/paths";
@@ -21,6 +19,8 @@ import {
     surfacesFromFlags,
     type WorkerSurfaces,
 } from "@genesiscz/utils/worker/isolation";
+import { recordWorkerTurnCost } from "@genesiscz/utils/worker/spend-ledger";
+import { formatCostLine } from "@genesiscz/utils/worker/spend-pricing";
 import { printWorkerTurn, type WorkerTurnReport } from "@genesiscz/utils/worker/turn-report";
 import { sessionMetaPath, turnErrPath, turnLogPath } from "./paths";
 import { type GrokSessionMeta, GrokSessionStore } from "./store";

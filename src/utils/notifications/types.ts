@@ -171,7 +171,10 @@ export interface ChannelDefinition<K extends ChannelName> {
     unusable(config: ChannelConfigs[K]): string | undefined;
     /** One line for a list, secrets masked. */
     describe(config: ChannelConfigs[K]): string;
-    /** Sends one event. Never throws. A switched-off channel answers `{ ok: true }` without sending. */
+    /**
+     * Sends one event. Never throws, except that it rejects in a test process when it would reach the real machine or
+     * a real service (`hostEffectRefusal`). A switched-off channel answers `{ ok: true }` without sending.
+     */
     post(event: NotificationEvent, config: ChannelConfigs[K]): Promise<ChannelReceipt>;
     /**
      * Takes a posted notice back by its stable id (`NotificationEvent.id`), switched on or not, since a notice posted

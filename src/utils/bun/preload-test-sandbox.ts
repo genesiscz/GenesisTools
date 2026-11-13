@@ -21,7 +21,7 @@ import { type NativeSessionProvider, nativeHomeOverrideVariable } from "@genesis
  *
  * `Storage` resolves its root from `GENESIS_TOOLS_HOME || homedir()`, so any test
  * that touches config, caches or databases without setting that variable writes
- * to the user's REAL data. That is not theoretical: the AIConfig suite persisted
+ * to the user's REAL data. That is not theoretical: the AI config suite persisted
  * a `test-app` block into the live `ai/config.json` on every run until 2026-07-29.
  *
  * Per-file discipline does not hold, because the next test written without the
@@ -40,7 +40,7 @@ import { type NativeSessionProvider, nativeHomeOverrideVariable } from "@genesis
  * full-suite run reset the live `ai/config.json` to an empty default. Four test
  * files call `env.testing.unset("GENESIS_TOOLS_HOME")` in their teardown, and any
  * one of them leaves the process pointing at the REAL home for every test that
- * follows. Worse, `AIConfig` is a process-wide singleton that captured its path
+ * follows. Worse, `AiConfigStore` is a process-wide singleton that captured its path
  * when it was first loaded, so it can keep writing the real file long after the
  * env is fixed. So the sandbox is also RE-ASSERTED after every test, and the
  * cached config singletons are dropped whenever it had drifted.
@@ -69,8 +69,8 @@ function installSandbox(): void {
  */
 async function invalidateConfigSingletons(): Promise<void> {
     try {
-        const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-        AIConfig.invalidate();
+        const { AiConfigStore } = await import("@genesiscz/utils/ai/config/AiConfigStore");
+        AiConfigStore.invalidate();
     } catch {
         // The module is not part of every test binary's graph; nothing to drop.
     }
@@ -81,9 +81,9 @@ async function invalidateConfigSingletons(): Promise<void> {
  *
  * The invariant is deliberately narrow: unset means `Storage` falls back to
  * `homedir()` and writes the user's real store, which is the whole failure. A
- * DIFFERENT value is fine and must be left alone — `setupStorageSandbox()` and
- * several suites install their own fixture root on purpose, and forcing them
- * back to this one breaks them (50 tests, measured).
+ * DIFFERENT value is fine and must be left alone: several suites install their
+ * own fixture root on purpose, and forcing them back to this one breaks them
+ * (50 tests, measured).
  */
 function guardSandbox(sandboxRoot: string): void {
     afterEach(async () => {

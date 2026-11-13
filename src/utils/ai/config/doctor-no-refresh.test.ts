@@ -13,7 +13,7 @@ import {
     _setMasterKeyProvidersForTest,
     resolveSecret,
 } from "@genesiscz/utils/security";
-import { AIConfig } from "../AIConfig";
+import { generateText } from "ai";
 import { _resetBuiltInPluginsForTest, registerBuiltInPlugins } from "../providers/plugins";
 import { _resetPluginsForTest, providerPlugin } from "../providers/registry";
 import { AiConfigStore } from "./AiConfigStore";
@@ -74,9 +74,6 @@ async function seed(accounts: AccountEntry[]): Promise<void> {
     const data: AiConfigData = { version: CONFIG_VERSION, accounts, defaults: {} };
     mkdirSync(join(home, ".genesis-tools", "ai"), { recursive: true });
     writeFileSync(configPath(), SafeJSON.stringify(data, null, 2));
-    // Both caches: `resolveAccountToken` reads through the v3 facade, whose
-    // singleton does not notice an AiConfigStore reset on its own.
-    AIConfig.invalidate();
     AiConfigStore.invalidate();
     await AiConfigStore.load();
 }
@@ -119,7 +116,7 @@ afterEach(() => {
     _resetSecretsForTest();
     _resetPluginsForTest();
     _resetBuiltInPluginsForTest();
-    AIConfig.invalidate();
+    AiConfigStore.invalidate();
 });
 
 describe("resolveAccountToken noRefresh gate", () => {
@@ -423,11 +420,17 @@ describe("openai-sub probe purity", () => {
         expect(readFileSync(configPath(), "utf8")).toBe(before);
     });
 
-    test("negative control: a bind without probe still reaches the refresh", async () => {
+    // The bind itself reads no token (it makes no network request), so real use reaches the
+    // refresh on its first request, and the refresh is the first thing that request sends.
+    test("negative control: a request through a bind without probe still reaches the refresh", async () => {
         const plugin = providerPlugin("openai-sub");
+        const binding = await plugin.bind({ account: await loadAccount("codex-main") });
 
-        await expect(plugin.bind({ account: await loadAccount("codex-main") })).rejects.toThrow();
-        expect(fetchCalls.length).toBeGreaterThan(0);
+        expect(fetchCalls).toEqual([]);
+        await expect(
+            generateText({ model: binding.language("gpt-6.1-sol"), prompt: "ping", maxRetries: 0 })
+        ).rejects.toThrow();
+        expect(fetchCalls[0]).toBe("https://auth.openai.com/oauth/token");
     });
 });
 

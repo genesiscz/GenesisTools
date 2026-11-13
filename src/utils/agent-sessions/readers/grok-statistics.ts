@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { HistoryReadOptions, HistoryStatisticsRead, NativeSessionSource } from "../types";
+import type { HistoryReadOptions, NativeSessionSource, SupportedHistoryStatistics } from "../types";
 import { readGrokMetadata, scanGrokRecords } from "./grok";
 import { grokModelOfSummary } from "./grok-model";
 import { createGrokUsageParser } from "./grok-usage";
@@ -43,7 +43,7 @@ async function usagePathAvailable(
 export async function readGrokStatistics(
     source: NativeSessionSource<"grok">,
     options: HistoryReadOptions = {}
-): Promise<HistoryStatisticsRead> {
+): Promise<SupportedHistoryStatistics> {
     const collector = createIssueCollector({ onIssue: options.onIssue });
     const metadata = await readGrokMetadata(source, { signal: options.signal, onIssue: collector.add });
     if (!metadata.complete) {

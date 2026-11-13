@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import { mergeRole, readWakeupConfig, updateWakeupConfig } from "../config";
@@ -24,6 +24,7 @@ export async function runConfigurationMenu(storage: Storage): Promise<void> {
             { value: "both", label: "Both" },
         ],
         initialValue: config.role ?? "both",
+        cancel: "back",
     });
 
     if (p.isCancel(roleChoice)) {
@@ -45,6 +46,7 @@ export async function runConfigurationMenu(storage: Storage): Promise<void> {
             { value: "done", label: "Done" },
         ],
         initialValue: "done",
+        cancel: "back",
     });
 
     if (p.isCancel(next)) {

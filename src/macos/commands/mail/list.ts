@@ -9,12 +9,12 @@ import {
 } from "@app/macos/lib/mail/command-helpers";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
-import * as p from "@clack/prompts";
 import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
 import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
 import { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
 import type { MailMessage } from "@genesiscz/utils/macos/mail/types";
 import { profiler } from "@genesiscz/utils/profile";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 
 const prof = profiler.scope("macos-mail");

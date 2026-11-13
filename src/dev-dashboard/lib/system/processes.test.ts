@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import * as captureModule from "@genesiscz/utils/process/capture";
 import * as processOs from "@genesiscz/utils/process/os";
-import * as ps from "@genesiscz/utils/process/ps";
 import { collectProcesses, friendlyProcessName, killProcess, sortProcesses } from "./processes";
 import type { ProcessInfo } from "./types";
 
@@ -74,7 +74,7 @@ describe("killProcess guards", () => {
 });
 test("collectProcesses uses one Windows snapshot for every row", async () => {
     const platform = spyOn(processOs, "processPlatform").mockReturnValue("win32");
-    const capture = spyOn(ps, "captureSync").mockReturnValue({
+    const capture = spyOn(captureModule, "captureSync").mockReturnValue({
         stderr: "",
         status: 0,
         stdout: '[{"ProcessId":81001,"Name":"worker.exe","CommandLine":"worker.exe --job fixture","WorkingSetSize":1024},{"ProcessId":81002,"Name":"helper.exe","WorkingSetSize":2048}]',

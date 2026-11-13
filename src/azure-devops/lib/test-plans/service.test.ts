@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { AdoRequest, AdoResponse, AdoTransport } from "@app/azure-devops/api.types";
 import { registerTestPlanCommand, show } from "@app/azure-devops/commands/test-plan";
+import { type FakeAdoHandler, FakeTransport } from "@app/azure-devops/lib/fake-transport.fixtures";
 import { parseIdList, parsePlanRef, parseSuiteRef } from "@app/azure-devops/lib/test-plans/refs";
 import { renderSuiteTree } from "@app/azure-devops/lib/test-plans/render";
 import { TestPlans } from "@app/azure-devops/lib/test-plans/service";
@@ -14,33 +14,7 @@ const CONFIG: AzureConfig = {
     apiResource: "499b84ac-1321-427f-aa17-267ca6975798",
 };
 
-type Handler = (request: AdoRequest) => unknown;
-
-/** Answers by `METHOD path-fragment`; an unmatched call fails the test. Every call is recorded. */
-class FakeTransport implements AdoTransport {
-    readonly calls: AdoRequest[] = [];
-
-    constructor(private readonly routes: [string, Handler][]) {}
-
-    async call<T>(request: AdoRequest): Promise<AdoResponse<T>> {
-        this.calls.push(request);
-        const path = new URL(request.url).pathname + new URL(request.url).search;
-        const route = this.routes.find(([key]) => {
-            const [method, fragment] = key.split(" ");
-            return method === request.method && path.includes(fragment);
-        });
-
-        if (!route) {
-            throw new Error(`unexpected ${request.method} ${path}`);
-        }
-
-        return { data: route[1](request) as T };
-    }
-
-    writes(): AdoRequest[] {
-        return this.calls.filter((call) => call.method !== "GET" && !call.url.includes("/wiql"));
-    }
-}
+type Handler = FakeAdoHandler;
 
 const PLAN = {
     id: 10,

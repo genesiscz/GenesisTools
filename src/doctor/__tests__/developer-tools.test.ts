@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rmSync } from "node:fs";
 import {
     developerToolStatus,
     developerToolsDetail,
@@ -83,8 +83,8 @@ describe("Developer Tools check", () => {
             expect(terminal.findings[0].severity).toBe("safe");
             expect(scans).toBe(2);
         } finally {
-            await rm(cacheFilePath(analyzer.id), { force: true });
-            await rm(analysisDirFor(runId), { recursive: true, force: true });
+            rmSync(cacheFilePath(analyzer.id), { force: true });
+            rmSync(analysisDirFor(runId), { recursive: true, force: true });
         }
     });
 

@@ -1,7 +1,7 @@
 import { basename } from "node:path";
-import { progress as clackProgress } from "@clack/prompts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { progress as clackProgress } from "@genesiscz/utils/prompts/p";
 import type { EncodeProgressEvent, EncodeRow } from "./encode";
 
 export const ENCODE_FORMATS = ["text", "json", "jsonl"] as const;

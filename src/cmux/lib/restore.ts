@@ -5,13 +5,13 @@ import { queueReplayCommand } from "@app/cmux/lib/replay-input";
 import { isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
 import type { Pane, Profile, Surface, Workspace } from "@app/cmux/lib/types";
 import { resolveWindowId } from "@app/cmux/lib/window-ref";
-import * as p from "@clack/prompts";
 import { runCmuxJSON, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import { paneList, type SurfaceSplitResult, windowList, workspaceCreate } from "@genesiscz/utils/cmux/lib/socket";
 import { sameCmuxId, surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { applySplitTree, measureCellDelta, type SplitTree } from "@genesiscz/utils/cmux/split-tree";
 import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import pc from "picocolors";
 

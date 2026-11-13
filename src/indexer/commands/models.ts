@@ -1,7 +1,7 @@
-import * as p from "@clack/prompts";
 import { ModelManager } from "@genesiscz/utils/ai/ModelManager";
 import type { ModelEntry } from "@genesiscz/utils/ai/types";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { EMBED_MODEL_REGISTRY, formatModelTable, getModelsForType } from "../lib/model-registry";

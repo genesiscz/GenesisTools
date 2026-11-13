@@ -26,7 +26,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos/darwinkit";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
-import { captureSync, listPsTable, parseCpuTime } from "@genesiscz/utils/process/ps";
+import { captureSync } from "@genesiscz/utils/process/capture";
+import { listPsTable, parseCpuTime } from "@genesiscz/utils/process/ps";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { finishBench, median, parseBenchArgs, summarize } from "../fs/shared";
 

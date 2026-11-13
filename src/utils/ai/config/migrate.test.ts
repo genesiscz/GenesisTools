@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { _overrideRealHomeWriteForTest } from "@genesiscz/utils/config/real-home-write";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -77,17 +78,19 @@ afterEach(() => {
 
 describe("ensureAiConfigMigrated", () => {
     /**
-     * `runMigrations` logs a failing migration, stops the chain and resolves
-     * normally, so the caller cannot tell success from failure by its return
-     * value. Latching the process guard regardless left the config holding
-     * plaintext credentials while every later load in the same process skipped
-     * the retry, which is the state the vault migration exists to end.
+     * The old dated runner logged a failing migration, stopped the chain and
+     * resolved normally, so the caller could not tell success from failure.
+     * Latching the process guard regardless left the config holding plaintext
+     * credentials while every later load in the same process skipped the retry,
+     * which is the state the vault migration exists to end.
      */
-    test("a failed migration does not latch the process guard", async () => {
+    test("a failed migration is returned to the caller and does not latch the process guard", async () => {
         mkdirSync(join(home, ".genesis-tools", "security"), { recursive: true });
         writeFileSync(vaultPath(), "{ this is not a vault");
 
-        await ensureAiConfigMigrated();
+        const failures = await ensureAiConfigMigrated();
+
+        expect(failures.map((failure) => [failure.id, failure.phase])).toEqual([["2026-08-secretsToVault", "run"]]);
 
         // The chain stopped: the credential is still plaintext on disk.
         expect(readConfig().accounts[0].credentials.accessToken).toBe("sk-ant-oat01-live");
@@ -101,8 +104,21 @@ describe("ensureAiConfigMigrated", () => {
         expect(isSecureRef(readConfig().accounts[0].credentials.accessToken)).toBe(true);
     });
 
+    test("a process the real-home check refuses runs no step and leaves the file byte-identical", async () => {
+        const before = readFileSync(configPath(), "utf8");
+        _overrideRealHomeWriteForTest({ sandbox: false });
+
+        try {
+            expect(await ensureAiConfigMigrated()).toEqual([]);
+        } finally {
+            _overrideRealHomeWriteForTest(undefined);
+        }
+
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+    });
+
     test("a clean chain latches, so a second call does no work", async () => {
-        await ensureAiConfigMigrated();
+        expect(await ensureAiConfigMigrated()).toEqual([]);
         expect(isSecureRef(readConfig().accounts[0].credentials.accessToken)).toBe(true);
 
         const after = readFileSync(configPath(), "utf8");

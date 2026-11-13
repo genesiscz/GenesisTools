@@ -61,7 +61,7 @@ describe("createPlainTransport", () => {
         expect(term.wsUrl).toBe("wss://mac.example.com/ttyd/abc-123/ws");
     });
 
-    it("reconnects QA after EOF, reports status, and stops retries after close", async () => {
+    it("reconnects the live stream after EOF, reports status, and stops retries after close", async () => {
         const attempts: Parameters<NonNullable<Parameters<typeof createPlainTransport>[0]["streamSseImpl"]>>[0][] = [];
         let closes = 0;
         const t = createPlainTransport({
@@ -81,16 +81,20 @@ describe("createPlainTransport", () => {
         });
         const statuses: string[] = [];
         const rows: string[] = [];
-        const subscription = t.client().qa.subscribe((entry) => rows.push((entry as unknown as { id: string }).id), {
-            onOpen: () => statuses.push("open"),
+        const hello = '{"v":1,"channel":"system","type":"hello","payload":{"connId":"c","channels":["qa"]}}';
+        const subscription = t.client().live.subscribe(["qa"], {
+            onFrame: (frame) => rows.push((frame.payload as unknown as { id: string }).id),
+            onConnect: () => statuses.push("open"),
             onError: () => statuses.push("down"),
         });
         await Promise.resolve();
         attempts[0]?.onOpen?.();
+        attempts[0]?.onEvent({ data: hello });
         attempts[0]?.onEof?.();
         await Bun.sleep(1);
         attempts[1]?.onOpen?.();
-        attempts[1]?.onEvent({ data: '{"type":"qa","id":"recovered"}' });
+        attempts[1]?.onEvent({ data: hello });
+        attempts[1]?.onEvent({ data: '{"v":1,"channel":"qa","type":"entry","payload":{"id":"recovered"}}' });
 
         expect(statuses).toEqual(["open", "down", "open"]);
         expect(rows).toEqual(["recovered"]);

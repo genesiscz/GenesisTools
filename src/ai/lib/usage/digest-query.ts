@@ -1,6 +1,5 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { ledgerTotals, readWorkerCostRows, type WorkerCostRow } from "@app/ai-spend/lib/workers/ledger";
 import { readDigestConfig } from "@app/hub/lib/digest";
 import { openHistoryReadOnly } from "@genesiscz/utils/agent-sessions/database";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
@@ -39,6 +38,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { aiSessionReportCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { ledgerTotals, readWorkerCostRows, type WorkerCostRow } from "@genesiscz/utils/worker/spend-ledger";
 
 export interface DigestOptions {
     day?: string | boolean;

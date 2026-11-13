@@ -1,9 +1,10 @@
+import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import type { AttentionRes } from "@app/dev-dashboard/contract/endpoints";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { AttentionList } from "@/components/needs-input-inbox/AttentionList";
-import { attentionApi } from "@/lib/api";
+import { dashboard } from "@/lib/dashboard-client";
 
 /**
  * Needs-Input Inbox web route — the curated "what needs me right now" queue. Consumes the SAME
@@ -18,12 +19,12 @@ export function NeedsInputInboxRoute() {
 
     const { data, isPending, isError, error } = useQuery<AttentionRes>({
         queryKey: ["attention"],
-        queryFn: attentionApi.list,
+        queryFn: () => dashboard.call(ENDPOINTS.attention, {}),
         refetchInterval: 15_000,
     });
 
     const resolveMutation = useMutation({
-        mutationFn: (qaId: string) => attentionApi.read([qaId]),
+        mutationFn: (qaId: string) => dashboard.call(ENDPOINTS.qaRead, { ids: [qaId], unread: false }),
         onMutate: (qaId) => setResolvingId(qaId),
         onSettled: () => {
             setResolvingId(null);

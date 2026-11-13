@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as p from "@genesiscz/utils/prompts/p";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import type { Command } from "commander";
 import pc from "picocolors";

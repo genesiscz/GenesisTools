@@ -1,8 +1,7 @@
 import { whoIsCalling } from "@genesiscz/utils/agent/identity";
 import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
-import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
-import { processBasename } from "@genesiscz/utils/process/ps";
+import { ancestry, processBasename, readExecutablePath } from "@genesiscz/utils/process/processes";
 
 /**
  * Context for the label beside the animated cursor: why the act happens and who drives it.

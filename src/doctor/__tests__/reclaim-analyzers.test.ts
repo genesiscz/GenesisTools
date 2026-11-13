@@ -24,7 +24,6 @@ import { TempLeaksAnalyzer, tmpPrefix } from "@app/doctor/analyzers/temp-leaks";
 import { runAct } from "@app/doctor/lib/act";
 import * as measurements from "@app/doctor/lib/fs-measure";
 import { measurePath, measurePaths } from "@app/doctor/lib/fs-measure";
-import { vmDataReason } from "@app/doctor/lib/path-guard";
 import { type ProcInfo, toProcInfo } from "@app/doctor/lib/processes";
 import * as doctorRun from "@app/doctor/lib/run";
 import { evaluateScanGate, hottestRss, recordScanGate, type ScanGateState } from "@app/doctor/lib/scan-gate";
@@ -1191,22 +1190,6 @@ describe("review fixes: temp-leaks and disk-space", () => {
         );
 
         expect(findings.filter((f) => f.metadata?.kind === "codesign-clone")).toEqual([]);
-    });
-
-    it("M6 more VM and container disks are denied by path and by name", () => {
-        const home = "/Users/alice";
-        for (const path of [
-            `${home}/.local/share/containers/podman/machine/qemu/podman-machine-default.raw`,
-            `${home}/Library/Application Support/rancher-desktop/lima/0/diffdisk`,
-            `${home}/.tart/vms/sonoma/disk.img`,
-            `${home}/.docker/machine/machines/default/disk.vmdk`,
-            `${home}/Downloads/basedisk`,
-        ]) {
-            expect(vmDataReason(path, home)).not.toBeNull();
-        }
-
-        expect(vmDataReason(`${home}/.android/avd/old.avd/userdata-qemu.img.qcow2`, home)).toBeNull();
-        expect(vmDataReason(`${home}/Movies/export.mov`, home)).toBeNull();
     });
 
     it("L7 a large file in a synced folder is never a plain removal: Tresorit is blocked, cloud storage is typed", async () => {

@@ -1,12 +1,14 @@
 import { chmodSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { patchAccount } from "@genesiscz/utils/ai/config/account-ops";
 import type { AISecondaryLogin } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { defaultClaudeJsonPath } from "@genesiscz/utils/providers/session-paths";
+import { resolveSecret } from "@genesiscz/utils/security";
 import { isJsonObject } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { isTestProcess } from "@genesiscz/utils/test-process";
@@ -311,7 +313,7 @@ export type KeychainSyncResult =
  * writes when the identity is unknown or unmatched (e.g. the user did
  * /login to a different account or /logout inside Claude Code directly).
  */
-export async function syncKeychainToConfig(aiConfig: AIConfig): Promise<KeychainSyncResult> {
+export async function syncKeychainToConfig(): Promise<KeychainSyncResult> {
     const entry = await readKeychainEntry();
 
     if (entry.state === "unreadable") {
@@ -331,28 +333,32 @@ export async function syncKeychainToConfig(aiConfig: AIConfig): Promise<Keychain
         return { status: "no-identity" };
     }
 
-    const account = aiConfig
-        .getAccountsByProvider("anthropic-sub")
-        .find((a) => a.secondary?.accountUuid && a.secondary.accountUuid === uuid);
+    const store = await AiConfigStore.load();
+    const account = store
+        .accounts({ provider: "anthropic-sub" })
+        .find((a) => a.credentials.secondary?.accountUuid && a.credentials.secondary.accountUuid === uuid);
+    const secondary = account?.credentials.secondary;
 
-    if (!account?.secondary) {
+    if (!account || !secondary) {
         logger.info(`[keychain] entry belongs to uuid ${uuid} — no configured secondary login matches, not syncing`);
         return { status: "no-match", uuid };
     }
 
-    if (account.secondary.accessToken === oauth.accessToken && account.secondary.refreshToken === oauth.refreshToken) {
+    if (
+        (await resolveSecret(secondary.accessToken)) === oauth.accessToken &&
+        (await resolveSecret(secondary.refreshToken)) === oauth.refreshToken
+    ) {
         return { status: "unchanged", account: account.name, uuid };
     }
 
-    await aiConfig.updateAccount(account.name, {
+    await patchAccount(account.id, {
         secondary: {
-            ...account.secondary,
             accessToken: oauth.accessToken,
             refreshToken: oauth.refreshToken,
             expiresAt: oauth.expiresAt,
-            scopes: oauth.scopes?.length ? oauth.scopes : account.secondary.scopes,
-            subscriptionType: oauth.subscriptionType ?? account.secondary.subscriptionType,
-            rateLimitTier: oauth.rateLimitTier ?? account.secondary.rateLimitTier,
+            scopes: oauth.scopes?.length ? oauth.scopes : secondary.scopes,
+            subscriptionType: oauth.subscriptionType ?? secondary.subscriptionType,
+            rateLimitTier: oauth.rateLimitTier ?? secondary.rateLimitTier,
         },
     });
 

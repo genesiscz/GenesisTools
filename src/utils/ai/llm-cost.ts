@@ -18,7 +18,11 @@ export interface TokenPricing {
     outputPer1M: number;
 }
 
-/** Cache and long-context rates, all optional; `undefined` means "bill the base rate". */
+/**
+ * Cache and long-context rates, all optional. An absent long-context rate bills the base rate; an absent cache rate
+ * bills 0. The catalog fills a cache rate from its provider family's default (`catalog/cache-rates.ts`) before a
+ * price reaches here.
+ */
 export interface CallPricing extends TokenPricing {
     cachedReadPer1M?: number;
     cachedCreatePer1M?: number;

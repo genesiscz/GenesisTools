@@ -30,6 +30,7 @@ export async function resolveKinds(args: {
         message: `Which ${args.flag} do you want?`,
         options: args.values.map((v) => ({ value: v, label: v })),
         required: true,
+        cancel: "back",
     });
     if (p.isCancel(picked)) {
         p.cancel("Aborted.");

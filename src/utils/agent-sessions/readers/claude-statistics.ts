@@ -1,7 +1,7 @@
 import { type HistoryFileStatistics, type TokenUsage, zeroTokenUsage } from "../cache-types";
 import type { JsonRecord, JsonValue } from "../source-scan";
 import { asRecord, scanJsonlRecords, text } from "../source-scan";
-import type { HistoryReadOptions, HistoryStatisticsRead, NativeSessionSource, NativeSourceIssue } from "../types";
+import type { HistoryReadOptions, NativeSessionSource, NativeSourceIssue, SupportedHistoryStatistics } from "../types";
 import { claudeProjectName, isClaudeSubagentPath } from "./claude-paths";
 import { increment, timestampParts } from "./native-statistics";
 
@@ -123,7 +123,7 @@ function addRow(summary: HistoryFileStatistics, dailyTokens: Record<string, Toke
 export async function readClaudeStatistics(
     source: NativeSessionSource<"claude">,
     options: HistoryReadOptions = {}
-): Promise<HistoryStatisticsRead> {
+): Promise<SupportedHistoryStatistics> {
     const issues: NativeSourceIssue[] = [];
     const summary = emptySummary(source);
     const dailyTokens: Record<string, TokenUsage> = {};
@@ -168,5 +168,5 @@ export async function readClaudeStatistics(
             };
         });
 
-    return { summary, dailyTokens, days, issues, complete: issues.length === 0 };
+    return { supported: true, summary, dailyTokens, days, issues, complete: issues.length === 0 };
 }

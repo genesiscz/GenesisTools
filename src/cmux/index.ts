@@ -15,13 +15,8 @@
  */
 
 import { CMUX_REGISTRARS } from "@app/cmux/registrars";
-import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
-import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
-import { out } from "@genesiscz/utils/logger";
-import { handleReadmeFlag } from "@genesiscz/utils/readme";
+import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
-
-handleReadmeFlag(import.meta.url);
 
 const program = new Command();
 
@@ -32,15 +27,4 @@ program
     .showHelpAfterError(true)
     .option("-v, --verbose", "Enable debug logging");
 
-await registerRequestedTrees({
-    program,
-    registrars: CMUX_REGISTRARS,
-    requested: requestedCommandFromArgv(process.argv),
-});
-
-enhanceHelp(program);
-
-await runTool(program, { tool: "cmux" }).catch((error) => {
-    out.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-});
+await runTool(program, { tool: "cmux", registrars: CMUX_REGISTRARS, enhanceHelp: true });

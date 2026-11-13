@@ -6,7 +6,7 @@ import { Api } from "@app/azure-devops/api";
 import { convertToMinutes, formatMinutes, getTodayDate, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { updateWorkItemEffort } from "@app/azure-devops/timelog-effort";
 import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
-import * as p from "@clack/prompts";
+import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
 export async function runInteractiveAddClack(
@@ -42,6 +42,7 @@ export async function runInteractiveAddClack(
                 }
                 return undefined;
             },
+            cancel: "back",
         });
         if (p.isCancel(workItemInput)) {
             p.cancel("Cancelled");
@@ -61,6 +62,7 @@ export async function runInteractiveAddClack(
         message: "Time Type:",
         options: typeOptions,
         initialValue: types.find((t) => t.isDefaultForProject)?.description,
+        cancel: "back",
     });
     if (p.isCancel(selectedType)) {
         p.cancel("Cancelled");
@@ -81,6 +83,7 @@ export async function runInteractiveAddClack(
             }
             return undefined;
         },
+        cancel: "back",
     });
     if (p.isCancel(hoursInput)) {
         p.cancel("Cancelled");
@@ -97,6 +100,7 @@ export async function runInteractiveAddClack(
             message: "Additional minutes (optional):",
             placeholder: "0",
             initialValue: "0",
+            cancel: "back",
         });
         if (p.isCancel(minutesInput)) {
             p.cancel("Cancelled");
@@ -118,6 +122,7 @@ export async function runInteractiveAddClack(
             }
             return undefined;
         },
+        cancel: "back",
     });
     if (p.isCancel(dateInput)) {
         p.cancel("Cancelled");
@@ -128,6 +133,7 @@ export async function runInteractiveAddClack(
     const commentInput = await p.text({
         message: "Comment (optional):",
         placeholder: "Description of work performed",
+        cancel: "back",
     });
     if (p.isCancel(commentInput)) {
         p.cancel("Cancelled");
@@ -149,6 +155,7 @@ export async function runInteractiveAddClack(
     const confirm = await p.confirm({
         message: "Create this time log entry?",
         initialValue: true,
+        cancel: "back",
     });
     if (p.isCancel(confirm) || !confirm) {
         p.cancel("Cancelled");

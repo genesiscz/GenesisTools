@@ -1,0 +1,274 @@
+:root{
+  color-scheme:dark;
+  --dd-bg:#0c0e10; --dd-bg-panel:#101316; --dd-bg-elevated:#161b20;
+  --dd-border:#1e2428; --dd-border-strong:#2a3439;
+  --dd-text:#e6edf3; --dd-text-dim:#8b96a0; --dd-text-faint:#5b6670;
+  --dd-accent:#34d399; --dd-accent-2:#2dd4bf; --dd-link:#5eead4;
+  --dd-tag-bg:rgba(52,211,153,0.1); --dd-tag-text:#5eead4;
+  --dd-text-strong:#f4f8fb; --dd-link-underline:rgba(94,234,212,.3);
+  --dd-code-bg:#0a0c0f; --dd-code-text:#e6edf3;
+  --dd-sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --dd-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:var(--dd-bg);color:var(--dd-text);
+  font-family:var(--dd-sans);line-height:1.75;-webkit-font-smoothing:antialiased;}
+body{padding:28px 30px 80px;}
+/* The column is as wide as the reader last dragged it (`--gn-article-width`,
+   set by window.gnWidth), never wider than the pane. The grips live in the
+   30 px body padding on either side; drag one to resize, double-click to reset. */
+#gn-column{position:relative;max-width:var(--gn-article-width,860px);margin:0 auto;}
+article{font-size:16px;color:var(--dd-text);}
+.gn-grip{position:absolute;top:0;bottom:0;width:16px;cursor:col-resize;opacity:0;transition:opacity .15s;}
+.gn-grip::after{content:"";position:absolute;top:0;bottom:0;left:6px;width:3px;border-radius:2px;background:var(--dd-border-strong);}
+.gn-grip:hover::after,.gn-grip.gn-active::after{background:var(--dd-accent);}
+.gn-grip-l{left:-22px;} .gn-grip-r{right:-22px;}
+#gn-column:hover .gn-grip,.gn-grip.gn-active,.gn-grip:focus-visible{opacity:1;}
+.gn-grip:focus-visible{outline:0;} .gn-grip:focus-visible::after{background:var(--dd-accent);}
+body.gn-resizing{cursor:col-resize;user-select:none;-webkit-user-select:none;}
+/* Split view: the split divider is the only boundary, and the page fills
+   whatever the divider left it. */
+/* Property key / value suggestions, from what the vault already uses. */
+#gn-suggest{position:absolute;z-index:40;min-width:160px;max-height:220px;overflow:auto;
+  background:var(--dd-bg-elevated);border:1px solid var(--dd-border);border-radius:8px;
+  box-shadow:0 8px 24px rgba(0,0,0,.35);padding:4px;font-size:.92em;}
+#gn-suggest div{padding:4px 8px;border-radius:5px;cursor:pointer;white-space:nowrap;}
+#gn-suggest div.gn-on,#gn-suggest div:hover{background:var(--dd-accent-soft,rgba(127,127,127,.2));color:var(--dd-text);}
+body.gn-nogrips .gn-grip{display:none;}
+body.gn-nogrips #gn-column{max-width:none;}
+article > * + *{margin-top:1.25em;}
+h1,h2,h3,h4,h5,h6{color:var(--dd-text);line-height:1.25;margin:1.5em 0 .55em;font-weight:600;scroll-margin-top:12px;}
+h1{font-size:2em;border-bottom:1px solid var(--dd-border);padding-bottom:.3em;margin-top:.2em;letter-spacing:-.01em;}
+h2{font-size:1.5em;border-bottom:1px solid var(--dd-border);padding-bottom:.25em;letter-spacing:-.01em;}
+h3{font-size:1.22em;} h4{font-size:1.08em;color:var(--dd-text-dim);}
+p{margin:.95em 0;}
+a{color:var(--dd-link);text-decoration:none;border-bottom:1px solid var(--dd-link-underline);transition:border-color .15s,color .15s;}
+a:hover{color:var(--dd-accent);border-bottom-color:var(--dd-accent);}
+strong{color:var(--dd-text-strong);font-weight:600;} em{color:var(--dd-text);}
+hr{border:0;border-top:1px solid var(--dd-border);margin:2em 0;}
+ul,ol{padding-left:1.6em;margin:.95em 0;} li{margin:.45em 0;} li > ul,li > ol{margin:.35em 0;}
+ul li::marker,ol li::marker{color:var(--dd-text-faint);}
+/* Task items: a real checkbox where the bullet was, in the theme's accent. The label around it is the hit area
+   (1.5em, 24 px at the default size) and answers the pointer; a disabled box shows its reason as a tooltip. */
+li.gn-task-item{list-style:none;}
+.gn-task-hit{display:inline-flex;align-items:center;justify-content:center;width:1.5em;height:1.5em;
+  margin:0 .15em 0 -1.65em;vertical-align:middle;border-radius:6px;transition:background-color .12s ease-out;}
+/* An input's own font is the 13 px control font, so the box takes the text's size first: 14 px at the default size,
+   which WebKit draws as the regular macOS checkbox, not the small one. */
+.gn-task{font-size:inherit;width:.875em;height:.875em;margin:0;accent-color:var(--dd-accent);cursor:inherit;}
+.gn-task-hit:has(.gn-task:not(:disabled)){cursor:pointer;}
+.gn-task-hit:has(.gn-task:not(:disabled)):hover{background:rgba(127,127,127,.18);}
+.gn-task:focus-visible{outline:2px solid var(--dd-accent);outline-offset:2px;}
+body.gn-tasks-dim li.gn-task-done > .gn-task-text,body.gn-tasks-dim li.gn-task-done > .gn-task-text *,
+body.gn-tasks-dim li.gn-task-done > p > .gn-task-text,body.gn-tasks-dim li.gn-task-done > p > .gn-task-text *{color:var(--dd-text-dim);}
+body.gn-tasks-strike li.gn-task-done > .gn-task-text,body.gn-tasks-strike li.gn-task-done > p > .gn-task-text{
+  text-decoration:line-through;text-decoration-color:var(--dd-text-faint);}
+@media (prefers-reduced-motion:reduce){.gn-task-hit{transition:none;}}
+blockquote{margin:1em 0;padding:.6em 1.1em;border-left:3px solid var(--dd-border-strong);
+  background:rgba(255,255,255,.015);color:var(--dd-text-dim);border-radius:0 4px 4px 0;font-style:italic;}
+blockquote > *{margin:.4em 0;}
+code{font-family:var(--dd-mono);font-size:.88em;background:var(--dd-bg-elevated);
+  border:1px solid var(--dd-border);border-radius:5px;padding:2px 7px;margin:0 1px;color:var(--dd-text-strong);
+  -webkit-box-decoration-break:clone;box-decoration-break:clone;}
+pre{margin:1.15em 0;padding:0;background:var(--dd-code-bg);border:1px solid var(--dd-border);
+  border-radius:8px;overflow:auto;font-family:var(--dd-mono);font-size:13.5px;line-height:1.55;}
+pre code,pre code.hljs{display:block;padding:14px 16px;background:transparent;border:0;border-radius:0;color:var(--dd-code-text);font-size:inherit;}
+pre code.gn-numbered{padding-left:8px;}
+.gn-ln{display:block;min-height:1.55em;}
+.gn-ln::before{content:attr(data-ln);display:inline-block;width:var(--gn-ln-w,2ch);margin-right:1.4em;padding-left:6px;
+  text-align:right;color:var(--dd-text-faint);user-select:none;-webkit-user-select:none;transition:color .5s ease-out;}
+.gn-ln.gn-hl::before{color:var(--dd-accent);font-weight:600;}
+#gn-hl-band{position:absolute;pointer-events:none;z-index:1;border-radius:8px;
+  background:color-mix(in srgb,var(--dd-accent) 9%,transparent);
+  box-shadow:inset 3px 0 0 color-mix(in srgb,var(--dd-accent) 75%,transparent);
+  opacity:1;transition:opacity .5s ease-out;}
+#gn-hl-band.gn-fading{opacity:0;}
+table{border-collapse:collapse;margin:1.15em 0;width:100%;font-size:.95em;border-radius:8px;border:1px solid var(--dd-border);overflow:hidden;table-layout:auto;}
+thead{background:var(--dd-bg-panel);}
+/* A long unbreakable cell (a PDF file name, a path) used to push the table past
+   the pane and give the whole document a horizontal scrollbar. Only links and
+   code get broken mid-token; `anywhere` on every cell let the auto layout
+   squeeze "Vendor" into two lines. */
+th,td{text-align:left;padding:9px 13px;border-bottom:1px solid var(--dd-border);overflow-wrap:break-word;}
+td a,td code,th code{overflow-wrap:anywhere;}
+th{color:var(--dd-text);font-weight:600;} tr:last-child td{border-bottom:0;}
+tbody tr:nth-child(even){background:rgba(255,255,255,.015);}
+img{max-width:100%;height:auto;border-radius:6px;}
+.dd-md-inline-tag{display:inline-block;background:var(--dd-tag-bg);color:var(--dd-tag-text);
+  border:1px solid rgba(94,234,212,.18);border-radius:999px;padding:0 8px;font-size:.82em;font-weight:500;vertical-align:1px;}
+.dd-wikilink{color:var(--dd-link);text-decoration:none;border-bottom:1px dashed var(--dd-link-underline);padding-bottom:1px;cursor:pointer;}
+.dd-wikilink:hover{color:var(--dd-accent);border-bottom-color:var(--dd-accent);}
+.dd-md-embed-stub{display:inline-flex;gap:8px;align-items:center;background:var(--dd-bg-panel);
+  border:1px dashed var(--dd-border-strong);border-radius:6px;padding:2px 10px;color:var(--dd-text-dim);font-size:.9em;}
+.dd-md-embed-icon{color:var(--dd-accent);}
+.gn-img-missing{opacity:.85;border-style:dashed;flex-wrap:wrap;}
+.gn-img-allow{font:inherit;color:var(--dd-accent);background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;}
+#gn-article.gn-is-empty::after{content:"This note is empty.";display:block;color:var(--dd-text-dim);font-style:italic;}
+.gn-img-pending{display:inline-block;min-width:120px;min-height:64px;border-radius:6px;background:var(--dd-bg-panel);vertical-align:middle;}
+#gn-article img[data-gn-img]{cursor:zoom-in;}
+#gn-article img[data-gn-img]:focus-visible{outline:2px solid var(--dd-accent);outline-offset:2px;}
+a.dd-md-embed-stub{cursor:pointer;}
+a.dd-md-embed-stub:hover{border-color:var(--dd-accent);color:var(--dd-accent);}
+.gn-json-chip{display:inline-flex;gap:6px;align-items:center;background:var(--dd-bg-panel);border:1px solid var(--dd-border);
+  border-radius:6px;padding:1px 8px;color:var(--dd-text);font:inherit;font-size:.92em;cursor:pointer;text-decoration:none;}
+.gn-json-chip:hover{border-color:var(--dd-accent);color:var(--dd-accent);}
+.gn-json-chip .gn-json-icon{color:var(--dd-accent);font-family:ui-monospace,monospace;font-size:.85em;}
+.gn-json-panel{margin:10px 0;border:1px solid var(--dd-border);border-radius:8px;background:var(--dd-bg-panel);overflow:hidden;}
+.gn-json-head{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--dd-border);
+  font-size:.85em;color:var(--dd-text-dim,var(--dd-text));}
+.gn-json-close{background:none;border:0;color:inherit;cursor:pointer;font-size:1.1em;line-height:1;}
+.gn-json-panel pre{margin:0;border:0;border-radius:0;max-height:480px;overflow:auto;}
+.markdown-alert{--cal:var(--dd-border-strong);margin:1.15em 0;padding:12px 16px 4px;
+  border:1px solid color-mix(in srgb,var(--cal) 28%,transparent);border-left:4px solid var(--cal);
+  border-radius:0 8px 8px 0;background:color-mix(in srgb,var(--cal) 8%,var(--dd-bg-panel));}
+.markdown-alert-body > *{margin:.55em 0;} .markdown-alert-body > :first-child{margin-top:0;}
+.markdown-alert-body > :last-child{margin-bottom:.4em;}
+.markdown-alert:not(:has(.markdown-alert-body)){padding-bottom:12px;}
+.markdown-alert-title{display:flex;align-items:center;gap:8px;font-weight:600;font-size:.97em;margin:0 0 8px;color:var(--cal);line-height:1.4;}
+.markdown-alert-icon{flex:none;width:17px;height:17px;color:var(--cal);}
+.markdown-alert-note{--cal:#4493f8;} .markdown-alert-abstract{--cal:#22d3ee;} .markdown-alert-info{--cal:#4493f8;}
+.markdown-alert-todo{--cal:#38bdf8;} .markdown-alert-tip{--cal:#2dd4bf;} .markdown-alert-success{--cal:#34d399;}
+.markdown-alert-question{--cal:#eab308;} .markdown-alert-warning{--cal:#f59e0b;} .markdown-alert-failure{--cal:#f87171;}
+.markdown-alert-danger{--cal:#ef4444;} .markdown-alert-bug{--cal:#fb7185;} .markdown-alert-example{--cal:#a855f7;}
+.markdown-alert-quote{--cal:var(--dd-text-dim);}
+/* <details>: a fold you cannot miss. Accent bar, tinted card, a chevron, and a Show/Hide pill. */
+details{--fold:#2dd4bf;margin:1.15em 0;border:1px solid color-mix(in srgb,var(--fold) 30%,var(--dd-border));
+  border-left:4px solid var(--fold);border-radius:0 10px 10px 0;overflow:hidden;
+  background:color-mix(in srgb,var(--fold) 6%,var(--dd-bg-panel));}
+details > summary{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;font-weight:600;
+  list-style:none;user-select:none;-webkit-user-select:none;}
+details > summary::-webkit-details-marker{display:none;}
+details > summary::before{content:"";flex:none;width:8px;height:8px;margin:0 4px 0 2px;
+  border-right:2px solid var(--fold);border-bottom:2px solid var(--fold);transform:rotate(-45deg);transition:transform .15s ease;}
+details[open] > summary::before{transform:rotate(45deg);}
+details > summary::after{content:"Show";margin-left:auto;flex:none;font-size:.72em;font-weight:600;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--fold);padding:2px 9px;border-radius:999px;
+  border:1px solid color-mix(in srgb,var(--fold) 45%,transparent);background:color-mix(in srgb,var(--fold) 12%,transparent);}
+details[open] > summary::after{content:"Hide";}
+details > summary:hover{background:color-mix(in srgb,var(--fold) 10%,transparent);}
+details[open] > summary{border-bottom:1px solid color-mix(in srgb,var(--fold) 22%,var(--dd-border));}
+details > :not(summary){margin-left:16px;margin-right:16px;}
+details > summary + *{margin-top:12px;} details > :last-child:not(summary){margin-bottom:14px;}
+/* Mermaid: render at NATURAL size and scroll (Obsidian parity) — never shrink
+   the diagram to fit the column. Wide/tall diagrams get their own scrollbars. */
+.mermaid{background:var(--dd-bg-panel);border:1px solid var(--dd-border);border-radius:8px;
+  padding:16px;margin:1.15em 0;color:var(--dd-text-dim);font-family:var(--dd-mono);font-size:.85em;
+  overflow:auto;max-height:80vh;}
+.mermaid svg{max-width:none !important;width:auto;height:auto;display:block;margin:0 auto;}
+.gn-flash{animation:gnflash .5s ease-in-out 2;border-radius:6px;}
+@keyframes gnflash{0%,100%{background:transparent;}50%{background:rgba(255,200,110,.22);}}
+mark.gn-find{background:rgba(250,204,21,.25);color:inherit;border-radius:2px;padding:0 1px;}
+mark.gn-find-current{background:rgba(250,204,21,.75);color:#0c0e10;}
+/* Find: match ticks on the right edge (GenesisKitMarkdownConfiguration.scrollbarMatchMarks).
+   The lane is as tall as the window and stands for the whole page, like the
+   scroller over it; the current match is in the accent colour, and a click on
+   a tick goes to that match. Only the ticks take clicks, never the lane. */
+#gn-find-ticks{position:fixed;top:0;right:0;bottom:0;width:12px;pointer-events:none;z-index:30;}
+.gn-find-tick{position:absolute;right:1px;width:9px;height:3px;margin-top:-1px;border-radius:1.5px;
+  background:rgba(250,204,21,.7);pointer-events:auto;cursor:pointer;}
+.gn-find-tick-current{height:4px;background:var(--dd-accent);z-index:1;}
+/* Properties: the frontmatter as Obsidian shows it. One row per key with a
+   type icon, the key in the dim colour and the value editable in place. */
+.gn-props{margin:0 0 1.4em;padding:2px 0 6px;border-bottom:1px solid var(--dd-border);font-size:.93em;}
+.gn-prop{display:flex;align-items:flex-start;gap:6px;padding:2px 4px;border-radius:5px;min-height:28px;}
+.gn-prop:hover{background:rgba(255,255,255,.03);}
+.gn-prop-key{flex:0 0 190px;display:flex;align-items:center;gap:7px;color:var(--dd-text-dim);min-height:24px;position:relative;}
+.gn-prop-icon{flex:none;width:16px;height:16px;color:var(--dd-text-faint);cursor:pointer;border-radius:4px;}
+.gn-prop-icon:hover{color:var(--dd-text);}
+.gn-prop-type{display:inline-flex;flex:none;padding:0;margin:0;border:0;background:transparent;color:inherit;border-radius:4px;cursor:pointer;}
+.gn-prop-type:focus-visible{outline:1px solid var(--dd-accent);outline-offset:1px;}
+.gn-prop-menu div:focus{outline:0;background:rgba(255,255,255,.06);}
+.gn-prop-name{outline:0;padding:1px 4px;border-radius:4px;min-width:40px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.gn-prop-name:focus{background:var(--dd-bg-elevated);color:var(--dd-text);}
+.gn-prop-value{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-height:24px;color:var(--dd-text);}
+.gn-prop-value input[type=text],.gn-prop-value input[type=number],.gn-prop-value input[type=date],.gn-prop-value input[type=datetime-local]{
+  flex:1 1 auto;min-width:60px;background:transparent;border:1px solid transparent;border-radius:4px;color:var(--dd-text);
+  font:inherit;padding:2px 6px;outline:0;color-scheme:dark;}
+.gn-prop-value input:not([type=checkbox]):focus{background:var(--dd-bg-elevated);border-color:var(--dd-border-strong);}
+.gn-prop-value input:disabled{opacity:1;color:var(--dd-text);}
+.gn-prop-value input[type=checkbox]{width:15px;height:15px;margin:4px 6px;accent-color:var(--dd-accent);}
+.gn-prop-value .gn-chip{display:inline-flex;align-items:center;gap:3px;background:var(--dd-bg-elevated);border:1px solid var(--dd-border);
+  border-radius:4px;padding:1px 6px;font-size:.92em;color:var(--dd-text);max-width:100%;}
+.gn-prop-tags .gn-chip{background:var(--dd-tag-bg);color:var(--dd-tag-text);border-color:rgba(94,234,212,.18);border-radius:999px;}
+.gn-chip-x{cursor:pointer;color:var(--dd-text-faint);margin:-3px -5px -3px 0;padding:3px 5px;border:0;border-radius:4px;background:transparent;font:inherit;line-height:1;}
+.gn-chip-x:hover,.gn-chip-x:focus-visible{color:var(--dd-text);background:rgba(127,127,127,.18);}
+.gn-chip-x:focus-visible{outline:1px solid var(--dd-accent);outline-offset:0;}
+.gn-prop-value .gn-chip-in{flex:1 1 80px;}
+.gn-prop-value a{border-bottom:1px dashed var(--dd-link-underline);}
+.gn-prop-remove{flex:none;opacity:0;border:0;background:transparent;color:var(--dd-text-faint);cursor:pointer;font-size:15px;line-height:1;padding:4px 7px;min-width:24px;min-height:24px;border-radius:4px;}
+.gn-prop:hover .gn-prop-remove,.gn-prop:focus-within .gn-prop-remove{opacity:1;} .gn-prop-remove:hover{color:var(--dd-text);background:var(--dd-bg-elevated);}
+.gn-prop-remove:focus-visible{outline:1px solid var(--dd-accent);outline-offset:-1px;}
+.gn-props-add{margin:4px 0 0 4px;border:0;background:transparent;color:var(--dd-text-faint);cursor:pointer;font:inherit;font-size:.92em;padding:3px 6px;border-radius:4px;}
+#gn-git-layer{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:2;}
+.gn-git-bar{position:absolute;width:3px;border:0;padding:0;margin:0;border-radius:2px;pointer-events:auto;cursor:pointer;}
+.gn-git-bar:focus-visible{outline:2px solid var(--dd-text);outline-offset:4px;}
+.gn-git-bar::after{content:'';position:absolute;left:-5px;right:-5px;top:0;bottom:0;}
+.gn-git-bar[data-k="added"]{background:rgba(89,217,140,.9);}
+.gn-git-bar[data-k="modified"]{background:rgba(115,166,255,.95);}
+.gn-git-bar[data-k="deleted"]{width:0;height:0;border-radius:0;border-left:6px solid rgba(255,89,89,.95);border-top:4px solid transparent;border-bottom:4px solid transparent;}
+.gn-git-bar[data-k="removed"]{background:rgba(255,89,89,.9);}
+.gn-git-bar[data-i^="d"]{pointer-events:none;cursor:default;}
+.gn-git-bar[data-i^="d"]::after{display:none;}
+.gn-diff-old{margin:10px 0;opacity:.75;}
+.gn-diff-old:not(.gn-diff-pair) *{text-decoration:line-through;text-decoration-color:rgba(255,89,89,.75);}
+.gn-diff-old>:first-child{margin-top:0;}.gn-diff-old>:last-child{margin-bottom:0;}
+mark.gn-del{background:rgba(255,89,89,.32);color:inherit;text-decoration:line-through;border-radius:2px;}
+mark.gn-ins{background:rgba(89,217,140,.32);color:inherit;border-radius:2px;}
+.gn-props-add:hover{color:var(--dd-text);background:var(--dd-bg-elevated);}
+.gn-prop-menu{position:absolute;left:0;top:26px;z-index:5;background:var(--dd-bg-elevated);border:1px solid var(--dd-border-strong);border-radius:6px;
+  padding:4px;min-width:150px;box-shadow:0 8px 24px rgba(0,0,0,.45);}
+.gn-prop-menu div{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:4px;cursor:pointer;color:var(--dd-text);white-space:nowrap;}
+.gn-prop-menu div:hover{background:rgba(255,255,255,.06);} .gn-prop-menu div.gn-cur{color:var(--dd-accent);}
+.gn-props.gn-ro .gn-prop-remove,.gn-props.gn-ro .gn-props-add,.gn-props.gn-ro .gn-chip-x,.gn-props.gn-ro .gn-chip-in{display:none;}
+.gn-props.gn-ro .gn-prop-icon{cursor:default;}
+/* ---- Page extras: heading anchors, code block bar, sticky section ------------------
+   Switched by window.gnPage (GenesisKitMarkdownConfiguration). The labels come from
+   attributes through ::before/::after, so the find and a text copy never see them. */
+:root{--gn-sticky-h:30px;}
+h1,h2,h3,h4,h5,h6{position:relative;}
+.gn-anchor{display:none;position:absolute;left:-26px;top:0;width:22px;height:1.25em;margin:0;padding:0;border:0;border-radius:5px;
+  font:inherit;background:transparent;color:var(--dd-text-faint);cursor:pointer;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .12s ease-out,color .12s ease-out;}
+body.gn-anchors .gn-anchor{display:flex;}
+.gn-anchor::before{content:"#";font-family:var(--dd-sans);font-size:15px;font-weight:600;line-height:1;}
+h1:hover > .gn-anchor,h2:hover > .gn-anchor,h3:hover > .gn-anchor,h4:hover > .gn-anchor,h5:hover > .gn-anchor,h6:hover > .gn-anchor,
+.gn-anchor:focus-visible{opacity:1;}
+.gn-anchor:hover{color:var(--dd-accent);}
+.gn-anchor:focus-visible{outline:1px solid var(--dd-accent);outline-offset:-1px;}
+#gn-toast{position:absolute;z-index:60;pointer-events:none;padding:2px 8px;border-radius:6px;transform:translateY(-50%);
+  font:600 11.5px/1.5 var(--dd-sans);color:var(--dd-bg);background:var(--dd-accent);opacity:0;transition:opacity .15s ease-out;}
+#gn-toast.gn-on{opacity:1;}
+/* Read by VoiceOver only: what a button did ("Copied"). */
+#gn-live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
+.gn-code{margin:1.15em 0;background:var(--dd-code-bg);border:1px solid var(--dd-border);border-radius:8px;overflow:hidden;}
+.gn-code > pre{margin:0;border:0;border-radius:0;}
+.gn-code-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;height:30px;padding:0 6px 0 14px;
+  background:var(--dd-bg-panel);border-bottom:1px solid var(--dd-border);user-select:none;-webkit-user-select:none;}
+.gn-code-lang::before{content:attr(data-lang);font-family:var(--dd-mono);font-size:11.5px;color:var(--dd-text-faint);letter-spacing:.02em;}
+.gn-code-copy{display:inline-flex;align-items:center;gap:5px;margin:0;padding:3px 8px;border:0;border-radius:5px;background:transparent;
+  color:var(--dd-text-dim);font:500 11.5px/1.4 var(--dd-sans);cursor:pointer;transition:color .12s ease-out,background-color .12s ease-out;}
+.gn-code-copy::after{content:attr(data-label);}
+.gn-code-copy:hover{color:var(--dd-text);background:var(--dd-bg-elevated);}
+.gn-code-copy.gn-done{color:var(--dd-accent);}
+.gn-code-copy:focus-visible{outline:1px solid var(--dd-accent);outline-offset:-1px;}
+#gn-sticky{position:fixed;top:0;left:0;right:0;z-index:30;height:var(--gn-sticky-h);padding:0 30px;
+  background:color-mix(in srgb,var(--dd-bg) 88%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--dd-border);visibility:hidden;opacity:0;transform:translateY(-6px);
+  transition:opacity .15s ease-out,transform .15s ease-out,visibility 0s linear .15s;}
+#gn-sticky.gn-on{visibility:visible;opacity:1;transform:none;transition-delay:0s;}
+.gn-sticky-in{display:flex;align-items:center;gap:2px;height:100%;min-width:0;max-width:var(--gn-article-width,860px);margin:0 auto;
+  font-size:12.5px;color:var(--dd-text-dim);}
+body.gn-nogrips .gn-sticky-in{max-width:none;}
+.gn-sticky-part{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:2px 6px;border:0;
+  border-radius:5px;background:transparent;color:inherit;font:inherit;cursor:pointer;}
+.gn-sticky-part:last-child{color:var(--dd-text);font-weight:600;}
+.gn-sticky-part:hover{color:var(--dd-accent);background:var(--dd-bg-elevated);}
+.gn-sticky-part:focus-visible{outline:1px solid var(--dd-accent);outline-offset:-1px;}
+.gn-sticky-sep{flex:none;color:var(--dd-text-faint);}
+/* A jump leaves the bar's height free above the heading, so the bar never covers it. */
+body.gn-sticky-on h1,body.gn-sticky-on h2,body.gn-sticky-on h3,body.gn-sticky-on h4,body.gn-sticky-on h5,body.gn-sticky-on h6{
+  scroll-margin-top:calc(var(--gn-sticky-h) + 12px);}
+@media (prefers-reduced-motion:reduce){.gn-anchor,#gn-toast,.gn-code-copy,#gn-sticky,details > summary::before{transition:none;}}
+@media (prefers-reduced-transparency:reduce){#gn-sticky{background:var(--dd-bg);-webkit-backdrop-filter:none;backdrop-filter:none;}}
+@media print{#gn-sticky,#gn-toast,.gn-anchor,.gn-code-copy{display:none !important;}}
+body.gn-export #gn-sticky,body.gn-export #gn-toast,body.gn-export .gn-anchor,body.gn-export .gn-code-copy{display:none !important;}

@@ -1,10 +1,10 @@
 import { chmodSync, copyFileSync, existsSync } from "node:fs";
 import { isInteractive } from "@genesiscz/utils/cli";
-import type { ConfigMigration } from "@genesiscz/utils/config/migration";
+import { mayPersistMigration } from "@genesiscz/utils/config/real-home-write";
 import { logger, out } from "@genesiscz/utils/logger";
 import { isSecureRef, masterKeySync, secrets } from "@genesiscz/utils/security";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { migrationAllowedHere } from "../migration-guard";
+import type { ConfigMigration } from "../migrate";
 import { type AccountCredentials, type AccountEntry, type AiConfigData, CONFIG_VERSION } from "../schema";
 
 /** Credential fields whose values are secrets. `authFile` and `dataDir` are paths, not secrets. */
@@ -88,7 +88,7 @@ export const migrateSecretsToVault: ConfigMigration = {
             return false;
         }
 
-        if (!migrationAllowedHere()) {
+        if (!mayPersistMigration().allowed) {
             return false;
         }
 

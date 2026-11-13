@@ -1,9 +1,9 @@
 import { exportMessages, parseMailIds } from "@app/macos/lib/mail/export";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
-import * as p from "@clack/prompts";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 
 export function registerDownloadCommand(program: Command): void {

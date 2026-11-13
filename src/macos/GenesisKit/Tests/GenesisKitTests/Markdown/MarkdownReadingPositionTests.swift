@@ -230,9 +230,11 @@ final class MarkdownReadingPositionTests: XCTestCase {
     /// restore's `gnPointAt` was silently the find's own helper of that name until this test.
     func testThePageScriptDeclaresEachFunctionOnce() throws {
         let pattern = try NSRegularExpression(pattern: #"function (\w+)\("#)
-        let script = MarkdownWebView.template as NSString
+        let asset = try XCTUnwrap(MarkdownWebView.assetData("markdown-page.js")?.0)
+        let source = try XCTUnwrap(String(data: asset, encoding: .utf8))
+        let script = source as NSString
         var counts: [String: Int] = [:]
-        for match in pattern.matches(in: MarkdownWebView.template, range: NSRange(location: 0, length: script.length)) {
+        for match in pattern.matches(in: source, range: NSRange(location: 0, length: script.length)) {
             counts[script.substring(with: match.range(at: 1)), default: 0] += 1
         }
         XCTAssertGreaterThan(counts.count, 50, "the scan sees the page's functions (92 on 2026-11-01)")

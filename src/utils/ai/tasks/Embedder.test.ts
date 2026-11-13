@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, spyOn, test } from "bun:test";
-import { AIConfig } from "../AIConfig";
+import { AiConfigStore } from "../config/AiConfigStore";
 import * as providers from "../providers/index";
 import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult } from "../types";
 import { Embedder } from "./Embedder";
@@ -102,15 +102,15 @@ describe("Embedder", () => {
 
 describe("Embedder.create and the AI config", () => {
     afterEach(() => {
-        spyOn(AIConfig, "load").mockRestore();
+        spyOn(AiConfigStore, "load").mockRestore();
         spyOn(providers, "getProvider").mockRestore();
         spyOn(providers, "getProviderForTask").mockRestore();
     });
 
-    // Loading the config decrypts every account's secrets, which raises the vault-key approval.
+    // An explicit local provider has no reason to read the AI config unless it persists the choice.
     test("an explicit provider never loads the config, and the default path still does", async () => {
-        const load = spyOn(AIConfig, "load").mockImplementation(() => {
-            throw new Error("AIConfig.load reached");
+        const load = spyOn(AiConfigStore, "load").mockImplementation(() => {
+            throw new Error("AiConfigStore.load reached");
         });
         const mock = createSequentialMockProvider(8) as unknown as AIProvider;
         spyOn(providers, "getProvider").mockReturnValue(mock);
@@ -120,13 +120,15 @@ describe("Embedder.create and the AI config", () => {
         expect(embedder.dimensions).toBe(8);
         expect(load).not.toHaveBeenCalled();
 
-        await expect(Embedder.create()).rejects.toThrow("AIConfig.load reached");
-        await expect(Embedder.create({ provider: "local-hf", persist: true })).rejects.toThrow("AIConfig.load reached");
+        await expect(Embedder.create()).rejects.toThrow("AiConfigStore.load reached");
+        await expect(Embedder.create({ provider: "local-hf", persist: true })).rejects.toThrow(
+            "AiConfigStore.load reached"
+        );
     });
 });
 
 describe("Embedder batch logic (through Embedder class)", () => {
-    // Helper to create Embedder from a provider (bypasses AIConfig)
+    // Helper to create Embedder from a provider (bypasses the AI config)
     function createEmbedderFromProvider(provider: AIEmbeddingProvider): Embedder {
         return new (Embedder as unknown as new (p: AIEmbeddingProvider) => Embedder)(provider);
     }

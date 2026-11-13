@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { formatDuration } from "@genesiscz/utils/format";
+import * as p from "@genesiscz/utils/prompts/p";
 import { formatTable } from "@genesiscz/utils/table";
 import pc from "picocolors";
 import type { HyperfineResult, SavedResult } from "./types";

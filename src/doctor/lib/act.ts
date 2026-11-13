@@ -1,5 +1,5 @@
 import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, writeSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { freeDiskSpace } from "@genesiscz/utils/fs/disk-usage";
@@ -19,6 +19,7 @@ import {
     selfAndAncestors,
     snapshotProcesses,
 } from "./processes";
+import { removeForDoctor } from "./remove";
 import { isActable, metadataBlockers, metadataPaths, pathsHash } from "./remove-action";
 
 export { pathsHash } from "./remove-action";
@@ -216,8 +217,17 @@ function defaultStatfs(path: string): { available: number; total: number } | nul
     }
 }
 
-async function defaultRemove(path: string): Promise<void> {
-    await rm(path, { recursive: true, force: false });
+/** The delete method: through `tools rm` (its hard-deny verdict, then its trash with no grace), never a plain unlink. */
+async function defaultRemove(path: string, analyzerId: string): Promise<void> {
+    const result = await removeForDoctor(path, { analyzerId });
+
+    if (result.refusal) {
+        throw new Error(`Refusing removal: ${result.refusal}`);
+    }
+
+    if (!result.removed) {
+        throw new Error(`${path} was not removed: it is already gone`);
+    }
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -828,7 +838,7 @@ async function removeItem(args: {
                 }
                 moved.push(result.trashPath ?? path);
             } else {
-                await (deps.remove ?? defaultRemove)(path);
+                await (deps.remove ? deps.remove(path) : defaultRemove(path, analyzer.id));
                 if (p.action.recreateEmpty) {
                     await mkdir(path, { recursive: true });
                 }

@@ -373,30 +373,62 @@ final class ReviewPageSeamTests: XCTestCase {
         XCTAssertEqual(DiffLineMap.newLine(forOld: 99, old: "a\n", new: "a\n"), 99, "past the old text: nothing to map")
     }
 
+    func testReviewCardIDRoundTripsEachKindAndLiveThreadEncoding() {
+        let cases: [(String, ReviewCardID)] = [
+            ("c_local", .localComment("c_local")),
+            ("draft:proposal", .proposalDraft("proposal")),
+            ("thread:reply", .threadReply("reply")),
+            ("live:reply", .liveThread("reply")),
+            ("draft:", .proposalDraft("")),
+            ("thread:", .threadReply("")),
+            ("live:", .liveThread("")),
+            ("draft:part:two", .proposalDraft("part:two")),
+        ]
+        for (encoded, card) in cases {
+            XCTAssertEqual(ReviewCardID(encoded), card)
+            XCTAssertEqual(card.rawValue, encoded)
+            XCTAssertEqual(ReviewCardID(card.rawValue), card)
+        }
+    }
+
+    func testReviewCardIDKeepsUnknownAndUnprefixedIDsAsLocalFallbacks() {
+        for id in ["", "unknown:value", "draft", "thread", "Draft:value", "c_local"] {
+            let card = ReviewCardID(id)
+            XCTAssertEqual(card, .localComment(id))
+            XCTAssertEqual(card.rawValue, id)
+            XCTAssertNil(card.draftID)
+            XCTAssertNil(card.threadID)
+            XCTAssertEqual(ReviewKeyNav.threadID(ofCard: id), id)
+        }
+        XCTAssertEqual(ReviewKeyNav.threadID(ofCard: "draft:value"), "draft:value")
+    }
+
     // MARK: a suggestion goes out once
 
     func testASentCardRefusesASecondSendAsThePageHidesItsButtons() {
         // main.ts renderDraft: `sent = state === "sent" || "drafted" || "posted"` hides the send row.
         for state in ["sent", "drafted", "posted"] {
-            XCTAssertNotNil(SuggestionSendGate.refusal(kind: "draft", state: state, toPR: true, inFlight: false, busy: nil), state)
+            XCTAssertNotNil(SuggestionSendGate.refusal(card: .proposalDraft("fixture"), state: state, toPR: true, inFlight: false, busy: nil), state)
         }
         for state in ["proposed", "accepted", "edited"] {
-            XCTAssertNil(SuggestionSendGate.refusal(kind: "draft", state: state, toPR: true, inFlight: false, busy: nil), state)
+            XCTAssertNil(SuggestionSendGate.refusal(card: .proposalDraft("fixture"), state: state, toPR: true, inFlight: false, busy: nil), state)
         }
         // renderReply: any replyStatus hides the send row.
-        XCTAssertNotNil(SuggestionSendGate.refusal(kind: "thread", state: "drafted", toPR: false, inFlight: false, busy: nil))
-        XCTAssertNil(SuggestionSendGate.refusal(kind: "thread", state: nil, toPR: true, inFlight: false, busy: nil))
+        XCTAssertNotNil(SuggestionSendGate.refusal(card: .threadReply("fixture"), state: "drafted", toPR: false, inFlight: false, busy: nil))
+        XCTAssertNil(SuggestionSendGate.refusal(card: .threadReply("fixture"), state: nil, toPR: true, inFlight: false, busy: nil))
+        XCTAssertNotNil(SuggestionSendGate.refusal(card: .liveThread("fixture"), state: "drafted", toPR: false, inFlight: false, busy: nil))
+        XCTAssertNil(SuggestionSendGate.refusal(card: .liveThread("fixture"), state: nil, toPR: true, inFlight: false, busy: nil))
         // renderComment: posted has no button; a pending draft still offers Post.
-        XCTAssertNotNil(SuggestionSendGate.refusal(kind: "local", state: "posted", toPR: true, inFlight: false, busy: nil))
-        XCTAssertNil(SuggestionSendGate.refusal(kind: "local", state: "draft", toPR: true, inFlight: false, busy: nil))
+        XCTAssertNotNil(SuggestionSendGate.refusal(card: .localComment("fixture"), state: "posted", toPR: true, inFlight: false, busy: nil))
+        XCTAssertNil(SuggestionSendGate.refusal(card: .localComment("fixture"), state: "draft", toPR: true, inFlight: false, busy: nil))
     }
 
     func testADoubleClickWhileTheFirstSendRunsIsDropped() {
-        XCTAssertNotNil(SuggestionSendGate.refusal(kind: "draft", state: "proposed", toPR: false, inFlight: true, busy: nil),
+        XCTAssertNotNil(SuggestionSendGate.refusal(card: .proposalDraft("fixture"), state: "proposed", toPR: false, inFlight: true, busy: nil),
                         "the agent send of this card is still running")
-        XCTAssertNotNil(SuggestionSendGate.refusal(kind: "local", state: "local", toPR: true, inFlight: false, busy: "Drafting…"),
+        XCTAssertNotNil(SuggestionSendGate.refusal(card: .localComment("fixture"), state: "local", toPR: true, inFlight: false, busy: "Drafting…"),
                         "a PR write is running: the second click would draft the comment twice")
-        XCTAssertNil(SuggestionSendGate.refusal(kind: "local", state: "local", toPR: false, inFlight: false, busy: "Drafting…"),
+        XCTAssertNil(SuggestionSendGate.refusal(card: .localComment("fixture"), state: "local", toPR: false, inFlight: false, busy: "Drafting…"),
                      "a PR write does not hold a send to the agent")
     }
 }

@@ -1,7 +1,7 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import * as p from "@genesiscz/utils/prompts/p";
 import { TmuxPresetStore } from "@genesiscz/utils/tmux/snapshot-store";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -38,7 +38,9 @@ export async function runDeletePreset(name: string, flags: DeleteFlags): Promise
             return;
         }
 
-        const proceed = await withCancel(p.confirm({ message: `Delete preset "${name}"?`, initialValue: false }));
+        const proceed = await withCancel(
+            p.confirm({ message: `Delete preset "${name}"?`, initialValue: false, cancel: "back" })
+        );
 
         if (!proceed) {
             p.cancel("Aborted.");

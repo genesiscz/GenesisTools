@@ -8,7 +8,7 @@ import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types"
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { tryProviderPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { getProviderConfigs } from "@genesiscz/utils/ask/providers/compat";
-import { modelsForProvider, providerNameFor, toDetectedProvider } from "@genesiscz/utils/ask/providers/detected";
+import { modelsForAccount, providerNameFor, toDetectedProvider } from "@genesiscz/utils/ask/providers/detected";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
@@ -33,9 +33,9 @@ import { logger } from "@genesiscz/utils/logger";
  *
  * The live ladder is now `resolveCredential`
  * (src/utils/ai/providers/credentials.ts), which applies this same order for
- * every provider and names the variable it spent. This function stays because
- * the deprecated v3 `AIConfig` facade still resolves keys this way and its order
- * is pinned by a unit test: the line decides whose money a call costs.
+ * every provider and names the variable it spent. This function keeps the order
+ * the retired v3 config facade resolved keys in, pinned by a unit test: the line
+ * decides whose money a call costs.
  */
 export function detectApiKeyFor(
     aiConfig: { getProviderApiKey(name: string): string | undefined },
@@ -152,11 +152,11 @@ export class ProviderManager {
 
         try {
             const binding = await plugin.bind({ account });
-            const models = await modelsForProvider(account.provider);
+            const models = await modelsForAccount(plugin, account);
             const detected = toDetectedProvider({
                 binding,
                 pluginId: account.provider,
-                account: { name: account.name, ...(account.label ? { label: account.label } : {}) },
+                account: { id: account.id, name: account.name, ...(account.label ? { label: account.label } : {}) },
                 models,
                 credentialSource: credential.detail,
             });
@@ -260,8 +260,8 @@ export class ProviderManager {
             return toDetectedProvider({
                 binding,
                 pluginId: account.provider,
-                account: { name: account.name, ...(account.label ? { label: account.label } : {}) },
-                models: await modelsForProvider(account.provider),
+                account: { id: account.id, name: account.name, ...(account.label ? { label: account.label } : {}) },
+                models: await modelsForAccount(plugin, account),
             });
         } catch (err) {
             logger.warn(`Failed to create subscription provider for "${accountName}": ${err}`);

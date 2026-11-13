@@ -1,11 +1,6 @@
-import {
-    ENDPOINTS,
-    type Endpoint,
-    type EndpointInput,
-    type EndpointOutput,
-} from "@app/dev-dashboard/contract/endpoint-table";
+import type { Endpoint, EndpointInput, EndpointOutput } from "@app/dev-dashboard/contract/endpoint-table";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
-import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
+import type { RouteContext, RouteDef, RouteHandler, RouteResult } from "@app/dev-dashboard/server/types";
 import type { z } from "zod";
 
 /** The header a caller sets to make a write safe to retry. */
@@ -35,7 +30,7 @@ function isRouteResult(value: unknown): value is RouteResult {
 }
 
 async function rawInput(method: string, ctx: RouteContext, kind: "json" | "raw"): Promise<unknown> {
-    if (method === "GET" || method === "DELETE" || kind === "raw") {
+    if (method === "GET" || kind === "raw") {
         return { ...Object.fromEntries(ctx.query.entries()), ...ctx.params };
     }
 
@@ -95,6 +90,27 @@ export class ReceiptCache {
 
 const sharedReceipts = new ReceiptCache();
 
+/** Every route made from a table row, so the table test can tell a bound route from a hand-written pattern. */
+const ROW_BOUND = new WeakSet<RouteDef>();
+
+/** Whether this route was made from its table row (`bindEndpoint` or `bindHandler`). */
+export function isBoundFromRow(def: RouteDef): boolean {
+    return ROW_BOUND.has(def);
+}
+
+/** The method, the pattern and `longLived` of a row: what a route takes from it, never restated. */
+function rowRoute(endpoint: Endpoint, handler: RouteHandler): RouteDef {
+    const def: RouteDef = {
+        method: endpoint.method,
+        pattern: endpoint.path,
+        ...(endpoint.timeout === "stream" ? { longLived: true } : {}),
+        handler,
+    };
+
+    ROW_BOUND.add(def);
+    return def;
+}
+
 /** One route from one table row. The method, the pattern and `longLived` come from the row, never restated. */
 export function bindEndpoint<E extends Endpoint>(
     endpoint: E,
@@ -114,51 +130,39 @@ export function bindEndpoint<E extends Endpoint>(
     };
     const failure = (err: unknown): RouteResult => (binding.error ? binding.error(err) : errorResult(err));
 
-    return {
-        method: endpoint.method,
-        pattern: endpoint.path,
-        ...(endpoint.timeout === "stream" ? { longLived: true } : {}),
-        handler: (ctx) => {
-            const key = ctx.headers[IDEMPOTENCY_HEADER];
+    return rowRoute(endpoint, (ctx) => {
+        const key = ctx.headers[IDEMPOTENCY_HEADER];
 
-            // Only a keyed-write row is cached here. `act` dedupes per token and key inside `act()`; a cache keyed
-            // without the act token would hand one token's receipt to another token that reused the key.
-            if (endpoint.policy !== "keyed-write" || !key) {
-                return run(ctx).catch(failure);
-            }
+        // Only a keyed-write row is cached here. `act` dedupes per token and key inside `act()`; a cache keyed
+        // without the act token would hand one token's receipt to another token that reused the key.
+        if (endpoint.policy !== "keyed-write" || !key) {
+            return run(ctx).catch(failure);
+        }
 
-            // The throw is turned into its error answer only after the cache, so a transient failure is retried
-            // instead of pinning the key to a 500 for the cache's lifetime.
-            return receipts.once(`${endpoint.method} ${ctx.pathname} ${key}`, () => run(ctx)).catch(failure);
-        },
-    };
+        // The throw is turned into its error answer only after the cache, so a transient failure is retried
+        // instead of pinning the key to a 500 for the cache's lifetime.
+        return receipts.once(`${endpoint.method} ${ctx.pathname} ${key}`, () => run(ctx)).catch(failure);
+    });
 }
 
 /**
- * The idempotency of the table for routes that are still written by hand (the pending forms, the handoffs, the AI
- * accounts): a route whose method and pattern are a `keyed-write` row answers a retry that carries the same
- * `Idempotency-Key` with its first answer, like a bound row. Every other route passes through unchanged.
+ * A route whose handler is still written by hand (it reads the request itself), bound from its table row: the method,
+ * the pattern and `longLived` come from the row. A `keyed-write` row answers a retry that carries the same
+ * `Idempotency-Key` with its first answer, like `bindEndpoint`; without a key the handler runs as it always did.
  */
-export function withTableIdempotency(defs: RouteDef[], receipts: ReceiptCache = sharedReceipts): RouteDef[] {
-    const keyed = new Set(
-        Object.values(ENDPOINTS)
-            .filter((entry) => entry.policy === "keyed-write")
-            .map((entry) => `${entry.method} ${entry.path}`)
-    );
+export function bindHandler(
+    endpoint: Endpoint,
+    handler: RouteHandler,
+    receipts: ReceiptCache = sharedReceipts
+): RouteDef {
+    if (endpoint.policy !== "keyed-write") {
+        return rowRoute(endpoint, handler);
+    }
 
-    return defs.map((def) => {
-        if (!keyed.has(`${def.method} ${def.pattern}`)) {
-            return def;
-        }
-
-        return {
-            ...def,
-            handler: async (ctx) => {
-                const key = ctx.headers[IDEMPOTENCY_HEADER];
-                return key
-                    ? receipts.once(`${def.method} ${ctx.pathname} ${key}`, async () => def.handler(ctx))
-                    : def.handler(ctx);
-            },
-        };
+    return rowRoute(endpoint, async (ctx) => {
+        const key = ctx.headers[IDEMPOTENCY_HEADER];
+        return key
+            ? receipts.once(`${endpoint.method} ${ctx.pathname} ${key}`, async () => handler(ctx))
+            : handler(ctx);
     });
 }

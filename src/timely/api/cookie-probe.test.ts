@@ -1,10 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readStoredCookie } from "@app/timely/utils/cookie";
 import { Storage } from "@genesiscz/utils/storage";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { type CookieRejection, probeAndSaveCookie } from "./cookie-probe";
-
-setupStorageSandbox();
 
 const realFetch = globalThis.fetch;
 

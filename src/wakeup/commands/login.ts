@@ -1,5 +1,5 @@
-import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Storage } from "@genesiscz/utils/storage";
 import type { Command } from "commander";
 import {
@@ -53,15 +53,18 @@ export async function runLoginFlow(storage: Storage): Promise<void> {
                 p.text({
                     message: "Server host:port",
                     initialValue: `${serverHost}:${serverPort}`,
+                    cancel: "back",
                 }),
             name: () =>
                 p.text({
                     message: "Device name",
                     initialValue: config.client?.name ?? "",
+                    cancel: "back",
                 }),
             password: () =>
                 p.password({
                     message: "Password",
+                    cancel: "back",
                 }),
         },
         {

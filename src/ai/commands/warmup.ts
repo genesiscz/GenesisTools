@@ -1,9 +1,9 @@
-import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { ACCOUNT_PROVIDER_ALIASES, providerAliasOf, resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { selectWarmupAccounts, type WarmupResult, warmupAccounts } from "@genesiscz/utils/ai/warmup";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -77,6 +77,7 @@ export function registerWarmupCommand(program: Command, opts: { provider?: strin
                     label: `${a.name} ${pc.dim(`(${providerAliasOf(a.provider)}${a.label ? `, ${a.label}` : ""})`)}`,
                 })),
                 required: true,
+                cancel: "back",
             });
 
             if (p.isCancel(picked)) {

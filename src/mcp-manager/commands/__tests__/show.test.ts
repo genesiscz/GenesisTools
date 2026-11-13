@@ -3,10 +3,7 @@ import { showServerConfig } from "@app/mcp-manager/commands/show.js";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { createMockServerConfig, MockMCPProvider } from "./test-utils.js";
-
-setupStorageSandbox();
 
 describe("showServerConfig", () => {
     let mockProvider: MockMCPProvider;

@@ -579,12 +579,15 @@ export function fixtureEventSource(url: string): EventSourceLike {
     }
 
     if (pathname === paths.live()) {
-        // The live stream says hello like the Mac's, then sends the pulse fixture when pulse is asked for.
+        // The live stream says hello like the Mac's, then sends the pulse fixture and a QA entry when asked for.
         const channels = (new URL(url).searchParams.get("channels") ?? "").split(",").filter(Boolean);
         return replay([
             { delayMs: 0, data: { v: 1, channel: "system", type: "hello", payload: { connId: "fixture", channels } } },
             ...(channels.includes("pulse")
                 ? [{ delayMs: 50, data: { v: 1, channel: "pulse", type: "snapshot", payload: mockPulse() } }]
+                : []),
+            ...(channels.includes("qa")
+                ? [{ delayMs: 800, data: { v: 1, channel: "qa", type: "entry", payload: MOCK_QA[0] } }]
                 : []),
         ]);
     }

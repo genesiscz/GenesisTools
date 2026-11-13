@@ -93,6 +93,7 @@ import { ZodError } from "zod";
 import cameraOps from "./__fixtures__/camera-ops.json";
 import cardVoiceovers from "./__fixtures__/card-voiceovers.json";
 import editMarkers from "./__fixtures__/edit-markers.json";
+import frameRules from "./__fixtures__/frame-rules.json";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import logoPictureTypes from "./__fixtures__/logo-picture-types.json";
 import partAudio from "./__fixtures__/part-audio.json";
@@ -100,6 +101,7 @@ import transcriptCuts from "./__fixtures__/transcript-cuts.json";
 import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema, syncDenoisedTranscript } from "./denoise";
 import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
 import { atempoChain, concatList, exportVideoArgv, sampleFpsFilter, speedArgv, trimArgv } from "./ffmpeg";
+import { transitionJoins } from "./fx";
 import { PICTURE_EXTENSIONS } from "./overlays";
 import { parseEditPlan, timeToUs } from "./plan";
 import { redactionBoxAt } from "./private-data";
@@ -4950,6 +4952,42 @@ describe.skipIf(skip.integration)("normalize measures what the export plays", ()
             ],
         });
         expect(Number.isFinite(sped)).toBe(true);
+    });
+});
+
+// The four frame rules the Swift renderer computes too (Tests/RecorderFrameRulesTests.swift replays the same file).
+describe("frame-rules.json is what the TypeScript rules compute (bun scripts/recorder/write-protocol-fixtures.ts)", () => {
+    test("output and source time", () => {
+        for (const item of frameRules.time.cases) {
+            const edit = editProjectSchema.parse(item.input.edit);
+            const value = {
+                outputUs: item.input.sourceUs.map((us) => projectOps.outputTimeOf(edit, us) ?? null),
+                sourceUs: item.input.outUs.map((us) => projectOps.sourceTimeOf(edit, us)),
+            };
+            expect<unknown>({ name: item.name, value }).toEqual({ name: item.name, value: item.value });
+        }
+    });
+
+    test("join detection", () => {
+        for (const item of frameRules.joins.cases) {
+            const value = transitionJoins(editProjectSchema.parse(item.input.edit));
+            expect<unknown>({ name: item.name, value }).toEqual({ name: item.name, value: item.value });
+        }
+    });
+
+    test("the zoom clamp", () => {
+        for (const item of frameRules.zoomClamp.cases) {
+            expect({ name: item.name, value: zoomView(item.input) }).toEqual({ name: item.name, value: item.value });
+        }
+    });
+
+    test("the hidden-part snap", () => {
+        for (const item of frameRules.hiddenSnap.cases) {
+            const value = projectOps
+                .snappedRedactionSpans(editProjectSchema.parse(item.input.edit))
+                .map(({ id, style, startUs, endUs }) => ({ id, style, startUs, endUs }));
+            expect<unknown>({ name: item.name, value }).toEqual({ name: item.name, value: item.value });
+        }
     });
 });
 
