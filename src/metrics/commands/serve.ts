@@ -8,7 +8,7 @@ import { type Command, Option } from "commander";
 
 const { log } = logger.scoped("metrics-service");
 
-interface ServeFlags {
+export interface ServeFlags {
     detach?: boolean;
     status?: boolean;
     stop?: boolean;
@@ -16,10 +16,15 @@ interface ServeFlags {
     startGate?: string;
 }
 
-async function detach(): Promise<void> {
+/** The command a `--detach` start runs: the serving flags (`--no-idle`) go with it. */
+export function detachedServeCommand(flags: Pick<ServeFlags, "idle">): string[] {
+    return ["metrics", "serve", ...(flags.idle === false ? ["--no-idle"] : [])];
+}
+
+async function detach(flags: ServeFlags): Promise<void> {
     const launch = await launchService({
         dir: metricsServiceDir(),
-        command: ["metrics", "serve"],
+        command: detachedServeCommand(flags),
         gates: toolDataDir("metrics", "start-gates"),
         label: "metrics service",
         logScope: "metrics-service",
@@ -79,7 +84,7 @@ async function serve(flags: ServeFlags): Promise<void> {
     }
 
     if (flags.detach) {
-        await detach();
+        await detach(flags);
         return;
     }
 

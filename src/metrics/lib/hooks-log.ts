@@ -101,6 +101,22 @@ function readChunk(path: string, offset: number, length: number): Buffer {
 }
 
 /**
+ * Where the line that goes on past `from` ends (the offset after its newline), read a chunk at a time so a long line
+ * is never held whole; undefined when the file ends first (a line its writer has not finished).
+ */
+function endOfLine(path: string, from: number, size: number): number | undefined {
+    for (let at = from; at < size; at += CHUNK_BYTES) {
+        const newline = readChunk(path, at, Math.min(CHUNK_BYTES, size - at)).indexOf(0x0a);
+
+        if (newline >= 0) {
+            return at + newline + 1;
+        }
+    }
+
+    return undefined;
+}
+
+/**
  * Reads the old log from the offset the store holds for it, whole lines only, and sends each batch through `ingest`
  * with its cursor, so the events and the new offset are written together and a second run adds only new lines.
  */
@@ -112,12 +128,42 @@ export async function importHooksLog(client: MetricsServiceClient, file: string)
     const summary: ImportSummary = { path, from, to: from, lines: 0, accepted: 0, rejected: 0, skipped: 0, bad: 0 };
     let offset = from;
 
+    const send = async (events: MetricEvent[], end: number, lines: number): Promise<void> => {
+        const answer = await client.call("ingest", { events, cursor: { path, start: offset, end, lines } });
+
+        if ("cursorMismatch" in answer) {
+            throw new Error(
+                `the store holds offset ${answer.cursorMismatch.stored} for ${path}, not ${offset}: another import ran at the same time`
+            );
+        }
+
+        summary.accepted += answer.accepted;
+        summary.rejected += answer.rejected;
+        summary.lines += lines;
+        offset = end;
+        summary.to = offset;
+    };
+
     while (offset < size) {
         const chunk = readChunk(path, offset, Math.min(CHUNK_BYTES, size - offset));
         const last = chunk.lastIndexOf(0x0a);
 
         if (last < 0) {
-            break;
+            // No newline in a whole chunk: one line longer than a chunk, or the last line, still being written.
+            const end = endOfLine(path, offset + chunk.length, size);
+
+            if (end === undefined) {
+                break;
+            }
+
+            // Skipped and counted as bad, but the cursor moves past it, so the lines after it are imported.
+            summary.bad += 1;
+            log.warn(
+                { path, line: summary.lines + 1, bytes: end - offset },
+                `a hooks log line longer than ${CHUNK_BYTES} bytes was skipped`
+            );
+            await send([], end, 1);
+            continue;
         }
 
         const lines = chunk.subarray(0, last).toString("utf8").split("\n");
@@ -147,23 +193,7 @@ export async function importHooksLog(client: MetricsServiceClient, file: string)
             throw new Error(`a hooks log chunk of ${events.length} lines is larger than one ingest batch`);
         }
 
-        const end = offset + last + 1;
-        const answer = await client.call("ingest", {
-            events,
-            cursor: { path, start: offset, end, lines: lines.length },
-        });
-
-        if ("cursorMismatch" in answer) {
-            throw new Error(
-                `the store holds offset ${answer.cursorMismatch.stored} for ${path}, not ${offset}: another import ran at the same time`
-            );
-        }
-
-        summary.accepted += answer.accepted;
-        summary.rejected += answer.rejected;
-        summary.lines += lines.length;
-        offset = end;
-        summary.to = offset;
+        await send(events, offset + last + 1, lines.length);
     }
 
     log.debug(summary, "hooks log imported");
