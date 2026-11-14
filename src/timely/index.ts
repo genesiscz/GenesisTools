@@ -25,7 +25,7 @@ import { registerProjectsCommand } from "./commands/projects";
 import { registerStatusCommand } from "./commands/status";
 import { reportTimelyFailure } from "./utils/failure";
 
-// Use inquirer backend for this tool
+// Use clack backend for this tool
 p.setBackend(clackBackend);
 
 // Initialize shared dependencies

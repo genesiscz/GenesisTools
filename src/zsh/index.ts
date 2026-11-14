@@ -157,6 +157,8 @@ program
                 label: rc,
             })),
             initialValues: rcPaths,
+            // An install into no rc file would save the config, write hook.sh and report success for nothing.
+            required: true,
             cancel: "back",
         });
 

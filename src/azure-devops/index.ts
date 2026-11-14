@@ -30,7 +30,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { clackBackend } from "@genesiscz/utils/prompts/p/clack-backend";
 
-// Use inquirer backend for this tool
+// Use clack backend for this tool
 p.setBackend(clackBackend);
 
 // Import command registration functions
