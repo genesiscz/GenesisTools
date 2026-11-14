@@ -191,24 +191,42 @@ export function formatPlan(groups: Omit<PlanGroup, "index">[]): string {
     return `${blocks.join("\n\n")}\n`;
 }
 
-export function canonicalPaths({ cwd, base, head }: { cwd: string; base: string; head: string }): string[] {
-    const out = must(
-        runGit(["diff-tree", "-r", "-z", "--no-renames", "--no-commit-id", "--name-only", base, head], { cwd }),
-        "git diff-tree"
-    );
-    return out.split("\0").filter(Boolean).sort();
+export interface RangeChanges {
+    /** Every path base..head changes, sorted: the canonical list. */
+    paths: string[];
+    /** The paths base..head deletes. */
+    deleted: Set<string>;
 }
 
-/** The paths base..head deletes, rename detection off like the canonical list. */
-export function deletedPaths({ cwd, base, head }: { cwd: string; base: string; head: string }): Set<string> {
-    const out = must(
-        runGit(
-            ["diff-tree", "-r", "-z", "--no-renames", "--no-commit-id", "--name-only", "--diff-filter=D", base, head],
-            { cwd }
-        ),
+/** What base..head changes, from one `diff-tree` with rename detection off, so both lists come from the same diff. */
+export function rangeChanges({ cwd, base, head }: { cwd: string; base: string; head: string }): RangeChanges {
+    const fields = must(
+        runGit(["diff-tree", "-r", "-z", "--no-renames", "--no-commit-id", "--name-status", base, head], { cwd }),
         "git diff-tree"
-    );
-    return new Set(out.split("\0").filter(Boolean));
+    ).split("\0");
+    const paths: string[] = [];
+    const deleted = new Set<string>();
+
+    // `-z --name-status` writes a status field, then its path, each ended by NUL.
+    for (let i = 0; i + 1 < fields.length; i += 2) {
+        const path = fields[i + 1];
+        paths.push(path);
+
+        if (fields[i] === "D") {
+            deleted.add(path);
+        }
+    }
+
+    return { paths: paths.sort(), deleted };
+}
+
+export function canonicalPaths({ cwd, base, head }: { cwd: string; base: string; head: string }): string[] {
+    return rangeChanges({ cwd, base, head }).paths;
+}
+
+/** The id of the tree of `ref`. */
+export function treeOf({ cwd, ref }: { cwd: string; ref: string }): string {
+    return must(runGit(["rev-parse", "--verify", `${ref}^{tree}`], { cwd }), "git rev-parse").trim();
 }
 
 export interface TreeEntry {
@@ -285,7 +303,8 @@ export interface HeadIndex {
 /**
  * Head's entry for each path, or a deletion line for a path base..head deletes. A path with no
  * entry that is not deleted is unresolved and gets no line: an entry lookup that came back short
- * must never turn into a deleted file.
+ * must never turn into a deleted file. A caller that already has `deleted` (`rangeChanges`) or
+ * head's tree passes them, so neither is read twice.
  */
 export function headIndexLines({
     cwd,
@@ -293,18 +312,20 @@ export function headIndexLines({
     head,
     paths,
     readEntries = treeEntries,
+    deleted = rangeChanges({ cwd, base, head }).deleted,
+    headTree = treeOf({ cwd, ref: head }),
 }: {
     cwd: string;
     base: string;
     head: string;
     paths: string[];
     readEntries?: EntryReader;
+    deleted?: Set<string>;
+    headTree?: string;
 }): HeadIndex {
     const entries = readEntries({ cwd, ref: head, paths });
-    const deleted = deletedPaths({ cwd, base, head });
-    const hashLength = must(runGit(["rev-parse", "--verify", `${head}^{tree}`], { cwd }), "git rev-parse").trim()
-        .length;
-    const zero = "0".repeat(hashLength);
+    // The null id has the length of the repository's hash (SHA-1 or SHA-256).
+    const zero = "0".repeat(headTree.length);
     const lines = new Map<string, string>();
     const unresolved: string[] = [];
 
@@ -370,7 +391,8 @@ export function checkPlan({
         }
     }
 
-    const canonical = canonicalPaths({ cwd, base, head });
+    const changes = rangeChanges({ cwd, base, head });
+    const canonical = changes.paths;
     const canonicalSet = new Set(canonical);
     const union = new Set(owners.keys());
 
@@ -386,7 +408,8 @@ export function checkPlan({
         }
     }
 
-    const index = headIndexLines({ cwd, base, head, paths: [...union] });
+    const headTree = treeOf({ cwd, ref: head });
+    const index = headIndexLines({ cwd, base, head, paths: [...union], deleted: changes.deleted, headTree });
     const gaps = index.unresolved.filter((path) => canonicalSet.has(path));
 
     if (gaps.length > 0) {
@@ -420,8 +443,6 @@ export function checkPlan({
 
             previous = tree;
         }
-
-        const headTree = must(runGit(["rev-parse", `${head}^{tree}`], { cwd }), "git rev-parse").trim();
 
         if (previous !== headTree) {
             problems.push(`tree: replaying the plan gives ${previous}, head tree is ${headTree}`);
