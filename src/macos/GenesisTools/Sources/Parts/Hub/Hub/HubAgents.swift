@@ -211,7 +211,7 @@ enum AgentsSource {
         }
 
         let args = ["hub", "agents", "--json"] + (session.map { ["--session", $0] } ?? [])
-        return try decode(run(args))
+        return try query(args)
     }
 
     /// `tools hub agents --session <p> --agent <c> --json`: one agent with its whole spawn prompt.
@@ -221,7 +221,7 @@ enum AgentsSource {
         }
 
         let args = ["hub", "agents", "--agent", child, "--json"] + (parent.map { ["--session", $0] } ?? [])
-        return try JSONDecoder().decode(Envelope.self, from: run(args)).agent
+        return try query(args, as: Envelope.self).agent
     }
 
     /// Whole spawn prompts by agent key: a prompt never changes once the agent started.
@@ -241,22 +241,21 @@ enum AgentsSource {
             let agents: [Count]
         }
 
-        let data = try run(["hub", "agents", "counts", "--session", parent, "--ids", ids.joined(separator: ","), "--json"])
-        return try JSONDecoder().decode(Envelope.self, from: data).agents
+        return try query(["hub", "agents", "counts", "--session", parent, "--ids", ids.joined(separator: ","), "--json"],
+                         as: Envelope.self).agents
     }
 
     static func mail(parent: String, child: String) throws -> AgentMail {
-        let data = try run(["hub", "agents", "mail", "--session", parent, "--agent", child, "--json"])
-        return try JSONDecoder().decode(AgentMail.self, from: data)
+        try query(["hub", "agents", "mail", "--session", parent, "--agent", child, "--json"])
     }
 
     static func decode(_ data: Data) throws -> AgentsEnvelope {
         try JSONDecoder().decode(AgentsEnvelope.self, from: data)
     }
 
-    /// The JSON a `tools hub agents` verb printed, its preamble dropped by the client.
-    private static func run(_ args: [String]) throws -> Data {
-        try HubSource.bridge.json(args, timeout: 90)
+    /// The JSON a `tools hub agents` verb printed, its preamble dropped by the client (`ToolsBridge.json`), decoded.
+    private static func query<T: Decodable>(_ args: [String], as type: T.Type = T.self) throws -> T {
+        try JSONDecoder().decode(type, from: HubSource.bridge.json(args, timeout: 90))
     }
 }
 
