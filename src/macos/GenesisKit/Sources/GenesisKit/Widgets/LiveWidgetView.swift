@@ -1344,7 +1344,7 @@ public struct LiveWidgetView: View {
         }
         if model.voiceActive {
             HStack(alignment: .center, spacing: 9) {
-                VoiceLevelBars(level: min(1, model.voiceLevel * 5), tint: .red, reduceMotion: model.effectiveReduceMotion)
+                WidgetVoiceBars(meter: model.voiceMeter, reduceMotion: model.effectiveReduceMotion)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.voiceMode == .note ? "Voice note" : "Dictation")
                         .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)

@@ -2789,6 +2789,46 @@ final class WidgetComposerClickTests: XCTestCase {
         XCTAssertNil(FrameProbe.frames["widget.peek.ownAnswer"], "news has no own answer field")
     }
 
+    /// The redraw measurement of a live dictation (swift skill: count bodies with `RenderProbe`). The listener sends one
+    /// `level` line per 100 ms audio frame (`frameBytes` in `pcm-source.ts`, 10 Hz), so ten seconds of dictation is 100
+    /// writes of `WidgetModel.voiceLevel` into a hosted `LiveWidgetView` with the selected session's composer open. It
+    /// counts the model's publishes and every probed body that ran, per run, over `WIDGET_VOICE_REDRAW=<runs>` runs.
+    /// Off by default; prints one `widget.voice.redraw` line per run.
+    func testTenSecondsOfDictationRedrawCount() throws {
+        guard let runs = ProcessInfo.processInfo.environment["WIDGET_VOICE_REDRAW"].flatMap(Int.init), runs > 0 else {
+            throw XCTSkip("a measurement; run with WIDGET_VOICE_REDRAW=<runs>")
+        }
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try StagingFixture.snapshot(draftOption: nil)])
+        model.select(StagingFixture.key)
+        let window = hostedWidget(model)
+        defer { window.orderOut(nil); window.close() }
+        pump(0.5)
+        let wasOn = RenderProbe.enabled
+        RenderProbe.enabled = true
+        defer { RenderProbe.enabled = wasOn }
+        let watch = RenderProbe.watch(model, "widgetModel")
+        defer { watch?.cancel() }
+        model.voiceActive = true
+        pump(0.3)
+        let frames = 100
+        for run in 1...runs {
+            let start = RenderProbe.snapshot()
+            for frame in 0..<frames {
+                model.voiceLevel = 0.05 + 0.04 * Double(frame % 7)
+                pump(0.1)
+            }
+            let ran = RenderProbe.snapshot().filter { $0.value > (start[$0.key] ?? 0) }
+                .map { ($0.key, $0.value - (start[$0.key] ?? 0)) }.sorted { $0.0 < $1.0 }
+            print("widget.voice.redraw run=\(run) frames=\(frames) "
+                + ran.map { "\($0.0)=\($0.1)" }.joined(separator: " "))
+        }
+        model.voiceActive = false
+    }
+
     private static let size = NSSize(width: 520, height: 700)
 
     /// The widget in a hidden window that takes the first click on any control.

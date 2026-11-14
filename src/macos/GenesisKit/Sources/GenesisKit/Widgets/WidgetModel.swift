@@ -205,7 +205,13 @@ public final class WidgetModel: ObservableObject {
     public var voiceTranscript: String {
         (voiceFinals + [voiceText]).filter { !$0.isEmpty }.joined(separator: " ")
     }
-    @Published public var voiceLevel = 0.0
+    /// The dictation's voice level, in its own object: it changes once per audio frame (10 Hz), and the only reader
+    /// is the level bars, so the model itself does not publish it. Writers keep assigning `voiceLevel`.
+    public let voiceMeter = WidgetVoiceMeter()
+    public var voiceLevel: Double {
+        get { voiceMeter.level }
+        set { voiceMeter.level = newValue }
+    }
     @Published public var voiceActive = false
     @Published public var reading = false
     @Published public var reduceMotion = false {
