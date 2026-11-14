@@ -23,7 +23,7 @@
  * change, 1 when it lacks one, 2 when git cannot answer.
  */
 import { flag } from "./run";
-import { prepGit } from "./versions";
+import { mustGit } from "./versions";
 
 export interface BehindRef {
     ref: string;
@@ -38,14 +38,9 @@ export interface BehindRef {
 /** One entry per ref whose merge into `branch` would change `branch` or cannot be made; none when it holds them all. */
 export function behindUnified(options: { cwd: string; branch: string; refs: string[] }): BehindRef[] {
     const { cwd, branch, refs } = options;
-    const git = prepGit(cwd);
     const must = (args: string[], okCodes = [0]) => {
-        const result = git(args);
-        if (!okCodes.includes(result.code)) {
-            throw new Error(`git ${args[0]}: ${result.out.trim().slice(0, 300)}`);
-        }
-
-        return result;
+        const result = mustGit(args, { cwd, okCodes });
+        return { code: result.exitCode, out: result.stdout.toString() };
     };
     const behind: BehindRef[] = [];
     const branchTree = must(["rev-parse", `${branch}^{tree}`]).out.trim();

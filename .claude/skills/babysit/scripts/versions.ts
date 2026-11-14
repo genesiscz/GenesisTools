@@ -135,6 +135,18 @@ export function spawnGit(args: string[], options: GitSpawn = {}) {
     return result;
 }
 
+/** `spawnGit` for a call that must exit with one of `okCodes` (0 when unset). Any other exit throws
+ * `git <cmd>: <stderr>`. */
+export function mustGit(args: string[], options: GitSpawn & { okCodes?: number[] } = {}) {
+    const { okCodes = [0], ...spawn } = options;
+    const result = spawnGit(args, spawn);
+    if (!okCodes.includes(result.exitCode ?? -1)) {
+        throw new Error(`git ${args[0]}: ${result.stderr.toString().trim()}`);
+    }
+
+    return result;
+}
+
 /**
  * `git cherry <upstream> <head> [<limit>]` with verbatim patch ids: the commits of `upstream..head` (after `limit`)
  * whose change `upstream` does not hold byte for byte. `git cherry` strips every space, so a commit that changes only
@@ -142,14 +154,7 @@ export function spawnGit(args: string[], options: GitSpawn = {}) {
  */
 export function unpickedCommits(options: { cwd: string; upstream: string; head: string; limit?: string }): string[] {
     const { cwd, upstream, head, limit } = options;
-    const must = (args: string[], stdin?: Uint8Array) => {
-        const result = spawnGit(args, { cwd, stdin });
-        if (result.exitCode !== 0) {
-            throw new Error(`git ${args[0]}: ${result.stderr.toString().trim()}`);
-        }
-
-        return result.stdout.toString();
-    };
+    const must = (args: string[], stdin?: Uint8Array) => mustGit(args, { cwd, stdin }).stdout.toString();
     const patchIds = (range: string[]) => {
         const log = must([
             "log",

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { spawnGit } from "./versions";
+import { mustGit, spawnGit } from "./versions";
 
 interface PatchComparison {
     /** null: the old range does not change the file, only the restacked range does. */
@@ -128,13 +128,7 @@ function parseBranches(args: string[]): { branches: Branch[]; reference?: string
 
 function run(args: string[]): number {
     const { branches, reference, json } = parseBranches(args);
-    const git = (args: string[], stdin?: Uint8Array) => {
-        const result = spawnGit(args, { stdin });
-        if (result.exitCode !== 0) {
-            throw new Error(`git ${args[0]}: ${result.stderr.toString().trim()}`);
-        }
-        return result.stdout;
-    };
+    const git = (args: string[], stdin?: Uint8Array) => mustGit(args, { stdin }).stdout;
     const diff = (base: string, head: string, file: string) =>
         git([
             "--literal-pathspecs",
