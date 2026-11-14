@@ -67,7 +67,7 @@ import * as transcribeTerms from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
 import { z } from "zod";
-import { claimWatcher, ensureWatcher, watcherPidPath } from "./commands/watch";
+import { claimWatcher } from "./commands/watch";
 import { buildQuestion } from "./lib/assign";
 import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
@@ -130,6 +130,7 @@ import {
     watchOnce,
 } from "./lib/watch";
 import { readAuto, writeAuto } from "./lib/watch-auto";
+import { ensureWatcher, watcherPidPath } from "./lib/watcher";
 
 function line(speaker: string, startSec: number, text: string, speakerId?: number): TranscriptEntry {
     return { speaker, startSec, text, speakerId };

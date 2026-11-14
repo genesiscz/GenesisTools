@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { ensureWidgetRunning } from "@app/hub/lib/widget/autostart";
-import { ensureWatcher } from "@app/meetings/commands/watch";
+import { ensureWatcher } from "@app/meetings/lib/watcher";
 import { configureLogger, logger } from "@genesiscz/utils/logger";
 import {
     attemptStaleTakeover,
