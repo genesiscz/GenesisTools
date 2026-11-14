@@ -140,13 +140,15 @@ public actor FailureCaptureStore {
         }
 
         let recordedAt = Date()
+        // The caller's own argv: `report` already carries it masked, and masked values cannot name a raw credential.
+        let argv = input.call?.argv ?? []
         write(Record(recordedAt: recordedAt, report: report), for: report)
         let environment = self.environment
         let enrich = self.enrich
         let task = Task { [weak self] in
             guard let self else { return report }
             return await ToolsCallTrace.$ledger.withValue(nil) {
-                await self.gather(report, recordedAt: recordedAt, environment: environment, enrich: enrich)
+                await self.gather(report, argv: argv, recordedAt: recordedAt, environment: environment, enrich: enrich)
             }
         }
         work[key] = task
@@ -155,10 +157,12 @@ public actor FailureCaptureStore {
         return ready
     }
 
-    private func gather(_ report: FailureReport, recordedAt: Date, environment: @escaping @Sendable () async -> FailureEnvironment?,
+    private func gather(_ report: FailureReport, argv: [String], recordedAt: Date, environment: @escaping @Sendable () async -> FailureEnvironment?,
                         enrich: @Sendable (FailureReport) async -> FailureReport) async -> FailureReport {
         let snapshot = Task { await self.facts(environment) }
         var ready = await enrich(report)
+        // The enrichment appends perf-log lines raw, and they can carry a child's stderr.
+        ready.log = ToolsCallTrace.redactedText(ready.log, argv: argv)
         let facts = await snapshot.value
         let capturedAt = Date()
         if var context = report.environment ?? facts {
@@ -178,7 +182,9 @@ public actor FailureCaptureStore {
     private static func merged(_ report: FailureReport, from captured: FailureReport) -> FailureReport {
         var ready = report
         ready.environment = captured.environment
-        if ready.log.isEmpty {
+        // The capture's log replaces the caller's when the caller had none, when the capture holds it, or when the
+        // capture located its trace line (its enrichment rebuilt the log, so the caller's text is the older one).
+        if ready.log.isEmpty || captured.log.contains(ready.log) || captured.logFile != nil {
             ready.log = captured.log
             ready.logFile = captured.logFile
             ready.logLine = captured.logLine

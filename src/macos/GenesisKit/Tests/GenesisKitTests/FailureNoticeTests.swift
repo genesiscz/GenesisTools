@@ -774,6 +774,32 @@ final class FailureInlineTests: XCTestCase {
         XCTAssertEqual(again.logLine, 42)
     }
 
+    func testAMergedCaptureKeepsItsDiagnosticsWhenTheCallerSuppliesANonemptyLog() async throws {
+        let store = FailureCaptureStore(directory: temporaryURL("failure-capture"), environment: { nil }, enrich: { report in
+            var enriched = report
+            enriched.log = "error: refused\ntrace line"
+            enriched.logFile = "/tmp/fixture-perf.log"
+            enriched.logLine = 7
+            return enriched
+        })
+        let report = FailureReport(headline: "failed", log: "error: refused")
+        _ = await store.prepared(report)
+        let again = await store.prepared(report)
+        XCTAssertEqual(again.log, "error: refused\ntrace line")
+        XCTAssertEqual(again.logFile, "/tmp/fixture-perf.log")
+        XCTAssertEqual(again.logLine, 7)
+    }
+
+    func testTheEnrichedLogOfACaptureHidesACredentialInAPerfLogLine() async throws {
+        let store = FailureCaptureStore(directory: temporaryURL("failure-capture"), environment: { nil }, enrich: { report in
+            var enriched = report
+            enriched.log = "mark stderr Authorization: Bearer fixture-token-123"
+            return enriched
+        })
+        let ready = await store.prepared(FailureReport(headline: "failed", log: ""))
+        XCTAssertFalse(ready.log.contains("fixture-token-123"), ready.log)
+    }
+
     func testDiagnosticWorkOutsideTheCallersLedgerNeverBecomesItsFailedCall() async {
         let ledger = ToolsCallLedger()
         let store = FailureCaptureStore(directory: temporaryURL("failure-capture"), environment: { nil }, enrich: { report in
