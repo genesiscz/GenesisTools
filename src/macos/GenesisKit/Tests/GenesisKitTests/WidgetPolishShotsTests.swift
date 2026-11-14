@@ -25,9 +25,9 @@ final class WidgetPolishShotsTests: XCTestCase {
         let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: state.path,
             defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
                 notificationNamespace: "polish." + UUID().uuidString, observeExternalChanges: false))
-        var preferences: [String: Any] = ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+        var preferences: [String: Any] = WidgetTestPreferences.dictionary(["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
             "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en",
-            "previewSort": "recent"]
+            "previewSort": "recent"])
         if let panelBackground { preferences["panelBackground"] = panelBackground }
         if let decisionClick { preferences["decisionClick"] = decisionClick }
         let sessions: [[String: Any]] = ["Kalendora hotfix research", "gt-native-ux", "gt-fixes"].enumerated().map { index, title in

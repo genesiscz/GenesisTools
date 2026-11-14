@@ -13,7 +13,7 @@ struct WidgetInboxOverview: View {
     @State private var focusedOption: String?
     @GenReduceMotion private var reduceMotion
 
-    private var filter: String { filterPick ?? model.snapshot?.state.preferences.overviewFilter ?? "all" }
+    private var filter: String { filterPick ?? model.preferences.overviewFilter }
 
     private var items: [WidgetInboxItem] {
         let all = model.inboxOverviewItems
@@ -25,7 +25,7 @@ struct WidgetInboxOverview: View {
     }
 
     /// Items under their session ("session", the default) or one list (Widgets → Inbox, and the header button).
-    private var grouped: Bool { (model.snapshot?.state.preferences.inboxGrouping ?? "session") == "session" }
+    private var grouped: Bool { model.preferences.inboxGrouping == "session" }
 
     /// The rows in the order they are drawn: grouped under their sessions, or the one list.
     private func drawnOrder(_ items: [WidgetInboxItem]) -> [WidgetInboxItem] {
@@ -129,9 +129,9 @@ struct WidgetInboxOverview: View {
             }
             return
         }
-        let preferences = model.snapshot?.state.preferences
+        let preferences = model.preferences
         let stages = DecisionAnswering.clickStages(preferences, command: alternate)
-        let swaps = preferences?.decisionCommandSwaps ?? true
+        let swaps = preferences.decisionCommandSwaps
         if stages {
             guard model.clickStagesNow else {
                 model.postNote("Hold ⌘ with Return to stage it.")
@@ -170,7 +170,7 @@ struct WidgetInboxOverview: View {
                 IconButton(systemName: grouped ? "list.bullet" : "rectangle.3.group",
                            tooltip: grouped ? "Show one list" : "Group the items by session") {
                     model.holdAgentFit()
-                    model.updatePreferences(["inboxGrouping": .string(grouped ? "list" : "session")])
+                    model.writePreferences { $0.inboxGrouping = grouped ? "list" : "session" }
                 }.accessibilityLabel(grouped ? "Show one list" : "Group by session")
                 if model.inboxCount > 0 {
                     Button("Mark all read", action: model.markAllRead)
@@ -321,7 +321,7 @@ struct WidgetInboxOverview: View {
     /// here is not made blind: the entry showed only "a", "b", "c" for a decision whose words were in its prompt
     /// (Martin, 2026-11-01). Widgets → General, "Show the question in the inbox of every session".
     @ViewBuilder private func summary(_ item: WidgetInboxItem) -> some View {
-        if model.snapshot?.state.preferences.overviewSummary ?? true, item.needsAnswer,
+        if model.preferences.overviewSummary, item.needsAnswer,
            let summary = item.summary, !summary.isEmpty {
             WidgetPeekSummary(summary: summary, identifier: "widget.overview.summary").equatable()
         }

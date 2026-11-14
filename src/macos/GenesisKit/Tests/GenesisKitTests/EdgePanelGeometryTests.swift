@@ -425,7 +425,7 @@ final class WidgetInteractionTests: XCTestCase {
             do { try FileManager.default.removeItem(at: directory) } catch { XCTFail("Fixture cleanup: \(error)") }
         }
         let snapshot = """
-            {"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
+            {"version":1,"state":{"version":1,"revision":0,"preferences":\(WidgetTestPreferences.json()),"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
             """
         try snapshot.write(to: directory.appendingPathComponent("snapshot.json"), atomically: true, encoding: .utf8)
         let script = directory.appendingPathComponent("tools")
@@ -460,8 +460,8 @@ final class WidgetInteractionTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(100))
         }
         XCTAssertNotNil(value.snapshot)
-        for step in 0...100 { value.updatePreferences(["sidePosition": .number(Double(step) / 100)]) }
-        value.updatePreferences(["side": .string("left")])
+        for step in 0...100 { value.writePreferences { $0.sidePosition = Double(step) / 100 } }
+        value.writePreferences { $0.side = "left" }
         XCTAssertEqual(value.snapshot?.state.preferences.sidePosition, 1)
         XCTAssertEqual(value.snapshot?.state.preferences.side, "left")
         // The fake `tools` creates the file before it writes the row and its newline: wait for the newline, or a read
@@ -1020,7 +1020,7 @@ final class WidgetVisibilityTests: XCTestCase {
             "widget-visibility-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let saved = """
-            {"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
+            {"version":1,"state":{"version":1,"revision":0,"preferences":\(WidgetTestPreferences.json()),"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
             """
         try saved.write(to: directory.appendingPathComponent("saved.json"), atomically: true, encoding: .utf8)
         let script = directory.appendingPathComponent("tools")
@@ -1073,7 +1073,7 @@ final class WidgetVisibilityTests: XCTestCase {
         defer { coordinator.stop() }
         try await waitFor { coordinator.model.snapshot != nil && !pages.isEmpty }
 
-        XCTAssertNil(coordinator.model.snapshot?.state.preferences.showWidget, "an old state has no key")
+        XCTAssertEqual(coordinator.model.snapshot?.state.preferences.showWidget, false, "a state that never set it reads as off")
         XCTAssertFalse(coordinator.panelsEnabled)
         XCTAssertEqual(pages, ["widgets.general"], "a bare --widget opens the settings when the widget is off")
         XCTAssertEqual(coordinator.panelCount, 0)
@@ -1127,14 +1127,14 @@ final class WidgetVisibilityTests: XCTestCase {
         XCTAssertEqual(coordinator.panelCount, 0)
         XCTAssertEqual(shownChanges, [false], "once at start")
 
-        coordinator.model.updatePreferences(["showWidget": .bool(true)])
+        coordinator.model.writePreferences { $0.showWidget = true }
         XCTAssertTrue(coordinator.panelsEnabled)
         XCTAssertGreaterThan(coordinator.panelCount, 0)
         XCTAssertGreaterThan(ordered, 0, "the panels order front as soon as the switch turns on")
         XCTAssertTrue(coordinator.panelMonitorsInstalled)
         XCTAssertEqual(shownChanges, [false, true])
 
-        coordinator.model.updatePreferences(["showWidget": .bool(false)])
+        coordinator.model.writePreferences { $0.showWidget = false }
         XCTAssertEqual(coordinator.panelCount, 0)
         XCTAssertFalse(coordinator.panelMonitorsInstalled)
         XCTAssertEqual(shownChanges, [false, true, false], "a rebuild with the same value calls nothing")
@@ -1154,21 +1154,21 @@ final class WidgetVisibilityTests: XCTestCase {
         defer { coordinator.stop() }
         try await waitFor { coordinator.model.snapshot != nil }
 
-        coordinator.model.updatePreferences(["showWidget": .bool(true), "placement": .string("both")])
+        coordinator.model.writePreferences { $0.showWidget = true; $0.placement = "both" }
         XCTAssertTrue(shown.contains(.top), "placement both orders the top panel front")
         XCTAssertTrue(shown.contains(.right), "placement both orders the side panels front")
 
         shown = []
-        coordinator.model.updatePreferences(["placement": .string("top")])
+        coordinator.model.writePreferences { $0.placement = "top" }
         XCTAssertTrue(shown.contains(.top))
         XCTAssertFalse(shown.contains(.right), "placement top shows no side panel")
 
         shown = []
-        coordinator.model.updatePreferences(["placement": .string("side")])
+        coordinator.model.writePreferences { $0.placement = "side" }
         XCTAssertFalse(shown.contains(.top), "placement side shows no top panel")
 
         shown = []
-        coordinator.model.updatePreferences(["placement": .string("both"), "topModules": .array([.string("capture")])])
+        coordinator.model.writePreferences { $0.placement = "both"; $0.topModules = ["capture"] }
         XCTAssertTrue(shown.contains(.top), "a new top module set keeps the top panel")
     }
 
@@ -1190,7 +1190,7 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.start(showSettings: true)
         defer { coordinator.stop() }
         try await waitFor { coordinator.model.snapshot != nil }
-        coordinator.model.updatePreferences(["showWidget": .bool(true), "placement": .string("side")])
+        coordinator.model.writePreferences { $0.showWidget = true; $0.placement = "side" }
 
         let decision = WidgetInboxItem(id: "decision:d_4_s", sourceId: "d_4_s", kind: "decision", key: "local:claude:s:",
             at: 2_000, needsAnswer: true, title: "Ship it?", number: 4)
@@ -1201,7 +1201,7 @@ final class WidgetVisibilityTests: XCTestCase {
         XCTAssertNil(coordinator.model.peekItem)
 
         coordinator.alert([result, decision])
-        XCTAssertEqual(chimes, [nil], "one chime with the default sound")
+        XCTAssertEqual(chimes, ["Glass"], "one chime with the default sound")
         XCTAssertEqual(coordinator.model.peekItem, decision, "the item that waits for an answer pops up")
         XCTAssertEqual(coordinator.model.hoveredSurface?.edge, .right)
         XCTAssertEqual(coordinator.model.presentation(for: try XCTUnwrap(coordinator.model.hoveredSurface)), .preview)
@@ -1225,20 +1225,20 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.alert([decision])
         XCTAssertNil(coordinator.model.peekItem, "no popup while the pointer is in a panel")
         XCTAssertEqual(coordinator.model.moduleSelections[side.key], "capture", "a refused popup keeps the selected module")
-        XCTAssertEqual(chimes, [nil, nil], "a refused popup still chimes")
+        XCTAssertEqual(chimes, ["Glass", "Glass"], "a refused popup still chimes")
         coordinator.model.hover(side, inside: false)
         coordinator.model.collapse()
         chimes.removeLast()
-        coordinator.model.updatePreferences(["alertPopup": .bool(false), "alertSound": .string("Ping")])
+        coordinator.model.writePreferences { $0.alertPopup = false; $0.alertSound = "Ping" }
         coordinator.alert([decision])
-        XCTAssertEqual(chimes, [nil, "Ping"])
+        XCTAssertEqual(chimes, ["Glass", "Ping"])
         XCTAssertNil(coordinator.model.peekItem, "alertPopup off shows no popup")
 
-        coordinator.model.updatePreferences(["alertDecisions": .bool(false)])
+        coordinator.model.writePreferences { $0.alertDecisions = false }
         coordinator.alert([decision])
         XCTAssertEqual(chimes.count, 2, "alertDecisions off: a decision is silent")
         XCTAssertEqual(Set(volumes), [1], "full volume by default")
-        coordinator.model.updatePreferences(["alertDecisions": .bool(true), "alertVolume": .number(40)])
+        coordinator.model.writePreferences { $0.alertDecisions = true; $0.alertVolume = 40 }
         coordinator.alert([decision])
         XCTAssertEqual(try XCTUnwrap(volumes.last), 0.4, accuracy: 0.001, "the chime plays at the volume setting")
 
@@ -1251,7 +1251,7 @@ final class WidgetVisibilityTests: XCTestCase {
         XCTAssertEqual(chimes.last, "Tink", "an answer from elsewhere plays its own sound")
         XCTAssertEqual(coordinator.model.peekItem, answered, "and pops up")
         coordinator.model.collapse()
-        coordinator.model.updatePreferences(["autoDecisionPopup": .bool(false)])
+        coordinator.model.writePreferences { $0.autoDecisionPopup = false }
         let heard = chimes.count
         coordinator.alertAnswered([answered])
         XCTAssertEqual(chimes.count, heard, "Announce them off: silent")
@@ -1267,7 +1267,7 @@ final class WidgetVisibilityTests: XCTestCase {
         XCTAssertEqual(coordinator.model.peekSeconds, 0, "it stays until it is closed")
         XCTAssertEqual(WidgetAlerts.kicker(try XCTUnwrap(coordinator.model.peekItem)), "Staged, not sent")
         coordinator.model.collapse()
-        coordinator.model.updatePreferences(["stagedReminder": .bool(false)])
+        coordinator.model.writePreferences { $0.stagedReminder = false }
         coordinator.remindStaged([staged])
         XCTAssertNil(coordinator.model.peekItem, "Staged at start off: no reminder")
     }
@@ -1288,23 +1288,22 @@ final class WidgetVisibilityTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: folder) }
         let file = folder.appendingPathComponent("state.json")
         func save(_ click: String, at stamp: Date) throws {
-            let preferences = try JSONDecoder().decode(WidgetPreferences.self, from: Data(
-                #"{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","decisionClick":"CLICK","decisionCommandSwaps":true}"#
-                    .replacingOccurrences(of: "CLICK", with: click).utf8))
+            let preferences = try WidgetTestPreferences.decode(
+                #"{"decisionClick":"CLICK","decisionCommandSwaps":true}"#.replacingOccurrences(of: "CLICK", with: click))
             try JSONEncoder().encode(["preferences": preferences]).write(to: file)
             try FileManager.default.setAttributes([.modificationDate: stamp], ofItemAtPath: file.path)
         }
         let reader = WidgetPreferencesFile(path: file.path)
         XCTAssertNil(reader.current(), "no file: the defaults")
         try save("send", at: Date(timeIntervalSince1970: 1_000))
-        XCTAssertFalse(DecisionAnswering.clickStages(reader.current(), command: false), "Send at once")
-        XCTAssertTrue(DecisionAnswering.clickStages(reader.current(), command: true), "⌘-click stages")
+        XCTAssertFalse(DecisionAnswering.clickStages(try XCTUnwrap(reader.current()), command: false), "Send at once")
+        XCTAssertTrue(DecisionAnswering.clickStages(try XCTUnwrap(reader.current()), command: true), "⌘-click stages")
         try save("stage", at: Date(timeIntervalSince1970: 2_000))
-        XCTAssertTrue(DecisionAnswering.clickStages(reader.current(), command: false), "a changed file is read again")
+        XCTAssertTrue(DecisionAnswering.clickStages(try XCTUnwrap(reader.current()), command: false), "a changed file is read again")
         try Data("{".utf8).write(to: file)
         XCTAssertEqual(reader.current()?.decisionClick, "stage", "an unreadable file keeps the last good read")
-        XCTAssertTrue(DecisionAnswering.returnStages(nil, command: false), "Return stages by default")
-        XCTAssertFalse(DecisionAnswering.returnStages(nil, command: true), "⌘-Return sends by default")
+        XCTAssertTrue(DecisionAnswering.returnStages(.hubDefaults, command: false), "Return stages by default")
+        XCTAssertFalse(DecisionAnswering.returnStages(.hubDefaults, command: true), "⌘-Return sends by default")
     }
 
     /// What the inbox shows for an open decision with the own-answer composer, and for a superseded one with the
@@ -1333,9 +1332,9 @@ final class WidgetVisibilityTests: XCTestCase {
             decision(8, [:]),
         ]
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
-            "selectedKey": key, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+            "selectedKey": key, "preferences": WidgetTestPreferences.dictionary(["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
                 "showWidget": false, "placement": "side", "side": "right", "quietSeconds": 60, "voiceProvider": "xai",
-                "voiceLanguage": ""], "assets": [:], "drafts": [:], "outgoing": []],
+                "voiceLanguage": ""]), "assets": [:], "drafts": [:], "outgoing": []],
             "sessions": [session], "cards": cards, "manifests": [:], "errors": [], "selectedKey": key])
         try data.write(to: fixture.directory.appendingPathComponent("saved.json"))
         let model = fixture.coordinator.model
@@ -1462,7 +1461,7 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.start(showSettings: true)
         defer { coordinator.stop() }
         try await waitFor { coordinator.model.snapshot != nil }
-        coordinator.model.updatePreferences(["showWidget": .bool(true)])
+        coordinator.model.writePreferences { $0.showWidget = true }
         func clickFarAway() throws -> NSEvent {
             try XCTUnwrap(NSEvent.mouseEvent(
                 with: .leftMouseDown, location: NSPoint(x: -20_000, y: -20_000), modifierFlags: [],
@@ -1488,7 +1487,7 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.model.showPeek(later, on: side, seconds: 60, many: .queue)
         coordinator.collapseIfOutside(try clickFarAway())
         XCTAssertEqual(coordinator.model.peekItem, decision, "a click elsewhere keeps the alert popup by default")
-        coordinator.model.updatePreferences(["alertPopupClickAway": .bool(true)])
+        coordinator.model.writePreferences { $0.alertPopupClickAway = true }
         coordinator.passivePanels = true
         coordinator.collapseIfOutside(try clickFarAway())
         XCTAssertEqual(coordinator.model.peekItem, decision, "passive mode keeps the popup too")
@@ -1510,7 +1509,7 @@ final class WidgetVisibilityTests: XCTestCase {
         try await waitFor { model.snapshot != nil }
         var saved: [[String: WidgetJSON]] = []
         model.preferencesSaved = { saved.append($0) }
-        model.updatePreferences(["showWidget": .bool(true)])
+        model.writePreferences { $0.showWidget = true }
         XCTAssertTrue(saved.isEmpty, "nothing is stored before the debounced write")
         try await waitFor { !saved.isEmpty }
         XCTAssertEqual(saved, [["showWidget": .bool(true)]])
@@ -1526,7 +1525,7 @@ final class WidgetVisibilityTests: XCTestCase {
         try await waitFor { model.snapshot != nil }
         var saved: [[String: WidgetJSON]] = []
         model.preferencesSaved = { saved.append($0) }
-        model.updatePreferences(["showWidget": .bool(true)])
+        model.writePreferences { $0.showWidget = true }
         try await waitFor { model.error != nil }
         XCTAssertNotNil(model.error)
         XCTAssertTrue(saved.isEmpty)
@@ -1625,7 +1624,7 @@ final class WidgetConnectionTests: XCTestCase {
             "widget-connection-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let snapshot = """
-            {"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":false,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[{"key":"k1","target":{"hostId":"local","provider":"codex","sessionId":"s1","sourceHome":"","cwd":"/"},"title":"Fixture","project":"Fixture","activityAt":1,"status":"recent","pinned":true,"visible":true,"hiddenByFilter":false}],"cards":[],"manifests":{},"errors":[]}
+            {"version":1,"state":{"version":1,"revision":0,"preferences":\(WidgetTestPreferences.json(#"{"showChanges":false}"#)),"assets":{},"drafts":{},"outgoing":[]},"sessions":[{"key":"k1","target":{"hostId":"local","provider":"codex","sessionId":"s1","sourceHome":"","cwd":"/"},"title":"Fixture","project":"Fixture","activityAt":1,"status":"recent","pinned":true,"visible":true,"hiddenByFilter":false}],"cards":[],"manifests":{},"errors":[]}
             """
         try snapshot.write(to: directory.appendingPathComponent("snapshot.json"), atomically: true, encoding: .utf8)
         let actions = directory.appendingPathComponent("actions.jsonl")
@@ -2082,7 +2081,7 @@ final class WidgetRosterTests: XCTestCase {
             do { try FileManager.default.removeItem(at: directory) } catch { XCTFail("Fixture cleanup: \(error)") }
         }
         let data = Data("""
-        {"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":""},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
+        {"version":1,"state":{"version":1,"revision":0,"preferences":\(WidgetTestPreferences.json()),"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}
         """.utf8)
         var snapshot = try JSONDecoder().decode(WidgetSnapshot.self, from: data)
         snapshot.sessions = sessionCount.map { Array(fixtureSessions().prefix($0)).map { session in

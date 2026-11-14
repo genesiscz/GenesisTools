@@ -12,9 +12,10 @@ import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { AgentsTree } from "../agents/types";
+import { performWidgetAction } from "./actions";
 import { type WidgetCard, type WidgetSources, widgetSnapshot } from "./snapshot";
 import { mutateWidgetState } from "./storage";
-import { type WidgetTarget, widgetSessionKey } from "./types";
+import { type WidgetTarget, widgetPreferencesSchema, widgetSessionKey } from "./types";
 
 /**
  * The golden widget snapshots in GenesisKitFixtures/Widget: what `widgetSnapshot` writes for a fixed, invented input
@@ -400,13 +401,29 @@ function goldenPath(file: string): string {
     return kitFixturePath(file, "Widget");
 }
 
+/**
+ * What the hub stores before anything is set. GenesisKit's `WidgetPreferences.hubDefaults` is the widget's copy for
+ * the moment before its first snapshot, and `WidgetPreferencesStoreTests` holds it to this file.
+ */
+const DEFAULTS_FILE = "preferences-defaults.json";
+
+function defaultsText(): string {
+    return `${SafeJSON.stringify(widgetPreferencesSchema.parse({}), null, 4)}\n`;
+}
+
 describe("the golden widget snapshots", () => {
     it(`are what the snapshot builder writes now (rewrite them: ${WRITE_COMMAND})`, async () => {
         const stale: string[] = [];
 
-        for (const golden of GOLDEN) {
-            const text = await goldenText(golden);
-            const path = goldenPath(golden.file);
+        const files = [
+            ...(await Promise.all(
+                GOLDEN.map(async (golden) => ({ file: golden.file, text: await goldenText(golden) }))
+            )),
+            { file: DEFAULTS_FILE, text: defaultsText() },
+        ];
+
+        for (const { file, text } of files) {
+            const path = goldenPath(file);
 
             if (env.test.shouldWriteGolden()) {
                 writeFileSync(path, text);
@@ -414,7 +431,7 @@ describe("the golden widget snapshots", () => {
             }
 
             if (!existsSync(path) || readFileSync(path, "utf8") !== text) {
-                stale.push(golden.file);
+                stale.push(file);
             }
         }
 
@@ -438,5 +455,25 @@ describe("the golden widget snapshots", () => {
         }
 
         expect(Object.keys(CARD_KINDS).filter((kind) => !seen.has(kind))).toEqual([]);
+    });
+});
+
+describe("a preferences write from the widget", () => {
+    it("is refused when it names a key the preferences do not have, and stores nothing", async () => {
+        const root = await mkdtemp(join(tmpdir(), "widget-preferences-"));
+
+        try {
+            await expect(
+                performWidgetAction({ root, input: { action: "preferences", patch: { inboxFiltre: "inbox" } } })
+            ).rejects.toThrow(/inboxFiltre/);
+            const stored = await performWidgetAction({
+                root,
+                input: { action: "preferences", patch: { inboxFilter: "inbox" } },
+            });
+            expect(stored).toMatchObject({ inboxFilter: "inbox" });
+            expect(stored).not.toHaveProperty("inboxFiltre");
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
     });
 });

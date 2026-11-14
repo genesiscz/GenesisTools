@@ -224,7 +224,7 @@ struct WidgetItemOptionButton: View {
         .disabled(model.sendingDecisionIDs.contains(item.sourceId) || model.dialogSendingIDs.contains(item.sourceId))
         .instantTooltip(item.kind == "dialog" ? "Send this option to the open dialog." : DecisionAnswering.optionTooltip(
             letter, recommended: recommended, stages: stages, picked: picked,
-            swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true, multiple: multiple))
+            swaps: model.preferences.decisionCommandSwaps, multiple: multiple))
         .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: letter, text: text, stages: stages,
                                                                 recommended: recommended, multiple: multiple,
                                                                 picked: picked))

@@ -465,7 +465,7 @@ final class HubInboxModel: ObservableObject {
     var onLoaded: (() -> Void)?
     /// The widget's settings for answering a decision (Decision click, ⌘ does the other, Return in an own answer):
     /// the Inbox answers the way the widget does (`DecisionAnswering`). Read again on each load and before each click.
-    @Published private(set) var preferences: WidgetPreferences?
+    @Published private(set) var preferences: WidgetPreferences = .hubDefaults
     /// The decision whose note field has the keyboard: ⌘-Return there belongs to the note, not to the Send bar.
     @Published var noteFocusID: String?
     /// Work waiting for an item's draft writes to land: a send at once waits for its pick.
@@ -548,7 +548,7 @@ final class HubInboxModel: ObservableObject {
                 try JSONDecoder().decode(InboxEnvelope.self, from: ledger.recordSync { try HubSource.bridge.output(["question", "inbox", "--json"]) })
             }
             span.end((try? result.get()).map { "\($0.sessions.count) sessions, tools \($0.elapsedMs ?? -1) ms" } ?? "failed")
-            let preferences = WidgetPreferencesFile.shared.current()
+            let preferences = WidgetPreferencesFile.shared.current() ?? .hubDefaults
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -764,8 +764,8 @@ final class HubInboxModel: ObservableObject {
     }
 
     /// The widget's settings as they are now: a click follows a change made since the last load.
-    private func freshPreferences() -> WidgetPreferences? {
-        let current = WidgetPreferencesFile.shared.current()
+    private func freshPreferences() -> WidgetPreferences {
+        let current = WidgetPreferencesFile.shared.current() ?? .hubDefaults
         if current != preferences { preferences = current }
         return current
     }
@@ -1160,7 +1160,7 @@ final class HubInboxModel: ObservableObject {
         GenAnnounce.post(delivery.summary)
         resultFades.removeValue(forKey: sessionId)?.cancel()
         guard !delivery.isError, !delivery.isQueued else { return }
-        let seconds = max(0, min(60, preferences?.noteSeconds ?? 6))
+        let seconds = max(0, min(60, preferences.noteSeconds))
         guard seconds > 0 else { return }
         resultFades[sessionId] = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
@@ -2148,7 +2148,7 @@ struct InboxCardState: Equatable {
     var sessionSending: Bool
     var writeError: String?
     var writeErrorDetail: String?
-    var preferences: WidgetPreferences?
+    var preferences: WidgetPreferences
     /// Changes only when the card's current note was successfully saved.
     var noteAcknowledgement: Int
     /// The note-focus request's count while it names this card, nil otherwise: a change moves the keyboard into it.
@@ -2433,7 +2433,7 @@ struct InboxDecisionCard: View, Equatable {
     private var noteField: some View {
         let keys = LiveWidgetView.ownAnswerKeys(ownAnswer: true,
                                                 returnStages: DecisionAnswering.returnStages(state.preferences, command: false),
-                                                commandSwaps: state.preferences?.decisionCommandSwaps ?? true)
+                                                commandSwaps: state.preferences.decisionCommandSwaps)
         let placeholder = (item.choices ?? []).isEmpty ? "Your answer…" : "Write my own answer…"
         return VStack(alignment: .leading, spacing: 4) {
             Group {
@@ -2721,7 +2721,7 @@ struct InboxDecisionCard: View, Equatable {
                         ? "This decision is closed: \(statusPhrase)"
                         : sessionSending ? "This session's send is running"
                         : DecisionAnswering.optionTooltip(choice.id, recommended: recommended, stages: stages, picked: stagedPick,
-                                                          swaps: preferences?.decisionCommandSwaps ?? true,
+                                                          swaps: preferences.decisionCommandSwaps,
                                                           key: index < 9 ? index + 1 : nil, multiple: multiple))
             } else {
                 label.restingButton(enabled: enabled, action: choose)

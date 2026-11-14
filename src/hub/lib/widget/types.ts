@@ -193,9 +193,10 @@ export const widgetPreferencesSchema = z.object({
     decisionProposal: z.enum(["option", "above"]).default("option"),
 });
 
-// Zod defaults also run inside partial objects; a patch must retain only supplied keys.
+// Zod defaults also run inside partial objects; a patch must retain only supplied keys. A key the schema does not
+// know is refused, so a misspelled write fails instead of being stripped while the write reports success.
 export const widgetPreferencesPatchSchema = z.record(z.string(), z.unknown()).transform((input, context) => {
-    const parsed = widgetPreferencesSchema.partial().safeParse(input);
+    const parsed = widgetPreferencesSchema.partial().strict().safeParse(input);
     if (!parsed.success) {
         for (const issue of parsed.error.issues) {
             context.addIssue({ ...issue });

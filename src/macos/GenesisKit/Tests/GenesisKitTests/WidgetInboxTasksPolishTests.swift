@@ -633,29 +633,24 @@ final class WidgetInboxPolishTests: XCTestCase {
         let decision = WidgetInboxItem(id: "decision:d_1_s", sourceId: "d_1_s", kind: "decision", key: "k", at: 1,
             needsAnswer: true)
         let answer = WidgetInboxItem(id: "answer:a", sourceId: "a", kind: "answer", key: "k", at: 2, needsAnswer: false)
-        func prefs(_ json: String) throws -> WidgetPreferences {
-            let base = #"{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"side","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","#
-            return try JSONDecoder().decode(WidgetPreferences.self, from: Data((base + json.dropFirst()).utf8))
-        }
+        func prefs(_ json: String) throws -> WidgetPreferences { try WidgetTestPreferences.decode(json) }
         let split = try prefs(#"{"alertSound":"Ping","alertAnswerSound":"Pop","alertFlashSeconds":10}"#)
         XCTAssertEqual(WidgetAlerts.sound(for: [answer], preferences: split), "Pop")
         XCTAssertEqual(WidgetAlerts.sound(for: [answer, decision], preferences: split), "Ping",
                        "a burst with a question in it plays the decisions' sound")
         XCTAssertEqual(WidgetAlerts.sound(for: [answer], preferences: try prefs(#"{"alertSound":"Ping","alertAnswerSound":"same"}"#)),
                        "Ping", "\"same\" follows the decisions' sound")
-        XCTAssertNil(WidgetAlerts.sound(for: [answer], preferences: nil), "no preferences: the default sound")
+        XCTAssertEqual(WidgetAlerts.sound(for: [answer], preferences: .hubDefaults), "Glass",
+                       "no stored preferences: the hub's default sound")
         XCTAssertEqual(WidgetAlerts.flashSeconds(split), 10)
-        XCTAssertEqual(WidgetAlerts.flashSeconds(nil), 5, "flashing is on by default")
+        XCTAssertEqual(WidgetAlerts.flashSeconds(.hubDefaults), 5, "flashing is on by default")
         XCTAssertEqual(WidgetAlerts.flashSeconds(try prefs(#"{"alertFlashSeconds":0}"#)), 0)
     }
 
     /// The popup says "Decision 4", not "New decision · DECISION 4"; VoiceOver hears what arrived and from where; the
     /// popup's time and a note's time are settings (ux catalogue R4, R6, R10, R3).
     func testAlertWordsAndTheTimesTheySettle() throws {
-        func prefs(_ json: String) throws -> WidgetPreferences {
-            let base = #"{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"side","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","#
-            return try JSONDecoder().decode(WidgetPreferences.self, from: Data((base + json.dropFirst()).utf8))
-        }
+        func prefs(_ json: String) throws -> WidgetPreferences { try WidgetTestPreferences.decode(json) }
         let decision = WidgetInboxItem(id: "decision:d_4_s", sourceId: "d_4_s", kind: "decision", key: "k", at: 1,
             needsAnswer: true, title: "Keep the cache?", number: 4)
         XCTAssertEqual(WidgetAlerts.kicker(decision), "Decision 4")
@@ -663,25 +658,25 @@ final class WidgetInboxPolishTests: XCTestCase {
                        "Decision 4, Keep the cache?, from Fixture session")
         let answer = WidgetInboxItem(id: "answer:a", sourceId: "a", kind: "answer", key: "k", at: 2, needsAnswer: false)
         XCTAssertEqual(WidgetAlerts.announcement(answer, session: nil), "New answer")
-        XCTAssertEqual(WidgetAlerts.popupSeconds(nil), 7, "the popup stays 7 s by default")
+        XCTAssertEqual(WidgetAlerts.popupSeconds(.hubDefaults), 7, "the popup stays 7 s by default")
         XCTAssertEqual(WidgetAlerts.popupSeconds(try prefs(#"{"alertPopupSeconds":15}"#)), 15)
         XCTAssertEqual(WidgetAlerts.popupSeconds(try prefs(#"{"alertPopupSeconds":0}"#)), 0, "0 keeps it until closed")
         XCTAssertEqual(WidgetAlerts.popupSeconds(try prefs(#"{"alertPopupSeconds":1}"#)), 3)
-        XCTAssertEqual(WidgetAlerts.popupMany(nil), .list, "later alerts are listed under the first by default")
+        XCTAssertEqual(WidgetAlerts.popupMany(.hubDefaults), .list, "later alerts are listed under the first by default")
         XCTAssertEqual(WidgetAlerts.popupMany(try prefs(#"{"alertPopupMany":"queue"}"#)), .queue)
-        XCTAssertEqual(WidgetAlerts.volume(nil), 1, "full volume by default")
+        XCTAssertEqual(WidgetAlerts.volume(.hubDefaults), 1, "full volume by default")
         let answered = WidgetInboxItem(id: "decision:d_4_s", sourceId: "d_4_s", kind: "decision", key: "k", at: 3,
             needsAnswer: false, title: "Keep the cache?", number: 4, options: ["a) keep", "drop"], option: "ab",
             answeredVia: "automatic_heuristic")
         XCTAssertEqual(WidgetAlerts.kicker(answered), "Decision 4 answered")
         XCTAssertEqual(WidgetAlerts.answeredOptions(answered).map(\.text), ["keep", "drop"], "the agent's own letter is not kept")
         XCTAssertEqual(WidgetAlerts.answeredViaText("automatic_heuristic"), "Answer read from your chat")
-        XCTAssertEqual(WidgetAlerts.autoDecisionSeconds(nil), 5)
-        XCTAssertEqual(WidgetAlerts.autoDecisionSound(nil), "Tink")
+        XCTAssertEqual(WidgetAlerts.autoDecisionSeconds(.hubDefaults), 5)
+        XCTAssertEqual(WidgetAlerts.autoDecisionSound(.hubDefaults), "Tink")
         XCTAssertEqual(WidgetAlerts.autoDecisionSound(try prefs(#"{"autoDecisionSound":"same","alertSound":"Ping"}"#)), "Ping")
         XCTAssertEqual(WidgetAlerts.volume(try prefs(#"{"alertVolume":40}"#)), 0.4, accuracy: 0.001)
-        XCTAssertEqual(WidgetModel.noteSeconds(nil, hasAction: false), 6, "a note fades after 6 s by default")
-        XCTAssertEqual(WidgetModel.noteSeconds(nil, hasAction: true), 10, "a note with Undo or Send again stays 10 s")
+        XCTAssertEqual(WidgetModel.noteSeconds(.hubDefaults, hasAction: false), 6, "a note fades after 6 s by default")
+        XCTAssertEqual(WidgetModel.noteSeconds(.hubDefaults, hasAction: true), 10, "a note with Undo or Send again stays 10 s")
         XCTAssertEqual(WidgetModel.noteSeconds(try prefs(#"{"noteSeconds":20}"#), hasAction: true), 20)
         XCTAssertNil(WidgetModel.noteSeconds(try prefs(#"{"noteSeconds":0}"#), hasAction: false), "0 keeps it")
         XCTAssertEqual(try prefs(#"{"alertSound":"Glass"}"#).openShortcutChord, .defaultOpen,
@@ -922,8 +917,8 @@ final class WidgetAnswerTargetTests: XCTestCase {
             "visible": true, "hiddenByFilter": false]
         let cards = try JSONSerialization.jsonObject(with: JSONEncoder().encode([card]))
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
-            "selectedKey": key, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
-                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en"],
+            "selectedKey": key, "preferences": WidgetTestPreferences.dictionary(["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en"]),
             "assets": [:], "drafts": [:], "outgoing": []], "sessions": [session], "cards": cards,
             "manifests": [:], "errors": [], "selectedKey": key,
             "notifications": ["unread": 0, "needsAnswer": 1, "complete": true, "truncated": false, "sessions": []]])
@@ -1431,7 +1426,7 @@ final class WidgetStagingTests: XCTestCase {
         defer { model.stop() }
         model.actionRunner = { _ in ["ok": true] }
         model.receive([try snapshot(draftOption: nil)])
-        model.livePreferenceWindow = 0.3
+        model.preferenceStore.liveWindow = 0.3
         model.showLivePreferences(["previewWidth": .number(400), "sidePosition": .number(0.3)])
         XCTAssertEqual(model.agentsPreviewWidth, 400)
         XCTAssertEqual(model.snapshot?.state.preferences.sidePosition, 0.3)
@@ -1453,7 +1448,7 @@ final class WidgetStagingTests: XCTestCase {
         defer { model.stop() }
         model.receive([try snapshot(draftOption: nil)])
         let savedPosition = model.snapshot?.state.preferences.sidePosition
-        model.livePreferenceWindow = 0.3
+        model.preferenceStore.liveWindow = 0.3
         model.showLivePreferences(["sidePosition": .number(0.3)])
         try await Task.sleep(for: .seconds(0.2))
         model.showLivePreferences(["previewWidth": .number(400)])
@@ -1470,7 +1465,7 @@ final class WidgetStagingTests: XCTestCase {
         let model = StagingFixture.model()
         defer { model.stop() }
         model.receive([try snapshot(draftOption: nil)])
-        model.liveApplyInterval = 0.2
+        model.preferenceStore.liveApplyInterval = 0.2
         var published = 0
         model.presentationChanged = { published += 1 }
         for width in stride(from: 300, through: 400, by: 10) {
@@ -1509,7 +1504,7 @@ final class WidgetStagingTests: XCTestCase {
         root["state"] = state
         full.receive([String(decoding: try JSONSerialization.data(withJSONObject: root), as: UTF8.self)])
 
-        XCTAssertEqual(live.snapshot?.state.preferences, full.snapshot?.state.preferences)
+        XCTAssertEqual(live.preferences, full.preferences)
         XCTAssertEqual(live.inboxFilter, "decisions")
         XCTAssertEqual(live.inboxFilter, full.inboxFilter)
         XCTAssertEqual(live.previewList.map(\.key), full.previewList.map(\.key))
@@ -2519,11 +2514,8 @@ final class WidgetStagingTests: XCTestCase {
     /// Every Undo row (Remove from shelf, Discard of a voice note) lasts as long as a note with a button; notes that
     /// stay until closed hold the item 60 s at most (judge round F4).
     func testUndoRowsLastAsLongAsANoteWithAButton() throws {
-        func prefs(_ json: String) throws -> WidgetPreferences {
-            let base = #"{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"side","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","#
-            return try JSONDecoder().decode(WidgetPreferences.self, from: Data((base + json.dropFirst()).utf8))
-        }
-        XCTAssertEqual(WidgetModel.undoSeconds(nil), 10, "the default note time is 6 s, so a note with Undo stays 10 s")
+        func prefs(_ json: String) throws -> WidgetPreferences { try WidgetTestPreferences.decode(json) }
+        XCTAssertEqual(WidgetModel.undoSeconds(.hubDefaults), 10, "the default note time is 6 s, so a note with Undo stays 10 s")
         XCTAssertEqual(WidgetModel.undoSeconds(try prefs(#"{"noteSeconds":3}"#)), 10)
         XCTAssertEqual(WidgetModel.undoSeconds(try prefs(#"{"noteSeconds":20}"#)), 20)
         XCTAssertEqual(WidgetModel.undoSeconds(try prefs(#"{"noteSeconds":0}"#)), 60, "until closed, at most 60 s")
@@ -3218,9 +3210,9 @@ final class WidgetSessionSwitchTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: [
             "version": 1,
             "state": ["version": 1, "revision": 0, "selectedKey": key(selected),
-                      "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+                      "preferences": WidgetTestPreferences.dictionary(["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
                                       "placement": "both", "side": "right", "quietSeconds": 15,
-                                      "voiceProvider": "openai", "voiceLanguage": "en"],
+                                      "voiceProvider": "openai", "voiceLanguage": "en"]),
                       "assets": [:], "drafts": [:], "outgoing": []],
             "sessions": sessions,
             "cards": try JSONSerialization.jsonObject(with: JSONEncoder().encode(cards)),

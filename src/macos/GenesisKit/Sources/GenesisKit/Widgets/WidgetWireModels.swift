@@ -381,134 +381,206 @@ public struct WidgetUsagePreferences: Codable, Equatable, Sendable {
     public init(ringWindow: WidgetUsageRingWindow? = nil) { self.ringWindow = ringWindow }
 }
 
+/// The widget's stored settings. The hub resolves every default before a snapshot leaves it (`widgetPreferencesSchema`
+/// in src/hub/lib/widget/types.ts, `prefault({})` in the state schema), so only the settings the hub keeps optional are
+/// optional here. Writes go through `WidgetPreferencesStore`, by field.
 public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var excludedKeys: [String]
     public var projects: [String]
     public var sessions: [String]
     public var showChanges: Bool
-    /// "Show the widget". A state saved before the switch existed has no key, and nil means off.
-    public var showWidget: Bool?
+    /// "Show the widget".
+    public var showWidget: Bool
     public var placement: String
     public var side: String
-    public var topModules: [String]?
-    public var sideGroups: [[String]]?
-    public var sideLayout: String?
-    public var sidePosition: Double?
-    /// The top bar's horizontal center, 0 (left) to 1 (right); nil reads as 0.5, centered.
-    public var topPosition: Double?
-    public var hoverPreviews: Bool?
-    public var sideStyle: String?
-    public var joinedEdges: Bool?
-    public var glassEffect: Bool?
-    /// "dark", "glass" or "theme"; nil reads as "dark".
-    public var panelBackground: String?
-    /// The hover list's rows show their waiting question; nil reads as on.
-    public var previewQuestion: Bool?
-    public var display: String?
-    public var providers: [String]?
+    public var topModules: [String]
+    public var sideGroups: [[String]]
+    public var sideLayout: String
+    public var sidePosition: Double
+    /// The top bar's horizontal center, 0 (left) to 1 (right).
+    public var topPosition: Double
+    public var hoverPreviews: Bool
+    public var sideStyle: String
+    public var joinedEdges: Bool
+    public var glassEffect: Bool
+    /// "dark", "glass" or "theme".
+    public var panelBackground: String
+    /// The hover list's rows show their waiting question.
+    public var previewQuestion: Bool
+    public var display: String
+    public var providers: [String]
     /// Widget alerts for new items: a chime (`alertSound`, a system sound name or "none") and a popup.
-    public var alertDecisions: Bool?
-    public var alertAnswers: Bool?
-    public var alertSound: String?
-    public var alertPopup: Bool?
-    /// Alert summary and compact answer field; nil means on for older saved settings.
-    public var alertSummary: Bool?
-    public var alertCompactAnswer: Bool?
+    public var alertDecisions: Bool
+    public var alertAnswers: Bool
+    public var alertSound: String
+    public var alertPopup: Bool
+    /// Alert summary and compact answer field.
+    public var alertSummary: Bool
+    public var alertCompactAnswer: Bool
     /// The agents hover list: "needs-you" (default) or "active" (sessions that work now too).
-    public var previewFilter: String?
+    public var previewFilter: String
     /// The agents hover list's order: "attention" (default), "recent" or "project".
-    public var previewSort: String?
+    public var previewSort: String
     /// An answer's sound: "same" (default, `alertSound`), "none" or a system sound name.
-    public var alertAnswerSound: String?
+    public var alertAnswerSound: String
     /// Seconds the session that raised an alert flashes; 0 does not flash it. Default 5.
-    public var alertFlashSeconds: Double?
+    public var alertFlashSeconds: Double
     /// What a follow-up names as the item it answers: "selected-or-newest" (default: the selected card, else the
     /// agent's newest item), "selected" (the selected card only) or "never".
-    public var replyNames: String?
+    public var replyNames: String
     /// A session inbox's composer: "top" (default, under the tabs) or "bottom".
-    public var inboxComposer: String?
+    public var inboxComposer: String
     /// A rail bubble's tooltip: "auto" (default, only without hover previews), "always" or "never".
-    public var bubbleTooltip: String?
+    public var bubbleTooltip: String
     /// The rail's session bubbles: "list" (default, the hover list's order) or "stable" (each keeps its place).
-    public var railOrder: String?
+    public var railOrder: String
     /// A click on a decision option: "stage" (default, sent later with the other staged ones) or "send" (at once).
-    public var decisionClick: String?
+    public var decisionClick: String
     /// ⌘-click on an option and ⌘-Return in a decision's own answer do the other action. Default true.
-    public var decisionCommandSwaps: Bool?
+    public var decisionCommandSwaps: Bool
     /// Return in a decision's own answer field: "stage" (default, the text becomes its note) or "send".
-    public var ownAnswerReturn: String?
+    public var ownAnswerReturn: String
     /// Return on a staged decision's empty own answer: "send" (default), "confirm" (a note with Send) or "nothing".
-    public var ownAnswerEmptyReturn: String?
+    public var ownAnswerEmptyReturn: String
     /// An answer to an agent's own question dialog (Claude's AskUserQuestion): "press" (default, the option's key in
     /// the live dialog) or "refuse" (answer it in the terminal).
-    public var dialogAnswer: String?
+    public var dialogAnswer: String
     /// Width in points of the rail's hover list (the agents preview). Default 324, 260 to 560.
-    public var previewWidth: Double?
+    public var previewWidth: Double
     /// At start, a popup lists the staged decisions with Send now until it is closed. Default true.
-    public var stagedReminder: Bool?
+    public var stagedReminder: Bool
     /// Leaving the inbox with staged decisions: "ask" (default), "keep" or "send".
-    public var stagedOnLeave: String?
+    public var stagedOnLeave: String
     /// Seconds to show a delivered note before a send-and-close folds the panel; 0 keeps it open. Default 2.5.
-    public var sendCloseSeconds: Double?
+    public var sendCloseSeconds: Double
     /// The inbox of every session: "session" (default, grouped under each session) or "list".
-    public var inboxGrouping: String?
+    public var inboxGrouping: String
     /// The filter a session's inbox opens with: "all" (default), "inbox" or "decisions".
-    public var inboxFilter: String?
+    public var inboxFilter: String
     /// The filter the inbox of every session opens with: "all" (default), "needs" or "unread".
-    public var overviewFilter: String?
+    public var overviewFilter: String
     /// An open decision in the inbox of every session shows its question's description above its options, as the
-    /// alert popup does. Default on (nil from an older hub).
-    public var overviewSummary: Bool?
+    /// alert popup does. Default on.
+    public var overviewSummary: Bool
     /// The composer's microphone: "note" (default, a voice note whose transcript fills the field) or "live".
-    public var composerVoice: String?
+    public var composerVoice: String
     /// Seconds the alert popup stays when the pointer is not on it; 0 keeps it until it is closed. Default 7.
-    public var alertPopupSeconds: Double?
+    public var alertPopupSeconds: Double
     /// A click outside the widget closes the alert popup. Default off.
-    public var alertPopupClickAway: Bool?
+    public var alertPopupClickAway: Bool
     /// Another alert while the popup is open: "list" (default, listed under it), "queue" (after it) or "newest".
-    public var alertPopupMany: String?
+    public var alertPopupMany: String
     /// After a pick sent from the alert popup: "stay" (default, the popup shows its result) or "session" (opens it).
-    public var popupSendOpens: String?
+    public var popupSendOpens: String
     /// The alert sounds' volume in percent of the system volume. Default 100.
-    public var alertVolume: Double?
+    public var alertVolume: Double
     /// A decision answered outside the widget pops up with a sound (Automatic decisions). Default on.
-    public var autoDecisionPopup: Bool?
+    public var autoDecisionPopup: Bool
     /// Seconds that popup stays while the pointer is not on it; 0 keeps it until it is closed. Default 5.
-    public var autoDecisionSeconds: Double?
+    public var autoDecisionSeconds: Double
     /// Its sound: a system sound name, "same" (`alertSound`) or "none". Default "Tink".
-    public var autoDecisionSound: String?
+    public var autoDecisionSound: String
     /// Seconds a widget note stays before it fades; 0 keeps it until it is closed. Default 6. A note with a button
     /// stays at least 10 s.
-    public var noteSeconds: Double?
+    public var noteSeconds: Double
     /// A global shortcut opens and closes the widget (`openShortcut`). Default on, with ⌃⌥⌘W.
-    public var openShortcutEnabled: Bool?
+    public var openShortcutEnabled: Bool
     /// The shortcut, as a Carbon key code and modifier mask (`HotkeyChord`).
-    public var openShortcut: WidgetShortcutChord?
+    public var openShortcut: WidgetShortcutChord
     /// A click on a file link in a card, a prompt or a transcript (`FileLinkClick`): "genesis-markdown" (default, a
     /// note in Genesis Markdown when it is installed, any other file in its default app), "default-app" or "ask".
-    public var fileLinkClick: String?
+    public var fileLinkClick: String
     /// A decision card's Context section: "folded" (default, at the hub card's height with Show all) or "open".
-    public var decisionContext: String?
+    public var decisionContext: String
     /// A decision card's Code section, the lines of each file it cites: "show" (default) or "hide".
-    public var decisionCode: String?
+    public var decisionCode: String
     /// Where a decision card puts the agent's reason for its pick: "option" (default, under the recommended option)
     /// or "above" (above the options, as the hub's Inbox card).
-    public var decisionProposal: String?
+    public var decisionProposal: String
     /// The Usage module's own preferences; nil (a state saved before the module) reads as the defaults.
     public var usage: WidgetUsagePreferences?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(
-            topModules: topModules ?? ["agents"],
-            sideGroups: sideGroups ?? [["agents"], ["capture", "shelf"], ["focus", "voice", "tasks"]],
-            separated: sideLayout == "separated", sidePosition: sidePosition ?? 0.5,
-            topPosition: topPosition ?? 0.5, hoverPreviews: hoverPreviews ?? true)
+            topModules: topModules, sideGroups: sideGroups, separated: sideLayout == "separated",
+            sidePosition: sidePosition, topPosition: topPosition, hoverPreviews: hoverPreviews)
     }
     public var quietSeconds: Int
     public var voiceProvider: String
     public var voiceAccount: String?
     public var voiceModel: String?
     public var voiceLanguage: String
+
+    /// What the hub stores before anything is set (`widgetPreferencesSchema.parse({})`), for a reader that has no
+    /// snapshot yet. `WidgetPreferencesStoreTests` holds it to the hub's own output (GenesisKitFixtures/Widget
+    /// `preferences-defaults.json`), so it cannot drift from zod.
+    public static let hubDefaults = WidgetPreferences(
+            excludedKeys: [],
+            projects: [],
+            sessions: [],
+            showChanges: true,
+            showWidget: false,
+            placement: "both",
+            side: "right",
+            topModules: ["agents"],
+            sideGroups: [["agents"], ["capture", "shelf"], ["focus", "voice", "tasks"]],
+            sideLayout: "joined",
+            sidePosition: 0.5,
+            topPosition: 0.5,
+            hoverPreviews: true,
+            sideStyle: "modular",
+            joinedEdges: true,
+            glassEffect: true,
+            panelBackground: "dark",
+            previewQuestion: true,
+            display: "",
+            providers: [],
+            alertDecisions: true,
+            alertAnswers: true,
+            alertSound: "Glass",
+            alertPopup: true,
+            alertSummary: true,
+            alertCompactAnswer: true,
+            previewFilter: "needs-you",
+            previewSort: "attention",
+            alertAnswerSound: "same",
+            alertFlashSeconds: 5,
+            replyNames: "selected-or-newest",
+            inboxComposer: "top",
+            bubbleTooltip: "auto",
+            railOrder: "list",
+            decisionClick: "stage",
+            decisionCommandSwaps: true,
+            ownAnswerReturn: "stage",
+            ownAnswerEmptyReturn: "send",
+            dialogAnswer: "press",
+            previewWidth: 324,
+            stagedReminder: true,
+            stagedOnLeave: "ask",
+            sendCloseSeconds: 2.5,
+            inboxGrouping: "session",
+            inboxFilter: "all",
+            overviewFilter: "all",
+            overviewSummary: true,
+            composerVoice: "ask",
+            alertPopupSeconds: 7,
+            alertPopupClickAway: false,
+            alertPopupMany: "list",
+            popupSendOpens: "stay",
+            alertVolume: 100,
+            autoDecisionPopup: true,
+            autoDecisionSeconds: 5,
+            autoDecisionSound: "Tink",
+            noteSeconds: 6,
+            openShortcutEnabled: true,
+            openShortcut: WidgetShortcutChord(keyCode: 13, modifiers: 6400),
+            fileLinkClick: "genesis-markdown",
+            decisionContext: "folded",
+            decisionCode: "show",
+            decisionProposal: "option",
+            quietSeconds: 15,
+            voiceProvider: "xai",
+            voiceLanguage: "")
 }
 /// The inbox item a follow-up answers, sent as its payload's `replyTo` and delivered as a "Reply to: <title>" line.
 public struct WidgetReplyTo: Codable, Equatable, Sendable {
@@ -559,8 +631,8 @@ extension WidgetPreferences {
     /// The shortcut that opens the widget, or nil while it is off. A stored chord without ⌘, ⌥ or ⌃ would take a
     /// plain key from every app, so the default stands in for it.
     public var openShortcutChord: WidgetShortcutChord? {
-        guard openShortcutEnabled ?? true else { return nil }
-        let chord = openShortcut ?? .defaultOpen
+        guard openShortcutEnabled else { return nil }
+        let chord = openShortcut
         let required = HotkeyChord.command | HotkeyChord.option | HotkeyChord.control
         return chord.modifiers & required != 0 ? chord : .defaultOpen
     }
@@ -624,6 +696,33 @@ public struct WidgetState: Codable, Equatable, Sendable {
     public var outgoing: [WidgetOutgoing]
     /// A decision link asked the running widget to show this decision (`tools hub widget show-decision`).
     public var showDecision: WidgetShowDecision?
+    /// Set when `preferences` did not decode (a hub older or newer than this build): `preferences` then holds
+    /// `WidgetPreferences.hubDefaults`, and `WidgetPreferencesStore` shows its last good value instead and reports
+    /// the failure once, so a stale app beside newer hub code never blanks the widget. Never encoded.
+    public var preferencesUnreadable: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case version, revision, selectedKey, preferences, assets, drafts, outgoing, showDecision
+    }
+}
+
+extension WidgetState {
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        revision = try container.decode(Int.self, forKey: .revision)
+        selectedKey = try container.decodeIfPresent(String.self, forKey: .selectedKey)
+        do {
+            preferences = try container.decode(WidgetPreferences.self, forKey: .preferences)
+        } catch {
+            preferences = .hubDefaults
+            preferencesUnreadable = String(describing: error)
+        }
+        assets = try container.decode([String: WidgetAsset].self, forKey: .assets)
+        drafts = try container.decode([String: WidgetDraft].self, forKey: .drafts)
+        outgoing = try container.decode([WidgetOutgoing].self, forKey: .outgoing)
+        showDecision = try container.decodeIfPresent(WidgetShowDecision.self, forKey: .showDecision)
+    }
 }
 public struct WidgetShowDecision: Codable, Equatable, Sendable {
     public var id: String

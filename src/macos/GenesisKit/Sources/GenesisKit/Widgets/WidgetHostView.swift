@@ -49,7 +49,7 @@ struct WidgetHostView: View {
 
     private var shape: EdgePanelShape {
         Self.panelShape(edge: surface.edge, presentation: presentation, classic: classicSide,
-            joined: model.snapshot?.state.preferences.joinedEdges ?? true)
+            joined: model.preferences.joinedEdges)
     }
 
     /// The outline of a panel; EdgePanelController animates its mask between these, so both must agree.
@@ -597,7 +597,7 @@ struct WidgetPeekView: View {
                 } else {
                     // The context the agent wrote under the title, so a pick here is not made blind (Martin,
                     // 2026-10-28: "in this window you should probably have the description").
-                    if model.snapshot?.state.preferences.alertSummary ?? true,
+                    if model.preferences.alertSummary,
                        let summary = item.summary, !summary.isEmpty, item.needsAnswer {
                         WidgetPeekSummary(summary: summary).equatable()
                     }
@@ -717,7 +717,7 @@ struct WidgetPeekView: View {
                 // Read at the click, ⌘ included: a click that only stages never opens anything.
                 // A decision that takes any set of its options only ticks the letter, in every click mode.
                 WidgetItemOptionButton(model: model, item: item, index: index, option: option) {
-                    if Self.sendOpensSession(model.snapshot?.state.preferences,
+                    if Self.sendOpensSession(model.preferences,
                         staging: model.clickStagesNow || NSEvent.modifierFlags.contains(.shift) || item.takesSeveral) {
                         open()
                     }
@@ -728,7 +728,7 @@ struct WidgetPeekView: View {
                 moreButton("\(options.count - Self.shownOptions) more in its session",
                            tooltip: "Opens the decision in its session with all its options") { open() }
             }
-            if model.snapshot?.state.preferences.alertCompactAnswer ?? true { ownAnswerField }
+            if model.preferences.alertCompactAnswer { ownAnswerField }
         }
     }
 
@@ -893,7 +893,7 @@ struct WidgetPeekView: View {
     /// The footer while nothing was sent: Send now while a pick waits, else Open. The answer button replaces the
     /// compact field when the alert's settings ask for it.
     @ViewBuilder private var footerButtons: some View {
-        if !options.isEmpty && !(model.snapshot?.state.preferences.alertCompactAnswer ?? true) {
+        if !options.isEmpty && !model.preferences.alertCompactAnswer {
             Button("Write my own answer") { open(ownAnswer: true) }
                 .accessibilityIdentifier("widget.peek.answerButton")
                 .frameProbe("widget.peek.answerButton")
@@ -916,7 +916,7 @@ struct WidgetPeekView: View {
             let namesSet = item.takesSeveral && letters != nil
             Button(sending ? "Sending…" : DecisionAnswering.sendTitle(letters, multiple: item.takesSeveral)) {
                 model.sendStaged([item.sourceId], known: [item])
-                if Self.sendOpensSession(model.snapshot?.state.preferences) { open() }
+                if Self.sendOpensSession(model.preferences) { open() }
             }
                 .buttonStyle(.genPrimary())
                 .disabled(sending)
@@ -929,8 +929,8 @@ struct WidgetPeekView: View {
 
     /// Alerts → After a send (`popupSendOpens`): a pick sent from the popup leaves it for its session ("session"), or
     /// the popup stays and shows the send's result ("stay", the default).
-    static func sendOpensSession(_ preferences: WidgetPreferences?, staging: Bool = false) -> Bool {
-        !staging && preferences?.popupSendOpens == "session"
+    static func sendOpensSession(_ preferences: WidgetPreferences, staging: Bool = false) -> Bool {
+        !staging && preferences.popupSendOpens == "session"
     }
 
     private var popupAttention: AttentionPulseStyle {

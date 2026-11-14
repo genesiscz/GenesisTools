@@ -10519,7 +10519,8 @@ Methods:
 - `destination(_ mode: String)`: `"resume"` opens the session through `openDestination`. `"new"` writes a handoff file and passes its path to `openDestination`. Any other mode saves the handoff and opens the file.
 - `openCard(_ card: WidgetCard)`, `markAllRead()`, `openInboxNotification(on surface: WidgetSurfaceID, key: String? = nil, needsAnswer: Bool? = nil)`: open an inbox card, clear the badges, or jump to the newest waiting or unread item.
 - `inboxFor(_ key: String) -> WidgetInboxSession?`, `inboxPulseFor(_ key: String) -> Int`: the inbox entry and arrival count of one session.
-- `updatePreferences(_ patch: [String: WidgetJSON], saved: (() -> Void)? = nil, failed: (() -> Void)? = nil)`: shows the patch at once and writes it after a short pause, merged with later patches. `saved` or `failed` runs when the write that carries it ends.
+- `preferences: WidgetPreferences`: the stored settings on screen; the hub's defaults (`WidgetPreferences.hubDefaults`) until the first snapshot.
+- `writePreferences(_ change: (inout WidgetPreferences) -> Void, saved: (() -> Void)? = nil, failed: (() -> Void)? = nil)`: changes fields of the settings through `preferenceStore` (`WidgetPreferencesStore`). Only the keys whose value changed are sent; the change shows at once and is written after a short pause, merged with later changes. `saved` or `failed` runs when the write that carries it ends.
 - `action(_ value: WidgetJSON, failed: (() -> Void)? = nil, completed: (() -> Void)? = nil)`: sends one raw `hub widget call` action. Actions run in order.
 - `receiptContext(for card: WidgetCard) async throws -> WidgetReceiptContext`: the transcript window around a card's source. Results are cached for 15 seconds.
 
@@ -10667,12 +10668,11 @@ Helpers for the "show only these sessions" filter, which is the `sessions` list 
 
 - `adding(_ key: String, to keys: [String]) -> [String]`: the list with the key appended, unless it is already there.
 - `removing(_ key: String, from keys: [String]) -> [String]`: the list without the key.
-- `patch(_ keys: [String]) -> [String: WidgetJSON]`: the preferences patch that stores the list.
 - `candidates(_ sessions: [WidgetSession], excluding keys: [String], query: String, limit: Int = 8) -> [WidgetSession]`: sessions that can still be added, newest first. With no query only top-level sessions appear. A query also matches sub-agents by title, project or provider.
 
 ```swift
 let keys = WidgetSessionFilter.adding("example-session-key", to: [])
-model.updatePreferences(WidgetSessionFilter.patch(keys))
+model.writePreferences { $0.sessions = keys }
 let more = WidgetSessionFilter.candidates(model.sessions, excluding: keys, query: "api")
 ```
 
@@ -10956,24 +10956,23 @@ for card in unanswered {
 
 #### `WidgetPreferences`
 
-The user's stored widget settings. Change them with `WidgetModel.updatePreferences(_:)`.
+The user's stored widget settings. The hub resolves every default before a snapshot leaves it, so the fields are non-optional except `voiceAccount`, `voiceModel` and `usage`. `hubDefaults` is the value before the first snapshot (a test holds it to the hub's `preferences-defaults.json`). Change them with `WidgetModel.writePreferences(_:)`. A snapshot whose preferences do not decode keeps the last good ones (`WidgetState.preferencesUnreadable`).
 
 - `excludedKeys: [String]`, `projects: [String]`, `sessions: [String]`: session and project filters. A non-empty `sessions` list is an allowlist. The Swift views do not read `excludedKeys`.
 - `showChanges: Bool`: shows the Changes tab.
-- `showWidget: Bool?`: "Show the widget". Nil means off.
+- `showWidget: Bool`: "Show the widget".
 - `placement: String`: `"both"`, `"top"` or `"side"`. `side: String`: `"left"` or `"right"`.
-- `topModules: [String]?`, `sideGroups: [[String]]?`, `sideLayout: String?`, `sidePosition: Double?`, `hoverPreviews: Bool?`: the layout inputs. `layout` returns them as a `WidgetLayoutConfiguration` with defaults filled in. `sideLayout` is `"joined"` or `"separated"`.
-- `sideStyle: String?`, `joinedEdges: Bool?`, `glassEffect: Bool?`: look of the side strip (`"classic"` is a known style).
-- `display: String?`: the screen id (see `WidgetCoordinator.id(_:)`). Empty or nil means the main display.
-- `providers: [String]?`: which sources appear (`"claude"`, `"codex"`, `"grok"`, `"unknown"`). Nil or empty shows every source.
+- `topModules: [String]`, `sideGroups: [[String]]`, `sideLayout: String`, `sidePosition: Double`, `hoverPreviews: Bool`: the layout inputs. `layout` returns them as a `WidgetLayoutConfiguration`. `sideLayout` is `"joined"` or `"separated"`.
+- `sideStyle: String`, `joinedEdges: Bool`, `glassEffect: Bool`: look of the side strip (`"classic"` is a known style).
+- `display: String`: the screen id (see `WidgetCoordinator.id(_:)`). Empty means the main display.
+- `providers: [String]`: which sources appear (`"claude"`, `"codex"`, `"grok"`, `"unknown"`). Empty shows every source.
 - `quietSeconds: Int`: seconds an open Agents panel waits, with no activity and an empty draft, before it collapses. The model uses at least 5.
 - `voiceProvider: String`, `voiceAccount: String?`, `voiceModel: String?`, `voiceLanguage: String`: the speech settings for voice notes.
 
 ```swift
-let preferences = model.snapshot?.state.preferences
-let side = preferences?.side ?? "right"
-let layout = preferences?.layout ?? WidgetLayoutConfiguration()
-model.updatePreferences(["placement": "top"])
+let side = model.preferences.side
+let layout = model.preferences.layout
+model.writePreferences { $0.placement = "top" }
 ```
 
 #### `WidgetOutgoing`
@@ -11017,10 +11016,8 @@ A small JSON value type for the hub protocol. It is `Codable`, `Equatable`, and 
 - `static func value<T: Encodable>(_ value: T) throws -> WidgetJSON`: encodes any `Encodable` into a `WidgetJSON`.
 
 ```swift
-let patch: [String: WidgetJSON] = [
-    "hoverPreviews": false, "sidePosition": .number(0.4), "topModules": ["agents"],
-]
-model.updatePreferences(patch)
+let request: WidgetJSON = ["action": "selection", "key": "example-session-key"]
+model.action(request)
 ```
 
 #### `WidgetAsset`

@@ -425,7 +425,7 @@ public struct LiveWidgetView: View {
 
     /// The inbox's composer sits under the tabs unless the user moved it to the bottom (Widgets → Sessions).
     private var composerOnTop: Bool {
-        showsComposer && section == "Inbox" && (model.snapshot?.state.preferences.inboxComposer ?? "top") == "top"
+        showsComposer && section == "Inbox" && model.preferences.inboxComposer == "top"
     }
 
     /// No session picked: the sessions that hold inbox items, so nothing waits out of sight.
@@ -617,7 +617,7 @@ public struct LiveWidgetView: View {
         .id("choice-" + card.id + "-" + choice.id)
         .instantTooltip(card.kind == "dialog" ? "Send this option to the open dialog." : DecisionAnswering.optionTooltip(
             choice.id, recommended: choice.recommended, stages: stages, picked: picked,
-            swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true, key: index < 9 ? index + 1 : nil,
+            swaps: model.preferences.decisionCommandSwaps, key: index < 9 ? index + 1 : nil,
             multiple: multiple))
         .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: choice.id, text: text, stages: stages,
                                                                 recommended: choice.recommended, multiple: multiple,
@@ -643,7 +643,7 @@ public struct LiveWidgetView: View {
     }
 
     @ViewBuilder private func cardDetail(_ card: WidgetCard) -> some View {
-        let preferences = model.snapshot?.state.preferences
+        let preferences = model.preferences
         // The agent's pick sits under the option it recommends, else above the options (Decision cards → The agent's
         // pick).
         let pickUnder = WidgetProposal.placement(card, preferences: preferences)
@@ -818,8 +818,8 @@ public struct LiveWidgetView: View {
 
     /// The refs listed under a card's buttons: all of them, less the files its Code section already shows with their
     /// lines (by the path as written or the file it names).
-    static func listedRefs(_ card: WidgetCard, preferences: WidgetPreferences?) -> [WidgetReference] {
-        guard preferences?.decisionCode != "hide", let code = card.decision?.refs, !code.isEmpty else { return card.refs }
+    static func listedRefs(_ card: WidgetCard, preferences: WidgetPreferences) -> [WidgetReference] {
+        guard preferences.decisionCode != "hide", let code = card.decision?.refs, !code.isEmpty else { return card.refs }
         let shown = Set(code.filter(\.hasContent).flatMap { [$0.path, $0.absolute].compactMap { $0 } })
         return card.refs.filter { !shown.contains($0.value) }
     }
@@ -1412,7 +1412,7 @@ public struct LiveWidgetView: View {
         let paste = WidgetKeymap.label(WidgetKeymap.paste)
         let close = WidgetKeymap.label(WidgetKeymap.collapse)
         let keys = Self.ownAnswerKeys(ownAnswer: model.ownAnswerCard != nil, returnStages: model.ownAnswerReturnStages,
-                                      commandSwaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true)
+                                      commandSwaps: model.preferences.decisionCommandSwaps)
         let media = paste.isEmpty ? keys.hint : keys.hint + " · \(paste) media"
         return ViewThatFits(in: .horizontal) {
             Text(close.isEmpty ? media : media + " · \(close) close")

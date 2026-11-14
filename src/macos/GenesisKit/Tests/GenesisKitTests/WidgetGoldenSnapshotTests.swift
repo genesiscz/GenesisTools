@@ -12,7 +12,7 @@ final class WidgetGoldenSnapshotTests: XCTestCase {
     private static let known: [WidgetCardKind] = [.decision, .dialog, .todo, .form, .answer, .result]
 
     private func snapshots() throws -> [(name: String, snapshot: WidgetSnapshot)] {
-        let names = try KitFixture.names(in: "Widget").filter { $0.hasSuffix(".json") }
+        let names = try KitFixture.names(in: "Widget").filter { $0.hasPrefix("snapshot-") && $0.hasSuffix(".json") }
         XCTAssertFalse(names.isEmpty, "GenesisKitFixtures/Widget holds no golden snapshot")
         return try names.map { name in
             do {

@@ -288,7 +288,7 @@ public final class WidgetModel: ObservableObject {
 
     /// `composerVoice`: "ask" (default) offers both modes on every press of the microphone (Martin, 2026-10-23: "i want
     /// to be able to pick when i click the "record" every time"); "note" or "live" starts that one at once.
-    public var composerVoiceChoice: String { snapshot?.state.preferences.composerVoice ?? "ask" }
+    public var composerVoiceChoice: String { preferences.composerVoice }
     /// What a press starts without asking: the setting, or the mode picked last when it asks.
     public var preferredVoiceMode: WidgetVoiceMode {
         if let fixed = WidgetVoiceMode(rawValue: composerVoiceChoice) { return fixed }
@@ -304,7 +304,15 @@ public final class WidgetModel: ObservableObject {
     }
     public var openDestination: ((WidgetSession, String, String?) -> Void)?
     /// Called with each preference patch once the hub has stored it.
-    public var preferencesSaved: (([String: WidgetJSON]) -> Void)?
+    public var preferencesSaved: (([String: WidgetJSON]) -> Void)? {
+        get { preferenceStore.onSaved }
+        set { preferenceStore.onSaved = newValue }
+    }
+    /// The stored settings on screen; the hub's defaults until the first snapshot arrives.
+    public var preferences: WidgetPreferences { snapshot?.state.preferences ?? .hubDefaults }
+    /// The preference writes: by field, shown at once, sent after a short pause, held over stale snapshots.
+    public private(set) lazy var preferenceStore = WidgetPreferencesStore(
+        stateFile: Self.widgetStateFile(stateRoot: stateRoot), wiring: preferenceWiring())
     /// One line under the header; a new line drops the button the old one had. A note fades by itself
     /// (`scheduleNoticeFade`) and is announced to VoiceOver; prefer `postNote(_:action:)`, which also restarts the fade
     /// and the announcement when the same text is posted again.
@@ -359,8 +367,8 @@ public final class WidgetModel: ObservableObject {
     }
 
     /// Seconds a note stays: the `noteSeconds` preference (0 keeps it until it is closed), at least 10 with a button.
-    nonisolated static func noteSeconds(_ preferences: WidgetPreferences?, hasAction: Bool) -> Double? {
-        let base = max(0, min(60, preferences?.noteSeconds ?? 6))
+    nonisolated static func noteSeconds(_ preferences: WidgetPreferences, hasAction: Bool) -> Double? {
+        let base = max(0, min(60, preferences.noteSeconds))
         guard base > 0 else { return nil }
         return hasAction ? max(base, 10) : base
     }
@@ -376,7 +384,7 @@ public final class WidgetModel: ObservableObject {
         noticeFade?.cancel()
         noticeFade = nil
         guard let text = notice, !noticeHeld,
-              let seconds = Self.noteSeconds(snapshot?.state.preferences, hasAction: noticeAction != nil) else { return }
+              let seconds = Self.noteSeconds(preferences, hasAction: noticeAction != nil) else { return }
         noticeFade = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
             guard let self, self.notice == text, !self.noticeHeld else { return }
@@ -398,7 +406,7 @@ public final class WidgetModel: ObservableObject {
     /// hub's View > Look or the General theme no longer turns the widget from dark to glass (Martin, 2026-10-25: "most
     /// of the time it shows like this"). Reduce Transparency still turns glass solid.
     public var panelTheme: NativeSettingsTheme {
-        switch snapshot?.state.preferences.panelBackground ?? "dark" {
+        switch preferences.panelBackground {
         case "glass":
             return NativeSettingsTheme.glass.effective(reduceTransparency: appearance.reduceTransparency,
                                                        systemReduceTransparency: false)
@@ -413,13 +421,6 @@ public final class WidgetModel: ObservableObject {
     private var settingsOnly = false
     private var settingsTask: Task<Void, Never>?
     private var settingsRefreshAgain = false
-    /// A settings read came back stale while a preference write was in flight; the last write to land reads again.
-    private var settingsRefreshAfterWrites = false
-    /// Bumped when a preference write starts and when it lands. A settings snapshot read across either holds the
-    /// preferences from before the write; applied, it undid the optimistic change, and the next toggle built its
-    /// patch on that stale layout, so two quick module toggles lost one (settings V2 pass, 2026-10-10).
-    private var preferenceWriteEpoch = 0
-    private var preferenceWritesInFlight = 0
     private var settingsWatcher: DirectoryWatcher?
     private let stateRoot: String?
     private let journal: URL
@@ -433,31 +434,8 @@ public final class WidgetModel: ObservableObject {
     private let transcriptCache: SessionTranscriptCache
     private var speechTask: Task<Void, Never>?
     private var mutationTask: Task<Void, Never>?
-    private var preferenceTask: Task<Void, Never>?
-    private var pendingPreferences: [String: WidgetJSON] = [:]
-    /// Saved preference patches, still shown over every snapshot until one read at or after their write arrives
-    /// (`fence`: state.json's revision once the write landed; nil while that is read). The watch builds a snapshot
-    /// from state it read earlier, so one read before the write can arrive after it; applied bare, it undid the
-    /// saved preference in the live widget.
-    private var savedPreferences: [(id: UUID, fence: Int?, patch: [String: WidgetJSON])] = []
-    /// Patches another process (the settings window) changed a moment ago, shown at once until its write has had time
-    /// to reach a snapshot (`livePreferenceSeconds`), so a setting applies while it is changed (Martin, 2026-10-28:
-    /// "all settings which affect the ui should be realtime").
-    private var livePreferences: [(at: Date, patch: [String: WidgetJSON])] = []
-    nonisolated static let livePreferenceSeconds: TimeInterval = 8
-    /// `livePreferenceSeconds`, shorter in tests.
-    var livePreferenceWindow: TimeInterval = WidgetModel.livePreferenceSeconds
-    private var liveExpiry: Task<Void, Never>?
-    /// Live notes not yet applied, merged (`showLivePreferences`).
-    private var liveApplyPending: [String: WidgetJSON] = [:]
-    private var liveAppliedAt = Date.distantPast
-    private var liveApplyTask: Task<Void, Never>?
-    /// The shortest time between two live applies: 30 per second keeps a slider smooth.
-    var liveApplyInterval: TimeInterval = 1.0 / 30
     /// The last snapshot as it arrived, before any overlay.
     private var lastReceived: WidgetSnapshot?
-    /// What the callers of `updatePreferences` asked to hear about the write that carries their patch.
-    private var pendingPreferenceOutcomes: [(saved: () -> Void, failed: () -> Void)] = []
     private var draftTasks: [String: Task<Void, Never>] = [:]
     /// Which drafts the composer owns and which a snapshot may write (`FieldTextOwnership`).
     var draftOwnership = FieldTextOwnership()
@@ -711,7 +689,7 @@ public final class WidgetModel: ObservableObject {
     public var effectiveReduceMotion: Bool {
         reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
-    public var placement: String { snapshot?.state.preferences.placement ?? "both" }
+    public var placement: String { preferences.placement }
     public var side: EdgePanelPlacement {
         snapshot?.state.preferences.side == "left" ? .left : .right
     }
@@ -754,24 +732,24 @@ public final class WidgetModel: ObservableObject {
             return
         }
         settingsRefreshAgain = false
-        let epoch = preferenceWriteEpoch
-        let clean = preferenceWritesInFlight == 0
+        let epoch = preferenceStore.writeEpoch
+        let clean = preferenceStore.writesInFlight == 0
         settingsTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await self.bridge.run(
                     subcommand: "hub", args: self.widgetArgs + ["snapshot", "--json"], timeoutSeconds: 30)
                 guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
-                let current = clean && epoch == self.preferenceWriteEpoch
+                let current = clean && epoch == self.preferenceStore.writeEpoch
                 if !Task.isCancelled, current || self.snapshot == nil {
                     self.receive([result.stdout])
                 } else if !current {
                     // Read again, but not while a write is still landing: every read until it lands is stale too,
                     // and they would run back to back. The write asks for the read when it lands.
-                    if self.preferenceWritesInFlight == 0 {
+                    if self.preferenceStore.writesInFlight == 0 {
                         self.settingsRefreshAgain = true
                     } else {
-                        self.settingsRefreshAfterWrites = true
+                        self.preferenceStore.readAgainAfterWrites()
                     }
                 }
             } catch {
@@ -865,12 +843,10 @@ public final class WidgetModel: ObservableObject {
         // A Discard still in its Undo window is what the user chose: it goes out now, not never.
         commitHeldDiscard()
         peekTask?.cancel()
-        preferenceTask?.cancel()
-        flushPreferences()
+        preferenceStore.stop()
         settingsTask?.cancel()
         settingsTask = nil
         settingsRefreshAgain = false
-        settingsRefreshAfterWrites = false
         settingsWatcher?.stop()
         settingsWatcher = nil
         followedTranscript = nil
@@ -943,18 +919,18 @@ public final class WidgetModel: ObservableObject {
     private func apply(_ decoded: WidgetSnapshot) {
         do {
             lastReceived = decoded
-            savedPreferences.removeAll { entry in entry.fence.map { decoded.state.revision >= $0 } ?? false }
             var next = decoded
-            next.state.preferences = try overlaid(next.state.preferences)
+            next.state.preferences = try preferenceStore.received(decoded.state)
+            next.state.preferencesUnreadable = nil
             sessionCache.remember(next)
             snapshot = next
             if !draggingSide, let position = draggedSidePosition,
-                abs((next.state.preferences.sidePosition ?? 0.5) - position) < 0.0001
+                abs(next.state.preferences.sidePosition - position) < 0.0001
             {
                 draggedSidePosition = nil
             }
             if !draggingTop, let position = draggedTopPosition,
-                abs((next.state.preferences.topPosition ?? 0.5) - position) < 0.0001
+                abs(next.state.preferences.topPosition - position) < 0.0001
             {
                 draggedTopPosition = nil
             }
@@ -996,7 +972,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     public var layout: WidgetLayoutConfiguration {
-        snapshot?.state.preferences.layout ?? WidgetLayoutConfiguration()
+        preferences.layout
     }
 
     public var sidePosition: Double { draggedSidePosition ?? layout.sidePosition }
@@ -1173,7 +1149,7 @@ public final class WidgetModel: ObservableObject {
         }
         let staged = stagedForLeave.filter { inPopup.contains($0.sourceId) }
         guard !staged.isEmpty else { return false }
-        switch snapshot?.state.preferences.stagedOnLeave ?? "ask" {
+        switch preferences.stagedOnLeave {
         case "send":
             PerfLog.mark("widget.peek staged send=\(staged.count) id=\(shown.id)")
             schedulePeekEnd(on: surface)
@@ -1254,7 +1230,7 @@ public final class WidgetModel: ObservableObject {
         peekTask?.cancel()
         peekTask = nil
         PerfLog.mark("widget.peek outcome id=\(shown.id) tone=\(outcome.tone.rawValue) delivered=\(delivered)")
-        let seconds = snapshot?.state.preferences.sendCloseSeconds ?? 2.5
+        let seconds = preferences.sendCloseSeconds
         guard delivered, seconds > 0 else { return }
         peekTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
@@ -1391,7 +1367,7 @@ public final class WidgetModel: ObservableObject {
         dragStep(finished: finished)
         if finished {
             action(
-                ["action": "preferences", "patch": ["sidePosition": .number(bounded)]],
+                ["action": "preferences", "patch": .object(preferenceStore.patch { $0.sidePosition = bounded })],
                 failed: { [weak self] in
                     guard let self, self.draggedSidePosition == bounded, !self.draggingSide else { return }
                     self.draggedSidePosition = nil
@@ -1409,7 +1385,7 @@ public final class WidgetModel: ObservableObject {
         dragStep(finished: finished)
         if finished {
             action(
-                ["action": "preferences", "patch": ["topPosition": .number(bounded)]],
+                ["action": "preferences", "patch": .object(preferenceStore.patch { $0.topPosition = bounded })],
                 failed: { [weak self] in
                     guard let self, self.draggedTopPosition == bounded, !self.draggingTop else { return }
                     self.draggedTopPosition = nil
@@ -1539,8 +1515,8 @@ public final class WidgetModel: ObservableObject {
         refreshOpeningFilterAndPreview()
     }
 
-    public var previewFilter: String { snapshot?.state.preferences.previewFilter ?? "needs-you" }
-    public var previewSort: String { snapshot?.state.preferences.previewSort ?? "attention" }
+    public var previewFilter: String { preferences.previewFilter }
+    public var previewSort: String { preferences.previewSort }
 
     /// The hover list. "Needs you": a session with an unanswered item, or a shown session that waits. With the
     /// "active" filter, shown top-level sessions that work or hold unread items join it. Orders: "attention" (waiting
@@ -1587,11 +1563,11 @@ public final class WidgetModel: ObservableObject {
 
     /// Stores the hover list's filter or order.
     public func setPreview(filter: String? = nil, sort: String? = nil) {
-        var patch: [String: WidgetJSON] = [:]
-        if let filter { patch["previewFilter"] = .string(filter) }
-        if let sort { patch["previewSort"] = .string(sort) }
-        guard !patch.isEmpty else { return }
-        updatePreferences(patch)
+        guard filter != nil || sort != nil else { return }
+        writePreferences { preferences in
+            if let filter { preferences.previewFilter = filter }
+            if let sort { preferences.previewSort = sort }
+        }
     }
 
     public func inboxFor(_ key: String) -> WidgetInboxSession? { inboxSessions[key] }
@@ -1693,7 +1669,7 @@ public final class WidgetModel: ObservableObject {
     /// The border flash of a revealed row, as long as the alert flash setting (`alertFlashSeconds`).
     var revealStyle: AttentionPulseStyle {
         var style = AttentionPulseStyle.borderFlash(color: .orange, cornerRadius: 11)
-        style.duration = WidgetAlerts.flashSeconds(snapshot?.state.preferences)
+        style.duration = WidgetAlerts.flashSeconds(preferences)
         style.period = 0.8
         style.fadeIn = 0.18
         style.fadeOut = 0.3
@@ -1703,7 +1679,7 @@ public final class WidgetModel: ObservableObject {
     /// Scrolls the panel to `rowID` and flashes its border (no flash when the flash setting is 0).
     func reveal(_ rowID: String) {
         let count = (revealCounts[rowID] ?? 0) + 1
-        if WidgetAlerts.flashSeconds(snapshot?.state.preferences) > 0 {
+        if WidgetAlerts.flashSeconds(preferences) > 0 {
             revealStarts[rowID] = Date()
             revealCounts[rowID] = count
         }
@@ -2366,7 +2342,7 @@ public final class WidgetModel: ObservableObject {
         let file = Self.widgetStateFile(stateRoot: stateRoot)
         Task { [weak self] in
             for attempt in 0..<4 {
-                let revision = await Task.detached(priority: .utility) { Self.storedRevision(file) }.value
+                let revision = await Task.detached(priority: .utility) { WidgetPreferencesStore.storedRevision(file) }.value
                 guard let self else { return }
                 if let revision {
                     self.draftOwnership.stored(key, at: revision, generation: generation)
@@ -2455,170 +2431,37 @@ public final class WidgetModel: ObservableObject {
         try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
     }
 
-    /// `preferences` with the saved patches not yet seen in a snapshot, then the ones still to be written, on top.
-    private func overlaid(_ preferences: WidgetPreferences) throws -> WidgetPreferences {
-        var patch: [String: WidgetJSON] = [:]
-        let now = Date()
-        livePreferences.removeAll { now.timeIntervalSince($0.at) > livePreferenceWindow }
-        for entry in livePreferences { patch.merge(entry.patch) { _, new in new } }
-        for entry in savedPreferences { patch.merge(entry.patch) { _, new in new } }
-        patch.merge(pendingPreferences) { _, new in new }
-        return try mergingPreferences(patch, into: preferences)
+    /// The store's hold on this model: the snapshot's preferences, the publish, the hub write and the settings read.
+    private func preferenceWiring() -> WidgetPreferencesStore.Wiring {
+        WidgetPreferencesStore.Wiring(
+            shown: { [weak self] in self?.snapshot?.state.preferences },
+            show: { [weak self] preferences, whole in
+                guard let self else { return }
+                guard whole else { return self.publishPreferences(preferences) }
+                guard var current = self.snapshot else { return }
+                current.state.preferences = preferences
+                self.snapshot = current
+                self.presentationChanged?()
+            },
+            send: { [weak self] patch, failed, completed in
+                self?.action(["action": "preferences", "patch": .object(patch)], failed: failed, completed: completed)
+            },
+            readAgain: { [weak self] in self?.refreshSettings() },
+            report: { [weak self] error in self?.report(error) },
+            stopping: { [weak self] in self?.stopping ?? true })
     }
 
-    /// A write landed: its patch stays shown until a snapshot read at or after the revision it stored arrives.
-    private func holdSaved(_ patch: [String: WidgetJSON]) {
-        let id = UUID()
-        savedPreferences.append((id, nil, patch))
-        let file = Self.widgetStateFile(stateRoot: stateRoot)
-        Task { [weak self] in
-            let revision = await Task.detached(priority: .utility) { Self.storedRevision(file) }.value
-            self?.fenceSaved(id, at: revision)
-        }
-    }
-
-    private func fenceSaved(_ id: UUID, at revision: Int?) {
-        guard let index = savedPreferences.firstIndex(where: { $0.id == id }) else { return }
-        guard let revision else {
-            // Unreadable: the patch is dropped as before, rather than shown over every later snapshot.
-            savedPreferences.remove(at: index)
-            return
-        }
-
-        savedPreferences[index].fence = revision
-        // The snapshot on screen may already be that new; then it shows what is stored now.
-        guard let last = lastReceived, last.state.revision >= revision, var current = snapshot else { return }
-        savedPreferences.remove(at: index)
-        do {
-            current.state.preferences = try overlaid(last.state.preferences)
-            snapshot = current
-            presentationChanged?()
-        } catch { report(error) }
-    }
-
-    /// state.json's revision (`hub widget` bumps it on every stored change); nil when it cannot be read.
-    nonisolated static func storedRevision(_ path: String) -> Int? {
-        struct Stored: Decodable { let revision: Int }
-        do {
-            return try JSONDecoder().decode(Stored.self, from: Data(contentsOf: URL(fileURLWithPath: path))).revision
-        } catch {
-            PerfLog.mark("widget.preferences revision unreadable: \(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    private func mergingPreferences(
-        _ patch: [String: WidgetJSON], into preferences: WidgetPreferences
-    ) throws -> WidgetPreferences {
-        guard case .object(var fields) = try WidgetJSON.value(preferences) else { return preferences }
-        fields.merge(patch) { _, new in new }
-        return try JSONDecoder().decode(WidgetPreferences.self, from: JSONEncoder().encode(WidgetJSON.object(fields)))
+    /// Changes fields of the stored settings (`WidgetPreferencesStore.write`): shown at once, sent after a short pause.
+    public func writePreferences(
+        _ change: (inout WidgetPreferences) -> Void, saved: (() -> Void)? = nil, failed: (() -> Void)? = nil
+    ) {
+        preferenceStore.write(change, saved: saved, failed: failed)
     }
 
     /// A preference another process changed (the settings window posts each change): shown at once, written by that
     /// process. Nothing is written here.
     public func showLivePreferences(_ patch: [String: WidgetJSON]) {
-        guard !patch.isEmpty, snapshot != nil else { return }
-        livePreferences.append((Date(), patch))
-        // A slider posts up to 60 notes a second, and each new snapshot rebuilds the inbox and re-renders the panels
-        // (about 8 ms of main thread per note, measured 2026-10-28). Notes are merged and applied at most once per
-        // `liveApplyInterval`, the first at once and the last always.
-        liveApplyPending.merge(patch) { _, new in new }
-        let wait = liveApplyInterval - Date().timeIntervalSince(liveAppliedAt)
-        if wait <= 0 {
-            applyLivePreferences()
-        } else if liveApplyTask == nil {
-            liveApplyTask = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(wait)) } catch { return }
-                self?.liveApplyTask = nil
-                self?.applyLivePreferences()
-            }
-        }
-        scheduleLiveExpiry()
-    }
-
-    private func scheduleLiveExpiry() {
-        guard liveExpiry == nil, let earliest = livePreferences.first?.at else { return }
-        let delay = max(0, earliest.addingTimeInterval(livePreferenceWindow).timeIntervalSinceNow) + 0.1
-        liveExpiry = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-            guard let self else { return }
-            self.liveExpiry = nil
-            self.dropExpiredLivePreferences()
-            self.scheduleLiveExpiry()
-        }
-    }
-
-    private func applyLivePreferences() {
-        let patch = liveApplyPending
-        liveApplyPending = [:]
-        liveAppliedAt = Date()
-        guard !patch.isEmpty, let current = snapshot else { return }
-        // The same value again (a slider held still, a repeated note) publishes nothing.
-        do { publishPreferences(try mergingPreferences(patch, into: current.state.preferences)) } catch { report(error) }
-    }
-
-    private func dropExpiredLivePreferences() {
-        guard let last = lastReceived else { return }
-        do { publishPreferences(try overlaid(last.state.preferences)) } catch { report(error) }
-    }
-
-    /// Shows `patch` at once and writes it after a short pause, merged with the patches that follow. `saved` or
-    /// `failed` runs when the write that carries it ends, so a page can confirm only what was stored.
-    public func updatePreferences(
-        _ patch: [String: WidgetJSON], saved: (() -> Void)? = nil, failed: (() -> Void)? = nil
-    ) {
-        pendingPreferences.merge(patch) { _, new in new }
-        WidgetLiveSettings.postPreferences(patch)
-        if saved != nil || failed != nil {
-            pendingPreferenceOutcomes.append((saved ?? {}, failed ?? {}))
-        }
-        if var current = snapshot {
-            do {
-                current.state.preferences = try mergingPreferences(patch, into: current.state.preferences)
-                snapshot = current
-                presentationChanged?()
-            } catch { report(error) }
-        }
-        preferenceTask?.cancel()
-        preferenceTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
-            self?.flushPreferences()
-        }
-    }
-
-    private func flushPreferences() {
-        let patch = pendingPreferences
-        guard !patch.isEmpty else { return }
-        let outcomes = pendingPreferenceOutcomes
-        pendingPreferenceOutcomes = []
-        preferenceWriteEpoch += 1
-        preferenceWritesInFlight += 1
-        /// True when it started the settings read a stale one put off.
-        @discardableResult func acknowledge() -> Bool {
-            preferenceWriteEpoch += 1
-            preferenceWritesInFlight -= 1
-            for (key, value) in patch where pendingPreferences[key] == value {
-                pendingPreferences.removeValue(forKey: key)
-            }
-            guard preferenceWritesInFlight == 0, settingsRefreshAfterWrites, !stopping else { return false }
-            settingsRefreshAfterWrites = false
-            refreshSettings()
-            return true
-        }
-        action(
-            ["action": "preferences", "patch": .object(patch)],
-            failed: { [weak self] in
-                let reread = acknowledge()
-                outcomes.forEach { $0.failed() }
-                if !reread { self?.refreshSettings() }
-            },
-            completed: { [weak self] in
-                self?.holdSaved(patch)
-                acknowledge()
-                outcomes.forEach { $0.saved() }
-                self?.preferencesSaved?(patch)
-            })
+        preferenceStore.showLive(patch)
     }
 
     /// `unanswered`: called in place of `failed` and the error note when the hub gave no answer within
@@ -2630,7 +2473,7 @@ public final class WidgetModel: ObservableObject {
         if completed == nil, failed == nil, case .object(let request) = value,
             request["action"] == .string("preferences"), case .object(let patch) = request["patch"]
         {
-            updatePreferences(patch)
+            preferenceStore.update(patch)
             return
         }
         let draftKey: String?
@@ -3426,7 +3269,7 @@ public final class WidgetModel: ObservableObject {
             !voiceActive,
             !dialogOpen
         else { return }
-        let delay = max(5, snapshot?.state.preferences.quietSeconds ?? 15)
+        let delay = max(5, preferences.quietSeconds)
         quietTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             guard let self else { return }

@@ -7,16 +7,16 @@ import Foundation
 /// lost when the widget restarts.
 extension WidgetModel {
     /// A click on a decision option or its number key stages it ("stage", the default) or sends it at once ("send").
-    public var decisionClickStages: Bool { (snapshot?.state.preferences.decisionClick ?? "stage") == "stage" }
+    public var decisionClickStages: Bool { preferences.decisionClick == "stage" }
 
     /// What this click does: `decisionClickStages`, turned around while ⌘ is down (`decisionCommandSwaps`, on by
     /// default), so a ⌘-click sends at once while clicks stage, and stages while clicks send (Martin, 2026-10-26).
     public var clickStagesNow: Bool {
-        DecisionAnswering.clickStages(snapshot?.state.preferences, command: NSEvent.modifierFlags.contains(.command))
+        DecisionAnswering.clickStages(preferences, command: NSEvent.modifierFlags.contains(.command))
     }
 
     /// Return in a decision's own answer field stages the text as its note ("stage", the default) or sends it.
-    public var ownAnswerReturnStages: Bool { (snapshot?.state.preferences.ownAnswerReturn ?? "stage") == "stage" }
+    public var ownAnswerReturnStages: Bool { preferences.ownAnswerReturn == "stage" }
 
     /// Return (or ⌘-Return, `command`) in the own answer field of `ownAnswerCard`: stage the text as the decision's
     /// note or send it as the answer, by `ownAnswerReturn`; ⌘ does the other while `decisionCommandSwaps` is on.
@@ -29,7 +29,7 @@ extension WidgetModel {
         // Return again on the empty field, after Return staged the note: the staged decision goes to its session now
         // (Martin, 2026-10-28: "if i enter to stage, then enter it again, it should probably send that one").
         if text.isEmpty, emptyReturnOnStaged(card) { return }
-        if DecisionAnswering.returnStages(snapshot?.state.preferences, command: command) {
+        if DecisionAnswering.returnStages(preferences, command: command) {
             guard !text.isEmpty else {
                 // The warning tone: in the default grey this note was nearly invisible (Martin, 2026-10-28).
                 postNote("Write your answer first.", tone: .warning)
@@ -47,7 +47,7 @@ extension WidgetModel {
     func emptyReturnOnStaged(_ card: WidgetCard) -> Bool {
         guard isStaged(card), draft.assetIds.isEmpty else { return false }
         let decision = WidgetWords.decision(card.number)
-        switch snapshot?.state.preferences.ownAnswerEmptyReturn ?? "send" {
+        switch preferences.ownAnswerEmptyReturn {
         case "confirm":
             postNote("Send " + decision + " with its staged answer now?", action: WidgetNoticeAction(title: "Send") {
                 [weak self] in _ = self?.sendStagedFromOwnAnswer(card)
@@ -568,7 +568,7 @@ extension WidgetModel {
                     // Only the panel this send left from: one the user opened again meanwhile stays open. It folds
                     // after the note was readable: closing at once hid "delivered" and read as "Send did nothing"
                     // (Martin, 2026-10-25).
-                    let closeSeconds = snapshot?.state.preferences.sendCloseSeconds ?? 2.5
+                    let closeSeconds = preferences.sendCloseSeconds
                     if thenClose, expanded != nil, openedAt == opened, sendCloseRevision == closeRevision,
                        closeSeconds > 0 {
                         Task { [weak self] in
@@ -612,7 +612,7 @@ extension WidgetModel {
     /// setting), so the note waiting in the panel is noticed.
     private func flashUnsent(_ items: [WidgetInboxItem]) {
         guard expanded == nil else { return }
-        let seconds = WidgetAlerts.flashSeconds(snapshot?.state.preferences)
+        let seconds = WidgetAlerts.flashSeconds(preferences)
         for key in Set(items.map(\.key)) { flashAttention(key, seconds: seconds) }
     }
 
@@ -642,7 +642,7 @@ extension WidgetModel {
             collapse(file: file, line: line)
             return
         }
-        switch snapshot?.state.preferences.stagedOnLeave ?? "ask" {
+        switch preferences.stagedOnLeave {
         case "keep":
             collapse(file: file, line: line)
         case "send":
@@ -750,12 +750,12 @@ extension WidgetModel {
 /// a button stays (`noteSeconds`, at least 10 s), so every Undo in the widget lasts the same. With notes set to stay
 /// until closed (`noteSeconds` 0), the row stays until it is closed, but 60 s at most, since the delete must happen.
 public extension WidgetModel {
-    nonisolated static func undoSeconds(_ preferences: WidgetPreferences?) -> Double {
+    nonisolated static func undoSeconds(_ preferences: WidgetPreferences) -> Double {
         noteSeconds(preferences, hasAction: true) ?? 60
     }
 
     /// `undoSeconds` for the current preferences; the coordinator hands this to the shelf and voice-notes stores.
-    var undoSeconds: Double { Self.undoSeconds(snapshot?.state.preferences) }
+    var undoSeconds: Double { Self.undoSeconds(preferences) }
 }
 
 /// A button beside the widget's notice line.

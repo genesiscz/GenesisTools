@@ -31,9 +31,9 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         let model = WidgetModel(binaryPath: tools.path, stateRoot: state.path,
             defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
                 notificationNamespace: "decisions." + UUID().uuidString, observeExternalChanges: false))
-        var preferences: [String: Any] = ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+        var preferences: [String: Any] = WidgetTestPreferences.dictionary(["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
             "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en",
-            "previewSort": "recent", "panelBackground": "dark"]
+            "previewSort": "recent", "panelBackground": "dark"])
         preferences.merge(extra) { _, new in new }
         let titles = ["Kalendora hotfix research", "gt-native-ux", "gt-fixes"]
         let sessions: [[String: Any]] = titles.enumerated().map { index, title in
@@ -321,15 +321,15 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
 
     /// P11: a pick sent from the alert popup stays there unless Alerts → After a send says "Open its session".
     func testAfterASendFollowsItsSetting() throws {
-        XCTAssertFalse(WidgetPeekView.sendOpensSession(nil), "the default stays in the popup")
+        XCTAssertFalse(WidgetPeekView.sendOpensSession(.hubDefaults), "the default stays in the popup")
         let stay = try model()
         defer { stay.stop() }
-        XCTAssertFalse(WidgetPeekView.sendOpensSession(stay.snapshot?.state.preferences))
+        XCTAssertFalse(WidgetPeekView.sendOpensSession(stay.preferences))
         let open = try model(preferences: ["popupSendOpens": "session"])
         defer { open.stop() }
         XCTAssertEqual(open.snapshot?.state.preferences.popupSendOpens, "session", "the hub's key reaches the widget")
-        XCTAssertTrue(WidgetPeekView.sendOpensSession(open.snapshot?.state.preferences))
-        XCTAssertFalse(WidgetPeekView.sendOpensSession(open.snapshot?.state.preferences, staging: true),
+        XCTAssertTrue(WidgetPeekView.sendOpensSession(open.preferences))
+        XCTAssertFalse(WidgetPeekView.sendOpensSession(open.preferences, staging: true),
                        "a staged pick, including Shift, is not a send")
     }
 
@@ -870,12 +870,14 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertEqual(old.fullText, old.body)
         let model = try model()
         defer { model.stop() }
-        let preferences = try XCTUnwrap(model.snapshot?.state.preferences)
-        XCTAssertNil(preferences.decisionContext)
-        XCTAssertNil(preferences.decisionCode)
-        XCTAssertNil(preferences.decisionProposal)
-        // An older hub sends no `overviewSummary`: the inbox of every session shows the description (default on).
-        XCTAssertNil(preferences.overviewSummary)
+        // The hub resolves every preference before the widget reads it, so the settings an older widget never had read
+        // as the hub's defaults.
+        let preferences = model.preferences
+        XCTAssertEqual(preferences.decisionContext, "folded")
+        XCTAssertEqual(preferences.decisionCode, "show")
+        XCTAssertEqual(preferences.decisionProposal, "option")
+        // The inbox of every session shows the description by default.
+        XCTAssertTrue(preferences.overviewSummary)
     }
 
     /// A card with the hub's details decodes every field in the hub's shape (`DecisionRef`, `DecisionDelivery`), and
@@ -922,20 +924,20 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         XCTAssertNil(WidgetProposal.underOption("b) the other one", letter: "a"))
         let open = try JSONDecoder().decode(WidgetCard.self, from: JSONSerialization.data(
             withJSONObject: Self.contextCard(key + "0")))
-        let placed = try XCTUnwrap(WidgetProposal.placement(open, preferences: nil))
+        let placed = try XCTUnwrap(WidgetProposal.placement(open, preferences: .hubDefaults))
         XCTAssertEqual(placed.letter, "a")
         XCTAssertEqual(placed.text, "it matches both of your instructions. The dialog stays the only approval path.")
         let sent = try JSONDecoder().decode(WidgetCard.self, from: JSONSerialization.data(
             withJSONObject: Self.contextCard(key + "0", status: "sent")))
-        XCTAssertNil(WidgetProposal.placement(sent, preferences: nil), "an answered card shows no options")
+        XCTAssertNil(WidgetProposal.placement(sent, preferences: .hubDefaults), "an answered card shows no options")
         let model = try model(preferences: ["decisionProposal": "above"])
         defer { model.stop() }
-        XCTAssertNil(WidgetProposal.placement(open, preferences: model.snapshot?.state.preferences))
+        XCTAssertNil(WidgetProposal.placement(open, preferences: model.preferences))
         // The Code section shows the cited file, so the list under the buttons does not name it again.
-        XCTAssertTrue(LiveWidgetView.listedRefs(open, preferences: nil).isEmpty)
+        XCTAssertTrue(LiveWidgetView.listedRefs(open, preferences: .hubDefaults).isEmpty)
         let hidden = try self.model(preferences: ["decisionCode": "hide"])
         defer { hidden.stop() }
-        XCTAssertEqual(LiveWidgetView.listedRefs(open, preferences: hidden.snapshot?.state.preferences).count, 1)
+        XCTAssertEqual(LiveWidgetView.listedRefs(open, preferences: hidden.preferences).count, 1)
     }
 
     /// The open decision card as a session's inbox draws it, rendered in a window that is never ordered front: the

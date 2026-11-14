@@ -64,7 +64,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     var panelCount: Int { panels.count }
     var panelMonitorsInstalled: Bool { localMouse != nil || globalMouse != nil || keyboard != nil }
     /// "Show the widget" in the Widget settings. Off until the first snapshot says otherwise.
-    public var panelsEnabled: Bool { model.snapshot?.state.preferences.showWidget ?? false }
+    public var panelsEnabled: Bool { model.preferences.showWidget }
     /// Called when the edge panels come or go with `panelsEnabled` (and once at start). The widget face holds its
     /// "widget is on screen" lock with it, which another face's ⌘Q question reads.
     public var panelsShownChanged: ((Bool) -> Void)?
@@ -124,7 +124,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 guard let model else { throw CancellationError() }
                 try await model.attachShelfItem(item.id, to: recipient.key)
             },
-            undoSeconds: { [weak model] in model?.undoSeconds ?? WidgetModel.undoSeconds(nil) })
+            undoSeconds: { [weak model] in model?.undoSeconds ?? WidgetModel.undoSeconds(.hubDefaults) })
         self.shelf = shelf
         let tasks = WidgetTasksStore(
             binaryPath: binaryPath,
@@ -137,9 +137,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let voiceNotes = WidgetVoiceNotesStore(binaryPath: binaryPath, stateRoot: stateRoot,
             micLauncher: micLauncher ?? "", acquireAudio: { try await runtime.acquireExternalAudio() },
             settings: { [weak model] in
-                let preferences = model?.snapshot?.state.preferences
-                return WidgetVoiceNoteSettings(provider: preferences?.voiceProvider ?? "xai",
-                    account: preferences?.voiceAccount, model: preferences?.voiceModel, language: preferences?.voiceLanguage)
+                let preferences = model?.preferences ?? .hubDefaults
+                return WidgetVoiceNoteSettings(provider: preferences.voiceProvider,
+                    account: preferences.voiceAccount, model: preferences.voiceModel, language: preferences.voiceLanguage)
             }, sessions: { [weak model] in model?.snapshot?.sessions ?? [] },
             attachDraft: { [weak self, weak model] session, note in
                 guard let model else { throw CancellationError() }
@@ -147,7 +147,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 self?.showShelfDraft(for: session)
                 return "Added to \(session.title)'s draft. Nothing has been sent."
             },
-            undoSeconds: { [weak model] in model?.undoSeconds ?? WidgetModel.undoSeconds(nil) })
+            undoSeconds: { [weak model] in model?.undoSeconds ?? WidgetModel.undoSeconds(.hubDefaults) })
         voiceNotes.recipientPickerVisibilityChanged = { [weak self] visible in
             guard let self else { return }
             self.model.dialogOpen = visible || self.settings?.isVisible == true || self.mediaWindow?.isVisible == true
@@ -245,7 +245,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// New decisions, questions and answers: one chime, and the newest item pops up in the agents preview.
     func alert(_ items: [WidgetInboxItem]) {
         guard panelsEnabled else { return }
-        let preferences = model.snapshot?.state.preferences
+        let preferences = model.preferences
         let wanted = WidgetAlerts.wanted(items, preferences: preferences)
         guard let item = WidgetAlerts.popupItem(wanted) else { return }
         PerfLog.mark("widget.alert items=\(wanted.count) id=\(item.id) kind=\(item.kind)")
@@ -256,7 +256,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         // The session that asked flashes on its rail bubble and in the lists, popup or not: it says why the widget
         // chimed or opened (Martin, 2026-10-23).
         model.flashAttention(item.key, seconds: WidgetAlerts.flashSeconds(preferences))
-        guard preferences?.alertPopup ?? true else { return }
+        guard preferences.alertPopup else { return }
         popUp(item, with: wanted, preferences: preferences, seconds: WidgetAlerts.popupSeconds(preferences))
     }
 
@@ -265,9 +265,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// with the option that was taken; the rest join it by Alerts → Several at once.
     func alertAnswered(_ items: [WidgetInboxItem]) {
         guard panelsEnabled, let newest = items.max(by: { $0.at < $1.at }) else { return }
-        let preferences = model.snapshot?.state.preferences
+        let preferences = model.preferences
         PerfLog.mark("widget.alert answered-elsewhere items=\(items.count) id=\(newest.id) via=\(newest.answeredVia ?? "")")
-        guard preferences?.autoDecisionPopup ?? true else { return }
+        guard preferences.autoDecisionPopup else { return }
         playChime(WidgetAlerts.autoDecisionSound(preferences), WidgetAlerts.volume(preferences))
         GenAnnounce.post(WidgetAlerts.announcement(newest, session: model.session(forKey: newest.key)?.title),
                          priority: .medium)
@@ -300,9 +300,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// stays until it is closed, so a pick staged before a restart is not left behind.
     func remindStaged(_ items: [WidgetInboxItem]) {
         guard panelsEnabled, let newest = items.max(by: { $0.at < $1.at }) else { return }
-        let preferences = model.snapshot?.state.preferences
-        PerfLog.mark("widget.staged-reminder items=\(items.count) shown=\(preferences?.stagedReminder ?? true)")
-        guard preferences?.stagedReminder ?? true else { return }
+        let preferences = model.preferences
+        PerfLog.mark("widget.staged-reminder items=\(items.count) shown=\(preferences.stagedReminder)")
+        guard preferences.stagedReminder else { return }
         let reminder = WidgetInboxItem(id: WidgetAlerts.stagedReminderID, sourceId: WidgetAlerts.stagedReminderID,
                                        kind: "staged", key: newest.key, at: newest.at, needsAnswer: false)
         popUp(reminder, with: [reminder], preferences: preferences, seconds: 0)
@@ -312,7 +312,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// the newest replaces. Checked before the module switch: a popup the user's interaction refuses must not swap the
     /// pane they use. An open popup takes a new alert even with the pointer on it, since nothing moves under the
     /// pointer, and an alert for the decision it shows takes its place.
-    private func popUp(_ first: WidgetInboxItem, with burst: [WidgetInboxItem], preferences: WidgetPreferences?,
+    private func popUp(_ first: WidgetInboxItem, with burst: [WidgetInboxItem], preferences: WidgetPreferences,
                        seconds: Double) {
         let many = WidgetAlerts.popupMany(preferences)
         let open = model.peekItem != nil && (many != .newest || model.peekItem?.sourceId == first.sourceId)
@@ -545,11 +545,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func panelShape(_ surface: WidgetSurfaceID, _ presentation: WidgetModulePresentation) -> EdgePanelShape {
-        let preferences = model.snapshot?.state.preferences
+        let preferences = model.preferences
         return WidgetHostView.panelShape(
             edge: surface.edge, presentation: presentation,
-            classic: surface.edge != .top && preferences?.sideStyle == "classic",
-            joined: preferences?.joinedEdges ?? true)
+            classic: surface.edge != .top && preferences.sideStyle == "classic",
+            joined: preferences.joinedEdges)
     }
 
     private func moduleIDs(for surface: WidgetSurfaceID) -> [String] {
@@ -561,7 +561,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
 
     /// The hover list opens at the slider's width while it moves, laid out again in place (no new panel, so nothing
     /// blinks), and closes 2 s after the slider is let go, once the saved width has arrived.
-    func showLivePreview(width: CGFloat?, done: Bool, fallbackSeconds: TimeInterval = WidgetModel.livePreferenceSeconds) {
+    func showLivePreview(width: CGFloat?, done: Bool, fallbackSeconds: TimeInterval = WidgetPreferencesStore.liveSeconds) {
         guard let width else { return }
         liveSettingsEnd?.cancel()
         model.livePreviewWidth = WidgetModel.clampedPreviewWidth(width)
@@ -872,7 +872,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     func collapseIfOutside(_ event: NSEvent) {
         guard !passivePanels else { return }
         // A click elsewhere closes the alert popup (and every alert listed or queued in it) when Alerts says so.
-        if model.expanded == nil, model.peekItem != nil, model.snapshot?.state.preferences.alertPopupClickAway ?? false,
+        if model.expanded == nil, model.peekItem != nil, model.preferences.alertPopupClickAway,
            isOutsidePanels(event) {
             model.dismissPeek(all: true)
             return

@@ -52,9 +52,13 @@ enum PreviewWidgetRoster {
                     + #""project":"project","activityAt":\#(now - Double(index) * 60_000),"status":"recent","#
                     + #""pinned":false,"visible":true,"hiddenByFilter":false,"model":"opus","toolCalls":\#(index % 40),\#(extra)}"#)
         }
-        return #"{"version":1,"state":{"version":1,"revision":0,"selectedKey":"\#(lead)","preferences":{"excludedKeys":[],"#
-            + #""projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"#
-            + #""voiceProvider":"fixture","voiceLanguage":"en"},"assets":{},"drafts":{},"outgoing":[]},"#
+        // A snapshot carries every preference the hub defaults (`WidgetPreferences` decodes them non-optional).
+        var preferences = WidgetPreferences.hubDefaults
+        preferences.voiceProvider = "fixture"
+        preferences.voiceLanguage = "en"
+        let preferencesJSON = (try? JSONEncoder().encode(preferences)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        return #"{"version":1,"state":{"version":1,"revision":0,"selectedKey":"\#(lead)","preferences":\#(preferencesJSON),"#
+            + #""assets":{},"drafts":{},"outgoing":[]},"#
             + #""sessions":[\#(rows.joined(separator: ","))],"cards":[],"manifests":{},"errors":[]}"#
     }
 
