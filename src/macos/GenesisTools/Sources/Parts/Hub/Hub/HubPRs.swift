@@ -2735,6 +2735,18 @@ struct PROverviewFolds: DynamicProperty {
     @AppStorage("hub.prs.fold.checks") var checks = false
 }
 
+extension View {
+    /// The palette's "review" opens the review popover of whichever PR detail layout shows: the request is taken back
+    /// as it is read, so it opens once.
+    func opensReview(on prs: PRsModel, reviewing: Binding<Bool>) -> some View {
+        onChange(of: prs.reviewRequested, initial: true) { _, wanted in
+            guard wanted else { return }
+            prs.reviewRequested = false
+            reviewing.wrappedValue = true
+        }
+    }
+}
+
 struct PRDetailView: View {
     var model: HubModel
     @ObservedObject var prs: PRsModel
@@ -2867,11 +2879,7 @@ struct PRDetailView: View {
                         }
                     }
                     // The palette's "review": the same popover, with the command shown before Start.
-                    .onChange(of: prs.reviewRequested, initial: true) { _, wanted in
-                        guard wanted else { return }
-                        prs.reviewRequested = false
-                        reviewing = true
-                    }
+                    .opensReview(on: prs, reviewing: $reviewing)
                 }
                 if let path = pr.localWorktree {
                     Button {

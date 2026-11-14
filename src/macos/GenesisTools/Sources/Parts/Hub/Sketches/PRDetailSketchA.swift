@@ -160,11 +160,7 @@ struct PRDetailSketchA: View {
                         }
                     }
                     // The palette's "review": the same popover, as the current PR detail opens it.
-                    .onChange(of: prs.reviewRequested, initial: true) { _, wanted in
-                        guard wanted else { return }
-                        prs.reviewRequested = false
-                        reviewing = true
-                    }
+                    .opensReview(on: prs, reviewing: $reviewing)
                 }
                 moreMenu
                     .popover(isPresented: $launching, arrowEdge: .bottom) {
