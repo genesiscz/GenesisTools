@@ -21,12 +21,6 @@ function refuseUnsafe(path: string): string | null {
     return denied ? `${path}: ${denied}` : null;
 }
 
-/**
- * The Trash method is the one deliberate exception to "every doctor removal goes through the rm trash": the user chose
- * the macOS Trash to get Put Back and a visible Trash, which the rm trash (a hidden folder, zero grace, a ledger) does
- * not give. It still asks the `tools rm` hard-deny verdict first (`refuseUnsafe`). The delete method goes through
- * `removeForDoctor`.
- */
 /** The system's own Trash command (macOS 15 and later): NSFileManager's trashItem, so no Finder, no Automation grant. */
 export const TRASH_COMMAND = "/usr/bin/trash";
 
@@ -36,6 +30,11 @@ export const TRASH_COMMAND = "/usr/bin/trash";
  * so one failure does not hide the others. A timeout or a crash part-way loses nothing: an item with no line is
  * settled by whether its source is still there (gone means it moved, with the destination unknown). The items stay on
  * the same volume: this frees nothing until the Trash is emptied.
+ *
+ * The Trash method is the one deliberate exception to "every doctor removal goes through the rm trash": the user chose
+ * the macOS Trash to get Put Back and a visible Trash, which the rm trash (a hidden folder, zero grace, a ledger) does
+ * not give. It still asks the `tools rm` hard-deny verdict first (`refuseUnsafe`). The delete method goes through
+ * `removeForDoctor`.
  */
 export async function moveManyToTrash(
     paths: string[],
