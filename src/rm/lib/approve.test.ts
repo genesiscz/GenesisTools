@@ -1696,6 +1696,40 @@ describe("an aside copy deleted outside tools rm (macOS tmp_cleaner)", () => {
         }
     });
 
+    test("a lost copy is reported once: an approval that decides nothing drops it from the request", async () => {
+        // m888au (2026-11-09 to 11-14): the same three lost copies were logged as `lost` at each of seven approvals,
+        // since the one path left was refused every time and nothing saved the request.
+        const request = asideRequest("lost-once");
+        const [lost, kept] = request.targets;
+
+        if (!lost?.stored || !kept?.stored) {
+            throw new Error("expected two aside copies");
+        }
+
+        clean(lost.stored, "lost-once");
+        const unanswered = async (): Promise<PersonAnswer> => ({
+            approved: false,
+            via: "none",
+            choices: { selected: null, disposal: "trash", remember: "once", note: null },
+            deniedByPerson: false,
+        });
+        const exitCode = process.exitCode;
+        const println = spyOn(out, "println").mockImplementation(() => undefined);
+
+        try {
+            for (let round = 0; round < 2; round++) {
+                await approveMany([request.id], context(), { ask: unanswered, kickDrainer: () => undefined });
+            }
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
+
+        const logged = readRmLedger().filter((entry) => entry.action === "lost" && entry.requestId === request.id);
+        expect(logged.map((entry) => entry.path)).toEqual([lost.path]);
+        expect(loadRmRequest(request.id)).toMatchObject({ status: "pending", targets: [{ path: kept.path }] });
+    });
+
     test("an approval moves the copies that are left and closes the request with the lost one reported", async () => {
         const request = asideRequest("tmp-cleaned-half");
         const [lost, kept] = request.targets;

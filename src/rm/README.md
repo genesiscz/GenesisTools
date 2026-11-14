@@ -590,8 +590,8 @@ tools rm preset bun-cache --in ~/.bun/install/cache
   `tools rm drain --now`, then set `trash-root` again.
 - **A batch stays in `tools rm trash` after its grace.** The drain could not delete an item (a `fail` line in
   `tools rm log`); fix the permission, then `tools rm drain --now`, or restore it.
-- **A request reads `copy lost`.** The aside copy was deleted outside `tools rm`. `approve` logs it as `lost` and
-  decides the rest.
+- **A request reads `copy lost`.** The aside copy was deleted outside `tools rm`. `approve` logs it as `lost` once,
+  drops it from the request, and decides the rest.
 - **The disk is full.** `tools rm` releases its 128 MB reserve when under 64 MB is free and prints a yellow line; free
   space, and the daily pass makes the reserve again.
 

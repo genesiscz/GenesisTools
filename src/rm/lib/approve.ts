@@ -165,6 +165,20 @@ export function reportLostCopies(request: RmRequest, lost: readonly RmRequestTar
 }
 
 /**
+ * Saves `request` with only `rest`, its paths that are not lost, once `reportLostCopies` reported the others; the
+ * caller holds its lock. A request with nothing else left keeps every path: `closeAllLost` closes it as it is.
+ */
+export function dropLostCopies(request: RmRequest, rest: readonly RmRequestTarget[]): RmRequest {
+    if (rest.length === 0 || rest.length === request.targets.length) {
+        return request;
+    }
+
+    const trimmed = { ...request, targets: [...rest] };
+    saveRmRequest(trimmed);
+    return trimmed;
+}
+
+/**
  * Closes `request` as `gone` when every path it still names is a lost aside copy, as prune would if it closed those:
  * an approval has nothing left to move. The caller holds the request's lock.
  */
