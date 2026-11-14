@@ -29,15 +29,14 @@ function flags(name: string): string[] {
 }
 
 /** A git call; a test run passes its own deadline. */
-const GIT_DEADLINE_MS = 60_000;
+const QUICK_DEADLINE_MS = 60_000;
 /** `scripts/test.ts` stops a stalled suite after 15 minutes; this stops a run that never reaches that check. */
 const BUN_TESTS_DEADLINE_MS = 20 * 60_000;
 /** swift-slot waits up to 40 minutes for the slot and runs up to 60 (the flags below), plus a margin. */
 const SWIFT_TESTS_DEADLINE_MS = 105 * 60_000;
 
-function exec(cmd: string[], cwd: string, timeoutMs = GIT_DEADLINE_MS): { code: number; out: string } {
-    const { code, out } = launch(cmd, { cwd, timeoutMs });
-    return { code, out };
+function exec(cmd: string[], cwd: string, timeoutMs = QUICK_DEADLINE_MS) {
+    return launch(cmd, { cwd, timeoutMs });
 }
 
 function counts(out: string) {
