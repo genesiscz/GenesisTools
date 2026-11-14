@@ -2965,7 +2965,8 @@ describe("round 7 review regressions", () => {
                     " : [], nativeTranscriptMaxDepth: () => 4, nativeHomePath: (kind, ...segments) => " +
                     SafeJSON.stringify(home) +
                     " + '/.' + kind + (segments.length ? '/' + segments.join('/') : '')}));",
-                "Bun.spawnSync = () => { throw new Error('unexpected command'); };",
+                // The one command reclaim may run is the ACL drop before a repeated delete; any other is a defect.
+                "const spawnSync = Bun.spawnSync; Bun.spawnSync = (args, opts) => { if (args[0] === '/bin/chmod' && args[1] === '-RN') return spawnSync(args, opts); throw new Error('unexpected command'); };",
                 // The open-file listing is the one async spawn faked; any other spawn runs as it would.
                 "const spawn = Bun.spawn; Bun.spawn = (args, opts) => args[0] !== '/usr/sbin/lsof' ? spawn(args, opts) :",
                 "{stdout:'p1\\nn/unrelated-fixture-file',stderr:'',exited:Promise.resolve(0),kill(){}};",
@@ -3050,6 +3051,26 @@ describe("round 7 review regressions", () => {
         const plan = SafeJSON.parse(fs.readFileSync(planPath, "utf8"), { strict: true });
         expect(plan.candidates.map((candidate: { path: string }) => candidate.path)).toContain(orphan);
     });
+
+    test.if(process.platform === "darwin")(
+        "reclaim empties a quarantine that holds a file whose ACL denies delete",
+        () => {
+            const s = reclaimFixture();
+            const orphan = join(s.root, ".tmp-reclaim-999999999-Qr90St");
+            const locked = join(orphan, "0-acl-fixture", "partner");
+            fs.mkdirSync(join(orphan, "0-acl-fixture"), { recursive: true, mode: 0o700 });
+            fs.writeFileSync(locked, "fixture");
+            expect(
+                Bun.spawnSync(["/bin/chmod", "+a", "everyone deny delete", locked], { env: process.env }).exitCode
+            ).toBe(0);
+            const dry = s.execute([]);
+            const planPath = /plan: (.+)/.exec(dry.stdout.toString())?.[1] ?? "";
+            const applied = s.execute(["--apply", "--plan", planPath]);
+            expect({ code: applied.exitCode, err: applied.stderr.toString() }).toEqual({ code: 0, err: "" });
+            expect(fs.existsSync(orphan)).toBe(false);
+            expect(fs.readdirSync(s.root).filter((name) => name.startsWith(".tmp-reclaim-"))).toEqual([]);
+        }
+    );
 
     test("reclaim takes a Claude session's scratch once its process exits, however recent its transcript", () => {
         const s = reclaimFixture();

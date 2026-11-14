@@ -630,6 +630,28 @@ export function judge(
     return { path, ino: st.ino, bytes: tree.bytes, newest: tree.newest };
 }
 
+/** Removes a tree, repeating the recursive delete while it ends with ENOTEMPTY (at most 10 passes, ACLs dropped after the first). */
+function removeTree(path: string): void {
+    for (let pass = 1; ; pass++) {
+        try {
+            rmSync(path, { recursive: true, force: true });
+            return;
+        } catch (error) {
+            const code = error instanceof Error && "code" in error ? error.code : undefined;
+
+            if (code !== "ENOTEMPTY" || pass >= 10) {
+                throw error;
+            }
+
+            // A file with an ACL that denies delete (the compress tests leave `everyone deny delete` on partner
+            // files) survives every pass. The tree is ours, so drop every ACL in it once, then delete again.
+            if (pass === 1) {
+                Bun.spawnSync(["/bin/chmod", "-RN", path], { stdout: "ignore", stderr: "ignore", timeout: 120_000 });
+            }
+        }
+    }
+}
+
 function childNames(path: string): string[] | null {
     try {
         return readdirSync(path);
@@ -1190,7 +1212,7 @@ async function main(): Promise<void> {
 
             if (leftBehind) {
                 try {
-                    rmSync(planned.path, { recursive: true, force: true });
+                    removeTree(planned.path);
                     removed++;
                     freed += now.bytes;
                 } catch (error) {
@@ -1249,10 +1271,11 @@ async function main(): Promise<void> {
                 continue;
             }
 
-            // A process that still writes into a moved folder makes the recursive delete see ENOTEMPTY. Retry, and when
-            // it still fails, leave the quarantine: its pid ends with this run, so the next run lists it as an orphan.
+            // A recursive delete of a large tree (258,000 files on 2026-11-14) can end with ENOTEMPTY: entries of a folder
+            // are still being removed when its own rmdir runs. Each pass removes more; when passes run out, leave the
+            // quarantine: its pid ends with this run, so the next run lists it as an orphan.
             try {
-                rmSync(trash, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+                removeTree(trash);
             } catch (error) {
                 leftover.push(trash);
                 console.error(
