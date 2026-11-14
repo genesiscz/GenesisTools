@@ -44,17 +44,16 @@ export async function callTimeOf(
         return undefined;
     }
 
-    for (const id of ids) {
-        if (id === undefined) {
-            continue;
-        }
+    // All reads at once, the first noted start in call order wins: a resumed group has no start for any call, and
+    // reading them one after another cost one awaited read per call on every redraw.
+    const held = await Promise.all(
+        ids.map((id) =>
+            id === undefined
+                ? undefined
+                : $.state.get({ plugin: "genesis-tools-mods", key: "callAt", id }).catch(() => undefined)
+        )
+    );
+    const at = held.map((entry) => entry?.value).find((value) => typeof value === "number");
 
-        const held = await $.state.get({ plugin: "genesis-tools-mods", key: "callAt", id }).catch(() => undefined);
-
-        if (typeof held?.value === "number") {
-            return callTimeText(held.value, { ago: settings.ago });
-        }
-    }
-
-    return undefined;
+    return typeof at === "number" ? callTimeText(at, { ago: settings.ago }) : undefined;
 }
