@@ -1541,11 +1541,20 @@ const SWIFT_HAND_JOINED_HOME = /appendingPathComponent\(\s*"\.genesis-tools\b/;
 /** The helper itself and the tests, which build expected paths on purpose. */
 const SWIFT_HAND_JOINED_HOME_ALLOWED = /(?:^|\/)Tests\/|GenesisToolsHome\.swift$/;
 
-const SWIFT_LINE_RULES = [
+interface SwiftLineRule {
+    rule: { name: string; severity: Severity; message: string };
+    pattern: RegExp;
+    /** Match the line with comments and strings masked (`maskSwiftNonCode`), not its raw text. */
+    codeOnly?: boolean;
+    /** Files the rule never applies to. */
+    skipFile?: RegExp;
+}
+
+const SWIFT_LINE_RULES: SwiftLineRule[] = [
     { rule: SWIFT_WAIT_RULE, pattern: SWIFT_BARE_WAIT },
-    { rule: SWIFT_HAND_JOINED_HOME_RULE, pattern: SWIFT_HAND_JOINED_HOME },
+    { rule: SWIFT_HAND_JOINED_HOME_RULE, pattern: SWIFT_HAND_JOINED_HOME, skipFile: SWIFT_HAND_JOINED_HOME_ALLOWED },
     { rule: SWIFT_CLICK_COUNT_RULE, pattern: SWIFT_CURRENT_EVENT_CLICK_COUNT },
-    { rule: SWIFT_ENTRY_MACRO_RULE, pattern: SWIFT_ENTRY_MACRO },
+    { rule: SWIFT_ENTRY_MACRO_RULE, pattern: SWIFT_ENTRY_MACRO, codeOnly: true },
 ];
 
 /**
@@ -1982,12 +1991,12 @@ export function checkSwiftSource(
             continue;
         }
 
-        for (const { rule, pattern } of SWIFT_LINE_RULES) {
-            if (rule === SWIFT_HAND_JOINED_HOME_RULE && SWIFT_HAND_JOINED_HOME_ALLOWED.test(file)) {
+        for (const { rule, pattern, codeOnly, skipFile } of SWIFT_LINE_RULES) {
+            if (skipFile?.test(file)) {
                 continue;
             }
 
-            const column = (rule === SWIFT_ENTRY_MACRO_RULE ? codeLines[index] : text).search(pattern);
+            const column = (codeOnly ? codeLines[index] : text).search(pattern);
 
             if (column === -1) {
                 continue;
