@@ -548,7 +548,7 @@ describe("command deadlines", () => {
             const giveUpAt = Date.now() + 5000;
 
             while (readMonitorState(sources.state) === null && Date.now() < giveUpAt) {
-                await Bun.sleep(20);
+                await Bun.sleep(100);
             }
 
             const firstSave = readMonitorState(sources.state)?.lastRunAt ?? "";

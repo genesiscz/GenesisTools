@@ -1738,6 +1738,7 @@ describe("the Meetings service's connections", () => {
         });
         await watcher.start();
         try {
+            expect(existsSync(root)).toBe(true);
             source.raise(join(root, "fixture", "comments.ndjson"));
             expect(await heard.next()).toEqual({ method: "comment.changed", params: { meeting: "fixture" } });
         } finally {
