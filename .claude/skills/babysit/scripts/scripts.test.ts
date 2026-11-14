@@ -63,10 +63,12 @@ import { createTaskLookup, pump } from "./watch-workers";
 
 describe("safe restack helpers", () => {
     const block = (a: string, b: string) => `<<<<<<< HEAD\n${a}\n=======\n${b}\n>>>>>>> change\n`;
-    const verifyRepo = () => {
-        const cwd = fs.mkdtempSync(join(tmpdir(), "restack-verify-"));
-        const git = (...args: string[]) => {
-            const p = Bun.spawnSync(
+    /** A temp repository with hooks off and a test identity: `run` returns git's result, `git` asserts exit 0 and
+     * returns the trimmed stdout. */
+    const tempRepo = (prefix = "restack-verify-") => {
+        const cwd = fs.mkdtempSync(join(tmpdir(), prefix));
+        const run = (...args: string[]) =>
+            Bun.spawnSync(
                 [
                     "git",
                     "-c",
@@ -79,12 +81,29 @@ describe("safe restack helpers", () => {
                 ],
                 { cwd, env: process.env, stdout: "pipe", stderr: "pipe" }
             );
+        const git = (...args: string[]) => {
+            const p = run(...args);
             expect(p.exitCode, p.stderr.toString()).toBe(0);
             return p.stdout.toString().trim();
         };
-        git("init", "-q");
-        return { cwd, git };
+        git("init", "-q", "-b", "main");
+        return { cwd, run, git };
     };
+    /** A repository whose base commit holds `f.ts` with `initial`; `commit` writes `f.ts` anew on top of `from`. */
+    const fileRepo = (initial: string) => {
+        const { cwd, git } = tempRepo();
+        const commit = (from: string, content: string, message: string) => {
+            git("checkout", "-q", "--detach", from);
+            fs.writeFileSync(join(cwd, "f.ts"), content);
+            git("commit", "-qam", message);
+            return git("rev-parse", "HEAD");
+        };
+        fs.writeFileSync(join(cwd, "f.ts"), initial);
+        git("add", "f.ts");
+        git("commit", "-qm", "base");
+        return { cwd, git, base: git("rev-parse", "HEAD"), commit };
+    };
+    const stringFile = (text: string) => `export const s = "${text}";\n`;
     const verify = (cwd: string, args: string[]) =>
         Bun.spawnSync(["bun", join(import.meta.dir, "restack-verify.ts"), ...args], {
             cwd,
@@ -152,7 +171,7 @@ describe("safe restack helpers", () => {
     });
 
     test("the verifier tells a kept, a lost, an absorbed and a new change apart in a real repository", () => {
-        const { cwd, git } = verifyRepo();
+        const { cwd, git } = tempRepo();
         const lines = Array.from({ length: 12 }, (_, i) => `l${i + 1}`);
         const write = (file: string, content: string[]) => fs.writeFileSync(join(cwd, file), `${content.join("\n")}\n`);
         write("file.txt", lines);
@@ -202,20 +221,10 @@ describe("safe restack helpers", () => {
     });
 
     test("a commit that changes only the spaces inside a string is not taken as already upstream", () => {
-        const { cwd, git } = verifyRepo();
-        const commit = (from: string, text: string, message: string) => {
-            git("checkout", "-q", "--detach", from);
-            fs.writeFileSync(join(cwd, "f.ts"), `export const s = "${text}";\n`);
-            git("commit", "-qam", message);
-            return git("rev-parse", "HEAD");
-        };
-        fs.writeFileSync(join(cwd, "f.ts"), 'export const s = "x";\n');
-        git("add", "f.ts");
-        git("commit", "-qm", "base");
-        const base = git("rev-parse", "HEAD");
-        const upstream = commit(base, "a b", "upstream");
-        const spacesDiffer = commit(base, "ab", "spaces differ");
-        const sameChange = commit(base, "a b", "same change");
+        const { cwd, git, base, commit } = fileRepo(stringFile("x"));
+        const upstream = commit(base, stringFile("a b"), "upstream");
+        const spacesDiffer = commit(base, stringFile("ab"), "spaces differ");
+        const sameChange = commit(base, stringFile("a b"), "same change");
         // Positive control: plain git cherry takes the spaces-only commit as upstream.
         expect(git("cherry", upstream, spacesDiffer)).toStartWith("-");
         expect(unpickedCommits({ cwd, upstream, head: spacesDiffer })).toEqual([spacesDiffer]);
@@ -224,20 +233,10 @@ describe("safe restack helpers", () => {
     });
 
     test("a fix that is only on a PR branch is named as missing from the integration branch, a picked one is not", () => {
-        const { cwd, git } = verifyRepo();
-        const commit = (from: string, text: string, message: string) => {
-            git("checkout", "-q", "--detach", from);
-            fs.writeFileSync(join(cwd, "f.ts"), `export const s = "${text}";\n`);
-            git("commit", "-qam", message);
-            return git("rev-parse", "HEAD");
-        };
-        fs.writeFileSync(join(cwd, "f.ts"), 'export const s = "x";\n');
-        git("add", "f.ts");
-        git("commit", "-qm", "base");
-        const base = git("rev-parse", "HEAD");
-        const fixOnPr = commit(base, "fixed", "fix(x): #1 followup - the fix a worker pushed");
+        const { cwd, git, base, commit } = fileRepo(stringFile("x"));
+        const fixOnPr = commit(base, stringFile("fixed"), "fix(x): #1 followup - the fix a worker pushed");
         git("branch", "unified-without", base);
-        git("branch", "unified-with", commit(base, "fixed", "fix(x): #1 followup - the fix, picked"));
+        git("branch", "unified-with", commit(base, stringFile("fixed"), "fix(x): #1 followup - the fix, picked"));
 
         const missing = behindUnified({ cwd, branch: "unified-without", refs: [fixOnPr] });
         expect(missing).toEqual([
@@ -253,11 +252,15 @@ describe("safe restack helpers", () => {
         );
         expect(behindUnified({ cwd, branch: "unified-with", refs: [fixOnPr] })).toEqual([]);
         // A recomposed branch: unified made the same change in two commits, so no patch id matches, yet it holds it.
-        git("branch", "unified-in-two-steps", commit(commit(base, "fi", "step one"), "fixed", "step two"));
+        git(
+            "branch",
+            "unified-in-two-steps",
+            commit(commit(base, stringFile("fi"), "step one"), stringFile("fixed"), "step two")
+        );
         expect(git("cherry", "unified-in-two-steps", fixOnPr)).toStartWith("+");
         expect(behindUnified({ cwd, branch: "unified-in-two-steps", refs: [fixOnPr] })).toEqual([]);
         // Unified changed the same line another way: the merge cannot say which side holds the other.
-        git("branch", "unified-other-way", commit(base, "other", "another change of the line"));
+        git("branch", "unified-other-way", commit(base, stringFile("other"), "another change of the line"));
         expect(behindUnified({ cwd, branch: "unified-other-way", refs: [fixOnPr] })[0]).toMatchObject({
             lacking: [],
             conflicted: ["f.ts"],
@@ -270,25 +273,20 @@ describe("safe restack helpers", () => {
     });
 
     test("a clean fix in a file that also has a conflicting change is still named as missing", () => {
-        const { cwd, git } = verifyRepo();
         const lines = Array.from({ length: 30 }, (_, index) => `export const v${index} = ${index};`);
-        const commit = (from: string, edits: Record<number, string>, message: string) => {
-            git("checkout", "-q", "--detach", from);
-            const next = lines.map((line, index) => edits[index] ?? line);
-            fs.writeFileSync(join(cwd, "f.ts"), `${next.join("\n")}\n`);
-            git("commit", "-qam", message);
-            return git("rev-parse", "HEAD");
-        };
-        fs.writeFileSync(join(cwd, "f.ts"), `${lines.join("\n")}\n`);
-        git("add", "f.ts");
-        git("commit", "-qm", "base");
-        const base = git("rev-parse", "HEAD");
-        const pr = commit(base, { 0: "export const v0 = 100;", 25: "export const v25 = -25;" }, "fix(x): #1 followup");
-        git("branch", "unified-other-way", commit(base, { 0: "export const v0 = 200;" }, "unified's own change"));
+        const edit = (edits: Record<number, string>) =>
+            `${lines.map((line, index) => edits[index] ?? line).join("\n")}\n`;
+        const { cwd, git, base, commit } = fileRepo(edit({}));
+        const pr = commit(
+            base,
+            edit({ 0: "export const v0 = 100;", 25: "export const v25 = -25;" }),
+            "fix(x): #1 followup"
+        );
+        git("branch", "unified-other-way", commit(base, edit({ 0: "export const v0 = 200;" }), "unified's own change"));
         git(
             "branch",
             "unified-with-fix",
-            commit(base, { 0: "export const v0 = 200;", 25: "export const v25 = -25;" }, "picked")
+            commit(base, edit({ 0: "export const v0 = 200;", 25: "export const v25 = -25;" }), "picked")
         );
 
         expect(behindUnified({ cwd, branch: "unified-other-way", refs: [pr] })[0]).toMatchObject({
@@ -302,11 +300,7 @@ describe("safe restack helpers", () => {
     });
 
     test("the verifier calls a patch CHANGED when only the spaces inside a string literal changed", () => {
-        const { cwd, git } = verifyRepo();
-        fs.writeFileSync(join(cwd, "f.ts"), "export const a = 1;\n");
-        git("add", "f.ts");
-        git("commit", "-qm", "base");
-        const base = git("rev-parse", "HEAD");
+        const { cwd, git, base } = fileRepo("export const a = 1;\n");
         fs.appendFileSync(join(cwd, "f.ts"), 'export const s = "a b";\n');
         git("commit", "-qam", "old");
         const oldHead = git("rev-parse", "HEAD");
@@ -319,39 +313,20 @@ describe("safe restack helpers", () => {
     });
 
     test("the resolver completes a rebase even when Git leaves REBASE_HEAD behind", () => {
-        const cwd = fs.mkdtempSync(join(tmpdir(), "resolve-same-"));
-        const git = (...args: string[]) =>
-            Bun.spawnSync(
-                [
-                    "git",
-                    "-c",
-                    "core.hooksPath=/dev/null",
-                    "-c",
-                    "user.name=Test",
-                    "-c",
-                    "user.email=test@example.com",
-                    ...args,
-                ],
-                { cwd, env: process.env, stdout: "pipe", stderr: "pipe" }
-            );
-        const must = (...args: string[]) => {
-            const result = git(...args);
-            expect(result.exitCode, result.stderr.toString()).toBe(0);
-        };
-        must("init", "-q", "-b", "main");
+        const { cwd, run, git } = tempRepo("resolve-same-");
         fs.writeFileSync(join(cwd, "a.ts"), "const x = [];\n");
         fs.writeFileSync(join(cwd, "b.txt"), "before\n");
-        must("add", ".");
-        must("commit", "-qm", "base");
-        must("checkout", "-qb", "feature");
+        git("add", ".");
+        git("commit", "-qm", "base");
+        git("checkout", "-qb", "feature");
         fs.writeFileSync(join(cwd, "a.ts"), "const x=[1, 2];\n");
         fs.writeFileSync(join(cwd, "b.txt"), "after\n");
-        must("commit", "-qam", "feature");
-        must("checkout", "-q", "main");
+        git("commit", "-qam", "feature");
+        git("checkout", "-q", "main");
         fs.writeFileSync(join(cwd, "a.ts"), "const x = [1, 2];\n");
-        must("commit", "-qam", "main");
-        must("checkout", "-q", "feature");
-        expect(git("rebase", "--empty=stop", "--reapply-cherry-picks", "main").exitCode).toBe(1);
+        git("commit", "-qam", "main");
+        git("checkout", "-q", "feature");
+        expect(run("rebase", "--empty=stop", "--reapply-cherry-picks", "main").exitCode).toBe(1);
         const result = Bun.spawnSync(["bun", join(import.meta.dir, "resolve-same.ts"), "--cwd", cwd], {
             cwd,
             stdout: "pipe",
