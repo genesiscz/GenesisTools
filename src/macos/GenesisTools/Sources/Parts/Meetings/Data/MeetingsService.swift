@@ -577,6 +577,9 @@ final class MeetingsService {
         // The connection opens before the subscription is kept: a new connection sends a kept one by itself, and this
         // call would send it a second time.
         let connected = await connection()
+        // An `unsubscribe()` or a newer subscribe ran while the connection opened: this call must not restore the
+        // parameters it cleared or replaced, nor reconnect after the explicit unsubscribe.
+        guard generation == subscriptionGeneration else { return [] }
         subscription = params
         guard let connected else {
             resumeSubscription()
