@@ -12,6 +12,7 @@ import {
 import { basename, extname, join, relative, sep } from "node:path";
 import { changeLogPath, changeLogPathIn, readChangeLogFile, walkChangeLogs } from "@genesiscz/utils/agents/change-log";
 import { cloudReadRisk } from "@genesiscz/utils/fs/cloud-placeholder";
+import { SCRIPT_RUNNERS } from "@genesiscz/utils/session-changes/stages";
 import {
     commandTokenIndex,
     commandWord,
@@ -626,26 +627,11 @@ const SCRIPT_MAX_BYTES = 256 * 1024;
 /** A bare file name shorter than this is too common to be proof (`index.ts`, `README.md`). */
 const DISTINCT_NAME_CHARS = 14;
 
-/** Programs that run the script file given as their first operand (`bun gen.ts`, `python3 -u gen.py`). */
-const SCRIPT_RUNNERS = new Set([
-    "bun",
-    "bunx",
-    "node",
-    "deno",
-    "tsx",
-    "ts-node",
-    "npx",
-    "uv",
-    "python",
-    "python3",
-    "ruby",
-    "php",
-    "perl",
-    "bash",
-    "sh",
-    "zsh",
-    "swift",
-]);
+/**
+ * Programs that run the script file given as their first operand (`bun gen.ts`, `python3 -u gen.py`): the shared
+ * runners `stageOf` classifies, plus the package runners and languages whose scripts attribution follows as well.
+ */
+const SCRIPT_FILE_RUNNERS = new Set([...SCRIPT_RUNNERS, "bunx", "ts-node", "npx", "uv", "php", "perl", "swift"]);
 /** A runner's verb before the script: `bun run gen.ts`, `deno run gen.ts`, `npx tsx gen.ts`, `uv run gen.py`. */
 const RUNNER_VERBS = new Set(["run", "exec", "tsx", "ts-node"]);
 
@@ -682,7 +668,7 @@ export function executedScripts(command: string): string[] {
                     continue;
                 }
 
-                if (!SCRIPT_RUNNERS.has(commandWord(head))) {
+                if (!SCRIPT_FILE_RUNNERS.has(commandWord(head))) {
                     continue;
                 }
 
