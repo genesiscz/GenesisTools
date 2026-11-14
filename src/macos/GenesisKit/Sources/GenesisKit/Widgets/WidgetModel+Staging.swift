@@ -91,7 +91,7 @@ extension WidgetModel {
         guard card.kind == "decision", card.needsAnswer, !typed.isEmpty || !draft.assetIds.isEmpty else { return false }
         PerfLog.mark("widget.send-staged own answer goes with \(card.sourceId)")
         guard draft.assetIds.isEmpty else {
-            submit(choice: stagedOption(card.sourceId, stored: card.draftOption), answering: true)
+            submit(choice: stagedOption(card.sourceId, stored: card.draftOption), answering: true, thenClose: thenClose)
             return true
         }
         sendDecisionNow(card, option: nil, note: typed, thenClose: thenClose)
@@ -493,6 +493,20 @@ extension WidgetModel {
         deliverDecisions(items, action: .resendAnswers)
     }
 
+    /// The delayed fold of a send on the way out of the panel, after the hub took the answer: it waits
+    /// `sendCloseSeconds` (0 keeps the panel open) so the note is readable, and folds only the panel this send left
+    /// from. One the user opened again, edited or switched meanwhile stays open.
+    func foldPanelAfterSend(opened: TimeInterval, closeRevision: Int, draft draftAtSend: WidgetDraft) {
+        let closeSeconds = preferences.sendCloseSeconds
+        guard expanded != nil, openedAt == opened, sendCloseRevision == closeRevision, closeSeconds > 0 else { return }
+        Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(closeSeconds)) } catch { return }
+            guard let self, self.expanded != nil, self.openedAt == opened,
+                  self.sendCloseRevision == closeRevision, self.draft == draftAtSend else { return }
+            self.collapse()
+        }
+    }
+
     /// One message per session through the hub, then a note that says what really happened: delivered, waiting
     /// for the session's next prompt (with why, and Send again), or not sent at all (an error, with the hub's own
     /// words behind Details). When the panel was closed meanwhile, the sessions that took nothing flash on the rail.
@@ -552,15 +566,8 @@ extension WidgetModel {
                     // Only the panel this send left from: one the user opened again meanwhile stays open. It folds
                     // after the note was readable: closing at once hid "delivered" and read as "Send did nothing"
                     // (Martin, 2026-10-25).
-                    let closeSeconds = preferences.sendCloseSeconds
-                    if thenClose, expanded != nil, openedAt == opened, sendCloseRevision == closeRevision,
-                       closeSeconds > 0 {
-                        Task { [weak self] in
-                            do { try await Task.sleep(for: .seconds(closeSeconds)) } catch { return }
-                            guard let self, self.expanded != nil, self.openedAt == opened,
-                                  self.sendCloseRevision == closeRevision, self.draft == draftAtSend else { return }
-                            self.collapse()
-                        }
+                    if thenClose {
+                        foldPanelAfterSend(opened: opened, closeRevision: closeRevision, draft: draftAtSend)
                     }
                     return
                 }

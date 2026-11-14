@@ -1148,9 +1148,10 @@ private enum StagingFixture {
         return String(decoding: try JSONSerialization.data(withJSONObject: wire), as: UTF8.self)
     }
 
-    static func model(root: URL? = nil, defaults given: UserDefaults? = nil) -> WidgetModel {
+    /// `binary`: a tools executable that answers every call, for a test that needs the journal to drain.
+    static func model(root: URL? = nil, defaults given: UserDefaults? = nil, binary: URL? = nil) -> WidgetModel {
         let defaults = given ?? UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
-        return WidgetModel(binaryPath: root?.appendingPathComponent("missing-tools").path ?? "/fixture/tools",
+        return WidgetModel(binaryPath: binary?.path ?? root?.appendingPathComponent("missing-tools").path ?? "/fixture/tools",
             stateRoot: root?.path ?? FileManager.default.temporaryDirectory.path,
             defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
                 notificationNamespace: "staging." + UUID().uuidString, observeExternalChanges: false))
@@ -2224,6 +2225,50 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertNil(models[1].expanded, "a configured delay replaces the 2.5 second default")
         try await Task.sleep(for: .milliseconds(2600))
         XCTAssertEqual(models[0].expanded, .right, "Keep open disables the delayed fold")
+    }
+
+    /// An own answer with media goes through the durable journal, not `send-staged`: Send on the way out folds the panel
+    /// once the hub queued it, by the same rule as a text answer. `reopen`: the user opened the panel again meanwhile.
+    private func ownAnswerWithMediaOnTheWayOut(reopen: Bool, hubTakes: Bool = true) async throws -> WidgetModel {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("widget.media-close." + UUID().uuidString)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("native-submissions"), withIntermediateDirectories: true)
+        let tools = root.appendingPathComponent("fixture-tools")
+        try "#!/bin/sh\n\(hubTakes ? "echo '{}'" : "echo refused >&2; exit 1")\n".write(to: tools, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tools.path)
+        let model = StagingFixture.model(root: root, binary: tools)
+        var wire = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(snapshot(draftOption: "a").utf8))
+        wire.state.preferences.sendCloseSeconds = 0.05
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
+        model.select(key)
+        model.open(.right)
+        let card = try XCTUnwrap(model.cards.first)
+        model.openOwnAnswer(card)
+        model.drafts[key] = WidgetDraft(text: "see the screenshot", assetIds: ["fixture-image"])
+        model.sendStaged([card.sourceId], thenClose: true)
+        if reopen { model.open(.right) }
+        for _ in 0 ..< 200 where model.expanded != nil && !reopen { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(reopen || !hubTakes ? 500 : 0))
+        return model
+    }
+
+    func testAnOwnAnswerWithMediaSentOnTheWayOutFoldsThePanelOnceTheHubQueuedIt() async throws {
+        let model = try await ownAnswerWithMediaOnTheWayOut(reopen: false)
+        defer { model.stop() }
+        XCTAssertNil(model.expanded, "the hub took the answer, so the panel folds")
+    }
+
+    func testAnOwnAnswerWithMediaDoesNotFoldAPanelTheUserOpenedAgain() async throws {
+        let model = try await ownAnswerWithMediaOnTheWayOut(reopen: true)
+        defer { model.stop() }
+        XCTAssertEqual(model.expanded, .right, "a panel opened again meanwhile stays open")
+    }
+
+    func testAnOwnAnswerWithMediaTheHubRefusedKeepsThePanelOpen() async throws {
+        let model = try await ownAnswerWithMediaOnTheWayOut(reopen: false, hubTakes: false)
+        defer { model.stop() }
+        XCTAssertEqual(model.expanded, .right, "a send the hub refused stays in the journal and never folds")
     }
 
     func testASendNoSessionTookSaysWhyAndSendAgainDeliversIt() async throws {
