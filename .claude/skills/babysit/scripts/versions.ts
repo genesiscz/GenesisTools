@@ -177,8 +177,26 @@ export function unpickedCommits(options: { cwd: string; upstream: string; head: 
         return ids;
     };
     const own = [`${upstream}..${head}`, ...(limit ? [`^${limit}`] : [])];
-    const upstreamIds = new Set(patchIds([`${head}..${upstream}`]).values());
     const ownIds = patchIds(own);
+    // An upstream commit holds an own commit's change only when it changes the same files, so only the upstream commits
+    // that touch a file of `own` are hashed: `head..upstream` is every commit master gained since the fork. The paths
+    // go on stdin, which has no argument limit; --full-history keeps a commit that history simplification would hide.
+    const ownFiles = [
+        ...new Set(
+            must(["log", "--no-merges", "--format=", "--name-only", "-z", ...own])
+                .split("\0")
+                .filter(Boolean)
+        ),
+    ];
+    const touching = ownFiles.length
+        ? must(
+              ["log", "--no-merges", "--full-history", "--format=%H", "--stdin"],
+              Buffer.from(`${head}..${upstream}\n--\n${ownFiles.map((file) => `:(literal)${file}\n`).join("")}`)
+          )
+              .split("\n")
+              .filter(Boolean)
+        : [];
+    const upstreamIds = new Set(touching.length ? patchIds(["--no-walk", ...touching]).values() : []);
     return must(["rev-list", "--no-merges", "--reverse", ...own])
         .split("\n")
         .filter(Boolean)
