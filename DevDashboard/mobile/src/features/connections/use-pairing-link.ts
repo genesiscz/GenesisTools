@@ -60,18 +60,11 @@ export function usePairingLink(params: PairingLinkParams) {
 
     useEffect(() => {
         generation.current += 1;
-        setError(null);
         setBusy(false);
         setAsking(false);
-        setConfirming(false);
         setSecret("");
-
-        if (!pairing) {
-            setError("That is not a DevDashboard pairing link.");
-            return;
-        }
-
-        setConfirming(true);
+        setConfirming(pairing !== null);
+        setError(pairing ? null : "That is not a DevDashboard pairing link.");
     }, [pairing]);
 
     const pair = useCallback(
