@@ -68,19 +68,15 @@ export function recordGuardVerdict(options: {
 
     const target = options.recorder ?? hookRecorder();
     const delivered = config.shadow ? [] : verdict.seenRules;
-    // The rules that get an event and showed text: each once, in violation order.
-    const shownRules = [...new Set(verdict.violations.map((violation) => violation.ruleId))].filter((rule) =>
-        delivered.includes(rule)
+    // Each firing rule once, in violation order: its first violation describes it.
+    const firings = verdict.violations.filter(
+        (violation, index, all) => all.findIndex((other) => other.ruleId === violation.ruleId) === index
     );
+    // The rules that showed text, which split the message's tokens.
+    const shownRules = firings.map((violation) => violation.ruleId).filter((rule) => delivered.includes(rule));
     const shares = tokenShares(shownRules.length > 0 ? estimateTokens(verdict.message) : 0, shownRules);
-    const seen = new Set<string>();
 
-    for (const violation of verdict.violations) {
-        if (seen.has(violation.ruleId)) {
-            continue;
-        }
-
-        seen.add(violation.ruleId);
+    for (const violation of firings) {
         const delivery = deliveryOf(verdict, violation.ruleId, violation.outcome);
         const shown = delivered.includes(violation.ruleId);
 
