@@ -7,15 +7,12 @@ extension ToolsBridge {
     /// The exit status and both streams. Blocks the calling thread: never call it on the main thread. A child still
     /// running at the end of `timeout` is killed and `ToolsBridgeError.timeout` is thrown.
     public func capture(_ argv: [String], timeout: TimeInterval = 60) throws -> ProcessCapture {
-        let traceId = ToolsCallTrace.newId()
-        let started = Date()
-        ToolsCallTrace.began(traceId: traceId, argv: argv, started: started)
+        let (traceId, started) = Self.beginCall(argv)
         if let server {
             let start = CFAbsoluteTimeGetCurrent()
-            let patience = Self.serverPatience(timeoutSeconds: Self.limitSeconds(timeout))
-            if let result = server.callSync(argv: argv, timeout: TimeInterval(patience), traceId: traceId),
-               !Self.isServerDeadline(result) {
-                return Self.serverCapture(result, argv, traceId: traceId, started: started, since: start)
+            let result = server.callSync(argv: argv, timeout: TimeInterval(Self.serverPatience(timeout: timeout)), traceId: traceId)
+            if let capture = Self.serverCapture(result, argv, traceId: traceId, started: started, since: start) {
+                return capture
             }
         }
 
@@ -47,16 +44,13 @@ extension ToolsBridge {
     /// writes (`cancelPoint`, src/hub/lib/widget/staged.ts), so a send that already typed finishes and says so.
     /// A server door is one idempotent write, so a cancel there only stops the wait for its answer.
     public func captureStoppable(_ argv: [String], timeout: TimeInterval = 60) async throws -> (capture: ProcessCapture, stopped: Bool) {
-        let traceId = ToolsCallTrace.newId()
-        let started = Date()
-        ToolsCallTrace.began(traceId: traceId, argv: argv, started: started)
+        let (traceId, started) = Self.beginCall(argv)
         if let server {
             let start = CFAbsoluteTimeGetCurrent()
-            let patience = Self.serverPatience(timeoutSeconds: Self.limitSeconds(timeout))
-            let result = await server.call(argv: argv, timeoutSeconds: patience, traceId: traceId)
+            let result = await server.call(argv: argv, timeoutSeconds: Self.serverPatience(timeout: timeout), traceId: traceId)
             try Task.checkCancellation()
-            if let result, !Self.isServerDeadline(result) {
-                return (Self.serverCapture(result, argv, traceId: traceId, started: started, since: start), false)
+            if let capture = Self.serverCapture(result, argv, traceId: traceId, started: started, since: start) {
+                return (capture, false)
             }
         }
 
@@ -100,9 +94,24 @@ extension ToolsBridge {
         max(1, Int(timeout.rounded(.up)))
     }
 
-    /// A server door's answer as a capture, with its perf span and its trace line.
-    private static func serverCapture(_ result: ToolsRunResult, _ argv: [String], traceId: String, started: Date,
-                                      since start: CFAbsoluteTime) -> ProcessCapture {
+    /// A new call's trace id and start time, with its `began` trace line written.
+    static func beginCall(_ argv: [String]) -> (traceId: String, started: Date) {
+        let traceId = ToolsCallTrace.newId()
+        let started = Date()
+        ToolsCallTrace.began(traceId: traceId, argv: argv, started: started)
+        return (traceId, started)
+    }
+
+    /// The server's part of a capture's limit (`serverPatience` of the limit in whole seconds).
+    private static func serverPatience(timeout: TimeInterval) -> Int {
+        serverPatience(timeoutSeconds: limitSeconds(timeout))
+    }
+
+    /// A server door's answer as a capture, with its perf span and its trace line. Nil when the server gave no answer
+    /// or ran past its deadline (`isServerDeadline`): the process runs then.
+    private static func serverCapture(_ result: ToolsRunResult?, _ argv: [String], traceId: String, started: Date,
+                                      since start: CFAbsoluteTime) -> ProcessCapture? {
+        guard let result, !isServerDeadline(result) else { return nil }
         PerfLog.since("\(PerfSpans.prefix).srv.\(argv.prefix(3).joined(separator: "."))", start)
         ToolsCallTrace.record(
             traceId: traceId, via: "server", argv: argv, started: started,
