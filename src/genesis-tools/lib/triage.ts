@@ -108,7 +108,28 @@ function mapPart<T, U>(source: TriagePart<T>, map: (value: T) => U): TriagePart<
     return source.ok ? { ok: true, value: map(source.value) } : source;
 }
 
-/** `bun` or `node` with the script it runs ("bun hub/index.ts"); any other process by its executable's name. */
+/** Interpreter options whose next word is source code or a module, never a script path: `node -e 'code'`. */
+const INLINE_CODE_OPTIONS = new Set([
+    "-e",
+    "--eval",
+    "-p",
+    "--print",
+    "-pe",
+    "-c",
+    "-m",
+    "-r",
+    "--require",
+    "--import",
+]);
+/** Interpreter options that take a value as the next word, which is not the script either. */
+const VALUE_OPTIONS = new Set(["--preload", "--loader", "--cwd", "--config", "--conditions", "-C", "--env-file", "-x"]);
+const SCRIPT_FILE = /\.(?:[cm]?[jt]sx?|py|rb)$/;
+
+/**
+ * `bun` or `node` with the script it runs ("bun hub/index.ts"); any other process by its executable's name. A process
+ * that runs inline code (`node -e '…'`, `python -c '…'`) is the executable alone: the code can carry a secret, and so
+ * can the value of any other option. Only a word that names a script file counts as the script.
+ */
 export function processLabel(name: string, command: string | null): string {
     if (!command) {
         return name;
@@ -120,14 +141,32 @@ export function processLabel(name: string, command: string | null): string {
         return executable || name;
     }
 
-    const script = words
-        .slice(1)
-        .find((word, index, rest) => !word.startsWith("-") && !rest[index - 1]?.startsWith("--preload"));
-    if (!script) {
-        return executable;
+    const rest = words.slice(1);
+
+    for (let index = 0; index < rest.length; index++) {
+        const word = rest[index] ?? "";
+
+        if (INLINE_CODE_OPTIONS.has(word) || (/^-[a-z]*[ecp]$/i.test(word) && !word.startsWith("--"))) {
+            return executable;
+        }
+
+        if (VALUE_OPTIONS.has(word)) {
+            index++;
+            continue;
+        }
+
+        if (word.startsWith("-")) {
+            continue;
+        }
+
+        if (word === "run" && index === 0) {
+            continue;
+        }
+
+        return SCRIPT_FILE.test(word) ? `${executable} ${word.split("/").slice(-2).join("/")}` : executable;
     }
 
-    return `${executable} ${script.split("/").slice(-2).join("/")}`;
+    return executable;
 }
 
 const FACE = /MacOS\/GenesisTools (--[a-z-]+)/;

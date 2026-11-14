@@ -1,11 +1,12 @@
-import { parseSubtitleFormat, parseTime } from "@app/recorder/commands/registrars/parse";
+import { parseTime, resolveEnumFlag } from "@app/recorder/commands/registrars/parse";
 import { writeSubtitles } from "@app/recorder/lib/edit";
 import { out } from "@genesiscz/utils/logger";
 import { timeToUs } from "@genesiscz/utils/recording-editor/plan";
+import { SUBTITLE_FORMATS } from "@genesiscz/utils/recording-editor/subtitles";
 import type { Command } from "commander";
 
 interface SubtitlesFlags {
-    format?: string;
+    format?: string | boolean;
     out?: string;
     from?: string;
     to?: string;
@@ -19,13 +20,25 @@ export function register(program: Command): void {
             "Write a recording's transcript as a subtitle file for its export (cut lines left out, fixes kept): the export's clock, so with an intro card every cue starts the card's length later"
         )
         .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
-        .option("--format <format>", "srt (default) or vtt")
+        .option("--format [format]", "srt (default) or vtt")
         .option("--out <file>", "the file to write (default beside the movie, named like its export)")
         .option("--from <time>", "only the part from this OUTPUT time, moved to start at 0 (an exported part)")
         .option("--to <time>", "only the part up to this OUTPUT time")
         .option("--output-time", "the movie's own times, without the intro card (a part never has one)")
         .action(async (value: string, flags: SubtitlesFlags) => {
             try {
+                const format = await resolveEnumFlag({
+                    flag: "--format",
+                    raw: flags.format,
+                    values: SUBTITLE_FORMATS,
+                    subcommand: ["subtitles"],
+                    message: "Which subtitle format?",
+                });
+
+                if (format === null) {
+                    return;
+                }
+
                 const part =
                     flags.from === undefined && flags.to === undefined
                         ? undefined
@@ -39,7 +52,7 @@ export function register(program: Command): void {
                 out.result(
                     await writeSubtitles({
                         value,
-                        format: flags.format === undefined ? "srt" : parseSubtitleFormat(flags.format),
+                        format: format ?? "srt",
                         out: flags.out,
                         part,
                         clock: flags.outputTime ? "output" : undefined,

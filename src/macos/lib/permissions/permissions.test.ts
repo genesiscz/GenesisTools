@@ -560,14 +560,14 @@ describe("reapedFaceLines", () => {
         });
         expect(lines.map((line) => SafeJSON.parse(line, { strict: true }))).toEqual([
             {
-                detail: "closed by an app build (pid 42, /repo); the build opens it again, not activated",
+                detail: "closed by an app build (pid 42, /repo)",
                 event: "reaped",
                 face: "--hub",
                 pid: 111,
                 t: 1794332083,
             },
             {
-                detail: "closed by an app build (pid 42, /repo); the build opens it again, not activated",
+                detail: "closed by an app build (pid 42, /repo)",
                 event: "reaped",
                 face: "--window",
                 pid: 333,

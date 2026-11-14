@@ -2235,7 +2235,7 @@ export function reapedFaceLines({
         return [
             SafeJSON.stringify(
                 {
-                    detail: `closed by an app build (${by}); the build opens it again, not activated`,
+                    detail: `closed by an app build (${by})`,
                     event: "reaped",
                     face,
                     pid: entry.pid,

@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { openProject } from "@app/recorder/lib/edit";
 import { findOnScreenOf } from "@app/recorder/lib/fx-analysis";
 import { resolveRecording } from "@app/recorder/lib/library";
@@ -30,9 +31,16 @@ export function register(program: Command): void {
         .action(async (value: string, text: string, flags: { limit?: string; json?: boolean }) => {
             try {
                 const folder = resolveRecording(value);
-                const hits = await findOnScreenOf(folder, async () => (await openProject(folder)).project, text, {
-                    limit: Number(flags.limit ?? 50),
-                });
+                // A standalone movie has no recording.json: it goes to the movie's own screen-text path.
+                const recordingFolder = statSync(folder).isDirectory() ? folder : undefined;
+                const hits = await findOnScreenOf(
+                    recordingFolder,
+                    async () => (await openProject(folder)).project,
+                    text,
+                    {
+                        limit: Number(flags.limit ?? 50),
+                    }
+                );
 
                 if (flags.json) {
                     out.result(screenHitsWithOps(hits, await movieSeconds(folder)));

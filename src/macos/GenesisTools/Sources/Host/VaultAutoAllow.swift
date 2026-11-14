@@ -214,8 +214,7 @@ enum VaultAutoAllow {
     /// cannot be saved posts nothing, because one notification a minute is worse than none; the audit line names
     /// every pass.
     static func notifyDaemon(_ daemon: String, everyHours: Double, now: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)) {
-        guard VaultDaemonNotices.isDue(daemon, now: now, everyHours: everyHours, stamps: VaultDaemonNotices.load()),
-              VaultDaemonNotices.mark(daemon, now: now) else { return }
+        guard VaultDaemonNotices.reserve(daemon, now: now, everyHours: everyHours) else { return }
         post(title: "Vault key given to GenesisTools' own “\((daemon as NSString).lastPathComponent)”",
              body: "\(daemon) is on the vault's daemons list, so it gets the key with no window (tools ai gate auto-allow).")
     }
@@ -250,6 +249,24 @@ enum VaultDaemonNotices {
     static func load(from path: String = path) -> [String: Int64] {
         guard let data = FileManager.default.contents(atPath: path) else { return [:] }
         return (try? JSONDecoder().decode([String: Int64].self, from: data)) ?? [:]
+    }
+
+    /// Reads the stamps, checks the daemon is due and saves its new stamp as one step, under a lock that other
+    /// processes share: two unlock processes that read the same expired stamp can no longer both pass, and one
+    /// daemon's stamp can no longer overwrite another's. True for the one process that may post.
+    static func reserve(_ daemon: String, now: Int64, everyHours: Double, in path: String = path) -> Bool {
+        try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        let lock = open(path + ".lock", O_CREAT | O_RDWR, 0o600)
+        guard lock >= 0 else {
+            logClick("vault.unlock auto-allow: the daemon notification lock could not be opened")
+            return false
+        }
+
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX) == 0 else { return false }
+        defer { flock(lock, LOCK_UN) }
+        guard isDue(daemon, now: now, everyHours: everyHours, stamps: load(from: path)) else { return false }
+        return mark(daemon, now: now, in: path)
     }
 
     /// True when the stamp is on disk.

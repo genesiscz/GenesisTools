@@ -49,10 +49,34 @@ public enum AutocompletePlacement {
 @MainActor
 public enum AutocompleteLaunch {
     private static var identifier: String?
+    private static var requested: String?
+    private static var opened = false
 
     /// The field whose accessibility identifier is `identifier` opens its list once it appears.
     public static func open(_ identifier: String) {
         self.identifier = identifier
+        requested = identifier
+        opened = false
+    }
+
+    /// The field has opened its list through its model (`whenInSight` ran).
+    static func markOpened() {
+        opened = true
+    }
+
+    /// Waits until the field named in `open(_:)` has opened its list, then a moment for its floating panel to appear
+    /// as a child window. True at once when no field was requested; false when the field did not open within
+    /// `timeout` seconds (it never came into sight), so a caller can report that instead of capturing a closed list.
+    public static func waitUntilOpened(timeout: TimeInterval = 20) async -> Bool {
+        guard requested != nil else { return true }
+        let deadline = ContinuousClock.now + .seconds(timeout)
+        while !opened, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+
+        guard opened else { return false }
+        try? await Task.sleep(for: .milliseconds(300))
+        return true
     }
 
     /// True once, for the named field.

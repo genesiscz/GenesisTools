@@ -16,7 +16,7 @@ describe("launchd swallowed-error logging", () => {
             // No launchd service exists under this label, so the real `launchctl
             // kickstart -k` invocation genuinely fails — exercising the catch path
             // instead of simulating it inline.
-            await kickstartLaunchd("com.genesis-tools.test.nonexistent-service");
+            expect(await kickstartLaunchd("com.genesis-tools.test.nonexistent-service")).toBe(false);
 
             expect(warnSpy).toHaveBeenCalled();
             const [payload] = warnSpy.mock.calls[0] ?? [];

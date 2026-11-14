@@ -139,6 +139,9 @@ struct VaultCaller {
     }
 
     static func isInterpreter(_ executable: String) -> Bool {
+        // Whatever the runtime check accepts as Bun (a hard link under another name included) is an interpreter, so it
+        // gets the environment checks of `bun` itself.
+        if VaultGrants.runtime(of: executable) == "bun" { return true }
         let name = (executable as NSString).lastPathComponent.lowercased()
         return name.hasPrefix("gt-") || name.range(of:
             #"^(node|nodejs|bun|deno|python[0-9.]*|pypy[0-9.]*|ruby[0-9.]*|perl[0-9.]*|php[0-9.]*|lua[0-9.]*|luajit|tclsh[0-9.]*|wish|osascript|java|pwsh|sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh)$"#,
@@ -183,7 +186,65 @@ struct VaultCaller {
             found.append("interpreter flags \(shown.joined(separator: " "))")
         }
 
+        // Bun also runs the `preload` list of a bunfig.toml before the script: the working folder's, the user's
+        // `~/.bunfig.toml` and `$XDG_CONFIG_HOME/.bunfig.toml`. Neither an argument nor a variable names it.
+        if let executable, VaultGrants.runtime(of: executable) == "bun" {
+            found += Self.untrustedBunfigPreloads(cwd: cwd, home: NSHomeDirectory(),
+                                                  xdgConfigHome: args?.environmentValue("XDG_CONFIG_HOME"), own: own)
+        }
+
         return found
+    }
+
+    /// The `preload` entries of the bunfig.toml files Bun reads that are not a checkout's own preloads, each as
+    /// `bunfig.toml preload <entry>`. A file that exists and cannot be read counts as one, and so does an unknown
+    /// working folder: both fail closed, because the approval has no window.
+    static func untrustedBunfigPreloads(cwd: String?, home: String, xdgConfigHome: String?, own: Set<String>,
+                                        fileManager: FileManager = .default) -> [String] {
+        var files: [(path: String, base: String)] = []
+        if let cwd, !cwd.isEmpty { files.append(((cwd as NSString).appendingPathComponent("bunfig.toml"), cwd)) }
+        files.append(((home as NSString).appendingPathComponent(".bunfig.toml"), home))
+        if let xdgConfigHome, !xdgConfigHome.isEmpty {
+            files.append(((xdgConfigHome as NSString).appendingPathComponent(".bunfig.toml"), xdgConfigHome))
+        }
+
+        var found: [String] = cwd == nil ? ["bunfig.toml preload (the working folder is not known)"] : []
+        for file in files where fileManager.fileExists(atPath: file.path) {
+            guard let text = try? String(contentsOfFile: file.path, encoding: .utf8) else {
+                found.append("bunfig.toml preload (\(file.path) is not readable)")
+                continue
+            }
+
+            for entry in bunfigPreloads(in: text) {
+                let absolute = entry.hasPrefix("/") ? entry : (file.base as NSString).appendingPathComponent(entry)
+                if !own.contains((absolute as NSString).standardizingPath) { found.append("bunfig.toml preload \(entry)") }
+            }
+        }
+
+        return found
+    }
+
+    /// The strings of the top-level `preload` key of a bunfig.toml (before its first `[table]`, where `[test]` has its
+    /// own `preload` that only `bun test` reads). Comments are cut first.
+    static func bunfigPreloads(in text: String) -> [String] {
+        var top: [Substring] = []
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") { break }
+            top.append(raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? raw)
+        }
+
+        let joined = top.joined(separator: "\n")
+        guard let key = joined.range(of: #"(?m)^\s*preload\s*="#, options: .regularExpression) else { return [] }
+        var rest = joined[key.upperBound...].drop { $0 == " " || $0 == "\t" }
+        if rest.hasPrefix("[") {
+            rest = rest[..<(rest.firstIndex(of: "]") ?? rest.endIndex)]
+        } else if let newline = rest.firstIndex(of: "\n") {
+            rest = rest[..<newline]
+        }
+
+        return rest.split(separator: "\"", omittingEmptySubsequences: false).enumerated()
+            .filter { $0.offset % 2 == 1 }.map { String($0.element) }.filter { !$0.isEmpty }
     }
 
     /// Why this request can only be allowed once, or nil when an allow may be remembered.
