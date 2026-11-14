@@ -1,7 +1,7 @@
 import { out } from "@genesiscz/utils/logger";
 import { shortenHomePaths } from "@genesiscz/utils/paths";
 import type { Command } from "commander";
-import { environmentMarkdown, gatherEnvironment, issueEnvironmentValues, readBugTemplate } from "../lib/environment";
+import { environmentMarkdown, gatherEnvironment, issueEnvironmentValues, shortenedIssue } from "../lib/environment";
 
 /**
  * `tools genesis-tools env`: the environment an issue or an agent needs (build commit and age, branch, dirty, build
@@ -21,11 +21,7 @@ export function registerEnvCommand(program: Command): void {
             if (options.json) {
                 // `issue`: the bug form's fields in order and the environment answers by field id, so a drafted issue
                 // has the form's sections with its exact names.
-                const template = readBugTemplate();
-                const values = Object.fromEntries(
-                    Object.entries(issueEnvironmentValues(report)).map(([id, value]) => [id, shortenHomePaths(value)])
-                );
-                out.result({ ...report, markdown, issue: { ...template, values } });
+                out.result({ ...report, markdown, issue: shortenedIssue(issueEnvironmentValues(report)) });
                 return;
             }
 

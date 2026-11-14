@@ -1,7 +1,7 @@
 import { out } from "@genesiscz/utils/logger";
 import { shortenHomePaths } from "@genesiscz/utils/paths";
 import type { Command } from "commander";
-import { environmentMarkdown, issueEnvironmentValues, readBugTemplate } from "../lib/environment";
+import { environmentMarkdown, issueEnvironmentValues, shortenedIssue } from "../lib/environment";
 import { gatherTriage, triageDocument, triageMarkdown } from "../lib/triage";
 
 /**
@@ -24,7 +24,6 @@ export function registerTriageCommand(program: Command): void {
 
             if (options.json) {
                 const environment = report.environment.ok ? report.environment.value : null;
-                const template = readBugTemplate();
                 const values = environment ? issueEnvironmentValues(environment) : {};
                 // The bug form has no field for the Mac's state: it goes under the app build, the nearest one.
                 const state = triageMarkdown(report);
@@ -34,15 +33,7 @@ export function registerTriageCommand(program: Command): void {
                     ...(environment ?? {}),
                     markdown: shortenHomePaths(triageDocument(report)),
                     environmentMarkdown: environment ? shortenHomePaths(environmentMarkdown(environment)) : null,
-                    issue: {
-                        ...template,
-                        values: Object.fromEntries(
-                            Object.entries({ ...values, "app-build": appBuild }).map(([id, value]) => [
-                                id,
-                                shortenHomePaths(value),
-                            ])
-                        ),
-                    },
+                    issue: shortenedIssue({ ...values, "app-build": appBuild }),
                     triage: report,
                 });
                 return;

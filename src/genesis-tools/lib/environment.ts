@@ -6,6 +6,7 @@ import { agentSessionIds } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { shortenHomePaths } from "@genesiscz/utils/paths";
 import { findProcesses } from "@genesiscz/utils/process/processes";
 import { readLiveService } from "@genesiscz/utils/screen-recorder/service-link";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -253,6 +254,21 @@ export function readBugTemplate(checkout: string = toolsCheckout()): {
     }
 
     return { path, fields: parseIssueTemplate(readFileSync(path, "utf8")) };
+}
+
+/**
+ * The bug form with its answers by field id, for a drafted issue. Every answer names the home as ~, never
+ * /Users/<name>, because a person posts or pastes it.
+ */
+export function shortenedIssue(values: Record<string, string>): {
+    path: string | null;
+    fields: IssueTemplateField[];
+    values: Record<string, string>;
+} {
+    return {
+        ...readBugTemplate(),
+        values: Object.fromEntries(Object.entries(values).map(([id, value]) => [id, shortenHomePaths(value)])),
+    };
 }
 
 /** The bug form's environment answers, by field id: commit, branch, app-build, macos, chip, bun, permissions. */
