@@ -79,21 +79,23 @@ function nextCommentNumber(lines: CommentLine[]): number {
     let staged = 0;
 
     for (const line of lines) {
-        const ids =
-            line.kind === "staged"
-                ? [line.comment.id]
-                : line.kind === "sent"
-                  ? line.comments.map((comment) => comment.id)
-                  : [];
-        staged += line.kind === "staged" ? 1 : 0;
-
-        for (const id of ids) {
-            const number = /^c(\d+)$/.exec(id)?.[1];
-            highest = Math.max(highest, number ? Number(number) : 0);
+        if (line.kind === "staged") {
+            staged++;
+            highest = Math.max(highest, commentIdNumber(line.comment.id));
+        } else if (line.kind === "sent") {
+            for (const comment of line.comments) {
+                highest = Math.max(highest, commentIdNumber(comment.id));
+            }
         }
     }
 
     return Math.max(highest, staged) + 1;
+}
+
+/** The number in a `c<N>` comment id, or 0 for an id of another shape. */
+function commentIdNumber(id: string): number {
+    const number = /^c(\d+)$/.exec(id)?.[1];
+    return number ? Number(number) : 0;
 }
 
 /** A parsed line as a comment line, or nothing for another shape. */
