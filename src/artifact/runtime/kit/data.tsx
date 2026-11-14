@@ -74,6 +74,34 @@ export function tabKeyTarget(key: string, current: number, count: number): numbe
 }
 
 /**
+ * The keydown handler of a tab strip whose buttons carry the ids `${uid}-tab-<index>`: it selects the target tab
+ * of tabKeyTarget and moves focus to its button.
+ */
+export function indexedTabKeyDown<T>({
+    uid,
+    tabs,
+    activeIndex,
+    select,
+}: {
+    uid: string;
+    tabs: readonly T[];
+    activeIndex: number;
+    select: (tab: T) => void;
+}): (event: KeyboardEvent<HTMLButtonElement>) => void {
+    return (event) => {
+        const target = tabKeyTarget(event.key, activeIndex, tabs.length);
+
+        if (target === undefined) {
+            return;
+        }
+
+        event.preventDefault();
+        select(tabs[target]);
+        document.getElementById(`${uid}-tab-${target}`)?.focus();
+    };
+}
+
+/**
  * DOM ids tying a tab button to its panel. Tab ids are arbitrary strings, so
  * they are encoded rather than interpolated raw: a space or a "#" would make an
  * invalid id and break the aria-controls / aria-labelledby pairing.

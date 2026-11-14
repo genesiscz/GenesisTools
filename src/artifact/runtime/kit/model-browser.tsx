@@ -1,5 +1,5 @@
-import { type KeyboardEvent, type ReactNode, useId, useState } from "react";
-import { tabKeyTarget } from "./data";
+import { type ReactNode, useId, useState } from "react";
+import { indexedTabKeyDown } from "./data";
 import { UML_MARK, type UmlMark } from "./uml-diagram";
 
 export type ModelBrowserIcon =
@@ -173,17 +173,7 @@ export function ModelBrowser({
     const [active, setActive] = useState(initialTab ?? tabs[0]);
     const current = (active !== undefined ? tabRoots?.[active] : undefined) ?? root;
     const activeIndex = Math.max(0, active === undefined ? 0 : tabs.indexOf(active));
-    const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
-        const target = tabKeyTarget(event.key, activeIndex, tabs.length);
-
-        if (target === undefined) {
-            return;
-        }
-
-        event.preventDefault();
-        setActive(tabs[target]);
-        document.getElementById(`${uid}-tab-${target}`)?.focus();
-    };
+    const onTabKeyDown = indexedTabKeyDown({ uid, tabs, activeIndex, select: setActive });
     return (
         <div className="overflow-auto border border-line bg-panel font-sans text-xs text-ink">
             <div className="flex items-center justify-between bg-panel-2 px-2 py-1 text-[15px]">
