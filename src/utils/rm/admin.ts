@@ -160,7 +160,9 @@ function adminBlocker(input: {
         // Another user's folder lets its owner rename any entry, sticky or not, and a sticky folder lets an entry's owner
         // rename it: neither is root, so either could redirect the later pathname-based chown during the prompt.
         const otherOwner = above.uid !== 0 && above.uid !== uid;
-        const otherEntryOwner = child !== join(realFolder, name) && entry.uid !== 0 && entry.uid !== uid;
+        // That holds for the file itself too: its owner could swap in a root-owned file moved from another folder
+        // before the pathname-based chown runs, so only a root-owned file is handed over.
+        const otherEntryOwner = entry.uid !== 0 && entry.uid !== uid;
 
         if (above.uid === uid || otherOwner || otherEntryOwner || (facts.writable(dir) && !guarded)) {
             return ` (this user could replace ${child}: an administrator deletes it, e.g. with sudo)`;

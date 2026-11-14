@@ -3879,6 +3879,11 @@ describe("a path this user cannot move", () => {
                 kind: "never",
                 reason: expect.stringContaining("this user could replace /private/var"),
             });
+            // The file itself belongs to a third user: that user can swap in a root-owned file before the chown runs.
+            expect(block(SPINDUMP, facts({ [SPINDUMP]: { ...rootFile, uid: 777 } }))).toMatchObject({
+                kind: "never",
+                reason: expect.stringContaining("this user could replace"),
+            });
             // A sticky folder of another user (not root): its owner can rename root's entry while the prompt is open.
             const other = { ...rootDir(0o1777), uid: 777 };
             expect(block(SPINDUMP, facts({ "/private/var/tmp": other }))).toMatchObject({
