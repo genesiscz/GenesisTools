@@ -35,6 +35,12 @@ describe("authStorageSessionStore", () => {
         expect(await getConfig()).toMatchObject(legacy);
     });
 
+    test("a session in the config file is never handed to another server", async () => {
+        await saveConfig({ ...Base, authToken: "token", sessionId: "test" });
+
+        expect(await authStorageSessionStore.read("https://other.example.com")).toBeNull();
+    });
+
     test("a write never touches the config file", async () => {
         await saveConfig(Base);
         await authStorageSessionStore.write({ authToken: "fresh", sessionId: "test" }, Base.baseUrl);
