@@ -179,26 +179,47 @@ interface Commit {
 }
 
 /** Subject, then the author's name, email and strict ISO date, which `GIT_AUTHOR_DATE` reads back. */
-const SUBJECT_AND_AUTHOR = "--format=%s%x00%an%x00%ae%x00%aI";
+const SUBJECT_AND_AUTHOR = "%s%x00%an%x00%ae%x00%aI";
 
-function subjectAndAuthor(cwd: string, sha: string): { subject: string; author: PlanAuthor } {
-    const [subject = "", name = "", email = "", date = ""] = git(cwd, ["log", "-1", SUBJECT_AND_AUTHOR, sha])
-        .replace(/\n$/, "")
-        .split("\0");
+function readSubjectAndAuthor(fields: string[]): { subject: string; author: PlanAuthor } {
+    const [subject = "", name = "", email = "", date = ""] = fields;
     return { subject, author: { name, email, date } };
 }
 
+function subjectAndAuthor(cwd: string, sha: string): { subject: string; author: PlanAuthor } {
+    return readSubjectAndAuthor(
+        git(cwd, ["log", "-1", `--format=${SUBJECT_AND_AUTHOR}`, sha])
+            .replace(/\n$/, "")
+            .split("\0")
+    );
+}
+
 function commitsBetween(cwd: string, base: string, head: string): Commit[] {
-    return git(cwd, ["rev-list", "--reverse", `${base}..${head}`])
+    // One `git log` reads every subject and author, one line per commit (a subject never holds a newline); only the
+    // paths still take a git call per commit.
+    return git(cwd, ["log", "--reverse", `--format=%H%x00${SUBJECT_AND_AUTHOR}`, `${base}..${head}`])
         .split("\n")
         .filter(Boolean)
-        .map((sha) => ({
-            sha,
-            ...subjectAndAuthor(cwd, sha),
-            paths: git(cwd, ["diff-tree", "-r", "-z", "--no-renames", "--no-commit-id", "--name-only", "--root", sha])
-                .split("\0")
-                .filter(Boolean),
-        }));
+        .map((line) => {
+            const [sha = "", ...fields] = line.split("\0");
+
+            return {
+                sha,
+                ...readSubjectAndAuthor(fields),
+                paths: git(cwd, [
+                    "diff-tree",
+                    "-r",
+                    "-z",
+                    "--no-renames",
+                    "--no-commit-id",
+                    "--name-only",
+                    "--root",
+                    sha,
+                ])
+                    .split("\0")
+                    .filter(Boolean),
+            };
+        });
 }
 
 type AuthorSpec = { from: string } | PlanAuthor;
