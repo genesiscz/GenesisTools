@@ -107,6 +107,15 @@ async function evidence(
                   ).map((measured) => [measured.index, measured])
               )
             : undefined;
+        // Both JSON outputs give a line its voice features and the people its device can name, in one way.
+        const withDevice = <L extends { index: number }>(
+            line: L,
+            device: Parameters<typeof lineDeviceCandidates>[0]
+        ) => ({
+            ...line,
+            ...(voice ? { voiceFeatures: voice.get(line.index) } : {}),
+            deviceCandidates: lineDeviceCandidates(device),
+        });
 
         // The facts only, for an agent to reason over (decision 33 a): JSON whatever --format says.
         if (opts.raw || format === "lines") {
@@ -150,16 +159,14 @@ async function evidence(
                 });
                 const enriched = {
                     ...raw,
-                    lines: raw.lines.map((line) => ({
-                        ...line,
-                        ...(voice ? { voiceFeatures: voice.get(line.index) } : {}),
-                        deviceCandidates: lineDeviceCandidates({
+                    lines: raw.lines.map((line) =>
+                        withDevice(line, {
                             record: current,
                             atSec: line.fromSec,
                             micShare: Math.max(line.energyMicShare ?? 0, line.channel.micShare ?? 0),
                             liveName: line.liveName,
-                        }),
-                    })),
+                        })
+                    ),
                 };
                 out.result(format === "lines" ? compactEvidence(enriched) : SafeJSON.stringify(enriched, null, 2));
             } finally {
@@ -219,7 +226,7 @@ async function evidence(
                         files: found.files,
                         devices: found.devices,
                         lines: lines.map((line) => {
-                            const deviceCandidates = lineDeviceCandidates({
+                            const withCandidates = withDevice(line, {
                                 record,
                                 atSec: line.startSec,
                                 micShare: Math.max(line.energyMic ?? 0, line.micShare ?? 0),
@@ -227,13 +234,9 @@ async function evidence(
                             });
                             // A shared device names no winner: several people speak into it, whatever the share.
                             const shared =
-                                deviceCandidates.length > 1 || (line.winner === SELF && sharedOwnMicrophone(record));
-                            return {
-                                ...line,
-                                ...(voice ? { voiceFeatures: voice.get(line.index) } : {}),
-                                deviceCandidates,
-                                winner: shared ? undefined : line.winner,
-                            };
+                                withCandidates.deviceCandidates.length > 1 ||
+                                (line.winner === SELF && sharedOwnMicrophone(record));
+                            return { ...withCandidates, winner: shared ? undefined : line.winner };
                         }),
                     },
                     null,
