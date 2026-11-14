@@ -22,5 +22,6 @@ if (import.meta.main) {
         );
     }
 
-    await runTool(createRmProgram(), { tool: "rm" });
+    // Exit 3: a path waits for the person in a request, the documented outcome of an ask, not a failure.
+    await runTool(createRmProgram(), { tool: "rm", outcomeExitCodes: [3] });
 }

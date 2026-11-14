@@ -319,6 +319,23 @@ describe("classifyExit", () => {
         expect(classifyExit({ exitCode: 2, noted: null, stderrTail: "could not find it\n" })).toBe("exit");
     });
 
+    it("an exit code the tool names as an outcome is no failure, unless the run crashed or threw", () => {
+        // `tools rm` exits 3 when it opened a request for the person: 23 such runs read as failures in two days
+        // (2026-11-13 and 11-14).
+        const outcome = { outcomeExitCodes: [3] };
+        expect(classifyExit({ exitCode: 3, ...none, ...outcome })).toBeNull();
+        expect(classifyExit({ exitCode: 1, ...none, ...outcome })).toBe("exit");
+        expect(classifyExit({ exitCode: 3, ...none })).toBe("exit");
+        expect(
+            classifyExit({
+                exitCode: 3,
+                noted: { kind: "error", error: new Error("x"), fatal: true },
+                stderrTail: "",
+                ...outcome,
+            })
+        ).toBe("error");
+    });
+
     it("a fatal crash wins even when the exit event reports 0 (Bun after an unhandled rejection)", () => {
         expect(
             classifyExit({ exitCode: 0, noted: { kind: "crash", error: new Error("x"), fatal: true }, stderrTail: "" })

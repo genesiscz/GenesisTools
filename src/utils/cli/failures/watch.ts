@@ -44,6 +44,7 @@ interface Run {
     ended: boolean;
     /** The `tools` wrapper's id for this run, copied into every record so the wrapper never records it twice. */
     runId: string | undefined;
+    outcomeExitCodes: readonly number[];
 }
 
 let run: Run | null = null;
@@ -340,10 +341,13 @@ export function classifyExit({
     exitCode,
     noted,
     stderrTail,
+    outcomeExitCodes = [],
 }: {
     exitCode: number;
     noted: Noted | null;
     stderrTail: string;
+    /** Exit codes the tool documents as an outcome, not a failure (`tools rm` exits 3 when it opened a request). */
+    outcomeExitCodes?: readonly number[];
 }): FailureKind | null {
     if (noted?.kind === "crash" && noted.fatal) {
         return "crash";
@@ -359,6 +363,10 @@ export function classifyExit({
 
     if (noted?.kind === "error" || noted?.kind === "usage") {
         return noted.kind;
+    }
+
+    if (outcomeExitCodes.includes(exitCode)) {
+        return null;
     }
 
     if (USAGE_LINE.test(stderrTail) || /^Usage: /.test(stderrTail.trimStart())) {
@@ -596,7 +604,12 @@ function finish(code: number): void {
     }
 
     const exitCode = code || (typeof process.exitCode === "number" ? process.exitCode : 0);
-    const kind = classifyExit({ exitCode, noted: run.noted, stderrTail: stripAnsi(run.stderr) });
+    const kind = classifyExit({
+        exitCode,
+        noted: run.noted,
+        stderrTail: stripAnsi(run.stderr),
+        outcomeExitCodes: run.outcomeExitCodes,
+    });
     if (kind) {
         write(kind, exitCode, true);
     }
@@ -665,6 +678,7 @@ export function watchToolRun({
     secrets = () => ({ flags: [], indexes: [] }),
     caller = agentCaller,
     runId,
+    outcomeExitCodes = [],
 }: {
     tool: string;
     argv?: string[];
@@ -673,6 +687,8 @@ export function watchToolRun({
     caller?: () => FailureCaller | null;
     /** Defaults to the wrapper's id from the env (run-id.ts), which is then removed so child tools do not inherit it. */
     runId?: string;
+    /** Exit codes the tool documents as an outcome, not a failure (`RunToolOpts.outcomeExitCodes`). */
+    outcomeExitCodes?: readonly number[];
 }): void {
     if (run) {
         return;
@@ -689,6 +705,7 @@ export function watchToolRun({
         noted: null,
         ended: false,
         runId: runId ?? takeRunId(process.env),
+        outcomeExitCodes,
     };
     logger.debug({ tool, runId: run.runId, pid: process.pid }, "tool run started");
     tapStderr();
