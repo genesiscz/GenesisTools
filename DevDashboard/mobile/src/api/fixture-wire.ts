@@ -627,9 +627,23 @@ let fixtureLiveCount = 0;
 function liveStream(channels: readonly string[], everyMs: number | undefined): EventSourceLike {
     fixtureLiveCount++;
     const connId = `fixture-${fixtureLiveCount}`;
-    const source: EventSourceLike = { onmessage: null, onopen: null, onerror: null, close: () => undefined };
-    const send = (data: unknown) => source.onmessage?.({ data: SafeJSON.stringify(data) });
     const feeds = new Map<LiveChannel, () => void>();
+    const source: EventSourceLike = {
+        onmessage: null,
+        onopen: null,
+        onerror: null,
+        close: () => {
+            clearTimeout(opened);
+            FIXTURE_LIVE.delete(connId);
+
+            for (const stop of feeds.values()) {
+                stop();
+            }
+
+            feeds.clear();
+        },
+    };
+    const send = (data: unknown) => source.onmessage?.({ data: SafeJSON.stringify(data) });
 
     const setChannels = (next: readonly string[]) => {
         const wanted = next.filter(isLiveChannel);
@@ -670,16 +684,6 @@ function liveStream(channels: readonly string[], everyMs: number | undefined): E
         setChannels(channels);
     }, 0);
     FIXTURE_LIVE.set(connId, setChannels);
-    source.close = () => {
-        clearTimeout(opened);
-        FIXTURE_LIVE.delete(connId);
-
-        for (const stop of feeds.values()) {
-            stop();
-        }
-
-        feeds.clear();
-    };
 
     return source;
 }
