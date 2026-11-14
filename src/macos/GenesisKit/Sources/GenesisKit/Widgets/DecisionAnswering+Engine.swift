@@ -36,12 +36,14 @@ public enum DecisionLogAction: Equatable, Sendable {
     /// task's Mark complete ("implemented"), both held for their Undo. The hub's Inbox only dismisses.
     case move(DecisionAddress, state: String)
 
-    /// A note-only stage queued behind an earlier stage keeps that stage's letters: it replaces the queued write, and
-    /// the running one may still fail. A newer pick wins, and nothing else takes letters.
-    func keepingPick(from earlier: DecisionLogAction?) -> DecisionLogAction {
-        guard case .stage(let ref, let option, let note) = self, option == nil,
-              case .stage(_, let earlierOption, _)? = earlier, let kept = earlierOption else { return self }
-        return .stage(ref, option: kept, note: note)
+    /// A stage queued behind an earlier stage keeps what the earlier one staged and this one leaves out: it replaces
+    /// the queued write, and the running one may still fail. A newer pick or note wins; an explicit empty one is a
+    /// clear and wins too. Letters and note are merged independently, so a note staged first and a pick staged next
+    /// reach the log together, in either order.
+    func keepingStaged(from earlier: DecisionLogAction?) -> DecisionLogAction {
+        guard case .stage(let ref, let option, let note) = self, option == nil || note == nil,
+              case .stage(_, let earlierOption, let earlierNote)? = earlier else { return self }
+        return .stage(ref, option: option ?? earlierOption, note: note ?? earlierNote)
     }
 }
 
@@ -131,6 +133,18 @@ extension DecisionAnswering {
             var then: [() -> Void] = []
             /// The answer to this write, for the surface that held it (`hold`) or cleared it (`unstage`).
             var ended: ((DecisionLogAnswer) -> Void)?
+            /// A write that changes several decisions sits in the queue of each one, so it runs after every earlier
+            /// write of all of them and every later write waits behind it. Nil for a write of one decision.
+            var joint: Joint?
+            /// The decision whose queue reports the joint write's answer (`ended`, `written`); the others only advance.
+            var reports = true
+        }
+
+        /// One write shared by the queues of several decisions: it runs once, when every one of them reached it.
+        private final class Joint {
+            let ids: [String]
+            var ready: Set<String> = []
+            init(ids: [String]) { self.ids = ids }
         }
 
         private let log: DecisionLog
@@ -201,7 +215,19 @@ extension DecisionAnswering {
                 versions[ref.id] = version
                 cleared[ref.id] = version
             }
-            write(first.id, Write(action: .unstage(refs), versions: cleared, ended: ended))
+            var ids: [String] = []
+            for ref in refs where !ids.contains(ref.id) { ids.append(ref.id) }
+            // One log call for the batch, queued behind the running and waiting writes of every decision it clears:
+            // a stage of one of them cannot run after the clear and bring its pick back.
+            guard ids.count > 1 else {
+                write(first.id, Write(action: .unstage(refs), versions: cleared, ended: ended))
+                return
+            }
+            let joint = Joint(ids: ids)
+            for id in ids {
+                write(id, Write(action: .unstage(refs), versions: cleared.filter { $0.key == id },
+                                ended: id == first.id ? ended : nil, joint: joint, reports: id == first.id))
+            }
         }
 
         /// The pick staged here as `version` went out with a send: it stops showing as pending. A newer one stays.
@@ -281,7 +307,7 @@ extension DecisionAnswering {
             }
             var waiting = queued[id] ?? []
             var next = write
-            next.action = write.action.keepingPick(from: (waiting.last ?? current).action)
+            next.action = write.action.keepingStaged(from: (waiting.last ?? current).action)
             if case .stage = write.action, let last = waiting.last, case .stage = last.action {
                 next.versions = last.versions.merging(write.versions) { _, newer in newer }
                 next.then = last.then + write.then
@@ -298,10 +324,22 @@ extension DecisionAnswering {
             running[id] = write
             writing.insert(id)
             if !queued, errors[id] != nil { errors[id] = nil }
+            if let joint = write.joint {
+                // The batch runs once, when every decision it clears has reached it; each queue then ends with it.
+                joint.ready.insert(id)
+                guard joint.ready.count == joint.ids.count else { return }
+            }
             let log = self.log
             Task { [weak self] in
                 let answer = await log.run(write.action)
-                self?.finish(id, write, answer)
+                guard let self else { return }
+                if let joint = write.joint {
+                    for jointId in joint.ids {
+                        if let own = self.running[jointId] { self.finish(jointId, own, answer) }
+                    }
+                } else {
+                    self.finish(id, write, answer)
+                }
             }
         }
 
@@ -323,8 +361,10 @@ extension DecisionAnswering {
                 for owned in current { pending[owned]?.unsaved = true }
                 afterWrites[id] = nil
             }
-            write.ended?(answer)
-            written?(id, write.action, answer)
+            if write.reports {
+                write.ended?(answer)
+                written?(id, write.action, answer)
+            }
             if var waiting = queued.removeValue(forKey: id), !waiting.isEmpty {
                 let next = waiting.removeFirst()
                 if !waiting.isEmpty { queued[id] = waiting }
