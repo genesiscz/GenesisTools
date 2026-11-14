@@ -258,31 +258,50 @@ export const PR_REFERENCE_SECTION: PromptComposeSection = {
     text: [
         "# PR and MR references",
         "The genesis-tools-mods links mod turns a bare #123 in your reply into a link, and for that it must guess the repository. Do not make it guess.",
-        "Write every PR as a full markdown link with its title: [#123 (title)](https://github.com/owner/repo/pull/123). When you cannot write the link, write owner/repo#123 only in a single-host session. Across GitHub.com and Enterprise hosts, require a verified full URL or leave the reference unlinked. A bare #123 is acceptable only when the session works in one repository and no other repository appears in the reply.",
+        "Write every PR as a full markdown link with its title: [#123 (title)](https://github.com/owner/repo/pull/123). When you cannot write the link, write owner/repo#123 only in a single-host session. Across GitHub.com and Enterprise hosts, require a verified full URL or leave the reference unlinked. A bare #123 is acceptable only when the session works in one repository and no other repository appears in the reply. In a reply that names PRs of two repositories, write each number as owner/repo#123 or as a full link, even in a list; never rely on a repository name earlier in the sentence.",
     ].join("\n"),
 };
 
-/** The PR numbers the mod linked since the last note to the model, keyed `<repo>#<n>`. */
-type LinkedPullRequest = { token: string; repo: string; why: string; url: string };
+/**
+ * The PR numbers the mod linked since the last note to the model, keyed `<repo>#<n>`. `certain`: the reply wrote the
+ * repository at the number or linked the number itself; every other repository is a guess.
+ */
+type LinkedPullRequest = { token: string; repo: string; number: string; why: string; url: string; certain: boolean };
 const linkedPullRequests = new Map<string, LinkedPullRequest>();
 
-function pullRequestNote(pending: readonly LinkedPullRequest[]): string {
+/**
+ * What the model reads about the links: each guessed repository with a warning and the text that makes it certain, and
+ * the certain ones as a count. On 2026-11-14 the note listed eleven links alike, and the one wrong guess hid among
+ * them. Undefined when every link is certain.
+ */
+function pullRequestNote(pending: readonly LinkedPullRequest[]): string | undefined {
+    const guessed = pending.filter((pr) => !pr.certain);
+    const certain = pending.length - guessed.length;
+
+    if (guessed.length === 0) {
+        return undefined;
+    }
+
     return [
-        "The genesis-tools-mods links mod linked these PR numbers in your last message:",
-        ...pending.map((pr) => `- ${pr.token} -> ${pr.url}, in ${pr.repo}: ${pr.why}`),
-        "It picks a number's repository in this order: one written at the number (owner/repo#123), the same number linked before, the nearest repository your reply names (a GitHub URL, a hub link, a path in a checkout, or a repository's name as a plain word), and last the remote of the session's checkout. In a session that works in several checkouts, a bare number with none of these is linked only when the title you wrote after it matches that repository's PR. If a number belongs to another repository, tell the user in your next reply that the link was added automatically and is wrong, and give the correct link. Write owner/repo#123 to choose the repository yourself; a PR you write as a full markdown link is never changed.",
+        "The genesis-tools-mods links mod guessed the repository of these PR numbers in your last message:",
+        ...guessed.map(
+            (pr) =>
+                `- ⚠️ ${pr.token} -> ${pr.url} (guessed: ${pr.why}). Next time write ${pr.repo}#${pr.number}, or [#${pr.number} (<its title>)](${pr.url}) after checking the title.`
+        ),
+        ...(certain === 0
+            ? []
+            : certain === 1
+              ? ["1 more link was written with its repository and needs no check."]
+              : [`${certain} more links were written with their repository and need no check.`]),
+        "Check each ⚠️ link. If one is in the wrong repository, tell the user in your next reply that the link was added automatically and is wrong, and give the correct link. To choose the repository yourself, write owner/repo#123 or a full markdown link with the title.",
     ].join("\n");
 }
 
 /**
  * The pending PR attribution as context for the main loop's next tool result, so the model reads it in the same turn
- * as the message that holds the links; the entries are taken. Undefined when nothing is pending.
+ * as the message that holds the links; the entries are taken. Undefined when no link is a guess.
  */
 export function takeLinkedPullRequestNote(): string | undefined {
-    if (linkedPullRequests.size === 0) {
-        return undefined;
-    }
-
     const note = pullRequestNote([...linkedPullRequests.values()]);
     linkedPullRequests.clear();
 
@@ -292,7 +311,7 @@ export function takeLinkedPullRequestNote(): string | undefined {
 /**
  * Append the pending PR attribution, acknowledging only entries still matching the successful snapshot. A failed
  * append leaves the entries for a later turn, and links recorded during the append are never cleared by it. The turn's
- * end uses it for links of a last message, which no tool result follows.
+ * end uses it for links of a last message, which no tool result follows. Certain links alone append nothing.
  */
 export async function appendLinkedPullRequestNote(append: (note: string) => Promise<unknown>): Promise<void> {
     if (linkedPullRequests.size === 0) {
@@ -300,7 +319,11 @@ export async function appendLinkedPullRequestNote(append: (note: string) => Prom
     }
 
     const pending = [...linkedPullRequests.entries()];
-    await append(pullRequestNote(pending.map(([, pr]) => pr)));
+    const note = pullRequestNote(pending.map(([, pr]) => pr));
+
+    if (note !== undefined) {
+        await append(note);
+    }
 
     for (const [key, pr] of pending) {
         if (linkedPullRequests.get(key) === pr) {
@@ -417,18 +440,47 @@ function writtenTitleMatches(after: string, title: string): boolean {
     return false;
 }
 
+/** A mention's own text: a URL (with the `)` that closes its markdown link), a path, `owner/repo#12` or a name. */
+const LIST_HEAD = /(?:https?|genesis-tools):\/\/[^\s)<>"'`\]]+\)?|[\w./~#@-]+/y;
+/** What may stand between the numbers of one list: commas, "and", "to", "or", and the numbers themselves. */
+const LIST_PART = /\s+|,|(?:and|or|to)\b|#\d{1,6}\b/y;
+
+/**
+ * Whether `span`, from a repository mention to a PR number, is a list that mention heads ("Toolbox #923, #925 to #927
+ * and #930"): after the mention's own text, only commas, "and", "to", "or", other numbers and the titles written after
+ * them. A mention inside an earlier number's title is cut off by the title's parenthesis, so it heads nothing.
+ */
+function headsList(span: string): boolean {
+    LIST_HEAD.lastIndex = 0;
+    let i = LIST_HEAD.exec(span)?.[0].length ?? 0;
+
+    while (i < span.length) {
+        LIST_PART.lastIndex = i;
+        const part = LIST_PART.exec(span)?.[0];
+
+        if (!part) {
+            return false;
+        }
+
+        i += part.length;
+        i += part.startsWith("#") ? writtenTitleSpan(span.slice(i)) : 0;
+    }
+
+    return true;
+}
+
 async function prRepo(
     ctx: LinkContext,
     n: number,
     { at, after }: { at: number; after: string }
-): Promise<{ project: ForgeProject; why: string } | undefined> {
+): Promise<{ project: ForgeProject; why: string; certain?: boolean } | undefined> {
     const earlier = [...ctx.above].reverse();
 
     for (const mention of [...ctx.line, ...earlier]) {
         const project = mention.number === n && !mention.path ? await mentionProject(ctx, mention) : undefined;
 
         if (project?.kind === "github") {
-            return { project, why: `the reply links #${n} there` };
+            return { project, why: `the reply links #${n} there`, certain: true };
         }
     }
 
@@ -440,8 +492,18 @@ async function prRepo(
 
     // The nearest mention of the same sentence first, then the nearest of the rest of the line.
     const sentence = ctx.sentenceAt?.(at);
-    const distance = (m: RepoMention) =>
-        (ctx.sentenceAt && ctx.sentenceAt(m.start) !== sentence ? 1_000_000 : 0) + Math.abs(m.start - at);
+    const sameSentence = (m: RepoMention) => !ctx.sentenceAt || ctx.sentenceAt(m.start) === sentence;
+    const distance = (m: RepoMention) => (sameSentence(m) ? 0 : 1_000_000) + Math.abs(m.start - at);
+    // Before them, a mention earlier in the sentence that heads a list running to this number: on 2026-11-14 "Reservine
+    // #923, #925 to #927, #929 and #930, and ReservineBack #1255" linked #930 in ReservineBack, the nearer name.
+    const lineText = ctx.lineText;
+    const head =
+        lineText === undefined
+            ? undefined
+            : ctx.line
+                  .filter((m) => m.start < at && sameSentence(m))
+                  .reverse()
+                  .find((m) => headsList(lineText.slice(m.start, at)));
     // A repository name inside the title written after the number is part of that title, not a pointer to the
     // repository: in a two-checkout session it counts only after the titles were compared.
     const titleFrom = at + `#${n}`.length;
@@ -462,7 +524,11 @@ async function prRepo(
 
         return undefined;
     };
-    const outside = await named([...nearest.filter((m) => !inTitle(m)), ...earlier]);
+    const outside = await named([
+        ...(head ? [head] : []),
+        ...nearest.filter((m) => m !== head && !inTitle(m)),
+        ...earlier,
+    ]);
 
     if (outside) {
         return outside === "gitlab" ? undefined : outside;
@@ -518,7 +584,7 @@ async function prTarget(
     ctx: LinkContext,
     token: string,
     { at, after }: { at: number; after: string }
-): Promise<{ project: ForgeProject; number: string; why: string } | undefined> {
+): Promise<{ project: ForgeProject; number: string; why: string; certain?: boolean } | undefined> {
     const [, owner, name, written] = new RegExp(`^${QUALIFIED_PR.source}$`).exec(token) ?? [];
 
     if (name && written) {
@@ -526,7 +592,7 @@ async function prTarget(
             ? { kind: "github" as const, host: githubHost(ctx), path: `${owner}/${name}` }
             : (projectNamed(name, knownProjects(ctx)) ?? sameOwner(name, ctx.project));
 
-        return project ? { project, number: written, why: "written at the number" } : undefined;
+        return project ? { project, number: written, why: "written at the number", certain: true } : undefined;
     }
 
     const n = token.slice(1);
@@ -736,8 +802,10 @@ async function linkPlain(ctx: LinkContext, text: string, offset: number): Promis
                 linkedPullRequests.set(`${target.project.path}#${target.number}`, {
                     token: hit.token,
                     repo: target.project.path,
+                    number: target.number,
                     why: target.why,
                     url: pr.url,
+                    certain: target.certain === true,
                 });
             }
         } else if (hit.kind === "decision") {

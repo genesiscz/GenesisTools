@@ -1772,7 +1772,11 @@ test("links: a bare PR number is linked in the folder's repository, and the mode
     await appendLinkedPullRequestNote(async (note) => {
         notes.push(note);
     });
-    expect(notes[0]).toContain("- #900 -> https://github.com/acme/api/pull/900, in acme/api: the session's checkout");
+    expect(notes[0]).toStartWith(
+        "The genesis-tools-mods links mod guessed the repository of these PR numbers in your last message:\n" +
+            "- ⚠️ #900 -> https://github.com/acme/api/pull/900 (guessed: the session's checkout). Next time write acme/api#900, or [#900 (<its title>)](https://github.com/acme/api/pull/900) after checking the title.\n" +
+            "Check each ⚠️ link."
+    );
     await appendLinkedPullRequestNote(async (note) => {
         notes.push(note);
     });
@@ -1823,7 +1827,7 @@ test("links: failed attribution retries without titles and preserves links recor
             throw new Error("append failed");
         })
     ).rejects.toThrow("append failed");
-    expect(failedNote).toContain("#902 -> https://github.com/acme/api/pull/902, in acme/api");
+    expect(failedNote).toContain("#902 -> https://github.com/acme/api/pull/902 (guessed: the session's checkout)");
     expect(failedNote).not.toContain(hostileTitle);
 
     let release!: () => void;
@@ -2025,18 +2029,19 @@ test("links: a bare PR number takes the repository the reply means, not only the
     await appendLinkedPullRequestNote(async (text) => {
         note = text;
     });
-    expect(note).toContain("#7 -> https://github.com/acme/web/pull/7, in acme/web: the reply links #7 there");
-    expect(note).toContain(
-        "#8 -> https://github.com/acme/web/pull/8, in acme/web: the nearest repository the reply names"
-    );
-    expect(note).toContain("acme/api#9 -> https://github.com/acme/api/pull/9, in acme/api: written at the number");
-    expect(note).toContain(
-        "#11 -> https://github.com/acme/tools/pull/11, in acme/tools: the session linked #11 there before"
-    );
-    expect(note).toContain(
-        "#13 -> https://github.com/acme/web/pull/13, in acme/web: the nearest repository the reply names"
-    );
-    expect(note).toContain("#14 -> https://github.com/acme/api/pull/14, in acme/api: the session's checkout");
+    // The guesses are listed with what makes them certain; #7 (linked in the reply), acme/api#9, web#10 and shop#15
+    // (written at the number, the second #15 linked in the reply) are only counted.
+    const guess = (n: number, repo: string, why: string) =>
+        `- ⚠️ #${n} -> https://github.com/${repo}/pull/${n} (guessed: ${why}). Next time write ${repo}#${n}, or [#${n} (<its title>)](https://github.com/${repo}/pull/${n}) after checking the title.`;
+    expect(note.split("\n").slice(1, 6)).toEqual([
+        guess(8, "acme/web", "the nearest repository the reply names"),
+        guess(11, "acme/tools", "the session linked #11 there before"),
+        guess(13, "acme/web", "the nearest repository the reply names"),
+        guess(14, "acme/api", "the session's checkout"),
+        "4 more links were written with their repository and need no check.",
+    ]);
+    expect(note).not.toContain("acme/api#9 ->");
+    expect(note).not.toContain("/pull/7");
 
     // A full link whose label carries the title, parentheses and all, stays as written and is no PR the mod linked.
     const full =
@@ -2142,9 +2147,75 @@ test("links: a repository's plain name picks it in a two-checkout session, as in
     ]);
     // The note waits for the next tool result, and is taken once.
     expect(takeLinkedPullRequestNote()).toContain(
-        "- #102 -> https://github.com/acme/Playground/pull/102, in acme/Playground: the nearest repository the reply names"
+        "- ⚠️ #102 -> https://github.com/acme/Playground/pull/102 (guessed: the nearest repository the reply names)"
     );
     expect(takeLinkedPullRequestNote()).toBeUndefined();
+});
+
+test("links: the repository that heads a list of numbers owns them all, as in the 2026-11-14 reply", async () => {
+    forgetPullRequests();
+    takeLinkedPullRequestNote();
+    const front = [923, 925, 927, 929, 930];
+    const back = [1255, 1260, 1262, 1263];
+    // Both repositories have every number, so a wrong guess gives a wrong link instead of none.
+    const titles: Record<string, string> = {};
+    for (const n of [...front, ...back, 42, 43]) {
+        titles[`acme/Toolbox#${n}`] = `toolbox ${n}`;
+        titles[`acme/Playground#${n}`] = `playground ${n}`;
+    }
+    const { ctx } = twoCheckouts(titles, GH_ONLY);
+    const t = (n: number) => `[#${n} (toolbox ${n})](https://github.com/acme/Toolbox/pull/${n})`;
+    const p = (n: number) => `[#${n} (playground ${n})](https://github.com/acme/Playground/pull/${n})`;
+
+    // #929 and #930 stand nearer to Playground, but Toolbox heads their list.
+    expect(
+        await linkLine(
+            ctx,
+            "The PRs are Toolbox #923, #925 to #927, #929 and #930, and Playground #1255 to #1260, #1262 and #1263.\n"
+        )
+    ).toBe(
+        `The PRs are Toolbox ${t(923)}, ${t(925)} to ${t(927)}, ${t(929)} and ${t(930)}, and Playground ${p(1255)} to ${p(1260)}, ${p(1262)} and ${p(1263)}.\n`
+    );
+    // A name the reply wrote apart from the number is still a guess: each of the nine is listed with its warning.
+    const note = takeLinkedPullRequestNote() ?? "";
+    expect(note.match(/^- ⚠️ #\d+ -> .* \(guessed: the nearest repository the reply names\)\./gm)).toHaveLength(9);
+    expect(note).toContain(
+        "- ⚠️ #930 -> https://github.com/acme/Toolbox/pull/930 (guessed: the nearest repository the reply names). Next time write acme/Toolbox#930, or [#930 (<its title>)](https://github.com/acme/Toolbox/pull/930) after checking the title."
+    );
+    expect(note).not.toContain("more link");
+    // A name after the number counts when no name stands before it in the sentence.
+    expect(await linkLine(ctx, "#42 in Playground.\n")).toBe(`${p(42)} in Playground.\n`);
+    // A name before the number that heads no list leaves the nearest name to decide, as before.
+    expect(await linkLine(ctx, "Toolbox is done, and the API fix is #43 in Playground.\n")).toBe(
+        `Toolbox is done, and the API fix is ${p(43)} in Playground.\n`
+    );
+    takeLinkedPullRequestNote();
+});
+
+test("links: links written with their repository send no note, and next to a guess they are only counted", async () => {
+    forgetPullRequests();
+    takeLinkedPullRequestNote();
+    const { ctx } = twoCheckouts(
+        { "acme/Toolbox#5": "five", "acme/Playground#6": "six", "acme/Toolbox#7": "seven" },
+        GH_ONLY
+    );
+
+    await linkLine(ctx, "acme/Toolbox#5 and acme/Playground#6.\n");
+    const appended: string[] = [];
+    await appendLinkedPullRequestNote(async (note) => {
+        appended.push(note);
+    });
+    expect(appended).toEqual([]);
+    expect(takeLinkedPullRequestNote()).toBeUndefined();
+
+    expect(await linkLine(ctx, "acme/Toolbox#5 and #7.\n")).toContain(
+        "[#7 (seven)](https://github.com/acme/Toolbox/pull/7)"
+    );
+    const note = takeLinkedPullRequestNote() ?? "";
+    expect(note.split("\n").slice(1, 3)).toEqual([
+        "- ⚠️ #7 -> https://github.com/acme/Toolbox/pull/7 (guessed: the nearest repository the reply names). Next time write acme/Toolbox#7, or [#7 (<its title>)](https://github.com/acme/Toolbox/pull/7) after checking the title.",
+        "1 more link was written with its repository and needs no check.",
+    ]);
 });
 
 test("links: in a two-checkout session the written title decides, and no evidence leaves the number as text", async () => {
@@ -2176,7 +2247,9 @@ test("links: in a two-checkout session the written title decides, and no evidenc
     // Only one of them has a #105.
     expect(await linkLine(ctx, "And #105.\n")).toBe("And #105.\n");
     const note = takeLinkedPullRequestNote() ?? "";
-    expect(note).toContain("#103 -> https://github.com/acme/Playground/pull/103, in acme/Playground: its title there");
+    expect(note).toContain(
+        "#103 -> https://github.com/acme/Playground/pull/103 (guessed: its title there matches the title the reply wrote)"
+    );
     expect(note).not.toContain("#105 ->");
 });
 
@@ -2262,7 +2335,7 @@ test("links: a one-checkout session links a bare number in its checkout as befor
     expect(await linkLine(one, "#106 alone.\n")).toBe(
         "[#106 (six)](https://github.com/acme/Toolbox/pull/106) alone.\n"
     );
-    expect(takeLinkedPullRequestNote()).toContain("in acme/Toolbox: the session's checkout");
+    expect(takeLinkedPullRequestNote()).toContain("/acme/Toolbox/pull/106 (guessed: the session's checkout)");
 
     const known = [
         { kind: "github" as const, host: "github.com", path: "acme/Playground" },

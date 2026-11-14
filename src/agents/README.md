@@ -978,7 +978,12 @@ defaults are in the plugin's [README](../../plugins/genesis-tools-mods/README.md
   links. Code fences, inline code that does not resolve, existing links and URLs stay as they are. A genesis.tools
   link is written only for a kind `tools genesis-tools probe` says opens on this Mac (the plugin's `genesis.ts` runs
   it once per 30 minutes; no `tools` means no such links). Otherwise a note gets its `cursor://` or plain path, and a
-  folder, a commit or a decision stays text.
+  folder, a commit or a decision stays text. A PR number (`#123`, `web#123`, `owner/repo#123`) that `gh` finds becomes
+  a link with its title. Its repository comes, in this order, from the text at the number, the same number linked
+  before, the nearest repository the reply names, and the session's checkout. A repository named before a list of
+  numbers owns the whole list (`Toolbox #923, #925 and #930, and Playground #1255`). The model then gets a note: each
+  guessed link with ⚠️ and the text that makes it certain next time (`owner/repo#123`, or a full link with the title),
+  and a count of the links the reply wrote with their repository. When every link is certain, no note is sent.
 - `mods.git` (`labels` `full` or `minimal`): a band line above the prompt with the branch, unpushed and unpulled
   commits, the changed files with their added and removed lines (`↑14 to push · ↓2 to pull 4 files changed +120 −30`,
   or `↑14 ↓2 ●4 +120 −30` with `minimal`), and the PRs (the branch's own and the ones `/mod-git pr add 42` tracks)
