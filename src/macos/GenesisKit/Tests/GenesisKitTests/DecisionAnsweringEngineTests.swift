@@ -200,14 +200,52 @@ final class DecisionAnsweringEngineTests: XCTestCase {
                        "a move keeps its place in the queue; a stage replaces only the stage waiting right before it")
     }
 
-    func testANoteKeepsThePickOfTheWriteBeforeIt() {
+    func testAStageKeepsWhatTheWriteBeforeItStagedAndItLeavesOut() {
         let note = DecisionLogAction.stage(ref, option: nil, note: "why")
         let pick = DecisionLogAction.stage(ref, option: "b", note: nil)
-        XCTAssertEqual(note.keepingPick(from: pick), .stage(ref, option: "b", note: "why"))
-        XCTAssertEqual(note.keepingPick(from: nil), note, "nothing earlier: the note alone")
+        XCTAssertEqual(note.keepingStaged(from: pick), .stage(ref, option: "b", note: "why"))
+        XCTAssertEqual(note.keepingStaged(from: nil), note, "nothing earlier: the note alone")
         let repick = DecisionLogAction.stage(ref, option: "c", note: nil)
-        XCTAssertEqual(repick.keepingPick(from: pick), repick, "a newer pick wins")
-        XCTAssertEqual(DecisionLogAction.dismiss(ref).keepingPick(from: pick), .dismiss(ref), "a dismiss never gets letters")
+        XCTAssertEqual(repick.keepingStaged(from: pick), repick, "a newer pick wins")
+        XCTAssertEqual(repick.keepingStaged(from: note), .stage(ref, option: "c", note: "why"),
+                       "a pick after a note keeps the note")
+        XCTAssertEqual(DecisionLogAction.stage(ref, option: "c", note: "").keepingStaged(from: note),
+                       .stage(ref, option: "c", note: ""), "an explicit empty note is a clear and wins")
+        XCTAssertEqual(DecisionLogAction.dismiss(ref).keepingStaged(from: pick), .dismiss(ref), "a dismiss never gets letters")
+    }
+
+    func testANoteQueuedBeforeAPickIsStillWritten() async {
+        let log = FakeDecisionLog()
+        log.holdNext = true
+        let engine = engine(log)
+        engine.stage(ref, option: "a", note: nil)
+        await settle()
+        engine.stage(ref, option: nil, note: "why")
+        engine.stage(ref, option: "c", note: nil)
+        log.release()
+        await settle()
+        XCTAssertEqual(log.actions, [.stage(ref, option: "a", note: nil), .stage(ref, option: "c", note: "why")],
+                       "the pick replaced the queued note write and carried the note")
+    }
+
+    func testABatchUnstageWaitsForTheRunningWriteOfEveryDecisionItClears() async {
+        let log = FakeDecisionLog()
+        let engine = engine(log)
+        let other = DecisionAddress(id: "d_5_s1", sessionId: "s1", number: 5)
+        log.holdNext = true
+        engine.stage(other, option: "a", note: nil)
+        await settle()
+        engine.stage(other, option: "b", note: nil)
+        engine.unstage([ref, other])
+        await settle()
+        XCTAssertEqual(log.actions, [.stage(other, option: "a", note: nil)],
+                       "the clear is not written while another decision's stage runs")
+        log.release()
+        await settle()
+        XCTAssertEqual(log.actions, [.stage(other, option: "a", note: nil), .stage(other, option: "b", note: nil),
+                                      .unstage([ref, other])], "the clear runs last, once, so no stage brings a pick back")
+        XCTAssertFalse(engine.isWriting(ref.id))
+        XCTAssertFalse(engine.isWriting(other.id))
     }
 
     func testADismissHeldForItsUndoWritesNothingUntilItsTimeAndUndoDropsIt() async {
