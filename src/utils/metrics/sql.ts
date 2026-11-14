@@ -338,6 +338,7 @@ function checkpointRangeSql(context: {
     metricId: number;
     query: MetricQuery;
     marks: readonly CheckpointMark[];
+    windows: ReturnType<typeof checkpointWindows>;
     groups: ReadonlyArray<{ name: string; alias: string }>;
     aggregates: ReadonlyArray<{ name: MetricAggregate; alias: string }>;
     order: string;
@@ -345,7 +346,7 @@ function checkpointRangeSql(context: {
 }): BuiltSql {
     const params: SQLQueryBindings[] = [];
     const buckets = context.groups.filter((group) => !isCheckpointGroup(group.name));
-    const arms = [...checkpointWindows(context.marks)].map(([label, window]) => {
+    const arms = [...context.windows].map(([label, window]) => {
         const select = [
             ...context.groups.map((group) => {
                 if (isCheckpointGroup(group.name)) {
@@ -407,13 +408,22 @@ export function buildAggregateSql(metricId: number, query: MetricQuery, options:
     const limit = limitOf(query.limit, DEFAULT_QUERY_LIMIT);
     const needsWindow = percentiles === "window" && aggregates.some((aggregate) => percentileOf(aggregate.name));
 
-    if (
-        !needsWindow &&
-        groupNames.some(isCheckpointGroup) &&
-        groupNames.every(readsTimeOnly) &&
-        checkpointWindows(marks).size <= MAX_SPAN_ARMS
-    ) {
-        const built = checkpointRangeSql({ metricId, query, marks, groups: aliases, aggregates, order, limit });
+    const windows =
+        !needsWindow && groupNames.some(isCheckpointGroup) && groupNames.every(readsTimeOnly)
+            ? checkpointWindows(marks)
+            : undefined;
+
+    if (windows && windows.size <= MAX_SPAN_ARMS) {
+        const built = checkpointRangeSql({
+            metricId,
+            query,
+            marks,
+            windows,
+            groups: aliases,
+            aggregates,
+            order,
+            limit,
+        });
         return { ...built, groups: aliases, aggregates };
     }
 
